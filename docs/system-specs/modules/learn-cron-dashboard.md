@@ -3906,6 +3906,7 @@ chat setting (Settings → Chat → Sessions, beside Split View; `ChatConfig.dim
 in `mc-chat-config`, default on, a stored non-boolean read as on): off, every
 pane stays at full brightness and the focused pane's accent border alone marks
 where keyboard input goes.
+The workspace and terminal tab strips offer Close, Close other tabs, Close tabs to the right, and Close all tabs on right-click, or on touch by holding a tab and lifting the finger without moving it. On the terminal strip they follow Rename in the chip's single context menu, and the chip suppresses that trigger's own touch long-press so the hold stays with the reorder gesture. The same hold followed by movement reorders the tab; touch swipes scroll these strips, and mouse dragging reorders tabs. Bulk workspace closes exclude its fixed views and confirm before discarding unsaved file edits. Closing terminal tabs deletes their PTYs; hiding a panel keeps them alive.
 
 `KiroPrerequisiteGate` wraps the main dashboard route (the independent
 `/worlds-popout` route is not gated). `DashboardBootstrap` mounts the proactive
