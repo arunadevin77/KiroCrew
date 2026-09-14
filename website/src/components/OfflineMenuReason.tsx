@@ -20,3 +20,28 @@ export default function OfflineMenuReason({ testId = 'menu-offline-reason' }: { 
     </div>
   )
 }
+
+/**
+ * The same standing reason for a surface that is not a menu: a table whose row
+ * controls are dimmed, or a field whose typed value is being held. The caller
+ * decides when it shows (it owns the connection read), and may narrow the text.
+ *
+ * A block-level `span`, so it nests validly in an inline host (a table cell's
+ * `span`) as well as a block one.
+ */
+export function OfflineReasonRow({ testId, className = '', message, id }: {
+  readonly testId: string
+  /** Placement for the host surface; the table pins it, the field insets it. */
+  readonly className?: string
+  /** Replaces the surface-wide reason, e.g. for a field whose draft is held. */
+  readonly message?: string
+  /** Lets a host point `aria-describedby` here, for a control that is refused
+   *  but still interactive and so keeps its own accessible name. */
+  readonly id?: string
+}) {
+  return (
+    <span role="status" id={id} data-testid={testId} className={`block text-[11px] text-muted ${className}`}>
+      {message ?? i18nT('utils.offline.menu_reason')}
+    </span>
+  )
+}
