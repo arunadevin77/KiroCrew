@@ -3266,7 +3266,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     continuable, interrupted, sendUnconfirmed, continuing, handleContinue,
     openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openTurnLimitSetting,
     featureRequestRefused, sessionStartRepeated, contextOverflowed,
-    freshSession, handleFreshSession,
+    freshSession, handleFreshSession, appAgentRefused,
   } = useTurnRecovery({
     activeSlot,
     slotRunning,
@@ -6621,8 +6621,9 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                  withholds Resume, so the composer falls back to Send.
                  `contextOverflowed` is the same rule for a conversation too
                  big for the model: Resume re-sends it, the card offers a fresh
-                 session instead. */
-              continuable={continuable && interrupted && !featureRequestRefused && !sessionStartRepeated && !contextOverflowed}
+                 session instead. `appAgentRefused` is the same rule for a
+                 refused app-owned agent turn. */
+              continuable={continuable && interrupted && !featureRequestRefused && !sessionStartRepeated && !contextOverflowed && !appAgentRefused}
               continueIsRecovery={interrupted}
               onContinue={handleContinue}
               continuing={continuing}

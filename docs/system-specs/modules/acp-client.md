@@ -1099,6 +1099,19 @@ that agent's own spawn (`_DERIVED_AGENTS`; the heartbeat spec is checked by
 name exactly. A project spec
 under any other name is still the documented discovery feature.
 
+App command bindings use `project_claims_agent_name` to check their selected agent
+against that same screened tree, per-spec reader and scan limits, for both the
+session project and every fallback cwd. It checks filename stems and declared
+names case-insensitively, including nested and linked directories, without
+restricting the check to reserved names or discovery-roster entries. A confirmed
+claim returns its spec path; an unverifiable scan returns the refusal reason, which
+the command guard surfaces instead of claiming that a project agent exists.
+`agents_dir_competing_claim` checks user-level uniqueness with the same walk and
+strict reader, excluding only the app's own registered file by resolved path. It
+refuses unreadable specs (including hardlinks), unlistable directories, rejected
+links and scan limits rather than dropping them as discovery does. Confirmed
+competitors retain the project/folder or user-level ambiguity messages.
+
 **Which start paths reach an admission gate.** Two gates decide whether a session
 may start on an agent spec, `agent.require_fork_governance` and
 `agent.require_fresh_derived_spec`, and their reach is disjoint.

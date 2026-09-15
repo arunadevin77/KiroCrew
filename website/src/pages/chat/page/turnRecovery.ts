@@ -9,7 +9,7 @@ import { selectContinuable, selectTrailingSendUnconfirmed, selectTurnInterrupted
 import type { ChatMessage } from '../../../types'
 import { KIRO_SIGN_IN_PATH } from '../../developer/kiroSignInLink'
 import type { FreshSessionState } from '../ErrorCard'
-import { contextOverflowIsNewest, featureRequestRefusalIsNewest, sessionStartRepeatIsNewest } from '../transcriptRenderers'
+import { appAgentRefusalIsNewest, contextOverflowIsNewest, featureRequestRefusalIsNewest, sessionStartRepeatIsNewest } from '../transcriptRenderers'
 
 interface TurnRecoveryOptions {
   activeSlot: string | null
@@ -168,6 +168,10 @@ export function useTurnRecovery({
   // A new turn on the active slot (the user sent again) starts its state over.
   useEffect(() => { if (slotRunning && activeSlot) setSlotFreshSession(activeSlot, 'idle') }, [slotRunning, activeSlot, setSlotFreshSession])
 
+  // Same rule for a refused app-owned agent turn: a retry re-runs the same
+  // refusal, so the card withholds Resume and the composer must not urge it.
+  const appAgentRefused = appAgentRefusalIsNewest(messages)
+
   const handleContinue = useCallback(() => {
     if (!activeSlot || continuing || !continuable) return
     setContinuing(true)
@@ -186,6 +190,6 @@ export function useTurnRecovery({
     continuable, interrupted, sendUnconfirmed, continuing, handleContinue,
     openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openTurnLimitSetting,
     featureRequestRefused, sessionStartRepeated, contextOverflowed,
-    freshSession, handleFreshSession,
+    freshSession, handleFreshSession, appAgentRefused,
   }
 }

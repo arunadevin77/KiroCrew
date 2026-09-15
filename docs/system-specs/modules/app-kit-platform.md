@@ -645,6 +645,16 @@ It applies three checks, and the two lexical ones run **first and unconditionall
    `is_relative_to`, which catches what no lexical check can see: a symlink or
    reparse point inside the root whose target leaves it.
 
+The app listing's command-agent containment (`contain_command_agents`, which runs on
+every `GET /api/apps`) uses `_path_escapes_app_root_screened`: the same lexical
+checks, then `hooks.validate_file_path` on both the resource and the root before
+anything is followed, so a manifest-controlled link to an untrusted UNC share is
+rejected without opening an outbound connection. The command-agent home-directory
+exemption compares only canonical paths returned by the same screen; a refused
+directory has no identity key and cannot qualify, and project scanning then
+supplies its link-refusal reason. Ordinary local aliases of the installed agents
+directory keep the exemption.
+
 A manifest is portable data validated on whichever host installs the app, so all
 three must reach the same verdict everywhere. Both lexical checks are therefore
 written **flavour-explicitly** rather than via the running host's `os.path`

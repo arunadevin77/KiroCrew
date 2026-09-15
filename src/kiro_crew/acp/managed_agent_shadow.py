@@ -32,12 +32,17 @@ on, the name a spawn finally hands to ``--agent`` is an alias Kiro Crew generate
 and publishes under ``~/.kiro/agents``, not the agent's own name, and kiro-cli
 resolves that alias against the checkout first as well. An alias is always Crew's
 own file, so a checkout may not claim one either.
+
+App commands distinguish confirmed claims from unverifiable scans of a selected
+name. Their user-level uniqueness check uses the same screened recursive walk and
+strict per-spec reader, excluding only the app's own registered file.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Callable, Literal, NamedTuple
 
 from kiro_crew import agent as agent_mod
 from kiro_crew import agent_discovery, hooks
@@ -112,7 +117,7 @@ def _is_link(entry: os.DirEntry[str]) -> bool:
         return False
 
 
-def _project_spec_files(project_agents: Path) -> list[Path]:
+def _project_spec_files(project_agents: Path, *, strict: bool = False) -> list[Path]:
     """Every spec-shaped file under *project_agents*, nested ones included.
 
     No roster filtering: discovery leaves some files out (skill-view aliases, for
@@ -128,7 +133,8 @@ def _project_spec_files(project_agents: Path) -> list[Path]:
     and leads to a directory is walked at its screened target; any other link is
     kept as an entry under its own name, for the spec reader to judge. An entry that
     cannot be stat'ed (a symlink loop, say) is kept rather than dropped, so it cannot
-    hide the rest and a name it claims by its stem still counts.
+    hide the rest and a name it claims by its stem still counts. With *strict*, an
+    unlistable directory refuses instead of being treated as an empty directory.
     """
     files: list[Path] = []
     pending = [project_agents]
@@ -167,12 +173,19 @@ def _project_spec_files(project_agents: Path) -> list[Path]:
                     if len(files) > _MAX_SPEC_FILES:
                         raise _TooManySpecs
         except OSError:
+            if strict:
+                raise _Unverifiable(directory) from None
             continue
     return sorted(files)
 
 
 def _reserved_claim(spec: Path) -> str | None:
-    """The reserved name *spec* claims by its stem or its declared name, if any.
+    """The reserved name *spec* claims by its stem or its declared name, if any."""
+    return _matching_claim(spec, _is_reserved)
+
+
+def _matching_claim(spec: Path, matches: Callable[[str], bool]) -> str | None:
+    """The name *spec* claims by stem or declaration that satisfies *matches*, if any.
 
     Compared case-insensitively, because a case-insensitive filesystem makes
     ``KIROCREW.json`` and ``kirocrew.json`` one file.
@@ -198,7 +211,7 @@ def _reserved_claim(spec: Path) -> str | None:
     spec form can start with), claims nothing; any other ``._`` file is unverifiable.
     """
     stem = spec_stem(spec.name)
-    if _is_reserved(stem):
+    if matches(stem):
         return stem
     if spec.name.startswith("._"):
         if agent_discovery.apple_double_sidecar(spec):
@@ -221,7 +234,7 @@ def _reserved_claim(spec: Path) -> str | None:
     if not isinstance(data, dict):
         return None
     declared = agent_discovery.spec_str(data, "name", stem)
-    return declared if _is_reserved(declared) else None
+    return declared if matches(declared) else None
 
 
 def _is_reserved(name: str) -> bool:
@@ -236,6 +249,83 @@ def _link_refusal(path: Path) -> str:
         "that what it reaches does not replace an agent Kiro Crew installs. Remove that "
         "link to run a session there."
     )
+
+
+class AgentNameClaim(NamedTuple):
+    """A confirmed claim's spec path, or the reason a scan cannot verify ownership."""
+
+    kind: Literal["claimed", "unverifiable"]
+    detail: str
+
+
+def project_claims_agent_name(agent: str, work_dir: str | Path | None) -> AgentNameClaim | None:
+    """A checkout claim or unverifiable scan, or ``None`` when no claim is found.
+
+    Stems and declared names match case-insensitively across the screened native
+    agents tree, including nested and linked directories. Unverifiable specs and
+    scan limits refuse; the installed agents directory itself is not a checkout
+    shadow. This uses the same reader and scan as the reserved-name admission gate.
+    """
+    if not agent or not work_dir:
+        return None
+    folded = agent.casefold()
+    claimed_path: Path | None = None
+
+    def claim(spec: Path) -> str | None:
+        nonlocal claimed_path
+        name = _matching_claim(spec, lambda name: name.casefold() == folded)
+        if name is not None:
+            claimed_path = spec
+        return name
+
+    reason = _project_agent_claim_refusal(work_dir, claim)
+    if reason is None:
+        return None
+    if claimed_path is not None:
+        return AgentNameClaim("claimed", str(claimed_path))
+    return AgentNameClaim("unverifiable", reason)
+
+
+def agents_dir_competing_claim(
+    agent: str, agents_dir: Path, own_file: Path
+) -> AgentNameClaim | None:
+    """A user-level claimant other than *own_file*, failing closed on unreadable entries.
+
+    The installed agents directory is the subject, not an exempt project shadow.
+    Every spec is checked, including ones the discovery roster cannot read or hides.
+
+    Only the app's own directory ENTRY is skipped, compared by its path, never by
+    what it resolves to: if ``<app>--<agent>.json`` were replaced by a link to a
+    host spec, a resolved-target comparison would also skip that host spec, and the
+    one competitor that matters would vanish from the check.
+    """
+    folded = agent.casefold()
+    own_entry = os.path.normcase(os.path.abspath(own_file))
+    try:
+        if _screened_target(agents_dir) is None:
+            raise _Unverifiable(agents_dir)
+        files = _project_spec_files(agents_dir, strict=True)
+        for spec in files:
+            if os.path.normcase(os.path.abspath(spec)) == own_entry:
+                continue
+            if _matching_claim(spec, lambda name: name.casefold() == folded) is not None:
+                return AgentNameClaim("claimed", str(spec))
+    except _TooManySpecs:
+        return AgentNameClaim(
+            "unverifiable",
+            f"the agents directory {agents_dir} holds more than {_MAX_SPEC_FILES} agent "
+            f"specs or {_MAX_SPEC_DIRS} directories, too many to verify the app's agent "
+            "is unique. Reduce them, then run the command again from the command palette.",
+        )
+    except (OSError, RuntimeError, _Unverifiable) as exc:
+        path = exc.args[0] if isinstance(exc, _Unverifiable) else own_file
+        return AgentNameClaim(
+            "unverifiable",
+            f"the agent entry at {path} could not be verified, so Kiro Crew cannot "
+            "confirm it does not replace the app's agent. Fix or remove that entry, "
+            "then run the command again from the command palette.",
+        )
+    return None
 
 
 def managed_agent_shadow_refusal(agent: str | None, work_dir: str | Path | None) -> str | None:
@@ -264,6 +354,13 @@ def managed_agent_shadow_refusal(agent: str | None, work_dir: str | Path | None)
     """
     if not agent or not work_dir:
         return None
+    return _project_agent_claim_refusal(work_dir, _reserved_claim)
+
+
+def _project_agent_claim_refusal(
+    work_dir: str | Path, claim: Callable[[Path], str | None]
+) -> str | None:
+    """Scan the screened checkout tree for a claim, preserving fail-closed read errors."""
     # Decided before any filesystem access under the checkout, like every other
     # reader of a caller-supplied project scope. Only a confirmed match is the
     # protected-checkout exemption: a resolver that stalled has confirmed nothing,
@@ -297,7 +394,7 @@ def managed_agent_shadow_refusal(agent: str | None, work_dir: str | Path | None)
         return _link_refusal(exc.args[0])
     for spec in files:
         try:
-            claimed = _reserved_claim(spec)
+            claimed = claim(spec)
         except _Unverifiable:
             return (
                 f"the session's project holds an agent spec at {spec} whose declared name "

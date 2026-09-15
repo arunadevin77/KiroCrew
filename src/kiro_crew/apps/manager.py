@@ -10,6 +10,7 @@ registration (agents, skills, crons) to bridge functions.
 from __future__ import annotations
 
 import contextlib
+import functools
 import ipaddress
 import json
 import logging
@@ -39,6 +40,7 @@ from kiro_crew.apps.manifest import (
     RESERVED_APP_NAME_CODE,
     AppManifest,
     app_name_error,
+    contain_command_agents,
     cron_permission_error,
     is_reserved_app_name,
 )
@@ -2724,6 +2726,192 @@ def disable_app(name: str) -> AppResult:
 # ---------------------------------------------------------------------------
 
 
+def _app_registered_agent(app_name: str, agent: str) -> bool:
+    """Whether registration wrote *app_name*'s own agent *agent* into the agents dir.
+
+    True only when :func:`_app_agent_registration` reports ``"ok"``.
+    """
+    return _app_agent_registration(app_name, agent)[0] == "ok"
+
+
+def _app_agent_registration(app_name: str, agent: str) -> tuple[str, tuple[str, ...]]:
+    """Whether *app_name*'s own agent *agent* is registered, and the clashing files.
+
+    The status is ``"ok"``, ``"missing"``, ``"ambiguous"`` or ``"unverifiable"``.
+    The second item names a competing file for ``"ambiguous"`` and carries the
+    refusal reason for ``"unverifiable"``.
+
+    Judged from the namespaced config ``_register_agents`` writes (``app--agent.json``)
+    and the bare ``name`` it carries, so every skip reason registration has -- an
+    unresolved template, an unsafe name, a malformed spec -- counts, including ones
+    added later. Anything unreadable reads as not registered.
+
+    Read through the hardened agent-spec reader, never a bare ``read_text``: the agents
+    dir is user-writable, so this file may be a symlink to a sensitive path, and the
+    reader refuses (and audits) that before any byte is read.
+
+    The name must also be UNIQUE in the agents dir. Sessions select an agent by its
+    bare declared ``name``, so if a host spec (or another app's) declares the same
+    name, which file a session resolves to is not this app's to decide, and the
+    app-authored prompt could run with that other spec's tools and auto-approvals.
+    An ambiguous name is refused rather than guessed at.
+
+    This listing checks only the USER-level agents dir: it does not know which
+    project a session will run in. Project-level shadowing is refused per turn by
+    :func:`app_command_agent_refusal`, which the session the command opens carries
+    as ``app_agent_owner``.
+    """
+    from kiro_crew.agent_discovery import _read_agent_spec
+    from kiro_crew.agent_sdk import agents_dir_competing_claim
+    from kiro_crew.apps import bridges  # bridges imports this module
+
+    agents_dir = bridges._kiro_agents_dir()
+    path = agents_dir / (bridges._safe_link_name(bridges._namespace(app_name, agent)) + ".json")
+    # Screened before the reader resolves it: the reader's ``resolve()`` would follow
+    # a link to wherever it points (on Windows, a UNC share is probed by the resolve
+    # itself), so the link's own target is checked first and a refused one is reported
+    # rather than followed.
+    screened = _screened_spec_path(path)
+    if screened is None:
+        return "unverifiable", (
+            f"the agent entry at {path} could not be verified, so Kiro Crew cannot "
+            "confirm it is the app's agent. Fix or remove that entry, then run the "
+            "command again from the command palette.",
+        )
+    data = _read_agent_spec(screened, operation="list_apps_command_agent", source="unknown")
+    if not (isinstance(data, dict) and data.get("name", path.stem) == agent):
+        return "missing", ()
+    claim = agents_dir_competing_claim(agent, agents_dir, path)
+    if claim is None:
+        return "ok", ()
+    if claim.kind == "claimed":
+        return "ambiguous", (Path(claim.detail).name,)
+    return "unverifiable", (claim.detail,)
+
+
+def _app_display_name(app_name: str) -> str:
+    """The ``displayName`` the dashboard shows for *app_name*, or the id when unreadable.
+
+    ``app.json`` is app-writable, so it is read through the hardened
+    ``_read_agent_spec`` reader: a symlink whose resolved target is sensitive is
+    refused and audited before any byte is read, and a refusal falls back to the id.
+    """
+    from kiro_crew.agent_discovery import _read_agent_spec
+
+    try:
+        screened = _screened_spec_path(app_dir(app_name) / APP_MANIFEST_FILENAME)
+        if screened is None:
+            return app_name
+        data = _read_agent_spec(screened, operation="app_command_agent_label", source="unknown")
+    except Exception:  # noqa: BLE001 - a label must never fail the refusal it labels
+        return app_name
+    label = data.get("displayName") if isinstance(data, dict) else None
+    return label if isinstance(label, str) and label.strip() else app_name
+
+
+def _screened_spec_path(path: Path) -> Path | None:
+    """*path* as the screened canonical path to read, or None when the screen refuses.
+
+    :func:`kiro_crew.hooks.validate_file_path` reads a link's own target before
+    anything resolves it, so a link into a protected location or an untrusted share
+    is refused without being followed; the hardened reader then reads the canonical
+    path the screen returned.
+    """
+    from kiro_crew import hooks
+
+    try:
+        screened = hooks.validate_file_path(str(path))
+    except (OSError, ValueError):
+        return None
+    return None if screened is None else Path(screened)
+
+
+def _same_dir_key(path: Path) -> str | None:
+    """A screened canonical comparison key, or None when the path is refused."""
+    from kiro_crew import hooks
+
+    try:
+        screened = hooks.validate_file_path(str(path))
+        return None if screened is None else os.path.normcase(screened)
+    except (OSError, ValueError):
+        return None
+
+
+def app_command_agent_refusal(owner: str, agent: str, *projects: str | None) -> str | None:
+    """Why a session bound to app *owner*'s agent must not run as *agent* now, or None.
+
+    The bare ``agent`` name is what the provider resolves, project-first, by declared
+    ``name`` or by filename stem. A turn on a session a palette command opened for the
+    app's own agent therefore runs only when that name still means the app's
+    registered spec: no directory in *projects* -- every directory the session's
+    provider can start in -- declares it or carries a ``.kiro/agents/<agent>`` spec,
+    and the app's materialized ``<app>--<agent>.json`` is the only user-level spec
+    declaring it. The first entry is the session's own project; the rest are the
+    directories the provider falls back to without one. Checked on every turn, so a
+    project switched or cleared later, or a spec dropped in later, is caught too. Does
+    filesystem I/O; call it off the event loop.
+    """
+    from kiro_crew.agent_sdk import project_claims_agent_name
+    from kiro_crew.agent_spec_format import NATIVE_SKILL_ALIAS_PREFIX
+
+    app = _app_display_name(owner)
+    # A skill-view name is never launched as itself: the spawn maps it to the host
+    # agent its view was built from, even after the view file is pruned, so it can
+    # never mean the app's own spec.
+    if agent.startswith(NATIVE_SKILL_ALIAS_PREFIX):
+        return (
+            f"{app} can't run: it has a setup problem its author needs to fix "
+            f"(its agent \"{agent}\" uses a name Kiro Crew reserves). "
+            f"Ask {app}'s author to rename that agent."
+        )
+    from kiro_crew.apps import bridges  # bridges imports this module
+    from kiro_crew.config.paths import project_agents_dir
+
+    user_agents_dir = _same_dir_key(bridges._kiro_agents_dir())
+    for project in dict.fromkeys(p for p in projects if p):
+        # A project whose ``.kiro/agents`` IS the user-level agents dir (the home
+        # directory as the project) holds the app's own registered spec, so it is
+        # the registration check below, not a shadow: scanning it here would
+        # refuse every turn and tell the user to rename the app's own agent.
+        if (
+            user_agents_dir is not None
+            and _same_dir_key(project_agents_dir(Path(project).expanduser())) == user_agents_dir
+        ):
+            continue
+        claim = project_claims_agent_name(agent, project)
+        if claim is None:
+            continue
+        if claim.kind == "unverifiable":
+            return f"{app} can't run here: {claim.detail}"
+        if project == projects[0]:
+            return (
+                f"{app} can't run here: this project has its own agent named \"{agent}\". "
+                f"Run the command again from the command palette in another project, "
+                f"or rename \"{agent}\" in this project's .kiro/agents folder."
+            )
+        return (
+            f"{app} can't run here: this session's folder {project} has its own agent "
+            f"named \"{agent}\". Start the command again from the command palette in a "
+            f"project session, or rename \"{agent}\" in that folder's .kiro/agents."
+        )
+    registration, others = _app_agent_registration(owner, agent)
+    if registration == "unverifiable":
+        return f"{app} can't run: {others[0]}"
+    if registration == "ambiguous":
+        where = ", ".join(others) if others else f"the other agent named \"{agent}\""
+        return (
+            f"{app} can't run: another agent in ~/.kiro/agents is also named \"{agent}\", "
+            f"so {app}'s agent can't be told apart from it. Rename or remove {where} "
+            "in ~/.kiro/agents, then run the command again from the command palette."
+        )
+    if registration != "ok":
+        return (
+            f"{app} can't run: its agent \"{agent}\" isn't installed. Re-enable {app} "
+            "in Apps \u203a Library, then run the command again from the command palette."
+        )
+    return None
+
+
 def list_apps() -> list[dict[str, Any]]:
     """Return metadata for all installed apps."""
     root = apps_dir()
@@ -2743,7 +2931,15 @@ def list_apps() -> list[dict[str, Any]]:
         if manifest_path.is_file():
             try:
                 manifest = AppManifest.from_json_file(manifest_path)
-                manifest_data = manifest.to_dict()
+                # A command may only name one of this app's own agents. Re-checked here,
+                # against the files, because a self-managed app's app.json never passes
+                # through install-time validation.
+                manifest_data = contain_command_agents(
+                    manifest.to_dict(),
+                    manifest.agents,
+                    entry,
+                    is_registered=functools.partial(_app_registered_agent, entry.name),
+                )
                 # For self-managed apps, the app may update its own
                 # app.json without going through update_app().  Reflect
                 # the manifest version in the RETURNED metadata only, so

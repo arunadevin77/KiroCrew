@@ -60,7 +60,8 @@ Design of record, including what each later phase moves in here:
 
 from __future__ import annotations
 
-from typing import Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
 
 # One name, because one name has a consumer: the dashboard handler that serves
 # ``GET /api/acp-backends``. The record types and the per-id projection stay inside
@@ -116,6 +117,9 @@ from kiro_crew.agent_sdk.host_auth import (
 )
 from kiro_crew.agent_sdk.native_commands import NativeCommandBatch, run_kiro_native_commands
 
+if TYPE_CHECKING:
+    from kiro_crew.acp.managed_agent_shadow import AgentNameClaim
+
 
 def fits_tool_result(text: str, limit: int) -> bool:
     """Whether *text* stays within *limit* after the tool-row scrub, so it lands uncut."""
@@ -133,6 +137,28 @@ def tool_row_text(text: str) -> str:
     return _scrub(text)
 
 
+def project_claims_agent_name(agent: str, work_dir: str | Path | None) -> AgentNameClaim | None:
+    """A checkout claim or unverifiable scan, or ``None`` when no claim is found.
+
+    Scans the checkout's native agents tree the way the backend loads it (nested and
+    linked directories, stem or declared name); application code asks here rather
+    than reaching into the ACP layer.
+    """
+    # Imported lazily for the same reason as fits_tool_result.
+    from kiro_crew.acp.managed_agent_shadow import project_claims_agent_name as _claims
+
+    return _claims(agent, work_dir)
+
+
+def agents_dir_competing_claim(
+    agent: str, agents_dir: Path, own_file: Path
+) -> AgentNameClaim | None:
+    """A competing user-level claim or unverifiable scan, excluding the app's own file."""
+    from kiro_crew.acp.managed_agent_shadow import agents_dir_competing_claim as _claim
+
+    return _claim(agent, agents_dir, own_file)
+
+
 TURN_STOP_REASON_CANCELLED = "cancelled"
 TURN_STOP_REASON_END_TURN = "end_turn"
 
@@ -146,6 +172,8 @@ class AgentTurnUsage(Protocol):
 
 __all__ = [
     "tool_row_text",
+    "project_claims_agent_name",
+    "agents_dir_competing_claim",
     "ContextPromptProvider",
     "ContextStreamEvent",
     "CONTEXT_EVENT_AGENT_CHANGED",

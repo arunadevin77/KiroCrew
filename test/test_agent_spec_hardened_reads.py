@@ -1147,6 +1147,18 @@ _EXPECTED_CALL_SITE_LABELS: dict[str, list[tuple[str, str]]] = {
     # reader refuses as unreadable (refuse) rather than as "no spec"; a denial
     # there belongs to the sub-agent surface that asked to spawn.
     "kiro_crew/subagent.py": [("spawn_available_agents", "subagent")],
+    # `list_apps` confirms a contributed command's agent was actually registered by
+    # reading the app's materialized `<app>--<agent>.json` -- a user-writable dir, so
+    # it goes through the hardened reader; a denial belongs to the app listing.
+    # A turn refused for an app-owned agent labels the refusal with the app's
+    # `displayName`, read from the app-writable `app.json` the same way.
+    "kiro_crew/apps/manager.py": [
+        ("app_command_agent_label", "unknown"),
+        ("list_apps_command_agent", "unknown"),
+    ],
+    # A manifest's `commands[].agent` is checked against the names its own source
+    # specs declare; those live in the app root, which the app can rewrite.
+    "kiro_crew/apps/manifest.py": [("app_manifest_agent_names", "unknown")],
 }
 
 
@@ -1177,6 +1189,9 @@ _EXPECTED_PROJECT_FILES_CALL_SITE_LABELS: dict[str, list[tuple[str, str]]] = {
         ("agent_project_shadow", "unknown"),
         ("markdown_spec_lookup", "unknown"),
     ],
+    # No ``kiro_crew/apps/manager.py`` entry: the app-command guard scans the
+    # checkout through ``acp.managed_agent_shadow.project_claims_agent_name``,
+    # the screened recursive walk, not through these roster helpers.
     # No ``kiro_crew/agent_discovery.py`` entry on purpose. The two in-module
     # readers (``list_agents``, ``project_agent_names``) decide this scope's
     # sensitivity THEMSELVES -- pinned in

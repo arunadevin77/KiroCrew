@@ -131,6 +131,10 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 ("mate_welcome.py", "maybe_start_first_greeting"),
                 ("chat_folders.py", "api_chat_slot_mode"),
                 ("chat_handlers.py", "_switch_target_busy"),
+                # The palette create's retraction of a newborn whose app-agent
+                # binding did not persist: it reads the RESERVATION, because a
+                # turn that started on the slot during the write keeps it.
+                ("chat_handlers.py", "api_chat_slot_create"),
                 ("handlers/members.py", "_turn_busy"),
                 ("handlers/members.py", "_turn_ends_within"),
                 # The agent route's transaction; the in-turn /agent command shares it.
