@@ -15,7 +15,9 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict, deque
+from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
+from typing import Any
 
 from kiro_crew.context_assembly import budget as _budgets
 
@@ -224,6 +226,60 @@ _REPLAY_INJECT_MAX_ROWS = (
 
 _REPLAY_CONVERSATION_MAX_ROWS = 500
 
+_REPLAY_SEED_HEADER = "[Earlier history compacted via {method}; large outputs elided]"
+_REPLAY_SEED_FOOTER = "[End of compacted history]"
+# ASCII on purpose: the replay folds multibyte punctuation afterwards, and a
+# mark whose length changes under that fold cannot be budgeted exactly.
+_REPLAY_SEED_TRUNCATED = "...[truncated]"
+
+
+def _seed_coverage_key(row: dict) -> tuple[str | None, tuple[int, float] | None] | None:
+    """What a seed row covers through: the boundary row's fingerprint and its stamp.
+
+    ``None`` when the seed names neither. Only a parseable ``through_ts`` yields
+    a stamp bound: ``transcript_sort_key`` parks an unreadable stamp after every
+    real instant, which as a coverage bound would swallow the whole conversation.
+    """
+    from kiro_crew.history import transcript_sort_key
+
+    meta = row.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    through_row = meta.get("through_row")
+    fingerprint = through_row if isinstance(through_row, str) and through_row else None
+    through = meta.get("through_ts")
+    stamp: tuple[int, float] | None = None
+    if isinstance(through, str) and through:
+        key = transcript_sort_key(through)
+        stamp = key if key[0] == 0 else None
+    if fingerprint is None and stamp is None:
+        return None
+    return fingerprint, stamp
+
+
+def _row_covered(row: dict, coverage: tuple[str | None, tuple[int, float] | None]) -> bool:
+    """Whether *row* is the row a seed covers through, or older than it.
+
+    The boundary row itself is named by fingerprint. Older rows are those
+    STRICTLY before its stamp: a row that merely shares the stamp (two streams
+    merged into one replay, a legacy second-resolution clock) is not covered,
+    because it never entered the digest. Without a fingerprint (a seed written
+    before the field existed) the stamp alone decides, exclusive.
+    """
+    from kiro_crew.history import transcript_sort_key
+    from kiro_crew.session_compaction_methods import row_fingerprint
+
+    fingerprint, stamp = coverage
+    if fingerprint is not None and row_fingerprint(row) == fingerprint:
+        return True
+    if stamp is None:
+        return False
+    ts = row.get("ts")
+    if not isinstance(ts, str) or not ts:
+        return False
+    key = transcript_sort_key(ts)
+    return key[0] == 0 and key < stamp
+
 
 def _replay_identity(row: dict) -> tuple | None:
     """Delivery identity, never a global text-equality deduplication key."""
@@ -290,72 +346,192 @@ def _quota_tail(messages: list[dict], *, conv_max: int, inject_max: int) -> list
     resurrecting an image a compaction already dropped -- or, once the file is gone,
     as prose naming a picture the model cannot see.
     """
+    return _quota_walk(messages, conv_max=conv_max, inject_max=inject_max)[0]
+
+
+def _quota_walk(
+    messages: list[dict],
+    *,
+    conv_max: int,
+    inject_max: int,
+    seeds: bool = False,
+    full_rows: bool = False,
+) -> tuple[list[dict], bool]:
+    """``_quota_tail``'s walk, plus whether the conversation quota left a row out.
+
+    With *seeds*, the session replay's admission: the newest non-empty
+    ``compaction`` seed row is kept (with its ``meta``), and the row it covers
+    through, and every row older than it, end the walk, because the seed stands
+    in for them. Older seeds are skipped. A stop at that coverage is not a cut.
+    A notice a rotation posted is skipped too (``is_rotation_notice``): it is
+    status for the person, and the rotation's own notice is appended after the
+    writer split the rows, so counting it would drop a tail row the digest does
+    not cover. Without *seeds* a seed row is skipped like any role outside the
+    quotas, and every other row is admitted as before.
+
+    *full_rows* returns the stored rows themselves, ``ts`` and ``meta``
+    included, instead of role/content pairs; the rotation compaction reads that
+    shape to split the transcript at the same rows the replay admits.
+    """
     from kiro_crew.image_refs import strip_image_refs
+    from kiro_crew.session_compaction_methods import SEED_ROLE, is_rotation_notice
 
     kept: list[dict] = []
     conv = inj = 0
+    quota_cut = False
+    seed_seen = False
+    coverage: tuple[str | None, tuple[int, float] | None] | None = None
     for m in reversed(messages):
+        if coverage is not None and _row_covered(m, coverage):
+            break
         role = m["role"]
+        if seeds and is_rotation_notice(m):
+            continue
+        if seeds and role == SEED_ROLE:
+            if seed_seen or not m.get("content"):
+                continue
+            seed_seen = True
+            coverage = _seed_coverage_key(m)
+            kept.append(
+                m
+                if full_rows
+                else {
+                    "role": role,
+                    "content": strip_image_refs(m["content"]),
+                    "meta": m.get("meta"),
+                }
+            )
+            continue
         if role == "inject":
             if inj >= inject_max:
                 continue
             inj += 1
         elif role in RECALL_ROLES:
             if conv >= conv_max:
+                quota_cut = True
                 if inj >= inject_max:
                     break
                 continue
             conv += 1
         else:
             continue
-        kept.append({"role": role, "content": strip_image_refs(m["content"])})
+        kept.append(m if full_rows else {"role": role, "content": strip_image_refs(m["content"])})
     kept.reverse()
-    return kept
+    return kept, quota_cut
 
 
-def replay_text(messages: list[dict], model_window: int | None) -> str:
+def replay_walk_options(window_tokens: int | None) -> dict[str, Any]:
+    """The exact ``walk_tail`` keyword arguments the session replay walks with.
+
+    Budget, the line renderer (which clips an ``inject`` row's content to the
+    window-scaled per-row ceiling) and the ``inject`` reserve. A rotation
+    compaction splits the transcript with these same options, so an oversized
+    inject row that the replay would clip and carry cannot, on the writer's
+    side, eat the budget whole and push conversation into the digest that the
+    successor would have kept verbatim. The budget is ``context_budget``'s: the
+    ONE conversation-tail figure the coordinator projects from and the writer
+    cuts at, so the three cannot drift.
+    """
+    # Replay is a separate, existing tail-history allowance, not background
+    # capacity. Preserve small-window replay limits; larger windows cannot
+    # enlarge it beyond the reference allowance. The per-row inject ceiling is
+    # scaled by the same factor, and bounded by the budget so a tiny window still
+    # admits one row rather than clipping every inject row to nothing.
+    from kiro_crew.context_budget import replay_budget_chars, replay_scale
+    from kiro_crew.image_refs import strip_image_refs
+
+    replay_budget = replay_budget_chars(window_tokens)
+    factor = replay_scale(window_tokens)
+    inject_cap = max(1, min(replay_budget, round(_REPLAY_INJECT_CAP_CHARS * factor)))
+
+    def _line(m: Mapping[str, Any]) -> str:
+        # The replay hands this renderer rows its admission already stripped;
+        # the rotation writer hands it the STORED rows (``full_rows``), whose
+        # image references it must not carry into a digest either. Stripping
+        # here, where both sides render, keeps the two walks measuring the same
+        # line at the budget edge: a bare path and its replacement marker differ
+        # in length, and a split that disagreed with the replay by one row would
+        # digest a row the successor still carries verbatim, or drop one it does
+        # not. The marker contains no path, so a second pass is a no-op.
+        content = strip_image_refs(m.get("content", ""))
+        if m["role"] == "inject" and len(content) > inject_cap:
+            content = content[:inject_cap] + "…[truncated]"
+        return f"{str(m['role']).title()}: {content}"
+
+    return {
+        "budget_chars": replay_budget,
+        "line_of": _line,
+        # Reserved so conversation cannot be starved by breadcrumbs: inject rows
+        # spend their own share and older ones are skipped, while the scan keeps
+        # looking for user/assistant rows rather than stopping at the first
+        # inject row that spills.
+        "reserve_role": "inject",
+        "reserve_chars": max(1, replay_budget // _REPLAY_INJECT_BUDGET_DIVISOR),
+    }
+
+
+def replay_text(
+    messages: list[dict], model_window: int | None, *, clip_newest: bool = False
+) -> str:
     """The tail-heavy replay of *messages* within the window-scaled replay budget.
 
     Keeps as many recent messages as fit, newest first. ``inject`` rows are clipped
     to a per-row ceiling and spend their own share of the budget, so conversation is
-    never starved by breadcrumbs. Returned unredacted; the caller redacts.
+    never starved by breadcrumbs. A ``compaction`` seed row opens the replay on its
+    own share of the budget, never inside the tail's walk. *clip_newest* clips an
+    oversized newest row to the budget (see ``build_session_replay``). Returned
+    unredacted; the caller redacts.
     """
-    # Replay is a separate, existing tail-history allowance, not background
-    # capacity. Preserve small-window replay limits; larger windows cannot
-    # enlarge it beyond the reference allowance.
-    factor = max(
-        0.2,
-        min(1.0, _budgets._effective_window(model_window) / _budgets._REFERENCE_WINDOW_TOKENS),
-    )
-    replay_budget = round(_REPLAY_BUDGET_CHARS * factor)
-    inject_cap = max(1, min(replay_budget, round(_REPLAY_INJECT_CAP_CHARS * factor)))
+    # At most one seed row survives the replay admission; it is rendered ahead of
+    # the conversation on its own budget, never inside the tail's walk below.
+    from kiro_crew.session_compaction_methods import SEED_BUDGET_DIVISOR, SEED_ROLE, walk_tail
 
-    # Reserved so conversation cannot be starved by breadcrumbs: inject rows spend
-    # their own share and older ones are skipped, while the scan keeps looking for
-    # user/assistant rows rather than stopping at the first inject row that spills.
-    inject_budget = max(1, replay_budget // _REPLAY_INJECT_BUDGET_DIVISOR)
+    seed = next((m for m in messages if m["role"] == SEED_ROLE), None)
+    if seed is not None:
+        messages = [m for m in messages if m is not seed]
 
-    # Build lines from most recent to oldest, stop when budget exhausted
-    lines: list[str] = []
-    total = 0
-    inject_total = 0
-    for m in reversed(messages):
-        role = m["role"].title()
-        content = m.get("content", "")
-        if m["role"] == "inject" and len(content) > inject_cap:
-            content = content[:inject_cap] + "…[truncated]"
-        line = f"{role}: {content}"
-        if m["role"] == "inject" and inject_total + len(line) > inject_budget and lines:
-            continue
-        if total + len(line) > replay_budget and lines:
-            break
-        lines.append(line)
-        total += len(line) + 2  # +2 for separator
-        if m["role"] == "inject":
-            inject_total += len(line) + 2
+    # One budget, one walk, one set of options: the rotation that wrote a seed
+    # split the rows with exactly these (``replay_walk_options``), so the
+    # successor carries exactly the rows the digest stops at. The clip rides
+    # beside them: it changes a line, never the cut, so the split needs no
+    # word of it.
+    options = replay_walk_options(model_window)
+    replay_budget = options["budget_chars"]
+    lines = walk_tail(messages, clip_newest=clip_newest, **options).lines
 
     lines.reverse()
+    if seed is not None:
+        # The seed spends its share ON TOP of the conversation budget rather
+        # than inside it: it stands in for the history a rotation dropped, and
+        # charging it to the tail it protects would open a gap between the
+        # newest row the digest covers and the oldest row the tail carries. The
+        # rotation sized the digest to the same share of the same budget, so at
+        # the reference window it fits whole.
+        seed_block = _render_seed_block(seed, max(1, replay_budget // SEED_BUDGET_DIVISOR))
+        if seed_block:
+            lines.insert(0, seed_block)
     return "\n\n".join(lines)
+
+
+def _render_seed_block(seed: dict, cap_chars: int) -> str:
+    """The seed row as the block that opens a replay, its digest clipped to *cap_chars*.
+
+    A digest that outgrows the cap (a smaller window than the one the rotation
+    sized it for) keeps its beginning: the head of a shake digest is the goal
+    statement, and the digest's own tail is the newest dropped rows, which the
+    verbatim tail right after this block continues from anyway.
+    """
+    meta = seed.get("meta")
+    method = meta.get("method") if isinstance(meta, dict) else None
+    header = _REPLAY_SEED_HEADER.format(method=method or "rotation")
+    content = str(seed.get("content") or "")
+    if not content:
+        return ""
+    if len(content) > cap_chars:
+        content = (
+            content[: max(0, cap_chars - len(_REPLAY_SEED_TRUNCATED))] + _REPLAY_SEED_TRUNCATED
+        )
+    return f"{header}\n{content}\n{_REPLAY_SEED_FOOTER}"
 
 
 def thread_history_text(recent: list[dict], caps: _budgets._ResolvedCaps) -> str:

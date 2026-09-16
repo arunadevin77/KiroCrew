@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
+from kiro_crew.async_utils import run_to_completion
+from kiro_crew.context_budget import replay_budget_chars, startup_context_chars
 from kiro_crew.messaging.commands import compact_unsupported_backend as _compact_unsupported_backend
 from kiro_crew.messaging.queue_drain import entry_channel, wake_other_drains
 from kiro_crew.metrics.events import CONTEXT_COMPACTIONS, emit_counter
@@ -35,6 +37,20 @@ from kiro_crew.metrics.sessions import (
     END_REASON_RECYCLED,
     record_session_ended,
     record_session_started,
+)
+from kiro_crew.session_compaction_methods import (
+    COMPACTION_METHOD_NATIVE,
+    COMPACTION_METHOD_SHAKE,
+    COMPACTION_METHOD_SOFT,
+    OUTCOME_INSUFFICIENT,
+    OUTCOME_UNAVAILABLE,
+    SEED_BUDGET_DIVISOR,
+    SEED_NOTHING,
+    SEED_WRITTEN,
+    estimate_tokens,
+    method_sufficient,
+    project_pct_after,
+    rotation_ladder,
 )
 from kiro_crew.session_lifecycle import allocation_identity, clear_stop_declined
 
@@ -73,6 +89,21 @@ CompactingCallback = Callable[[str, bool], None]
 
 
 class CompactCallback(Protocol):
+    """Surface hook fired once per compaction verdict.
+
+    *outcome* says WHICH arm ran (compacted in place, recycled, or recycled
+    because the backend cannot compact at all); *method* names what ran: a
+    rotation method (``soft``, ``shake``) or ``native``. The surface needs
+    both because a rotation, an in-place summary and a plain recycle reach it
+    through the same call with ``success=True``, and the notice it posts has
+    to say which one the user now lives with. *all_kept* is ``True`` for the
+    one rotation that dropped nothing: a ``shake`` whose seed writer answered
+    ``SEED_NOTHING`` (the tail covers every row) recycles as ``soft``, and
+    ``method`` still says ``soft`` because that is what ran, but the notice
+    for it says the agent carried the whole conversation, not that the earlier
+    turns are gone. ``False`` for every other verdict.
+    """
+
     async def __call__(  # noqa: E704
         self,
         key: str,
@@ -80,7 +111,36 @@ class CompactCallback(Protocol):
         *,
         success: bool,
         outcome: str = COMPACT_OUTCOME_COMPACTED,
+        method: str,
+        all_kept: bool = False,
     ) -> None: ...
+
+
+class SeedWriter(Protocol):
+    """Surface hook both rotation methods depend on.
+
+    The coordinator owns no transcript; the surface that does (the dashboard
+    slot and its conversation log) is what re-seeds a rotated session, and it
+    writes the seed row a ``shake`` successor starts from. ``supports`` is
+    asked BEFORE either rotation is projected and must be cheap and
+    synchronous (no transcript read): it answers whether this surface holds a
+    transcript for *key* at all. A ``False`` there makes ``soft`` and ``shake``
+    both ``unavailable``, so the walk hands to ``native``: without that
+    transcript nothing would re-seed the successor. The call itself (``shake``
+    only) runs with the turn semaphore held, so the rows it reads are
+    quiescent. *window_tokens* is the provider's window: the surface sizes the
+    verbatim tail from it with the replay's own budget function, the same
+    figure the coordinator projected with. It answers one of
+    ``SEED_WRITTEN``; ``SEED_NOTHING`` when the complete conversation fits the
+    tail, so the coordinator recycles as ``soft`` with ``all_kept=True``;
+    ``SEED_TAIL_ONLY`` when replay admission cut rows at its quota or rows
+    fall outside the tail with no digest written; or ``SEED_UNSUPPORTED`` when
+    the surface is gone at write time. The last two hand to ``native``.
+    """
+
+    def supports(self, key: str) -> bool: ...  # noqa: E704
+
+    async def __call__(self, key: str, method: str, window_tokens: int) -> str: ...  # noqa: E704
 
 
 @dataclass(slots=True)
@@ -112,6 +172,38 @@ class CompactionState:
     #: it runs rather than only announce its verdict. Synchronous and fail-soft: it
     #: is called from the same tick that commits the membership change.
     on_compacting_changed: CompactingCallback | None = None
+    #: Sessions being rotated ON PURPOSE (folded key -> method name), held for
+    #: the span of the rotation's transaction: the seed write, then the restart
+    #: and its ``_recycle_held``. The same recycle primitive serves the native
+    #: failure path, so this is what tells the success counter a rotation apart
+    #: from a replaced provider, and what makes every notice posted inside the
+    #: rotation (a Stop's, a failed start's, its own) name the method.
+    rotating: dict[str, str] = field(default_factory=dict)
+    #: Keys whose in-flight rotation dropped nothing: the seed writer answered
+    #: ``SEED_NOTHING`` (the tail covers every row), so the recycle runs as
+    #: ``soft`` and ``rotating`` says ``soft``, which is what the counter and the
+    #: verdict need, but the notice must not read ``soft``'s fate. Held for the
+    #: same span as ``rotating``: added beside it, discarded where it is popped,
+    #: and read by ``_fire_compact_callback`` as the callback's ``all_kept``.
+    rotation_kept_all: set[str] = field(default_factory=set)
+    #: Rotations awaiting their verdict (folded key -> method name). A rotation
+    #: is judged before it runs, by a projection; the successor's first
+    #: confirmed reading is the after-the-fact check, and it settles through the
+    #: same ``pending_verdict`` the native path uses. This map says which of
+    #: those pending verdicts a rotation armed (folded key -> the method that
+    #: ran, and the configured method, window and threshold its projection
+    #: read), so an ineffective one can hold under the inputs it was judged on,
+    #: not under ones that changed while the successor was still unread.
+    pending_rotation: dict[str, tuple[str, tuple[str, int, float]]] = field(default_factory=dict)
+    #: Sessions whose last rotation was judged ineffective (the successor still
+    #: sat inside the threshold band), mapped to what that rotation's projection
+    #: read: the configured method, the window and the threshold. The projection
+    #: reads those three and fixed budgets, never the session's content, so
+    #: while all three hold, every later crossing would project the same and
+    #: rotate into the same band. The ladder runs ``native`` for the key until
+    #: one of them changes.
+    rotation_hold: dict[str, tuple[str, int, float]] = field(default_factory=dict)
+    seed_writer: SeedWriter | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,9 +485,9 @@ class CompactionCoordinator:
         The holder is read from ``turn_owner``, so the answer is only as good as
         that record. Each compaction path names itself there in the step its
         acquire returns (the Claude arm of ``_compact_session``,
-        ``_recycle_unmanaged``, ``_compact_in_place``), and every release of a
-        holding that named itself clears it in the same step
-        (``SessionManager.release``, those three paths, ``recycle_background``).
+        ``_recycle_unmanaged``, ``_compact_in_place``, ``_rotate``), and every
+        release of a holding that named itself clears it in the same step
+        (``SessionManager.release``, those four paths, ``recycle_background``).
         So the record never names a task that has let the permit go. When a turn
         releases the permit to the parked compaction, the record names nobody
         until the compaction's task runs, and a Stop in that hand-off is
@@ -477,6 +569,12 @@ class CompactionCoordinator:
             key, pct, success=False, outcome=COMPACT_OUTCOME_CANCELLED
         )
         return "cancelled"
+
+    def set_seed_writer(self, writer: SeedWriter | None) -> None:
+        """Register the surface hook both rotation methods ask ``supports`` of; ``shake`` writes its seed row through it."""
+        if self.state.seed_writer is not None and writer is not None:
+            self._deps.logger.warning("Compaction seed writer already registered; replacing it")
+        self.state.seed_writer = writer
 
     def mark_needs_reinjection(self, key: str) -> None:
         """Flag the live session to restore skill context on its next turn."""
@@ -572,6 +670,23 @@ class CompactionCoordinator:
             # Ignore the escalation result here: a deferred reading includes a
             # later turn's growth and is only safe for cooldown damping.
             self._owner._judge_compact_effect(key, baseline, pct)
+            rotated = self.state.pending_rotation.pop(key, None)
+            if rotated is not None and key in self.state.cooldown_until:
+                # The judge armed the failure cooldown: the successor of a
+                # rotation started inside the band the projection said it would
+                # clear. Rotating again would repeat the same arithmetic on the
+                # same session, so walks run native until the method, window or
+                # threshold the projection read changes.
+                method_ran, projected_inputs = rotated
+                self.state.rotation_hold[key] = projected_inputs
+                self._deps.logger.warning(
+                    "Session %s rotation %s left context at %.1f%% (from %.1f%%); "
+                    "compactions run native until the method, window or threshold changes",
+                    key,
+                    method_ran,
+                    pct,
+                    baseline,
+                )
 
         return self._gate_rung(key, provider, pct, log=True)
 
@@ -780,7 +895,7 @@ class CompactionCoordinator:
             )
 
     async def _compact_session(self, key: str, pct: float) -> str:
-        """Run the backend-specific in-place compaction policy."""
+        """Run the backend-specific compaction: Claude in place, everything else through the ladder."""
         owner = self._owner
         # Before the first branch, so the observation covers every backend; not
         # awaited, so it cannot sit between the trigger and the compaction.
@@ -853,17 +968,7 @@ class CompactionCoordinator:
 
             if session is None:
                 return "absent"
-            if _compaction_unmanaged_backend(session.provider) is not None:
-                # No ``/compact`` to send and no harness-side summarization to
-                # wait for, so there is nothing for ``_compact_in_place`` to do
-                # except spend its whole timeout proving it: the prompt would
-                # land as ordinary text, no compaction status would follow, and
-                # ``wait_for_compaction`` would strand until the deadline before
-                # recycling anyway. Recycle straight away instead -- same
-                # destination, none of the wait, and the reason is stated rather
-                # than inferred from a timeout.
-                return await owner._recycle_unmanaged(key, session, pct)
-            outcome = await owner._compact_in_place(key, session, pct)
+            outcome = await self._run_method_ladder(key, session, pct)
             if outcome == "busy":
                 # A held turn is a deferral, not a failure: no recycle,
                 # cooldown, or failure callback is allowed here.
@@ -878,6 +983,251 @@ class CompactionCoordinator:
             return "failed"
         finally:
             self._set_compacting(key, False)
+
+    async def _run_method_ladder(self, key: str, session: Any, pct: float) -> str:
+        """Run ``session.compaction_method``, handing to ``native`` when it cannot run.
+
+        The walk is the configured rotation method (``soft`` carries the tail,
+        ``shake`` the tail plus a digest of the rows before it), then ``native``,
+        which summarizes in place. ``native`` is the in-place ``/compact`` (or, on
+        a backend with no ``/compact`` to send, the unmanaged recycle) and ends
+        the walk whatever it returns, because its own failure path already
+        recycles. A rotation method answers ``unavailable`` (it cannot run here)
+        or ``insufficient`` (it would not free enough context) to hand the turn
+        to ``native``. No weaker rotation runs in its place: ``soft`` after
+        ``shake`` would drop, undigested, the history the operator chose
+        ``shake`` to keep, and ``native`` still keeps it as a summary. The
+        default, ``native``, is this branch's pre-ladder dispatch exactly. Every
+        attempted method logs one INFO line.
+        A key whose last rotation was judged ineffective by its successor's
+        first reading (``rotation_hold``) runs ``native`` outright while the
+        configured method, the window and the threshold are the ones that
+        rotation's projection read; a change to any of them walks the ladder again.
+        """
+        owner = self._owner
+        hold = self.state.rotation_hold.get(key)
+        if hold is not None and hold == self._rotation_identity(key, session.provider):
+            self._deps.logger.info(
+                "Session %s compaction: last rotation judged ineffective, running native", key
+            )
+            ladder: tuple[str, ...] = ()
+        else:
+            if hold is not None:
+                # The projection that judged the held rotation read other inputs;
+                # the new ones get their own verdict.
+                del self.state.rotation_hold[key]
+            # Normalized at load to a known name; the ladder below it is fixed.
+            ladder = rotation_ladder(owner._cfg.session.compaction_method)
+        for method in ladder:
+            try:
+                outcome = await self._rotate(method, key, session, pct)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A rotation that raises (an unreadable transcript under the
+                # seed writer, a provider without a window figure) is one more
+                # way of stepping aside: a method that cannot run never ends the
+                # walk, so it reaches native.
+                self._deps.logger.warning(
+                    "Session %s compaction method %s raised; handing to native",
+                    key,
+                    method,
+                    exc_info=True,
+                )
+                outcome = OUTCOME_UNAVAILABLE
+            self._deps.logger.info("Session %s compaction method %s: %s", key, method, outcome)
+            if outcome not in (OUTCOME_UNAVAILABLE, OUTCOME_INSUFFICIENT):
+                return outcome
+        if _compaction_unmanaged_backend(session.provider) is not None:
+            # No ``/compact`` to send and no harness-side summarization to
+            # wait for, so there is nothing for ``_compact_in_place`` to do
+            # except spend its whole timeout proving it: the prompt would
+            # land as ordinary text, no compaction status would follow, and
+            # ``wait_for_compaction`` would strand until the deadline before
+            # recycling anyway. Recycle straight away instead -- same
+            # destination, none of the wait, and the reason is stated rather
+            # than inferred from a timeout.
+            return await owner._recycle_unmanaged(key, session, pct)
+        outcome = await owner._compact_in_place(key, session, pct)
+        self._deps.logger.info(
+            "Session %s compaction method %s: %s", key, COMPACTION_METHOD_NATIVE, outcome
+        )
+        return outcome
+
+    async def _rotate(self, method: str, key: str, session: Any, pct: float) -> str:
+        """Run one rotation method: restart the session so its successor re-seeds from the transcript.
+
+        Returns ``unavailable`` / ``insufficient`` to advance the ladder, else
+        the terminal result of the walk: ``recycled``; ``busy`` when a turn
+        still holds the semaphore (every method needs it, so nothing later in
+        the order could run either); ``absent`` when the key changed owners
+        during the wait; ``cancelled`` when a user Stop landed during the hold;
+        or ``failed`` when the successor did not start.
+        """
+        window = session.provider.context_window_tokens()
+        if window <= 0:
+            # No window figure: nothing to project from, and the successor's
+            # replay would size its tail from the reference window blind.
+            return OUTCOME_UNAVAILABLE
+        if method not in (COMPACTION_METHOD_SOFT, COMPACTION_METHOD_SHAKE):
+            return OUTCOME_UNAVAILABLE
+        writer = self.state.seed_writer
+        if writer is None or not writer.supports(key):
+            # Both rotations hang on the same surface question. ``shake``: no
+            # digest can be written here whatever the window (no writer at all,
+            # or the one writer holds no transcript for this key: a channel-born
+            # session, a key with no tab). ``soft``: the successor is re-seeded
+            # from that same transcript by the dashboard replay, and nothing
+            # else re-seeds it -- a cron job, hook, subagent or channel session
+            # recycled here would come back with zero turns, and a channel's own
+            # fresh-session bootstrap is a model call, which ``soft`` promises
+            # not to spend. Answered before projecting, so the log names the
+            # real reason (unavailable) rather than a window arithmetic
+            # (insufficient) that could never have mattered here.
+            return OUTCOME_UNAVAILABLE
+        # The tail the successor carries is the replay's own budget for this
+        # window (one figure, shared with the seed writer and the replay itself);
+        # shake's digest rides beside it at its share of the same budget.
+        tail_tokens = estimate_tokens(replay_budget_chars(window))
+        carried = tail_tokens
+        if method == COMPACTION_METHOD_SHAKE:
+            carried += tail_tokens // SEED_BUDGET_DIVISOR
+        projected = self._project_rotation(window, carried)
+        # What this projection reads, captured with it: the verdict that settles
+        # on the successor's first reading holds the key under these inputs.
+        projected_inputs = self._rotation_identity(key, session.provider)
+        if not method_sufficient(
+            projected,
+            threshold_pct=projected_inputs[2],
+            min_effect_pct_points=self._deps.compact_min_effect_pct_points,
+        ):
+            return OUTCOME_INSUFFICIENT
+
+        timeout = self._deps.compact_wait_timeout_secs()
+        try:
+            await asyncio.wait_for(session.semaphore.acquire(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return "busy"
+        # The same guards as ``_compact_in_place`` and ``_recycle_unmanaged``, for
+        # the same Stop. Read AFTER the permit is held: a Stop that ended the turn
+        # this waited behind is not this rotation's cancel.
+        stop_gen = self._stop_generation(key)
+        # Named where ``reset`` looks (``_orphan_turn_holder``), so a hard Stop
+        # during the hold below records this task as the holder of the permit it
+        # hands to a woken claimant.
+        session.turn_owner = asyncio.current_task()
+
+        def _stopped() -> bool:
+            return self._stop_generation(key) > stop_gen
+
+        try:
+            # The key can change owners while this rotation waits; checking under
+            # the registry lock keeps stale work from seeding or recycling its successor.
+            async with self._owner._lock:
+                if self._owner._sessions.get(key) is not session:
+                    return "absent"
+            # A rotation ends this process like every other restart, and with it
+            # the sub-agents that share it, so it waits for them the same way.
+            # Before the seed write: a Stop that ends the wait leaves no seed.
+            if not await self._await_cotenants(key, pct, stopped=_stopped, method=method):
+                return await self._settle_cancelled(key, pct)
+
+            async def _run_rotation_transaction() -> str:
+                rotation_method = method
+                # Held for the whole transaction, not only the restart: every
+                # notice posted from here (a Stop's, a failed start's, the
+                # rotation's own) and the counter name the rotation, so the
+                # successor's replay leaves those notices out.
+                self.state.rotating[key] = rotation_method
+                try:
+                    if method == COMPACTION_METHOD_SHAKE and writer is not None:
+                        written = await writer(key, method, window)
+                        if written == SEED_NOTHING:
+                            # The tail covers every admitted row and the replay
+                            # read dropped none, so there is nothing to digest and
+                            # nothing to lose: recycle as soft under this hold, so
+                            # a queued turn cannot move the tail boundary first.
+                            rotation_method = COMPACTION_METHOD_SOFT
+                            self.state.rotating[key] = rotation_method
+                            self.state.rotation_kept_all.add(key)
+                        elif written != SEED_WRITTEN:
+                            # No complete digest exists: rows fall outside the tail
+                            # with none written (``SEED_TAIL_ONLY``), the surface
+                            # went away under the rotation (a closed tab), or the
+                            # writer answered something this contract does not
+                            # name. Soft here would drop those rows undigested;
+                            # native keeps them as a summary.
+                            return OUTCOME_UNAVAILABLE
+                        if _stopped():
+                            # A force Stop during the seed write already replaced
+                            # the session; restarting it again would announce a
+                            # rotation the user stopped. A written seed stays in the
+                            # transcript, where a later replay reads it like any
+                            # other seed row.
+                            return await self._settle_cancelled(key, pct)
+                    # The cotenant wait and the seed write both yield, and a reset
+                    # that is not a Stop (a rewind, a model switch) can replace the
+                    # session meanwhile. Restarting then would recycle the stale
+                    # session, post a rotation notice the user never had, and arm
+                    # this rotation's verdict on a successor it never measured.
+                    async with self._owner._lock:
+                        if self._owner._sessions.get(key) is not session:
+                            return "absent"
+                    # The restart every other path takes: the successor starts
+                    # first and inherits the turns queued behind this hold, then
+                    # the old session is recycled. It is still seeded lazily: its
+                    # first real turn replays the transcript, seed row included.
+                    result = await self._restart_held(key, session, pct)
+                finally:
+                    self.state.rotating.pop(key, None)
+                    self.state.rotation_kept_all.discard(key)
+                if result != "recycled":
+                    # The successor did not start: the old session keeps its key
+                    # and its context, and ``_restart_held`` has armed the cooldown.
+                    return result
+                # The projection judged this rotation BEFORE it ran; the successor
+                # has not answered a turn yet, so its real starting usage is read on
+                # its first confirmed turn, through the same deferred verdict the
+                # native path uses. That reading arms the failure cooldown when the
+                # rotation freed too little, and ``pending_rotation`` lets the
+                # settle hold the next walk to native (see ``_run_method_ladder``).
+                self.state.pending_verdict[key] = pct
+                self.state.pending_rotation[key] = (rotation_method, projected_inputs)
+                return "recycled"
+
+            # One transaction from the seed write through the verdict
+            # bookkeeping: a shutdown that cancelled it after the seed row was
+            # saved would leave a durable seed for a rotation that never ran.
+            # The cancel is deferred to the end of the transaction, never
+            # dropped, and ``close_all`` gathers this task before it tears the
+            # sessions down.
+            return await run_to_completion(_run_rotation_transaction())
+        finally:
+            # Release ONLY a permit this task still owns. A hard Stop during the
+            # hold popped the session and handed its permit to a woken claimant;
+            # a second release here would raise in that claimant's own release.
+            # The release clears the holder record in the same step, as every
+            # other holding does, so ``compaction_waits_for_turn`` never reads a
+            # task that has let the permit go.
+            if not self._owner.absorb_orphaned_release(key):
+                session.semaphore.release()
+                session.turn_owner = None
+
+    def _project_rotation(self, window: int, carried_tokens: int) -> float | None:
+        """Usage the successor would start at; ``None`` only for a window of 0, which the caller rules out."""
+        return project_pct_after(
+            window_tokens=window,
+            carried_tokens=carried_tokens,
+            overhead_tokens=estimate_tokens(startup_context_chars(window)),
+        )
+
+    def _rotation_identity(self, key: str, provider: Any) -> tuple[str, int, float]:
+        """The inputs a rotation's projection and verdict read for *key*: method, window, threshold."""
+        return (
+            self._owner._cfg.session.compaction_method,
+            provider.context_window_tokens(),
+            self.effective_autocompact_pct(key),
+        )
 
     async def _recycle_held(
         self, key: str, session: Any, pct: float, *, uncompactable: bool = False
@@ -949,7 +1299,12 @@ class CompactionCoordinator:
         ]
 
     async def _await_cotenants(
-        self, key: str, pct: float, *, stopped: Callable[[], bool] | None = None
+        self,
+        key: str,
+        pct: float,
+        *,
+        stopped: Callable[[], bool] | None = None,
+        method: str = COMPACTION_METHOD_NATIVE,
     ) -> bool:
         """Hold a context restart while sub-agents share the process.
 
@@ -965,6 +1320,11 @@ class CompactionCoordinator:
         already reset the parent, and this task's restart is then stale -- cancelling
         the live sub-agents and recycling again would end work the Stop did not ask
         to end. Returns False when the wait ended for that reason, True otherwise.
+
+        *method* names what restarts the session: ``native`` for the restart after a
+        failed or impossible compaction, or the rotation method for a planned
+        rotation, so the waiting notice and the stopped sub-agents' reason do not
+        call a rotation a failure.
         """
         lifecycle = self._owner._lifecycle_boundary()
         # The ``SubagentManager`` registered as the parent-end teardown handler.
@@ -976,10 +1336,19 @@ class CompactionCoordinator:
         if callback is not None:
             try:
                 await callback(
-                    key, pct, success=False, outcome=COMPACT_OUTCOME_WAITING_FOR_SUBAGENTS
+                    key,
+                    pct,
+                    success=False,
+                    outcome=COMPACT_OUTCOME_WAITING_FOR_SUBAGENTS,
+                    method=method,
                 )
             except Exception:
                 self._deps.logger.exception("Compact callback failed for %s", key)
+        stop_origin = (
+            "stopped at a failed compaction's restart"
+            if method == COMPACTION_METHOD_NATIVE
+            else f"stopped when an auto-compaction rotated the session ({method})"
+        )
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._deps.cotenant_wait_secs
         while ids := self._live_cotenants(runs, key):
@@ -990,7 +1359,7 @@ class CompactionCoordinator:
                 self._deps.logger.warning("Session %s: stopping sub-agents %s", key, ids)
                 for info in runs.running:
                     if info.id in ids and not info._stop_origin:
-                        info._stop_origin = "stopped at a failed compaction's restart"
+                        info._stop_origin = stop_origin
                 task = asyncio.ensure_future(asyncio.gather(*(runs.cancel(i) for i in ids)))
                 self._owner._background_tasks.add(task)
                 task.add_done_callback(self._owner._background_tasks.discard)
@@ -1400,13 +1769,34 @@ class CompactionCoordinator:
         # ``_recycle_held`` and popped only after this call, so it is what
         # separates the two populations here; ``test_a_failed_compact_that_recycles
         # _is_not_counted_successful`` pins that ordering.
+        #
+        # A rotation method (``soft``, ``shake``) reaches this funnel through the
+        # SAME recycle primitive, on purpose: for it the recycle IS the
+        # compaction, so ``rotating`` (set for the whole rotation, which contains
+        # the marker's span) restores the success the marker would otherwise
+        # demote.
         recycled = key in self._owner._recycling
-        emit_counter(CONTEXT_COMPACTIONS, {"success": bool(success) and not recycled})
+        intentional = key in self.state.rotating
+        # The method tag separates rotations from native summaries, so a
+        # rotation recycling every turn shows up as its own series rather than
+        # hiding inside the success bit. The callback gets the same name: the
+        # notice it posts is the only place the user learns that the pre-tail
+        # history was dropped or digested rather than summarized in place.
+        method = self.state.rotating.get(key, COMPACTION_METHOD_NATIVE)
+        emit_counter(
+            CONTEXT_COMPACTIONS,
+            {
+                "success": bool(success) and (not recycled or intentional),
+                "method": method,
+            },
+        )
         # The same marker that keeps a recycle out of the success counter also tells
         # the callback WHICH outcome it is reporting. Without it a recycle arrives
         # indistinguishable from a compaction, and the dashboard announced one as the
         # other -- "Auto-compacted at N%." on a session whose history had just been
-        # discarded, which is the untruth this whole change set out to remove.
+        # discarded, which is the untruth this whole change set out to remove. A
+        # rotation is a recycle here too; ``method`` is what tells the surface it
+        # was the intended kind.
         if outcome is not None:
             pass
         elif not recycled:
@@ -1428,7 +1818,13 @@ class CompactionCoordinator:
         callback = self.state.on_compacted
         if callback is None:
             return
+        # Read for the callback alone, after the counter: a soft rotation that
+        # dropped nothing is still ``soft`` to the counter's series and to the
+        # verdict, and only the notice needs to know the tail carried every row.
+        all_kept = key in self.state.rotation_kept_all
         try:
-            await callback(key, pct, success=success, outcome=outcome)
+            await callback(
+                key, pct, success=success, outcome=outcome, method=method, all_kept=all_kept
+            )
         except Exception:
             self._deps.logger.exception("Compact callback failed for %s", key)

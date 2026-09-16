@@ -3507,6 +3507,7 @@ def _build_history_prefix(
     conversation_log: ConversationLog | None = None,
     current_message: dict | None = None,
     model_window: int | None = None,
+    clip_newest_row: bool = False,
 ) -> str:
     """Legacy no-builder entry point; share the canonical merge and budget."""
     from kiro_crew.context import build_session_replay
@@ -3517,6 +3518,7 @@ def _build_history_prefix(
         pending_messages=list(slot.messages),
         current_message=current_message,
         model_window=model_window,
+        clip_newest_row=clip_newest_row,
     )
     if not replay:
         return ""

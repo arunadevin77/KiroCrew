@@ -244,6 +244,29 @@ describe('CompactionCard', () => {
     }
   })
 
+  it('says "compacted", not "summarized", when the row names a rotation method', () => {
+    // A rotation (soft, shake) keeps recent turns and writes no summary, and when it
+    // cannot run, native runs: "compacted" is true for both. The method rides on the
+    // row (`meta.compaction_method`), read through SystemNoticeRow as the registries do.
+    const content = '\u{1F504} Context at 47% (limit 40%) \u2014 will compact after this turn.'
+    const compacted = 'Context at 47%, past the 40% auto-compact threshold — the chat will be compacted when this turn ends'
+    const summarized = 'Context at 47%, past the 40% auto-compact threshold — the chat will be summarized when this turn ends'
+    const row = (meta: Record<string, unknown>) =>
+      msg('assistant', { content, meta: { kind: 'compaction', notice: 'compact_after_turn', ...meta } })
+    for (const method of ['soft', 'shake']) {
+      const { unmount } = render(<SystemNoticeRow message={row({ compaction_method: method })} />)
+      expect(screen.getByText(compacted), method).toBeInTheDocument()
+      expect(screen.queryByText(summarized), method).toBeNull()
+      unmount()
+    }
+    // Native, and a row written before the key existed, keep main's wording.
+    for (const meta of [{ compaction_method: 'native' }, {}]) {
+      const { unmount } = render(<SystemNoticeRow message={row(meta)} />)
+      expect(screen.getByText(summarized), JSON.stringify(meta)).toBeInTheDocument()
+      unmount()
+    }
+  })
+
   it('routes the ⚠-led threshold failure and the timeout to ErrorNotice too (origin decides, not the glyph)', () => {
     for (const content of [
       '\u26A0 Auto-compact failed at 92% — will retry after cooldown. You can run `/compact` manually.',

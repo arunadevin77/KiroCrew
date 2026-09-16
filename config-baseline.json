@@ -1588,6 +1588,7 @@
         "empty_response_max_continues": 1,
         "autocompact_pct": 70.0,
         "compact_wait_secs": 0.0,
+        "compaction_method": "native",
         "pool_size": 0,
         "pool_agent": "",
         "pool_ttl_secs": 1800,
@@ -1695,6 +1696,24 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": 0.0
+    },
+    {
+      "path": "session.compaction_method",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Compaction Method",
+      "help": "What runs when the Auto-Compact Threshold fires. native (default): the agent summarizes the whole context in place; one model call, minutes on a large window; everything is kept as a summary. soft: a fresh session with only the recent turns; no model call; older turns are gone from the agent's memory (the transcript stays on screen). shake: soft, plus the older turns condensed into the agent's memory as a digest. soft and shake run in dashboard tabs only. A rotation that would not free enough context, or cannot run, hands to native. A running turn defers the attempt to the next check. The chat notice names the method that ran.",
+      "hasChildren": false,
+      "enumValues": [
+        "native",
+        "soft",
+        "shake"
+      ],
+      "defaultValue": "native"
     },
     {
       "path": "session.pool_size",

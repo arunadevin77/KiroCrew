@@ -151,9 +151,14 @@ export function isSystemNoticeRow(m: Pick<ChatMessage, 'role' | 'kind' | 'meta'>
  *
  * Expansion is per-row disclosure state, not persisted (same as RecoveryCard).
  */
-const CompactionCard = memo(function CompactionCard({ content, disclosureKey, keepRecord }: { content: string; disclosureKey?: string;
+const CompactionCard = memo(function CompactionCard({ content, disclosureKey, keepRecord, compactionMethod }: { content: string; disclosureKey?: string;
   /** Raw `decisions_strip` field off the notice row, validated here. Absent renders nothing. */
-  keepRecord?: unknown }) {
+  keepRecord?: unknown
+  /** Raw `meta.compaction_method` off the notice row: the rotation method
+   *  (`session.compaction_method`) the turn read when it wrote the mid-turn
+   *  "will compact after this turn" row. Absent with `native`, and on every
+   *  row written before the key existed. */
+  compactionMethod?: unknown }) {
   // memo() boundary rendering i18nT() strings: subscribe so a language switch repaints.
   useLanguageGeneration()
   const parsed = parseCompactionNotice(content)
@@ -198,10 +203,13 @@ const CompactionCard = memo(function CompactionCard({ content, disclosureKey, ke
     if (after) {
       // About what comes next, not a receipt: a clock glyph tells it apart from the
       // "Auto-compacted" row that follows, on the same calm info tone (nothing to do).
-      const text = i18nT('pages.chat.compactionCard.after_turn', {
-        pct: fmtPercent(after.pct / 100),
-        limit: fmtPercent(after.limit / 100),
-      })
+      const vars = { pct: fmtPercent(after.pct / 100), limit: fmtPercent(after.limit / 100) }
+      // `native` summarizes in place. A rotation method keeps recent turns instead,
+      // and when it cannot run `native` runs: "compacted" is true either way.
+      const rotation = typeof compactionMethod === 'string' && compactionMethod !== '' && compactionMethod !== 'native'
+      const text = rotation
+        ? i18nT('pages.chat.compactionCard.after_turn_rotation', vars)
+        : i18nT('pages.chat.compactionCard.after_turn', vars)
       return withKeep(<NoticeCard content={text} icon={Clock} />)
     }
     return withKeep(<NoticeCard content={parsed.text} icon={parsed.stopCaused ? Square : undefined} />)
@@ -243,6 +251,7 @@ export function SystemNoticeRow({ message, disclosureKey }: { message: ChatMessa
         // The same field the assistant and user receipts ride, read through the same
         // helper so a live frame and a row reloaded from history are treated alike.
         keepRecord={decisionStripFieldOf(message)}
+        compactionMethod={message.meta?.compaction_method}
       />
     )
   }
