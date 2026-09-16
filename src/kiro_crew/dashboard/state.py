@@ -5407,6 +5407,7 @@ class _ChatSlot:
         meta: dict | None = None,
         on_consumed: Callable[[bool], None] | None = None,
         on_irreversibly_consumed: Callable[[], Awaitable[None] | None] | None = None,
+        on_discarded: Callable[[], None] | None = None,
         directive_user_origin: bool = False,
         directive_channel_origin: bool = False,
     ) -> str:
@@ -5419,12 +5420,25 @@ class _ChatSlot:
             meta,
             on_consumed,
             on_irreversibly_consumed,
+            on_discarded,
             directive_user_origin,
             directive_channel_origin,
         )
 
     def queue_pop(self, index: int = 0) -> dict[str, Any]:
         return self._queue_repository.queue_pop(self, index)
+
+    def queue_pop_many(self, count: int) -> list[dict[str, Any]]:
+        return self._queue_repository.queue_pop_many(self, count)
+
+    def queue_discard_all(self) -> list[dict[str, Any]]:
+        return self._queue_repository.queue_discard_all(self)
+
+    def queue_retire_all(self) -> list[dict[str, Any]]:
+        return self._queue_repository.queue_retire_all(self)
+
+    def queue_discard_by_ids(self, queue_ids: set[str]) -> list[dict[str, Any]]:
+        return self._queue_repository.queue_discard_by_ids(self, queue_ids)
 
     def note_pending_subagent_delivery(
         self, content: str, deliveries: list[SubagentDelivery]

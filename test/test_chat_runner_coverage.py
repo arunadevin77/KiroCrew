@@ -2729,10 +2729,12 @@ class TestStartNextQueuedTurn:
 
         with (
             patch.object(chat_runner.KiroCrewConfig, "load") as load,
-            patch.object(chat_runner, "spawn_guarded_turn", return_value=MagicMock()) as spawn,
             patch.object(
-                chat_runner, "_run_chat", new=MagicMock(return_value=MagicMock())
-            ) as run_chat,
+                chat_runner,
+                "spawn_guarded_turn",
+                side_effect=lambda _state, _slot, coro: asyncio.create_task(coro),
+            ) as spawn,
+            patch.object(chat_runner, "_run_chat", new=AsyncMock()) as run_chat,
         ):
             load.return_value.dashboard.merge_queued_messages = False
             started = await chat_runner._start_next_queued_turn(
@@ -2741,6 +2743,7 @@ class TestStartNextQueuedTurn:
                 allow_user_during_subagents=True,
                 required_queue_id=q2,
             )
+            await slot.task
 
         assert started is True
         assert spawn.call_count == 1
@@ -2758,10 +2761,12 @@ class TestStartNextQueuedTurn:
 
         with (
             patch.object(chat_runner.KiroCrewConfig, "load") as load,
-            patch.object(chat_runner, "spawn_guarded_turn", return_value=MagicMock()) as spawn,
             patch.object(
-                chat_runner, "_run_chat", new=MagicMock(return_value=MagicMock())
-            ) as run_chat,
+                chat_runner,
+                "spawn_guarded_turn",
+                side_effect=lambda _state, _slot, coro: asyncio.create_task(coro),
+            ) as spawn,
+            patch.object(chat_runner, "_run_chat", new=AsyncMock()) as run_chat,
         ):
             load.return_value.dashboard.merge_queued_messages = True
             started = await chat_runner._start_next_queued_turn(
@@ -2770,6 +2775,7 @@ class TestStartNextQueuedTurn:
                 allow_user_during_subagents=True,
                 required_queue_id=q2,
             )
+            await slot.task
 
         assert started is True
         assert spawn.call_count == 1

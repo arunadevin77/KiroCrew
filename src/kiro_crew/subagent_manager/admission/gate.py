@@ -1671,9 +1671,9 @@ class _GateMixin(ManagerComponent):
             )
             logger.warning("Subagent %s rejected: no approval callback", agent_id)
             if self._manager._on_done:
-                self._manager._tasks[agent_id] = asyncio.ensure_future(
-                    self._manager._safe_announce(info)
-                )
+                _announce_task = asyncio.ensure_future(self._manager._safe_announce(info))
+                self._manager._tasks[agent_id] = _announce_task
+                self._own_announce_task(_announce_task, info)
 
         if info.done:
             # Rejected after the claim (no approval mechanism): terminal in the
@@ -1999,10 +1999,31 @@ class _GateMixin(ManagerComponent):
         # only records never arm (guarded inside the arm itself): they skip the
         # consumer's accounting block entirely.
         self._manager.arm_report_in_flight(info)
+        # Scheduled announces were owned when they were created; an approval
+        # path awaits this coroutine inside its own task, which owns it here.
+        current = asyncio.current_task()
+        if current is not None and current not in self._manager._announce_owners:
+            self._own_announce_task(current, info)
         try:
             await self._manager._on_done(info)
         except Exception as exc:
             logger.error("Subagent announce failed for %s (%s)", info.id, type(exc).__name__)
+            # The callback never accepted this terminal fact. Retain it as the
+            # parent's next-turn failure notice, the same fallback a timed-out
+            # terminal report takes, so the rejection is not silently lost and
+            # the parent's stop fence keeps holding until that notice lands.
+            retained = self._manager.notify_injection_failed(
+                info, reason="completion delivery failed before acceptance"
+            )
+            if retained is not None:
+                try:
+                    await asyncio.shield(retained)
+                except Exception:
+                    logger.debug(
+                        "Subagent %s rejection fallback could not be retained",
+                        info.id,
+                        exc_info=True,
+                    )
         finally:
             # Structural release, mirroring ``_report_terminal``'s: whether the
             # consumer landed the contribution (idempotent no-op), the announce
@@ -2207,7 +2228,7 @@ class _GateMixin(ManagerComponent):
                 # at its flip site composes with no effect.
                 self._manager.arm_report_in_flight(info)
                 _announce_task = asyncio.ensure_future(self._manager._safe_announce(info))
-                self._hold_announce_task(f"reject-{info.id}", _announce_task)
+                self._hold_announce_task(f"reject-{info.id}", _announce_task, owner=info)
                 # Strand-guard mirroring ``_spawn_terminal_report``'s: an
                 # announce task cancelled before its first run never reaches
                 # ``_safe_announce``'s structural release. Idempotent no-op on
