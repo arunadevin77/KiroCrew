@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 from kiro_crew.acp._dispatch import (
     _dumps_degraded,
+    _json_result_omits_text,
     _measure_tool_output,
     classify_tool_call,
     derive_edit_diff,
@@ -561,6 +562,9 @@ def _extract_tool_call_update(self: AcpClient, msg: JsonRpcMessage) -> AcpEvent 
     )
 
     output_parts: list[str] = []
+    # Set when a ``Json`` item's display text (stdout) leaves out another
+    # text field the tool returned: the result text is then not whole.
+    fields_omitted = False
 
     # Path 1: `content` blocks (arrive during tool execution / mid-stream)
     content = update.get("content")
@@ -590,6 +594,9 @@ def _extract_tool_call_update(self: AcpClient, msg: JsonRpcMessage) -> AcpEvent 
                     if isinstance(j, dict):
                         if "stdout" in j and j.get("stdout"):
                             output_parts.append(str(j["stdout"]))
+                            # stdout alone is shown; stderr text is then not in
+                            # ``tool_output`` (see ``_json_result_omits_text``).
+                            fields_omitted = fields_omitted or _json_result_omits_text(j)
                         else:
                             output_parts.append(_dumps_degraded(j, default=str))
             # Path 3: an object that is not that envelope at all. Mirrors
@@ -636,6 +643,7 @@ def _extract_tool_call_update(self: AcpClient, msg: JsonRpcMessage) -> AcpEvent 
         tool_output=final_output,
         tool_output_digest=tool_output_digest,
         tool_output_bytes=tool_output_bytes,
+        tool_output_truncated=fields_omitted or len(_redacted) > 8000,
         # Same contract as `_dispatch._build_tool_result_event`: only a
         # result the redactor changed can hold a credential to trace.
         tool_output_credentials=(
@@ -849,6 +857,10 @@ def _jsonl_tool_results(line: bytes) -> list[AcpEvent]:
         if not isinstance(tr_content, list):
             continue
         output_parts: list[str] = []
+        # A per-part bound removes text before the join, so the joined
+        # length alone cannot say whether anything was cut; a stdout-only
+        # display of a result that also carried stderr is not whole either.
+        part_cut = False
         for rc in tr_content:
             if not isinstance(rc, dict):
                 continue
@@ -857,11 +869,17 @@ def _jsonl_tool_results(line: bytes) -> list[AcpEvent]:
                 if isinstance(d, dict) and "stdout" in d:
                     out = d.get("stdout", "")
                     if isinstance(out, str) and out:
+                        part_cut = part_cut or len(out) > 4000
                         output_parts.append(out[:4000])
+                    part_cut = part_cut or _json_result_omits_text(d)
                 else:
-                    output_parts.append(_dumps_degraded(d, indent=2)[:4000])
+                    dumped = _dumps_degraded(d, indent=2)
+                    part_cut = part_cut or len(dumped) > 4000
+                    output_parts.append(dumped[:4000])
             elif rc.get("kind") == "text":
-                output_parts.append(str(rc.get("data", ""))[:4000])
+                text = str(rc.get("data", ""))
+                part_cut = part_cut or len(text) > 4000
+                output_parts.append(text[:4000])
         if output_parts:
             joined = "\n".join(output_parts)
             results.append(
@@ -869,6 +887,7 @@ def _jsonl_tool_results(line: bytes) -> list[AcpEvent]:
                     kind=EVENT_TOOL_RESULT,
                     tool_call_id=tool_use_id,
                     tool_output=joined[:8000],
+                    tool_output_truncated=part_cut or len(joined) > 8000,
                     # A kiro-cli result read back from its session
                     # file traces credentials like a streamed one.
                     tool_output_credentials=tool_output_fingerprints(joined),
