@@ -78,6 +78,7 @@ export { SIDEBAR_DISPLACEMENT_WINDOW } from './chat-sidebar/laneRows'
 import { createFolderBlocks } from './chat-sidebar/folderBlocks'
 import { createListLanes } from './chat-sidebar/listLanes'
 import { createBoardLane } from './chat-sidebar/boardLane'
+import ErrorNotice from '../components/ErrorNotice'
 import { renderSidebarHeader } from './chat-sidebar/SidebarHeader'
 import { renderSearchDock } from './chat-sidebar/SearchDock'
 export { FILTER_LABEL_KEY, FILTER_DESCRIPTION_KEY, SORT_LABEL_KEY, FOLDER_SORT_LABEL_KEY } from './chat-sidebar/SearchDock'
@@ -623,9 +624,8 @@ function ChatSidebar({
   // each behaviour has one definition. Rename + Tags stay local (they drive this
   // component's inline-edit + tag-popover state).
   const sessionActions = useSessionActions(mode)
-  // The last close the server refused, from any close path (this sidebar, a
-  // session menu elsewhere, Cmd+W): `deleteSlot` records it so none drops it.
   const closeRefused = useAppSelector(st => st.chat.closeRefused)
+  const { forkError: duplicateError, clearForkError: clearDuplicateError } = sessionActions
   // Which sessions are currently open in a popped-out window (shared singleton).
   const { poppedOut } = useChatPopouts()
   const {
@@ -794,6 +794,20 @@ function ChatSidebar({
       {/* Scroll peek: full titles in a floating, click-through layer. The
           card itself keeps `sidebarWidth`. */}
       <ScrollPeekLayer titles={peekTitles} />
+      {/* Outside the row list on purpose: a notice under a row adds a line every session
+          pays for in above-fold density (AUTOSDE session-row-fixed-height). */}
+      {duplicateError ? (
+        <ErrorNotice
+          message={duplicateError.message}
+          report={duplicateError.report}
+          variant="inline"
+          askAgent
+          onDismiss={clearDuplicateError}
+          testId={`sidebar-duplicate-error-${duplicateError.slotKey}`}
+          className="mx-1 mt-1 mb-0 min-w-0 flex-wrap shrink-0"
+          messageClassName="min-w-0 break-words"
+        />
+      ) : null}
       {/* Drag handle — the shared column grip (components/ResizeHandle), so
           this edge looks and behaves exactly like the Crew Members roster's and
           the app workspaces'. Positioned absolutely on the card's right border

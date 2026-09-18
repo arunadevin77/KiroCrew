@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../api/client'
 import { apiErrorCode, isSlotCapError } from '../api/apiError'
@@ -13,6 +13,9 @@ import { loadChatConfig } from '../pages/chat/ChatSettings'
 import { sessionIsBusyForClose } from '../lib/closeBusyGate'
 import { commitPinnedSessionOperations, commitPinnedSessionSnapshot, readPinnedSessionOrder, reconcilePinnedSessionOrder } from '../utils/pinnedSessionOrder'
 import { i18nT } from '../i18n/t'
+import { forkFailureNoticeOffsite } from '../utils/forkFailure'
+import type { ForkFailureNotice } from '../utils/forkFailure'
+import { errMessage } from '../utils/thunkError'
 import type { ChatSlot } from '../types'
 import { compareBySort, readSessionSortKey } from '../pages/chat/sessionOrder'
 
@@ -84,6 +87,12 @@ function setSlotPinInOrder(key: string, pinned: boolean) {
 export interface SessionActions {
   /** Fork/duplicate a session. */
   duplicate: (slotKey: string) => void
+  /** A refused duplicate: the localized line PLUS the structured report, which the
+   * caller passes to `ErrorNotice` so the endpoint/status/code survive the
+   * localization. This hook deliberately raises no dialog of its own. */
+  forkError: (ForkFailureNotice & { slotKey: string }) | null
+  /** Dismiss the refusal above. */
+  clearForkError: () => void
   /** Toggle read/unread. */
   toggleRead: (slotKey: string) => void
   /** Toggle pinned. */
@@ -243,10 +252,18 @@ export function useSessionActions(mode?: string): SessionActions {
     }
   }, [dispatch, queryClient])
 
+  // Surfaced by the caller through ErrorNotice, not a native dialog: one refusal
+  // rendered three ways teaches three different recoveries for one cause.
+  const [forkError, setForkError] = useState<(ForkFailureNotice & { slotKey: string }) | null>(
+    null,
+  )
   const forkMutation = useMutation({
     mutationFn: (slot: string) => api.forkChatSlot(slot),
     onSuccess: (data) => {
       if (data?.ok && data.key) {
+        // A refusal describes a condition that no longer holds: leaving it under the row
+        // contradicts the tab this success just opened.
+        setForkError(null)
         queryClient.invalidateQueries({ queryKey: ['slots'] })
         dispatch(switchSlot(data.key))
       }
@@ -270,7 +287,24 @@ export function useSessionActions(mode?: string): SessionActions {
     // found") says neither what is wrong nor what to do.
     // Any other reason has its end punctuation (Latin, CJK or Devanagari) dropped
     // so the template's own full stop follows it.
-    onError: (err) => {
+    //
+    // The over-capacity refusal (`fork_corpus_too_large`) is the exception: it
+    // has a recovery the user can take right away (fork AT a message), so it
+    // renders through the caller's ErrorNotice with that advice instead of an
+    // alert that ends the conversation.
+    onError: (err, slotKey) => {
+      if (err instanceof ApiError && apiErrorCode(err) === 'fork_corpus_too_large') {
+        const notice = forkFailureNoticeOffsite(
+          err.body,
+          errMessage(err),
+          // Compact and named: the panel is the narrowest surface, and the notice renders at
+          // its root rather than beside the pressed row, so the copy must say which session.
+          true,
+          store.getState().dashboard.slots.find(s => s.key === slotKey)?.title || slotKey,
+        )
+        setForkError({ ...notice, slotKey })
+        return
+      }
       if (!(err instanceof ApiError)) {
         alert(i18nT('hooks.useSessionActions.duplicate_unreachable'))
       } else if (err.authRequired || isSlotCapError(err.status, err.body)) {
@@ -330,6 +364,7 @@ export function useSessionActions(mode?: string): SessionActions {
       }))
     },
   })
+  const clearForkError = useCallback(() => setForkError(null), [])
 
   const pinMutation = useMutation({
     mutationFn: ({ key, pinned }: { key: string; pinned: boolean }) => setSlotPinInOrder(key, pinned),
@@ -448,5 +483,5 @@ export function useSessionActions(mode?: string): SessionActions {
     if (!mustConfirm || confirm(i18nT('hooks.useSessionActions.close_this_session'))) dispatch(deleteSlot(slotKey))
   }, [dispatch])
 
-  return { duplicate, toggleRead, togglePin, toggleMutesOpened, toggleMuted, copyLink, move, reload, close }
+  return { duplicate, forkError, clearForkError, toggleRead, togglePin, toggleMutesOpened, toggleMuted, copyLink, move, reload, close }
 }

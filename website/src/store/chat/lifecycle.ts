@@ -12,6 +12,7 @@ import { resolveDefaultColor } from '../../utils/sessionColors'
 import { isChatPageSurface } from '../../utils/channelOrigin'
 import { mergePreservedPastes } from '../../utils/pasteTokens'
 import { findReport, parseErrorCode } from '../../utils/errorReport'
+import { errMessage } from '../../utils/thunkError'
 import type { HistoryDeleteRefusal } from '../../utils/historyDeleteRefusal'
 import type { ChatState } from './state'
 import { filterMessages, safeKey } from './wire'
@@ -188,11 +189,29 @@ export const forkSlot = createAsyncThunk(
   'chat/forkSlot',
   async (
     { slot, atIndex, messageId, prompt, mode, direction }: { slot: string; atIndex?: number; messageId?: string; prompt?: string; mode?: string; direction?: 'head' | 'tail' },
-    { dispatch },
+    { dispatch, rejectWithValue },
   ) => {
-    const d = messageId
-      ? await api.forkChatSlot(slot, atIndex, prompt, mode, direction, messageId)
-      : await api.forkChatSlot(slot, atIndex, prompt, mode, direction)
+    let d
+    try {
+      d = messageId
+        ? await api.forkChatSlot(slot, atIndex, prompt, mode, direction, messageId)
+        : await api.forkChatSlot(slot, atIndex, prompt, mode, direction)
+    } catch (e) {
+      // `miniSerializeError` at the thunk boundary drops the backend `code`, so
+      // reject with it as a value. The check is STRUCTURAL (duck-typed on
+      // `status`/`body`), so a mocked transport reads the same as an ApiError.
+      const status = (e as { status?: unknown } | null)?.status
+      const body = (e as { body?: unknown } | null)?.body
+      const raw = typeof body === 'string' ? body : undefined
+      if (typeof status === 'number') {
+        return rejectWithValue({
+          status,
+          message: errMessage(e),
+          code: parseErrorCode(raw),
+        })
+      }
+      throw e
+    }
     if (d.ok) {
       // memory_mode is the parent's, echoed by the server; without it the new
       // tab would read as persistent until the next slots refresh.

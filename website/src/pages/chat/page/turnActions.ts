@@ -13,6 +13,7 @@ import { isSystemNoticeRow } from '../CompactionCard'
 import { mergeRecoveredDraft, setDraft } from '../../../utils/chatDrafts'
 import { revealComposer } from '../composerFocus'
 import type { ChatMessage } from '../../../types'
+import type { ErrorReport } from '../../../utils/errorReport'
 import { i18nT } from '../../../i18n/t'
 
 // Per-action titles for the refused-press notice above the composer. A press
@@ -76,11 +77,13 @@ export function useSteerDelivery({
   // ErrorNotice; the newest failure wins, the same shape as `refusedPress`.
   // `title` is optional because several sites already own a whole-sentence
   // message ("Fork failed: …") that must stay intact for the error-journal match.
-  const [actionError, setActionError] = useState<{ title?: string; message: string; preserveOnSwitch?: boolean } | null>(null)
-  const showActionError = useCallback((message: string, title?: string) => {
-    // Same failure re-reported (an effect re-run, a retry that fails the same
-    // way) keeps the stored object, so React bails out instead of re-rendering.
-    setActionError(prev => (prev && prev.message === message && prev.title === title) ? prev : { title, message })
+  const [actionError, setActionError] = useState<{ title?: string; message: string; preserveOnSwitch?: boolean; report?: ErrorReport } | null>(null)
+  const showActionError = useCallback((message: string, title?: string, report?: ErrorReport) => {
+    // The report is part of the identity: a retry failing the same way carries its
+    // OWN diagnostic context, so matching on the copy alone would pin the first one.
+    setActionError(prev => (
+      prev && prev.message === message && prev.title === title && prev.report === report
+    ) ? prev : { title, message, report })
   }, [])
   // NOT fire-and-forget: the receipt is the only thing that knows whether the
   // text reached the running turn, and the optimistic bubble asserts that it did.

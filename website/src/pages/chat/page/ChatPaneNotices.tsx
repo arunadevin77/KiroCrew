@@ -15,6 +15,7 @@ import { findSurfaceBySlotMode, surfaceLabel } from '../../../surfaces/registry'
 import { slotChannelLabel } from '../../../utils/channelOrigin'
 import { historyDeleteRefusalMessage } from '../../../utils/historyDeleteRefusal'
 import type { ShortNameMatch } from '../../../utils/sessionKeys'
+import type { ErrorReport } from '../../../utils/errorReport'
 
 // Lazy so the notice's code AND its fetch/poll (useUnrestoredTabs) stay out of the
 // always-loaded chat-route chunk. The notice renders nothing in the common case
@@ -89,8 +90,8 @@ interface ChatPaneNoticesProps {
   selectionCapabilitiesQ: { isError: boolean; error?: unknown }
   /** For the model-default notice: the Settings default model read failed. */
   chipDefault: { failed: boolean }
-  actionError: { title?: string; message: string; preserveOnSwitch?: boolean } | null
-  setActionError: Dispatch<SetStateAction<{ title?: string; message: string; preserveOnSwitch?: boolean } | null>>
+  actionError: { title?: string; message: string; preserveOnSwitch?: boolean; report?: ErrorReport } | null
+  setActionError: Dispatch<SetStateAction<{ title?: string; message: string; preserveOnSwitch?: boolean; report?: ErrorReport } | null>>
   switchSlotGone: RootState['chat']['switchSlotGone']
   setVoiceRecoverySlot: (slot: string | null) => void
   pinError: string | null
@@ -199,6 +200,7 @@ export default function ChatPaneNotices({
       <ErrorNotice
         title={actionError?.title}
         message={actionError?.message}
+        report={actionError?.report}
         onDismiss={() => setActionError(null)}
         askAgent
         className="mx-4 mt-2 mb-0 animate-rise"

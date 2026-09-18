@@ -161,6 +161,7 @@ import WorkflowProgressBar from './chat/WorkflowProgressBar'
 import { tryQuickSend } from '../lib/quickSend'
 import { sessionTitleRoster } from '../utils/sessionRoster'
 import { errMessage } from '../utils/thunkError'
+import { showTranscriptForkFailure } from '../utils/forkFailure'
 // Only a crew session mounts the window, so its code loads on first open.
 const CrewChatWindow = lazy(() => import('./chat/crew-window/CrewChatWindow'))
 // Eager: holds the window's isolation guards until its chunk arrives.
@@ -675,6 +676,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   const { data: forkCfg } = useQuery<{ tail_fork_enabled?: boolean }>({ queryKey: ['dashboardConfig'], queryFn: fetchDashboardConfig, staleTime: 30_000 })
   const handleFork = useCallback(async (visibleIndex: number, messageId?: string) => {
     if (!activeSlot) return
+    let direction: 'head' | 'tail' = 'head' // hoisted so the catch advises the same way
     try {
       // Fork WITHOUT a prompt: an unsent composer draft must never be
       // auto-submitted into the freshly forked session. The
@@ -688,15 +690,16 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       // — which would downgrade an intended tail-fork to a head-fork whenever
       // the query has errored or settled with no data, not just while loading.
       const resolvedCfg = forkCfg ?? await api.dashboardConfig()
-      const direction = resolvedCfg?.tail_fork_enabled ? 'tail' : 'head'
+      direction = resolvedCfg?.tail_fork_enabled ? 'tail' : 'head'
       const result = await dispatch(forkSlot({ slot: activeSlot, atIndex: visibleIndex, messageId, direction })).unwrap()
       if (result.ok) {
         await dispatch(switchSlot(result.key))
       } else {
-        showActionError(i18nT('pages.chatPage.fork_failed_error', { error: result.error || i18nT('pages.chatPage.unknown_error') }))
+        showTranscriptForkFailure(showActionError, result.code, result.error, direction)
       }
     } catch (e) {
-      showActionError(i18nT('pages.chatPage.fork_failed_error', { error: errMessage(e) || i18nT('pages.chatPage.unknown_error') }))
+      // A refusal is a non-2xx, so the thunk REJECTS: its code rides the rejection payload.
+      showTranscriptForkFailure(showActionError, (e as { code?: string } | null)?.code, errMessage(e), direction)
     }
   }, [activeSlot, dispatch, forkCfg, showActionError])
 
