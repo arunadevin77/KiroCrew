@@ -29,6 +29,7 @@ from kiro_crew.atomic_write import atomic_write, fsync_dir
 from kiro_crew.config.loader import (
     DASHBOARD_PORT,
     _raw_config,
+    _session_work_dir,
     config_dir,
     resolve_effective_agent,
 )
@@ -2901,7 +2902,8 @@ class _ChatSlot:
         "workspace",
         "memory_store",
         "_memory_assignment_from_history",
-        "project",
+        "_project",
+        "project_cleared",
         "created_at",
         "_messages",
         "_lazy_window",
@@ -3263,7 +3265,10 @@ class _ChatSlot:
         # assignment. Only a protected binding or an explicit owner pick clears
         # that admission boundary; this marker is not persisted in the transcript.
         self._memory_assignment_from_history = False
-        self.project: str = ""
+        self._project: str = ""
+        # A CLEARED project and one never set both leave ``project`` empty, but only a clear
+        # invalidates a warm pooled child's binding.
+        self.project_cleared: bool = False
         # Relay-archive binding, read off disk. ``executor`` is "local" for every
         # ordinary slot; "remote" marks a chat an older build ran on the peer
         # ``instance_id`` (its slot ``remote_slot``). Such a slot is read-only:
@@ -4499,6 +4504,52 @@ class _ChatSlot:
         leave a later ``begin_close`` reading as not-closing.
         """
         self._closing = max(0, self._closing - 1)
+
+    @property
+    def project(self) -> str:
+        """The directory this slot claims, or empty when it claims none."""
+        return self._project
+
+    @project.setter
+    def project(self, value: str) -> None:
+        """Bind a directory, retracting the cleared marker so the two cannot disagree.
+
+        The marker states the user REMOVED a project, so a slot that HAS one cannot also be
+        cleared -- and :meth:`resolved_cwd` reads the marker first, so one left standing
+        keeps binding the default workspace for a directory that was chosen, sending the
+        turn elsewhere with nothing to signal it. Retracting here rather than at each writer
+        is what makes a missed pairing impossible instead of silent. Emptying this leaves
+        the marker alone: a clear states it explicitly afterwards, and the identity-gated
+        rollbacks restore the prior pair the same way.
+        """
+        self._project = value
+        if value:
+            self.project_cleared = False
+
+    async def resolved_cwd(self, session_key: str | None) -> str | None:
+        """The directory a spawn for this slot must bind, or ``None`` to state none.
+
+        ``cwd`` carries two answers a spawn site must not confuse. ``None`` says the caller
+        has no requirement, so a stored or inherited directory may still be restored over
+        it. A CLEARED project is a requirement: the user removed it, and the turn must bind
+        the session's own default rather than the directory the session has stored.
+        Returning ``""`` for that would land on the provider factory's "unspecified" branch
+        -- the very branch that restores the removed directory -- so it resolves here.
+
+        The MARKER is read before the project, so a value that outlived its clear cannot
+        win. A persisted record is merged by an upsert that cannot delete a key, so a slot
+        cleared after `/old` was written still carries `/old` on disk; honoring that resumes
+        relative writes into the former directory with nothing to signal it. Both fields are
+        read here, before the thread hop below, so no caller can pair one with a stale copy
+        of the other.
+
+        INVARIANT the ``project`` setter enforces: the marker is true only while the slot
+        has NO chosen directory, so a write that SETS a project retracts it there.
+        """
+        if getattr(self, "project_cleared", False):
+            # Resolution creates the workspace root, so it stays off the event loop.
+            return str(await asyncio.to_thread(_session_work_dir, session_key))
+        return self.project or None
 
     @property
     def _dirty(self) -> bool:
