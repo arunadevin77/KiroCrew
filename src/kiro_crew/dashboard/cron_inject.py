@@ -15,14 +15,9 @@ from kiro_crew.dashboard.chat_persistence import (
     _restore_dismissed_source_links,
     _validate_turn_timeout_secs,
 )
-from kiro_crew.dashboard.chat_utils import redact_display_content
+from kiro_crew.dashboard.chat_utils import bind_linked_session_key, redact_display_content
 from kiro_crew.dashboard.slot_ownership import app_holds_gateway_key
-from kiro_crew.dashboard.state import (
-    DashboardState,
-    SlotOrigin,
-    note_crew_log_class,
-    row_mid,
-)
+from kiro_crew.dashboard.state import DashboardState, SlotOrigin, row_mid
 from kiro_crew.history import append_rows_if_absent_off_loop
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 from kiro_crew.sel import sel
@@ -588,11 +583,7 @@ def _bind_cron_slot(
         # full save CARRIES the on-disk dismissed line forward rather than
         # serializing its empty in-memory set and erasing the real tombstones. A
         # later readable restore clears the flag. Link + hydration move together.
-        slot.linked_session_key = f"cron:{job.id}"
-        # A cron link is exempt from the channel class, so this records nothing in
-        # practice. It is here so EVERY assignment site reaches the recorder and the
-        # derived pin needs no exception for this one.
-        note_crew_log_class(state, slot)
+        bind_linked_session_key(slot, f"cron:{job.id}", state)
         hydrate_slot_from_history(slot, history or [])
         # The tab's own turn time limit lives on the transcript's metadata line,
         # which this bind does not read. Until restore_cron_turn_timeout reads
