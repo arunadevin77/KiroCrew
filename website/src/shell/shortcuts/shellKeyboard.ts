@@ -76,9 +76,13 @@ export function useShellKeyboard({ toggleFocusMode, toggleNav, terminalEnabled, 
   }, [agentSwitchNotice, dispatch])
   // A new chat that could not get its own session folder opened on the default
   // project; the API client announces it for every create path (see
-  // lib/sessionFolderNotice), and it shares this transient notice.
+  // lib/sessionFolderNotice), and it shares this transient notice. The create
+  // SUCCEEDED, so this is the one dispatcher here that is not a failure and it
+  // says so: `errors-use-error-notice` carves out status text about something
+  // that has not failed, and the shared notice renders failures through
+  // ErrorNotice.
   useEffect(() => {
-    const onFolderUnavailable = () => dispatch(setAgentSwitchNotice(i18nT('store.chatSlice.session_folder_unavailable')))
+    const onFolderUnavailable = () => dispatch(setAgentSwitchNotice({ message: i18nT('store.chatSlice.session_folder_unavailable'), kind: 'status' }))
     window.addEventListener(SESSION_FOLDER_UNAVAILABLE_EVENT, onFolderUnavailable)
     return () => window.removeEventListener(SESSION_FOLDER_UNAVAILABLE_EVENT, onFolderUnavailable)
   }, [dispatch])
