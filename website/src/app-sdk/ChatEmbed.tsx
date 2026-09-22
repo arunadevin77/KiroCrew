@@ -39,6 +39,7 @@ import { JumpToBottomButton } from './ChatScrollChrome'
 import FollowUpBar from '../components/FollowUpBar'
 import ChatFooter from '../pages/chat/ChatFooter'
 import { deriveFollowUpOptions } from './protocol'
+import { goalSuggestionReplyFallback } from './protocol/options'
 import { useComposerDraft } from './useComposerDraft'
 import { useAppApi, useAppInfo } from './index'
 import { appApiSendWire } from './appSendWire'
@@ -480,16 +481,20 @@ function ChatEmbed({
    *  after the answer settles" and "a later user message clears them" behave identically
    *  here too — an agent's follow-up choices should never be silently dropped just
    *  because the surface embedding them is thinner. */
-  const { followUpOptions } = useMemo(
+  const { followUpOptions, followUpGoal } = useMemo(
     () => deriveFollowUpOptions(messages, running),
     [messages, running]
+  )
+  const followUpReplies = useMemo(
+    () => goalSuggestionReplyFallback(followUpOptions, followUpGoal),
+    [followUpOptions, followUpGoal],
   )
 
   /** The composer's draft behaviour, owned by the chat SDK rather than by this file —
    *  see useComposerDraft's own docs. Picking a follow-up option edits the draft
    *  (matching every other surface) instead of sending immediately. */
   const { draft, setDraft, textareaRef, picked, toggleOption, composition, submitOnEnter } =
-    useComposerDraft({ followUpOptions, maxHeight: composerMaxHeight })
+    useComposerDraft({ followUpOptions: followUpReplies, maxHeight: composerMaxHeight })
 
   /** What recent sends left behind on the transcript's tail, if anything:
    *  an `error` row for a send that never went out (the same role ChatPage and
@@ -976,10 +981,10 @@ function ChatEmbed({
         </div>
       )}
 
-      {followUpOptions.length > 0 && (
+      {followUpReplies.length > 0 && (
         <div className={`shrink-0 px-3 ${frameless ? '' : 'bg-bg-accent'}`}>
           <FollowUpBar
-            options={followUpOptions}
+            options={followUpReplies}
             picked={picked}
             onSelect={toggleOption}
             onSend={text => send(text)}

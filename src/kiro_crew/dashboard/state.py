@@ -45,6 +45,7 @@ from kiro_crew.constants import (  # noqa: F401 -- DENY_CAUSE_* / STEER_NOTICE_B
     STEER_NOTICE_BOUND_SECS,
     SUBAGENT_BATCH_COMPLETION_PREFIX,
     SUBAGENT_COMPLETION_PREFIX,
+    strip_goal_marker_lines,
 )
 from kiro_crew.dashboard.chat_compaction_notice import deliver_channel_compaction_notice
 from kiro_crew.dashboard.chat_tag_grants import seed_default_grants, seed_status_identity_rows
@@ -6096,7 +6097,7 @@ class _ChatSlot:
             transient_roles=_TRANSIENT_ROLES,
             redact=_redact,
             parse_options=_parse_options,
-            strip_options=lambda text: _OPTIONS_RE.sub("", text).strip(),
+            strip_options=lambda text: strip_goal_marker_lines(_OPTIONS_RE.sub("", text)).strip(),
             parse_cls_meta=parse_cls_meta,
             is_turn_interrupted=is_turn_interrupted,
             is_system_notice=is_system_notice,

@@ -819,7 +819,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   const isStreaming = lastMsg?.role === 'streaming'
   // Follow-up option chips and the ownership of the text they append.
   const {
-    followUpOptions, followUpSourceKey, followUpMulti,
+    followUpOptions, followUpGoal, followUpSourceKey, followUpMulti,
     followUpPicked, followUpPickedRef, toggleFollowUpOption,
     composerRootChange, composerUserEdit,
   } = useFollowUpChips({
@@ -2483,6 +2483,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               sentMessages={sentMessages}
               onEditLastRequest={handleEditLastRequest}
               sendOnEnter={isMobile && isTouch ? 'ctrl-enter' : chatConfig.sendOnEnter}
+              followUpGoal={followUpGoal}
               followUpOptions={followUpOptions}
               followUpPicked={followUpPicked}
               quickSend={dashCfg?.quick_send}
