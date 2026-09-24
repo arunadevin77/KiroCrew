@@ -462,6 +462,10 @@ def test_ci_blocking_scans_are_covered_by_the_floor():
         # pre-push gate: the floor would then demand a ~10-minute desktop build
         # from every contributor whose diff happens to touch packaging.
         "scripts/smoke-linux-packages.sh",
+        # Windows-only: creates a kiro-cli process under a volume-identity cwd on
+        # a real Windows runner (it downloads the pinned MSI to do so). A POSIX
+        # host cannot run it, and the floor must not download kiro-cli.
+        "scripts/windows_volume_cwd_probe.py",
         # Invoked BY packaging/build-desktop.sh to write the beacon provenance
         # module, never standalone. Gating on it would gate on the build script.
         "scripts/stamp-distribution.sh",

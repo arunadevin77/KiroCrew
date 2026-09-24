@@ -400,7 +400,7 @@ from kiro_crew.agent_sdk.backends import (  # noqa: F401
 from kiro_crew.agent_sdk.capabilities import capabilities_for
 from kiro_crew.atomic_write import atomic_write  # noqa: F401
 from kiro_crew.browser_cli.launch import browser_session_env, browser_socket_env  # noqa: F401
-from kiro_crew.config.paths import config_dir, kiro_sessions_dir
+from kiro_crew.config.paths import config_dir, default_work_dir, kiro_sessions_dir  # noqa: F401
 from kiro_crew.constants import COMPACT_WAIT_TIMEOUT_SECS  # noqa: F401
 from kiro_crew.dashboard.side_readonly_spec import unavailable_mode_explanation
 from kiro_crew.env import (  # noqa: F401
@@ -470,6 +470,12 @@ from kiro_crew.turn_limit import current_turn_limit_secs  # noqa: F401
 from kiro_crew.user_json import loads_user_json  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+#: Whether the spawn pins the caller-named work dir's directory chain across
+#: process creation, on every platform (rationale on ``AcpRuntime``'s twin).
+#: A module attribute rather than an inline platform read so a test can drive
+#: the composition on any host and switch it off for harnesses that stub the spawn.
+_PIN_WORK_DIR_CHAIN: bool = True
 
 #: The name sent as ``clientInfo.name``. It IS the kiro-cli client-application
 #: tag, so one filter string finds Crew on both channels and the two cannot drift.
@@ -689,7 +695,14 @@ class AcpClient:
         if work_dir:
             self._work_dir = Path(work_dir)
         else:
-            self._work_dir = config_dir() / "workspace"
+            self._work_dir = default_work_dir()
+        # A caller-named work dir (a slot's project, a folder's project, a
+        # cron job's ``project_dir``, an alias workspace) is operator-chosen and
+        # was handed over as a canonical STRING; on Windows the spawn pins its
+        # directory chain so that string still reaches the verified
+        # directories when the child enters it (``_pin_work_dir_chain``).
+        # The runtime's own default tree is not operator-named and is left alone.
+        self._work_dir_is_named = bool(work_dir)
         # Once-per-instance guard for the ensure_ready work-dir check: True
         # after the first (off-loop) mkdir, so the per-prompt warm path pays
         # no filesystem syscall at all.
@@ -887,6 +900,7 @@ class AcpClient:
         self._stub_session_token = mint_stub_session_token()
         self._sandbox_cleanup: str | None = None
         self._bound_workspace_fd: int | None = None
+        self._work_dir_chain: list[int] = []
         self._spawn_work_dir = str(self._work_dir)
         self._process: asyncio.subprocess.Process | None = None
         self._pid: int | None = None
@@ -1723,6 +1737,88 @@ class AcpClient:
     _apply_session_identity_env = _client_spawn_env._apply_session_identity_env
     _resolve_spawn_agent_argv = _client_spawn_env._resolve_spawn_agent_argv
 
+    async def _pin_work_dir_chain(self) -> None:
+        """Hold every directory on the caller-named work dir across the spawn.
+
+        Mirrors ``AcpRuntime._pin_work_dir_chain``; the rationale lives there.
+        On POSIX the chain's leaf is duplicated into ``_bound_workspace_fd`` so
+        the child enters it by descriptor and the ACP cwd is verified against it.
+        """
+        if not (_PIN_WORK_DIR_CHAIN and getattr(self, "_work_dir_is_named", False)):
+            return
+
+        def _pin() -> tuple[list[int], str, int | None]:
+            # Twin of the runtime's ``_pin``: the pool's explicit default cwd
+            # and the cold-start path's per-key directory (a direct child of
+            # that default) are the gateway's OWN tree, never pinned -- pinning
+            # them would hold the data home from the gateway for as long as any
+            # agent lives and put the walk on every ordinary session start.
+            # String work only (``compare_key``), so nothing is resolved by
+            # name inside the guard against a re-resolved name.
+            own_default = platform_compat.compare_key(default_work_dir())
+            spawn_key = platform_compat.compare_key(self._spawn_work_dir)
+            if spawn_key == own_default or os.path.dirname(spawn_key) == own_default:
+                return [], self._spawn_work_dir, None
+            # ``create_missing``: a caller-named work dir that does not exist yet
+            # is created by name only under already-pinned ancestors and then
+            # pinned itself, the one write the walk allows; a by-name ``mkdir``
+            # BEFORE the pin would resolve the whole path unpinned.
+            fds, bound_spelling = platform_compat.pin_directory_chain_bound(
+                self._spawn_work_dir, create_missing=True
+            )
+            # POSIX: the child enters the LEAF by descriptor, never by name
+            # (twin of the runtime; Windows has no descriptor-entered cwd).
+            child_fd: int | None = None
+            if platform_compat.IS_POSIX:
+                try:
+                    child_fd = platform_compat.duplicate_leaf_descriptor(fds)
+                except BaseException:
+                    platform_compat.release_directory_chain(fds)
+                    raise
+            # The child is created under the spelling the chain OPENED under --
+            # on the binding rule the volume identity, since the drive letter
+            # the validated spelling starts from is a rebindable name the
+            # kernel's cwd open at ``CreateProcess`` would resolve. The runtime's
+            # ``_pin`` carries the full account, including the real-Windows CI
+            # probe that verifies the harnesses start under that cwd.
+            return fds, bound_spelling, child_fd
+
+        try:
+            # The chain, the spelling the child is created under (the
+            # volume-identity spelling on the Windows rule, the validated
+            # spelling elsewhere) and, on POSIX, the descriptor the child enters
+            # instead of that spelling.
+            self._work_dir_chain, self._spawn_work_dir, bound = await asyncio.to_thread(_pin)
+            if bound is not None:
+                self._bound_workspace_fd = bound
+        except OSError as exc:
+            raise RuntimeError(
+                f"refusing to start the agent in {self._spawn_work_dir!r}: a directory on "
+                f"that path could not be pinned ({exc.strerror or exc.__class__.__name__}); "
+                "a component may have been replaced by a symlink or junction since the "
+                "directory was validated."
+            ) from exc
+
+    async def _pinned_spawn(self) -> None:
+        """Pin the named work dir, then :meth:`_spawn`; release the pin if the spawn fails."""
+        # The Windows chain pin comes FIRST -- before the workspace mkdir, the
+        # voice-runtime check, the skill projection and every other by-name
+        # touch of the work dir on the way to ``CreateProcess``: each resolves
+        # the pathname, and a component swapped for a junction aimed at a share
+        # is followed by whichever runs first, so a pin just before the create
+        # would guard the last access and leave the earlier ones open. Held
+        # from here through the create and for the process's lifetime;
+        # released on any failure before the process exists. A stale binding
+        # from an earlier attempt is discarded first (the discard is also what
+        # releases a chain). Mirrors ``AcpRuntime._spawn_admitted``.
+        await self._discard_bound_workspace()
+        await self._pin_work_dir_chain()
+        try:
+            await self._spawn()
+        except BaseException:
+            await self._discard_bound_workspace()
+            raise
+
     async def _spawn(self) -> None:
         """Start the ACP backend subprocess with stdio pipes, suspended, then track it.
 
@@ -1732,6 +1828,9 @@ class AcpClient:
         own arm below. Either plan goes through the launch tail both drivers share
         (:func:`kiro_crew.acp.launch.launch`). What happens once the process exists --
         the resume, its identity, its pids, its stderr -- stays here.
+        Entered through :meth:`_pinned_spawn`, which holds the Windows work-dir
+        chain before the first by-name access below; the launch tail binds the
+        workspace against that held descriptor rather than re-opening the name.
         """
         # Off-loop: mkdir is a blocking syscall and the parent dirs may live on
         # slow storage; the loop must never wait on the kernel here. The
@@ -1739,7 +1838,9 @@ class AcpClient:
         # the detector runs for every harness (the defect it catches has shipped on
         # three), and a second await would be a new suspension point on kiro-cli's
         # construction path in service of a diagnostic -- so the count of awaits
-        # here is deliberately unchanged (harness-parity H13).
+        # here is deliberately unchanged (harness-parity H13). Under the pin every
+        # component of a named work dir is held, so this by-name resolution
+        # cannot be redirected.
         await asyncio.to_thread(self._prepare_spawn_workspace)
         # A fresh spawn reads ``agent.env`` afresh, once (_agent_env_for_spawn).
         self._agent_env_snapshot = None
@@ -2739,7 +2840,13 @@ class AcpClient:
             finally:
                 self._reset_state()
         if not self._work_dir_ready:
-            await asyncio.to_thread(ensure_directory, self._work_dir)
+            # A caller-named work dir the spawn will PIN (Windows) is not touched
+            # by name here: this mkdir would resolve the pathname ahead of the
+            # pin, the very window the pin exists to close. The pin proves the
+            # directory exists, and the mkdir under it in ``_spawn``
+            # runs on every spawn regardless.
+            if not (_PIN_WORK_DIR_CHAIN and getattr(self, "_work_dir_is_named", False)):
+                await asyncio.to_thread(ensure_directory, self._work_dir)
             self._work_dir_ready = True
         if self._process and self._process.returncode is None and self._session_id:
             if getattr(self, "_activated_model", ""):
@@ -2776,7 +2883,7 @@ class AcpClient:
                             self._reset_state()
 
                     if not self._process:
-                        await self._spawn()
+                        await self._pinned_spawn()
                         _startup_spawned = True
 
                     await self._initialize_session()

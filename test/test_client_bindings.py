@@ -160,6 +160,8 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     ),
     "_pi_session_mcp_servers": ("function", False, "f5423acdeebc", "client_mcp_array"),
     "_pin_claude_starting_mode": ("function", True, "4d0ed6879afd", "client_claude_session"),
+    "_pin_work_dir_chain": ("function", True, "b60c5fea256e", "client"),
+    "_pinned_spawn": ("function", True, "b60c5fea256e", "client"),
     "_placed_mcp_server_names": ("function", False, "9d5ab4ea1828", "client_mcp_array"),
     "_pooled_broker_stubs": ("function", False, "7eb96c2fda05", "client_mcp_array"),
     "_pooled_mcp_servers": ("function", False, "7eb96c2fda05", "client_mcp_array"),

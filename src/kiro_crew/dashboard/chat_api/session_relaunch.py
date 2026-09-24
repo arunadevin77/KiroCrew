@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -20,6 +19,7 @@ if TYPE_CHECKING:
         AcpProvider,
         DashboardState,
         LLMProvider,
+        ProjectDirRefused,
         _app_cancel_denied,
         _ChatSlot,
         _CommitToken,
@@ -35,11 +35,11 @@ if TYPE_CHECKING:
         default_project_dir,
         deny_app_slot_access,
         effective_session_key,
-        is_sensitive_path,
         logger,
         owner_start_priority,
         read_bounded_json,
         relay_archive_refusal,
+        resolve_project_dir,
         schedule_eager_spawn,
         sel,
         slot_not_found,
@@ -608,18 +608,24 @@ async def api_chat_slot_project(request: web.Request) -> web.Response:
     if denied is not None:
         return denied
     if project:
-        project = os.path.realpath(os.path.expanduser(project))
-        if not os.path.isdir(project):
-            return web.json_response({"error": "Not a directory"}, status=400)
-        if is_sensitive_path(project):
-            sel().log_api_access(
-                caller=request.get("user", "dashboard"),
-                operation="chat_slot_project",
-                outcome="denied",
-                resources=f"slot={name} project={project}",
-                error="sensitive path",
+        # The one project-directory rule (absolute, canonical, non-sensitive,
+        # existing; UNC refused; a reparse-point component refused on
+        # Windows), shared with the chat-folder and cron validators, so this
+        # surface cannot drift from them. Off-loop: it canonicalises through
+        # the filesystem. The sensitive-path denial (and the network/reparse
+        # ones) are SEL-audited inside the rule under ``chat_slot_project``.
+        try:
+            project = await asyncio.to_thread(
+                resolve_project_dir,
+                project,
+                label="Project directory",
+                audit_operation="chat_slot_project",
+                audit_caller=request.get("user", "dashboard"),
             )
-            return web.json_response({"error": "Access denied"}, status=403)
+        except ProjectDirRefused as exc:
+            if exc.sensitive:
+                return web.json_response({"error": "Access denied"}, status=403)
+            return web.json_response({"error": str(exc)}, status=400)
         # Pre-flight the voice-runtime workspace guard: a
         # workspace that contains (or sits inside) the Kiro Crew data home is
         # refused at agent spawn anyway, but only after the session exists and

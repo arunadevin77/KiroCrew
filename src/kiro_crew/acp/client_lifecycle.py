@@ -23,7 +23,7 @@ Instance fields written: ``_background_launches``, ``_bound_workspace_fd``, ``_b
 ``_session_mcp_cache``, ``_session_mcp_snapshot``, ``_session_mcp_unhonoured``,
 ``_spawn_start_token``, ``_spawn_work_dir``, ``_spec_denied_tools``,
 ``_spec_zero_tools``, ``_stderr_lines``, ``_stderr_task``, ``_stdin_stalled``,
-``_windows_tree_cleanup_failed``.
+``_windows_tree_cleanup_failed``, ``_work_dir_chain``.
 
 Instance fields read: ``_entitlement_probe_inflight``, ``_mcp_gateway_socket``,
 ``_native_skill_projection``, ``_sandbox_hidden_dirs``, ``_sandbox_mode``,
@@ -246,40 +246,57 @@ def _discard_sandbox_cleanup(self: AcpClient) -> None:
 
 
 async def _discard_bound_workspace(self: AcpClient) -> None:
-    """Close the parent copy of a macOS workspace identity off-loop."""
+    """Close the parent copy of a macOS workspace identity off-loop.
+
+    Also releases the Windows work-dir chain pins (``_pin_work_dir_chain``):
+    both are the parent's hold on the directory the child entered, and both
+    end with the process.
+    """
     descriptor = getattr(self, "_bound_workspace_fd", None)
     self._bound_workspace_fd = None
+    chain = getattr(self, "_work_dir_chain", [])
+    self._work_dir_chain = []
     work_dir = getattr(self, "_work_dir", None)
     if work_dir is not None:
         self._spawn_work_dir = str(work_dir)
     if descriptor is not None:
         await release_bound_agent_workspace(descriptor)
+    if chain:
+        await asyncio.to_thread(platform_compat.release_directory_chain, chain)
 
 
 async def _session_work_dir(self: AcpClient) -> str:
     """Return the ACP cwd backed by the process's bound directory identity.
 
-    Unbound -- every platform but macOS, where nothing binds -- this is the
-    spawn's own pathname and there is nothing to re-check.
+    Unbound with a pinned chain (the Windows rule), the peer receives the
+    spelling the process was created under -- the volume identity the chain
+    pin walked -- since the peer resolves that name for itself and the
+    letter is what a same-user writer can rebind (``_pin_work_dir_chain``).
+    Unbound and unpinned (the gateway's own work dirs), this is the
+    validated work dir and there is nothing to re-check.
 
-    Bound, the descriptor is re-verified and the peer receives the DESCRIPTOR's
-    own name. The rule itself is ``sandbox.resolve_bound_session_workspace``,
+    Bound (a caller-named work dir on POSIX, the macOS voice-safe binding),
+    the descriptor is re-verified and the peer receives the DESCRIPTOR's own
+    name. The rule itself is ``sandbox.resolve_bound_session_workspace``,
     shared with ``AcpRuntime._session_work_dir`` so the two halves of this
     boundary cannot drift; only the error type is this front end's. Fails the
     session rather than falling back to the bind-time spelling; see the runtime's
     method for the residual limit a string cannot close.
     """
     if self._bound_workspace_fd is None:
-        return self._spawn_work_dir
+        if getattr(self, "_work_dir_chain", None):
+            return str(self._spawn_work_dir)
+        return str(self._work_dir)
     try:
         return await resolve_bound_session_workspace(self._bound_workspace_fd, self._spawn_work_dir)
     except BoundWorkspaceMismatch as exc:
         raise AcpError(
-            "A delegated macOS Kiro process is bound to one exact workspace; "
-            "respawn it bound to the requested workspace"
+            "This agent process is bound to one exact workspace directory and the "
+            "requested path no longer names it (moved, or replaced by a link since "
+            "it was validated); respawn it bound to the requested workspace"
         ) from exc
     except OSError as exc:
-        raise AcpError("Cannot verify the macOS session workspace binding") from exc
+        raise AcpError("Cannot verify the session workspace against the bound directory") from exc
 
 
 async def _cleanup_failed_live_spawn(self: AcpClient) -> None:
