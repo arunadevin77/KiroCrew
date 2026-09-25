@@ -1,4 +1,5 @@
-import TabCloseMenu, { openTabCloseMenu } from '../../components/TabCloseMenu'
+import TabCloseMenu, { batchCloseConfirm, openTabCloseMenu } from '../../components/TabCloseMenu'
+import { useConfirm } from '../../components/ConfirmDialog'
 import { useState, useRef, useEffect, useCallback, useMemo, Fragment, Suspense, lazy, forwardRef, type ComponentPropsWithoutRef, type ElementRef, type ReactNode } from 'react'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { useRailWidth } from '../../hooks/useRailWidth'
@@ -713,16 +714,61 @@ export default function SidePanel({
   const { confirm, confirmDialog, confirmOpen } = useConfirm()
   const currentSlotRef = useRef(slot)
   currentSlotRef.current = slot
+  // The live tab list, read AFTER the disk preflight's await so a buffer the
+  // user edited during that round trip is re-evaluated, not closed from a stale
+  // snapshot.
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
   const handleCloseTabs = async (targets: PanelTab[]) => {
     if (confirmOpen || targets.length === 0) return
-    if (targets.some(tab => tab.kind === 'file' && tab.content !== tab.savedContent)) {
-      if (!await confirm({
-        title: i18nT('components.markdownPanel.discard_unsaved_changes'),
-        confirmLabel: i18nT('components.markdownPanel.discard_changes_button'),
-      })) return
-    }
+    const shells = targets.filter(tab => tab.kind === 'terminal' && tab.sessionId).map(tab => tab.title)
+    // A clean file tab whose on-disk copy is gone (or cannot be read) holds the
+    // only remaining copy of its contents. The single × runs through
+    // MarkdownPanel's last-copy guard, but a batch calls handleCloseTab
+    // directly and would skip it, so the batch re-checks the disk for each
+    // clean, non-empty file target and asks before discarding one whose copy it
+    // cannot confirm. A partial (truncated) buffer is still the only surviving
+    // prefix once its disk copy is gone, so it is preflighted too — only binary
+    // buffers, which are an envelope rather than the file, are excluded. A
+    // working-tree diff tab carries the file's full text too, and its single ×
+    // runs the same guard, so it is preflighted alongside file tabs. Dirty
+    // tabs are named separately below.
+    const cleanFiles = targets.filter(tab =>
+      (tab.kind === 'file' || tab.kind === 'wtdiff') && tab.content === tab.savedContent
+      && !tab.binary && (tab.content ?? '') !== '' && !!tab.path)
+    const lastCopy: PanelTab[] = []
+    const unread: PanelTab[] = []
+    await Promise.all(cleanFiles.map(async tab => {
+      try {
+        const r = await fetchFileRead(tab.path!)
+        // 404 = gone from disk; any other non-ok (or a transport throw) is a
+        // failed read that could not verify the copy. Either way the buffer may
+        // be the only copy left, but only the first is a missing file.
+        if (r.status === 404) lastCopy.push(tab)
+        else if (!r.ok) unread.push(tab)
+      } catch { unread.push(tab) }
+    }))
     if (currentSlotRef.current !== slot) return
-    targets.forEach(tab => handleCloseTab(tab.id))
+    // Re-resolve each target from the LIVE tab state after the await: a tab the
+    // user edited during the disk read is now dirty and must be named, not
+    // closed on the pre-read snapshot. A target that vanished mid-read drops out.
+    const live = new Map(tabsRef.current.map(t => [t.id, t]))
+    const liveTargets = targets.map(t => live.get(t.id)).filter((t): t is PanelTab => !!t)
+    const dirty = liveTargets.filter(tab => tab.kind === 'file' && tab.content !== tab.savedContent)
+    // A file that turned dirty during the read is no longer a silent last-copy
+    // close — it is named under the unsaved-edits list instead.
+    const dirtyIds = new Set(dirty.map(t => t.id))
+    const lastCopyLive = lastCopy.filter(t => !dirtyIds.has(t.id))
+    const unreadLive = unread.filter(t => !dirtyIds.has(t.id))
+    const ask = batchCloseConfirm(
+      dirty.map(tab => ({ name: tab.title, path: tab.path })),
+      shells,
+      lastCopyLive.map(tab => ({ name: tab.title, path: tab.path })),
+      unreadLive.map(tab => ({ name: tab.title, path: tab.path })),
+    )
+    if (ask && !await confirm(ask)) return
+    if (currentSlotRef.current !== slot) return
+    liveTargets.forEach(tab => handleCloseTab(tab.id))
   }
   // Move a terminal tab OUT of this chat into the app-wide bottom panel. Unlike
   // handleCloseTab this must NOT dispose the session — the PTY + xterm live in
@@ -1158,6 +1204,7 @@ export default function SidePanel({
               instantLayout={resizing || slotSwitched || dimAnimating}
               onSelect={() => { void requestActive(t.id, activeId) }}
               onClose={() => handleCloseTabs([t])}
+              onCloseDirect={() => handleCloseTab(t.id)}
               closeOthersDisabled={dynamicTabs.length === 1}
               closeRightDisabled={i === dynamicTabs.length - 1}
               onCloseOthers={() => handleCloseTabs(dynamicTabs.filter(tab => tab.id !== t.id))}
@@ -1933,14 +1980,19 @@ function TerminalTabTitle({ sessionId, fallback }: { sessionId: string; fallback
  *
  *  A component rather than inline JSX inside the map: each chip owns its own
  *  long-press drag state, and a hook cannot be called from a loop. */
-function DraggableTabItem({ tab, active, separator, instantLayout, onSelect, onClose, closeOthersDisabled, closeRightDisabled, onCloseOthers, onCloseRight, onCloseAll }: {
+function DraggableTabItem({ tab, active, separator, instantLayout, onSelect, onClose, onCloseDirect, closeOthersDisabled, closeRightDisabled, onCloseOthers, onCloseRight, onCloseAll }: {
   tab: PanelTab
   active: boolean
   separator: boolean
   /** Skip the layout spring while the panel is being resized — see the caller. */
   instantLayout: boolean
   onSelect: () => void
+  /** The close-menu's "Close" item: shares the batch path with the other menu
+   *  items so a last-copy/unsaved file is still confirmed. */
   onClose: () => void
+  /** The chip's × (and middle-click): closes this one tab directly, exactly as
+   *  on main — the single-× control's behaviour is unchanged by this feature. */
+  onCloseDirect: () => void
   closeOthersDisabled: boolean
   closeRightDisabled: boolean
   onCloseOthers: () => void
@@ -1951,7 +2003,9 @@ function DraggableTabItem({ tab, active, separator, instantLayout, onSelect, onC
   const { itemProps, dragging } = useLongPressReorder({ onHoldRelease: openTabCloseMenu })
   return (
     <TabCloseMenu closeOthersDisabled={closeOthersDisabled} closeRightDisabled={closeRightDisabled}
-      onClose={onClose} onCloseOthers={onCloseOthers} onCloseRight={onCloseRight} onCloseAll={onCloseAll}>
+      onClose={onClose} onCloseOthers={onCloseOthers} onCloseRight={onCloseRight} onCloseAll={onCloseAll}
+      // Batches act on dynamic tabs only; the note says the fixed views stay.
+      keepNote={i18nT('components.tabCloseMenu.fixed_views_stay_open')}>
     <Reorder.Item
       value={tab}
       {...itemProps}
@@ -1969,7 +2023,7 @@ function DraggableTabItem({ tab, active, separator, instantLayout, onSelect, onC
         // Centered in the group's gap-2.
         <span aria-hidden="true" className="absolute -left-[4.5px] top-1/2 -translate-y-1/2 w-px h-4 bg-border" />
       )}
-      <TabChip tab={tab} active={active} onSelect={onSelect} onClose={onClose} />
+      <TabChip tab={tab} active={active} onSelect={onSelect} onClose={onCloseDirect} />
     </Reorder.Item>
     </TabCloseMenu>
   )

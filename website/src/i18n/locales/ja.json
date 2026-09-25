@@ -6190,6 +6190,21 @@
       "close_failed": "サーバー上でこのターミナルのシェルを停止できませんでした。自動的にクリーンアップされます。",
       "closing_terminal": "ターミナルを閉じています…"
     },
+    "tabCloseMenu": {
+      "close_all_terminals": "すべてのターミナルを閉じる",
+      "close_and_discard_button": "破棄してターミナルを閉じる",
+      "close_other_terminals": "他のターミナルを閉じる",
+      "close_terminals_body_other": "{{count}} 個のターミナルを閉じ、実行中のシェルを停止します。",
+      "close_terminals_button": "ターミナルを閉じる",
+      "close_terminals_title": "ターミナルを閉じますか？",
+      "close_terminals_to_right": "右側のターミナルを閉じる",
+      "discard_and_close_button": "破棄して閉じる",
+      "discard_and_close_terminals_title": "編集を破棄してターミナルを閉じますか？",
+      "fixed_views_stay_open": "変更・成果物・ファイルのビューは開いたままです",
+      "last_copy_files_lost": "これらのファイルはディスク上にありません。閉じると残っている唯一のコピーが失われます。",
+      "unread_files_error": "これらのファイルをディスクから読み取れませんでした。開いているタブが唯一のコピーかもしれません。",
+      "unsaved_files_lost": "次のファイルの保存されていない変更は失われます。"
+    },
     "chatInput": {
       "auto_jev": "自動 (Jev)",
       "auto_jev_desc": "Jev に任せる: すぐ反映するか、後で実行するか",

@@ -123,6 +123,7 @@
   "components.queueStack.hidden_lines",
   "components.queueStack.sub_agent_result",
   "components.skillBrowserModal.file",
+  "components.tabCloseMenu.close_terminals_body",
   "components.webPreviewPanel.annotate_clear_confirm",
   "components.webPreviewPanel.annotations_count",
   "components.workspaceTree.unreadable_dismissed",

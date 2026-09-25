@@ -6298,6 +6298,22 @@
       "close_failed": "সার্ভারে এই টার্মিনালের শেল বন্ধ করা যায়নি। এটি স্বয়ংক্রিয়ভাবে পরিষ্কার হয়ে যাবে।",
       "closing_terminal": "টার্মিনাল বন্ধ হচ্ছে…"
     },
+    "tabCloseMenu": {
+      "close_all_terminals": "সব টার্মিনাল বন্ধ করো",
+      "close_and_discard_button": "বাতিল করে টার্মিনাল বন্ধ করো",
+      "close_other_terminals": "অন্য টার্মিনালগুলো বন্ধ করো",
+      "close_terminals_body_one": "{{count}}টি টার্মিনাল বন্ধ হবে এবং এর চলমান শেল থেমে যাবে।",
+      "close_terminals_body_other": "{{count}}টি টার্মিনাল বন্ধ হবে এবং সেগুলোর চলমান শেল থেমে যাবে।",
+      "close_terminals_button": "টার্মিনাল বন্ধ করো",
+      "close_terminals_title": "টার্মিনাল বন্ধ করবে?",
+      "close_terminals_to_right": "ডান পাশের টার্মিনালগুলো বন্ধ করো",
+      "discard_and_close_button": "বাদ দিয়ে বন্ধ করো",
+      "discard_and_close_terminals_title": "সম্পাদনা বাদ দিয়ে টার্মিনাল বন্ধ করবে?",
+      "fixed_views_stay_open": "পরিবর্তন, আর্টিফ্যাক্ট ও ফাইল ভিউ খোলা থাকে",
+      "last_copy_files_lost": "এই ফাইলগুলো ডিস্কে নেই; এগুলো বন্ধ করলে এদের একমাত্র অবশিষ্ট কপি হারিয়ে যাবে।",
+      "unread_files_error": "এই ফাইলগুলো ডিস্ক থেকে পড়া যায়নি, তাই খোলা ট্যাবেই হয়তো একমাত্র কপি আছে।",
+      "unsaved_files_lost": "এই ফাইলগুলোতে অসংরক্ষিত পরিবর্তন আছে, যা হারিয়ে যাবে।"
+    },
     "chatInput": {
       "auto_jev": "স্বয়ংক্রিয় (Jev)",
       "auto_jev_desc": "Jev ঠিক করুক: এখনই কাজে লাগানো, নাকি পরে চালানো",

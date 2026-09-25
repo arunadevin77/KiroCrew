@@ -6298,6 +6298,22 @@
       "close_failed": "सर्वर पर इस टर्मिनल का शेल बंद नहीं किया जा सका। यह स्वतः साफ़ हो जाएगा।",
       "closing_terminal": "टर्मिनल बंद हो रहा है…"
     },
+    "tabCloseMenu": {
+      "close_all_terminals": "सभी टर्मिनल बंद करो",
+      "close_and_discard_button": "छोड़ें और टर्मिनल बंद करो",
+      "close_other_terminals": "अन्य टर्मिनल बंद करो",
+      "close_terminals_body_one": "{{count}} टर्मिनल बंद होगा और उसका चल रहा शेल रुक जाएगा।",
+      "close_terminals_body_other": "{{count}} टर्मिनल बंद होंगे और उनके चल रहे शेल रुक जाएँगे।",
+      "close_terminals_button": "टर्मिनल बंद करो",
+      "close_terminals_title": "टर्मिनल बंद करने हैं?",
+      "close_terminals_to_right": "दाईं ओर के टर्मिनल बंद करो",
+      "discard_and_close_button": "छोड़कर बंद करो",
+      "discard_and_close_terminals_title": "बदलाव छोड़कर टर्मिनल बंद करने हैं?",
+      "fixed_views_stay_open": "बदलाव, आर्टिफ़ैक्ट और फ़ाइलें व्यू खुले रहते हैं",
+      "last_copy_files_lost": "ये फ़ाइलें डिस्क पर नहीं हैं; इन्हें बंद करने पर इनकी एकमात्र बची हुई कॉपी चली जाएगी।",
+      "unread_files_error": "ये फ़ाइलें डिस्क से पढ़ी नहीं जा सकीं, इसलिए खुले टैब में शायद इनकी इकलौती कॉपी है।",
+      "unsaved_files_lost": "इन फ़ाइलों में बिना सहेजे बदलाव हैं, जो खो जाएँगे।"
+    },
     "chatInput": {
       "auto_jev": "स्वतः (Jev)",
       "auto_jev_desc": "Jev चुने: अभी लागू करें, या बाद में चलाएँ",

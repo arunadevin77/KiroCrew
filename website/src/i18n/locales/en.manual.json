@@ -2105,6 +2105,22 @@
       "body_default_multi": "No workspace selected. The {{lines}} lines below will run in a new terminal tab, using the terminal’s starting directory.",
       "body_default_single": "No workspace selected. The command below will run in a new terminal tab, using the terminal’s starting directory."
     },
+    "tabCloseMenu": {
+      "close_all_terminals": "Close all terminals",
+      "close_and_discard_button": "Discard and close terminals",
+      "close_other_terminals": "Close other terminals",
+      "close_terminals_body_one": "{{count}} terminal will close and its running shell will stop.",
+      "close_terminals_body_other": "{{count}} terminals will close and their running shells will stop.",
+      "close_terminals_button": "Close terminals",
+      "close_terminals_title": "Close terminals?",
+      "close_terminals_to_right": "Close terminals to the right",
+      "discard_and_close_button": "Discard and close",
+      "discard_and_close_terminals_title": "Discard edits and close terminals?",
+      "fixed_views_stay_open": "The Changes, Artifacts and Files views stay open",
+      "last_copy_files_lost": "These files are not on disk; closing them discards their only remaining copy.",
+      "unread_files_error": "Couldn't read these files from disk, so their open tabs may hold the only copy.",
+      "unsaved_files_lost": "These files have unsaved edits that will be lost."
+    },
     "chatInput": {
       "cancel_upload": "Cancel upload",
       "send_waits_for_upload": "Waiting for the attachment to finish",

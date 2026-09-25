@@ -6190,6 +6190,21 @@
       "close_failed": "서버에서 이 터미널의 셸을 중지할 수 없습니다. 자동으로 정리됩니다.",
       "closing_terminal": "터미널을 닫는 중…"
     },
+    "tabCloseMenu": {
+      "close_all_terminals": "모든 터미널 닫기",
+      "close_and_discard_button": "취소하고 터미널 닫기",
+      "close_other_terminals": "다른 터미널 닫기",
+      "close_terminals_body_other": "터미널 {{count}}개를 닫고 실행 중인 셸을 중지합니다.",
+      "close_terminals_button": "터미널 닫기",
+      "close_terminals_title": "터미널을 닫으시겠습니까?",
+      "close_terminals_to_right": "오른쪽 터미널 닫기",
+      "discard_and_close_button": "버리고 닫기",
+      "discard_and_close_terminals_title": "편집 내용을 버리고 터미널을 닫으시겠습니까?",
+      "fixed_views_stay_open": "변경 사항, 아티팩트, 파일 보기는 열린 채로 유지됩니다",
+      "last_copy_files_lost": "이 파일은 디스크에 없습니다. 닫으면 남은 유일한 사본이 사라집니다.",
+      "unread_files_error": "디스크에서 이 파일을 읽지 못했습니다. 열린 탭에만 사본이 남아 있을 수 있습니다.",
+      "unsaved_files_lost": "다음 파일의 저장하지 않은 변경 사항이 사라집니다."
+    },
     "chatInput": {
       "auto_jev": "자동 (Jev)",
       "auto_jev_desc": "Jev가 선택: 지금 반영하거나 나중에 실행",
