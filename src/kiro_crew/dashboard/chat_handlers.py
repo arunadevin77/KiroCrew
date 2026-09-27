@@ -23,6 +23,7 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 from kiro_crew import crew_recency
+from kiro_crew import execution_context as execution_context_mod
 from kiro_crew import members as members_mod
 from kiro_crew import model_registry
 from kiro_crew.acp.client import AcpModelUnavailable
@@ -31,6 +32,7 @@ from kiro_crew.agent_sdk.backends import ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS
 from kiro_crew.agent_sdk.capabilities import MODEL_NAMESPACE_ACP, capabilities_of
 from kiro_crew.agent_sdk.provider_identity import is_claude_code
 from kiro_crew.agent_switch_command import switch_announcement
+from kiro_crew.config import live
 from kiro_crew.config.loader import (
     AUTOCOMPACT_PCT_MAX,
     AUTOCOMPACT_PCT_MIN,
@@ -128,6 +130,8 @@ from kiro_crew.dashboard.chat_persistence import (  # noqa: F401
     _load_restore_cfg,
     _local_turn_generation,
     _local_turn_prompt,
+    _member_choice,
+    _member_private_selection,
     _rebase_rehydrated_refresh_mark,
     _reconcile_local_turn_marker,
     _rehydrate_slot_title,
@@ -140,11 +144,14 @@ from kiro_crew.dashboard.chat_persistence import (  # noqa: F401
     cap_effort_capability_levels,
     get_reasoning_effort_ordered,
     get_reasoning_effort_values,
+    member_choice_refusal,
+    member_replaced_message,
     pin_private_agent_store,
     register_reasoning_effort_values,
     release_prewarmed_session,
     remember_unknown_row_fields,
     save_slot_off_loop,
+    slot_defers_member_binding,
 )
 from kiro_crew.dashboard.chat_runner import (
     _context_usage_payload,
@@ -195,6 +202,7 @@ from kiro_crew.dashboard.chat_utils import (
 )
 from kiro_crew.dashboard.chat_utils import (  # noqa: F401
     restore_replacement_if_handover_did_not_land,
+    run_to_completion,
     slot_history_key,
     slot_transcript_key,
     subagents_attached_async,
@@ -269,6 +277,11 @@ from kiro_crew.dashboard.state import (  # noqa: F401
 )
 from kiro_crew.dashboard.system_notices import SESSION_RELOAD_KIND, is_system_notice
 from kiro_crew.dashboard.turn_dispatch import spawn_guarded_turn
+from kiro_crew.execution_context import (
+    EXECUTION_CONTEXT_KEY,
+    execution_from_record,
+    read_session_execution,
+)
 from kiro_crew.history import (  # noqa: F401
     HUMAN_TURN_META_KEY,
     carry_provenance,
@@ -282,7 +295,11 @@ from kiro_crew.llm_helpers import (
     slot_switch_session_lock,
 )
 from kiro_crew.memory_startup import MemoryStartupUnavailable, wait_for_memory_preparation
-from kiro_crew.memory_stores import UnknownMemoryStore
+from kiro_crew.memory_stores import (
+    UnknownMemoryStore,
+    named_store_or_empty,
+    require_member_memory_store,
+)
 from kiro_crew.messaging.link import canonical_key, is_channel_session_key  # noqa: F401
 from kiro_crew.providers.acp import AcpProvider
 from kiro_crew.providers.base import LLMProvider
@@ -298,12 +315,16 @@ from kiro_crew.security import (
     redact_exfiltration_urls,
 )
 from kiro_crew.sel import sel
-from kiro_crew.session_agent_selection import (
+from kiro_crew.session_agent_selection import (  # noqa: F401
     SelectionChange,
+    member_choice_from_record,
+    member_choice_record,
     record_agent_selection,
     resolve_session_agent_bindings,
     restore_agent_selection,
     session_agent_selection_name,
+    withdraw_agent_selection,
+    withdraw_new_agent_selection,
 )
 from kiro_crew.session_lifecycle import compaction_in_flight
 from kiro_crew.session_summary import count_user_turns_in_records
@@ -673,6 +694,73 @@ async def decided_message_handling(slot: Any, message: str) -> tuple[bool, dict 
         return False, None
 
 
+def _may_run_unbound_member(slot: _ChatSlot) -> bool:
+    """Whether an empty plain slot's agent may be a private member not bound yet.
+
+    Asks the adopted config snapshot and reads nothing from disk, so a first
+    send on any other empty slot does not load config before its user row. A
+    member-kind pick that is missing or names a store is admitted for the
+    off-loop store check.
+    """
+    if not slot.agent or not slot_defers_member_binding(slot):
+        return False
+    snapshot = live.snapshot()
+    if snapshot is None:
+        return False
+    if slot.member_choice is not None or _member_private_selection(slot.agent, snapshot)[1]:
+        return True
+    if slot.agent_kind != "member":
+        return False
+    member = snapshot.agents.get(slot.agent)
+    return member is None or bool(named_store_or_empty(member.memory_store))
+
+
+def _member_unresolved(agent: str, config: KiroCrewConfig) -> bool:
+    try:
+        require_member_memory_store(config, agent, require_directory=False)
+    except UnknownMemoryStore:
+        return True
+    return False
+
+
+async def _runs_unbound_member(
+    session_key: str, agent: str, agent_kind: str, config: KiroCrewConfig
+) -> bool:
+    """Whether a first send binds *agent*'s private store before its user row.
+
+    Holds while *agent* is a private member in *config* and the session has no
+    execution record. Any other unbound session is bound by the chat runner on
+    its first turn, after the user row.
+    """
+    if agent_kind == "template" or not agent or not _member_private_selection(agent, config)[1]:
+        return False
+    return await asyncio.to_thread(read_session_execution, session_key) is None
+
+
+async def _rollback_first_send_member_bind(
+    session_key: str, change: SelectionChange | None
+) -> None:
+    """Restore the selection replaced by a first-send member bind."""
+    try:
+        if change is None:
+            return
+        prior, published = change.prior, change.published
+        if prior is None:
+            if published is None:
+                return
+            expected = execution_from_record({EXECUTION_CONTEXT_KEY: published})
+            await drained_to_thread(withdraw_new_agent_selection, session_key, expected)
+        else:
+            await drained_to_thread(restore_agent_selection, session_key, change)
+    except Exception:
+        logger.warning(
+            "Failed to restore the first-send binding for %s",
+            session_key,
+            exc_info=True,
+        )
+        raise
+
+
 async def api_chat(request: web.Request) -> web.StreamResponse:
     """POST /api/chat — send message to a slot, stream response via SSE."""
     state: DashboardState = request.app["state"]
@@ -874,6 +962,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         if denied is not None:
             return denied
     created_in_send = slot_name is None or _normalize_slot_key(slot_name) not in state._slots
+    agent_adopted = False
     try:
         slot = state.get_or_create_slot(
             slot_name,
@@ -1048,6 +1137,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                 effective_session_key(slot),
                 slot.workspace,
                 slot._app,
+                slot.agent_kind,
             )
             try:
                 # Config load is file IO (stat + read + jsonschema validate on a
@@ -1073,6 +1163,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                             compared_binding[3],
                             compared_binding[0],
                             compared_binding[1] or None,
+                            selection_kind=compared_binding[6],
                         ),
                         resolve_agent_bindings(_cfg, agent, compared_binding[1] or None),
                     )
@@ -1099,6 +1190,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                 effective_session_key(slot),
                 slot.workspace,
                 slot._app,
+                slot.agent_kind,
             ):
                 return web.json_response(
                     {"error": "slot changed during agent resolution", "code": "session_rebound"},
@@ -1133,6 +1225,8 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                 status=409,
             )
         slot.agent = agent
+        slot.member_choice = None
+        agent_adopted = True
         _emit_agent_assignment(slot.key, agent)
     else:
         # No agent on slot, no agent in request — nothing to enforce.
@@ -1391,16 +1485,19 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # (the system prompt and the kirocrew-commands / web-browse skills tell it
     # how), so the backend injects nothing here.
 
-    # A slot created by this send binds to its member's private store BEFORE
-    # the user row is appended: a store failure then returns with nothing
-    # persisted, and the assignment snapshot (agent, project, workspace,
-    # session, message count) proves no other request rebound the slot while
-    # the store was being resolved.
-    if created_in_send:
+    # A slot created by this send, or an empty one running a private member no
+    # session record binds yet, binds to its member's private store BEFORE the
+    # user row is appended: a store failure then returns with nothing persisted,
+    # and the assignment snapshot (agent, project, workspace, session, message
+    # count) proves no other request rebound the slot while the store was being
+    # resolved.
+    may_run_unbound = _may_run_unbound_member(slot)
+    if (created_in_send or may_run_unbound) and slot.executor != "remote":
         from kiro_crew.dashboard.handlers.source_providers import is_owner_dashboard_request
 
-        if is_owner_dashboard_request(request):
-            async with slot._lock:
+        owner_request = is_owner_dashboard_request(request)
+        if owner_request or may_run_unbound:
+            async with slot._lock, contextlib.AsyncExitStack() as session_lock:
                 assignment = (
                     slot.agent,
                     slot.project,
@@ -1408,32 +1505,98 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                     effective_session_key(slot),
                     len(slot.messages),
                 )
-                selection_change = None
+                selection_change: SelectionChange | None = None
+                member_selection_changes: list[SelectionChange] = []
+                assigned_store = ""
+                chosen_member = slot.member_choice
+                fresh_choice = created_in_send or agent_adopted
+                revalidates = not created_in_send and _may_run_unbound_member(slot)
+                binds = (owner_request and created_in_send) or revalidates
                 try:
-                    cfg = await asyncio.to_thread(KiroCrewConfig.load)
-                    assigned_store = await pin_private_agent_store(
-                        state, assignment[3], assignment[0], cfg, memory_mode=slot.memory_mode
-                    )
-                    chosen = await asyncio.to_thread(
-                        resolve_agent_bindings,
-                        cfg,
-                        assignment[0],
-                        assignment[1] or None,
-                        validate_memory_files=False,
-                    )
-                    selection_change = await _record_explicit_agent_selection(
-                        assignment[3],
-                        assignment[0],
-                        chosen,
-                        config=cfg,
-                        memory_mode=slot.memory_mode,
-                        app=slot._app or "",
-                    )
+                    if binds:
+                        await session_lock.enter_async_context(
+                            _slot_switch_session_lock(assignment[3])
+                        )
+                        cfg = await asyncio.to_thread(KiroCrewConfig.load)
+                        if not created_in_send:
+                            binds = owner_request and await _runs_unbound_member(
+                                assignment[3], assignment[0], slot.agent_kind, cfg
+                            )
+                            if binds and chosen_member is None and not fresh_choice:
+                                raise UnknownMemoryStore(member_replaced_message(assignment[0]))
+                        if revalidates and not binds:
+                            replaced = member_choice_refusal(
+                                chosen_member, assignment[0], cfg, fresh=fresh_choice
+                            )
+                            unresolved = slot.agent_kind == "member" and (
+                                await asyncio.to_thread(_member_unresolved, assignment[0], cfg)
+                            )
+                            if (replaced or unresolved) and await asyncio.to_thread(
+                                read_session_execution, assignment[3]
+                            ) is None:
+                                raise UnknownMemoryStore(
+                                    replaced
+                                    or f"Crew Member '{assignment[0]}' is unavailable; "
+                                    "restore it or choose a member"
+                                )
+                            if chosen_member is None and fresh_choice and not unresolved:
+                                slot.member_choice = _member_choice(assignment[0], cfg)
+                    if binds:
+                        assigned_store = await run_to_completion(
+                            pin_private_agent_store(
+                                state,
+                                assignment[3],
+                                assignment[0],
+                                cfg,
+                                memory_mode=slot.memory_mode,
+                                selection_changes=member_selection_changes,
+                                expected_member=None if fresh_choice else chosen_member,
+                            )
+                        )
+                        if assigned_store:
+                            selection_change = member_selection_changes[-1]
+                            bound_selection = await drained_to_thread(
+                                read_session_execution, assignment[3]
+                            )
+                            if bound_selection is None or bound_selection.member_id is None:
+                                raise UnknownMemoryStore(
+                                    "Private member assignment was not published"
+                                )
+                        else:
+                            chosen = await asyncio.to_thread(
+                                resolve_agent_bindings,
+                                cfg,
+                                assignment[0],
+                                assignment[1] or None,
+                                validate_memory_files=False,
+                            )
+                            selection_change = await _record_explicit_agent_selection(
+                                assignment[3],
+                                assignment[0],
+                                chosen,
+                                config=cfg,
+                                memory_mode=slot.memory_mode,
+                                app=slot._app or "",
+                            )
+                except asyncio.CancelledError:
+                    if member_selection_changes:
+                        await _rollback_first_send_member_bind(
+                            assignment[3], member_selection_changes[-1]
+                        )
+                    raise
                 except Exception as exc:
+                    if member_selection_changes:
+                        await _rollback_first_send_member_bind(
+                            assignment[3], member_selection_changes[-1]
+                        )
+                    else:
+                        await drained_to_thread(
+                            restore_agent_selection, assignment[3], selection_change
+                        )
                     from kiro_crew.dashboard.handlers.memory import _store_unavailable_response
 
                     return _store_unavailable_response(slot.memory_store, exc)
-                if (
+                if binds and (
                     state._slots.get(slot.key) is not slot
                     or slot.running
                     or assignment
@@ -1445,9 +1608,14 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                         len(slot.messages),
                     )
                 ):
-                    await drained_to_thread(
-                        restore_agent_selection, assignment[3], selection_change
-                    )
+                    if member_selection_changes:
+                        await _rollback_first_send_member_bind(
+                            assignment[3], member_selection_changes[-1]
+                        )
+                    else:
+                        await drained_to_thread(
+                            restore_agent_selection, assignment[3], selection_change
+                        )
                     return web.json_response(
                         {
                             "error": "Could not save the member assignment. Try again.",
@@ -1457,6 +1625,8 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                     )
                 if assigned_store:
                     slot.memory_store = assigned_store
+                if binds and slot.member_choice is chosen_member:
+                    slot.member_choice = None
 
     # A dashboard's busy snapshot can suppress its optimistic user bubble even
     # when this send starts a turn. Echo correlated sends BEFORE starting the
@@ -2424,22 +2594,44 @@ async def api_chat_slot_create(request: web.Request) -> web.Response:
                 cfg_proj = ""
             slot.project = cfg_proj or default_project_dir(workspace)
         if is_new_slot and cfg is not None:
-            if is_owner_dashboard_request(request):
+            if not is_owner_dashboard_request(request):
+                slot.member_choice = (
+                    None if agent_kind == "template" else _member_choice(slot.agent, cfg)
+                )
+            else:
                 assignment_key = effective_session_key(slot)
                 assignment_agent = slot.agent
                 assignment_project = slot.project
                 await creation_stack.enter_async_context(_slot_switch_session_lock(assignment_key))
-                selection_change = None
+                selection_change: SelectionChange | None = None
+                prior_selection_metadata: dict[str, Any] | None = None
+                unbound_member = agent_kind != "template" and bool(
+                    _member_private_selection(agent, cfg)[1]
+                )
+
+                async def _restore_create_selection() -> None:
+                    await drained_to_thread(
+                        restore_agent_selection, assignment_key, selection_change
+                    )
+                    if prior_selection_metadata is not None and state.conversation_log:
+                        await drained_to_thread(
+                            state.conversation_log.update_metadata,
+                            assignment_key,
+                            prior_selection_metadata,
+                        )
+
                 try:
                     # An explicit template choice is the shared template even when
                     # a member carries the same name: it never pins member memory.
-                    assigned_store = (
-                        ""
-                        if agent_kind == "template"
-                        else await pin_private_agent_store(
-                            state, assignment_key, agent, cfg, memory_mode=slot.memory_mode
+                    if agent_kind != "template":
+                        await pin_private_agent_store(
+                            state,
+                            assignment_key,
+                            agent,
+                            cfg,
+                            memory_mode=slot.memory_mode,
+                            validate_only=True,
                         )
-                    )
                     chosen = await asyncio.to_thread(
                         resolve_agent_bindings,
                         cfg,
@@ -2451,15 +2643,53 @@ async def api_chat_slot_create(request: web.Request) -> web.Response:
                     # Availability was settled before the mint; this records
                     # the namespace the pick was committed in.
                     slot.agent_kind = chosen.selection_kind
-                    selection_change = await _record_explicit_agent_selection(
-                        assignment_key,
-                        assignment_agent,
-                        chosen,
-                        config=cfg,
-                        memory_mode=slot.memory_mode,
-                        app=slot._app or "",
+                    slot.member_choice = (
+                        _member_choice(assignment_agent, cfg) if unbound_member else None
                     )
+                    if unbound_member:
+                        initial_execution = await asyncio.to_thread(
+                            read_session_execution, assignment_key
+                        )
+                        if state.conversation_log and slot.memory_mode == "persistent":
+                            initial_metadata = await asyncio.to_thread(
+                                state.conversation_log.get_metadata, assignment_key
+                            )
+                            if initial_metadata:
+                                prior_selection_metadata = {
+                                    "agent": str(initial_metadata.get("agent") or ""),
+                                    "agent_kind": str(initial_metadata.get("agent_kind") or ""),
+                                    "member_choice": initial_metadata.get("member_choice") or {},
+                                }
+                        if initial_execution is not None and initial_execution.member_id is None:
+                            selection_change = SelectionChange(initial_execution.to_record(), None)
+                            await drained_to_thread(
+                                withdraw_agent_selection, assignment_key, initial_execution
+                            )
+                        if state.conversation_log and slot.memory_mode == "persistent":
+                            await drained_to_thread(
+                                state.conversation_log.update_metadata,
+                                assignment_key,
+                                {
+                                    "agent": assignment_agent,
+                                    "agent_kind": chosen.selection_kind,
+                                    "member_choice": member_choice_record(slot.member_choice),
+                                    "memory_mode": slot.memory_mode,
+                                },
+                            )
+                    else:
+                        selection_change = await _record_explicit_agent_selection(
+                            assignment_key,
+                            assignment_agent,
+                            chosen,
+                            config=cfg,
+                            memory_mode=slot.memory_mode,
+                            app=slot._app or "",
+                        )
+                except asyncio.CancelledError:
+                    await _restore_create_selection()
+                    raise
                 except Exception as exc:
+                    await _restore_create_selection()
                     from kiro_crew.dashboard.handlers.memory import _store_unavailable_response
 
                     return _store_unavailable_response(slot.memory_store, exc)
@@ -2469,9 +2699,7 @@ async def api_chat_slot_create(request: web.Request) -> web.Response:
                     or slot.agent != assignment_agent
                     or slot.project != assignment_project
                 ):
-                    await drained_to_thread(
-                        restore_agent_selection, assignment_key, selection_change
-                    )
+                    await _restore_create_selection()
                     return web.json_response(
                         {
                             "error": "Could not save the member assignment. Try again.",
@@ -2479,8 +2707,6 @@ async def api_chat_slot_create(request: web.Request) -> web.Response:
                         },
                         status=409,
                     )
-                if assigned_store:
-                    slot.memory_store = assigned_store
         _sync_dashboard_slots(state)
         # Persist INSIDE the suspension, ahead of the coalesced broadcast, the
         # same ordering `session_control.py`'s create span uses ("the whole
@@ -5434,10 +5660,10 @@ async def switch_slot_agent(
                 if denied is not None:
                     return denied
         if agent_name != slot.agent:
-            from kiro_crew.execution_context import read_session_execution
-
             try:
-                prior_execution = await asyncio.to_thread(read_session_execution, session_key)
+                prior_execution = await asyncio.to_thread(
+                    execution_context_mod.read_session_execution, session_key
+                )
             except (OSError, ValueError):
                 return web.json_response(
                     {
@@ -5496,6 +5722,9 @@ async def switch_slot_agent(
         pre_await_workspace = slot.workspace
         pre_await_project = slot.project
         pre_await_memory_store = slot.memory_store
+        pre_await_agent_kind = slot.agent_kind
+        pre_await_member_choice = slot.member_choice
+        new_member_choice = None
 
         # Resolve workspace from agent bindings. The response value is seeded
         # from the slot's CURRENT workspace, not a "default" literal: if
@@ -5509,8 +5738,9 @@ async def switch_slot_agent(
         new_agent_kind = ""
         committed_agent: str | None = None
         committed_agent_kind: str | None = None
+        defers_member_binding = False
         try:
-            cfg = KiroCrewConfig.load()
+            cfg = await asyncio.to_thread(KiroCrewConfig.load)
             # Resolve by the name being STORED, which is exactly the name dispatch
             # will resolve later (`chat_runner` -> resolve_agent_bindings(
             # slot.agent)). Looking it up as an alias first and taking THAT
@@ -5556,6 +5786,16 @@ async def switch_slot_agent(
             new_workspace = ws_name
             workspace = ws_name
             new_memory_store = bindings.memory_store_name
+            member_memory = cfg.memory_stores.get(bindings.memory_store_name)
+            defers_member_binding = (
+                owner_request
+                and member_memory is not None
+                and member_memory.memory_version == 2
+                and slot_defers_member_binding(slot, agent_kind)
+            )
+            if defers_member_binding:
+                new_memory_store = pre_await_memory_store if agent_name == prior_agent else ""
+                new_member_choice = _member_choice(agent_name, cfg)
             # A project-scope agent exists only inside slot.project: kiro-cli
             # resolves --agent against $PWD/.kiro/agents, so resetting the
             # project here would make the very agent just selected unresolvable
@@ -5672,7 +5912,6 @@ async def switch_slot_agent(
             # A failed lookup cannot commit a name while retaining a different
             # protected selection. Leave the established conversation usable.
             from kiro_crew.dashboard.handlers.memory import _store_unavailable_response
-            from kiro_crew.memory_stores import UnknownMemoryStore
 
             return _store_unavailable_response(
                 slot.memory_store, UnknownMemoryStore("Conversation agent selection is unavailable")
@@ -5741,6 +5980,9 @@ async def switch_slot_agent(
         if slot.memory_store == pre_await_memory_store:
             slot.memory_store = _CommitToken(new_memory_store)
             committed_memory_store = slot.memory_store
+        member_choice_committed = slot.member_choice is pre_await_member_choice
+        if member_choice_committed:
+            slot.member_choice = new_member_choice
 
         # Reset session so the next message uses the new agent.
         logger.info(
@@ -5770,6 +6012,10 @@ async def switch_slot_agent(
                 slot.project = pre_await_project
             if committed_memory_store is not None and slot.memory_store is committed_memory_store:
                 slot.memory_store = pre_await_memory_store
+            if committed_agent_kind is not None and slot.agent_kind is committed_agent_kind:
+                slot.agent_kind = pre_await_agent_kind
+            if member_choice_committed and slot.member_choice is new_member_choice:
+                slot.member_choice = pre_await_member_choice
             # Re-mark unconditionally: the periodic flush writes a slot's
             # metadata line only while _dirty is set, so without this a
             # rollback that follows a persisted provisional binding leaves
@@ -5924,7 +6170,11 @@ async def switch_slot_agent(
                     await drained_to_thread(
                         conversation_log.update_metadata,
                         _history_key_for(name),
-                        {"agent": str(slot.agent), "agent_kind": slot.agent_kind},
+                        {
+                            "agent": str(slot.agent),
+                            "agent_kind": str(slot.agent_kind),
+                            "member_choice": member_choice_record(slot.member_choice),
+                        },
                     )
                 except Exception:
                     logger.warning(
@@ -5941,7 +6191,11 @@ async def switch_slot_agent(
                 await drained_to_thread(
                     conversation_log.update_metadata,
                     _history_key_for(name),
-                    {"agent": agent_name, "agent_kind": new_agent_kind},
+                    {
+                        "agent": agent_name,
+                        "agent_kind": str(slot.agent_kind),
+                        "member_choice": member_choice_record(slot.member_choice),
+                    },
                 )
             except asyncio.CancelledError:
                 # Drain the writer before restoring history, and retain both
@@ -5977,7 +6231,11 @@ async def switch_slot_agent(
                     await drained_to_thread(
                         state.conversation_log.update_metadata,
                         _history_key_for(name),
-                        {"agent": str(slot.agent), "agent_kind": slot.agent_kind},
+                        {
+                            "agent": str(slot.agent),
+                            "agent_kind": str(slot.agent_kind),
+                            "member_choice": member_choice_record(slot.member_choice),
+                        },
                     )
                 except Exception:
                     logger.warning(
@@ -5991,7 +6249,7 @@ async def switch_slot_agent(
         # Every authorized choice must update both durable records. Only an
         # owner choice can also admit an unbound restored member.
         if slot.agent is committed_agent and assignment_resolved:
-            selection_change = None
+            selection_change: SelectionChange | None = None
             selection_error = None
 
             async def _rollback_owner_selection() -> None:
@@ -6005,7 +6263,11 @@ async def switch_slot_agent(
                         await drained_to_thread(
                             state.conversation_log.update_metadata,
                             _history_key_for(name),
-                            {"agent": str(slot.agent), "agent_kind": slot.agent_kind},
+                            {
+                                "agent": str(slot.agent),
+                                "agent_kind": str(slot.agent_kind),
+                                "member_choice": member_choice_record(slot.member_choice),
+                            },
                         )
 
             try:
@@ -6013,8 +6275,6 @@ async def switch_slot_agent(
                 # canonical identity; otherwise that publication would conceal
                 # template history from the member-selection guard.
                 selected_memory = cfg.memory_stores.get(bindings.memory_store_name)
-                from kiro_crew.execution_context import read_session_execution
-
                 initial_execution = await asyncio.to_thread(read_session_execution, session_key)
                 changed_member = (
                     initial_execution is None
@@ -6046,14 +6306,23 @@ async def switch_slot_agent(
                         or slot.messages
                     ):
                         raise ValueError("The conversation changed during member selection.")
-                selection_change = await _record_explicit_agent_selection(
-                    session_key,
-                    agent_name,
-                    bindings,
-                    config=cfg,
-                    memory_mode=slot.memory_mode,
-                    app=slot._app or "",
-                )
+                if defers_member_binding and (
+                    initial_execution is None or initial_execution.member_id is None
+                ):
+                    if initial_execution is not None:
+                        selection_change = SelectionChange(initial_execution.to_record(), None)
+                        await drained_to_thread(
+                            withdraw_agent_selection, session_key, initial_execution
+                        )
+                else:
+                    selection_change = await _record_explicit_agent_selection(
+                        session_key,
+                        agent_name,
+                        bindings,
+                        config=cfg,
+                        memory_mode=slot.memory_mode,
+                        app=slot._app or "",
+                    )
             except asyncio.CancelledError:
                 await _rollback_owner_selection()
                 raise
@@ -6093,87 +6362,6 @@ async def switch_slot_agent(
         owner_pick = slot.agent is committed_agent and assignment_resolved and caller.owner
         if owner_pick:
             slot._memory_assignment_from_history = False
-
-        # Menu grants are for an EMPTY plain dashboard chat only. Channel,
-        # cron and workflow alias tabs are excluded: an injector can set their
-        # linked_session_key without the slot lock, and they carry native
-        # context the pin helper refuses. With this gate, pin_key is the slot's
-        # own transcript key, which nothing rebinds. The helper verifies the
-        # transcript is empty before capturing member context; V1 picks pass
-        # through without a grant.
-        if (
-            owner_pick
-            and agent_name
-            # A shared-template pick has no member memory to grant, even when
-            # a member of the same name exists.
-            and agent_kind != "template"
-            and not slot.messages
-            and not slot.linked_session_key
-            and not slot.channel_origin
-        ):
-            pin_key = session_key
-
-            async def _unwind_pin_failure() -> None:
-                # A failed grant must restore the protected selection as well
-                # as the slot and transcript, before either switch lock releases.
-                try:
-                    await _rollback_owner_selection()
-                finally:
-                    state.push_slots_update()
-
-            if (
-                state._slots.get(slot.key) is slot
-                and slot.agent is committed_agent
-                and effective_session_key(slot) == pin_key
-                and not slot.messages
-            ):
-                try:
-                    # Off the loop: the create path loads it the same way, and
-                    # the in-handler load above is not guaranteed to have run.
-                    pin_cfg = await asyncio.to_thread(KiroCrewConfig.load)
-                    # The reset above tore this slot's session down but kept its
-                    # resume pointer, and a new chat is pre-warmed while it is
-                    # still on the default agent. Drop that pointer for a
-                    # private pick, or the pin reads it as V1 context and
-                    # refuses a chat with no messages in it. Re-checked after
-                    # the awaits below for the same reason the pin is.
-                    await release_prewarmed_session(state, pin_key, agent_name, pin_cfg)
-                    if (
-                        state._slots.get(slot.key) is not slot
-                        or slot.agent is not committed_agent
-                        or effective_session_key(slot) != pin_key
-                        or slot.messages
-                    ):
-                        await _unwind_pin_failure()
-                        return web.json_response(
-                            {
-                                "error": "slot changed during member assignment",
-                                "code": "session_rebound",
-                            },
-                            status=409,
-                        )
-                    assigned_store = await pin_private_agent_store(
-                        state, pin_key, agent_name, pin_cfg, memory_mode=slot.memory_mode
-                    )
-                except Exception as exc:
-                    from kiro_crew.dashboard.handlers.memory import _store_unavailable_response
-
-                    await _unwind_pin_failure()
-                    return _store_unavailable_response(slot.memory_store, exc)
-                # Agent committed: a raced message uses the new agent and confirms its grant.
-                if assigned_store and (
-                    state._slots.get(slot.key) is not slot or slot.agent is not committed_agent
-                ):
-                    # No unwind: the owner's grant on this slot's own key is valid and immutable.
-                    return web.json_response(
-                        {
-                            "error": "slot changed during member assignment",
-                            "code": "session_rebound",
-                        },
-                        status=409,
-                    )
-                if assigned_store and slot.memory_store != assigned_store:
-                    slot.memory_store = assigned_store
 
         # Snapshot the response's workspace LAST, immediately before leaving
         # the lock: the metadata await above yields the event loop, so a

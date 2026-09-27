@@ -1001,3 +1001,67 @@ class TestAgentMismatchFix:
 
         resp = await api_completions(request)
         assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_sends_dispatch_once_after_member_validation():
+    slot = _make_slot()
+    slot.agent = "vanellope"
+    slot._app = ""
+    slot.executor = ""
+    slot.mode = ""
+    state = _make_state(slot)
+    request_body = {
+        "id": "test-slot",
+        "model": "vanellope",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": False,
+    }
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    dispatched = asyncio.Event()
+    validation_calls = 0
+    dispatch_calls = 0
+
+    async def yielding_validation(_slot, *, fresh):
+        nonlocal validation_calls
+        validation_calls += 1
+        if validation_calls == 1:
+            first_entered.set()
+            await release_first.wait()
+        else:
+            await first_entered.wait()
+            release_first.set()
+            await dispatched.wait()
+        return None
+
+    async def fake_run_chat(*_args, **_kwargs):
+        nonlocal dispatch_calls
+        dispatch_calls += 1
+        slot.running = True
+        dispatched.set()
+
+    with (
+        patch(
+            "kiro_crew.dashboard.openai_compat._unbound_member_refusal",
+            side_effect=yielding_validation,
+        ),
+        patch("kiro_crew.dashboard.openai_compat.slot_defers_member_binding", return_value=True),
+        patch("kiro_crew.dashboard.openai_compat._run_chat", side_effect=fake_run_chat),
+        patch(
+            "kiro_crew.dashboard.openai_compat._blocking_response",
+            new=AsyncMock(return_value=MagicMock(status=200)),
+        ),
+    ):
+        responses = await asyncio.gather(
+            api_completions(_make_request(request_body, state)),
+            api_completions(_make_request(request_body, state)),
+        )
+        await asyncio.gather(*state._background_tasks)
+
+    assert sorted(response.status for response in responses) == [200, 409]
+    assert (
+        json.loads(next(response.text for response in responses if response.status == 409))["code"]
+        == "slot_busy"
+    )
+    assert dispatch_calls == 1
