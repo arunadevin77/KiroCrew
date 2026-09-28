@@ -6928,7 +6928,8 @@ class TestBlockedLinkCardRecords:
     def test_one_address_on_its_host_is_its_one_record(self):
         url = f"https://{self.H}/only?q=" + "a" * 250
         content, links = self._flush(["See ", url[:40], url[40:], " now."])
-        assert content.count(f"[REDACTED: suspicious URL to {self.H}]") == 1
+        tag = f"[REDACTED: suspicious URL to {self.H} (long query, may be legitimate)]"
+        assert content.count(tag) == 1
         assert [r["url"] for r in links] == [url]
 
     def test_glued_pair_a_credential_tag_and_a_key_split_link_list_every_record(self):
@@ -7008,7 +7009,7 @@ class TestBlockedLinkCardRecords:
         it under that address and never as the clicked link."""
         out = self._one_presigned_one_key_split_flush()
         host = "my-bucket.s3.us-east-1.amazonaws.com"
-        assert out["content"].count(f"[REDACTED: suspicious URL to {host}]") == 1
+        assert out["content"].count(f"[REDACTED: suspicious URL to {host} (credential)]") == 1
         assert [r["path"] for r in out["blocked_links"]] == ["/other-a"]
         fixture = (
             Path(__file__).resolve().parents[1] / "website/src/test/fixtures/blockedLinkOneOne.json"

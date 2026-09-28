@@ -164,6 +164,11 @@ def _url_payload_command(n: int) -> str:
 #: holds the canonical spelling and is off the event loop, so the anchors resolve
 #: inline. No new entry point, no target, no matching rule and no threshold moved.
 #:
+#: Raised again for the rule reason in the suspicious-URL placeholder:
+#: the fixed rule-id-to-words table ``EXFIL_RULE_LABELS``, the one function that
+#: builds the placeholder from it, and the restore matcher accepting those words
+#: and a bracketed IPv6 host.
+#:
 #: The number IS the package's measured total, carrying no spare room: a ratchet with
 #: headroom admits exactly the unreviewed growth it exists to catch, so the next line
 #: added here fails this gate and has to be re-pinned deliberately, with its reason
@@ -323,7 +328,7 @@ def _url_payload_command(n: int) -> str:
 #: start with a literal ``re`` searches at memchr speed, which takes a second
 #: Authorization half and the comments that say why each spelling accepts
 #: exactly what the old one did. No credential branch, gate verdict or pass moved.
-_PACKAGE_LINE_BUDGET = 29_205
+_PACKAGE_LINE_BUDGET = 29_229
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
