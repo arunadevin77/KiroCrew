@@ -332,6 +332,12 @@ def _url_payload_command(n: int) -> str:
 #: patterns. It only narrows what auto-approves; no deny rule, threshold or pass
 #: moved.
 _PACKAGE_LINE_BUDGET = 29_293
+#:
+#: Raised again, from 29,293, for the per-decision payload-walk memo: a
+#: ``ContextVar``-scoped memo in ``shell_normalizer`` and the decorator that opens it
+#: around ``is_denied``, so every floor of one decision shares a single walk of each
+#: distinct text instead of re-tokenizing the command once per floor.
+_PACKAGE_LINE_BUDGET = 29_363
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
