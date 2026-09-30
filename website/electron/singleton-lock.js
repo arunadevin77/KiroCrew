@@ -44,4 +44,62 @@ function describeSingletonLock({ userDataDir, fs = nodeFs, hostname = nodeOs.hos
   }
 }
 
-module.exports = { parseLockTarget, describeSingletonLock };
+const SINGLETON_FILES = ["SingletonLock", "SingletonSocket", "SingletonCookie"];
+
+function isPidDead(pid, kill = process.kill) {
+  try {
+    kill(pid, 0);
+    return false;
+  } catch (error) {
+    return Boolean(error && error.code === "ESRCH");
+  }
+}
+
+function reclaimStaleSingletonLock({
+  app,
+  log,
+  fs = nodeFs,
+  kill = process.kill,
+  platform = process.platform,
+}) {
+  if (platform === "win32") return false;
+  let userData;
+  let target;
+  try {
+    userData = app.getPath("userData");
+    target = fs.readlinkSync(path.join(userData, "SingletonLock"));
+  } catch {
+    return false;
+  }
+  const owner = parseLockTarget(target);
+  if (!owner) {
+    log("singleton: lock target '" + target + "' is not <hostname>-<pid>; leaving it");
+    return false;
+  }
+  if (!isPidDead(owner.pid, kill)) {
+    log("singleton: lock '" + target + "' names a running process; leaving it");
+    return false;
+  }
+  for (const name of SINGLETON_FILES) {
+    try {
+      fs.unlinkSync(path.join(userData, name));
+    } catch {}
+  }
+  let won = false;
+  try {
+    won = app.requestSingleInstanceLock();
+  } catch (error) {
+    log("singleton: retry after clearing a stale lock failed: " + (error && error.message));
+    return false;
+  }
+  log("singleton: cleared stale lock '" + target + "'; retry " + (won ? "won" : "lost"));
+  return won;
+}
+
+module.exports = {
+  parseLockTarget,
+  describeSingletonLock,
+  isPidDead,
+  reclaimStaleSingletonLock,
+  SINGLETON_FILES,
+};

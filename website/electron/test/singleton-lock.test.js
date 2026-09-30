@@ -132,3 +132,204 @@ describe("describeSingletonLock failure handling", () => {
     assert.doesNotThrow(() => describeSingletonLock({ userDataDir: "/x", fs: badFs, hostname: HOST, kill: killAlive }));
   });
 });
+
+const test = require("node:test");
+const { reclaimStaleSingletonLock, isPidDead, SINGLETON_FILES } = require("../singleton-lock");
+
+const MAIN_SRC = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
+
+const USER_DATA = path.join("fake", "userData");
+
+function fakeFs(target) {
+  const files = new Set(target === null ? [] : SINGLETON_FILES);
+  return {
+    files,
+    readlinkSync(p) {
+      if (p !== path.join(USER_DATA, "SingletonLock") || !files.has("SingletonLock")) {
+        const error = new Error("ENOENT");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return target;
+    },
+    unlinkSync(p) {
+      const name = path.basename(p);
+      assert.equal(path.dirname(p), USER_DATA);
+      files.delete(name);
+    },
+  };
+}
+
+function killWith(code) {
+  const calls = [];
+  const kill = (pid, signal) => {
+    calls.push([pid, signal]);
+    if (code) {
+      const error = new Error(code);
+      error.code = code;
+      throw error;
+    }
+  };
+  kill.calls = calls;
+  return kill;
+}
+
+function harness({ target, killCode, retryWins = true, platform = "darwin" }) {
+  const logs = [];
+  const state = { retries: 0 };
+  const fsImpl = fakeFs(target);
+  const kill = killWith(killCode);
+  const app = {
+    getPath: (name) => {
+      assert.equal(name, "userData");
+      return USER_DATA;
+    },
+    requestSingleInstanceLock: () => {
+      state.retries += 1;
+      return retryWins;
+    },
+  };
+  const result = reclaimStaleSingletonLock({
+    app,
+    log: (l) => logs.push(l),
+    fs: fsImpl,
+    kill,
+    platform,
+  });
+  return { result, logs, state, fsImpl, kill };
+}
+
+test("isPidDead is true only for ESRCH", () => {
+  assert.equal(isPidDead(1, killWith("ESRCH")), true);
+  assert.equal(isPidDead(1, killWith("EPERM")), false);
+  assert.equal(isPidDead(1, killWith(null)), false);
+});
+
+test("isPidDead probes the real process table", () => {
+  assert.equal(isPidDead(process.pid), false);
+});
+
+test("a dead owner's lock is cleared and the retry wins", () => {
+  const { result, logs, state, fsImpl, kill } = harness({ target: "host-4242", killCode: "ESRCH" });
+  assert.equal(result, true);
+  assert.deepEqual(kill.calls, [[4242, 0]]);
+  assert.equal(state.retries, 1);
+  assert.equal(fsImpl.files.size, 0, "all three Singleton files are removed");
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /cleared stale lock 'host-4242'; retry won/);
+});
+
+test("a dead owner is reclaimed even when the hostname no longer matches", () => {
+  const { result, fsImpl } = harness({ target: "some-other-host-4242", killCode: "ESRCH" });
+  assert.equal(result, true);
+  assert.equal(fsImpl.files.size, 0);
+});
+
+test("a live owner's lock is left alone and not retried", () => {
+  const { result, logs, state, fsImpl } = harness({ target: "host-4242", killCode: null });
+  assert.equal(result, false);
+  assert.equal(state.retries, 0);
+  assert.equal(fsImpl.files.size, SINGLETON_FILES.length);
+  assert.match(logs[0], /names a running process; leaving it/);
+});
+
+test("EPERM counts as a live owner", () => {
+  const { result, state, fsImpl } = harness({ target: "host-4242", killCode: "EPERM" });
+  assert.equal(result, false);
+  assert.equal(state.retries, 0);
+  assert.equal(fsImpl.files.size, SINGLETON_FILES.length);
+});
+
+test("Windows never probes or deletes anything", () => {
+  const { result, logs, state, fsImpl, kill } = harness({
+    target: "host-4242",
+    killCode: "ESRCH",
+    platform: "win32",
+  });
+  assert.equal(result, false);
+  assert.equal(state.retries, 0);
+  assert.equal(kill.calls.length, 0, "process.kill(pid, 0) is not a liveness probe on Windows");
+  assert.equal(fsImpl.files.size, SINGLETON_FILES.length);
+  assert.deepEqual(logs, []);
+});
+
+test("no SingletonLock means there is nothing to reclaim", () => {
+  const { result, logs, state, kill } = harness({ target: null, killCode: "ESRCH" });
+  assert.equal(result, false);
+  assert.equal(state.retries, 0);
+  assert.equal(kill.calls.length, 0);
+  assert.deepEqual(logs, []);
+});
+
+test("an unparseable lock target is left alone", () => {
+  const { result, logs, state, fsImpl, kill } = harness({ target: "garbage", killCode: "ESRCH" });
+  assert.equal(result, false);
+  assert.equal(state.retries, 0);
+  assert.equal(kill.calls.length, 0);
+  assert.equal(fsImpl.files.size, SINGLETON_FILES.length);
+  assert.match(logs[0], /is not <hostname>-<pid>/);
+});
+
+test("a retry that still loses returns false so the caller exits", () => {
+  const { result, logs } = harness({ target: "host-4242", killCode: "ESRCH", retryWins: false });
+  assert.equal(result, false);
+  assert.match(logs[0], /retry lost/);
+});
+
+test("a throwing retry is logged and reported as lost", () => {
+  const logs = [];
+  const app = {
+    getPath: () => USER_DATA,
+    requestSingleInstanceLock: () => {
+      throw new Error("boom");
+    },
+  };
+  const result = reclaimStaleSingletonLock({
+    app,
+    log: (l) => logs.push(l),
+    fs: fakeFs("host-4242"),
+    kill: killWith("ESRCH"),
+    platform: "linux",
+  });
+  assert.equal(result, false);
+  assert.match(logs[0], /retry after clearing a stale lock failed: boom/);
+});
+
+test("an unavailable userData path fails closed without throwing", () => {
+  const app = {
+    getPath: () => {
+      throw new Error("no userData");
+    },
+    requestSingleInstanceLock: () => assert.fail("must not retry"),
+  };
+  assert.equal(reclaimStaleSingletonLock({ app, log: () => {}, platform: "darwin" }), false);
+});
+
+test("real symlinks: a dead owner's files are removed from a temp userData", (t) => {
+  if (process.platform === "win32") {
+    t.skip("SingletonLock is a POSIX symlink");
+    return;
+  }
+  const os = require("node:os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "singleton-lock-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.symlinkSync("host-4242", path.join(dir, "SingletonLock"));
+  fs.symlinkSync(path.join(dir, "missing-socket"), path.join(dir, "SingletonSocket"));
+  fs.symlinkSync("12345", path.join(dir, "SingletonCookie"));
+  const app = { getPath: () => dir, requestSingleInstanceLock: () => true };
+  const result = reclaimStaleSingletonLock({ app, log: () => {}, kill: killWith("ESRCH") });
+  assert.equal(result, true);
+  assert.deepEqual(fs.readdirSync(dir), []);
+});
+
+test("main.js retries the lock through the reclaim before exiting", () => {
+  assert.match(
+    MAIN_SRC,
+    /if \(!app\.requestSingleInstanceLock\(\) && !reclaimStaleSingletonLock\(\{ app, log: glog \}\)\) \{/,
+  );
+});
+
+test("singleton-lock.js ships in the packaged app", () => {
+  const files = require("../package.json").build.files;
+  assert.ok(files.includes("singleton-lock.js"));
+});

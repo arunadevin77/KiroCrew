@@ -64,7 +64,7 @@ describe("crash arming order in main.js", () => {
   it("arms inside the single-instance lock winner, not before it", () => {
     // A rejected second instance exits immediately; stamping a cutoff from it
     // would move the primary process's baseline for a run that collects nothing.
-    const lock = CODE.search(/if\s*\(!app\.requestSingleInstanceLock\(\)\)/);
+    const lock = CODE.search(/if\s*\(!app\.requestSingleInstanceLock\(\)/);
     assert.notEqual(lock, -1, "main.js must take the single-instance lock");
     assert.ok(lock < callOffset(CODE, "armCrashCollector"));
   });
@@ -96,7 +96,7 @@ describe("early boot guard in main.js", () => {
   });
 
   it("installs the guard before armCrashCollector and the single-instance lock", () => {
-    const lock = CODE.search(/if\s*\(!app\.requestSingleInstanceLock\(\)\)/);
+    const lock = CODE.search(/if\s*\(!app\.requestSingleInstanceLock\(\)/);
     assert.ok(installOffset < lock, "the guard must precede the single-instance lock");
     assert.ok(installOffset < callOffset(CODE, "armCrashCollector"), "the guard must precede armCrashCollector");
   });

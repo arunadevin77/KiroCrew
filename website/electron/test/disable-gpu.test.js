@@ -97,7 +97,7 @@ test("main wires GPU policy in the lock winner before Electron becomes ready", (
   // not just the pure policy, so a refactor cannot leave a fully tested helper
   // disconnected or let a rejected second instance mutate the primary launch.
   const source = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
-  const lock = source.indexOf("if (!app.requestSingleInstanceLock())");
+  const lock = source.indexOf("if (!app.requestSingleInstanceLock()");
   const winner = source.indexOf("} else {", lock);
   const nativeLogging = source.indexOf("initNativeLogging({", winner);
   const gpuPolicy = source.indexOf("initGpuPolicy({", nativeLogging);

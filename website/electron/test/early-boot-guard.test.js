@@ -229,13 +229,14 @@ describe("main.js executes under a stubbed electron (load test)", () => {
     assert.doesNotMatch(run.log, /native logging armed/);
   });
 
-  it("a lost lock left by a dead pid is described and left in place", { skip: process.platform === "win32" }, () => {
+  it("a lost lock left by a dead pid is cleared, and a retry that still loses exits 0", { skip: process.platform === "win32" }, () => {
     const run = runDriver("stale-lock");
     assert.equal(run.status, 0, `driver exited ${run.status}\n${run.stdout}\n${run.stderr}`);
     assert.match(run.stdout, /^APP_EXIT:0$/m);
-    assert.match(run.stdout, /^SINGLETON_LEFT:SingletonLock,SingletonSocket,SingletonCookie$/m);
+    assert.match(run.stdout, /^SINGLETON_LEFT:$/m);
+    assert.match(run.log, /singleton: cleared stale lock '[^']+-\d+'; retry lost/);
     assert.match(run.log, /single-instance lock held by another process; exiting/);
-    assert.match(run.log, /SingletonLock target "[^"]+-\d+", host matches, pid \d+ on this machine is not running/);
+    assert.match(run.log, /no SingletonLock file/);
     assert.doesNotMatch(run.log, /native logging armed/);
   });
 });

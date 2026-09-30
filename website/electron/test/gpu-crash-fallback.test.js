@@ -481,7 +481,7 @@ test("main wires the fallback in the lock winner, after the opt-in policy, befor
   // to exist before the GPU process can die. Pin the call site so a refactor
   // cannot leave a fully tested module disconnected.
   const source = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
-  const lock = source.indexOf("if (!app.requestSingleInstanceLock())");
+  const lock = source.indexOf("if (!app.requestSingleInstanceLock()");
   const winner = source.indexOf("} else {", lock);
   const gpuPolicy = source.indexOf("initGpuPolicy({", winner);
   const fallback = source.indexOf("initGpuCrashFallback({", gpuPolicy);
