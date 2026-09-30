@@ -38,6 +38,7 @@ unreachable in production because the caller's `X-Internal-Secret` is ignored.
 | `session_release` | `POST /api/session-control/release` | Let a session the caller holds, or the caller itself, out from under its parent; the released session keeps its own subtree |
 | `session_read_message` | `GET /api/session-control/read` | Read another session's transcript tail + liveness |
 | `session_summary` | `GET /api/session-control/summary` | Read another session's cached intent summary + liveness, authorized as `session_read_message` is; never generates one |
+| `session_queue` | `POST /api/session-control/queue` | List, cancel or move queue entries on a session the caller created; cancel and move reach only entries the caller queued (sender stamp), and a move earlier may pass only the caller's own entries |
 
 `session_adopt` and `session_release` reshape the session tree, so both go
 through `authorize_target` like every other verb and add tree checks of their
