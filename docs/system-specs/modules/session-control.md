@@ -30,6 +30,7 @@ unreachable in production because the caller's `X-Internal-Secret` is ignored.
 | `session_generate_title` | `POST /api/session-control/generate-title` | Regenerate a session's title through `chat_title.generate_manual_title` and `chat_title.apply_regenerated_title`, the sidebar "Regenerate title" code: one awaited titling-model call; the result replaces the current title (a hand-set one included) and stays auto. After `authorize_target` (no `allow_self`), the target must be one the caller created (`not_creator`, 403) for every caller class. One admitted call per target per `create_rate_limit.WINDOW_SECS` (300 s) through the shared creation limiter keyed by the target slot, stamped before the model call (`title_rate_limited`, 429). After the model answers, the slot identity and closing flag are checked (`target_replaced`, 409) and `authorize_target` runs again synchronously; then every field is assigned before the first await, as `session_rename` does, and the save only makes that change durable. The save passes `still_current` (slot identity), so `_persist_title` refuses the write under the history lock when the slot left its key, and the verb then answers `target_replaced` (409) rather than overwriting a successor's saved title. A rename that landed during the model call wins (`changed: false`). If the history write fails the live slot keeps the title and the verb answers `title_persist_failed` (500). The sidebar push is skipped when the slot left its key during the save |
 | `session_close` | `POST /api/session-control/close` | Close (archive) another session, or the caller itself, as the tab ✕ does — heavier than stop, and recoverable rather than a delete |
 | `session_revive` | `POST /api/session-control/revive` | Bring an archived session back into the live sidebar, as clicking it in the History tab does — the mirror of close, optionally filing it into a folder |
+| `session_history_list` | `GET /api/session-control/history` | List the archived sessions the caller could revive, newest first, optionally narrowed to one folder; every row passes the same containment and ownership fence `session_revive` applies |
 | `session_send` | `POST /api/session-control/send` | Deliver a message that another session runs as its next turn, or cut it into the turn already running (`steer`) |
 | `session_broadcast` | `POST /api/session-control/broadcast` | Deliver ONE message to several sessions — by default every session the caller created — in a required `queue` or `steer` mode, reporting the outcome per target |
 | `session_status` | `GET /api/session-control/status` | List the sessions the caller stood up and what each is doing, with the roster taken from the crew log's session tree so a session that is gone still appears |
@@ -1971,6 +1972,29 @@ deduplicated the slot anyway, but silently answering "done" would hide that the
 caller's model of the sidebar is stale. Member DM threads
 (`member-*`) are refused outright (`member_thread_target`): they are opened only
 through the roster route that re-checks the member binding.
+
+## Listing what can be revived
+
+`session_history_list` answers "what is there to revive?" so an agent does not
+have to guess a title. `list_archived_sessions` runs the caller side exactly as
+`revive_session` does (`refuse_caller_identity`, then `refuse_caller_surface`,
+then the fence verdict) before touching history, so a refused caller learns
+nothing about what is on disk. The catalog walk (`_scan_revivable_history`) runs
+in a worker thread, newest first, and keeps a row only when revive would accept
+it: the same key fold and `cron-`/`workflow-`/`member-` prefix guards, persistent
+memory mode, no `app`, no link on the metadata line or in the gateway session
+store, no outbound mirror, the caller's workspace, and for a fenced caller a
+`created_by` corroborated by `_slot_tree_parent`. The store probes fail closed the
+way revive's do, so a session whose link cannot be read is hidden rather than
+offered and then refused. A fenced caller whose candidates the lineage cannot
+vouch for gets `lineage_unknown: true` beside the rows it could verify, so an empty
+answer during the post-boot unseeded window is not read as "nothing archived".
+The live-slot table is snapshotted on the loop before the walk and re-read after
+it (a session revived during the scan is dropped), and the caller surface and
+workspace are re-asserted after the walk because the rows carry titles, the same
+reason `created_session_status` re-checks. `folder_id` must exist in the tree
+(`folder_not_found` otherwise); `limit` is clamped to 1..100 and `more` says the
+walk stopped with rows left.
 
 ## Configuration
 
