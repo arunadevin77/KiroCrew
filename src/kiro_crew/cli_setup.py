@@ -9,6 +9,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -212,6 +213,95 @@ def _print_no_desktop_sources() -> None:
     )
 
 
+def _is_app_bundle(candidate: Path) -> bool:
+    contents = candidate / "Contents"
+    return (contents / "MacOS" / candidate.stem).is_file() and (contents / "Info.plist").is_file()
+
+
+def _find_prebuilt_app() -> Path | None:
+    for parent in Path(__file__).resolve().parents:
+        if parent.name != platform_compat.BUNDLED_BACKEND_DIST_DIRNAME:
+            continue
+        resources = parent.parent
+        bundle = resources.parent.parent
+        if (
+            resources.name == "Resources"
+            and resources.parent.name == "Contents"
+            and bundle.suffix == ".app"
+            and _is_app_bundle(bundle)
+        ):
+            return bundle
+    return None
+
+
+def _installed_app_path() -> Path:
+    return Path.home() / "Applications" / "KiroCrew.app"
+
+
+def _install_stamp_path(app_dest: Path) -> Path:
+    return app_dest.parent / ".KiroCrew.app.source"
+
+
+def _prebuilt_app_is_installed() -> bool:
+    prebuilt = _find_prebuilt_app()
+    if prebuilt is None:
+        return False
+    src = prebuilt.resolve()
+    if src.parent.name == "Applications":
+        return True
+    app_dest = _installed_app_path()
+    if not app_dest.is_dir():
+        return False
+    if app_dest.resolve() == src:
+        return True
+    try:
+        stamped = _install_stamp_path(app_dest).read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    return stamped == str(src)
+
+
+def _install_prebuilt_app(app_src: Path) -> None:
+    app_dest = _installed_app_path()
+    app_dest.parent.mkdir(parents=True, exist_ok=True)
+    src = app_src.resolve()
+    if app_dest.exists() and app_dest.resolve() == src:
+        print("  ✅ KiroCrew.app in ~/Applications is already this bundle.")
+        return
+
+    work = Path(tempfile.mkdtemp(prefix=".KiroCrew.app.", dir=app_dest.parent))
+    staged = work / "KiroCrew.app"
+    previous = work / "previous.app"
+    try:
+        shutil.copytree(src, staged, symlinks=True)
+        if app_dest.is_symlink() or app_dest.exists():
+            os.replace(app_dest, previous)
+        try:
+            os.replace(staged, app_dest)
+        except OSError:
+            if previous.is_symlink() or previous.exists():
+                os.replace(previous, app_dest)
+            raise
+    except OSError as exc:
+        shutil.rmtree(staged, ignore_errors=True)
+        try:
+            work.rmdir()
+        except OSError:
+            pass
+        print(f"  ❌ Could not install KiroCrew.app: {exc}")
+        print("     Any previous install was left in place.")
+        print("     Quit Kiro Crew if it is running and re-run: kirocrew setup --electron-only")
+        return
+    shutil.rmtree(work, ignore_errors=True)
+
+    try:
+        _install_stamp_path(app_dest).write_text(f"{src}\n", encoding="utf-8")
+    except OSError:
+        pass
+    print("  ✅ KiroCrew.app installed to ~/Applications")
+    print("     Launch it from Spotlight or from Finder in ~/Applications")
+
+
 def _setup_electron() -> None:
     """Build and install the KiroCrew desktop app (macOS only)."""
     if platform.system() != "Darwin":
@@ -220,6 +310,10 @@ def _setup_electron() -> None:
 
     electron_dir = _find_electron_dir()
     if electron_dir is None:
+        prebuilt = _find_prebuilt_app()
+        if prebuilt is not None:
+            _install_prebuilt_app(prebuilt)
+            return
         _print_no_desktop_sources()
         return
 
@@ -271,6 +365,22 @@ def _setup_electron() -> None:
     shutil.copytree(str(app_src), str(app_dest))
     print("  ✅ KiroCrew.app installed to ~/Applications")
     print("     Launch via Spotlight (⌘+Space → KiroCrew) or Finder → ~/Applications")
+
+
+def _setup_desktop_app_step() -> None:
+    print("── Desktop App ──\n")
+    if _find_electron_dir() is None and _find_prebuilt_app() is None:
+        _print_no_desktop_sources()
+        print()
+        return
+    if _prebuilt_app_is_installed():
+        print("  ✅ Kiro Crew desktop app is already installed.\n")
+        return
+    answer = input("  Install Kiro Crew desktop app to ~/Applications? [Y/n]: ").strip().lower()
+    if answer in ("", "y", "yes"):
+        _setup_electron()
+    else:
+        print("  ⏭  Skipped. Install later: kirocrew setup --electron-only\n")
 
 
 def _setup(
@@ -411,18 +521,7 @@ def _setup_impl(
 
     # 6. Desktop app (macOS only)
     if platform.system() == "Darwin":
-        print("── Desktop App ──\n")
-        if _find_electron_dir() is None:
-            _print_no_desktop_sources()
-            print()
-        else:
-            answer = (
-                input("  Install Kiro Crew desktop app to ~/Applications? [Y/n]: ").strip().lower()
-            )
-            if answer in ("", "y", "yes"):
-                _setup_electron()
-            else:
-                print("  ⏭  Skipped. Install later: kirocrew setup --electron-only\n")
+        _setup_desktop_app_step()
 
     # 7. Cloud (run KiroCrew on the user's own AWS EC2) — optional, delegated.
     _maybe_setup_cloud()
