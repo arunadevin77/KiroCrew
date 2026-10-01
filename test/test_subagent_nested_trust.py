@@ -944,6 +944,44 @@ class TestNestedTrustInheritance:
         assert a2.conversation_root_session_key == ROOT
         assert manager.root_session_key("subagent:A") == ROOT
 
+    @pytest.mark.asyncio
+    async def test_a_queued_continuation_adopts_a_contest_made_while_it_waited(self) -> None:
+        """An in-memory queued continuation re-enters with its first entry's stamp.
+        A rival admitted while it waited may have contested the conversation
+        (its run writes the marker onto the founder's record); the contest is
+        one-way, so the drained continuation must not run on the founding
+        chat's trust."""
+        sessions = _sessions({ROOT})
+        manager = _manager(sessions, AsyncMock(return_value=True))
+        founder = _live(manager, "A", ROOT)
+        founder.done = True
+        with patch("kiro_crew.subagent.Stats"), patch("kiro_crew.subagent.sel"):
+            prepared = manager.prepare_spawn(
+                "continue A",
+                parent_session_key=ROOT,
+                conversation_key="subagent:A",
+                _memory_mode="persistent",
+                _execution_context=execution_for_store("", template_id="").to_record(),
+            )
+        assert not isinstance(prepared, SubagentInfo), (prepared.error, prepared.queued)
+        params = dict(prepared.params)
+        assert params["_conversation_root_session_key"] == ROOT  # stamped before the contest
+        founder.conversation_root_session_key = CONTESTED_A  # the rival's contest landed
+
+        with (
+            patch("kiro_crew.subagent.Stats"),
+            patch("kiro_crew.subagent.sel"),
+            patch.object(manager, "_run", AsyncMock()),
+        ):
+            info = manager.spawn(**params, _from_queue=True)
+            try:
+                assert info is not None and not info.error, info.error if info else None
+                assert info.conversation_root_session_key == CONTESTED_A
+                assert manager.trust_root_for(info) == CONTESTED_A
+                assert sessions.get_approval_policy(manager.trust_root_for(info)) == ""
+            finally:
+                await manager.cancel_all()
+
     def test_cross_root_continuation_marks_the_conversation_contested(self) -> None:
         """A continue from another chat never lends that chat's trust to the conversation.
 

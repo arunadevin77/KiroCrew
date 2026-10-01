@@ -3189,9 +3189,13 @@ class GatewayOrchestrator:
             # and the reconnect replay (``subagent_replay_slot``) address the
             # same tab, listing the tree rooted there, so no frame the tab
             # receives can evict a card another frame painted.
+            # ``subagent_queued`` is the exception: it carries ONE parent's queue
+            # depth, and the client stores it per slot as a value, not a sum, so
+            # a nested parent's count routed to the root tab would overwrite the
+            # root chat's own wave count. It keeps its literal parent's slot.
             slot_name = _event_slot(
                 self.subagent_mgr.root_session_key_for(info)
-                if self.subagent_mgr
+                if self.subagent_mgr and etype != "subagent_queued"
                 else info.parent_session_key
             )
             base = {"id": info.id, "slot": slot_name}

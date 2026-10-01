@@ -7411,6 +7411,28 @@ class TestRetriggerRecovery:
         assert etype == "subagent_spawn"
         assert payload["slot"] == "cron-188f71e5"
 
+    @pytest.mark.asyncio
+    async def test_a_nested_parents_queue_depth_never_overwrites_the_root_tabs_count(self):
+        """Per-run frames follow a nested run to its root chat's tab, but
+        ``subagent_queued`` is ONE parent's depth, stored per slot as a value:
+        routed to the root tab it would replace the root chat's own count."""
+        orch, mock_sm = self._setup()
+        on_event = mock_sm.call_args[1]["on_event"]
+        mock_sm.return_value.root_session_key_for = MagicMock(return_value="dashboard:slot1")
+
+        info = MagicMock()
+        info.id = "_queue"
+        info.parent_session_key = "subagent:P"
+        info.batch_id = ""
+
+        await on_event("subagent_queued", info, {"queued": 1})
+        _etype, payload = orch.dashboard_state.broadcast_ws.call_args[0]
+        assert payload["slot"] != "slot1"
+        # A per-run frame of the same nested parent does reach the root tab.
+        await on_event("subagent_spawn", info, {"task": "t", "agent": "a"})
+        _etype, payload = orch.dashboard_state.broadcast_ws.call_args[0]
+        assert payload["slot"] == "slot1"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Tests: run() signal handling and bg session
