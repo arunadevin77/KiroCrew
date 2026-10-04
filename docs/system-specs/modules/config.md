@@ -3405,7 +3405,7 @@ owns **plus one mechanical backend entry** in `_UI_LANGUAGE_CATALOGS`, which the
 `test/test_context_ui_language.py` names explicitly on failure.
 
 Shipped catalogs (ordered by global speaker count, which is also the picker
-order): `en`, `zh-CN`, `hi`, `es`, `fr`, `bn`, `pt`, `ru`, `de`, `ja`, `ko`, `it`. Right-to-left
+order): `en`, `zh-CN`, `zh-TW`, `hi`, `es`, `fr`, `bn`, `pt`, `ru`, `de`, `ja`, `ko`, `it`. Right-to-left
 languages are deliberately **not** shipped yet: the catalogs would translate
 fine, but the dashboard's layout uses physical-direction utilities (`pl-*`,
 `left-*`, `text-left`) and unmirrored directional icons, so an RTL locale would
