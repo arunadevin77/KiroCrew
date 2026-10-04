@@ -59,6 +59,23 @@ describe('scroll shell: header fade', () => {
     // consumer suites; what belongs to THIS page is the anchored mount.
     expect(SRC).toContain('<EdgeFade side="top" anchor="below" />')
   })
+
+  it('mounts the phone fade at the fold sentinel, behind the pinned card', () => {
+    // On phones (titleInTopbar) the fade must not hang from the bottom of the
+    // pinned band: its opaque edge would sit under a one-line card and mask
+    // the transcript line below it. It overlays from the fold sentinel in a
+    // zero-height relative wrapper, and the pinned card paints above it.
+    const page = readFileSync(resolve(__dirname, '../pages/ChatPage.tsx'), 'utf8')
+    expect(page).not.toContain('{titleInTopbar && <EdgeFade side="top" anchor="below" />}')
+    const fold = page.indexOf('<div ref={pinFoldRef} aria-hidden className="h-0" />')
+    expect(fold, 'fold sentinel not found').toBeGreaterThanOrEqual(0)
+    const afterFold = page.slice(fold)
+    const pinnedCard = afterFold.indexOf('<PinnedPrompt')
+    expect(pinnedCard, 'pinned card mount not found after the fold').toBeGreaterThan(0)
+    expect(afterFold.slice(0, pinnedCard)).toMatch(
+      /\{titleInTopbar && \(\s*<div className="relative h-0">\s*<EdgeFade side="top" \/>\s*<\/div>\s*\)\}/,
+    )
+  })
 })
 
 describe('scroll shell: the scroller element contract', () => {
