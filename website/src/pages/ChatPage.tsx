@@ -334,6 +334,7 @@ import { useGuidePredicate, useGuideSelection } from '../guide/guidePredicates'
 import { fmtDateFields } from '../i18n/format'
 import { fmtMessageTime, fmtMessageTimeFull } from './chat/messageTime'
 import { fetchDashboardConfig } from '../api/dashboardConfigQuery'
+import { acpBackendName } from '../api/acpBackend'
 
 /**
  * Horizontal room the chat pane reclaims (negative margin) while the desktop
@@ -909,13 +910,6 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // client must not OFFER regenerate, edit-resend, rewind or continue either —
   // same predicate and same `executor` keying `selectContinuable` uses for Resume.
   const activeSlotRemoteBound = slotIsRemoteBound(slots.find(s => s.key === activeSlot))
-  // The agent and model rosters the pickers offer.
-  const {
-    installedAgents, sidebarAgents, defaultAgent, effectiveAgents,
-    defaultAgentFailed, toggleDefaultAgent,
-    agentDropdown, setAgentDropdown, agentFilter, setAgentFilter, agentDropdownRef, agentInputRef, filteredAgents,
-    effectiveModels,
-  } = useSessionRosters({ activeSlot, activeSlotProject, refreshTrigger, dispatch })
   const selectionCapabilitiesQ = useQuery({
     queryKey: ['slot-selection-capabilities', activeSlot],
     queryFn: () => api.chatSlotSelectionCapabilities(activeSlot!),
@@ -925,6 +919,16 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     // A missing/non-ACP peer can remain unknown indefinitely. Probe quickly
     // during session startup, then back off instead of proxying every 2s.
     refetchInterval: query => query.state.data?.known || query.state.dataUpdateCount + query.state.errorUpdateCount >= 5 ? 30_000 : 2_000,
+  })
+  // The agent and model rosters the pickers offer.
+  const {
+    installedAgents, sidebarAgents, defaultAgent, effectiveAgents,
+    defaultAgentFailed, toggleDefaultAgent,
+    agentDropdown, setAgentDropdown, agentFilter, setAgentFilter, agentDropdownRef, agentInputRef, filteredAgents,
+    effectiveModels, ownModelsQuery, ownModelsFailed,
+  } = useSessionRosters({
+    activeSlot, activeSlotProject, refreshTrigger, dispatch,
+    modelsBackend: selectionCapabilitiesQ.data?.models_backend,
   })
   const selectionCapabilities = selectionCapabilitiesQ.data?.known
     ? selectionCapabilitiesQ.data
@@ -6679,6 +6683,10 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                 models={filteredModels}
                 activeModel={jevRouteShownModel(shownModel, currentSlot)}
                 onSelectModel={pickModel}
+                modelsFailed={ownModelsFailed}
+                modelsFailedMessage={i18nT('components.modelEffortDropdown.harness_models_failed', { harness: acpBackendName({ id: selectionCapabilitiesQ.data?.models_backend ?? '' }) })}
+                retryingModels={ownModelsQuery.isFetching}
+                onRetryModels={() => ownModelsQuery.refetch()}
                 filter={modelFilter}
                 setFilter={setModelFilter}
                 onClose={() => setModelDropdown(false)}

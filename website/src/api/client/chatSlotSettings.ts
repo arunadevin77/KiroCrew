@@ -24,7 +24,9 @@ export interface SlotTurnTimeout {
 
 export function createChatSlotSettingsEndpoints({ post, j, jfetch: fetch }: ClientTransport) {
   const selection = {
-    models: () => fetch('/api/models').then(j),
+    /** The configured backend's model list, or `backend`'s own (`''` is kiro-cli). */
+    models: (backend?: string) =>
+      fetch(backend === undefined ? '/api/models' : '/api/models?backend=' + encodeURIComponent(backend)).then(j),
     chatSlotSelectionCapabilities: (slot: string) =>
       fetch('/api/chat/slots/' + encodeURIComponent(slot) + '/selection-capabilities').then(j) as Promise<{
         known: boolean
@@ -32,6 +34,8 @@ export function createChatSlotSettingsEndpoints({ post, j, jfetch: fetch }: Clie
         effort_supported?: boolean
         effort_levels?: string[]
         model_effort_pair_ids?: boolean
+        /** Present when this session's harness lists other models than the configured backend. */
+        models_backend?: string
       }>,
     effortLevels: (slot?: string) =>
       fetch('/api/effort-levels' + (slot ? '?slot=' + encodeURIComponent(slot) : '')).then(j) as Promise<string[]>,
