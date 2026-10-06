@@ -130,16 +130,14 @@ export function useComposerChips({
     // a bare `auto` for a session running one specific model.
     codexPairModels ? modelWithoutEffort(currentSlot?.served_model || '') : currentSlot?.served_model,
   )
-  // Before a session reports, its own harness answers when the server gave one. A null answer is
-  // "no session on that harness has said yet", so the model answers then, as in the crew editor.
-  const effortCaps = selectionCapabilities
-    ?? (selectionCapabilitiesQ.data?.effort_supported == null ? undefined : selectionCapabilitiesQ.data)
+  // An unknown effort verdict leaves the currently shown model to answer.
+  const effortCaps = selectionCapabilities ?? selectionCapabilitiesQ.data
   const effortSupported = provider.capabilities.reasoningEffort && !selectionCapabilitiesFailed(selectionCapabilitiesQ) && (
-    effortCaps
-      ? effortCaps.effort_supported === true
+    effortCaps?.effort_supported != null
+      ? effortCaps.effort_supported
       : modelSupportsEffort(shownModel === 'auto' ? '' : shownModel)
   )
-  const effortLevelsOverride = effortCaps?.effort_levels
+  const effortLevelsOverride = effortCaps?.effort_levels?.length ? effortCaps.effort_levels : undefined
   // The same answer WITHOUT that substitution, for the pin-to-agent row: that
   // row asks about the PIN, and it must stay disabled for a withheld one even
   // now that the chip names the model the session inherited instead.

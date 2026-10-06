@@ -243,6 +243,7 @@ _FACADE_DEFS = (
     "_shared_catalog_fetch",
     "_consume_refresh_exception",
     "own_models_backend",
+    "_live_on",
     "harness_effort",
     "api_models",
     "api_effort_levels",

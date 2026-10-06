@@ -84,11 +84,12 @@ from kiro_crew.agent_files import (  # noqa: F401
     KAS_RESERVED_AGENT_IDS,
 )
 from kiro_crew.agent_sdk.capabilities import capabilities_for, capabilities_of
-from kiro_crew.agent_sdk.drivers.acp import (
+from kiro_crew.agent_sdk.drivers.acp import (  # noqa: F401
     EntitlementRevalidating,
     catalog_row_would_drop,
     resolve_kiro_bin_for_spawn,
     resolve_pin_spelling,
+    resolve_pin_spelling_on,
     resolve_ssh_auth_sock,
 )
 from kiro_crew.agent_sdk.provider_identity import is_claude_code
@@ -277,6 +278,7 @@ from kiro_crew.dashboard.agent_admin.template_lineage import (  # noqa: F401
 from kiro_crew.dashboard.chat_persistence import (
     cap_effort_capability_levels,
     get_reasoning_effort_ordered,
+    get_reasoning_effort_values,
 )
 from kiro_crew.dashboard.chat_utils import (  # noqa: F401
     _BLOCKED_SLASH_COMMANDS,
@@ -284,6 +286,7 @@ from kiro_crew.dashboard.chat_utils import (  # noqa: F401
     SLASH_COMMAND_DESCRIPTIONS,
     _history_key_for,
     drained_to_thread,
+    effective_session_key,
     is_deprecated_model,
     run_config_write,
 )
@@ -1294,28 +1297,68 @@ def own_models_backend(backend: str, configured: str) -> str | None:
     return backend if backend in selectable_backend_values() else None
 
 
-def harness_effort(state: Any, backend: str, model: str | None) -> dict:
+def _live_on(state: Any, backend: str, crew: str) -> Any:
+    """A live provider on *backend*, *crew*'s own session's first, then the newest.
+
+    The levels a pair-id harness advertises can follow the model a session runs, and the
+    crew's own session is the likeliest to run the crew's. Newest first, as
+    ``core._advertised_evidence_provider`` reads: an older session still holds what its
+    build said at its own ``session/new``.
+    """
+    sessions = getattr(state, "sessions", None)
+    if sessions is None:
+        return None
+    on = [
+        p
+        for p in reversed(list(sessions.active_providers()))
+        if capabilities_of(p).backend == backend
+    ]
+    mine = {
+        id(sessions.get_provider(effective_session_key(s)))
+        for s in getattr(state, "_slots", {}).values()
+        if crew and s.agent == crew
+    }
+    return next((p for p in on if id(p) in mine), next(iter(on), None))
+
+
+def harness_effort(
+    state: Any, backend: str, model: str | None, crew: str = "", *, model_answers: bool = True
+) -> dict:
     """``effort_supported`` and ``effort_levels`` for a session on *backend* before it reports its own.
 
     Where the level rides the model (kiro-cli, claude) *model* answers over the shared
-    vocabulary, as the live provider's own gate does; ``None`` leaves that call to the
-    caller. Where the harness carries it in a session option (pi) or splits a model pair
-    onto one (codex), only that harness's build can say: a live session on it answers,
-    and none means no control.
+    vocabulary, as the live provider's own gate does. ``model_answers=False`` returns
+    nothing there instead, for a caller that judges the model itself: the crew editor
+    follows the pick the user is making, which a saved model would contradict.
+
+    Where the harness carries it in a session option (pi) or splits a model pair onto one
+    (codex), only that harness's build can say, and with no live session on it
+    ``effort_supported`` is ``None``: unknown, not unsupported.
+
+    A live session there, even one of *crew*'s own, is evidence of the BUILD alone --
+    whether it advertises the effort option, and at which levels -- because its own
+    ``supports_effort`` judges the model IT runs, which a slot pick can make another than
+    *model*: a pair-id harness (codex) would otherwise report that pick as this harness
+    taking no effort, and tell the crew to clear a pin that works. So *model* answers for
+    the pair, as the live gate does.
     """
     if backend in ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION | ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS:
-        sessions = getattr(state, "sessions", None)
-        live = next(
-            (
-                p
-                for p in (sessions.active_providers() if sessions is not None else [])
-                if capabilities_of(p).backend == backend
-            ),
-            None,
-        )
-        supported = live is not None and live.supports_effort()
-        levels = live.get_valid_effort_levels() if live is not None and supported else []
-    elif model is None:
+        live = _live_on(state, backend, crew)
+        if live is None:
+            return {"effort_supported": None, "effort_levels": []}
+        levels = [
+            level
+            for level in live.get_valid_effort_levels()
+            if isinstance(level, str) and level in get_reasoning_effort_values()
+        ]
+        supported: bool | None = bool(levels)
+        if backend in ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS:
+            if model_answers:
+                supported = supported and model_supports_effort(model)
+            elif supported:
+                supported = None
+        levels = levels if supported is not False else []
+    elif not model_answers or model is None:
         return {}
     else:
         supported = model_supports_effort(model)

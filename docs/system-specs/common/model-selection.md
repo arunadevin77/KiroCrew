@@ -427,22 +427,21 @@ its own once the cache refreshes with a list that carries it.
   as that id, or as not offered by the harness.
 - The chat composer reads `GET /api/chat/slots/{slot}/selection-capabilities` for
   the active ACP session's backend, effort support, and ordered effort levels. A
-  missing session answers `known: false`, with `effort_supported` and
-  `effort_levels` for the slot's own harness: where the level rides the model
-  (kiro-cli, claude) the model the slot will run decides, over the shared
-  vocabulary; where the harness carries it in a session option (pi) or a model
-  pair (codex) a live session on that harness answers, the crew's own first, but
-  only for its BUILD (whether it advertises the effort option, and at which
-  levels), since its own answer judges the model IT runs, which a slot pick can
-  make another -- so a pair-id harness judges this slot's or crew's model itself.
-  With no live session on that harness `effort_supported` is `null`: unknown, not
-  unsupported. On `null` the composer, split panes and effort-cycle shortcut judge
-  the model the slot will run, as before a session reports, so a cold crewmate
-  thread keeps its control; on `false` they offer none, and the shortcut says the
-  session takes no effort rather than doing nothing. `resolved-model` gives the
-  crew editor's Effort field the same harness answer, and nothing where the level
-  rides the model, which the editor judges itself as the user picks one; so it
-  says the harness takes no effort only on a definite `false`. A slot the gateway has not registered yet answers 404
+  missing session answers `known: false`. Where the level rides the model
+  (kiro-cli, claude), it resolves the slot's or crew's effective model so an
+  inheriting crew thread still has its effort control before its first turn.
+  The cold answer refreshes every two seconds, and a model switch invalidates
+  it immediately. Where the harness carries a session option (pi)
+  or a model pair (codex), a live session on that harness answers for its BUILD
+  alone: whether it advertises the option and which registered levels it takes.
+  A pair-id harness with the option reports `effort_supported: null` and keeps
+  those levels, so each picker judges its current model; one without the option
+  reports `false`. With no live session on that harness `null` means unknown,
+  and the current model supplies the provisional answer. On `false` the effort
+  control is absent and the shortcut says the session takes no effort.
+  `resolved-model` gives the crew editor the same build answer for pi and Codex,
+  while the editor judges its unsaved model pick itself where model choice matters.
+  It says the harness takes no effort only on a definite `false`. A slot the gateway has not registered yet answers 404
   `slot_not_found`, and the composer reads that the same way
   (`selectionCapabilitiesFailed` in `website/src/lib/effort.ts`): only a real
   fault (any error other than that 404, such as a 403 or transport failure) shows
