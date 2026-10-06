@@ -1028,10 +1028,16 @@ class TestTheCarryForwardReadIsNeverOnTheLoop:
                         " an _impl method resolves 'asyncio' only"
                     )
                     checked += 1
-        # Six offloads live in _impl methods: the delivery path, the leaked
-        # delivery's mark, the two gateway_restart writes, the digest-hold
-        # settlement, and the drained queue's, the pattern the others follow.
-        assert checked == 6, f"expected 6 _impl offloads, found {checked}"
+        # Seven offloads live in _impl methods after this branch rebases over main.
+        # Main already carried six: the delivery path's mark and the leaked delivery's
+        # mark in _report_terminal_impl, the orphan reconcile tombstone and the
+        # notify-orphan tombstone, the drained queue's mark (which predates this change
+        # and is the pattern the others follow), and the digest-hold settlement. This
+        # branch adds the seventh -- the DEFERRED tombstone written in
+        # _reconcile_orphans_impl after the digest DM confirms delivery for a
+        # digest-pending orphan -- off the loop because it reads any existing tombstone
+        # and the call site is a coroutine on the loop, like the others.
+        assert checked == 7, f"expected 7 _impl offloads, found {checked}"
 
     def test_the_source_reads_do_not_depend_on_the_working_directory(self, tmp_path, monkeypatch):
         """The modules are read from this file's own tree, not from the cwd.
