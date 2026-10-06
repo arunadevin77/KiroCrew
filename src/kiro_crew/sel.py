@@ -3557,6 +3557,8 @@ def _infer_source(session_key: str) -> str:
         return "taskrunner"
     if session_key == "_bg":
         return "background"
+    if session_key == "_consolidate":
+        return "background"
     if session_key == "_hb":
         return "heartbeat"
     if session_key == "cli_chat":

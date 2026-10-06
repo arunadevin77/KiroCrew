@@ -949,7 +949,13 @@ class BackgroundSessionRuntime:
             return None
         return f"tree rss={rss}MB exceeds {ceiling}MB"
 
-    async def recycle_background(self, *, context_overflowed: bool = False) -> None:
+    async def recycle_background(
+        self,
+        session_key: str | None = None,
+        *,
+        agent: str | None = None,
+        context_overflowed: bool = False,
+    ) -> None:
         """Recycle the persistent background provider when context is full.
 
         ``context_overflowed`` says the turn just taken was refused as too long
@@ -960,8 +966,8 @@ class BackgroundSessionRuntime:
         last successful turn's, so the threshold below can keep a conversation
         every later turn will be refused on, until the gateway restarts.
         """
-        background_key = self._deps.background_key
-        background_agent = self._deps.background_agent
+        background_key = session_key or self._deps.background_key
+        background_agent = agent or self._deps.background_agent
         logger = self._deps.logger
         session = self._owner._sessions.get(background_key)
         if not session:
