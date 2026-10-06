@@ -62,6 +62,15 @@ export function applyNavIntentInMain(
     switchSlot: (slotKey: string) => void
     // Required, so every caller decides whether its exit asks the page first.
     mayLeave: () => boolean
+    /**
+     * Append `text` to the chat composer this window already shows for
+     * `slotKey`, returning false when no such composer is on screen. A hand-off
+     * to the slot already shown cannot go through the sessionStorage prefill:
+     * activating an already-active slot does not re-run the slot-restore effect,
+     * so the seed would sit unread for its 30s TTL and then overwrite whatever
+     * the user typed on their next switch back.
+     */
+    appendToOpenComposer?: (slotKey: string, text: string) => boolean
   },
 ): void {
   // Best-effort raise — a channel-delivered intent has no user activation, so
@@ -70,8 +79,13 @@ export function applyNavIntentInMain(
   // main. Raised before the leave check so its confirm shows on a window the
   // user can see.
   try { window.focus() } catch { /* vetoed — non-fatal */ }
+  const prefill = intent.prefill
+  if (prefill?.append !== undefined && intent.path === '/chat'
+    && intent.slotKey === prefill.slotKey && deps.appendToOpenComposer?.(prefill.slotKey, prefill.append)) {
+    return
+  }
   if (!deps.mayLeave()) return
-  if (intent.prefill) writePrefill(intent.prefill.slotKey, intent.prefill.prompt)
+  if (prefill) writePrefill(prefill.slotKey, prefill.prompt)
   if (intent.slotKey) deps.switchSlot(intent.slotKey)
   deps.navigate(intent.path)
 }

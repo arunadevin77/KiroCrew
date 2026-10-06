@@ -247,6 +247,45 @@ describe('applyNavIntentInMain', () => {
     expect(mayLeave).toHaveBeenCalledTimes(1)
     expect(navigate).toHaveBeenCalledWith('/artifacts')
   })
+
+  it('does not ask when the intent appends to the composer already on screen', () => {
+    const appendToOpenComposer = vi.fn(() => true)
+    const mayLeave = vi.fn(() => false)
+    applyNavIntentInMain(
+      { path: '/chat', slotKey: 'chat-1', prefill: { slotKey: 'chat-1', prompt: 'ref', append: 'ref' } },
+      { navigate: vi.fn(), switchSlot: vi.fn(), mayLeave, appendToOpenComposer },
+    )
+    expect(mayLeave).not.toHaveBeenCalled()
+    expect(appendToOpenComposer).toHaveBeenCalledWith('chat-1', 'ref')
+  })
+
+  it('appends to the composer already open on the target slot instead of leaving a stale prefill', () => {
+    const appendToOpenComposer = vi.fn(() => true)
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    const switchSlot = vi.fn()
+    const navigate = vi.fn()
+    applyNavIntentInMain(
+      { path: '/chat', slotKey: 'chat-1', prefill: { slotKey: 'chat-1', prompt: 'old draft\n\nref', append: 'ref' } },
+      { navigate, switchSlot, appendToOpenComposer, mayLeave: () => true },
+    )
+    expect(appendToOpenComposer).toHaveBeenCalledWith('chat-1', 'ref')
+    expect(setItem).not.toHaveBeenCalledWith(PREFILL_STORAGE_KEY, expect.anything())
+    expect(switchSlot).not.toHaveBeenCalled()
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it('still seeds the prefill when no composer on screen shows the target slot', () => {
+    const appendToOpenComposer = vi.fn(() => false)
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    const switchSlot = vi.fn()
+    applyNavIntentInMain(
+      { path: '/chat', slotKey: 'chat-1', prefill: { slotKey: 'chat-1', prompt: 'ref', append: 'ref' } },
+      { navigate: vi.fn(), switchSlot, appendToOpenComposer, mayLeave: () => true },
+    )
+    expect(appendToOpenComposer).toHaveBeenCalledWith('chat-1', 'ref')
+    expect(setItem).toHaveBeenCalledWith(PREFILL_STORAGE_KEY, expect.stringContaining('"prompt":"ref"'))
+    expect(switchSlot).toHaveBeenCalledWith('chat-1')
+  })
 })
 
 describe('chatDeepLinkSlot', () => {

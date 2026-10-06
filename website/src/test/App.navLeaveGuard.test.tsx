@@ -17,7 +17,9 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { screen, waitFor, fireEvent, cleanup, act } from '@testing-library/react'
-import { renderWithProviders } from './helpers'
+import { renderWithProviders, createTestStore } from './helpers'
+import { setActiveSlot } from '../store/chatSlice'
+import { PREFILL_STORAGE_KEY } from '../utils/navIntent'
 import App from '../App'
 import SidePanelLayout, { useSidePanelLeaveGuard } from '../components/SidePanelLayout'
 import { NavigationLeaveGuardProvider } from '../components/NavigationLeaveGuard'
@@ -261,5 +263,39 @@ describe('native app-menu navigation leave guard', () => {
     await waitFor(() => expect(nativeHandler).not.toBeNull())
     act(() => { nativeHandler!('/schedule') })
     await waitFor(() => expect(screen.queryByLabelText('draft')).toBeNull())
+  })
+})
+
+describe('popout hand-off to the session already on screen', () => {
+  beforeEach(() => { localStorage.clear(); sessionStorage.clear() })
+  afterEach(() => { vi.restoreAllMocks(); cleanup() })
+
+  const deliver = (store: ReturnType<typeof createTestStore>, activeSlot: string) => {
+    act(() => { store.dispatch(setActiveSlot(activeSlot)) })
+    act(() => {
+      navIntent.handler!({
+        path: '/chat', slotKey: 'chat-1', prefill: { slotKey: 'chat-1', prompt: 'ref', append: 'ref' },
+      } as Parameters<NonNullable<typeof navIntent.handler>>[0])
+    })
+  }
+
+  // Staging on mainComposerAppend is what lets the split-view grid pane for
+  // that slot pick it up as well as the single-session ChatPage.
+  it('stages the append for the composer consumers when /chat shows the target slot', async () => {
+    const store = createTestStore()
+    renderWithProviders(<NavigationLeaveGuardProvider><App /></NavigationLeaveGuardProvider>, { route: '/chat', store })
+    await waitFor(() => expect(navIntent.handler).not.toBeNull())
+    deliver(store, 'chat-1')
+    expect(store.getState().chat.mainComposerAppend).toEqual({ slot: 'chat-1', text: 'ref' })
+    expect(sessionStorage.getItem(PREFILL_STORAGE_KEY)).toBeNull()
+  })
+
+  it('seeds the prefill instead when /chat shows another slot', async () => {
+    const store = createTestStore()
+    renderWithProviders(<NavigationLeaveGuardProvider><App /></NavigationLeaveGuardProvider>, { route: '/chat', store })
+    await waitFor(() => expect(navIntent.handler).not.toBeNull())
+    deliver(store, 'chat-2')
+    expect(store.getState().chat.mainComposerAppend).toBeNull()
+    expect(sessionStorage.getItem(PREFILL_STORAGE_KEY)).toContain('"prompt":"ref"')
   })
 })

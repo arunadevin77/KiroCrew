@@ -17,6 +17,7 @@ import { Routes, Route } from 'react-router-dom'
 import ArtifactDetailPage from '../pages/ArtifactDetailPage'
 import { NavigationLeaveGuardProvider, useMayLeaveForNavigation } from '../components/NavigationLeaveGuard'
 import { renderWithProviders } from './helpers'
+import { openMore, closeMore } from './artifactMoreMenu'
 import { api } from '../api/client'
 import { __resetArtifactEditing } from '../utils/artifactEditGuard'
 import type { Artifact } from '../types'
@@ -62,7 +63,7 @@ function renderPage() {
 async function enterEditMode() {
   renderPage()
   await waitFor(() => expect(screen.getByLabelText('Toggle agent chat')).toBeInTheDocument())
-  fireEvent.click(screen.getByTitle(/edit content/i))
+  fireEvent.click(screen.getByRole('button', { description: /edit content/i }))
   return screen.findByLabelText('editor')
 }
 
@@ -137,3 +138,39 @@ describe('ArtifactDetailPage app-shell leave guard', () => {
   })
 })
 
+describe('ArtifactDetailPage Escape inside the More menu', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    __resetArtifactEditing()
+    vi.mocked(api).artifact = vi.fn().mockResolvedValue(mkArtifact())
+    vi.mocked(api).artifactVersions = vi.fn().mockResolvedValue({ slug: 'cr-queue', versions: [1] })
+    vi.mocked(api).artifactEvents = vi.fn().mockResolvedValue({ slug: 'cr-queue', events: [] })
+    vi.mocked(api).artifactComments = vi.fn().mockResolvedValue({ comments: [] })
+    vi.mocked(api).chatSlots = vi.fn().mockResolvedValue([])
+  })
+  afterEach(() => { vi.restoreAllMocks() })
+
+  it('closes the menu and keeps a clean editor open', async () => {
+    await enterEditMode()
+    openMore()
+    await screen.findByRole('menu')
+    await closeMore()
+    expect(screen.getByLabelText('editor')).toBeInTheDocument()
+  })
+
+  it('closes the menu without asking to discard a dirty buffer', async () => {
+    const editor = await enterEditMode()
+    fireEvent.change(editor, { target: { value: '# unsaved work' } })
+    openMore()
+    await screen.findByRole('menu')
+    await closeMore()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect((screen.getByLabelText('editor') as HTMLTextAreaElement).value).toBe('# unsaved work')
+  })
+
+  it('still cancels the edit on an Escape outside the menu', async () => {
+    await enterEditMode()
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByLabelText('editor')).toBeNull())
+  })
+})
