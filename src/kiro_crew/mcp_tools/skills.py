@@ -153,6 +153,7 @@ def skill_search(name: str, args: dict[str, Any]) -> str:
     page_limit = max(1, int(args["limit"])) if paging and args.get("limit") is not None else None
     capacity = _read_capacity(key, offset) if action == "read" else SKILL_READ_CAPACITY
     incomplete = False
+    scoped = False
     refusal: dict[str, Any] | None = None
     if (action == "search" and not query) or (action == "read" and not key):
         # Audit even validation failures — every tool invocation must emit a
@@ -216,6 +217,7 @@ def skill_search(name: str, args: dict[str, Any]) -> str:
             matches = result.get("matches", [])
             next_offset = result.get("next_offset")
             incomplete = bool(result.get("incomplete"))
+            scoped = result.get("scoped") is True
             if isinstance(result.get("refusal"), dict):
                 refusal = result["refusal"]
         else:
@@ -296,6 +298,12 @@ def skill_search(name: str, args: dict[str, Any]) -> str:
             "Body indexing is still in progress; absence is not conclusive. "
             "Repeat the query to continue indexing, browse action='list', "
             "or load an exact key with action='read'."
+        )
+    if not matches and scoped:
+        return (
+            f"No skills matched '{query}'. Search covers only this agent's skill:// "
+            "resources, so an installed skill outside them is not found; "
+            "browse action='list' to see the mapped set."
         )
     if not matches:
         return (
