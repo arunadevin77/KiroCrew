@@ -9,10 +9,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from kiro_crew.dashboard.side_prompts import (
-    SIDE_BOUNDARY_PROMPT,
-    SIDE_BOUNDARY_PROMPT_NO_TOOLS,
     build_side_format_prompt,
     build_side_system_prompt,
+    side_boundary_prompt,
 )
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 
@@ -111,13 +110,14 @@ def build_side_message(
     *,
     is_first_turn: bool,
     tools_available: bool = True,
+    shell_available: bool = True,
     cfg: KiroCrewConfig | None = None,
 ) -> str:
     """First turn: full envelope (instructions + format + parent + side history + question).
     Subsequent turns: bare question (kiro-cli session retains framing).
 
-    ``tools_available`` picks the boundary prompt for the harness the turn runs
-    on: the read-only allowance (kiro-cli) or no tools at all (other backends).
+    ``tools_available`` and ``shell_available`` pick the boundary prompt for the
+    harness the turn runs on (:func:`side_prompts.side_boundary_prompt`).
 
     ``cfg`` feeds the reply-style block of the format contract
     (``side_prompts.build_side_format_prompt``); ``None`` omits that block.
@@ -130,8 +130,11 @@ def build_side_message(
     question = question.strip()
     if not is_first_turn:
         return question
+    boundary = side_boundary_prompt(
+        tools_available=tools_available, shell_available=shell_available
+    )
     parts: list[str] = [
-        build_side_system_prompt(tools_available=tools_available),
+        build_side_system_prompt(tools_available=tools_available, shell_available=shell_available),
         # The rendering contract sits with the instructions, ahead of the
         # parent snapshot: it describes how THIS surface draws a reply, which
         # is framing, not history.
@@ -143,6 +146,6 @@ def build_side_message(
     side_block = _format_side_history(slot)
     if side_block:
         parts.append(side_block)
-    parts.append(SIDE_BOUNDARY_PROMPT if tools_available else SIDE_BOUNDARY_PROMPT_NO_TOOLS)
+    parts.append(boundary)
     parts.append(f"User: {question}")
     return "\n\n".join(parts)

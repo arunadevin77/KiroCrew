@@ -14,8 +14,7 @@ vi.mock('../api/client', () => ({
     sideTurn: vi.fn(),
     sideClose: vi.fn(),
     sideStop: vi.fn(),
-    kirocrewConfig: vi.fn(),
-    acpBackends: vi.fn(),
+    sideTools: vi.fn(),
   },
 }))
 
@@ -41,50 +40,43 @@ function renderSide() {
   )
 }
 
-/** The card rows the gateway sends: the side_chat_tools line per backend. */
-function serveBackends(withTools: string[]) {
-  const ids = ['', 'kas', 'claude']
-  vi.mocked(api.acpBackends).mockResolvedValue({
-    backends: ids.map(id => ({
-      id,
-      capabilities: [{ id: 'side_chat_tools', available: withTools.includes(id), measured: true, unmeasured_reason: '' }],
-    })),
-  } as never)
+/** The answer GET /api/chat/side/tools sends: what a side turn runs right now. */
+function serveSideTools(answer: { read_only_tools: boolean; claude_adapter_outdated?: boolean; config_unavailable?: boolean }) {
+  vi.mocked(api.sideTools).mockResolvedValue({
+    claude_adapter_outdated: false,
+    config_unavailable: false,
+    ...answer,
+  })
 }
 
-describe('SideChat footer follows the side_chat_tools line of the configured backend', () => {
+describe('SideChat footer follows the gateway answer for the side turn', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    serveBackends(['', 'kas'])
   })
 
-  it.each([
-    ['kiro', ''],
-    ['kas', 'kas'],
-  ])('says lookups work on %s', async (_name, backend) => {
-    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: { acp_backend: backend } } as never)
+  it('says lookups work when the side turn runs read-only tools', async () => {
+    serveSideTools({ read_only_tools: true })
     renderSide()
     expect(await screen.findByText(/Lookups work here, but changes don't/)).toBeTruthy()
     expect(screen.queryByText(/Tools are unavailable here/)).toBeNull()
   })
 
   it('says tools are unavailable on a backend outside the set', async () => {
-    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: { acp_backend: 'claude' } } as never)
+    serveSideTools({ read_only_tools: false })
     renderSide()
     expect(await screen.findByText(/Tools are unavailable here/)).toBeTruthy()
     expect(screen.queryByText(/Lookups work here, but changes don't/)).toBeNull()
   })
 
-  it('follows the server line, not a frontend list', async () => {
-    serveBackends([''])
-    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: { acp_backend: 'kas' } } as never)
+  it('says to update claude-agent-acp when only the adapter is too old', async () => {
+    serveSideTools({ read_only_tools: false, claude_adapter_outdated: true })
     renderSide()
-    expect(await screen.findByText(/Tools are unavailable here/)).toBeTruthy()
+    expect(await screen.findByText(/Update claude-agent-acp/)).toBeTruthy()
+    expect(screen.queryByText(/Lookups work here, but changes don't/)).toBeNull()
   })
 
-  it('says only that the tools are unknown when the backend card cannot load', async () => {
-    vi.mocked(api.acpBackends).mockRejectedValue(new Error('down'))
-    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: { acp_backend: '' } } as never)
+  it('says only that the tools are unknown when the answer cannot load', async () => {
+    vi.mocked(api.sideTools).mockRejectedValue(new Error('down'))
     renderSide()
     expect((await screen.findByTestId('side-chat-tools-unknown')).textContent).toMatch(
       /Couldn't check which tools this agent backend allows here/,
@@ -94,7 +86,7 @@ describe('SideChat footer follows the side_chat_tools line of the configured bac
   })
 
   it('says the config failed only when the config is what failed', async () => {
-    vi.mocked(api.kirocrewConfig).mockRejectedValue(new Error('down'))
+    serveSideTools({ read_only_tools: false, config_unavailable: true })
     renderSide()
     expect(await screen.findByTestId('side-chat-config-error')).toBeTruthy()
     expect(screen.queryByTestId('side-chat-tools-unknown')).toBeNull()

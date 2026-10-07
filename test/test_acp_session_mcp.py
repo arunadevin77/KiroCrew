@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import stat
 from pathlib import Path
 from unittest import mock
@@ -1769,6 +1770,277 @@ class TestClientSeam:
 
         source = inspect.getsource(client_mod.AcpClient._initialize_session)
         assert source.count("await self._pin_claude_starting_mode(") == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["new", "load"])
+    async def test_a_side_read_only_session_starts_confined_and_pinned(
+        self, tmp_path, agents_dir, monkeypatch, path
+    ):
+        """A Side Chat session gets only the read built-ins and no MCP server.
+
+        The spec's servers are not mounted, every web call is forced to the host by
+        an inline ``ask`` rule, settings hooks are off, bypass cannot be the
+        starting mode, and an approving mode inherited from the user's settings is
+        pinned to ``default`` before the first prompt -- on both establishment paths.
+        """
+        _write_spec(agents_dir, servers={"foo": {"command": "/bin/foo"}}, tools=["@foo"])
+        client = self._seeded(
+            tmp_path, agent="kirocrew", acp_backend=ACP_BACKEND_CLAUDE, side_read_only=True
+        )
+        # As the launch does (ClaudeLaunch.resolve_spawn), before session/new.
+        await client._prepare_claude_side_read_denies()
+        if path == "load":
+            client._resume_session_id = "s-old"
+        sent, killed = self._adapter_transport(
+            client, monkeypatch, started_mode="bypassPermissions"
+        )
+
+        await client._initialize_session()
+
+        params = dict(sent)["session/load" if path == "load" else "session/new"]
+        assert params["mcpServers"] == []
+        options = params["_meta"]["claudeCode"]["options"]
+        assert options["tools"] == ["Read", "Grep", "Glob", "WebFetch", "WebSearch"]
+        assert options["strictMcpConfig"] is True
+        assert options["allowDangerouslySkipPermissions"] is False
+        assert "settingSources" not in options
+        assert options["settings"]["permissions"]["ask"] == ["WebFetch", "WebSearch"]
+        assert options["settings"]["disableAllHooks"] is True
+        assert [p for m, p in sent if m == "session/set_mode"] == [
+            {"sessionId": client._session_id, "modeId": "default"}
+        ]
+        assert killed == []
+
+    def test_a_side_read_only_session_keeps_the_exclusions_restrictions(self, tmp_path, agents_dir):
+        """On the exclusion path the side shape is added to, never swapped for,
+        the inline settings: the project's deny rules still ride along and only
+        the user tier loads."""
+        _write_spec(agents_dir, servers={"foo": {"command": "/bin/foo"}}, tools=["@foo"])
+        local = tmp_path / ".claude" / "settings.local.json"
+        local.parent.mkdir(parents=True)
+        local.write_text(
+            json.dumps({"permissions": {"deny": ["Read(./secrets/**)"], "ask": ["WebFetch"]}}),
+            encoding="utf-8",
+        )
+        client = AcpClient(
+            work_dir=tmp_path, agent="kirocrew", acp_backend=ACP_BACKEND_CLAUDE, side_read_only=True
+        )
+        client._claude_adapter_disk_version = "0.84.0"
+        client._write_claude_local_settings()
+        assert client._claude_local_settings_excluded is True
+        client._claude_side_read_denies = client_mod._claude_side_read_deny_rules()
+
+        options = client._claude_session_meta()["claudeCode"]["options"]
+
+        assert options["settingSources"] == ["user"]
+        permissions = options["settings"]["permissions"]
+        assert "Read(./secrets/**)" in permissions["deny"]
+        assert permissions["ask"] == ["WebFetch", "WebSearch"]
+        assert options["tools"] == ["Read", "Grep", "Glob", "WebFetch", "WebSearch"]
+
+    @pytest.mark.parametrize(("side_read_only", "builtin"), [(True, "fs_read"), (False, "")])
+    def test_only_a_side_read_only_session_names_a_claude_read_builtin(
+        self, tmp_path, side_read_only, builtin
+    ):
+        """The mapped name is how the READ_ONLY gate proves a claude read on a
+        Side Chat session; on any other session it would bind kiro-cli-named deny
+        rules to claude's own tools."""
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        client = AcpClient(
+            work_dir=tmp_path, acp_backend=ACP_BACKEND_CLAUDE, side_read_only=side_read_only
+        )
+        client._extract_tool_event(
+            JsonRpcMessage(
+                method="session/update",
+                params={
+                    "update": {
+                        "_meta": {"claudeCode": {"toolName": "Read"}},
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "toolu_1",
+                        "title": "Read /etc/hosts",
+                        "kind": "read",
+                        "rawInput": {"file_path": "/etc/hosts"},
+                    }
+                },
+            )
+        )
+        event = client._build_permission_event(
+            JsonRpcMessage(
+                id=7,
+                method="session/request_permission",
+                params={
+                    "toolCall": {
+                        "toolCallId": "toolu_1",
+                        "title": "Read /etc/hosts",
+                        "kind": "read",
+                    },
+                    "options": [
+                        {"optionId": "allow-once", "name": "Yes", "kind": "allow_once"},
+                        {"optionId": "reject-once", "name": "No", "kind": "reject_once"},
+                    ],
+                },
+            )
+        )
+        assert event is not None
+        assert event.harness_builtin_tool == builtin
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("version", ["0.83.0", None])
+    async def test_a_handshake_below_the_floor_stops_a_side_read_only_session(
+        self, tmp_path, agents_dir, monkeypatch, version
+    ):
+        """The read-only shape rides session options an unverified adapter may
+        ignore, so the session never reaches its first prompt."""
+        client = self._seeded(
+            tmp_path, agent="kirocrew", acp_backend=ACP_BACKEND_CLAUDE, side_read_only=True
+        )
+        await client._prepare_claude_side_read_denies()
+        _sent, killed = self._adapter_transport(
+            client, monkeypatch, started_mode="default", version=version
+        )
+        with pytest.raises(client_mod.AcpError, match="not verified to honour settingSources"):
+            await client._initialize_session()
+        assert killed == [True]
+
+    @staticmethod
+    def _claude_reads_natively(path, *, deny, allow):
+        """Whether Claude Code runs a Read of *path* without asking the host.
+
+        Its documented order: a deny rule from any settings source refuses before
+        an allow rule from any source can pre-approve. Only the rule shapes in play
+        are modelled: a bare ``Read`` (every path), and a ``//`` pattern, exact or
+        ending in ``/**``, with gitignore's backslash escapes. Paths are compared
+        in the POSIX spelling Claude Code matches (``C:\\x`` is ``/c/x``).
+        """
+        spelled = Path(path).as_posix()
+        drive = re.match(r"([A-Za-z]):", spelled)
+        if drive:
+            spelled = f"/{drive.group(1).lower()}{spelled[2:]}"
+
+        def _matches(rule):
+            if rule == "Read":
+                return True
+            if not (rule.startswith("Read(//") and rule.endswith(")")):
+                return False
+            pattern = re.sub(r"\\(.)", r"\1", rule[len("Read(/") : -1])
+            if pattern.endswith("/**"):
+                return spelled.startswith(pattern[: -len("**")])
+            return spelled == pattern
+
+        if any(_matches(rule) for rule in deny):
+            return False
+        return any(_matches(rule) for rule in allow)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["new", "load"])
+    async def test_an_inherited_read_allow_does_not_open_a_sensitive_path(
+        self, tmp_path, agents_dir, monkeypatch, path
+    ):
+        """The user's settings allow every read; a side turn still cannot read a sensitive path.
+
+        A Side Chat session keeps the user tier, so a ``Read`` allow rule there (or
+        an ``additionalDirectories`` entry) lets claude run Read, Grep and Glob
+        without asking the host, and the READ_ONLY gate never sees the call. What
+        refuses it is the deny rule the session carries, which Claude Code checks
+        first. Launched as the spawn path launches it, every sensitive target is
+        denied as itself and as everything under it, while a work-dir file still
+        reads natively.
+        """
+        from kiro_crew.acp.harness import claude as harness_claude
+        from kiro_crew.acp.harness.base import SpawnContext
+        from kiro_crew.security import sandbox_credential_targets
+
+        _write_spec(agents_dir, servers={"foo": {"command": "/bin/foo"}}, tools=["@foo"])
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        user = {"permissions": {"allow": ["Read"], "additionalDirectories": [str(home)]}}
+        (home / ".claude" / "settings.json").write_text(json.dumps(user), encoding="utf-8")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        work = tmp_path / "work"
+        work.mkdir()
+        monkeypatch.setattr(harness_claude, "_claude_acp_argv_cache", (["/x/claude-agent-acp"], ""))
+        monkeypatch.setattr(
+            harness_claude, "_claude_adapter_installed_version", lambda _argv: "0.84.0"
+        )
+        client = AcpClient(
+            work_dir=work, agent="kirocrew", acp_backend=ACP_BACKEND_CLAUDE, side_read_only=True
+        )
+        if path == "load":
+            client._resume_session_id = "s-old"
+        await harness_claude.ClaudeLaunch().resolve_spawn(
+            SpawnContext(
+                agent="kirocrew", work_dir=work, model=None, environ={}, home=home, session=client
+            )
+        )
+        sent, _killed = self._adapter_transport(client, monkeypatch, started_mode="default")
+
+        await client._initialize_session()
+
+        params = dict(sent)["session/load" if path == "load" else "session/new"]
+        deny = params["_meta"]["claudeCode"]["options"]["settings"]["permissions"].get("deny", [])
+        allow = user["permissions"]["allow"]
+        targets = sandbox_credential_targets()
+        assert str(home / ".aws") in targets
+        for target in targets:
+            for sensitive in (Path(target), Path(target) / "x"):
+                assert not self._claude_reads_natively(sensitive, deny=deny, allow=allow), sensitive
+        assert self._claude_reads_natively(work / "README.md", deny=deny, allow=allow)
+
+    @pytest.mark.asyncio
+    async def test_a_side_session_without_its_deny_rules_never_starts(self, tmp_path, monkeypatch):
+        """Fail closed: a launch that cannot build the deny rules stops, and an
+        envelope with none to carry is refused, so no side session runs on the
+        user's allow rules unfenced. Any other session is untouched."""
+
+        def _unresolvable():
+            raise RuntimeError("roots could not be canonicalised")
+
+        monkeypatch.setattr(client_mod, "sandbox_credential_targets", _unresolvable)
+        side = AcpClient(work_dir=tmp_path, acp_backend=ACP_BACKEND_CLAUDE, side_read_only=True)
+        with pytest.raises(client_mod.AcpError, match="could not be built"):
+            await side._prepare_claude_side_read_denies()
+        with pytest.raises(client_mod.AcpError, match="no sensitive-path deny rules"):
+            side._claude_session_meta()
+
+        main = AcpClient(work_dir=tmp_path, acp_backend=ACP_BACKEND_CLAUDE)
+        await main._prepare_claude_side_read_denies()
+        assert main._claude_side_read_denies == ()
+        assert main._claude_session_meta() == {"claudeCode": {"options": {}}}
+
+    @pytest.mark.parametrize(
+        ("target", "windows", "pattern"),
+        [
+            ("/home/u/.aws", False, "//home/u/.aws"),
+            ("/home/[u]/a*b?\\c", False, "//home/\\[u\\]/a\\*b\\?\\\\c"),
+            ("C:\\Users\\u\\.aws", True, "//c/Users/u/.aws"),
+            ("D:\\[x]\\.ssh", True, "//d/\\[x\\]/.ssh"),
+        ],
+    )
+    def test_a_target_is_written_as_a_root_anchored_rule(self, target, windows, pattern):
+        """``//`` anchors a Claude Code rule at the filesystem root, which it matches in
+        POSIX spelling (a drive becomes ``/c``); a real path's glob characters are
+        escaped, so the rule fences that path and nothing else."""
+        assert client_mod._claude_root_pattern(target, windows=windows) == pattern
+
+    @pytest.mark.parametrize(
+        ("version", "expected"),
+        [("0.84.0", True), ("0.86.0", True), ("0.81.2", False), ("", False)],
+    )
+    def test_side_chat_asks_the_installed_adapters_version(self, monkeypatch, version, expected):
+        """Side Chat grants tools on claude only from an adapter at the floor."""
+        from kiro_crew.agent_sdk.drivers.acp import claude_adapter_honours_session_options
+
+        monkeypatch.setattr(client_mod, "_claude_acp_argv_cache", (["/x/claude-agent-acp"], ""))
+        monkeypatch.setattr(client_mod, "_claude_adapter_installed_version", lambda argv: version)
+        assert claude_adapter_honours_session_options() is expected
+
+    def test_side_chat_sees_no_adapter_as_unverified(self, monkeypatch):
+        from kiro_crew.agent_sdk.drivers.acp import claude_adapter_honours_session_options
+
+        monkeypatch.setattr(client_mod, "_claude_acp_argv_cache", (None, "PATH"))
+        assert claude_adapter_honours_session_options() is False
 
     @pytest.mark.parametrize(
         "raw",

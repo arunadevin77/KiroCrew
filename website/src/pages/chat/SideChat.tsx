@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, MessageCircleQuestionMark, RotateCcw, CornerUpRight } from 'lucide-react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import type { AcpBackendProbe } from '../../api/client/config'
 import { sendTurn, type SendReceipt } from '../../chat-core/transport/sendTurn'
 import { sendFailureCopy, deliveryUnconfirmedCopy } from '../../chat-core/transport/receiptCopy'
 import { sideTurnWire } from './sideTurnWire'
@@ -93,40 +92,23 @@ function handBack(vars: SideSubmit): Pick<SendRecovery, 'text' | 'pastes'> {
  *  lazy-loading (the Lexical editor) before it gives up on placing the caret. */
 const SEED_FOCUS_WAIT_MS = 5000
 
-// The capability line on the backend card that answers whether a side turn runs
-// read-only tools (`backend_cards.LINE_SIDE_CHAT_TOOLS`, built from
-// `ACP_BACKENDS_SIDE_READONLY`).
-const SIDE_CHAT_TOOLS_LINE = 'side_chat_tools'
-
 export default function SideChat({ slot }: { slot: string }) {
   const connected = useConnected()
   const dispatch = useAppDispatch()
-  // The footer describes what the backend enforces, so it follows the selected
-  // harness and reads the server's own answer for it: the `side_chat_tools` line
-  // of that harness's card. The kiro backend is the empty string
-  // (`ACP_BACKEND_KIRO`), so an absent value reads as kiro — the default the
-  // gateway itself falls back to.
-  const cfgQ = useQuery<{ agent?: { acp_backend?: string } }>({
-    queryKey: ['kirocrewConfig'],
-    queryFn: () => api.kirocrewConfig(),
+  // The footer describes what the backend enforces, so it asks the gateway the
+  // question the side turn asks itself: the selected harness, and on claude
+  // whether the installed adapter honours the read-only session options. Keyed
+  // under `kirocrewConfig` so a config change, which invalidates that prefix,
+  // asks again. The footer claims nothing until the answer arrives. Each failure
+  // is said in its own words: a config that did not load means the turn runs
+  // with no tools, while a failed request only means this panel cannot say
+  // which tools work.
+  const sideToolsQ = useQuery({
+    queryKey: ['kirocrewConfig', 'sideTools'],
+    queryFn: () => api.sideTools(),
   })
-  const backendsQ = useQuery<{ backends: AcpBackendProbe[] }>({
-    queryKey: ['acpBackends'],
-    queryFn: () => api.acpBackends(),
-  })
-  // The footer claims nothing until both answers are loaded. Each failure is
-  // said in its own words: a config failure means the turn runs with no tools,
-  // while a card failure only means this panel cannot say which tools work. A
-  // line the card omits reads as no tools.
-  const postureError = cfgQ.isError
-  const cardError = !postureError && backendsQ.isError
-  const postureLoaded = cfgQ.isSuccess && backendsQ.isSuccess
-  const configuredBackend = cfgQ.data?.agent?.acp_backend ?? ''
-  const readOnlyToolsAvailable =
-    postureLoaded &&
-    backendsQ.data?.backends
-      ?.find(b => b.id === configuredBackend)
-      ?.capabilities?.find(c => c.id === SIDE_CHAT_TOOLS_LINE)?.available === true
+  const postureError = sideToolsQ.data?.config_unavailable === true
+  const readOnlyToolsAvailable = sideToolsQ.data?.read_only_tools === true
   const reduxSide = useAppSelector(s => s.chat.slotSide[slot])
   const parentTurnCount = useAppSelector(s =>
     s.chat.messages.filter(m => m.role === 'user' || m.role === 'assistant').length
@@ -1024,22 +1006,24 @@ export default function SideChat({ slot }: { slot: string }) {
               message={i18nT('pages.chat.sideChat.context_only_config_unavailable')}
               testId="side-chat-config-error"
             />
-          ) : cardError ? (
+          ) : sideToolsQ.isError ? (
             // No hand-off: navigating to the main chat would unmount Side Chat and
             // discard the unsent side-question draft in its composer. The turn's own
-            // posture does not depend on this card.
+            // posture does not depend on this answer.
             <ErrorNotice
               variant="inline"
               className="px-1 pt-1.5 text-[11px] leading-4"
               message={i18nT('pages.chat.sideChat.context_only_tools_unknown')}
               testId="side-chat-tools-unknown"
             />
-          ) : postureLoaded ? (
+          ) : sideToolsQ.isSuccess ? (
             <div role="note" className="px-1 pt-1.5 text-[11px] leading-4 text-muted">
               {i18nT(
                 readOnlyToolsAvailable
                   ? 'pages.chat.sideChat.context_only_tools_unavailable'
-                  : 'pages.chat.sideChat.context_only_tools_unavailable_backend',
+                  : sideToolsQ.data?.claude_adapter_outdated === true
+                    ? 'pages.chat.sideChat.context_only_claude_adapter_outdated'
+                    : 'pages.chat.sideChat.context_only_tools_unavailable_backend',
               )}
             </div>
           ) : null}

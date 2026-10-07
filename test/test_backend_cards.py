@@ -360,7 +360,7 @@ def test_core_counts_per_harness_are_pinned() -> None:
         for card in _every_card()
     }
     assert counts == {
-        "claude": 6,
+        "claude": 7,
         "codex": 6,
         "deepseek": 4,
         "goose": 6,

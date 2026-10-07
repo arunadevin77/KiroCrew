@@ -231,6 +231,10 @@ class ClaudeLaunch(ProcessAdapter):
         # spawn path — not only the rare model-substitution retry — or a claude
         # session collapses to the 200K default.
         await session._seed_session_settings()
+        # A Side Chat session carries deny rules for the host's sensitive paths in
+        # its session options; they are built here, off the loop, because the
+        # envelope that ships them is built synchronously at session/new.
+        await session._prepare_claude_side_read_denies()
         # Translate the agent spec into the session MCP array HERE, and only AFTER
         # the seed above: the array is withheld entirely unless Crew authored
         # settings.local.json, so resolving it first would read the ownership flag

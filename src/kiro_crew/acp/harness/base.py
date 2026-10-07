@@ -167,6 +167,9 @@ class ProcessSession(Protocol):
     async def _seed_session_settings(self) -> None:
         """Seed the session's own settings file, best-effort."""
 
+    async def _prepare_claude_side_read_denies(self) -> None:
+        """Build a Side Chat session's sensitive-path deny rules off the loop, fail closed."""
+
 
 @dataclass(frozen=True)
 class SpawnPlan:
