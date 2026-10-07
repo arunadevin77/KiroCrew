@@ -2013,6 +2013,10 @@ def after_shows_the_write(
         return after.get("trusted") is True
     if kind == catalog.KIND_DENIED_COMMAND and p.get("action") == "toggle":
         return after.get("enabled") is bool(p.get("enabled"))
+    if kind == catalog.KIND_FOLDER_STEERING:
+        # The card carries each directory as the route stores it
+        # (resolve_params), so the read-back matches unless another save landed.
+        return same(after.get("steering_dirs"), p.get("steering_dirs"))
     return True
 
 
@@ -2414,6 +2418,11 @@ async def read_state(
         }
     if kind == catalog.KIND_CREWMATE_CAPABILITIES:
         return await asyncio.to_thread(_capability_state, app, params)
+    if kind == catalog.KIND_FOLDER_STEERING:
+        folder = await _folder(state, params["folder"])
+        if folder is None:
+            return {"exists": False}
+        return {"exists": True, "steering_dirs": catalog.string_items(folder.get("steering_dirs"))}
     if kind == catalog.KIND_TEMPLATE_UPDATE and "skills" in (params.get("fields") or {}):
         return await asyncio.to_thread(_template_state_with_skills, params, state)
     if kind == catalog.KIND_CREWMATE_CREATE and len(evidence) > 1:
@@ -2422,6 +2431,17 @@ async def read_state(
         schedule = _cron_job_revision(job) if job is not None else None
         return {**base, "schedule_exists": job is not None, "schedule": schedule}
     return await asyncio.to_thread(_sync_read_state, kind, params, evidence)
+
+
+async def _folder(state: Any, folder_id: str) -> dict[str, Any] | None:
+    """A copy of the sidebar folder *folder_id*, or ``None``."""
+
+    def _find(folders: list[dict[str, Any]]) -> dict[str, Any] | None:
+        hit = next((f for f in folders if f.get("id") == folder_id), None)
+        return copy.deepcopy(hit) if hit is not None else None
+
+    found: dict[str, Any] | None = await state.read_folders(_find)
+    return found
 
 
 async def _mcp_detail(params: dict[str, Any]) -> dict[str, Any]:
@@ -2560,7 +2580,31 @@ async def read_context(
         return {"members": members}
     if kind == catalog.KIND_MCP_INSTALL:
         return {"detail": await _mcp_detail(p)}
+    if kind == catalog.KIND_FOLDER_STEERING:
+        # Display only: the folder's name, so a rename is not a conflict.
+        folder = await _folder(state, p["folder"])
+        return {"label": str((folder or {}).get("name") or p["folder"])}
     return {}
+
+
+async def resolve_params(kind: str, params: dict[str, Any]) -> dict[str, Any]:
+    """*params* with any value the target route would canonicalize, canonicalized.
+
+    A ``folder.steering`` card carries each directory as the folder route will
+    store it (``_validate_steering_dirs``: ``~`` expanded, links resolved), so
+    the list the person approves is the list the gateway reads, and Undo's
+    read-back matches what the card wrote.
+    """
+    if kind != catalog.KIND_FOLDER_STEERING:
+        return params
+    from kiro_crew.dashboard.chat_folders import _validate_steering_dirs
+
+    resolved, err = await asyncio.to_thread(_validate_steering_dirs, params["steering_dirs"])
+    if err:
+        raise catalog.CardCatalogError("invalid_param", err)
+    # Re-validated as resolved, so a list the stored card could not be rebuilt
+    # from (on restart) is refused here instead of the card being dropped later.
+    return catalog.validate_params(kind, {**params, "steering_dirs": resolved})
 
 
 async def build(

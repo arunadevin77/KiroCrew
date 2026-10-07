@@ -66,6 +66,7 @@ KIND_CONNECTION_CONNECT = "connection.connect"
 KIND_SECRET_SAVE = "secret.save"
 KIND_TRUST_APP = "trust.app"
 KIND_DENIED_COMMAND = "denied_command"
+KIND_FOLDER_STEERING = "folder.steering"
 
 LIST_OP_ADD = "add"
 LIST_OP_REMOVE = "remove"
@@ -95,6 +96,9 @@ _MAX_CUSTOM_SERVERS = 8
 _MAX_LIST_ITEMS = 300
 _MAX_CAPABILITY_OPS = 100
 _PARAMS_MAX_BYTES = 32 * 1024
+#: The folder route's per-entry bound (``chat_folders.MAX_FOLDER_STEERING_DIR_LEN``),
+#: so a canonical path the route accepts is one a stored card keeps.
+FOLDER_STEERING_DIR_MAX = 4096
 
 #: The grammars the real routes enforce, so a card is never stricter than the
 #: Settings page: a template name (``validation.TEMPLATE_NAME_RE``) and an app
@@ -354,6 +358,18 @@ KINDS: dict[str, KindDef] = {
             ),
             ("note", "enabled"),
         ),
+        KindDef(
+            KIND_FOLDER_STEERING,
+            "Replace a sidebar folder's additional steering directories (Folder settings "
+            "-> Additional steering). `folder` is a folder id from chat_folder_tree; "
+            "`steering_dirs` is the COMPLETE new list of absolute directory paths, [] "
+            "clears it.",
+            _obj(
+                {"folder": _STR, "steering_dirs": {"type": "array", "items": _STR}},
+                ["folder", "steering_dirs"],
+            ),
+            ("steering_dirs",),
+        ),
     )
 }
 
@@ -457,12 +473,12 @@ def _clean_at(params: dict[str, Any]) -> str:
     return parsed.isoformat(timespec="minutes" if parsed.second == 0 else "seconds")
 
 
-def _str_list(value: Any, key: str) -> list[str]:
+def _str_list(value: Any, key: str, *, max_len: int = 512) -> list[str]:
     if not isinstance(value, list) or len(value) > _MAX_LIST_ITEMS:
         raise _fail("invalid_param", f"'{key}' must be a list of at most {_MAX_LIST_ITEMS}")
     out: list[str] = []
     for item in value:
-        if not isinstance(item, str) or not item or len(item) > 512:
+        if not isinstance(item, str) or not item or len(item) > max_len:
             raise _fail("invalid_param", f"'{key}' items must be non-empty strings")
         if item not in out:
             out.append(item)
@@ -692,6 +708,14 @@ def validate_params(kind: str, params: Any) -> dict[str, Any]:
         if repo:
             out["repository"] = repo
         return out
+    if kind == KIND_FOLDER_STEERING:
+        _only(p, {"folder", "steering_dirs"})
+        return {
+            "folder": _clean_str(p, "folder", pattern=_ID_RE),
+            "steering_dirs": _str_list(
+                p.get("steering_dirs"), "steering_dirs", max_len=FOLDER_STEERING_DIR_MAX
+            ),
+        }
     # KIND_DENIED_COMMAND
     action = p.get("action")
     if action == "add":
@@ -1349,6 +1373,31 @@ def build_preview(
         out["risk"] = RISK_WIDEN
         body = {"repository": p["repository"]} if p.get("repository") else None
         out["apply"] = [step("POST", f"/api/security/trusted-apps/{_q(p['name'])}", body)]
+    elif kind == KIND_FOLDER_STEERING:
+        if not snapshot.get("exists"):
+            raise _fail("not_found", f"no folder with id '{p['folder']}'")
+        current = string_items(snapshot.get("steering_dirs"))
+        new = p["steering_dirs"]
+        if new == current:
+            raise _fail("no_change", "the folder already has that steering list")
+        label = str(context.get("label") or p["folder"])
+        out["title"] = f"Change steering for folder “{label}”"
+        add, remove = _list_diff(current, new)
+        out["changes"] = [{"label": "Folder", "after": label}]
+        if add or remove:
+            # The entries that differ, marked, so a dropped one is not found by eye.
+            out["changes"].append({"label": "Change", "add": add, "remove": remove})
+        out["changes"] += [
+            {"label": "Current", "after": current},
+            {"label": "New", "after": new},
+        ]
+        # A directory added is a host-file read the gateway now makes into every
+        # chat in the folder; only removing directories narrows that.
+        if add:
+            out["risk"] = RISK_WIDEN
+        elif remove:
+            out["risk"] = RISK_TIGHTEN
+        out["apply"] = [_folder_steering_step(p["folder"], new)]
     else:  # KIND_DENIED_COMMAND
         if p["action"] == "add":
             if snapshot.get("exists"):
@@ -1415,6 +1464,10 @@ def offers_no_undo(kind: str, params: dict[str, Any]) -> bool:
     ):
         return True
     return kind == KIND_DENIED_COMMAND and params.get("action") == "add"
+
+
+def _folder_steering_step(folder: str, steering_dirs: list[str]) -> dict[str, Any]:
+    return step("PATCH", f"/api/chat/folders/{_q(folder)}", {"steering_dirs": steering_dirs})
 
 
 def _toggle_step(p: dict[str, Any], enabled: bool) -> dict[str, Any]:
@@ -1647,6 +1700,11 @@ def _build_undo(
         return [step("PATCH", f"/api/agents/detail/{_q(p['template'])}", old)], None
     if kind == KIND_MCP_TOGGLE:
         return [_toggle_step(p, bool(before.get("enabled")))], None
+    if kind == KIND_FOLDER_STEERING:
+        # Offered only while the folder holds what the card stored
+        # (after_shows_the_write); the card hook arms that list for the route.
+        prior_dirs = string_items(before.get("steering_dirs"))
+        return [_folder_steering_step(p["folder"], prior_dirs)], None
     if kind == KIND_SECRET_SAVE:
         if before.get("exists"):
             return None, "overwrites_existing"
@@ -1834,9 +1892,14 @@ HOOKED_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/api/security/denied-commands/user"),
         ("PATCH", "/api/security/denied-commands/user/{id}"),
         ("DELETE", "/api/security/denied-commands/user/{id}"),
+        ("PATCH", "/api/chat/folders/{id}"),
     }
 )
+#: The folder PATCH is hooked only so a ``folder.steering`` card can be applied
+#: through it; it is sidebar organization, not a setting, so it writes no
+#: memory line.
 MEMORY_ROUTES: frozenset[tuple[str, str]] = HOOKED_ROUTES - {
     ("POST", "/api/agents/{name}/capabilities/preview"),
     ("GET", "/api/connections/mint"),
+    ("PATCH", "/api/chat/folders/{id}"),
 }

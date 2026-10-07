@@ -382,6 +382,22 @@ none" is the single on-disk representation and a PATCH with `[]` clears it.
   signal. Clearing to `[]` stays allowed for every principal (it only removes
   reads). The person may still declare steering on a folder an app or member
   owns; delivery then routes it to that principal's chats as described below.
+  A call on the internal credential every MCP tool call carries
+  (`request["internal_auth"]`) is refused the same way, at both write sites.
+- **Agent surface** is a `folder.steering` change card
+  (`change_card_catalog.py`): `propose_change(kind="folder.steering",
+  params={folder, steering_dirs})` resolves each directory the way the route
+  stores it (`_validate_steering_dirs`, refusing what the route would refuse),
+  then shows the person the folder, its current list and the resolved new one,
+  and the person's own browser applies it as
+  `PATCH /api/chat/folders/{id}` `{"steering_dirs": [...]}` through the card
+  hook, so the gates above are the only authority. Adding a directory is
+  `widen`, only removing is `tighten`; Undo writes the previous list back while
+  the folder still holds what the card stored. The card hook arms each Apply
+  and Undo step with the list it replaces (a request attribute, never a body
+  field), which the route compares under the store lock
+  (`409 steering_dirs_changed` when another save landed first).
+  `chat_folder_tree` renders each folder's declared list (`steering=[…]`).
 - **Resolution** (`_resolve_folder_steering_dirs`) is ACCUMULATIVE up the
   `parent_id` chain (root ancestor first, then descendants), unlike the
   nearest-wins `project_dir` resolver: an org-standards folder above a per-repo

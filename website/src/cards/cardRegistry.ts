@@ -5,7 +5,7 @@
  */
 import type { ComponentType } from 'react'
 import {
-  CalendarClock, Cog, KeyRound, Link2, Plug, Power, ShieldCheck, ShieldOff, UserPlus, UserCog, Wrench, LayoutTemplate, PackagePlus, PackageOpen,
+  CalendarClock, Cog, FolderCog, KeyRound, Link2, Plug, Power, ShieldCheck, ShieldOff, UserPlus, UserCog, Wrench, LayoutTemplate, PackagePlus, PackageOpen,
   type LucideIcon,
 } from 'lucide-react'
 import { i18nT } from '../i18n/t'
@@ -82,6 +82,11 @@ export const CARD_REGISTRY: Record<CardKind, CardKindSpec> = {
   denied_command: {
     icon: ShieldOff, label: () => i18nT('components.changeCards.kind_denied_command'),
     primary: () => i18nT('components.changeCards.primary_denied_command'), Body: NoBody,
+  },
+  'folder.steering': {
+    // The Folder settings section's own name, so the card reads as that setting.
+    icon: FolderCog, label: () => i18nT('components.folderConfigModal.steering_dirs'),
+    primary: () => i18nT('components.changeCards.primary_setting_change'), Body: NoBody,
   },
 }
 

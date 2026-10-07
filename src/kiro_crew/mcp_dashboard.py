@@ -138,7 +138,9 @@ def _folder_tools() -> tuple[Tool, ...]:
                 "mode the listing says so and warns that an anchor sets the stored "
                 "position without changing the displayed order. Returns per "
                 "folder: id, human path, project directory, default "
-                "agent, and a hidden flag; "
+                "agent, a hidden flag, and the steering directories it DECLARES "
+                "(``steering=[…]``; a folder inherits its ancestors' too, "
+                "root-first, so read up the tree for the full set); "
                 "then one line per live session (slot key + title) nested under it, "
                 "and an '(unfiled)' group for sessions at the top level. Use this to "
                 "get folder ids/paths and session keys before calling "
@@ -261,7 +263,9 @@ def _folder_tools() -> tuple[Tool, ...]:
                 "fields here): those fields change the working directory, agent, "
                 "memory boundary or standing instructions of every future session "
                 "filed in the folder, which is the person's call in the folder "
-                "settings, not an agent's. An app agent or crew member may update "
+                "settings, not an agent's. To ask for a steering_dirs change, "
+                "propose_change(kind='folder.steering') puts a card in front of "
+                "the person. An app agent or crew member may update "
                 "only a folder it created. Refused in a session linked to a channel "
                 "(a resumed channel conversation, a channel mirror or a linked Slack "
                 "thread)."
@@ -3510,6 +3514,11 @@ def _run_chat_folder_tree(args: dict[str, Any], ctx: ToolContext) -> str:
             meta_bits.append(f"project={row['project_dir']}")
         if row.get("default_agent"):
             meta_bits.append(f"agent={row['default_agent']}")
+        # What the folder DECLARES, so an agent proposing a folder.steering
+        # card sees the list it replaces. An ancestor's line above is the
+        # inherited part: the tree is already root-first.
+        if isinstance(row.get("steering_dirs"), list) and row.get("steering_dirs"):
+            meta_bits.append(f"steering=[{', '.join(str(p) for p in row['steering_dirs'])}]")
         # No archived count. The invariant this server holds is that nothing it
         # emits discloses a non-persistent session — and the folders endpoint's
         # ``history_count`` covers archived transcripts with no memory_mode to

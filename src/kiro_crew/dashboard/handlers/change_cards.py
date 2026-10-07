@@ -62,6 +62,12 @@ HEADER_CARD_STEP = "X-Card-Step"
 #: owner-authed card step; a direct DELETE never carries it.
 REQ_CARD_UNDO_CRON_EXPECT = "card_undo_cron_expect"
 
+#: Request attribute a ``folder.steering`` card's Apply and Undo steps set to
+#: the steering list the step replaces; the folder PATCH compares it under the
+#: folder store's lock and answers 409 when another save landed first. Set ONLY
+#: on the owner-authed card step.
+REQ_CARD_FOLDER_STEERING_EXPECT = "card_folder_steering_expect"
+
 _SLOT_QUERY_MAX = 256
 _BODY_MAX = 1024 * 1024
 _QUERY_MAX = 200
@@ -477,6 +483,7 @@ async def propose_for_caller(
     """
     try:
         params = catalog.validate_params(kind, params)
+        params = await cards.resolve_params(kind, params)
         cards.check_param_text(params)
         reason = cards.clean_reason(reason)
         state = request.app["state"]
@@ -561,6 +568,7 @@ async def api_cards_preview(request: web.Request) -> web.Response:
         rec = store.get(request.match_info["card_id"])
         revert = store.snapshot(rec)
         params = catalog.validate_params(rec["kind"], body.get("params"))
+        params = await cards.resolve_params(rec["kind"], params)
         catalog.check_editable(rec["kind"], rec["params"], params)
         preview, before, context = await cards.build(
             rec["kind"], params, state=request.app["state"], app=request.app
@@ -857,12 +865,21 @@ def _arm_card_undo_cron_guard(
     * a crewmate PUT in a ``crewmate.update`` Undo, against
       ``after["member_id"]``.
 
-    Only the owner-authed card Undo step carries these keys; no public HTTP
+    A ``folder.steering`` Apply or Undo carries the list it replaces: the
+    folder's list before the card for Apply, the list the card wrote for Undo.
+
+    Only the owner-authed card step carries these keys; no public HTTP
     parameter is added.
     """
+    kind = rec["kind"]
+    if kind == catalog.KIND_FOLDER_STEERING:
+        replaced = (rec.get("params") if op == catalog.OP_UNDO else rec.get("before")) or {}
+        request[REQ_CARD_FOLDER_STEERING_EXPECT] = catalog.string_items(
+            replaced.get("steering_dirs")
+        )
+        return
     if op != catalog.OP_UNDO:
         return
-    kind = rec["kind"]
     path = str(plan_step.get("path", ""))
     after = rec.get("after") or {}
     method = str(plan_step.get("method", "")).upper()

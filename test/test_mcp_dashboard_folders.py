@@ -156,6 +156,13 @@ class TestFolderTree:
         assert "(unfiled" in out and "chat-3-300" in out
         assert "3 folders, 3 live sessions" in out
 
+    def test_renders_each_folders_declared_steering(self) -> None:
+        """The list a ``folder.steering`` card would replace is visible here."""
+        folders = [dict(_FOLDERS[0], steering_dirs=["/srv/standards", "/srv/team"]), *_FOLDERS[1:]]
+        out, _ = _call("chat_folder_tree", {}, _reads(folders=folders))
+        assert "steering=[/srv/standards, /srv/team]" in out
+        assert out.count("steering=") == 1
+
     def test_slot_pointing_at_unknown_folder_falls_back_to_unfiled(self) -> None:
         """A dangling folder_id must not make the session disappear."""
         orphan = _slots_with_caller(

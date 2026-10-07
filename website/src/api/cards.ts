@@ -30,6 +30,7 @@ export const CARD_KINDS = [
   'secret.save',
   'trust.app',
   'denied_command',
+  'folder.steering',
 ] as const
 export type CardKind = typeof CARD_KINDS[number]
 

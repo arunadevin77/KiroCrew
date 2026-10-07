@@ -726,7 +726,7 @@ MAX_FOLDER_STEERING_DIR_LEN = 4096
 
 
 def _refuse_principal_steering_dirs(
-    request_app: str, steering_dirs: list, *, operation: str, folder_id: str
+    request_app: str, steering_dirs: list, *, operation: str, folder_id: str, agent: bool = False
 ) -> web.Response | None:
     """Only the PERSON may declare steering directories; refuse everyone else.
 
@@ -743,11 +743,16 @@ def _refuse_principal_steering_dirs(
     calls carry the empty principal and are unaffected; a person can still
     declare steering on a folder an app or member owns, and the delivery gate
     then routes it to that principal's chats as before.
+
+    ``agent`` marks a call on the internal credential every MCP tool call
+    carries. It is refused the same way: an agent proposes a ``folder.steering``
+    change card instead, which the person's own browser applies through this
+    route.
     """
-    if not request_app or not steering_dirs:
+    if not (request_app or agent) or not steering_dirs:
         return None
     sel().log_api_access(
-        caller=request_app,
+        caller=request_app or "internal",
         operation=operation,
         outcome="denied",
         source="app_isolation",
@@ -1535,7 +1540,11 @@ async def api_chat_folder_create(request: web.Request) -> web.Response:
     # the person" stays the one representation (see _folder_owner_app).
     request_app = folder_principal(state, request)
     refused = _refuse_principal_steering_dirs(
-        request_app, steering_dirs, operation="chat.folder_create", folder_id=""
+        request_app,
+        steering_dirs,
+        operation="chat.folder_create",
+        folder_id="",
+        agent=request.get("internal_auth") is True,
     )
     if refused is not None:
         return refused
@@ -1803,6 +1812,7 @@ async def api_chat_folder_update(request: web.Request) -> web.Response:
             raw_steering if isinstance(raw_steering, list) else [raw_steering],
             operation="chat.folder_steering_dirs",
             folder_id=fid,
+            agent=request.get("internal_auth") is True,
         )
         if refused is not None:
             return refused
@@ -1814,6 +1824,26 @@ async def api_chat_folder_update(request: web.Request) -> web.Response:
                 {"error": steering_err, "code": "steering_dirs_invalid"}, status=400
             )
         changes["steering_dirs"] = resolved_steering
+    from kiro_crew.dashboard.handlers.change_cards import REQ_CARD_FOLDER_STEERING_EXPECT
+
+    # Set only by a folder.steering card's Apply/Undo step: the list it
+    # replaces, compared under the store lock in _apply.
+    expect_steering = request.get(REQ_CARD_FOLDER_STEERING_EXPECT)
+    if (
+        expect_steering is not None
+        and "steering_dirs" in changes
+        and changes["steering_dirs"] != body["steering_dirs"]
+    ):
+        # The card carries each directory already resolved, so a step whose
+        # list now resolves elsewhere (a directory swapped for a link after
+        # the person approved it) would store a tree they never saw.
+        return web.json_response(
+            {
+                "error": "a steering directory now resolves to a different path than the card showed",
+                "code": "steering_dirs_changed",
+            },
+            status=409,
+        )
     if "tags" in body:
         # Vocabulary-constrained tag list. An empty list clears the folder's
         # tags; anything else must be ids that exist in the tag vocabulary.
@@ -1880,6 +1910,11 @@ async def api_chat_folder_update(request: web.Request) -> web.Response:
         # belongs to between validation and the write.
         if request_app and _folder_owner_app(target) != request_app:
             return False, "not_owned"
+        if (
+            expect_steering is not None
+            and list(target.get("steering_dirs") or []) != expect_steering
+        ):
+            return False, "steering_changed"
         if reparenting and new_parent:
             if not any(f["id"] == new_parent for f in folders):
                 return False, "parent_not_found"
@@ -2020,6 +2055,14 @@ async def api_chat_folder_update(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "parent folder not found", "code": "folder_parent_not_found"},
             status=400,
+        )
+    if err == "steering_changed":
+        return web.json_response(
+            {
+                "error": "the folder's steering directories changed since this was checked",
+                "code": "steering_dirs_changed",
+            },
+            status=409,
         )
     if err == "cycle":
         # A concurrent reparent moved the target under this folder while this
