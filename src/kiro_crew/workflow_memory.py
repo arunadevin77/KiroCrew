@@ -70,10 +70,12 @@ def _allocator_owner(path: Path, info: os.stat_result) -> None:
         try:
             security = windows_acl.describe(path)
             # Elevated Windows creation defaults to the local Administrators
-            # owner. The same SID on a share belongs to a different machine.
-            owned = bool(sid) and (
-                security.owner_sid == sid
-                or (security.owner_sid == "S-1-5-32-544" and security.volume_is_local)
+            # owner. The same SID on a share belongs to a different machine. The
+            # owner-trust rule is shared with the relocated scratch-root adoption
+            # (:func:`kiro_crew.config.paths.scratch_root_owner_refusal`) so the two
+            # cannot drift.
+            owned = windows_acl.owner_is_trusted_allocator(
+                security.owner_sid, security.volume_is_local, sid or ""
             )
         except windows_acl.AclUnavailable as exc:
             raise WorkflowAllocatorError("Workflow allocator owner is unavailable") from exc

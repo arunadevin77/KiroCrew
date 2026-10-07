@@ -102,6 +102,7 @@ __all__ = [
     "owner_only_dacl_matches",
     "owner_only_dacl_matches_parsed",
     "describe",
+    "owner_is_trusted_allocator",
     "volume_is_local",
     "volume_is_remote",
 ]
@@ -214,6 +215,31 @@ class ComponentSecurity:
     #: leaves the policy a pure function of this dataclass, which is what makes
     #: it testable on a non-Windows CI runner.
     volume_is_local: bool
+
+
+#: ``BUILTIN\Administrators``. A directory an elevated Windows session creates is owned by
+#: this group rather than the creator's own SID.
+_BUILTIN_ADMINISTRATORS_SID = "S-1-5-32-544"
+
+
+def owner_is_trusted_allocator(owner_sid: str, volume_is_local: bool, current_sid: str) -> bool:
+    """Whether *owner_sid* is safe for THIS host to adopt as a managed directory's owner.
+
+    The ONE owner-trust rule shared by the workflow allocator
+    (:func:`kiro_crew.workflow_memory._allocator_owner`) and the relocated scratch-root
+    adoption (:func:`kiro_crew.config.paths.scratch_root_owner_refusal`), so the two cannot
+    drift: the current user's own SID, OR ``BUILTIN\\Administrators`` (``S-1-5-32-544``) WHEN
+    the volume is LOCAL. An elevated session's new directory is owned by Administrators
+    rather than the user's own SID, so a strict ``owner == me`` compare would refuse a root
+    this host just created; ``volume_is_local`` keeps that trust honest, because the identical
+    Administrators SID on a UNC/mapped share belongs to the file server, a different machine.
+    Fail-closed: a falsy *current_sid* trusts nothing.
+    """
+    if not current_sid:
+        return False
+    return owner_sid == current_sid or (
+        owner_sid == _BUILTIN_ADMINISTRATORS_SID and volume_is_local
+    )
 
 
 class _ACL(C.Structure):

@@ -118,9 +118,12 @@ from kiro_crew.config.paths import (  # noqa: F401, kiro_agents_dir
     config_dir,
     config_package_dir,
     data_home,
+    demote_scratch_root_override,
     ensure_data_home,
     kiro_agents_dir,
     project_agents_dir,
+    scratch_root_owner_refusal,
+    scratch_root_writer_refusal,
     valid_scratch_root_override,
 )
 from kiro_crew.config.resolution import (  # noqa: F401
