@@ -27,7 +27,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
-from chat_test_helpers import _make_state
+from chat_test_helpers import _make_state, stamp_the_person
 from dashboard_owner_helpers import as_owner
 
 from kiro_crew.config.loader import KiroCrewAgentConfig, KiroCrewConfig
@@ -226,13 +226,25 @@ def folder_root(tmp_path):
     return root
 
 
+@web.middleware
+async def _person(request: web.Request, handler):
+    stamp_the_person(request)
+    return await handler(request)
+
+
 async def _create(
     state: Any, payload: dict[str, Any], *, owner: bool = True
 ) -> tuple[int, dict[str, Any]]:
     app = web.Application()
     app["state"] = state
     app.router.add_post("/api/chat/slots", chat_handlers.api_chat_slot_create)
-    async with TestClient(TestServer(as_owner(app) if owner else app)) as client:
+    if owner:
+        # The owner's own browser: the folder fences admit a create that files
+        # into a project-linked folder only for the person (the positive
+        # ``is_dashboard_user`` stamp), never for an agent's session key.
+        as_owner(app)
+        app.middlewares.append(_person)
+    async with TestClient(TestServer(app)) as client:
         resp = await client.post("/api/chat/slots", json=payload)
         return resp.status, await resp.json()
 

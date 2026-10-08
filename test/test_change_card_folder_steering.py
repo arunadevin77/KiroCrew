@@ -178,6 +178,10 @@ async def _fake_auth(request: web.Request, handler):
     if request.headers.get("X-Test-Auth") == "internal":
         request["internal_auth"] = True
         request["peer_verified"] = True
+    else:
+        # The token middleware's positive stamp for a validated non-app
+        # dashboard token: what the folder fences read as the person.
+        request["is_dashboard_user"] = True
     return await handler(request)
 
 
