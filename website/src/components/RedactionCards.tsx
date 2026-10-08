@@ -1171,6 +1171,16 @@ export function RedactionCoach({ count, slotKey }: { count: number; slotKey?: st
 /** Rules an allowed host relaxes: the host exemption skips only these. */
 const ALLOWABLE_RULES = new Set(['exfil_query_length', 'exfil_query_pattern'])
 
+/**
+ * Hosts the allowed-host list can hold: the shape `redaction_allow._HOST_RE`
+ * accepts, a DNS name with a letter TLD. An IP literal is refused there, so the
+ * card offers no Allow for it rather than one that always fails.
+ */
+const ALLOWABLE_HOST_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z]{2,63}$/
+export function isAllowableHost(host: string): boolean {
+  return ALLOWABLE_HOST_RE.test(host.toLowerCase())
+}
+
 function linkReason(record: BlockedLink): string {
   switch (record.rule) {
     case 'exfil_query_length':
@@ -1269,7 +1279,7 @@ function BlockedLinkEntry({ record, cardId }: { record: BlockedLink; cardId: str
   const cancelRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { if (confirming) cancelRef.current?.focus() }, [confirming])
   const url = record.url
-  const allowable = url !== null && ALLOWABLE_RULES.has(record.rule) && !!slotKey
+  const allowable = url !== null && ALLOWABLE_RULES.has(record.rule) && !!slotKey && isAllowableHost(record.domain)
   const openOnce = () => {
     // Re-derived at the click, so what opens is the address on screen and it
     // passes the same shape check. noopener/noreferrer: the page gets no handle

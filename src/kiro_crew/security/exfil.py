@@ -1553,7 +1553,52 @@ def restore_allowed_links(
         return address.get(m.group(1).lower(), m.group(0))
 
     out = _PLACEHOLDER_RE.sub(swap, text)
+    for domain in address:
+        _emit_allowed_host_used_event(domain, records)
     return out, [r for i, r in enumerate(records) if i not in restored]
+
+
+# Per-process dedupe for the allowed-host-used audit event: every history load
+# and live frame re-restores the same links, and one record per host per
+# process is what the audit needs to answer "did this entry ever let a link
+# through".
+_ALLOWED_HOST_AUDITED: set[str] = set()
+
+
+def _emit_allowed_host_used_event(host: str, records: list[dict]) -> None:
+    """SEL-audit that a reader-allowed host put a blocked link back on screen.
+
+    The add and revoke are audited by their routes; this records USE, the same
+    way ``_emit_oauth_extension_used_event`` does for the operator OAuth file.
+    Best-effort: the reader allowed the host, so the restore stands whether or
+    not the audit write lands.
+    """
+    if host in _ALLOWED_HOST_AUDITED:
+        return
+    _ALLOWED_HOST_AUDITED.add(host)
+    rules = sorted(
+        {str(r.get("rule")) for r in records if str(r.get("domain", "")).lower() == host}
+    )
+    try:
+        SecurityEventLog().log(
+            SecurityEvent(
+                event_id=uuid.uuid4().hex[:16],
+                timestamp=datetime.now(tz=timezone.utc).isoformat(),
+                event_type="redaction_allowed_host_used",
+                caller_identity="",
+                agent="kirocrew",
+                source="security",
+                operation="restore_allowed_links",
+                outcome="allowed",
+                resources=host,
+                metadata={"host": host, "rules": rules, "mechanism": "REDACTION_ALLOWED_HOST"},
+            )
+        )
+    except Exception:
+        logger.debug(
+            "SEL audit failed for redaction_allowed_host_used (restore stands)",
+            exc_info=True,
+        )
 
 
 def current_scoped_exempt_hosts() -> frozenset[str]:
