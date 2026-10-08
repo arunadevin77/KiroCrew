@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from aiohttp import web
 
+from kiro_crew.members import member_identity_for_session
+
 if TYPE_CHECKING:
     from kiro_crew.dashboard.handlers.messaging import (
         _CHANNEL_TYPE_RE,
@@ -749,6 +751,7 @@ async def _deliver_send_message_fallback(
     channel_type: str,
     caller_session: str,
     declared_session: str,
+    attribution_session: str,
     is_cron_caller: bool,
     send_to_slack: bool,
 ) -> None:
@@ -770,7 +773,10 @@ async def _deliver_send_message_fallback(
         safe_name, _ = redact_credentials(safe_name)
         title = f"⏰ {safe_name}"
         text += "\n\n_(session closed — delivered as notification)_"
-    state.notify("agent", title, text)
+    # Only an attested, non-app caller's key names the publishing crewmate
+    # (``attributable_session_key``); a bare TCP or app-token header does not.
+    member = await asyncio.to_thread(member_identity_for_session, attribution_session)
+    state.notify("agent", title, text, member=member)
     # No widget on either channel path, so a parsed [OPTIONS:] trailer is
     # re-attached as a numbered list rather than dropped: the user still
     # learns the choices exist and can answer by typing one. Built from the

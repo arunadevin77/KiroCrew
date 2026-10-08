@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from kiro_crew import platform_compat
 from kiro_crew.artifacts import slugify
@@ -1137,6 +1138,55 @@ def read_dm_binding_for_slot(slot_key: str) -> dict | None:
         return None
     binding = read_dm_binding(slug)
     return binding if binding is not None and binding["slot_key"] == slot_key else None
+
+
+def member_identity_for_session(session_key: str | None) -> dict[str, str] | None:
+    """``{"slug", "name"}`` of the crewmate whose pinned DM session this is, else ``None``.
+
+    Accepts every spelling :func:`is_member_session_key` does. The name comes
+    from the slot's live ``dm.json`` binding, never from the key: slugification
+    is lossy, and a key whose binding is gone or belongs to another generation
+    names no crewmate. Total, and blocking file IO like :func:`read_dm_binding`.
+    """
+    if not session_key or not is_member_session_key(session_key):
+        return None
+    key = session_key
+    for prefix in ("dashboard_", "dashboard:"):
+        if key.startswith(prefix):
+            key = key[len(prefix) :]
+            break
+    binding = read_dm_binding_for_slot(key)
+    slug = slug_from_dm_slot_key(key)
+    if binding is None or not slug:
+        return None
+    name = binding["member"]
+    # The payload refuses a member past this bound, and a refused payload drops
+    # the whole note; an unattributable note must still be delivered.
+    if len(name) > MEMBER_NAME_MAX_CHARS:
+        return None
+    return {"slug": slug, "name": name}
+
+
+def attributable_session_key(request: Any) -> str:
+    """The request's ``X-Session-Key`` when it may name a note's crewmate, else ``""``.
+
+    Over TCP loopback the header alone is the caller's word, so an app token
+    holding a send grant could declare a crewmate's DM key and put that
+    crewmate's face on its own note. The key counts only once
+    :func:`kiro_crew.member_memory_auth.session_key_is_attested` binds it to
+    the caller (the Unix-socket peer attestation, or a signed per-session
+    token that verifies to it), and never for an app caller
+    (``request["app"]``), whose notes are the app's own. Blocking file IO on
+    the token branch; callers on an event loop must offload it.
+    """
+    from kiro_crew.member_memory_auth import session_key_is_attested
+
+    if request.get("app"):
+        return ""
+    key = request.headers.get("X-Session-Key", "")
+    if not isinstance(key, str) or not key:
+        return ""
+    return key if session_key_is_attested(request, key) else ""
 
 
 def member_rules_path(slug: str) -> Path:

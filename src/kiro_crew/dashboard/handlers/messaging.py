@@ -237,6 +237,7 @@ from kiro_crew.dashboard.ws_event_scope import (  # noqa: F401
     persisted_snapshot_denial_reason,
     slot_owner_snapshot,
 )
+from kiro_crew.members import attributable_session_key, member_identity_for_session
 from kiro_crew.messaging.display_safety import redact_for_display
 from kiro_crew.messaging.link import SLACK_NAMESPACE, ChannelLink  # noqa: F401
 from kiro_crew.messaging.renderer import (  # noqa: F401
@@ -736,6 +737,10 @@ async def api_notification_agent_push(request: web.Request) -> web.Response:
     actions = body.get("actions")
     if actions is not None and not isinstance(actions, list):
         return web.json_response({"error": "actions must be a list"}, status=400)
+    # Attribution comes from an attested, non-app session header, never the
+    # body, so no caller can put another crewmate's face on its note.
+    attribution_key = await asyncio.to_thread(attributable_session_key, request)
+    member = await asyncio.to_thread(member_identity_for_session, attribution_key)
     payload = NotificationPayload(
         source="system",
         channel="system.agent",
@@ -746,6 +751,7 @@ async def api_notification_agent_push(request: web.Request) -> web.Response:
         url=body.get("url"),
         group_key=body.get("group_key"),
         actions=actions,
+        member=member,
     )
     try:
         note = state.notification_bus.push(payload)
@@ -1126,6 +1132,7 @@ async def api_send_message(request: web.Request) -> web.Response:
                 channel_type=channel_type,
                 caller_session=caller_session,
                 declared_session=declared_session,
+                attribution_session=await asyncio.to_thread(attributable_session_key, request),
                 is_cron_caller=is_cron_caller,
                 send_to_slack=send_to_slack,
             )
