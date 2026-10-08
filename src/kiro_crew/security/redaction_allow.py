@@ -27,19 +27,13 @@ from pathlib import Path
 
 from kiro_crew.atomic_write import replace_with_retry
 from kiro_crew.config.paths import config_dir
+from kiro_crew.security.exfil import _OAUTH_EXTENSION_HOST_RE
 
 _LOCK = threading.RLock()
-# A lowercase DNS name with a letter TLD, label by label: no IP literal, no
-# port, no wildcard. An address names one machine rather than a site its
-# operator vouches for, and a loopback or private address is where the reader's
-# own control planes live, so the list never holds one. A file entry that
-# fails this shape is dropped on load, the same as any other malformed entry.
-_HOST_RE = re.compile(
-    r"\A(?=.{1,253}\Z)"
-    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
-    r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
-    r"\.[a-z]{2,63}\Z"
-)
+# A lowercase DNS name, never an IP literal: an address names one machine, often
+# the reader's own loopback. Shared with the OAuth extension list; a file entry
+# of another shape is dropped on load.
+_HOST_RE = _OAUTH_EXTENSION_HOST_RE
 _WORKSPACE_RE = re.compile(r"^[A-Za-z0-9 _.-]{1,128}$")
 MAX_HOSTS_PER_WORKSPACE = 200
 #: How many workspaces the list holds. With the per-workspace cap it bounds the

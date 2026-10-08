@@ -118,6 +118,27 @@ def test_restoring_an_allowed_link_is_audited_once_per_host(
     assert event.metadata["rules"] == ["exfil_query_length"]
 
 
+def test_the_audit_memo_stops_growing_at_its_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    from kiro_crew.security import exfil
+
+    logged: list = []
+
+    class _Log:
+        def log(self, event) -> None:
+            logged.append(event)
+
+    monkeypatch.setattr(exfil, "SecurityEventLog", _Log)
+    monkeypatch.setattr(exfil, "_ALLOWED_HOST_AUDITED", {"a.example.org", "b.example.org"})
+    monkeypatch.setattr(exfil, "_ALLOWED_HOST_AUDITED_MAX", 2)
+    url = "https://wiki.example.org/page?state=" + "a" * 260
+    saved, _, records = redact_exfiltration_urls_with_records(url)
+    for _ in range(2):
+        exfil.restore_allowed_links(saved, records, frozenset({"wiki.example.org"}))
+    # At the ceiling the host is not remembered, so each restore is audited.
+    assert exfil._ALLOWED_HOST_AUDITED == {"a.example.org", "b.example.org"}
+    assert len(logged) == 2
+
+
 def test_a_failing_audit_does_not_stop_the_restore(monkeypatch: pytest.MonkeyPatch) -> None:
     from kiro_crew.security import exfil
 

@@ -123,13 +123,17 @@ describe('Blocked link chip', () => {
     await waitFor(() => expect(revoke).toHaveBeenCalledWith('default', 'reviews.corp.example'))
   })
 
-  it('offers no Allow for an IP-literal host, which the allowed-host list refuses', () => {
-    for (const domain of ['10.0.0.5', '[::1]']) {
+  it('offers no Allow for a host the server refuses and says why in its place', () => {
+    for (const domain of ['10.0.0.5', '[::1]', 'my_box.corp.example']) {
       const ui = render(<MarkdownRenderer content={PH(domain)} blockedLinks={[link({ domain })]} slotKey="s1" />)
       fireEvent.click(ui.getByTestId('blocked-link-inspect'))
       expect(ui.queryByTestId('blocked-link-allow')).toBeNull()
+      expect(ui.getByTestId('blocked-link-allow-unsupported').textContent).toContain('Only a host name like example.com')
       ui.unmount()
     }
+    const dns = render(<MarkdownRenderer content={PH('reviews.corp.example')} blockedLinks={[link()]} slotKey="s1" />)
+    fireEvent.click(dns.getByTestId('blocked-link-inspect'))
+    expect(dns.queryByTestId('blocked-link-allow-unsupported')).toBeNull()
   })
 
   it('asks the page to reload the slot once a host is allowed, so the link shows again', async () => {

@@ -1176,8 +1176,8 @@ const ALLOWABLE_RULES = new Set(['exfil_query_length', 'exfil_query_pattern'])
  * accepts, a DNS name with a letter TLD. An IP literal is refused there, so the
  * card offers no Allow for it rather than one that always fails.
  */
-const ALLOWABLE_HOST_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z]{2,63}$/
-export function isAllowableHost(host: string): boolean {
+const ALLOWABLE_HOST_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/
+function isAllowableHost(host: string): boolean {
   return ALLOWABLE_HOST_RE.test(host.toLowerCase())
 }
 
@@ -1279,7 +1279,11 @@ function BlockedLinkEntry({ record, cardId }: { record: BlockedLink; cardId: str
   const cancelRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { if (confirming) cancelRef.current?.focus() }, [confirming])
   const url = record.url
-  const allowable = url !== null && ALLOWABLE_RULES.has(record.rule) && !!slotKey && isAllowableHost(record.domain)
+  const allowRule = url !== null && ALLOWABLE_RULES.has(record.rule) && !!slotKey
+  const allowable = allowRule && isAllowableHost(record.domain)
+  // Where Allow would otherwise sit, say why it is missing so a reader who
+  // has allowed other hosts does not take its absence for a bug.
+  const hostRefused = allowRule && !allowable
   const openOnce = () => {
     // Re-derived at the click, so what opens is the address on screen and it
     // passes the same shape check. noopener/noreferrer: the page gets no handle
@@ -1365,6 +1369,11 @@ function BlockedLinkEntry({ record, cardId }: { record: BlockedLink; cardId: str
               </button>
             )}
           </div>
+          {hostRefused && (
+            <div className="mt-1.5 text-[12px] leading-[18px] text-muted" data-testid="blocked-link-allow-unsupported">
+              {i18nT('components.redaction.link_allow_unsupported')}
+            </div>
+          )}
         </>
       ) : (
         <div className="text-[13px] leading-5" data-testid="blocked-link-withheld">
