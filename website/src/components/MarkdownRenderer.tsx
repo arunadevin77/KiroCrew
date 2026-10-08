@@ -12,7 +12,7 @@ import React, { useContext, memo, useEffect, useLayoutEffect, useMemo, useCallba
 import { GitPullRequest } from 'lucide-react'
 import { capWhitespaceRuns, rehypeBoundRawDepth } from '../utils/markdownDepthBound'
 import { REMARK_BASE_PLUGINS } from './markdown/remarkBase'
-import { canonicalChatHref, chatHrefSid, namesASession } from '../utils/sessionKeys'
+import { canonicalChatHref, chatHrefSid, namesASession, sessionKeyFrom, sessionKeyFromShort } from '../utils/sessionKeys'
 import ReactMarkdown from 'react-markdown'
 import type { Components, ExtraProps } from 'react-markdown'
 import remarkAutolinkRules from '../utils/remarkAutolinkRules'
@@ -192,6 +192,19 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
   // cannot disagree about whether it is reachable.
   // A closed session the page can resume counts too (`useSessionChip`).
   const sessionLink = useSessionChip(sessionHrefSid, sessionActions)
+  // Whether the href names the session we are already in. `useSessionChip`
+  // returns null for BOTH the active key and a closed/unknown one, so the title
+  // below cannot tell them apart from `sessionLink` alone — and "closed" is the
+  // wrong word for the session you are in. Resolved the same way the chip resolves
+  // a key (full key, else short name), so the two cannot disagree about which key
+  // is active.
+  const sessionHrefKey = sessionHrefSid
+    ? (sessionKeyFrom(sessionHrefSid)
+      ?? (sessionActions.sessions
+        ? sessionKeyFromShort(sessionHrefSid, sessionActions.sessions.keys(), sessionActions.writtenAtEpoch)
+        : null))
+    : null
+  const sessionHrefIsActive = !!sessionHrefKey && sessionHrefKey === sessionActions.activeSession
   // The attribute carries the canonical key: a modified click goes to the browser,
   // and an authored `dashboard_…` sid would open a session `?sid=` cannot resolve.
   const sessionHref = sessionLink && sessionCandidate ? canonicalChatHref(sessionCandidate, sessionLink.key) : null
@@ -346,7 +359,9 @@ function MdAnchor({ node, href, children }: React.AnchorHTMLAttributes<HTMLAncho
       onClick={sessionHrefNamesSession ? onSessionClick : (pathResolution.candidate ? onPathClick : undefined)}
       title={sessionLink && !sessionLink.failure
         ? `${sessionLink.title}\n${i18nT('components.markdownRenderer.click_to_switch_to_this_session')}`
-        : undefined}
+        : sessionHrefNamesSession && sessionRouting && !sessionHrefIsActive
+          ? i18nT('components.markdownRenderer.session_closed_link_disabled')
+          : undefined}
       {...(ext ? {} : { target: '_blank', rel: 'noopener noreferrer' })}
       // A session link that names a session but cannot open one drops the live-link
       // affordance rather than keeping it and doing nothing. The click is swallowed
