@@ -41,7 +41,9 @@ When Mate's welcome lands, main already does the right thing:
 - So `pendingMate` (`website/src/lib/assistantMember.ts`) stops answering Mate,
   and on the next bare visit `resolveMateLanding` yields to the ordinary
   landing: the remembered crewmate, then `lastChattedMember` (order amended by
-  #19341, see rfc-crewmates-chatted-list.md §3.1).
+  #19341, see rfc-crewmates-chatted-list.md §3.1; the last-chatted step is
+  replaced by the newest conversation, rfc-session-template-vs-crewmate.md
+  rule 4).
 
 The pin is a welcome that never lands. `maybe_start_first_greeting` claims the
 once-only marker (`claim_greeting_marker`, `members/<slug>/welcome_claimed.json`)
@@ -60,7 +62,7 @@ landing applies.
 | Mate's welcome | Lands on (bare visit, preview on) |
 |---|---|
 | still coming | Mate (one introduction, fresh and existing users) |
-| sent | the ordinary landing (the remembered crewmate, then last-chatted; #19341) |
+| sent | the ordinary landing (the remembered crewmate, then the newest conversation; #19341, rfc-session-template-vs-crewmate.md rule 4) |
 | attempted and failed | the ordinary landing (counts as seen) |
 
 - **Still coming** = the welcome is owed (`welcome_owed`), its marker is not
@@ -117,7 +119,8 @@ The implementation (#18904) pins:
    Mate's thread empty) lands on Mate once.
 2. After the welcome row exists, the next bare visit lands on the ordinary
    landing (the remembered crewmate, then the last-chatted one — #19341; at
-   #18904 the last-chatted one came first).
+   #18904 the last-chatted one came first; rfc-session-template-vs-crewmate.md
+   rule 4 replaces the last-chatted step with the newest conversation).
 3. With a claimed marker and an empty thread (a failed welcome), the next bare
    visit lands on the ordinary landing likewise.
 4. A roster row that does not say whether the marker is claimed, or whether

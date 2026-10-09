@@ -222,9 +222,11 @@ async def test_roster_masks_package_controlled_strings_like_the_sibling_rosters(
     assert rows["atlas"]["model"] == _SENSITIVE_MASK
     assert rows["reviewer"]["description"] == "benign"
     # Reference labels come from crew, folder, schedule and token records the
-    # agent can write too.
+    # agent can write too. The seeded roster default's template is carried into
+    # ``agent.default_agent``, so it is the default custom agent as well.
     assert rows["reviewer"]["used_by"] == [
-        {"kind": "crew", "id": _SENSITIVE_MASK, "label": _SENSITIVE_MASK}
+        {"kind": "crew", "id": _SENSITIVE_MASK, "label": _SENSITIVE_MASK},
+        {"kind": "default", "id": "default", "label": "default agent"},
     ]
 
 
@@ -565,9 +567,11 @@ async def test_delete_refuses_while_referenced_and_lists_the_references(agents_d
     assert resp.status == 409
     body = await _body(resp)
     assert body["code"] == "template_referenced"
+    # The roster default's template is carried into ``agent.default_agent``.
     assert {(r["kind"], r["id"]) for r in body["references"]} == {
         ("crew", "pr-bot"),
         ("schedule", "job-1"),
+        ("default", "default"),
     }
     assert (agents_dir / "reviewer.json").exists()
 
@@ -756,8 +760,10 @@ async def test_delete_counts_a_binding_that_lives_only_in_the_overlay(agents_dir
     )
     resp = await api_agent_template_delete(_request("DELETE", "reviewer"))
     assert resp.status == 409
+    # The overlay names the roster default's template, so the load carries it.
     assert (await _body(resp))["references"] == [
-        {"kind": "crew", "id": "pr-bot", "label": "pr-bot"}
+        {"kind": "crew", "id": "pr-bot", "label": "pr-bot"},
+        {"kind": "default", "id": "default", "label": "default agent"},
     ]
     assert (agents_dir / "reviewer.json").exists()
 

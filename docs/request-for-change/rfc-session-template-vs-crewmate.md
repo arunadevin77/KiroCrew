@@ -128,14 +128,20 @@ Rules that follow:
 
 ## 5. Backward compatibility
 
-- A config whose `default` crewmate binds a template other than
-  `agent.default_agent` changes: new plain sessions run `agent.default_agent`
-  (`kirocrew` when unset). Existing sessions keep their recorded execution
-  context; nothing live switches. Set `agent.default_agent` to keep the old
-  template for plain chats.
-- A `config.default_agent` alias with its own memory store no longer lends it to
-  plain sessions; `kirocrew doctor` says so beside the binding. The store serves
-  the crewmate's DM thread and explicit picks.
+- Plain sessions keep their template on upgrade. When `agent.default_agent` is
+  unset and the roster default's row (`config.default_agent`: the `default`
+  crewmate, or the crewmate a ★ pointed at) binds a template other than
+  `kirocrew`, the first load writes that template to `agent.default_agent`, once
+  (`MIGRATE_STAR_DEFAULT_TEMPLATE`). A stored `agent.default_agent`, `kirocrew`
+  included, is never overwritten. Existing sessions keep their recorded
+  execution context; nothing live switches.
+- Only the template is carried. The row's folder, memory store and model pin
+  stay the crewmate's own, so new plain sessions run on the default workspace
+  and Global memory with no crewmate model pin (the template's own model, else
+  `agent.model`, still applies). A roster default with its own memory store no
+  longer lends it to plain sessions; `kirocrew doctor` says so beside the
+  binding. The store serves the crewmate's DM thread and explicit picks, and
+  memories written before the upgrade stay where they were written.
 - Legacy plain slots stamped `default` run as before and are not credited to
   the `default` crewmate's roster recency.
 - The picker's ★ no longer enrolls a template as a crewmate alias; an alias it
@@ -151,7 +157,13 @@ Rules that follow:
   seed are gone; creating a crewmate does not list it until its thread holds a
   message (the greeting is one). A crewmate that only ran in the background is
   listed, as its conversation holds messages -- the owner's decision of
-  2026-10-09 ("就像 iMessage 一样 … 不管是谁回复的，只要有消息就要参与排序").
+  2026-10-09 ("就像 iMessage 一样 … 不管是谁回复的，只要有消息就要参与排序"). Its §3.1
+  (#19341) already puts the browser memory first, as rule 4 does; rule 4
+  replaces its fallback, the last send (`last_chat_ts`), with the thread
+  holding the newest message.
+- [rfc-mate-landing-once.md](rfc-mate-landing-once.md): the ordinary landing
+  Mate yields to is rule 4's (the remembered crewmate, then the newest
+  conversation), not the last-chatted one.
 - [rfc-crewmate-guides-and-mate.md](rfc-crewmate-guides-and-mate.md) "`default`
   stays the fallback": "Every chat with no crew picked folds into it" is replaced
   by rules 1 and 3. `default` remains the shared, undeletable crewmate on Global

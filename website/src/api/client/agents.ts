@@ -66,11 +66,6 @@ export interface MemberRosterRow {
    *  it created Mate). Absent or false = never owed; the Crewmates page then
    *  treats Mate as already seen. */
   welcome_owed?: boolean
-  /** Epoch seconds the USER last sent this crew a message, in its DM or in a
-   *  normal chat; 0 = never. Background work (crons, wakes, sub-agents,
-   *  dispatched workers, apps) never moves it. The Crewmates list shows and
-   *  orders by it. Absent on an older gateway. */
-  last_chat_ts?: number
   /** Baseline projections (roster/activity/wake/driving) at a known seq, fed
    *  to the per-member projection store so the page renders from pushed
    *  frames. Absent on an older gateway that predates the event log. */

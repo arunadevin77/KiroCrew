@@ -46,7 +46,7 @@ vi.mock('../../components/ChatPane', () => ({
 import { api } from '../../api/client'
 import MembersPage from './MembersPage'
 
-function row(name: string, lastChat: number) {
+function row(name: string, lastActive: number) {
   return {
     name,
     slug: name,
@@ -58,8 +58,7 @@ function row(name: string, lastChat: number) {
     model: '',
     source: 'kirocrew',
     starred: false,
-    last_chat_ts: lastChat,
-    last_active_ts: lastChat,
+    last_active_ts: lastActive,
   }
 }
 

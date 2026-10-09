@@ -38,7 +38,7 @@ const MEMBERS = [
 function setup(props: Partial<Parameters<typeof CrewmateSwitcher>[0]> = {}) {
   const onPick = vi.fn()
   const onCreate = vi.fn()
-  render(<CrewmateSwitcher members={MEMBERS} defaultAgent="" activeName="scribe" onPick={onPick} onCreate={onCreate} {...props} />)
+  render(<CrewmateSwitcher members={MEMBERS} activeName="scribe" onPick={onPick} onCreate={onCreate} {...props} />)
   return { onPick, onCreate }
 }
 
@@ -295,9 +295,9 @@ describe('CrewmateSwitcher live signals', () => {
 
 describe('CrewmateSwitcher opens on an outside request', () => {
   it('a bumped openRequest opens the list; the mount value does not', async () => {
-    const { rerender } = render(<CrewmateSwitcher members={MEMBERS} defaultAgent="" activeName="scribe" onPick={vi.fn()} openRequest={3} />)
+    const { rerender } = render(<CrewmateSwitcher members={MEMBERS} activeName="scribe" onPick={vi.fn()} openRequest={3} />)
     expect(screen.queryByTestId('crewmate-switcher-list')).toBeNull()
-    rerender(<CrewmateSwitcher members={MEMBERS} defaultAgent="" activeName="scribe" onPick={vi.fn()} openRequest={4} />)
+    rerender(<CrewmateSwitcher members={MEMBERS} activeName="scribe" onPick={vi.fn()} openRequest={4} />)
     expect(await screen.findByTestId('crewmate-switcher-list')).toBeInTheDocument()
   })
 })
@@ -307,7 +307,7 @@ describe('CrewmateUnreadColumn', () => {
   const column = (props: Partial<Parameters<typeof CrewmateUnreadColumn>[0]> = {}) => {
     const onPick = vi.fn()
     const onMore = vi.fn()
-    const view = render(<CrewmateUnreadColumn members={MEMBERS} defaultAgent="" activeName="scribe" onPick={onPick} onMore={onMore} {...props} />)
+    const view = render(<CrewmateUnreadColumn members={MEMBERS} activeName="scribe" onPick={onPick} onMore={onMore} {...props} />)
     return { onPick, onMore, ...view }
   }
 

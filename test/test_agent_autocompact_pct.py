@@ -221,11 +221,32 @@ class TestEndpoint:
         assert data["agent"] == "orchestrator"
 
     @pytest.mark.asyncio
-    async def test_get_without_a_live_session_follows_the_default_crew(self) -> None:
-        """An unbound slot starts under the default crew, so it shows that crew's value."""
+    async def test_get_without_a_live_session_is_a_template_session_not_the_default_crew(
+        self,
+    ) -> None:
+        """An unbound slot starts as a template session on the default custom agent
+        (a template), never under the roster's default crewmate, so it follows the
+        global and names no crew -- whatever the default crewmate declares."""
         cfg = _crew_cfg(orchestrator=45.0, worker=80.0)
         cfg.default_agent = "worker"
         slot = _ChatSlot("test")
+        state = MagicMock(spec=DashboardState)
+        state._slots = {slot.key: slot}
+        state.sessions = _manager()
+        state.conversation_log = MagicMock()
+        with unittest.mock.patch.object(KiroCrewConfig, "load", return_value=cfg):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.get("/api/chat/slots/test/autocompact")
+                data = await resp.json()
+        assert data["agent_pct"] is None
+        assert data["agent"] is None
+
+    @pytest.mark.asyncio
+    async def test_get_without_a_live_session_follows_a_picked_crew(self) -> None:
+        """A slot that picked a crewmate starts under it, so it shows that crew's value."""
+        cfg = _crew_cfg(orchestrator=45.0, worker=80.0)
+        slot = _ChatSlot("test")
+        slot.agent = "worker"
         state = MagicMock(spec=DashboardState)
         state._slots = {slot.key: slot}
         state.sessions = _manager()
