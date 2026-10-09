@@ -331,7 +331,13 @@ def _url_payload_command(n: int) -> str:
 #: docstring, the runner and opener tables and the redirection and hidden-command
 #: patterns. It only narrows what auto-approves; no deny rule, threshold or pass
 #: moved.
-_PACKAGE_LINE_BUDGET = 29_293
+#:
+#: Raised again, from 29,293, for the ``self-protection-skills-authority-retire`` floor,
+#: which denies the operator-only ``kirocrew skills authority-retire`` recovery
+#: through an agent shell: one argv matcher, its rule row and reason in
+#: ``denied_rules``, its ``is_denied`` registration, its facade export, and its name
+#: in the ungated-floor comment. No pass widened and no threshold moved.
+_PACKAGE_LINE_BUDGET = 29_313
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
