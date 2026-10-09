@@ -46,6 +46,7 @@ import time
 from contextlib import ExitStack, contextmanager
 from datetime import datetime  # noqa: F401 -- patch seam the owners read through here
 from pathlib import Path
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -54,6 +55,7 @@ from typing import (
     Collection,
     Coroutine,
     Iterator,
+    Mapping,
 )
 
 if TYPE_CHECKING:
@@ -160,6 +162,8 @@ from kiro_crew.cron_service.store import (  # noqa: F401 -- re-exported
     CronPendingMismatch,
     CronStoreBusy,
     CronStoreUnreadable,
+    StoreDocument,
+    UnknownFields,
     _is_loadable_record,
     _is_representable_number,
     _job_from_record,
@@ -168,6 +172,7 @@ from kiro_crew.cron_service.store import (  # noqa: F401 -- re-exported
     _record_user_paused,
     cron_store_lock,
     decode_jobs,
+    decode_store,
     encode_store,
     quarantine_copies,
     quarantine_unreadable_store,
@@ -467,6 +472,15 @@ class CronLoopSafetyError(RuntimeError):
 
 class CronService:
     """Background service for managing and executing scheduled jobs."""
+
+    # What a NEWER build added to the store this service last loaded: the version
+    # it wrote, its unknown top-level keys, and each loaded job's unknown keys.
+    # _save writes them back (encode_store), so a rollback does not delete them.
+    # Class-level defaults are this build's own empty document; every _load
+    # replaces them whole on the instance, and nothing edits them in place.
+    _store_version: int = _STORE_VERSION
+    _store_extra: Mapping[str, Any] = MappingProxyType({})
+    _unknown_fields: Mapping[str, UnknownFields] = MappingProxyType({})
 
     def __init__(
         self,
@@ -4883,6 +4897,18 @@ class CronService:
         self._last_size = st.st_size
         self._last_digest = store_digest(raw)
 
+    def _keep_store_document(self, document: StoreDocument) -> None:
+        """Hold what a newer build added to the store just loaded, for :meth:`_save`."""
+        self._store_version = document.version
+        self._store_extra = MappingProxyType(dict(document.extra))
+        self._unknown_fields = MappingProxyType(dict(document.unknown_fields))
+
+    def _forget_store_document(self) -> None:
+        """Back to this build's own empty document (no file, or one that did not load)."""
+        self._store_version = _STORE_VERSION
+        self._store_extra = MappingProxyType({})
+        self._unknown_fields = MappingProxyType({})
+
     def _reset_fingerprint(self) -> None:
         """Clear the fingerprint so the next :meth:`_sync` forces a reload."""
         self._last_mtime = 0.0
@@ -5027,6 +5053,7 @@ class CronService:
         and a store repaired between two loads heals itself.
         """
         self._load_failed = False
+        self._forget_store_document()
         if not self._path.exists():
             self._jobs = []
             self._reset_fingerprint()
@@ -5034,8 +5061,8 @@ class CronService:
         try:
             st = self._path.stat()
             raw = _preread if _preread is not None else self._path.read_bytes()
-            jobs = decode_jobs(raw)
-            if jobs is None:
+            document = decode_store(raw)
+            if document is None:
                 # A document that parses but is not an object holding a jobs
                 # LIST (top-level [], a scalar, {"jobs": null}) cannot yield
                 # any job — same salvage story as unparseable JSON (there is
@@ -5069,8 +5096,9 @@ class CronService:
             # with the reload on a worker thread) never sees a copy without it.
             # Under the guard, as the hold's lookup and apply are.
             with self._held_run_records_guard:
-                self._apply_held_run_records_to(jobs)
-                self._jobs = jobs
+                self._apply_held_run_records_to(document.jobs)
+                self._jobs = document.jobs
+            self._keep_store_document(document)
         except (OSError, ValueError, TypeError, RecursionError) as exc:
             # Same class set as _read_job_records' json.loads guard, kept
             # spelled identically so the two cannot drift. A decode-error-only
@@ -5224,7 +5252,12 @@ class CronService:
         if self._load_failed:
             raise self._unreadable_error()
         self._dir.mkdir(parents=True, exist_ok=True)
-        document = encode_store(self._jobs if jobs is None else jobs)
+        document = encode_store(
+            self._jobs if jobs is None else jobs,
+            version=self._store_version,
+            extra=self._store_extra,
+            unknown_fields=self._unknown_fields,
+        )
         # Atomic write: unique tmp → rename
         # Deferred import to avoid circular dependency (pre-existing)
         from kiro_crew.atomic_write import atomic_write
