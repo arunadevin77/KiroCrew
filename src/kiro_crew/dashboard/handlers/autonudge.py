@@ -1097,6 +1097,13 @@ async def api_autonudge_update(request: web.Request) -> web.Response:
             {"error": "expect_fingerprint must be a string", "code": "not_a_string"},
             status=400,
         )
+    # The popover reaches a crew/member slot's default patrol too, and that row
+    # keeps the text and watch its fire-time guard admits: the chokepoint refuses
+    # such an edit naming the fields that stay tunable, when it is handed the
+    # state that holds the slot's mode. Read off the app rather than asserted: a
+    # request with no app state leaves the chokepoint no mode to refuse on.
+    app = getattr(request, "app", None)
+    state = app.get("state") if app is not None else None
     loop, error, status = await authorize_and_update_nudge(
         svc=svc,
         loop_id=loop_id,
@@ -1117,6 +1124,7 @@ async def api_autonudge_update(request: web.Request) -> web.Response:
         expect_fingerprint=expect_fingerprint,
         source="dashboard",
         caller=request.remote or "",
+        state=state,
     )
     if error is not None:
         if status == 409 and error == STALE_GOAL_BASELINE_ERROR:
