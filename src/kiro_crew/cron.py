@@ -1676,6 +1676,15 @@ class CronService:
                 job.last_status = "error"
                 job.last_error = last_error
                 job.last_run_ts = last_run_ts
+                # A cancelled one-shot is parked, not left due: its run never
+                # reaches _execute's one-shot disable. Live at once, so a busy
+                # store cannot let the next tick run it again; the merge parks
+                # the disk copy. A delete_after_run one-shot is left to
+                # _execute_with_timeout, whose failed-run auto-pause parks it.
+                park_one_shot = job.schedule.kind == "at" and not job.delete_after_run
+                if park_one_shot:
+                    job.enabled = False
+                    job.user_paused = True
                 try:
                     await asyncio.to_thread(
                         self._merge_terminal_state_locked,
@@ -1685,6 +1694,7 @@ class CronService:
                         last_run_ts=last_run_ts,
                         run_generation=generation,
                         result_produced=claim.started_monotonic is not None and job.result_produced,
+                        park_one_shot=park_one_shot,
                     )
                 except Exception:
                     logger.exception("Cancel: failed to persist state for cron %s", job_id)
@@ -4559,6 +4569,7 @@ class CronService:
         run_generation: int,
         result_produced: bool = False,
         count_failure: bool = False,
+        park_one_shot: bool = False,
     ) -> None:
         """Persist a job's terminal runtime state under the store lock.
 
@@ -4588,8 +4599,9 @@ class CronService:
         record would persist that run's success as the cancellation or timeout
         that came before it. Returning early here skips nothing owed: unlike
         ``_merge_job_result`` this helper writes only the three status fields
-        (plus clearing a command/script job's carried result, and the failure
-        count when ``count_failure``), and the save after them has nothing to
+        (plus clearing a command/script job's carried result, the failure
+        count when ``count_failure``, and the one-shot park when
+        ``park_one_shot``), and the save after them has nothing to
         record once they are skipped.
         """
         with self._file_lock():
@@ -4611,6 +4623,14 @@ class CronService:
             target.last_status = last_status
             target.last_error = last_error
             target.last_run_ts = last_run_ts
+            # A one-shot whose run the user cancelled is parked like a
+            # fire-time-denied one: its due time has passed, so leaving it
+            # enabled would run it again on the next tick. Disabled, so the user
+            # can re-enable it. Set before the snapshot below, so a failed save
+            # keeps the park in memory, as the caller's live park does.
+            if park_one_shot and target.schedule.kind == "at":
+                target.enabled = False
+                target.user_paused = True
             # Counted on the disk copy under the lock, so the failure count and
             # any auto-pause it triggers persist with the terminal record.
             counted = (target.enabled, target.auto_paused, target.consecutive_failures)

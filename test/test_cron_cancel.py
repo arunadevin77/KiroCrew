@@ -8,8 +8,10 @@ run_command_sandboxed, and the POST /api/crons/{id}/cancel handler.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -25,7 +27,7 @@ from test_cron_reaper import (
 )
 
 from kiro_crew import platform_compat
-from kiro_crew.cron import CronJob, CronSchedule, CronService, _RunClaim
+from kiro_crew.cron import CronJob, CronSchedule, CronService, CronStoreBusy, _RunClaim
 from kiro_crew.cron_history import CronHistoryStore
 from kiro_crew.cron_script import (
     _CANCELLED_PROC_JOBS,
@@ -790,3 +792,164 @@ class TestApiCronCancel:
             assert resp.status == 409
             data = await resp.json()
         assert "not running" in data["error"]
+
+
+_ADMITTED = SimpleNamespace(admitted=True, reason="")
+
+
+async def _start_without_timer(svc: CronService) -> None:
+    """Start ``svc`` with its real timer retired, so the test's own ticks are the only ones."""
+    await svc.start()
+    svc._arm_timer = lambda: None  # type: ignore[method-assign]
+    task, svc._timer_task = svc._timer_task, None
+    if task is not None:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=5.0)
+
+
+async def _cancel_mid_run_then_tick(svc: CronService, job_id: str, started: asyncio.Event) -> None:
+    """Tick once, cancel the run while its callback is blocked, then tick again.
+
+    The tick takes a run's claim before it returns, so the claim table is the
+    dispatch record: a second claim after the cancel is the job running again.
+    """
+    with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+        await svc._on_timer()
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+        assert await svc.cancel(job_id) is True
+        assert job_id not in svc._claims, "cancel left the first run's claim in place"
+        await svc._on_timer()  # the next tick
+        _assert_not_redispatched(svc, job_id)
+
+
+def _assert_not_redispatched(svc: CronService, job_id: str) -> None:
+    """The tick takes a run's claim before it returns, so a claim here is a re-run."""
+    assert job_id not in svc._claims, "the tick after the cancel dispatched the one-shot again"
+
+
+class TestCancelledOneShotIsParked:
+    """A cancelled one-shot ``at`` job is parked disabled, so the next tick does not run it again."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("delete_after_run", "pause"),
+        # (enabled, auto_paused, user_paused) on disk after the cancel. A
+        # delete_after_run one-shot is the control: the failed-run auto-pause
+        # parks it, before and after this change.
+        [(False, (False, False, True)), (True, (False, True, False))],
+    )
+    async def test_cancelled_one_shot_does_not_run_again(
+        self, tmp_path, delete_after_run: bool, pause: tuple[bool, bool, bool]
+    ) -> None:
+        runs: list[str] = []
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def on_job(job: CronJob) -> None:
+            runs.append(job.id)
+            started.set()
+            await asyncio.wait_for(release.wait(), timeout=5.0)
+
+        svc = CronService(base_dir=tmp_path, on_job=on_job)
+        await _start_without_timer(svc)
+        job = await svc.add_job_async(
+            "remind-once", "msg", at_ts=time.time() - 1, delete_after_run=delete_after_run
+        )
+        try:
+            await _cancel_mid_run_then_tick(svc, job.id, started)
+        finally:
+            release.set()
+            await svc.stop()
+        assert runs == [job.id], f"cancelled one-shot ran {len(runs)} times"
+
+        # Parked on disk, not deleted: a fresh service finds it disabled, paused by
+        # the user (or, for delete_after_run, by the failed-run auto-pause), and its
+        # tick does not run it.
+        reloaded = CronService(base_dir=tmp_path, on_job=on_job)
+        await _start_without_timer(reloaded)
+        try:
+            parked = reloaded.get_job(job.id)
+            assert parked is not None
+            assert (parked.enabled, parked.auto_paused, parked.user_paused) == pause
+            assert parked.last_error.startswith("Cancelled by user")
+            with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+                await reloaded._on_timer()
+            assert job.id not in reloaded._claims
+        finally:
+            await reloaded.stop()
+        assert runs == [job.id]
+
+    @pytest.mark.asyncio
+    async def test_cancel_against_a_busy_store_still_keeps_the_next_tick_off(
+        self, tmp_path
+    ) -> None:
+        """The park lands on the live job before the store write, so a busy store does not reopen it."""
+        runs: list[str] = []
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def on_job(job: CronJob) -> None:
+            runs.append(job.id)
+            started.set()
+            await asyncio.wait_for(release.wait(), timeout=5.0)
+
+        svc = CronService(base_dir=tmp_path, on_job=on_job)
+        await _start_without_timer(svc)
+        job = await svc.add_job_async("remind-once", "msg", at_ts=time.time() - 1)
+        real_lock = svc._file_lock
+        busy = False
+
+        @contextlib.contextmanager
+        def _lock(*args: Any, **kwargs: Any):
+            if busy:
+                raise CronStoreBusy("cron store busy")
+            with real_lock(*args, **kwargs):
+                yield
+
+        svc._file_lock = _lock  # type: ignore[method-assign]
+        try:
+            with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+                await svc._on_timer()
+                await asyncio.wait_for(started.wait(), timeout=5.0)
+                busy = True
+                assert await svc.cancel(job.id) is True
+                busy = False
+                assert job.id not in svc._claims, "cancel left the first run's claim in place"
+                await svc._on_timer()
+                _assert_not_redispatched(svc, job.id)
+        finally:
+            release.set()
+            await svc.stop()
+        assert runs == [job.id], f"cancelled one-shot ran {len(runs)} times"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_recurring_job_keeps_its_schedule(self, tmp_path) -> None:
+        """Only a one-shot is parked: a cancelled ``every`` job stays enabled for its next slot."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def on_job(job: CronJob) -> None:
+            started.set()
+            await asyncio.wait_for(release.wait(), timeout=5.0)
+
+        svc = CronService(base_dir=tmp_path, on_job=on_job)
+        await _start_without_timer(svc)
+        job = await svc.add_job_async("every-hour", "msg", every_secs=3600, strict_schedule=True)
+        live = svc.get_job(job.id)
+        assert live is not None
+        live.created_ts = live.last_run_ts = time.time() - 7200  # due on the first tick
+        try:
+            with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+                await svc._on_timer()
+                await asyncio.wait_for(started.wait(), timeout=5.0)
+                assert await svc.cancel(job.id) is True
+        finally:
+            release.set()
+            await svc.stop()
+
+        reloaded = CronService(base_dir=tmp_path, on_job=on_job)
+        reloaded._load()
+        kept = reloaded.get_job(job.id)
+        assert kept is not None
+        assert (kept.enabled, kept.user_paused) == (True, False)
