@@ -2901,7 +2901,8 @@ class SubagentInfo:
     # digest; 0.0 once that hold has been flushed (or never held). Separate from
     # ``_digest_held`` on purpose: that flag is the restart-safety contract read
     # by the run loop, and must not be mutated by the hold-deadline sweep. This
-    # timestamp is the sweep's only input — see ``_sweep_digest_holds``.
+    # timestamp is the sweep's only input — see ``_sweep_digest_holds``. It is a
+    # ``time.monotonic()`` reading, compared with the reaper's monotonic ``now``.
     _digest_held_at: float = 0.0
     # True ONLY for the synthetic record that :meth:`force_digest_flush`
     # announces to release held results whose hold deadline expired. It is NOT a
@@ -4069,7 +4070,9 @@ class SubagentManager:
         # fallback see "no pending members" while later submissions are still
         # in flight. Pruned by finalize_batch().
         self._batch_submitted: dict[str, list[int]] = {}
-        # Wave liveness: last submission-progress time.time() per batch_id.
+        # Wave liveness: last submission-progress time.monotonic() per batch_id,
+        # aged against the reaper's monotonic reading so a wall-clock step cannot
+        # move it.
         # Drives the reaper's stuck-wave backstop (a wave with lost
         # submissions and no progress is force-reconciled). Pruned by
         # finalize_batch alongside _batch_submitted.
@@ -5538,7 +5541,7 @@ class SubagentManager:
                 if batch_id and not kwargs.get("_from_queue") and not kwargs.get("_store_accepted"):
                     submitted = self._batch_submitted.setdefault(batch_id, [0, batch_total])
                     submitted[0] += 1
-                    self._batch_progress_ts[batch_id] = time.time()
+                    self._batch_progress_ts[batch_id] = time.monotonic()
                 return self._announce_rejection(
                     SubagentInfo(
                         id=kwargs.get("_preassigned_id") or self._mint_agent_id(),

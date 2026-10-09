@@ -2538,8 +2538,8 @@ class TestStoreOffLoop:
             assert mgr._batch_submitted["wv"] == [1, 2]
             # And the two call sites take the awaited form, not the sync entry.
             reaper = inspect.getsource(monitoring_mod.OrphanStallMonitor._reaper_loop_impl)
-            assert "await self._manager._sweep_stuck_waves_async(now)" in reaper
-            assert "await self._manager._sweep_digest_holds_async(now)" in reaper
+            assert "await self._manager._sweep_stuck_waves_async(mono_now)" in reaper
+            assert "await self._manager._sweep_digest_holds_async(mono_now)" in reaper
             consumer = inspect.getsource(GatewayOrchestrator._init_subagents)
             assert "await _subagent_batch_pending(self.subagent_mgr, _batch_id)" in consumer
         finally:

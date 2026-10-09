@@ -10092,7 +10092,10 @@ class GatewayOrchestrator:
                         # separate from _digest_held (the restart-safety flag the
                         # run loop reads) so the sweep never mutates that
                         # contract; cleared when this member's chunk fires.
-                        info._digest_held_at = time.time()
+                        # Monotonic, as the sweep's ``now`` is: a wall-clock step
+                        # must not force a partial digest out, or hold one past
+                        # its deadline.
+                        info._digest_held_at = time.monotonic()
                         bp.setdefault("held_infos", []).append(info)
                         if _oc == "completed":
                             bp["held_ok_deliveries"].append(

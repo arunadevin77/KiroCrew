@@ -142,7 +142,7 @@ class WaveDigestCoordinator(ManagerComponent):
             return
         _bs = self._manager._batch_submitted.setdefault(batch_id, [0, max(0, int(batch_total))])
         _bs[0] += 1
-        self._manager._batch_progress_ts[batch_id] = time.time()
+        self._manager._batch_progress_ts[batch_id] = time.monotonic()
         try:
             sel().log_tool_invocation(
                 session_key=parent_session_key or "",
@@ -177,7 +177,10 @@ class WaveDigestCoordinator(ManagerComponent):
 
         A wave is STUCK when ``submitted < expected``, every registered
         member is terminal, nothing of the wave sits in the spawn queue, and
-        there has been no submission progress for ``_WAVE_STUCK_SECS``. The
+        there has been no submission progress for ``_WAVE_STUCK_SECS``,
+        measured on the monotonic clock: ``now`` is the reaper's
+        ``time.monotonic()`` reading, the clock the ``_batch_progress_ts``
+        stamps are taken on. The
         count-driven ``batch_members_pending()`` can never close such a wave
         on its own — no future completion event will arrive. Reconciling via
         :meth:`record_lost_submission` (once per sweep per wave — waves with

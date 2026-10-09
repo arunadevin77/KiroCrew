@@ -1105,15 +1105,18 @@ class OrphanStallMonitor(ManagerComponent):
             except Exception:
                 logger.debug("Reaper: learned settled RSS refresh failed", exc_info=True)
             # Wave liveness backstop: reconcile waves wedged by submissions
-            # lost before the process boundary (see _sweep_stuck_waves).
+            # lost before the process boundary (see _sweep_stuck_waves). The
+            # progress stamps are monotonic readings, so the sweep takes
+            # ``mono_now``, not ``now``.
             try:
-                await self._manager._sweep_stuck_waves_async(now)
+                await self._manager._sweep_stuck_waves_async(mono_now)
             except Exception:
                 logger.debug("Reaper: stuck-wave sweep failed", exc_info=True)
             # Digest hold deadline: release completed wave results that a
-            # straggler (or a hung member) has been withholding.
+            # straggler (or a hung member) has been withholding. The hold stamp
+            # is a monotonic reading, so the sweep takes ``mono_now``, not ``now``.
             try:
-                await self._manager._sweep_digest_holds_async(now)
+                await self._manager._sweep_digest_holds_async(mono_now)
             except Exception:
                 logger.debug("Reaper: digest-hold sweep failed", exc_info=True)
             try:

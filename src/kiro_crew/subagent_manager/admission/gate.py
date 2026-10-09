@@ -322,7 +322,7 @@ class _GateMixin(ManagerComponent):
         if batch_id and not _from_queue and not _store_accepted and not _memory_reentry:
             _bs = self._manager._batch_submitted.setdefault(batch_id, [0, max(0, int(batch_total))])
             _bs[0] += 1
-            self._manager._batch_progress_ts[batch_id] = time.time()
+            self._manager._batch_progress_ts[batch_id] = time.monotonic()
         # --- Task guard: refuse empty/whitespace-only tasks (defense in depth).
         # The HTTP handler (api_spawn) and MCP tool schemas validate too, but
         # direct Python callers reach this choke point unvalidated. An empty
