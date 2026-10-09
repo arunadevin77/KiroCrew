@@ -232,11 +232,13 @@ from kiro_crew.dashboard.agent_admin.crew_update import (  # noqa: F401
 from kiro_crew.dashboard.agent_admin.default_agent import (  # noqa: F401
     _AppRegisteredTemplate,
     _BackgroundOnlyTemplate,
+    _default_template_ineligible_reason,
     _installed_template_alias,
     _is_app_registered,
     _set_default_template,
     _spec_lock_or_unlocked_read,
     api_default_agent,
+    default_template_eligible,
 )
 from kiro_crew.dashboard.agent_admin.fork_publish import (  # noqa: F401
     api_agent_fork,
@@ -304,6 +306,9 @@ from kiro_crew.dashboard.handlers.agent_templates import (  # noqa: F401
     control_plane_declarations,
     read_only_reason_for_path,
     validate_definition_patch,
+)
+from kiro_crew.dashboard.handlers.source_providers import (  # noqa: F401
+    owner_view_for_request,
 )
 from kiro_crew.dashboard.kiro_readiness import reject_if_kiro_unverified
 from kiro_crew.dashboard.state import DashboardState

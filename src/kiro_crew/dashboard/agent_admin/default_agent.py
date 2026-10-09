@@ -28,11 +28,13 @@ if TYPE_CHECKING:
         _UnverifiableLineage,
         agents_spec_lock,
         coerce_dict_section,
+        config_local_path,
         default_template,
         discovery_executor,
         kiro_agents_dir_path,
         list_agents,
         logger,
+        owner_view_for_request,
         read_bounded_json,
         run_config_write,
         update_config_locked,
@@ -56,6 +58,33 @@ def _is_app_registered(info: AgentInfo) -> bool:
     disabled or uninstalled, so nothing in ``config.json`` may depend on it.
     """
     return info.filename.endswith(f"--{info.name}.json")
+
+
+def _default_template_ineligible_reason(info: AgentInfo) -> str | None:
+    """The lifecycle reason *info* cannot be a default template, if any."""
+    # Deferred: the catalog module imports this one.
+    from kiro_crew.dashboard.handlers.agent_catalog import _is_background_only
+
+    if _is_background_only(info):
+        return "background_only"
+    if _is_app_registered(info):
+        return "app_registered"
+    return None
+
+
+def default_template_eligible(info: AgentInfo) -> bool:
+    """Whether *info* may be the machine-global default template.
+
+    ``private_to`` is the discovery scan's lenient reading (an unreadable sidecar
+    degrades it to ``""``); the write re-reads lineage strictly under its lock,
+    so this is the display-side answer, not the one that guards the write.
+    """
+    return (
+        info.scope == SCOPE_GLOBAL
+        and not info.private_to
+        and not _name_would_be_masked(info.name)
+        and _default_template_ineligible_reason(info) is None
+    )
 
 
 async def _installed_template_alias(
@@ -84,9 +113,6 @@ async def _installed_template_alias(
     unreadable sidecar degrades to ``""``. The locked write re-reads it strictly
     through :func:`_foreign_private_copy_owner`, as every binding writer does.
     """
-    # Deferred: the catalog module imports this one.
-    from kiro_crew.dashboard.handlers.agent_catalog import _is_background_only
-
     if _name_would_be_masked(name):
         return None
     try:
@@ -98,9 +124,10 @@ async def _installed_template_alias(
         return None
     for info in found:
         if info.name == name and info.scope == SCOPE_GLOBAL:
-            if _is_background_only(info):
+            reason = _default_template_ineligible_reason(info)
+            if reason == "background_only":
                 raise _BackgroundOnlyTemplate(name)
-            if _is_app_registered(info):
+            if reason == "app_registered":
                 raise _AppRegisteredTemplate(name)
             # Stamped ``kirocrew`` (the mark every non-sync writer leaves), not the
             # spec's discovery source: the owner chose this crewmate, so neither
@@ -116,7 +143,13 @@ async def _installed_template_alias(
 
 
 async def api_default_agent(request: web.Request) -> web.Response:
-    """GET/PUT /api/config/default-agent — read or set the default agent."""
+    """GET/PUT /api/config/default-agent — read or set the two defaults.
+
+    GET returns the roster's ``default_agent`` and the effective
+    ``default_template``, including its gone-spec fallback. ``overridden`` says
+    whether ``config.local.json`` pins ``agent.default_agent``; ``override_path``
+    is included only for an owner view.
+    """
     import kiro_crew.dashboard.handlers as _h  # noqa: F811
 
     if request.method == "PUT":
@@ -203,12 +236,18 @@ async def api_default_agent(request: web.Request) -> web.Response:
             )
         return web.json_response({"ok": True, "default_agent": name})
     cfg = KiroCrewConfig.load()
+    overridden = await asyncio.to_thread(_overlay_kiro_agent) is not None
     # Two defaults, two fields. `default_template` is what an agent-less session,
     # cron or slot RUNS, so the surfaces that label one (the Schedule page's
     # agent column, the Worlds agent rail) read it here rather than the alias.
-    return web.json_response(
-        {"default_agent": cfg.default_agent, "default_template": default_template(cfg)}
-    )
+    response: dict[str, object] = {
+        "default_agent": cfg.default_agent,
+        "default_template": default_template(cfg),
+        "overridden": overridden,
+    }
+    if overridden and owner_view_for_request(request):
+        response["override_path"] = str(config_local_path())
+    return web.json_response(response)
 
 
 def _spec_lock_or_unlocked_read(agents_dir: Path) -> contextlib.ExitStack:

@@ -1765,6 +1765,31 @@ session (`pool_kiro_agent`), never through the alias table, so an
 `agent.default_agent` that spells a crewmate alias binding another template
 prewarms what the session runs.
 
+**Two "default agent" settings, two things.** `config.default_agent` (top-level)
+is a CREWMATE alias — a key of `config.agents` — naming the roster's default
+crewmate: the **Default** badge on the Crewmates page, its DM thread, and the
+row the crewmate-delete guard keeps. No agent-less dispatch path reads it.
+`PUT /api/config/default-agent` writes it for `agent_kind: "member"` (or a bare
+crewmate alias) and writes `agent.default_agent` for `agent_kind: "template"`.
+`config.agent.default_agent` is a TEMPLATE name — what a plain chat, a CLI
+chat, a warm-pool process, or an agent-less schedule runs when nothing names
+one, and the runtime's own `kirocrew` when unset. The Custom agents tab reads
+that choice through `GET /api/config/default-agent` (see
+[learn-cron-dashboard](learn-cron-dashboard.md)). Its body is
+`{default_agent, default_template, overridden, override_path?}`:
+`default_agent` is the roster's default crewmate alias; `default_template` is
+the effective template, including the managed-template fallback when a stored
+spec is gone; `overridden` says whether `config.local.json` pins
+`agent.default_agent`; and the absolute `override_path` appears only for the
+owner so an open read cannot disclose the owner's home-directory path. The
+picker writes the template through `PUT /api/config/default-agent` with
+`{agent, agent_kind: "template"}`, implemented by
+[agent_admin/default_agent.py](../../../src/kiro_crew/dashboard/agent_admin/default_agent.py).
+The template roster reports the setting as a `used_by` reference of kind
+`default`; the writer accepts only an installed GLOBAL template, never a
+crewmate's private copy, a background-only runtime spec, an app's materialized
+agent, or a name the browser mask would hide.
+
 `selection_kind="template"` restricts an existing conversation to the materialized
 template namespace even if discovery has imported a same-named member.
 `selection_kind="member"` requires the configured alias instead of falling back

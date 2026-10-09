@@ -813,7 +813,11 @@ class TestDefaultAgentGuard:
                 # defaults, so a label reader can name what an agent-less session
                 # runs without conflating it with the alias.
                 got = await (await client.get("/api/config/default-agent")).json()
-                assert got == {"default_agent": "default", "default_template": "atlas"}
+                assert got == {
+                    "default_agent": "default",
+                    "default_template": "atlas",
+                    "overridden": False,
+                }
             assert default_template(KiroCrewConfig.load()) == "atlas"
         saved = json.loads(tmp.read_text())
         assert saved["agent"]["default_agent"] == "atlas"
@@ -822,6 +826,67 @@ class TestDefaultAgentGuard:
         assert [(e["operation"], e["resources"]) for e in events] == [
             ("default_template.write", "atlas")
         ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("owner", [True, False], ids=["owner", "non-owner"])
+    async def test_get_reports_overlay_pin_with_owner_only_path(
+        self, tmp_path: Path, owner: bool
+    ) -> None:
+        tmp = tmp_path / "config.json"
+        tmp.write_text(json.dumps(_seed_config()), encoding="utf-8")
+        local = tmp_path / "config.local.json"
+        local.write_text(json.dumps({"agent": {"default_agent": "pinned"}}), encoding="utf-8")
+        with (
+            unittest.mock.patch("kiro_crew.config.loader.config_path", return_value=tmp),
+            unittest.mock.patch("kiro_crew.config.loader.config_local_path", return_value=local),
+            unittest.mock.patch(
+                "kiro_crew.dashboard.handlers.agents.config_local_path", return_value=local
+            ),
+            unittest.mock.patch(
+                "kiro_crew.dashboard.handlers.agents.owner_view_for_request",
+                return_value=owner,
+            ),
+        ):
+            async with TestClient(TestServer(self._default_agent_app())) as client:
+                resp = await client.get("/api/config/default-agent")
+                assert resp.status == 200
+                body = await resp.json()
+        expected = {
+            "default_agent": "default",
+            "default_template": "pinned",
+            "overridden": True,
+        }
+        if owner:
+            expected["override_path"] = str(local)
+        assert body == expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("overlay_text", ["{", json.dumps({"agent": {"default_agent": 7}})])
+    async def test_get_treats_malformed_overlay_as_unpinned(
+        self, tmp_path: Path, overlay_text: str
+    ) -> None:
+        tmp = tmp_path / "config.json"
+        tmp.write_text(json.dumps(_seed_config()), encoding="utf-8")
+        local = tmp_path / "config.local.json"
+        local.write_text(overlay_text, encoding="utf-8")
+        with (
+            unittest.mock.patch("kiro_crew.config.loader.config_path", return_value=tmp),
+            unittest.mock.patch("kiro_crew.config.loader.config_local_path", return_value=local),
+            unittest.mock.patch(
+                "kiro_crew.dashboard.handlers.agents.config_local_path", return_value=local
+            ),
+            unittest.mock.patch(
+                "kiro_crew.dashboard.handlers.agents.owner_view_for_request",
+                return_value=True,
+            ),
+        ):
+            async with TestClient(TestServer(self._default_agent_app())) as client:
+                body = await (await client.get("/api/config/default-agent")).json()
+        assert body == {
+            "default_agent": "default",
+            "default_template": "kirocrew",
+            "overridden": False,
+        }
 
     @pytest.mark.asyncio
     async def test_template_namespace_wins_over_a_same_name_alias(self, tmp_path: Path) -> None:

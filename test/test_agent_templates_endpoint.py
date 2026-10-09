@@ -19,8 +19,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
 
 from kiro_crew import agent_state
+from kiro_crew.agent_files import LITE_AGENT_FILENAME
 from kiro_crew.config.loader import KiroCrewAgentConfig, KiroCrewConfig
 from kiro_crew.config.paths import config_dir
 from kiro_crew.dashboard.handlers import agent_templates
@@ -29,7 +31,11 @@ from kiro_crew.dashboard.handlers.agent_templates import (
     api_agent_template_delete,
     api_agent_templates,
 )
-from kiro_crew.dashboard.handlers.agents import api_agent_detail
+from kiro_crew.dashboard.handlers.agents import (
+    api_agent_detail,
+    api_default_agent,
+    default_template_eligible,
+)
 from kiro_crew.webhooks import token_store
 
 
@@ -132,6 +138,12 @@ async def _body(resp):
     return json.loads(resp.text)
 
 
+def _default_agent_app() -> web.Application:
+    app = web.Application()
+    app.router.add_put("/api/config/default-agent", api_default_agent)
+    return app
+
+
 # ── roster ─────────────────────────────────────────────────────────────
 
 
@@ -181,6 +193,101 @@ async def test_roster_marks_editability_and_references(agents_dir):
     assert rows["atlas"]["read_only"] == "package"
     assert rows["kirocrew-worker"]["read_only"] == "runtime"
     assert rows["atlas"]["used_by"] == []
+    # Editability and default-eligibility are different questions: a package
+    # template cannot be edited here but every session start can reach it.
+    assert rows["reviewer"]["default_eligible"] is True
+    assert rows["atlas"]["default_eligible"] is True
+
+
+@pytest.mark.asyncio
+async def test_roster_flags_which_rows_the_picker_may_offer(agents_dir):
+    """The writer's shared predicate appears as one display flag per row."""
+    from kiro_crew.agent_discovery import AgentInfo
+
+    _write(agents_dir, "reviewer.json")
+    _write(agents_dir, "SomePkg-atlas.json", name="atlas")
+    _write(agents_dir, "pr-bot-copy.json")
+    agent_state.set_fork_info("pr-bot-copy", forked_from="reviewer", private_to="pr-bot")
+    _write(agents_dir, LITE_AGENT_FILENAME)
+    _write(agents_dir, "notes--scribe.json", name="scribe")
+    _write(agents_dir, "spaced.json", name="My Agent")
+    _seed_config()
+
+    resp = await api_agent_templates(_request("GET"))
+    assert resp.status == 200
+    rows = {r["name"]: r["default_eligible"] for r in (await _body(resp))["templates"]}
+    assert rows["My Agent"] is True
+    assert rows["atlas"] is True
+    assert rows["kirocrew-lite"] is False
+    assert rows["pr-bot-copy"] is False
+    assert rows["reviewer"] is True
+    assert rows["scribe"] is False
+    masked = AgentInfo(
+        name="AKIAIOSFODNN7EXAMPLE",
+        filename="masked.json",
+        description="",
+        model="",
+    )
+    assert default_template_eligible(masked) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("info_kw", "private_owner", "eligible"),
+    [
+        ({"name": "reviewer", "filename": "reviewer.json"}, "", True),
+        (
+            {
+                "name": "atlas",
+                "filename": "SomePkg-atlas.json",
+                "source": "package",
+            },
+            "",
+            True,
+        ),
+        ({"name": "pr-bot-copy", "filename": "pr-bot-copy.json"}, "pr-bot", False),
+        (
+            {
+                "name": "kirocrew-lite",
+                "filename": LITE_AGENT_FILENAME,
+                "kirocrew_owned": True,
+                "source": "kirocrew",
+            },
+            "",
+            False,
+        ),
+        ({"name": "scribe", "filename": "notes--scribe.json"}, "", False),
+        (
+            {
+                "name": "AKIAIOSFODNN7EXAMPLE",
+                "filename": "masked.json",
+            },
+            "",
+            False,
+        ),
+    ],
+    ids=["plain", "package", "private-copy", "background", "app", "masked"],
+)
+async def test_default_eligibility_matches_put_refusal(
+    agents_dir, monkeypatch, info_kw, private_owner, eligible
+):
+    """Every rejected predicate row is refused by the template write."""
+    from kiro_crew.agent_discovery import AgentInfo
+
+    info = AgentInfo(description="", model="", private_to=private_owner, **info_kw)
+    assert default_template_eligible(info) is eligible
+    _seed_config()
+    monkeypatch.setattr("kiro_crew.dashboard.handlers.agents.list_agents", lambda *a, **kw: [info])
+    monkeypatch.setattr(
+        "kiro_crew.dashboard.handlers.agents._foreign_private_copy_owner",
+        lambda *a, **kw: private_owner,
+    )
+    async with TestClient(TestServer(_default_agent_app())) as client:
+        resp = await client.put(
+            "/api/config/default-agent",
+            json={"agent": info.name, "agent_kind": "template"},
+        )
+    assert (resp.status != 200) is (not eligible), resp.text
 
 
 @pytest.mark.asyncio

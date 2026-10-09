@@ -175,7 +175,12 @@ export function createConfigEndpoints({ post, put, j, jfetch: fetch }: ClientTra
     // Agent config
     agentConfig: () => fetch('/api/agent/config').then(j),
     saveAgentConfig: (config: object) => put('/api/agent/config', { config }).then(j),
-    defaultAgent: () => fetch('/api/config/default-agent').then(j),
+    // One readout for both defaults: `default_agent` is the default crewmate,
+    // `default_template` the template a session runs when nothing names one
+    // (the effective name, a deleted template's fallback included).
+    // `overridden` says config.local.json pins the template, so a template
+    // write is refused; `override_path` names that file (owner only).
+    defaultAgent: () => fetch('/api/config/default-agent').then(j) as Promise<{ default_agent: string; default_template: string; overridden: boolean; override_path?: string }>,
     /** The default for NEW SESSIONS is a template (`agent.default_agent`); a
      *  crewmate alias sets the roster's default crewmate instead. `agent_kind`
      *  names which the caller means when a template and a crewmate share a name. */

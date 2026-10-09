@@ -43,7 +43,7 @@ export function useAgentSync() {
   // GET /api/config/default-agent — no lock, no write — and useWebSocket's
   // refresh invalidation keeps a long-lived Worlds/popout surface from pinning
   // a stale name after the default changes.
-  const { data: defaultAgentData } = useQuery(defaultAgentQuery)
+  const { data: defaultAgentData } = useQuery({ ...defaultAgentQuery, select: d => d.default_template })
   const defaultAgent = defaultAgentData ?? ''
 
   const slotAgents = useMemo<AgentSource[]>(() => [...slots]

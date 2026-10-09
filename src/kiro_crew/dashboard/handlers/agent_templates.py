@@ -325,7 +325,7 @@ def _template_rows(folders: list[FolderPin]) -> list[dict[str, Any]]:
     verbatim. ``read_only`` and reference kinds are this module's own words.
     """
     # circular import: see api_agent_template_create.
-    from kiro_crew.dashboard.handlers.agents import _roster_mask
+    from kiro_crew.dashboard.handlers.agents import _roster_mask, default_template_eligible
 
     agents_dir = kiro_agents_dir_path()
     infos = list(list_agents(agents_dir=agents_dir))
@@ -347,6 +347,10 @@ def _template_rows(folders: list[FolderPin]) -> list[dict[str, Any]]:
             # offer one that can only answer 404.
             reason = _READ_ONLY_RUNTIME
         row["read_only"] = reason
+        # Whether the tab's default template picker may offer the row. The
+        # same predicate drives the write's lifecycle checks, while the lenient
+        # roster lineage is re-derived strictly inside the locked write.
+        row["default_eligible"] = default_template_eligible(info)
         row["used_by"] = _masked_refs(
             template_references(aliases, cfg, forks, crons, folders, webhooks), _roster_mask
         )

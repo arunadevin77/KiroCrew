@@ -275,7 +275,7 @@ export default function SchedulePage() {
   // comes from the shared, WS-invalidated + focus-refetched query rather than
   // useAgents' one-shot value, so the agent-column label's freshness matches
   // the agents rail's — one source of truth (issue #6495).
-  const { data: defaultAgentData, isError: defaultAgentFailed, error: defaultAgentError } = useQuery(defaultAgentQuery)
+  const { data: defaultAgentData, isError: defaultAgentFailed, error: defaultAgentError } = useQuery({ ...defaultAgentQuery, select: d => d.default_template })
   const defaultAgent = defaultAgentData ?? ''
   const [cronFilter, setCronFilter] = useState('')
   const [selected, setSelected] = useState<CronJob | null>(null)
