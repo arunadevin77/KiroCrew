@@ -2214,7 +2214,14 @@ async def test_reconcile_digest_names_every_orphans_producer():
     dm = AsyncMock(return_value=True)
     mgr = SubagentManager(sessions=MagicMock(), ctx_builder=None, on_orphan_dm=dm)
     orphans = [
-        {"id": "orph-1", "pid": None, "parent_session": "dashboard:chat-1", "task": "one"},
+        {
+            "id": "orph-1",
+            "pid": None,
+            "parent_session": "dashboard:chat-1",
+            "task": "one",
+            "agent": "writer",
+            "app": "my-app",
+        },
         {
             "id": "orph-2",
             "pid": None,
@@ -2238,8 +2245,76 @@ async def test_reconcile_digest_names_every_orphans_producer():
         "dashboard:chat-1",
         "subagent:orph-2",
     ]
-    assert meta["producer_agent"] == "researcher"
+    assert meta["producer_agent"].split("\n") == ["writer", "researcher"]
     assert meta["producer_app"] == "my-app"
+    # Both orphans resolved an agent, so none is unresolved: the bridge sends it.
+    assert meta["producer_agent_unresolved"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_digest_with_an_agent_less_orphan_is_refused_at_the_bridge():
+    """GPT 6.1 (bridge.py): an orphan whose own/parent execution record is unreadable
+    resolves NO agent, yet the digest still carries a sibling orphan's producer_agent. The
+    digest must not egress on the resolved sibling's profile alone -- the unreadable
+    orphan's own agent-bound Slack denial would never be consulted. _merge_producers counts
+    the orphans that resolved no agent in producer_agent_unresolved, and the bridge refuses
+    the whole digest when it is positive."""
+    dm = AsyncMock(return_value=True)
+    mgr = SubagentManager(sessions=MagicMock(), ctx_builder=None, on_orphan_dm=dm)
+    orphans = [
+        # orph-1 resolves an agent; orph-2's record names none (an unreadable restart).
+        {
+            "id": "orph-1",
+            "pid": None,
+            "parent_session": "",
+            "task": "one",
+            "agent": "writer",
+            "app": "my-app",
+        },
+        {"id": "orph-2", "pid": None, "parent_session": "", "task": "two", "app": "my-app"},
+    ]
+    with (
+        patch("kiro_crew.subagent.list_orphans", return_value=orphans),
+        patch("kiro_crew.subagent.write_tombstone"),
+        patch("kiro_crew.subagent.sel"),
+    ):
+        await mgr._reconcile_orphans()
+
+    dm.assert_awaited_once()
+    meta = dm.await_args.kwargs["producer_meta"]
+    # One of the two orphans resolved no agent -> the bridge denies the whole digest.
+    assert meta["producer_agent_unresolved"] == "1"
+    assert meta["producer_agent"] == "writer"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_digest_with_an_app_less_orphan_stays_dashboard_only():
+    """Fail-safe: a legacy orphan's app can live only in member-memory, absent from
+    state.json, so an empty recorded app cannot be told from a genuinely app-less run
+    without an off-loop lookup. When ANY orphan records no app the whole digest carries NO
+    producer meta, so the bridge refuses it as unattributed and it stays dashboard-only --
+    genuine app-less orphans lose external
+    delivery too, the accepted cost of not egressing a note whose owning app's messaging
+    denial we cannot confirm."""
+    dm = AsyncMock(return_value=True)
+    mgr = SubagentManager(sessions=MagicMock(), ctx_builder=None, on_orphan_dm=dm)
+    orphans = [
+        {"id": "orph-1", "pid": None, "parent_session": "", "task": "one", "app": "my-app"},
+        # No app recorded -> cannot confirm ownership -> whole digest is dashboard-only.
+        {"id": "orph-2", "pid": None, "parent_session": "", "task": "two", "agent": "researcher"},
+    ]
+    with (
+        patch("kiro_crew.subagent.list_orphans", return_value=orphans),
+        patch("kiro_crew.subagent.write_tombstone"),
+        patch("kiro_crew.subagent.sel"),
+    ):
+        await mgr._reconcile_orphans()
+
+    dm.assert_awaited_once()
+    # No app resolved -> _merge_producers returns None -> the DM is invoked WITHOUT a
+    # producer_meta, so the note names no producer and the bridge keeps it dashboard-only.
+    assert "producer_meta" not in dm.await_args.kwargs
+    assert dm.await_args.args[1:] == ()
 
 
 @pytest.mark.asyncio
@@ -2256,8 +2331,9 @@ async def test_an_orphan_with_no_named_agent_names_its_execution_template():
             "task": "t",
             "agent": "",
             "execution_context": {"template_id": "inherited-tmpl", "selection_name": ""},
+            "app": "my-app",
         },
-        {"id": "orph-u", "pid": None, "parent_session": "", "task": "u"},
+        {"id": "orph-u", "pid": None, "parent_session": "", "task": "u", "app": "my-app"},
     ]
     with (
         patch("kiro_crew.subagent.list_orphans", return_value=orphans),
@@ -2291,16 +2367,19 @@ async def test_reconcile_single_orphan_dm_is_not_wrapped_in_digest():
 
 
 @pytest.mark.asyncio
-async def test_reconcile_undelivered_digest_leaves_orphan_recoverable():
-    """GPT 5.6 F6 (monitoring.py reconcile): a digest-pending orphan (injection did not
-    deliver) must be tombstoned ONLY after the digest DM confirms delivery. list_orphans
-    skips ANY tombstoned folder regardless of recovery_action, so tombstoning before the
-    DM lands means a failed/unwired DM silently discharges the completion and its
-    follow-up queue with no replay. When the DM reports NOT delivered, the orphan must be
-    left un-tombstoned so the next start's list_orphans() re-delivers it.
+async def test_reconcile_undelivered_digest_still_tombstones_the_orphan():
+    """Orphan-DM tombstone timing follows main's existing contract
+    (test_subagent_boot_orphan_announcement.py): a digest-pending orphan is
+    tombstoned after the digest EVERY time, whatever the DM returns. Repeating an
+    orphan announcement after a failed/unwired send is not the safe side -- it can
+    loop, re-announcing at every subsequent start -- so the run is discharged once
+    the digest has been attempted. (A process that DIES before the DM is the only
+    case left to the next start, handled by the raising path.) The delivered-only
+    variant is tracked as a deferred finding; see the PR body.
     """
-    # DM reports the owner was NOT reached (unwired/failed delivery).
-    dm = AsyncMock(return_value=False)
+    # DM returns nothing (unwired / no delivery channel): main's contract treats the
+    # attempt as the discharge point regardless.
+    dm = AsyncMock(return_value=None)
     mgr = SubagentManager(sessions=MagicMock(), ctx_builder=None, on_orphan_dm=dm)
 
     orphans = [{"id": "orph-x", "pid": None, "parent_session": "", "task": "lost task"}]
@@ -2312,21 +2391,21 @@ async def test_reconcile_undelivered_digest_leaves_orphan_recoverable():
         await mgr._reconcile_orphans()
 
     dm.assert_awaited_once()
-    # The orphan must NOT have been tombstoned -- an undelivered digest leaves it
-    # recoverable rather than discharged.
+    # The orphan IS tombstoned after the digest even though the DM reported nothing --
+    # main's contract, so the run is not re-announced at the next start.
     tombstoned_ids = [c.args[0] for c in wt.call_args_list if c.args]
-    assert "orph-x" not in tombstoned_ids, (
-        "a digest-pending orphan was tombstoned despite the DM not being delivered -- "
-        f"its completion is now excluded from recovery. tombstoned={tombstoned_ids}"
+    assert "orph-x" in tombstoned_ids, (
+        "a digest-pending orphan was NOT tombstoned after the digest -- main's contract "
+        f"tombstones unconditionally so it cannot loop. tombstoned={tombstoned_ids}"
     )
 
 
 @pytest.mark.asyncio
-async def test_reconcile_delivered_digest_tombstones_the_orphan():
-    """The other half of F6: once the digest DM confirms delivery, the digest-pending
-    orphan IS tombstoned (so a reached owner does not leave the folder re-delivering on
-    every subsequent start)."""
-    dm = AsyncMock(return_value=True)
+async def test_reconcile_digest_carries_each_orphans_producer_meta():
+    """F6 governance (kept from the PR): the digest DM carries each digest-pending
+    orphan's own producer identities so the notification bridge vets every child's
+    profile before routing. The tombstone timing itself follows main's contract."""
+    dm = AsyncMock(return_value=None)
     mgr = SubagentManager(sessions=MagicMock(), ctx_builder=None, on_orphan_dm=dm)
 
     orphans = [{"id": "orph-y", "pid": None, "parent_session": "", "task": "told task"}]
@@ -2338,10 +2417,11 @@ async def test_reconcile_delivered_digest_tombstones_the_orphan():
         await mgr._reconcile_orphans()
 
     dm.assert_awaited_once()
+    # Still tombstoned after the digest (main's contract).
     tombstoned_ids = [c.args[0] for c in wt.call_args_list if c.args]
     assert (
         "orph-y" in tombstoned_ids
-    ), f"a digest-DELIVERED orphan was not tombstoned. tombstoned={tombstoned_ids}"
+    ), f"a digest-pending orphan was not tombstoned. tombstoned={tombstoned_ids}"
 
 
 def _streams_then_fails(error: Exception, text: str = "the answer "):

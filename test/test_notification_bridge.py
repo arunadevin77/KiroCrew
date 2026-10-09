@@ -1186,6 +1186,30 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             await d.drain(timeout=3)
         self.assertEqual(len(sink.sent), 1)
 
+    async def test_drain_timeout_logs_stranded_fanout_and_does_not_hang(self) -> None:
+        # A fanout leg still in flight when the drain budget is spent must not be dropped
+        # SILENTLY. drain returns (never hangs the shutdown) AND logs a visible warning
+        # naming the stranded count, so a terminal report cut short by shutdown leaves a
+        # trace (the note itself stays durable on the dashboard). No re-sequencing.
+        import logging
+
+        released = asyncio.Event()
+
+        async def _blocking_sink_dispatch(_note):
+            await released.wait()  # never set during the test: the leg stays in flight
+            return []
+
+        d = _dispatcher({"slack": _RecordingSink()}, {"system.cron": {"deliver_to": ["slack"]}})
+        with mock.patch.object(d, "_dispatch_guarded", _blocking_sink_dispatch):
+            d.schedule({"channel": "system.cron", "priority": "critical", "title": "t"})
+            with self.assertLogs("kiro_crew.notifications.bridge", level=logging.WARNING) as logs:
+                await asyncio.wait_for(d.drain(timeout=0.05), timeout=5)
+        released.set()  # let the stranded task unwind so the loop closes cleanly
+        self.assertTrue(
+            any("still" in m and "in flight" in m for m in logs.output),
+            logs.output,
+        )
+
 
 class OffLoopProducerTests(unittest.IsolatedAsyncioTestCase):
     """A producer on a worker thread must still reach the transport.
@@ -2063,6 +2087,10 @@ class AttributionTests(unittest.IsolatedAsyncioTestCase):
             session_key="dashboard:parent",
             producer_session=at_cap,
             producer_agent="child-template",
+            # A note naming several producers is delivered only on the producing site's
+            # explicit assertion that every one of them resolved an agent; a non-empty
+            # ``producer_agent`` alone cannot tell "all resolved" from "only the child did".
+            producer_agent_unresolved="0",
         )
         self.assertEqual(len(sink.sent), 1)
 
@@ -2086,6 +2114,19 @@ class AttributionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sink.sent, [])
         self.assertEqual([o.reason for o in outcomes], ["denied_unattributed"])
 
+    async def test_a_system_tag_does_not_buy_a_producer_a_host_only_pass(self) -> None:
+        # A note tagged system_origin that ALSO names producer context (here a session) is
+        # held to the agent-attribution bar, not waved through on the host alone. Without a
+        # resolved agent it is denied; the context-free system note above still passes.
+        sink, outcomes, _sel = await self._send(
+            channel="system.skills",
+            source="system",
+            producer_system="1",
+            session_key="slack:T1:C1:1.2",
+        )
+        self.assertEqual(sink.sent, [])
+        self.assertEqual([o.reason for o in outcomes], ["denied_unattributed"])
+
     async def test_an_apps_own_push_passes_without_an_agent(self) -> None:
         sink, _outcomes, _sel = await self._send(channel="my-app.alerts", source="app:my-app")
         self.assertEqual(len(sink.sent), 1)
@@ -2098,3 +2139,82 @@ class AttributionTests(unittest.IsolatedAsyncioTestCase):
             producer_session="taskrunner:run-1:runtime",
         )
         self.assertEqual(sink.sent, [])
+
+    async def test_a_partially_attributed_required_note_is_refused(self) -> None:
+        # A restart whose parent execution record is unreadable leaves one named producer
+        # with no resolved agent while the note still carries a sibling's producer_agent.
+        # The producing site reports that unresolved producer in producer_agent_unresolved,
+        # and the bridge must DENY outright rather than egress on the resolved sibling's
+        # profile alone.
+        sink, outcomes, _sel = await self._send(
+            channel="system.subagent",
+            source="system",
+            producer_session="subagent:a1\nsubagent:a2",
+            producer_agent="writer",  # only one of two distinct producers resolved
+            producer_agent_required="1",
+            producer_agent_unresolved="1",  # the site saw one producer resolve no agent
+        )
+        self.assertEqual(sink.sent, [])
+        self.assertEqual([o.reason for o in outcomes], ["denied_unattributed"])
+
+    async def test_a_fully_attributed_required_note_is_sent(self) -> None:
+        # Paired with the refusal above so the guard cannot pass by withholding every
+        # required note: every named producer resolved an agent (none unresolved).
+        sink, _outcomes, _sel = await self._send(
+            channel="system.subagent",
+            source="system",
+            producer_session="subagent:a1\nsubagent:a2",
+            producer_agent="writer\nresearcher",
+            producer_agent_required="1",
+            producer_agent_unresolved="0",
+        )
+        self.assertEqual(len(sink.sent), 1)
+
+    async def test_a_subagent_only_match_with_an_unresolved_chat_is_refused(self) -> None:
+        # The finding this round closes: a background task's completion names its
+        # ORIGINATING chat (session_key) AND the child subagent that produced the content.
+        # On a restart where the chat's execution record is unreadable the chat resolves NO
+        # agent, while the child's producer_agent is still carried. A non-empty
+        # producer_agent alone would let the note through on the CHILD's profile and never
+        # ask the originating chat's agent -- the permission check the chat should enforce
+        # is skipped. With two producers named and no "every producer resolved" signal, the
+        # note is untrusted and takes the unattributed path (refused / not routed).
+        sink, outcomes, _sel = await self._send(
+            channel="system.subagent",
+            source="system",
+            session_key="dashboard:chat-1",  # originating chat -- its agent did NOT resolve
+            producer_session="subagent:c1",  # child subagent -- resolved below
+            producer_agent="researcher",  # ONLY the child's agent is named
+        )
+        self.assertEqual(sink.sent, [])
+        self.assertEqual([o.reason for o in outcomes], ["denied_unattributed"])
+
+    async def test_a_subagent_match_with_a_resolved_chat_is_sent(self) -> None:
+        # Paired with the refusal above: when the originating chat IS positively resolved
+        # (the producing site reports zero unresolved producers), the same multi-producer
+        # completion is delivered. The guard cannot pass by withholding every such note.
+        sink, _outcomes, _sel = await self._send(
+            channel="system.subagent",
+            source="system",
+            session_key="dashboard:chat-1",
+            producer_session="subagent:c1",
+            producer_agent="chat-agent\nresearcher",  # chat AND child both resolved
+            producer_agent_unresolved="0",
+        )
+        self.assertEqual(len(sink.sent), 1)
+
+    async def test_a_same_agent_multi_session_completion_is_sent(self) -> None:
+        # Opus 5.5 finding: a subagent completion names TWO sessions (subagent:<id> and
+        # the conversation key) for ONE child run. When both resolve to the SAME agent,
+        # the de-duplicated producer_agent collapses to one name. The site reports zero
+        # unresolved producers, so the note must be SENT -- a count of distinct agent
+        # names against the session count would have wrongly refused it.
+        sink, _outcomes, _sel = await self._send(
+            channel="system.subagent",
+            source="system",
+            producer_session="subagent:a1\nconv:a1",
+            producer_agent="writer",  # one agent for the one child run, named once
+            producer_agent_required="1",
+            producer_agent_unresolved="0",
+        )
+        self.assertEqual(len(sink.sent), 1)

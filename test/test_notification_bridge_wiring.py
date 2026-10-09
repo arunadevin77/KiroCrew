@@ -1712,6 +1712,7 @@ class TestFallbackBellNamesItsProducer:
                 channel_type="",
                 caller_session=caller_session,
                 declared_session=declared_session,
+                attribution_session=declared_session,
                 is_cron_caller=False,
                 send_to_slack=False,
                 caller_app=caller_app,

@@ -4450,7 +4450,7 @@ class SubagentManager:
 
     async def _send_orphan_slack_dm(
         self, msg: str, producer_meta: dict[str, str] | None = None
-    ) -> bool:
+    ) -> None:
         return await self._monitor._send_orphan_slack_dm_impl(msg, producer_meta)
 
     def _live_shared_count(self, pid: int | None, agents: "list[SubagentInfo]") -> int:

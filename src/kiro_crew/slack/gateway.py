@@ -9115,8 +9115,7 @@ class GatewayOrchestrator:
         if isinstance(held, list):
             info._digest_settle_deliveries = []
 
-    @staticmethod
-    def _cron_notif_meta(job: Any, **extra: str) -> dict[str, str]:
+    def _cron_notif_meta(self, job: Any, **extra: str) -> dict[str, str]:
         """Cron-result meta: the job id plus the job's owning app, when an app owns it.
 
         An app's own cron job is stamped ``created_by="app:<name>"``, but its result note
@@ -9149,9 +9148,20 @@ class GatewayOrchestrator:
         agents = cron_job_agent_names(job)
         if not agents:
             # An agent job that names none runs the configured default agent.
-            from kiro_crew.notifications.attribution import default_agent_names
+            # Resolved from the gateway's already-loaded ``self._cfg`` rather than a
+            # fresh ``KiroCrewConfig.load()``: this builds meta on the event loop, and
+            # ``load()`` can read and validate ``config.json`` from disk on a cache
+            # miss, which must not block delivery. A caller without a cached config
+            # (only a bare ``__new__`` test stub) falls back to the loading helper.
+            cfg = getattr(self, "_cfg", None)
+            if cfg is not None:
+                from kiro_crew.notifications.attribution import default_agent_names_from
 
-            agents = default_agent_names()
+                agents = default_agent_names_from(cfg)
+            else:
+                from kiro_crew.notifications.attribution import default_agent_names
+
+                agents = default_agent_names()
         if agents:
             meta["producer_agent"] = "\n".join(agents)
         return meta
@@ -9189,6 +9199,12 @@ class GatewayOrchestrator:
             sessions.append(conversation)
         if sessions:
             meta["producer_session"] = "\n".join(sessions)
+            # Agent attribution is REQUIRED for these producers: a completion note
+            # names the parent AND the child, and the bridge must consult each one's
+            # agent profile. On a restart whose parent execution record is unreadable
+            # the parent's agent cannot be resolved; this flag makes the bridge DENY
+            # the note then rather than egress it on the child's profile alone.
+            meta["producer_agent_required"] = "1"
         # The child's agent, and the template its execution binds when it named
         # none (a child spawned without an agent inherits its parent's template).
         from kiro_crew.execution_context import producer_agent_names
@@ -9198,6 +9214,12 @@ class GatewayOrchestrator:
         )
         if agents:
             meta["producer_agent"] = "\n".join(agents)
+        if sessions:
+            # Both sessions name ONE child run, so one resolved agent attributes the
+            # whole note: report unresolved only when the child's own agent could not be
+            # resolved at all. The bridge refuses a required note with any producer
+            # unresolved; an empty ``producer_agent`` is already refused as unattributed.
+            meta["producer_agent_unresolved"] = "0" if agents else "1"
         return meta or None
 
     @staticmethod
@@ -11533,6 +11555,11 @@ class GatewayOrchestrator:
                     meta["producer_agent_required"] = "1"
                     if agent:
                         meta["producer_agent"] = agent
+                    # One run, one producer session: unresolved only when the run names
+                    # no agent (then ``producer_agent`` is absent and the bridge refuses
+                    # the note as unattributed anyway). Reported so the bridge sees a
+                    # required-attribution note with its completeness.
+                    meta["producer_agent_unresolved"] = "0" if agent else "1"
                 if session_key:
                     meta["session_key"] = session_key
                 # The run's owning app, bound by the bridge as a `producer_app`
