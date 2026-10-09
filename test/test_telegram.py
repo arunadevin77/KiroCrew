@@ -2439,6 +2439,147 @@ class TestRenderer:
         seen = self._parts_seen(lambda text, kw: "bravo" in text and kw.get("parse_mode"))
         assert seen == ["1", "2", "3"]
 
+    @staticmethod
+    def _overflowing_table() -> str:
+        # A pipe table that fits one segment while it streams but whose degraded
+        # render is split into several messages when it is sealed.
+        rows = "".join(f"| row {i} | value {i} |\n" for i in range(400))
+        return "| name | value |\n| --- | --- |\n" + rows
+
+    @staticmethod
+    def _sealed_over_dead_edits(
+        table: bool, fails: Any, lost: str | None = None
+    ) -> tuple[FakeClient, list[int], int, list[str]]:
+        # Seals one streamed answer, or a pipe table whose degraded render splits,
+        # while every edit fails although the live frame still exists (the per-chat
+        # edit budget, or two timeouts). ``fails(text, kwargs)`` says which sends
+        # fail once the live frame has landed, and ``lost`` ("first", "second" or
+        # "last") names one part of the table whose every send fails, its notice
+        # still going out. Returns the client, the id of each send that landed (the
+        # live frame first), the number of parts the reply is sealed in, and the
+        # sends and deletes in the order they happened.
+        notice = "Part of this reply may not have been delivered."
+        ids: list[int] = []
+        order: list[str] = []
+        lost_at = 0  # the number of the part whose sends all fail, 0 for none
+
+        class _Client(FakeClient):
+            async def edit_message(self, *a: Any, **kw: Any) -> bool:
+                await super().edit_message(*a, **kw)
+                return False
+
+            async def send_message(self, chat_id: int, text: str, **kw: Any) -> Any:
+                # The live frame plus the parts landed so far: the part now being
+                # sent is number ``len(ids)``.
+                part_lost = len(ids) == lost_at and text != notice
+                if ids and (fails(text, kw) or part_lost):
+                    return None
+                ids.append(await super().send_message(chat_id, text, **kw))
+                order.append(f"send {ids[-1]}")
+                return ids[-1]
+
+            async def delete_message(self, chat_id: int, message_id: int) -> None:
+                order.append(f"delete {message_id}")
+                await super().delete_message(chat_id, message_id)
+
+        cli = _Client()
+        cli.rich_fails = True
+        r = TelegramRenderer(cli, 55, TELEGRAM_CAPABILITIES, session_key="telegram:1:0")  # type: ignore[arg-type]
+        text = TestRenderer._overflowing_table()
+        parts = 1
+        if table:
+            assert len(text) <= r._rich_limit(), "precondition: one segment while streaming"
+            assert (
+                len(_md_to_telegram_html(text)) > r._rendered_limit()
+            ), "precondition: the degraded seal must split, so its first chunk takes the frame"
+            parts = len(r._degraded_table_chunks(text))
+        if lost:
+            assert parts >= 3, "precondition: a first chunk, a middle chunk and a tail"
+            lost_at = {"first": 1, "second": 2, "last": parts}[lost]
+
+        async def _answer() -> None:
+            await r.on_turn_start()
+            await r.dispatch(OutputEvent(kind=TEXT_CHUNK, text="first half"))
+            await r.dispatch(OutputEvent(kind=TEXT_CHUNK, text=", second half"))
+            await r.dispatch(OutputEvent(kind=DONE, stop_reason=""))
+
+        async def _degraded_table() -> None:
+            await r.on_turn_start()
+            await r.on_text_chunk(text)  # the live frame is sent
+            await r._seal_current()
+
+        asyncio.run(_degraded_table() if table else _answer())
+        return cli, ids, parts, order
+
+    @pytest.mark.parametrize("table", [False, True], ids=["answer", "degraded table"])
+    @pytest.mark.parametrize("html_send_fails", [False, True], ids=["html send", "plain send"])
+    def test_a_resent_answer_replaces_the_live_frame_it_could_not_edit(
+        self, table: bool, html_send_fails: bool
+    ) -> None:
+        # The answer is sent as a new message, and the live frame above it, an older
+        # and shorter draft, is deleted, as the rich path deletes the bubble it
+        # supersedes. "degraded table" is the first chunk of an overflowing table,
+        # which re-uses the live frame through its own ladder; either send of a
+        # ladder (the HTML one, then the plain one) can be the one that lands. The
+        # frame goes last: until every part has landed it is the only copy of what
+        # the reader saw.
+        cli, ids, parts, order = self._sealed_over_dead_edits(
+            table, lambda text, kw: html_send_fails and bool(kw.get("parse_mode"))
+        )
+        assert len(ids) == 1 + parts, "the live frame, then each part as a new message"
+        assert cli.deleted == [ids[0]]
+        assert order == [f"send {i}" for i in ids] + [f"delete {ids[0]}"]
+
+    @pytest.mark.parametrize("table", [False, True], ids=["answer", "degraded table"])
+    def test_a_failed_resend_keeps_the_live_frame(self, table: bool) -> None:
+        # When the fallback send fails too, the live frame is the only copy of the
+        # answer the reader has, so it stays, and a notice stands where each part is
+        # missing.
+        notice = "Part of this reply may not have been delivered."
+        cli, _ids, parts, _order = self._sealed_over_dead_edits(
+            table, lambda text, kw: text != notice
+        )
+        assert cli.deleted == []
+        assert [text for text, _kb in cli.sent[1:]] == [notice] * parts
+
+    @pytest.mark.parametrize("lost", ["first", "second", "last"])
+    def test_a_lost_part_keeps_the_live_frame(self, lost: str) -> None:
+        # Each part of an overflowing table is a send of its own, and the pressure
+        # that failed the edits can fail any one of them. The frame holds rows the
+        # reader has already seen, and the parts that landed may not carry them, so
+        # one lost part keeps it, wherever that part falls: the first chunk, a middle
+        # chunk (the first one to go out below the frame) or the tail (sealed by
+        # ``_seal_text``). A notice stands where the part is missing; the rest land.
+        notice = "Part of this reply may not have been delivered."
+        cli, ids, parts, _order = self._sealed_over_dead_edits(True, lambda text, kw: False, lost)
+        at = {"first": 1, "second": 2, "last": parts}[lost]
+        sent = [text for text, _kb in cli.sent[1:]]
+        assert len(sent) == parts, "every part either landed or left a notice"
+        assert [n for n, text in enumerate(sent, 1) if text == notice] == [at]
+        assert len(ids) == 1 + parts
+        assert cli.deleted == []
+
+    def test_a_chunk_edited_into_the_live_frame_leaves_it_alone(self) -> None:
+        # With working edits, the first chunk of an overflowing table lands in the
+        # live frame itself and the rest go out below it. The frame now carries that
+        # chunk, so nothing replaces it, and deleting it would delete the chunk.
+        cli = FakeClient()
+        cli.rich_fails = True
+        r = TelegramRenderer(cli, 55, TELEGRAM_CAPABILITIES, session_key="telegram:1:0")  # type: ignore[arg-type]
+        text = self._overflowing_table()
+        parts = len(r._degraded_table_chunks(text))
+        assert parts >= 3, "precondition: the table splits, so its first chunk takes the frame"
+
+        async def _go() -> None:
+            await r.on_turn_start()
+            await r.on_text_chunk(text)  # the live frame is sent
+            await r._seal_current()
+
+        asyncio.run(_go())
+        assert len(cli.edits) == 1, "the first chunk is edited into the live frame"
+        assert len(cli.sent) == parts, "the live frame, then every other part as a new message"
+        assert cli.deleted == []
+
     def test_error_done_renders_error_when_no_text(self) -> None:
         cli = self._drive([OutputEvent(kind=DONE, stop_reason="error")])
         assert "Error" in cli.sent[-1][0]
