@@ -467,7 +467,7 @@ def test_crewmate_create_cron_undo_refuses_a_schedule_edited_in_the_window(tmp_p
         history = service.get_history()
         with (
             mock.patch.object(
-                history, "delete_job_history", wraps=history.delete_job_history
+                history, "delete_job_history_sync", wraps=history.delete_job_history_sync
             ) as del_hist,
             mock.patch.object(cards, "read_state", read_state),
         ):
@@ -481,7 +481,7 @@ def test_crewmate_create_cron_undo_refuses_a_schedule_edited_in_the_window(tmp_p
                     data = await resp.json()
                 if routes._BACKGROUND:
                     await asyncio.gather(*list(routes._BACKGROUND))
-                return resp.status, data, del_hist.await_count
+                return resp.status, data, del_hist.call_count
             finally:
                 await client.close()
 
