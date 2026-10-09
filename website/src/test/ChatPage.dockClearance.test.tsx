@@ -59,7 +59,7 @@ describe('composer dock clearance', () => {
   })
 
   it('measures the dock root from a callback ref through a ResizeObserver', () => {
-    expect(CHAT_PAGE).toMatch(/<div ref=\{dockRef\} className="[^"]*\babsolute\b[^"]*\bbottom-0\b[^"]*" style=\{\{ right: dockGutter \}\} data-testid="composer-dock-root">/)
+    expect(CHAT_PAGE).toMatch(/<div ref=\{dockRef\} className="[^"]*\babsolute\b[^"]*\bbottom-0\b[^"]*" style=\{\{ right: dockGutter \}\} data-testid="composer-dock-root"[^>]*>/)
     // A callback ref, not a `[]` layout effect: the dock sits inside the pane's
     // conditional branch, so a mount-once effect can run before it exists and
     // never measure. The ref fires on every mount/unmount of the box.
@@ -70,7 +70,7 @@ describe('composer dock clearance', () => {
     expect(DOCK).toMatch(hook)
     for (const src of [CHAT_PAGE, CHAT_PANE]) {
       expect(src, 'the host takes dockRef from the shared measurement').toMatch(/const \{ inputAreaRef, dockH, dockGutter, dockRef \} = useComposerDockMetrics\(scrollerRef\)/)
-      expect(src).toMatch(/<div ref=\{dockRef\} className="[^"]*\babsolute\b[^"]*\bbottom-0\b[^"]*" style=\{\{ right: dockGutter \}\} data-testid="composer-dock-root">/)
+      expect(src).toMatch(/<div ref=\{dockRef\} className="[^"]*\babsolute\b[^"]*\bbottom-0\b[^"]*" style=\{\{ right: dockGutter \}\} data-testid="composer-dock-root"[^>]*>/)
     }
     // `dock-inert` goes on the two inner wrapper boxes, never on the root: the
     // jump pill is a direct child of the root and its wrapper is a full-width
