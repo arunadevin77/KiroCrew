@@ -539,6 +539,11 @@ class CronService:
         # a completed one-shot is always
         # eventually removed and can never re-fire in the meantime.
         self._pending_removals: set[str] = set()
+        # Completed runs whose result merge has not been saved yet, the newest
+        # run per job id (see _hold_run_record). The guard covers only the dict
+        # operations: the loop holds, worker threads re-apply and release.
+        self._held_run_records: dict[str, CronJob] = {}
+        self._held_run_records_guard = threading.Lock()
         # True while a critical-posture episode is deferring scheduled
         # firings (see _on_timer). Log-throttle state only: the INFO line
         # fires once per deferral episode, not once per deferred tick.
@@ -726,6 +731,10 @@ class CronService:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._claims.clear()
+        # A record the store lock refused is held in memory only; save it before
+        # this process goes, or the next one finds the job due again.
+        if self._held_run_records:
+            await asyncio.to_thread(self._flush_held_run_records)
 
     # ── Reaper ──
 
@@ -2354,6 +2363,75 @@ class CronService:
                 "SEL audit for one-shot cron removal failed (job %s)", job_id, exc_info=True
             )
 
+    def _hold_run_record(self, job: CronJob, record: CronJob) -> None:
+        """Keep a completed run's record until a save under the lock persists it.
+
+        Loop-side; the finalizer calls it before the result merge. The merge
+        is best-effort: a lock that stays contended raises
+        :class:`CronStoreBusy` before anything is merged, and the record then
+        lives only in memory. A reload of a store another writer changed
+        replaces the job with its disk copy, which never received the run, so
+        an ``every`` job is due again early and a fired one-shot is enabled
+        again. Every reload re-applies a held record
+        (:meth:`_reapply_held_run_records`), and the next save under the lock
+        (the merge, the timer tick, :meth:`stop`) persists and releases it.
+
+        Holds of one job arrive in run order (the next run cannot start before
+        this finalizer gets here), so the newest record replaces a held one.
+        ``job`` is the object the run wrote its fields on. While it is still
+        the listed job the record is applied to it here, which adds the
+        generation and the persisted spellings (``user_paused`` for a fired
+        one-shot), so any save of it lands the record and a re-apply skips it.
+        """
+        if any(j is job for j in self._jobs) and job.run_generation < record.run_generation:
+            apply_run_record(job, record)
+        with self._held_run_records_guard:
+            self._held_run_records[record.id] = record
+
+    def _release_held_run_record(self, record: CronJob) -> None:
+        """Drop ``record`` after a save persisted it, unless a newer one is held."""
+        with self._held_run_records_guard:
+            if self._held_run_records.get(record.id) is record:
+                del self._held_run_records[record.id]
+
+    def _reapply_held_run_records(self) -> None:
+        """Apply held run records to the job list. Under the store lock.
+
+        Same fence as :meth:`_merge_job_result`: a record applies only to a job
+        whose generation is older, so it never overwrites a newer run another
+        writer stored, nor a job that already carries it.
+        """
+        with self._held_run_records_guard:
+            held = list(self._held_run_records.values())
+        by_id = {j.id: j for j in self._jobs}
+        for record in held:
+            target = by_id.get(record.id)
+            if target is not None and target.run_generation < record.run_generation:
+                apply_run_record(target, record)
+
+    def _save_held_run_records_locked(self) -> None:
+        """Persist and release the held run records. MUST hold the store lock, after ``_sync``."""
+        with self._held_run_records_guard:
+            held = list(self._held_run_records.values())
+        if not held or self._load_failed:
+            return
+        self._reapply_held_run_records()
+        self._save()
+        for record in held:
+            self._release_held_run_record(record)
+
+    def _flush_held_run_records(self) -> None:
+        """Persist the held run records for :meth:`stop`. WORKER-THREAD ONLY.
+
+        Best-effort: a store still contended or unwritable leaves them unsaved.
+        """
+        try:
+            with self._file_lock():
+                self._sync()
+                self._save_held_run_records_locked()
+        except (CronStoreBusy, OSError) as exc:
+            logger.warning("Cron: held run records not saved at stop: %s", exc)
+
     def _drain_pending_removals_locked(self) -> list[str]:
         """Delete jobs queued via :meth:`defer_removal`. MUST hold the store lock.
 
@@ -3686,6 +3764,7 @@ class CronService:
             with self._file_lock():
                 self._sync()
                 drained = self._drain_pending_removals_locked()
+                self._save_held_run_records_locked()
         except CronStoreBusy:
             logger.debug("Cron timer tick: store busy, using in-memory snapshot")
         except OSError as exc:
@@ -4007,6 +4086,7 @@ class CronService:
             except Exception:
                 logger.debug("push_refresh failed on job end", exc_info=True)
             if terminal is not None:
+                self._hold_run_record(job, terminal)
                 try:
                     # Offload the lock+sync+save merge to a worker thread:
                     # _merge_job_result enters the bounded sync _file_lock,
@@ -4394,6 +4474,7 @@ class CronService:
                 # store-unreadable case: surface it rather than reporting a quiet
                 # no-op after the disk refused the write.
                 raise
+            self._release_held_run_record(job)
         if removed_one_shot:
             # The delete_after_run consume is an automated removal with no
             # handler-level caller, so the emit lives with the removal.
@@ -4916,6 +4997,8 @@ class CronService:
             self._last_mtime_ns = st.st_mtime_ns
             self._last_size = st.st_size
             self._last_digest = store_digest(raw)
+            # The disk copies never received a run whose merge the lock refused.
+            self._reapply_held_run_records()
         except (OSError, ValueError, TypeError, RecursionError) as exc:
             # Same class set as _read_job_records' json.loads guard, kept
             # spelled identically so the two cannot drift. A decode-error-only
