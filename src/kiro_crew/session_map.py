@@ -145,6 +145,11 @@ UNLANDED_SID_FIELD = "unlanded_sid"
 # not one immortal map row per empty generation.
 GENERATION_FLOOR_FIELD = "generation_floor"
 
+# A rewind's request that the key's next cold start fork the native session it
+# discarded: ``{"sid": <source sid>, "message_id": <fork point>}``. It stands in
+# for an empty ``sid``, so every write or clear of ``sid`` drops it.
+NATIVE_FORK_FIELD = "native_fork"
+
 # Flags that are durable SETTINGS rather than session-scoped state, and so keep
 # their entry alive through :meth:`SessionMap.prune`. Membership is opt-in
 # BECAUSE immortality has a cost: an entry that prune can never collect is a row
@@ -345,10 +350,14 @@ def _stash_and_clear_sid(entry: dict) -> bool:
     as the key's last store, citing a predecessor two links back and orphaning
     the one between them. Which path emptied the field is not a distinction any
     reader of it can use, so the field cannot be written by only some of them.
+
+    A pending native fork is dropped too, even with no ``sid`` to stash: it
+    would otherwise restore a conversation the caller has just cleared.
     """
+    fork_dropped = entry.pop(NATIVE_FORK_FIELD, None) is not None
     sid = entry.get("sid")
     if not sid:
-        return False
+        return fork_dropped
     entry["discarded_sid"] = sid
     entry["sid"] = ""
     return True
@@ -1321,6 +1330,7 @@ class SessionMap:
             if existing.get(UNLANDED_SID_FIELD) not in (None, sid):
                 existing.pop(UNLANDED_SID_FIELD, None)
             existing["sid"] = sid
+            existing.pop(NATIVE_FORK_FIELD, None)
             if provider:
                 existing["provider"] = provider
             if cwd:
@@ -2604,3 +2614,35 @@ class SessionMap:
         """Return the per-thread project-dir override for *key*, or None."""
         entry = self._data.get(canonical_key(key))
         return entry.get("project_override") if entry else None
+
+    @_guarded
+    def set_native_fork(self, key: str, source_sid: str, message_id: str) -> None:
+        """Ask *key*'s next cold start to fork *source_sid* at *message_id*."""
+        self._ensure_entry(canonical_key(key))[NATIVE_FORK_FIELD] = {
+            "sid": source_sid,
+            "message_id": message_id,
+        }
+        self._save()
+
+    def get_native_fork(self, key: str) -> tuple[str, str] | None:
+        """The pending ``(source_sid, message_id)`` fork for *key*, or None."""
+        entry = self._data.get(canonical_key(key))
+        fork = entry.get(NATIVE_FORK_FIELD) if entry else None
+        if not isinstance(fork, dict):
+            return None
+        source_sid, message_id = fork.get("sid"), fork.get("message_id")
+        if not (
+            source_sid
+            and isinstance(source_sid, str)
+            and message_id
+            and isinstance(message_id, str)
+        ):
+            return None
+        return source_sid, message_id
+
+    @_guarded
+    def clear_native_fork(self, key: str) -> None:
+        """Drop *key*'s pending native fork, if any."""
+        entry = self._data.get(canonical_key(key))
+        if entry and entry.pop(NATIVE_FORK_FIELD, None) is not None:
+            self._save()
