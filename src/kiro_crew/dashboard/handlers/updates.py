@@ -1748,6 +1748,7 @@ async def _restart_gateway(
         # kiro_crew.dashboard.handlers (which re-exports this module), so this
         # must stay inline to avoid an import cycle at module load.
         from kiro_crew.dashboard.chat import save_all_slots_to_history
+        from kiro_crew.dashboard.chat_persistence import wait_for_unwinding_turns
         from kiro_crew.executors import subprocess_executor
 
         try:
@@ -1772,6 +1773,10 @@ async def _restart_gateway(
             await state.sessions.close_all()
         except Exception:
             logger.debug("Session cleanup before restart failed", exc_info=True)
+        # close_all() cut every turn that was mid-reply, and each one saves the text
+        # its user watched stream as it unwinds, after the save above. The exec
+        # below would beat that save.
+        await wait_for_unwinding_turns(state)
         # The broker this gateway spawned dies with it, the same as on a clean
         # shutdown; an adopted daemon belongs to its own owner and is left alone,
         # as ``GatewayManager.shutdown`` already does. The exec below does not run

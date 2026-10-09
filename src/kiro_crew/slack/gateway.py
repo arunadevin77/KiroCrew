@@ -136,7 +136,10 @@ from kiro_crew.cron import (  # noqa: F401
 )
 from kiro_crew.cron_script import delivery_fingerprint, run_command_sandboxed, run_script_sandboxed
 from kiro_crew.dashboard import cautious_boot, start_dashboard
-from kiro_crew.dashboard.chat_persistence import rehydrate_slot_from_history_async
+from kiro_crew.dashboard.chat_persistence import (
+    rehydrate_slot_from_history_async,
+    wait_for_unwinding_turns,
+)
 from kiro_crew.dashboard.chat_runner import (
     _arm_queued_delivery_settlement,
     _auto_approve_reason,
@@ -11772,6 +11775,12 @@ class GatewayOrchestrator:
 
         await asyncio.to_thread(self._stop_memory_startup)
 
+        # close_all() above ended every ACP session, so a dashboard turn that was
+        # mid-reply is now unwinding, and it saves the text its user watched stream
+        # before it ends; the hard exit after this method would beat the save. Last,
+        # so the steps above keep their share of the shutdown deadline.
+        await wait_for_unwinding_turns(self.dashboard_state)
+
     # ------------------------------------------------------------------
     # Auto-update
     # ------------------------------------------------------------------
@@ -12169,6 +12178,10 @@ class GatewayOrchestrator:
                 logger.warning("Update restart fence lost to real shutdown; deferring restart")
                 return
             await sessions.close_all()
+            # close_all() cut every dashboard turn that was mid-reply, and each one
+            # saves the text its user watched stream as it unwinds, after the save
+            # above. The exec below would beat that save.
+            await wait_for_unwinding_turns(self.dashboard_state)
 
         # The broker this gateway spawned dies with it, the same as ``_shutdown``
         # does on a clean exit; an adopted daemon belongs to its own owner and is

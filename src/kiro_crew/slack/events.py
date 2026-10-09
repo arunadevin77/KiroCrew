@@ -981,6 +981,12 @@ async def _handle_restart(
             )
     except Exception:
         logger.debug("Session cleanup before restart failed", exc_info=True)
+    # close_all() cut every dashboard turn that was mid-reply, and each one saves
+    # the text its user watched stream as it unwinds, after the save above. The
+    # exit below would beat that save. Bounded, so the exit is still reached.
+    from kiro_crew.dashboard.chat_persistence import wait_for_unwinding_turns
+
+    await wait_for_unwinding_turns(orch.dashboard_state)
     # Flush the SEL audit queue: logging is async (background writer thread +
     # atexit flush) and os._exit() runs neither atexit handlers nor finalizers,
     # so the approved-restart audit event above would be lost. flush() is a
