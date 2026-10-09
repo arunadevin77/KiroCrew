@@ -25,6 +25,7 @@ import logging
 import os
 import re
 import stat as _stat
+import threading
 import time
 from datetime import date as _date
 from datetime import datetime, timedelta
@@ -269,6 +270,16 @@ class MemoryStore:
         self._index_db = index_db or (workspace or config_dir()) / INDEX_DB_FILE
         self._vector_store: "VectorMemoryStore | None" = vector_store
         self._index_owner_only = False  # FTS index + sidecars restricted once per store
+        # Paths whose last index update failed. The next update or search re-indexes
+        # each from its file (``_drain_stale_index_locked``), so search catches up in
+        # this process once the cause (a full disk, say) clears; the boot-time
+        # ``rebuild_index`` covers a restart. Only paths are kept, never contents.
+        self._index_stale: set[str] = set()
+        # Serializes every index write in this process, so a catch-up re-index read
+        # from the file cannot land after a newer update of the same file.
+        self._index_lock = threading.Lock()
+        # Whether the current failure streak has already been logged at WARNING.
+        self._index_failure_warned = False
         # TTL cache for read_recent_history, keyed by `days` so callers using
         # different windows (context build=14, suggestions=2, dashboard=30) don't
         # evict each other. Value: (monotonic_deadline, day_iso, result).
@@ -1219,13 +1230,32 @@ class MemoryStore:
         return ok
 
     def _index_file(self, path: Path, content: str) -> None:
-        """Index a single file (incremental update)."""
+        """Index a single file (incremental update).
+
+        Best-effort: a failure never fails the memory write that called it. It is
+        logged at WARNING once per failure streak, and the path is kept in
+        ``_index_stale`` so the next update or search re-indexes it.
+        """
         if self._memory_version == 2:
             return  # Manual profiles are outside learned-memory search.
+        path_str = str(path)
+        with self._index_lock:
+            if self._write_index_row(path_str, content):
+                self._index_stale.discard(path_str)
+                self._drain_stale_index_locked()
+            else:
+                self._index_stale.add(path_str)
+
+    def _write_index_row(self, path_str: str, content: str, *, quiet: bool = False) -> bool:
+        """Replace *path_str*'s row in the FTS index; False when the write failed.
+
+        A failure is logged at WARNING when it starts a streak, at DEBUG while the
+        streak lasts, and always at DEBUG when *quiet* (a catch-up retry). A
+        success ends the streak, so the next failure warns again.
+        """
         conn = None
         try:
             conn = self._get_db()
-            path_str = str(path)
             conn.execute("DELETE FROM memory_fts WHERE path = ?", (path_str,))
             conn.execute(
                 "INSERT INTO memory_fts (path, content) VALUES (?, ?)",
@@ -1233,10 +1263,36 @@ class MemoryStore:
             )
             conn.commit()
         except Exception:
-            logger.debug("FTS index update failed", exc_info=True)
+            if quiet or self._index_failure_warned:
+                logger.debug("FTS index update failed", exc_info=True)
+            else:
+                self._index_failure_warned = True
+                logger.warning(
+                    "FTS index update failed; memory search can miss the newest text "
+                    "until a later update succeeds (warned once per failure streak)",
+                    exc_info=True,
+                )
+            return False
         finally:
             if conn is not None:
                 conn.close()
+        self._index_failure_warned = False
+        return True
+
+    def _drain_stale_index_locked(self) -> None:
+        """Re-index every stale path from its file; one that fails again stays.
+
+        Caller holds ``_index_lock``. Reads the file itself rather than a kept copy,
+        so the row matches what is on disk now.
+        """
+        for path_str in sorted(self._index_stale):
+            try:
+                content = self._files.read_text(Path(path_str))
+            except Exception:
+                logger.debug("FTS catch-up: %s could not be read; kept", path_str, exc_info=True)
+                continue
+            if self._write_index_row(path_str, content, quiet=True):
+                self._index_stale.discard(path_str)
 
     @named_store_operation
     def rebuild_index(self) -> int:
@@ -1361,6 +1417,11 @@ class MemoryStore:
         require_memory_ready(self._memory_store_name)
         if self._memory_version == 2:
             return self._member_store().search_memory(query, limit=limit)
+        if self._index_stale:
+            # A file whose index update failed earlier is re-indexed before the
+            # query reads the index, so it is found once the cause has cleared.
+            with self._index_lock:
+                self._drain_stale_index_locked()
         conn = None
         try:
             # Inside the try, not around it: this method handles its own errors
