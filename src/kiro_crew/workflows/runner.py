@@ -33,6 +33,7 @@ import asyncio
 import hashlib
 import json
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -165,6 +166,21 @@ def describe_agent_error(exc: BaseException) -> str:
     return text
 
 
+def _call_fingerprint(prompt: str, opts: dict) -> str:
+    """Identity of one agent call for replay: the prompt and every option that
+    reaches the model, without the display-only ``label`` and ``phase``.
+
+    Returns "" when the options cannot be serialized; a call without a
+    fingerprint is never replayed and always runs live.
+    """
+    keyed = {k: v for k, v in opts.items() if k not in ("label", "phase")}
+    try:
+        blob = json.dumps({"prompt": prompt, "opts": keyed}, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return ""
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 @asynccontextmanager
 async def _optional_slot(sem: Optional["asyncio.Semaphore"]) -> AsyncIterator[None]:
     """Hold ``sem`` for the duration of the block; a no-op when there is no cap."""
@@ -268,10 +284,14 @@ AuthorFn = Callable[..., Awaitable[dict]]
 
 # Signature of the per-call checkpoint hook, mirroring how ``on_source`` publishes
 # the authored script mid-run:
-#   on_agent_result(call_index: int, *, result: Any, ok: bool, error: str) -> None
+#   on_agent_result(call_index: int, *, result: Any, ok: bool, error: str,
+#                   fingerprint: str) -> None
 # Called as soon as EACH agent call settles, so the host can persist that payload
 # before the run reaches a terminal state. Without it, results would live only in
 # process memory until the run finished, and any interruption would throw them away.
+# ``fingerprint`` is the call's identity for replay (see ``_call_fingerprint``, ""
+# when it has none); it lands with the result, so a record that holds a result
+# also holds what a rerun needs to replay it.
 AgentResultFn = Callable[..., None]
 
 
@@ -323,6 +343,7 @@ class _RunContext:
         replay_results: Optional[dict] = None,
         replay_before: int = 0,
         on_agent_result: Optional[AgentResultFn] = None,
+        replay_fingerprints: Optional[dict] = None,
     ) -> None:
         self.args = args
         self.now = now
@@ -362,6 +383,19 @@ class _RunContext:
         # ``agent_results`` collects THIS run's results for the next resume.
         self._replay_results: dict[int, Any] = replay_results or {}
         self._replay_before = replay_before
+        # A replayed call is matched to the prior run's call by fingerprint, not
+        # by call_index. Inside ``parallel``/``pipeline`` a replayed call returns
+        # without suspending, so the calls of a rerun start in a different order
+        # than the prior run's did, and the same index names a different call.
+        # fingerprint → prior call indices with that fingerprint, oldest first.
+        # Only prior calls before ``replay_before`` that carry a fingerprint
+        # are eligible; any other call runs live.
+        prior_fingerprints = replay_fingerprints or {}
+        self._replay_queues: dict[str, deque[int]] = {}
+        for prior_index in sorted(k for k in self._replay_results if isinstance(k, int)):
+            prior_fp = prior_fingerprints.get(prior_index)
+            if prior_index < replay_before and isinstance(prior_fp, str) and prior_fp:
+                self._replay_queues.setdefault(prior_fp, deque()).append(prior_index)
         self.agent_results: dict[int, Any] = {}
         # call_index → why that call failed (bounded/redacted). Kept alongside
         # agent_results so "no result" is always accompanied by a reason.
@@ -442,13 +476,16 @@ class _RunContext:
             "session": session,
             "nudge": nudge,
         }
+        fingerprint = _call_fingerprint(prompt, opts)
+        replay_queue = self._replay_queues.get(fingerprint) if fingerprint else None
         error = ""
         try:
-            if call_index < self._replay_before and call_index in self._replay_results:
-                # Resume: replay the cached result from the prior run instead
-                # of re-calling the model. Determinism (no time/random + stable
-                # call_index) makes this sound — same script+args ⇒ same call order.
-                result = self._replay_results[call_index]
+            if replay_queue:
+                # Resume: replay the prior run's result for this same call
+                # (same fingerprint, oldest first) instead of re-calling the
+                # model. The lookup and the popleft run with no await between
+                # them, so two concurrent calls never take the same result.
+                result = self._replay_results[replay_queue.popleft()]
                 ok = result is not None
                 if not ok:
                     error = "replayed a call that had already failed in the prior run"
@@ -490,7 +527,9 @@ class _RunContext:
         # Best-effort — a failing sink never breaks a run.
         if self._on_agent_result is not None:
             try:
-                self._on_agent_result(call_index, result=result, ok=ok, error=error)
+                self._on_agent_result(
+                    call_index, result=result, ok=ok, error=error, fingerprint=fingerprint
+                )
             except Exception:  # noqa: BLE001 - checkpointing must not break a run
                 pass
         self._record(
@@ -663,6 +702,7 @@ class WorkflowRunner:
         author_fn: Optional[AuthorFn] = None,
         on_source: Optional[Callable[[str], None]] = None,
         on_agent_result: Optional[AgentResultFn] = None,
+        replay_fingerprints: Optional[dict] = None,
     ) -> RunResult:
         """Execute a workflow script end-to-end, returning result + event stream.
 
@@ -784,6 +824,7 @@ class WorkflowRunner:
                 events=events,
                 emit=emit,
                 on_agent_result=on_agent_result,
+                replay_fingerprints=replay_fingerprints,
             )
 
         # 1. Validate (B-group static). A bad script fails before any exec.
@@ -821,6 +862,7 @@ class WorkflowRunner:
             events=events,
             emit=emit,
             on_agent_result=on_agent_result,
+            replay_fingerprints=replay_fingerprints,
         )
 
     async def _exec_validated(
@@ -841,6 +883,7 @@ class WorkflowRunner:
         events: list[WorkflowEvent],
         emit: Callable[[WorkflowEvent], WorkflowEvent],
         on_agent_result: Optional[AgentResultFn] = None,
+        replay_fingerprints: Optional[dict] = None,
     ) -> RunResult:
         """Build the run context, exec the (already validated) script under the
         wall-clock guard, and emit the terminal event. Shared by the source-given
@@ -900,6 +943,7 @@ class WorkflowRunner:
             replay_results=replay_results,
             replay_before=replay_before,
             on_agent_result=on_agent_result,
+            replay_fingerprints=replay_fingerprints,
         )
         ctx._execution_guard = self._execution_guard
         ctx._events = events  # share the sink so phase/log/agent events land in order
@@ -1064,6 +1108,7 @@ class WorkflowRunner:
         author: str = "",
         replay_results: Optional[dict] = None,
         replay_before: int = 0,
+        replay_fingerprints: Optional[dict] = None,
         source_is_original: bool = True,
         execution_binding_version: int = 0,
         execution_context: Any = None,
@@ -1107,7 +1152,12 @@ class WorkflowRunner:
                         pass
 
         def _checkpoint_agent_result(
-            call_index: int, *, result: Any, ok: bool = True, error: str = ""
+            call_index: int,
+            *,
+            result: Any,
+            ok: bool = True,
+            error: str = "",
+            fingerprint: str = "",
         ) -> None:
             """Record ONE settled agent call on the run handle the moment it lands.
 
@@ -1118,12 +1168,22 @@ class WorkflowRunner:
             it lands lets the terminal paths read them back and the terminal
             transition flush them to disk. A hard kill of the gateway mid-run can
             still lose whatever no write has covered yet.
+
+            The call's ``fingerprint`` is recorded with its result, so a run the
+            gateway's restart interrupted can still be restarted with replay.
             """
             record = getattr(registry, "record_agent_result", None)
             if record is None:  # pragma: no cover - registry always provides it
                 return
             try:
-                record(run_id, call_index, result=result, ok=ok, error=error)
+                record(
+                    run_id,
+                    call_index,
+                    result=result,
+                    ok=ok,
+                    error=error,
+                    fingerprint=fingerprint,
+                )
             except Exception:  # noqa: BLE001 - checkpointing must never break a run
                 pass
 
@@ -1148,6 +1208,7 @@ class WorkflowRunner:
                     author_fn=author_fn,
                     on_source=_publish_source,
                     on_agent_result=_checkpoint_agent_result,
+                    replay_fingerprints=replay_fingerprints,
                 )
             finally:
                 # Fire per-run teardown (e.g. warm-pool shutdown) on EVERY exit —
