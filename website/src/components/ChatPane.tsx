@@ -1979,10 +1979,14 @@ export default function ChatPane({
                  the footer's inputs from its own per-slot stream state. A
                  crewmate's current step is the one-line status directly above
                  it, mounted for the whole live turn so the indicator never
-                 moves while steps come and go (#18238). */
+                 moves while steps come and go (#18238). Keyed by the slot: the
+                 line holds each step briefly (useHeldActivity), and the Members
+                 page rebinds this one pane to another crewmate without
+                 remounting it, so without the key B's chat would open on A's
+                 held step. A new key is a fresh mount: B's reading at once. */
               <>
               {greetingShown && crewmateGreeting}
-              {crewmate && crewmateLive && <CrewmateLiveActivity activity={liveActivity} />}
+              {crewmate && crewmateLive && <CrewmateLiveActivity key={slotKey} activity={liveActivity} />}
               <ChatFooter
                 running={running || !!paneSlot?.running}
                 stopping={streamState === 'stopping' || !!paneSlot?.stopping}

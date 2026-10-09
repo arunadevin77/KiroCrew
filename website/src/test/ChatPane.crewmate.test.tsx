@@ -8,7 +8,7 @@ import { configureStore } from '@reduxjs/toolkit'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from '../hooks/useTheme'
 import chatReducer, { setSlotStatusDetail, sseChatMessage, sseToolActivity, sseToolResult, syncSlotRunningFromServer } from '../store/chatSlice'
-import dashboardReducer from '../store/dashboardSlice'
+import dashboardReducer, { sseSlots } from '../store/dashboardSlice'
 import notificationsReducer from '../store/notificationsSlice'
 
 /* A crewmate's chat (ChatPane with the `crewmate` prop, as the Members page
@@ -151,6 +151,40 @@ describe("a crewmate's chat", () => {
     expect(view.queryByText(/auto-nudge/)).toBeNull()
     expect(view.queryByText(/gh issue list/)).toBeNull()
     expect(view.queryByTestId('crewmate-quiet-hint')).toBeNull()
+  })
+
+  it("rebinding the pane to another working crewmate shows THAT crewmate's step at once, never the held one", async () => {
+    // The Members page rebinds ONE ChatPane to the newly picked crewmate
+    // without remounting it. The status line holds each step briefly
+    // (useHeldActivity), so without a per-slot key B's chat would open on A's
+    // held tool title for up to 1.5s while B's header pill said Thinking.
+    const SLOT_B = 'member-sonar'
+    const store = liveStore({ kind: 'tool', purpose: 'Checking the triage queue', toolName: 'gh issue list', toolCallId: 'tc-1' })
+    // Both crewmates busy in the slots frame (the pane's liveness for a
+    // background slot is the frame's `running`, not a live chunk).
+    const busy = (key: string) => ({ key, messages: MACHINERY.length, running: true, mode: '', pending_approval: false, waiting_for_input: false })
+    store.dispatch(sseSlots([busy(SLOT), busy(SLOT_B)] as Parameters<typeof sseSlots>[0]))
+    store.dispatch(setSlotStatusDetail({ slot: SLOT_B, kind: 'thinking', ts: Date.now() }))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const pane = (slot: string, who: { name: string }) => (
+      <Provider store={store}>
+        <QueryClientProvider client={qc}>
+          <ThemeProvider>
+            <MemoryRouter>
+              <ChatPane slotKey={slot} crewmate={who} />
+            </MemoryRouter>
+          </ThemeProvider>
+        </QueryClientProvider>
+      </Provider>
+    )
+    const view = render(pane(SLOT, radar))
+    await view.findByText('Checking the triage queue')
+    view.rerender(pane(SLOT_B, { name: 'Sonar' }))
+    // Synchronous on purpose: "at once" means no timer has to run first.
+    const line = view.getByTestId('crewmate-live-activity')
+    expect(line).toHaveTextContent('Thinking…')
+    expect(line.dataset.activity).toBe('thinking')
+    expect(view.queryByText('Checking the triage queue')).toBeNull()
   })
 
   it('once the call has returned (its output is in the tool log) the line reads the plain "Thinking…"', async () => {

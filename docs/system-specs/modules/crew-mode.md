@@ -2048,14 +2048,34 @@ header identity pill's OWN reading, through the one shared hook
 `useSlotActivity` (`pages/members/useSlotActivity.ts` → `resolvePillActivity`
 over the slot's live status record `slotStatusDetail`, the stream state and
 the tool log's returned flag, labelled by the shared `toolStatusLabel`), so
-the header and the chat can never name one moment differently. It answers
+the header and the chat read one moment from one seam and can never disagree
+on WHAT the crewmate is doing — only on when the chat line says it, see the
+hold below. It answers
 "what is the crewmate doing now", never "what has it done": the open call's
 label while the call runs (`data-activity=tool`), the indicator's own
 "Thinking…" once the call has returned or the model is reasoning
 (`thinking`), the pill's other phase words otherwise (`writing`, `working`,
 `delegated`), and text-free (same height) for `compacting` and `stopping`,
 which the `ChatFooter` directly under it already spells out; and the line goes
-with the turn. Words only — the ghost under it carries the motion; a second
+with the turn. The chat line, and only the chat line, HOLDS each reading
+(`components/chat/useHeldActivity.ts`; #18527): a tool call often returns in
+tens of milliseconds, so painting the raw reading made titles flash past a
+line that mostly said "Thinking…". Every step stays at least 600ms
+(`HOLD_STEP_MS`); a finished tool's title stays 1.5s
+(`HOLD_BEFORE_THINKING_MS`) before the line falls back to "Thinking…", so the
+next tool usually replaces it directly; when a hold ends the newest reading
+wins, except that a tool which started and finished inside the hold still
+gets its turn before "Thinking…" (the line names the newest step, never an
+older one); `stopping` and `compacting` — the user's own actions — swap at
+once; a pending swap is dropped when a newer reading arrives or the line
+unmounts. The hold is display timing only: the slot's status record and the
+header pill (which reads `useSlotActivity` directly) are not delayed, so for
+up to 1.5s the pill can say "Thinking…" while the chat line still names the
+tool that just returned. The held step belongs to one crewmate: the Members
+page rebinds ONE `ChatPane` to the newly picked crewmate without remounting
+it, so `ChatPane` keys the line by slot and a rebind starts from that
+crewmate's own reading, never from the previous one's held step. Words only —
+the ghost under it carries the motion; a second
 spinner read as a second "working" sign. The line is a status, not a
 transcript row, for a reason that is part of the contract: it is one
 fixed-height row (`h-5`, truncating), mounted for the WHOLE live turn and
