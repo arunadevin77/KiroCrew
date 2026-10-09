@@ -678,6 +678,26 @@ class ContinuationCoordinator(ManagerComponent):
             if _captured_state is ...
             else self._inherited_context_groups_impl(conv_id, state=_captured_state)
         )
+        # A continuation is another turn of the SAME run, so it keeps the model
+        # the caller pinned at spawn and the effort that went with it, unless the
+        # caller names a model. Only the caller's own pin is kept: a model the run
+        # took from ``agent.role_models['subagent']`` or from a ``model.route``
+        # tier is not one (``requested_model`` records the effective pin and holds
+        # both), so it resolves again, as it does for a run still in memory. After
+        # a gateway restart the run is gone from memory and state.json holds what
+        # the spawn recorded.
+        if original is not None:
+            run_model, run_effort = original.model or "", original.reasoning_effort
+        else:
+            recorded = (read_state(conv_id) or {}) if _captured_state is ... else _captured_state
+            run_model = str(recorded.get("pinned_model") or "")
+            run_effort = str(recorded.get("reasoning_effort") or "")
+        # Effort follows the model (rfc-worker-model-inheritance, rule 4): the
+        # run's effort was chosen for the run's model, so a caller who names a
+        # model gets that model's own effort resolution instead.
+        named_model = bool(model)
+        if not named_model and run_model:
+            model = run_model
         delegation = (
             original.delegation
             if original is not None
@@ -716,6 +736,7 @@ class ContinuationCoordinator(ManagerComponent):
             parent_session_key=parent_session_key,
             agent=agent,
             model=model,
+            reasoning_effort="" if named_model else run_effort,
             max_turns=max_turns,
             keep=True,
             cwd=cwd,

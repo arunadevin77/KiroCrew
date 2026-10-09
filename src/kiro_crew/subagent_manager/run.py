@@ -2617,6 +2617,11 @@ class RunEventCoordinator(ManagerComponent):
                     "model provenance",
                     requested_model=info.requested_model,
                     resolved_model=info.resolved_model,
+                    # What a continuation after a restart keeps: the caller's own
+                    # pin, not ``requested_model`` (which also holds a role pin or
+                    # a routed tier), and the effort.
+                    pinned_model=info.model,
+                    reasoning_effort=info.reasoning_effort,
                 )
                 if _wrote:
                     break
