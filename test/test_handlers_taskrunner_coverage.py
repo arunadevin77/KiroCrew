@@ -26,7 +26,13 @@ from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 from body_stream_helpers import BodyStreamPayload
 
-from kiro_crew.acp.types import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK, AcpEvent
+from kiro_crew.acp.types import (
+    EVENT_COMPLETE,
+    EVENT_PERMISSION_REQUEST,
+    EVENT_TEXT_CHUNK,
+    STOP_REASON_STALE_RECOVER,
+    AcpEvent,
+)
 from kiro_crew.dashboard.handlers.taskrunner import (
     _run_refine,
     _validate_spec_path,
@@ -1561,6 +1567,43 @@ class TestRunRefine:
         state.sessions = sessions
         await _run_refine(state, "x")
         assert state._refine_status == "cancelled"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stop_reason", ["timeout", STOP_REASON_STALE_RECOVER])
+    async def test_a_refine_the_backend_never_finished_is_an_error(self, stop_reason) -> None:
+        """A cut-off refine is reported as an error that names the stop reason, and
+        its partial spec is still broadcast, so it cannot pass for a finished one."""
+        state = _refine_state()
+        state.sessions = self._sessions(
+            [
+                AcpEvent(
+                    kind=EVENT_TEXT_CHUNK, text="## Spec\n1. Build the parser\n2. Wire the CL"
+                ),
+                AcpEvent(kind=EVENT_COMPLETE, stop_reason=stop_reason),
+            ]
+        )
+        await _run_refine(state, "build a thing")
+        final = state.broadcast_ws.call_args.args[1]
+        assert final["status"] == "error"
+        assert "did not finish the turn" in final["error"]
+        assert stop_reason in final["error"]
+        assert final["text"].endswith("Wire the CL")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stop_reason", ["end_turn", "cancelled"])
+    async def test_a_refine_that_ends_its_turn_is_done(self, stop_reason) -> None:
+        """A finished turn and a user-requested stop keep the refined spec."""
+        state = _refine_state()
+        state.sessions = self._sessions(
+            [
+                AcpEvent(kind=EVENT_TEXT_CHUNK, text="## Spec\n1. Build the parser"),
+                AcpEvent(kind=EVENT_COMPLETE, stop_reason=stop_reason),
+            ]
+        )
+        await _run_refine(state, "build a thing")
+        final = state.broadcast_ws.call_args.args[1]
+        assert final["status"] == "done"
+        assert final["error"] == ""
 
 
 class TestNonObjectBodiesAcrossConvertedHandlers:

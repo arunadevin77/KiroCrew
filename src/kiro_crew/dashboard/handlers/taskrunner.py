@@ -24,7 +24,7 @@ from kiro_crew.dashboard.slot_ownership import TASK_REVIEW_SLOT_PREFIX, task_rev
 from kiro_crew.dashboard.state import DashboardState
 from kiro_crew.execution_context import ExecutionContext, bind_session_execution
 from kiro_crew.hooks import FileTooLargeError, validate_file_path
-from kiro_crew.llm_helpers import _steer_host_deny
+from kiro_crew.llm_helpers import _steer_host_deny, unfinished_turn_error
 from kiro_crew.security import (
     is_sensitive_path,
     is_sensitive_resolved_path,
@@ -1284,6 +1284,12 @@ async def _run_refine(
                 )
                 await client.reject_tool(event.request_id)
             elif event.kind == EVENT_COMPLETE:
+                # A refine the backend never finished is not a finished spec: the
+                # error branch below sets status "error", and the partial text is
+                # still broadcast with it, so it reads as cut off.
+                unfinished = unfinished_turn_error(event, state._refine_text)
+                if unfinished is not None:
+                    raise unfinished
                 break
 
         _push()

@@ -977,7 +977,9 @@ The answer is matched **exactly**, not by first letter: a prefix match reads
 
 Denial is **not** an error: the request is answered, the turn runs to completion,
 and the exit code is unchanged. Only the existing transport failures
-(`AcpTimeoutError`, `AcpError`) exit non-zero.
+(`AcpTimeoutError`, `AcpError`) exit non-zero. A turn the backend never finished (stop
+reason `timeout` or `stale_recover`) is one of them: the text was already printed as it
+streamed, so the timeout notice follows it and the exit code is 1.
 
 Every decision is written to the SEL log **before** the matching
 `approve_tool`/`reject_tool`, so a transport failure cannot erase a decision

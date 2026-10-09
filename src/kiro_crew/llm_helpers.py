@@ -2596,14 +2596,16 @@ async def background_turn(
 _UNFINISHED_TURN_STOP_REASONS = frozenset({STOP_REASON_TIMEOUT, STOP_REASON_STALE_RECOVER})
 
 
-def _unfinished_turn_error(event: LLMEvent, partial_output: str) -> AcpTimeoutError | None:
+def unfinished_turn_error(event: LLMEvent, partial_output: str) -> AcpTimeoutError | None:
     """The prompt-timeout error for a turn the backend never finished, else ``None``.
 
     Raised, not returned as an answer, so the caller's failure path runs: the text
     collected so far is not a result. It is the same error the per-process
     client raises when a prompt times out, carrying the partial text, and it is
     never transient: a retry would re-send the prompt to a backend that stopped
-    answering and wait out the ceiling again.
+    answering and wait out the ceiling again. A collector that ends a turn on
+    ``EVENT_COMPLETE`` asks this function rather than listing the unfinished
+    stop reasons itself.
     """
     stop_reason = str(getattr(event, "stop_reason", "") or "")
     if stop_reason not in _UNFINISHED_TURN_STOP_REASONS:
@@ -2850,7 +2852,7 @@ async def stream_and_collect(
                             on_complete(event)
                         except Exception:
                             logger.debug("on_complete callback failed", exc_info=True)
-                    unfinished = _unfinished_turn_error(event, result_text)
+                    unfinished = unfinished_turn_error(event, result_text)
                     if unfinished is not None:
                         raise unfinished
                     break

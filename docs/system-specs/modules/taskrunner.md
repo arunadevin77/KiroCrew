@@ -1099,7 +1099,10 @@ reading, no clarifying questions — just a fast spec rewrite.
 **No tools allowed during refine** — all tool calls are rejected. The refiner's
 only job is to produce a better-written spec from the user's input.
 
-**WS events**: `refine` type with `{status, text, error}` fields.
+**WS events**: `refine` type with `{status, text, error}` fields. A refine whose turn the
+backend never finished (stop reason `timeout` or `stale_recover`) ends with status `error`
+and an error that names the stop reason, with the partial text still sent beside it, so it
+cannot pass for a finished spec.
 
 ## Dashboard UI (Projects Page)
 

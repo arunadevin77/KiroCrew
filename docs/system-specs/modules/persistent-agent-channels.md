@@ -58,6 +58,10 @@ A new orchestrator posts a ready system message, while a new specialist posts it
 
 If the wedge survives the replacement, or the replacement lease is unobtainable, the agent is not usable again: the loop posts one unrecoverable-session system message, sets `failed`, and stops consuming its inbox rather than resetting once per later message. `_recover_busy_agent` also tears the abandoned replacement back down, because `channel:`-keyed sessions are exempt from both session reapers (`session_cleanup._rss_threshold_check` and `_expire_idle` skip that prefix) and `api_channel_wake_agent` would otherwise re-acquire the same wedged session out of the registry. `test/test_channel_prompt_busy.py` pins the detection arms, the single replay, the one-shot report, and the teardown.
 
+### Unfinished Turns
+
+`_stream_task` asks `llm_helpers.unfinished_turn_error` at the turn's terminal event. A turn the backend never finished (stop reason `timeout` or `stale_recover`) is not the agent's reply: it takes the error branch and posts the error card as a system message, not the partial text and not silence. A finished turn and a user-requested stop (`cancelled`) post their text as before. `test/test_channel_prompt_busy.py` pins both.
+
 ### Message Routing
 
 1. `Channel.post` delivers an unmentioned top-level human message to the orchestrator.

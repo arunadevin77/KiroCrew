@@ -38,7 +38,7 @@ from kiro_crew.hooks import (
     mcp_identity_ref,
     target_paths,
 )
-from kiro_crew.llm_helpers import _steer_host_deny
+from kiro_crew.llm_helpers import _steer_host_deny, unfinished_turn_error
 from kiro_crew.messaging.commands import compact_unsupported_backend
 from kiro_crew.permission_floor import (
     OUTCOME_PENDING_APPROVAL,
@@ -1172,6 +1172,11 @@ async def _send_and_print(
                 # never ends.
                 await _answer_permission(provider, event, interactive=interactive, gate=gate)
             elif event.kind == EVENT_COMPLETE:
+                # The text was printed as it streamed, so the error carries
+                # none: the timeout branch below must not print it twice.
+                unfinished = unfinished_turn_error(event, "")
+                if unfinished is not None:
+                    raise unfinished
                 break
         print()  # final newline
     except AcpTimeoutError as e:

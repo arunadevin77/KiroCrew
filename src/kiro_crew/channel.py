@@ -39,6 +39,7 @@ from kiro_crew.llm_helpers import (
     _steer_host_deny,
     acp_error_is_session_not_found,
     is_prompt_busy,
+    unfinished_turn_error,
 )
 from kiro_crew.messaging.renderer import count_redaction_tags, redaction_notice
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
@@ -1724,6 +1725,11 @@ async def _stream_task(
                     )
 
             elif event.kind == EVENT_COMPLETE:
+                # A turn the backend never finished is not the agent's reply:
+                # the error branch below posts its notice instead of this text.
+                unfinished = unfinished_turn_error(event, "".join(chunks))
+                if unfinished is not None:
+                    raise unfinished
                 break
     except Exception as exc:
         if is_prompt_busy(exc):

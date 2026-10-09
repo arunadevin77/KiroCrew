@@ -1,12 +1,16 @@
 """Regression tests for interrupting CLI chat."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from kiro_crew import cli_chat
+from kiro_crew.acp.client import AcpTimeoutError
+from kiro_crew.acp.types import STOP_REASON_STALE_RECOVER
 from kiro_crew.config import KiroCrewConfig
+from kiro_crew.providers.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from kiro_crew.shell_audit_log import SHELL_AUDIT_LOG_MAX_BYTES, SHELL_AUDIT_LOG_NAME
 
 
@@ -132,3 +136,42 @@ async def test_a_chat_start_leaves_a_fresh_data_home_untouched(monkeypatch, tmp_
     await cli_chat._chat("hello", None)
 
     assert not any(p.name.startswith(SHELL_AUDIT_LOG_NAME) for p in tmp_path.iterdir())
+
+
+def _turn_provider(stop_reason: str | None) -> SimpleNamespace:
+    """Streams one chunk, then ends the turn with ``stop_reason``; ``None`` raises
+    the prompt timeout the per-process client raises instead."""
+
+    async def stream(message, **_kw):
+        yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="partial answ")
+        if stop_reason is None:
+            raise AcpTimeoutError("partial answ")
+        yield LLMEvent(kind=EVENT_COMPLETE, stop_reason=stop_reason)
+
+    return SimpleNamespace(stream=stream)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["timeout", STOP_REASON_STALE_RECOVER, None])
+async def test_send_and_print_reports_an_unfinished_turn_as_timed_out(stop_reason, capsys):
+    """A turn the backend never finished exits 1 with the timeout notice, whether
+    the provider ends it with a terminal event or raises the prompt timeout."""
+    with pytest.raises(SystemExit) as excinfo:
+        await cli_chat._send_and_print(_turn_provider(stop_reason), "question")
+    out, err = capsys.readouterr()
+    assert excinfo.value.code == 1
+    assert "Response timed out." in err
+    assert "partial answ" in out
+    if stop_reason is not None:
+        # Streamed once, and not printed again by the timeout branch.
+        assert out.count("partial answ") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["end_turn", "cancelled"])
+async def test_send_and_print_prints_a_finished_or_cancelled_turn(stop_reason, capsys):
+    """A finished turn and a user-requested stop print their text and return."""
+    await cli_chat._send_and_print(_turn_provider(stop_reason), "question")
+    out, err = capsys.readouterr()
+    assert "partial answ" in out
+    assert "timed out" not in err

@@ -31,6 +31,7 @@ import pytest
 
 from kiro_crew import channel as channel_mod
 from kiro_crew.acp.client import AcpError, AcpPromptBusy
+from kiro_crew.acp.types import STOP_REASON_STALE_RECOVER
 from kiro_crew.channel import (
     Channel,
     _reacquire_cleared_session,
@@ -224,6 +225,45 @@ async def test_stream_task_returns_false_on_success():
     assert busy == channel_mod._STREAM_OK
     ch.post.assert_awaited_once()
     assert ch.post.await_args.args[1] == "done"
+
+
+def _ended_client(text: str, stop_reason: str):
+    """A turn that streams ``text`` and then ends with ``stop_reason``."""
+    client = SimpleNamespace()
+
+    async def _stream(message):
+        if text:
+            yield SimpleNamespace(kind=EVENT_TEXT_CHUNK, text=text)
+        yield SimpleNamespace(kind=EVENT_COMPLETE, stop_reason=stop_reason)
+
+    client.stream = _stream
+    return client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["timeout", STOP_REASON_STALE_RECOVER])
+@pytest.mark.parametrize("text", ["half a pl", ""], ids=["partial", "empty"])
+async def test_stream_task_posts_a_card_not_the_text_of_an_unfinished_turn(text, stop_reason):
+    """A turn the backend never finished is not the agent's reply: the channel
+    gets the error card, not the partial text as a reply and not silence."""
+    agent, ch = _make_agent(), _make_channel()
+    busy = await _stream_task(agent, ch, _ended_client(text, stop_reason), "hi")
+    assert busy == channel_mod._STREAM_OK
+    ch.post.assert_awaited_once()
+    assert "error occurred" in ch.post.await_args.args[1]
+    assert ch.post.await_args.kwargs["msg_type"] == "system"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason", ["end_turn", "cancelled"])
+async def test_stream_task_posts_the_text_of_a_finished_or_cancelled_turn(stop_reason):
+    """A finished turn posts its reply, and a user-requested stop keeps its partial text."""
+    agent, ch = _make_agent(), _make_channel()
+    busy = await _stream_task(agent, ch, _ended_client("half a pl", stop_reason), "hi")
+    assert busy == channel_mod._STREAM_OK
+    ch.post.assert_awaited_once()
+    assert ch.post.await_args.args[1] == "half a pl"
+    assert ch.post.await_args.kwargs["msg_type"] == "progress"
 
 
 # ── _reset_busy_session ──
