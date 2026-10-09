@@ -16,6 +16,7 @@ import type { ChatInputProps } from './chat-input/props'
 import { busySteerFlag } from './chat-input/busySend'
 import { filterCrewmateChat } from './chat/crewmateBubbles'
 import CrewmateLiveActivity from './chat/CrewmateLiveActivity'
+import { useCrewmateGreetingShown } from './chat/useCrewmateGreetingShown'
 import type { CrewmateIdentity } from '../pages/chat/CrewmateMessage'
 import ErrorNotice from './ErrorNotice'
 import { Btn } from './ui'
@@ -147,6 +148,7 @@ export default function ChatPane({
   onArtifactOpen,
   busyMode = 'split',
   crewmate,
+  crewmateGreeting,
   onOpenCrewWorkLog,
   onOpenCommandCenter,
   threads,
@@ -248,6 +250,12 @@ export default function ChatPane({
    *  (components/chat/crewmateBubbles). Undefined = an ordinary transcript;
    *  decided by the host, never inferred from the slot. */
   crewmate?: CrewmateIdentity
+  /** A message from the crewmate the HOST draws after the last row (the
+   *  Members page's warm resume / cold welcome, `mateGreeting.ts`). It sits in
+   *  the transcript like a reply but is not one: never a slot row, never sent,
+   *  so it costs no model call and the model never reads it back. Only
+   *  meaningful with `crewmate`. */
+  crewmateGreeting?: React.ReactNode
   /** Focus the crewmate's Work log tab (the side-panel tab that holds what
    *  the filter hid). When given, the quiet hint's "where the work went" line
    *  is a link that opens it, so the words that read as a destination are one;
@@ -544,6 +552,9 @@ export default function ChatPane({
     () => (crewmate ? filterCrewmateChat(paneMessages) : paneMessages),
     [crewmate, paneMessages],
   )
+  // The host's greeting is drawn while it is still the newest word: a reply
+  // landing after it (a patrol / wake turn keeps it up) takes it down.
+  const greetingShown = useCrewmateGreetingShown(!!crewmate && !!crewmateGreeting, messages)
   // What the crewmate is doing right now, for the status line above the
   // working indicator: read through the SAME seam the DM header's identity
   // pill reads (`useSlotActivity` over the slot's live status record), so the
@@ -1894,6 +1905,7 @@ export default function ChatPane({
                  it, mounted for the whole live turn so the indicator never
                  moves while steps come and go (#18238). */
               <>
+              {greetingShown && crewmateGreeting}
               {crewmate && crewmateLive && <CrewmateLiveActivity activity={liveActivity} />}
               <ChatFooter
                 running={running || !!paneSlot?.running}
