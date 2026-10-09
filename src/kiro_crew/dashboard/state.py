@@ -10748,6 +10748,9 @@ class DashboardState:
     def _spawn_ws_send(self, ws: web.WebSocketResponse, msg: str) -> None:
         _websocket_for(self)._spawn_ws_send(ws, msg)
 
+    def _drop_if_stalled(self, ws: web.WebSocketResponse) -> bool:
+        return _websocket_for(self)._drop_if_stalled(ws)
+
     def _on_ws_send_done(self, task: asyncio.Task) -> None:
         _websocket_for(self)._on_ws_send_done(task)
 

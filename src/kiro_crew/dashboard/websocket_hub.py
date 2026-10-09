@@ -19,6 +19,25 @@ SLOT_PATCH_CAPABILITY = "slot_patch"
 #: carries it; every other socket keeps receiving the full ``slots`` list.
 SLOT_PATCH_WS_FLAG = "_slot_patch"
 
+#: Unsent bytes a tab may hold before the hub drops it. asyncio pauses writing
+#: at 64 KiB, so a tab that reads stays far below this; one that stays connected
+#: but stops reading passes it after about 70 frames of 64 KiB. Dropping it makes
+#: the dashboard reconnect and resync from a fresh snapshot.
+WS_MAX_BUFFERED_BYTES = 4 * 1024 * 1024
+
+#: Seconds one awaited owner send (``deliver_ws_owners``) may take. A send waits
+#: only for its tab's buffer to drain, which never happens for a tab that stopped
+#: reading.
+WS_OWNER_SEND_TIMEOUT_S = 3.0
+
+
+def _write_buffer_size(ws: web.WebSocketResponse) -> int | None:
+    """Bytes the tab's transport still holds, or None when that is unknown."""
+    transport = getattr(getattr(ws, "_req", None), "transport", None)
+    size_of = getattr(transport, "get_write_buffer_size", None)
+    size = size_of() if callable(size_of) else None
+    return size if isinstance(size, int) else None
+
 
 class WebSocketHubOwner(Protocol):
     """The mutable facade-owned state the hub operates on.
@@ -129,10 +148,44 @@ class WebSocketHub:
         # Resolve the provider on-loop as well. DashboardState's provider latches
         # this loop only when startup has not already bound an authoritative one.
         self._serving_loop_provider()
+        if self._drop_if_stalled(ws):
+            return
         task = asyncio.ensure_future(ws.send_str(msg))
         self._owner._background_tasks.add(task)
         done = self._owner_method("_on_ws_send_done", self._on_ws_send_done)
         task.add_done_callback(done)
+
+    def _drop_if_stalled(self, ws: web.WebSocketResponse) -> bool:
+        """Drop a tab whose unsent bytes passed ``WS_MAX_BUFFERED_BYTES``.
+
+        Runs on the serving loop, before a send. A tab that stays connected but
+        stops reading keeps every frame in its transport's write buffer, so the
+        buffer size is the measure of how far it has fallen behind.
+        """
+        size = _write_buffer_size(ws)
+        if size is None or size <= WS_MAX_BUFFERED_BYTES:
+            return False
+        self._log.warning(
+            "WS client stopped reading: %d bytes buffered (limit %d); dropping it",
+            size,
+            WS_MAX_BUFFERED_BYTES,
+        )
+        self._drop_ws(ws)
+        return True
+
+    def _drop_ws(self, ws: web.WebSocketResponse) -> None:
+        """Unregister a tab and abort its connection.
+
+        ``abort()`` discards the bytes buffered for the peer and fires
+        ``connection_lost``, which ends every send waiting on the buffer to
+        drain. A ``close()`` would wait for a peer that is not reading.
+        """
+        remove = self._owner_method("_remove_ws", self._remove_ws)
+        remove(ws)
+        transport = getattr(getattr(ws, "_req", None), "transport", None)
+        abort = getattr(transport, "abort", None)
+        if callable(abort):
+            abort()
 
     def _on_ws_send_done(self, task: asyncio.Task[Any]) -> None:
         """Release a completed send task and surface asynchronous failures."""
@@ -426,19 +479,35 @@ class WebSocketHub:
         send_all(msg_type, data, msg)
 
     async def deliver_ws_owners(self, msg_type: str, data: WsPayload) -> int:
-        """Await owner-only sends and return the number that completed."""
-        targets = [ws for ws in list(self._owner._owner_ws_clients) if not ws.closed]
+        """Await owner-only sends and return the number that completed.
+
+        Each send has its own ``WS_OWNER_SEND_TIMEOUT_S``: a tab that stays
+        connected but stopped reading never completes a send that waits for its
+        buffer to drain. Such a tab counts as not delivered and is dropped, so
+        the call returns for every other tab.
+        """
+        targets = [
+            ws
+            for ws in list(self._owner._owner_ws_clients)
+            if not ws.closed and not self._drop_if_stalled(ws)
+        ]
         if not targets:
             return 0
         msg = json.dumps({"type": msg_type, "data": data})
         results = await asyncio.gather(
-            *(ws.send_str(msg) for ws in targets),
+            *(asyncio.wait_for(ws.send_str(msg), WS_OWNER_SEND_TIMEOUT_S) for ws in targets),
             return_exceptions=True,
         )
         delivered = 0
         remove = self._owner_method("_remove_ws", self._remove_ws)
         for ws, result in zip(targets, results):
-            if isinstance(result, BaseException):
+            if isinstance(result, TimeoutError):
+                self._log.warning(
+                    "Owner WS send did not complete in %.1f s; dropping the client",
+                    WS_OWNER_SEND_TIMEOUT_S,
+                )
+                self._drop_ws(ws)
+            elif isinstance(result, BaseException):
                 self._log.debug("Owner WS send failed (client likely disconnected): %s", result)
                 remove(ws)
             else:
