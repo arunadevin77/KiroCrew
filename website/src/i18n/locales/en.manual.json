@@ -5468,7 +5468,12 @@
       "followup_worktree_session_not_opened": "Worktree ready at {{path}}, but its session could not be opened. Switch to it in the sidebar, or press the button again.",
       "followup_worktree_session_not_focused": "Worktree ready at {{path}}, but its session is not in focus. Switch to it in the sidebar, or press the button again.",
       "followup_chat_not_created": "The new chat could not be opened. Press the button again to retry.",
-      "followup_chat_not_focused": "The new chat was created, but it could not be brought into focus. Switch to it in the sidebar."
+      "followup_chat_not_focused": "The new chat was created, but it could not be brought into focus. Switch to it in the sidebar.",
+      "open_older_sessions": "Open Older Sessions",
+      "tabs_were_not_restored_one": "{{count}} tab that was open before the restart was not restored.",
+      "tabs_were_not_restored_other": "{{count}} tabs that were open before the restart were not restored.",
+      "dismiss_until_next_visit": "Dismiss until next visit",
+      "could_not_check_restored_tabs": "Could not check whether every tab was restored after the last restart."
     },
     "chatSidebar": {
       "no_sessions_match_folders": "No sessions match — only a folder name did",

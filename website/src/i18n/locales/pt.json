@@ -12081,7 +12081,13 @@
       "followup_worktree_session_not_opened": "Worktree pronta em {{path}}, mas não foi possível abrir a sessão dela. Mude para ela na barra lateral ou clique no botão de novo.",
       "followup_worktree_session_not_focused": "Worktree pronta em {{path}}, mas a sessão dela não está em foco. Mude para ela na barra lateral ou clique no botão de novo.",
       "followup_chat_not_created": "Não foi possível abrir o novo chat. Clique no botão de novo para tentar outra vez.",
-      "followup_chat_not_focused": "O novo chat foi criado, mas não foi possível colocá-lo em foco. Mude para ele na barra lateral."
+      "followup_chat_not_focused": "O novo chat foi criado, mas não foi possível colocá-lo em foco. Mude para ele na barra lateral.",
+      "open_older_sessions": "Abrir Sessões antigas",
+      "tabs_were_not_restored_many": "{{count}} abas que estavam abertas antes da reinicialização não foram restauradas.",
+      "tabs_were_not_restored_one": "{{count}} aba que estava aberta antes da reinicialização não foi restaurada.",
+      "tabs_were_not_restored_other": "{{count}} abas que estavam abertas antes da reinicialização não foram restauradas.",
+      "dismiss_until_next_visit": "Ocultar até à próxima visita",
+      "could_not_check_restored_tabs": "Não foi possível verificar se todas as abas foram restauradas após a última reinicialização."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 ignorada — atualmente selecionada)",

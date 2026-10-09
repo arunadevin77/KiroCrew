@@ -1,6 +1,7 @@
-import type { Dispatch, SetStateAction } from 'react'
+import { Suspense, lazy, type Dispatch, type SetStateAction } from 'react'
 import { X } from 'lucide-react'
 
+import ErrorBoundary from '../../../components/ErrorBoundary'
 import ErrorNotice from '../../../components/ErrorNotice'
 import VoicePlaybackNotice from '../../../components/VoicePlaybackNotice'
 import { Btn } from '../../../components/ui'
@@ -12,6 +13,13 @@ import { clearSwitchSlotGone, clearUndeletableHistory, clearUnresumableResume, s
 import { findSurfaceBySlotMode, surfaceLabel } from '../../../surfaces/registry'
 import { slotChannelLabel } from '../../../utils/channelOrigin'
 import { historyDeleteRefusalMessage } from '../../../utils/historyDeleteRefusal'
+
+// Lazy so the notice's code AND its fetch/poll (useUnrestoredTabs) stay out of the
+// always-loaded chat-route chunk. The notice renders nothing in the common case
+// (no tabs were dropped), so a null Suspense fallback is invisible, and an
+// ErrorBoundary keeps a chunk-load hiccup from taking the pane's other notices
+// down with it.
+const UnrestoredTabsNotice = lazy(() => import('./UnrestoredTabsNotice'))
 
 /**
  * Sentence for the unresumable-resume notice, built from the raw facts the chat
@@ -220,6 +228,18 @@ export default function ChatPaneNotices({
           />
         </div>
       )}
+      {/* Lazy boundary: the notice and its fetch live in their own chunk (see the
+          import above). The Suspense fallback is null because the notice itself
+          renders null in the common case, so there is nothing to stand in for
+          while the chunk loads. The ErrorBoundary carries NO fallback, so a
+          chunk-load failure renders its default error card rather than silently
+          vanishing -- hiding a notice whose whole job is to report silent data
+          loss would repeat the very defect this change exists to end. */}
+      <ErrorBoundary>
+        <Suspense fallback={null}>
+          <UnrestoredTabsNotice />
+        </Suspense>
+      </ErrorBoundary>
       {undeletableHistory && (
         <div className="mx-4 mt-2 mb-0" data-testid="undeletable-history-error">
           {/* Same site and shape as the unresumable notice above: a sidebar

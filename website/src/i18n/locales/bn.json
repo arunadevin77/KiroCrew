@@ -11914,7 +11914,12 @@
       "followup_worktree_session_not_opened": "{{path}}-এ worktree প্রস্তুত, কিন্তু এর সেশন খোলা যায়নি। সাইডবারে সেটিতে যাও, অথবা বোতামটি আবার চাপো।",
       "followup_worktree_session_not_focused": "{{path}}-এ worktree প্রস্তুত, কিন্তু এর সেশন ফোকাসে নেই। সাইডবারে সেটিতে যাও, অথবা বোতামটি আবার চাপো।",
       "followup_chat_not_created": "নতুন চ্যাট খোলা যায়নি। আবার চেষ্টা করতে বোতামটি আবার চাপো।",
-      "followup_chat_not_focused": "নতুন চ্যাট তৈরি হয়েছে, কিন্তু সেটিকে ফোকাসে আনা যায়নি। সাইডবারে সেটিতে যাও।"
+      "followup_chat_not_focused": "নতুন চ্যাট তৈরি হয়েছে, কিন্তু সেটিকে ফোকাসে আনা যায়নি। সাইডবারে সেটিতে যাও।",
+      "open_older_sessions": "পুরোনো সেশন খুলুন",
+      "tabs_were_not_restored_one": "পুনরায় চালুর আগে খোলা {{count}}টি ট্যাব পুনরুদ্ধার করা যায়নি।",
+      "tabs_were_not_restored_other": "পুনরায় চালুর আগে খোলা {{count}}টি ট্যাব পুনরুদ্ধার করা যায়নি।",
+      "dismiss_until_next_visit": "পরের বার আসা পর্যন্ত লুকিয়ে রাখো",
+      "could_not_check_restored_tabs": "শেষ পুনঃচালুর পর সব ট্যাব পুনরুদ্ধার হয়েছে কি না, তা যাচাই করা যায়নি।"
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1টি এড়িয়ে যাওয়া হয়েছে — এখন বেছে নেওয়া আছে)",

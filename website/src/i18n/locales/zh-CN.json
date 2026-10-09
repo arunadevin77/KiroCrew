@@ -11747,7 +11747,11 @@
       "followup_worktree_session_not_opened": "{{path}} 处的工作树已就绪，但无法打开其会话。请在侧边栏中切换过去，或再次按下按钮。",
       "followup_worktree_session_not_focused": "{{path}} 处的工作树已就绪，但其会话未获得焦点。请在侧边栏中切换过去，或再次按下按钮。",
       "followup_chat_not_created": "无法打开新聊天。再次按下按钮即可重试。",
-      "followup_chat_not_focused": "新聊天已创建，但无法切换到它。请在侧边栏中切换过去。"
+      "followup_chat_not_focused": "新聊天已创建，但无法切换到它。请在侧边栏中切换过去。",
+      "open_older_sessions": "打开“较早的会话”",
+      "tabs_were_not_restored_other": "重启前打开的 {{count}} 个标签页未恢复。",
+      "dismiss_until_next_visit": "下次访问前不再显示",
+      "could_not_check_restored_tabs": "无法确认上次重启后所有标签页是否已恢复。"
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "（跳过 1 个 — 当前已选中）",

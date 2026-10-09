@@ -12081,7 +12081,13 @@
       "followup_worktree_session_not_opened": "Worktree prêt dans {{path}}, mais sa session n’a pas pu être ouverte. Bascule dessus dans la barre latérale, ou appuie à nouveau sur le bouton.",
       "followup_worktree_session_not_focused": "Worktree prêt dans {{path}}, mais sa session n’a pas le focus. Bascule dessus dans la barre latérale, ou appuie à nouveau sur le bouton.",
       "followup_chat_not_created": "Impossible d’ouvrir le nouveau chat. Appuie à nouveau sur le bouton pour réessayer.",
-      "followup_chat_not_focused": "Le nouveau chat a été créé, mais n’a pas pu prendre le focus. Bascule dessus dans la barre latérale."
+      "followup_chat_not_focused": "Le nouveau chat a été créé, mais n’a pas pu prendre le focus. Bascule dessus dans la barre latérale.",
+      "open_older_sessions": "Ouvrir Sessions plus anciennes",
+      "tabs_were_not_restored_many": "{{count}} onglets qui étaient ouverts avant le redémarrage n'ont pas été restaurés.",
+      "tabs_were_not_restored_one": "{{count}} onglet qui était ouvert avant le redémarrage n'a pas été restauré.",
+      "tabs_were_not_restored_other": "{{count}} onglets qui étaient ouverts avant le redémarrage n'ont pas été restaurés.",
+      "dismiss_until_next_visit": "Masquer jusqu’à la prochaine visite",
+      "could_not_check_restored_tabs": "Impossible de vérifier si tous les onglets ont été restaurés après le dernier redémarrage."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 ignorée — actuellement sélectionnée)",

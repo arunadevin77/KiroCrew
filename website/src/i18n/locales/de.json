@@ -11914,7 +11914,12 @@
       "followup_worktree_session_not_opened": "Worktree unter {{path}} ist bereit, aber die zugehörige Sitzung konnte nicht geöffnet werden. Wechsle in der Seitenleiste zu ihr oder drücke die Schaltfläche erneut.",
       "followup_worktree_session_not_focused": "Worktree unter {{path}} ist bereit, aber die zugehörige Sitzung ist nicht im Fokus. Wechsle in der Seitenleiste zu ihr oder drücke die Schaltfläche erneut.",
       "followup_chat_not_created": "Der neue Chat konnte nicht geöffnet werden. Drücke die Schaltfläche erneut, um es noch einmal zu versuchen.",
-      "followup_chat_not_focused": "Der neue Chat wurde erstellt, konnte aber nicht in den Fokus geholt werden. Wechsle in der Seitenleiste zu ihm."
+      "followup_chat_not_focused": "Der neue Chat wurde erstellt, konnte aber nicht in den Fokus geholt werden. Wechsle in der Seitenleiste zu ihm.",
+      "open_older_sessions": "Ältere Sitzungen öffnen",
+      "tabs_were_not_restored_one": "{{count}} Tab, der vor dem Neustart geöffnet war, wurde nicht wiederhergestellt.",
+      "tabs_were_not_restored_other": "{{count}} Tabs, die vor dem Neustart geöffnet waren, wurden nicht wiederhergestellt.",
+      "dismiss_until_next_visit": "Bis zum nächsten Besuch ausblenden",
+      "could_not_check_restored_tabs": "Es konnte nicht geprüft werden, ob nach dem letzten Neustart alle Tabs wiederhergestellt wurden."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 übersprungen — aktuell ausgewählt)",

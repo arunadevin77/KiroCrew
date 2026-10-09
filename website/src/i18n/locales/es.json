@@ -12081,7 +12081,13 @@
       "followup_worktree_session_not_opened": "El worktree en {{path}} está listo, pero no se pudo abrir su sesión. Cámbiate a ella en la barra lateral o pulsa el botón otra vez.",
       "followup_worktree_session_not_focused": "El worktree en {{path}} está listo, pero su sesión no está en primer plano. Cámbiate a ella en la barra lateral o pulsa el botón otra vez.",
       "followup_chat_not_created": "No se pudo abrir el chat nuevo. Pulsa el botón otra vez para reintentar.",
-      "followup_chat_not_focused": "Se creó el chat nuevo, pero no se pudo poner en primer plano. Cámbiate a él en la barra lateral."
+      "followup_chat_not_focused": "Se creó el chat nuevo, pero no se pudo poner en primer plano. Cámbiate a él en la barra lateral.",
+      "open_older_sessions": "Abrir Sesiones anteriores",
+      "tabs_were_not_restored_many": "No se restauraron {{count}} pestañas que estaban abiertas antes del reinicio.",
+      "tabs_were_not_restored_one": "No se restauró {{count}} pestaña que estaba abierta antes del reinicio.",
+      "tabs_were_not_restored_other": "No se restauraron {{count}} pestañas que estaban abiertas antes del reinicio.",
+      "dismiss_until_next_visit": "Ocultar hasta la próxima visita",
+      "could_not_check_restored_tabs": "No se pudo comprobar si todas las pestañas se restauraron tras el último reinicio."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 omitida — seleccionada actualmente)",

@@ -11747,7 +11747,11 @@
       "followup_worktree_session_not_opened": "{{path}}의 worktree는 준비되었지만 해당 세션을 열지 못했습니다. 사이드바에서 전환하거나 버튼을 다시 누르세요.",
       "followup_worktree_session_not_focused": "{{path}}의 worktree는 준비되었지만 해당 세션에 포커스가 없습니다. 사이드바에서 전환하거나 버튼을 다시 누르세요.",
       "followup_chat_not_created": "새 채팅을 열지 못했습니다. 다시 시도하려면 버튼을 다시 누르세요.",
-      "followup_chat_not_focused": "새 채팅을 만들었지만 포커스를 옮기지 못했습니다. 사이드바에서 전환하세요."
+      "followup_chat_not_focused": "새 채팅을 만들었지만 포커스를 옮기지 못했습니다. 사이드바에서 전환하세요.",
+      "open_older_sessions": "'이전 세션' 열기",
+      "tabs_were_not_restored_other": "재시작 전에 열려 있던 탭 {{count}}개가 복원되지 않았습니다.",
+      "dismiss_until_next_visit": "다음 방문 전까지 숨기기",
+      "could_not_check_restored_tabs": "마지막 재시작 후 모든 탭이 복원되었는지 확인하지 못했습니다."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1개 건너뜀 — 현재 선택됨)",

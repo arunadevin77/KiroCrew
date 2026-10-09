@@ -70,6 +70,15 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
     // The look-preview frame (utils/lookPreview.ts) shows one demo session in
     // place of the user's own: fixtures answer both reads below.
     chatSlots: () => isLookPreviewFrame() ? Promise.resolve(lookPreviewSlots()) : fetch('/api/chat/slots').then(j),
+    /** How many tabs this gateway's startup restore listed but could not show.
+     *
+     *  `reported: false` means the restore has not answered yet, which is not the
+     *  same as nothing having been dropped — a caller must not render it as zero.
+     *  `unknowable: true` is the third answer: the restore finished and could not
+     *  read the registry at all, so tabs may be missing and `count` is not a
+     *  measurement. It is reported, so the caller stops asking and says so. */
+    chatSlotsUnrestored: (): Promise<{ reported: boolean; count: number; unknowable?: boolean }> =>
+      fetch('/api/chat/slots/unrestored').then(j),
   }
 
   const slots = {

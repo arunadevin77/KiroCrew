@@ -12081,7 +12081,13 @@
       "followup_worktree_session_not_opened": "Worktree pronto in {{path}}, ma non è stato possibile aprire la sua sessione. Passa alla sessione dalla barra laterale o premi di nuovo il pulsante.",
       "followup_worktree_session_not_focused": "Worktree pronto in {{path}}, ma la sua sessione non è in primo piano. Passa alla sessione dalla barra laterale o premi di nuovo il pulsante.",
       "followup_chat_not_created": "Impossibile aprire la nuova chat. Premi di nuovo il pulsante per riprovare.",
-      "followup_chat_not_focused": "La nuova chat è stata creata, ma non è stato possibile portarla in primo piano. Passa alla chat dalla barra laterale."
+      "followup_chat_not_focused": "La nuova chat è stata creata, ma non è stato possibile portarla in primo piano. Passa alla chat dalla barra laterale.",
+      "open_older_sessions": "Apri Sessioni più vecchie",
+      "tabs_were_not_restored_many": "{{count}} schede che erano aperte prima del riavvio non sono state ripristinate.",
+      "tabs_were_not_restored_one": "{{count}} scheda che era aperta prima del riavvio non è stata ripristinata.",
+      "tabs_were_not_restored_other": "{{count}} schede che erano aperte prima del riavvio non sono state ripristinate.",
+      "dismiss_until_next_visit": "Nascondi fino alla prossima visita",
+      "could_not_check_restored_tabs": "Non è stato possibile verificare se tutte le schede sono state ripristinate dopo l'ultimo riavvio."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 saltata — attualmente selezionata)",

@@ -295,6 +295,10 @@ CANONICAL: dict[str, dict] = {
     },
     "guide/started": {"guide_id": "g_0a1b2c3d4e5f"},
     "guide/finished": {"guide_id": "g_0a1b2c3d4e5f", "status": "completed"},
+    # A whole working set lost at once: of sixteen listed tabs none comes back, and
+    # all sixteen stay in the reopen seed. ``kept`` counts the SET rather than this
+    # one tab, which is what lets a reader tell that case from one bad transcript.
+    "session/unrestored": {"listed": 16, "restored": 0, "kept": 16},
 }
 
 
@@ -365,10 +369,17 @@ def test_every_type_written_today_is_declared_and_nothing_else_is():
     # a row of the conversation, and ``card/*`` / ``guide/*`` record the proposal and
     # every outcome in the same session's history.
     #
-    # The one past those is the session tree's ``session/spawned``, written on the
-    # CREATOR's log at session_create time so a child's creating edge survives a
-    # restart before the child's first turn writes a log of its own.
-    assert len(SESSION_ENTRY_TYPES) == 44
+    # Two past those joined most recently. The session tree's ``session/spawned`` is
+    # written on the CREATOR's log at session_create time so a child's creating edge
+    # survives a restart before the child's first turn writes a log of its own.
+    #
+    # ``session/unrestored`` is the open-tab registry's own record. It joins for the
+    # reason the agentic pair does -- this log is its ONLY record -- and the gap it
+    # covers is the sharpest of the set: a tab the startup restore lists and cannot
+    # show has nothing to show anywhere else. No ``session/closed``, because the
+    # gateway did not stop serving the session; no delete, because nothing was
+    # deleted; and the restore's own warning goes to a gateway log that rotates away.
+    assert len(SESSION_ENTRY_TYPES) == 45
     # Nine types the vocabulary owns that nothing writes. Declaring one would state
     # a shape no writer produces, and the first emitter to land would have to
     # satisfy a contract written without it. They pass through undeclared instead.
