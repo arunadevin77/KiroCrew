@@ -12433,7 +12433,10 @@
       "crew_enable_named": "Activer {{name}}",
       "crew_spaces_unavailable": "Impossible de charger les dossiers de {{name}}. Ses discussions sont listées sans eux.",
       "crew_enable_failed": "Impossible d'activer {{name}}",
-      "muted": "En sourdine : ni son, ni notification, ni badge"
+      "muted": "En sourdine : ni son, ni notification, ni badge",
+      "chat_with_session": "Chat avec {{title}}",
+      "chat_with_session_desc": "Le chat qui a lancé les autres chats de ce dossier",
+      "conductor_tag": "conducteur"
     },
     "connectionsPage": {
       "action_failed": "Échec de l’action : {{error}}",
@@ -13046,7 +13049,9 @@
         "decisions_runtime_error": "Impossible de démarrer le modèle.",
         "decisions_runtime_retry": "Réessayer",
         "dashboard": "Tableau de bord dynamique",
-        "dashboard_desc": "Active le tableau de bord dynamique, encore en développement : une ligne d’état au-dessus du champ de saisie du chat, une vue Tableau de bord dans le panneau latéral et sur la page d’un coéquipier, et une page Tous les tableaux de bord. Sa mise en page est encore en cours de conception, il n’apparaît donc que si tu l’actives. Contient aussi l’interrupteur des cartes automatiques."
+        "dashboard_desc": "Active le tableau de bord dynamique, encore en développement : une ligne d’état au-dessus du champ de saisie du chat, une vue Tableau de bord dans le panneau latéral et sur la page d’un coéquipier, et une page Tous les tableaux de bord. Sa mise en page est encore en cours de conception, il n’apparaît donc que si tu l’actives. Contient aussi l’interrupteur des cartes automatiques.",
+        "folder_conductor": "Conducteur du dossier",
+        "folder_conductor_desc": "Remonte en haut du dossier le chat qui a lancé les autres chats de ce dossier : une barre de couleur sur son bord gauche et une petite étiquette `conductor` à côté du nom de l'agent. Cela change l'ordre de la liste des sessions, donc la liste reste telle quelle jusqu'à ce que tu l'actives. L'entrée de chat du menu du dossier est toujours là."
       },
       "kiroSignInCard": {
         "title": "Connexion Kiro",

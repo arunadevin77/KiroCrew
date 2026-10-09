@@ -5641,7 +5641,10 @@
       "unlink_source_link_confirm": "Select again to permanently hide “{{label}}”",
       "unlink_source_link_failed": "Could not hide. Try again.",
       "waiting_for_memory": "Waiting for free RAM",
-      "muted": "Muted: no chime, toast or badge"
+      "muted": "Muted: no chime, toast or badge",
+      "chat_with_session": "Chat with {{title}}",
+      "chat_with_session_desc": "The chat that started this folder's other chats",
+      "conductor_tag": "conductor"
     },
     "connectionsPage": {
       "action_failed": "Action failed: {{error}}",
@@ -8439,7 +8442,9 @@
         "decisions_runtime_error": "The model could not be started.",
         "decisions_runtime_retry": "Try again",
         "dashboard": "Dynamic Dashboard",
-        "dashboard_desc": "Turns on the in-development Dynamic Dashboard: a status row above the chat composer, a Dashboard view in the side panel and on a crewmate’s page, and an All Dashboards page. Its layout is still being designed, so it is not shown until you turn it on. Also holds the switch for automatic cards."
+        "dashboard_desc": "Turns on the in-development Dynamic Dashboard: a status row above the chat composer, a Dashboard view in the side panel and on a crewmate’s page, and an All Dashboards page. Its layout is still being designed, so it is not shown until you turn it on. Also holds the switch for automatic cards.",
+        "folder_conductor": "Folder conductor",
+        "folder_conductor_desc": "Lifts the chat that started a folder's other chats to the top of that folder: an accent bar down its left edge and a small `conductor` tag beside the agent name. This changes the order of the Sessions list, so the list stays as it is until you turn it on. The folder menu's chat item is always there."
       },
       "kiroSignInCard": {
         "title": "Kiro sign-in",

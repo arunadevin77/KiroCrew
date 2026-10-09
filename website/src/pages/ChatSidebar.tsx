@@ -15,7 +15,7 @@ import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { usePreviewFlag } from '../hooks/usePreviewFlag'
-import { PREVIEW_DASHBOARD } from '../utils/previewFlags'
+import { PREVIEW_DASHBOARD, PREVIEW_FOLDER_CONDUCTOR } from '../utils/previewFlags'
 import { shallowEqual, useStore } from 'react-redux'
 import { useAppDispatch, useAppSelector } from '../store'
 import type { RootState } from '../store'
@@ -129,6 +129,7 @@ import { useSidebarTags } from './chat-sidebar/tags'
 import { useBoardColumns, useColumnPopover, useBoardColumnMutations, useColumnMatches, useBoardFolderCollapse } from './chat-sidebar/board'
 import { useHoverHold, useHoverPinLiveness } from './chat-sidebar/hoverHold'
 import { useLineageAvailable, useConductorLane, citedCreatorOf } from './chat-sidebar/conductor'
+import { detectFolderConductor } from './chat-sidebar/folderConductor'
 import { useShortcutOrder } from './chat-sidebar/shortcuts'
 import { useFolderDropOps, useSidebarMoveUndo, useSidebarDragHandlers, useNativeSessionDrag } from './chat-sidebar/dnd/useSidebarDrag'
 import { useSidebarReveal } from './chat-sidebar/reveal'
@@ -1962,6 +1963,34 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
                 *  rare agent switch, and the repo's animation invariant is
                 *  framer-only (no new CSS @keyframes). */}
               <span key={agentName || 'empty'} title={agentDisplay || undefined} className={`truncate shrink-0 ${resolvedSlotTags.length > 0 || agentDiverged ? 'max-w-[50%]' : ''}`}>{agentDisplay || '\u00A0'}</span>
+              {/* WHY this card is sitting above its folder's other rows, in a
+                *  word, beside the agent name that is the card's own first line.
+                *  The accent bar down its left edge groups the card with the
+                *  folder row; on its own that bar is a decoration a reader has to
+                *  guess at, and the agent name says which AGENT is running, never
+                *  what the session is to the folder.
+                *
+                *  Same shape and the same accent tokens as every other marker on
+                *  this line (the peer-crew chip, the Members-page chip): nothing
+                *  here is a new colour, and the tag is the accent the bar already
+                *  is. Not a title attribute -- the menu item one row up carries
+                *  the sentence, and a hover-only gloss is unreachable on a touch
+                *  screen.
+                *
+                *  No size, line-height or weight of its own: it INHERITS the
+                *  agent-name line's `ROW_META_CLS` and `font-semibold`, which is
+                *  the one place that type scale is spelled. Restating those two
+                *  utilities here instead is the drift
+                *  `test/listShellParity.test.ts` exists to stop -- that pin
+                *  reddened on exactly this span, and it reads the whole FILE as
+                *  text, so the literal must not appear in a comment either. */}
+              {view.folderConductor && (
+                <span
+                  className="shrink-0 inline-flex items-center px-1 rounded bg-accent-subtle text-accent"
+                  data-testid={`folder-conductor-tag-${rowIdentity}`}>
+                  {i18nT('pages.chatSidebar.conductor_tag')}
+                </span>
+              )}
               {/* Peer-OWNERSHIP badge: this session belongs to another machine.
                 *  The SAME component the `RemoteCrewChip` further down this row
                 *  uses, which says a LOCAL session dispatches its turns to a peer.
@@ -2922,6 +2951,41 @@ function ChatSidebar({
 
   const { hoverPinRef, heldDisplacedRef, releaseHoverPin, heldLane, onRootPointerOver } = useHoverHold()
 
+  /**
+   * The session CONDUCTING a folder, derived from the folder's own rows.
+   *
+   * Read once, by the folder's menu, to decide whether that menu offers the
+   * chat item and to name the session it opens. A folder whose rows resolve no
+   * conductor gets `null` and its menu is the menu on main, which is why no
+   * other branch in this file had to change: the ordinary folder row is still
+   * the only shape this lane draws.
+   *
+   * The whole row comes back rather than its key, because the item names the
+   * session it opens: a label that says only "conductor" leaves a first-time
+   * reader with no idea what the click does.
+   *
+   * Computed per render rather than memoized. `sidebarRows` is a fresh object
+   * every render, so a memo keyed on it would recompute anyway and only add a
+   * cache to read; the work is one pass over each folder's own rows.
+   */
+  /**
+   * Is the conductor PIN on? Settings > Developer > Feature Previews, default
+   * off (see `utils/previewFlags.ts`).
+   *
+   * It gates the pinned card, its accent bar and its tag -- the three things
+   * that change the resting list -- and nothing else. The folder menu's "Chat
+   * with <title>" item below is NOT gated on it: that item is an ingress in a
+   * menu a reader opened on purpose, it moves nothing on the list, and it
+   * shipped reviewed.
+   */
+  const folderConductorPin = usePreviewFlag(PREVIEW_FOLDER_CONDUCTOR)
+
+  const folderConductorOf = (folderId: string): Slot | null => {
+    const rows = sidebarRows.folderTree.rowsIn(folderId)
+    const key = detectFolderConductor(rows)
+    return key == null ? null : rows.find(r => r.key === key) ?? null
+  }
+
   const { lineageAvailable } = useLineageAvailable({ allRows })
   // Which lane the sidebar is actually rendering (see `renderedLane`). The tag-column
   // board wins when columns exist — flat view does not replace it, it applies INSIDE
@@ -3450,7 +3514,7 @@ function ChatSidebar({
   // total across scopes, which is what the clamp counts.
   const sessionRowStamps = new Map<string, Map<string, number>>()
   let sessionRowStampCount = 0
-  const renderSessionRow = (s: Slot, _indent: number, showDivider: boolean, scope = 'list', navScope = scope, holdContainer = navScope, conductor?: ConductorRowView) => {
+  const renderSessionRow = (s: Slot, _indent: number, showDivider: boolean, scope = 'list', navScope = scope, holdContainer = navScope, conductor?: ConductorRowView, folderConductor?: boolean) => {
     // Clamped, not raw: rows past the window share a stamp and bail out of a
     // displacement above them (see SIDEBAR_DISPLACEMENT_WINDOW).
     let scopeStamps = sessionRowStamps.get(scope)
@@ -3466,7 +3530,7 @@ function ChatSidebar({
       scopeStamps.set(stampKey, orderStamp)
     }
     const view = rowViews.view(s, {
-      scope, navScope, holdContainer, showDivider, orderStamp, conductor,
+      scope, navScope, holdContainer, showDivider, orderStamp, conductor, folderConductor,
       // staticRows (the compositor drawer) folds into the one row-animation
       // gate: projection under a WAAPI-driven ancestor mis-attributes the
       // panel's motion to the rows, so the drawer disables row animation
@@ -3661,8 +3725,36 @@ function ChatSidebar({
         </Item>
       </>
     )
+    // The conductor's own chat, reachable from the folder row instead of from an
+    // expand-and-scan. It is a MENU item rather than a button beside the row's
+    // other two, because a third peer action in that cluster is over the
+    // two-controls-per-row cap and the overflow menu is where the cap sends it.
+    // Both menus render from here, so the ⋯ menu and the right-click menu offer
+    // the same action. A folder whose rows resolve no conductor gets nothing
+    // added, which is why no other branch in this file changes: the row, the
+    // hover cluster and the session cards are what they are on main.
+    //
+    // The label NAMES the session and the second line says what that session is
+    // to this folder. A label carrying the word "conductor" and nothing else
+    // left a first-time reader unable to say what the click opens, and the two
+    // other chat affordances on the same row made that worse rather than
+    // clearer. The two-line shape is the one the ephemeral-chat items in this
+    // file already use.
+    const conductor = folderConductorOf(folder.id)
     return (
       <>
+        {conductor && (
+          <Item className="items-start" data-testid={tid('conductor-chat')} onClick={() => {
+            dispatch(switchSlot({ key: conductor.key, announceOnMissing: true }))
+            onSelectSlot?.(conductor.key)
+          }}>
+            <MessageSquare size={14} className="text-accent mt-[3px] shrink-0" />
+            <span className="flex min-w-0 flex-col gap-px">
+              <span className="truncate">{i18nT('pages.chatSidebar.chat_with_session', { title: conductor.title || conductor.key })}</span>
+              <span className="whitespace-normal text-[11px] leading-snug text-muted">{i18nT('pages.chatSidebar.chat_with_session_desc')}</span>
+            </span>
+          </Item>
+        )}
         <Item data-testid={tid('rename')} onClick={() => { suppressMenuRestoreRef.current = true; setEditingId(folder.id); setEditScope('list'); setEditName(folder.name) }}><Pencil size={13} /> {i18nT('pages.chatSidebar.rename')}</Item>
         <Item data-testid={tid('new-subfolder')} onClick={() => { setFolderModal({ mode: 'create', parentId: folder.id }) }}><FolderPlus size={13} /> {i18nT('pages.chatSidebar.new_subfolder')}</Item>
         {/* The two private modes are listed flat, each naming its own action
@@ -4006,7 +4098,34 @@ function ChatSidebar({
   const renderFolderBlock = (folder: ChatFolder, depth: number, visited = new Set<string>(), dragHandleProps?: React.HTMLAttributes<HTMLElement>, forceCollapsed = false): React.ReactNode[] => {
     if (depth > 10 || visited.has(folder.id)) return []
     visited.add(folder.id)
-    const childSlots = sidebarRows.folderTree.rowsIn(folder.id)
+    const allChildSlots = sidebarRows.folderTree.rowsIn(folder.id)
+    /**
+     * The one row this folder is drawn AROUND, or null.
+     *
+     * A conducted folder is one conversation that opened the rest, and reading
+     * it off the lane meant picking that card out of a time-sorted list where it
+     * sits wherever it last spoke, drawn exactly like the sessions it opened. So
+     * it is lifted to the top of the folder and marked, and the folder row plus
+     * that card read as the one thing they are.
+     *
+     * Null for an ordinary folder AND whenever the preview flag is off, and
+     * `allChildSlots` is then handed on UNTOUCHED -- same array, same order,
+     * same nodes. That is the whole fallback: nothing about an ordinary render
+     * is conditional on this feature, so the lane tens of thousands of people
+     * already read is unchanged for them.
+     */
+    const folderConductorSlot = (() => {
+      if (!folderConductorPin) return null
+      const key = detectFolderConductor(allChildSlots)
+      return key == null ? null : allChildSlots.find(s => s.key === key) ?? null
+    })()
+    // What the body draws: every row in the folder except the pinned one. The
+    // folder HEADER's count still reads `rowsIn` and so still counts the
+    // conductor -- it says how many sessions are filed here, and that is still
+    // all of them.
+    const childSlots = folderConductorSlot == null
+      ? allChildSlots
+      : allChildSlots.filter(s => s !== folderConductorSlot)
     const childNodes: React.ReactNode[] = []
     // Nested subfolders are sortables, exactly as root folders are: dragging one
     // either re-orders it among its siblings (drop on a sibling's edges or body)
@@ -4053,6 +4172,44 @@ function ChatSidebar({
     // Stale rows are collapsed into their own section and are stale precisely
     // because nothing is bumping them, so only the live list needs the hold.
     const { rows: freshChildSlots, navScope: treeChildScope, container: treeChildContainer } = heldLane(freshChildSlotsRaw, 'list', `tree:folder:${folder.id}`)
+    /**
+     * The pinned conductor card: the folder body's FIRST child, before the
+     * sibling folders and before the sorted rows.
+     *
+     * INSIDE `FOLDER_BODY_CLS`, which is load-bearing. An earlier revision drew
+     * it outside that div to put it at the folder row's own left edge, and that
+     * outdented its text 15px left of the folder name -- breaking the shared
+     * edge recorded in
+     * docs/decisions/2026-10-09-folder-glyph-sits-on-its-connector-line.md,
+     * whose guide 2 is that a folder name and the agent label of every session
+     * filed inside it sit on one column. Drawn here the card keeps that column:
+     * it is a row in the body like any other, so no guide moves and there is no
+     * per-depth term to get wrong.
+     *
+     * So the pin is POSITION ONLY. `childNodes.unshift` below puts it first,
+     * which is why it is not handed to the lane: `freshChildSlots` is in lane
+     * order (recency, or the search ranking), and pinning by sorting would mean
+     * teaching that comparator what a folder is.
+     *
+     * Same lane scope and hold container as its siblings, so keyboard roving
+     * reaches it as the folder's first row. Kept OUT of `heldLane`'s list
+     * because that list is the one a hover-hold displaces, and this row's
+     * position is the one thing about it that is fixed.
+     *
+     * The accent bar is drawn OUT OF FLOW -- an absolutely positioned 2px span
+     * in a `relative` wrapper -- for the same alignment reason. A `border-l-2`
+     * on the wrapper would push the card's content 2px right and break the same
+     * guide by 2px instead of 15. Out of flow it costs no width: it sits inside
+     * the card's own left pad, so it reads as a bar down the card's left edge
+     * while the text stays on the shared column. `inset-y-1` keeps it off the
+     * row divider above and below.
+     */
+    const folderConductorNode = folderConductorSlot && (
+      <div key={`folder-conductor-${folder.id}`} data-folder-conductor={folder.id} className="relative">
+        <span aria-hidden="true" className="absolute left-0 inset-y-1 w-0.5 rounded-full bg-accent" />
+        {renderSessionRow(folderConductorSlot, depth + 1, false, treeChildScope, treeChildScope, treeChildContainer, undefined, true)}
+      </div>
+    )
     freshChildSlots.forEach((s, i) => {
       const isActive = isActiveRow(s)
       const nextIsActive = isActiveRow(freshChildSlots[i + 1])
@@ -4070,6 +4227,12 @@ function ChatSidebar({
     }
     const staleSection = renderStaleSection(folder.id, staleChildSlots, depth + 1, folder.name)
     if (staleSection) childNodes.push(staleSection)
+    // FIRST in the body, after everything else has been pushed. One `unshift`
+    // rather than a branch at each of the three places below that read
+    // `childNodes.length`: the pinned card is a child of this folder like any
+    // other, so counting it as one keeps the empty-body, narrowed-away and
+    // body-wrapper decisions exactly as they are on main.
+    if (folderConductorNode) childNodes.unshift(folderConductorNode)
     // Hide folders with no matching children while the list is narrowed —
     // unless this folder owns the active create-failure notice: a create fired
     // from the folder-picker menu can target a folder the narrow is hiding,

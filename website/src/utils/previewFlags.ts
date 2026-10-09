@@ -163,6 +163,30 @@ export const PREVIEW_LAYOUT_HARNESS = `${PREVIEW_FLAG_PREFIX}layout-harness`
 export const PREVIEW_DASHBOARD = `${PREVIEW_FLAG_PREFIX}dashboard`
 
 /**
+ * A sidebar folder drawn around the session that conducts it: that card pinned
+ * first inside the folder, with an accent bar down its left edge and a
+ * `conductor` tag beside its agent name.
+ *
+ * Held because it changes the SHAPE of a list tens of thousands of people read
+ * every day, by default, for every folder whose sessions were opened by one of
+ * them. The pin is not a new door that a reader can decline to walk through, so
+ * the usual ingress-only argument for shipping a preview unflagged does not
+ * apply here: there is nothing to decline. First Principles review asked for
+ * either a flag or an accepted RFC, and a per-device flag is the cheaper of the
+ * two to retire.
+ *
+ * Default OFF, and OFF is byte-for-byte the list on `main`: the folder's rows
+ * are handed on as the same array in the same order and the body is the same
+ * element, so nothing about an ordinary render is conditional on this key.
+ *
+ * It does NOT gate the folder menu's "Chat with <title>" item. That item is an
+ * ingress -- one entry in a menu a reader opened on purpose -- it moves nothing
+ * on the resting list, and it shipped reviewed. Gating it here would hold a
+ * released affordance behind an unreleased layout.
+ */
+export const PREVIEW_FOLDER_CONDUCTOR = `${PREVIEW_FLAG_PREFIX}folder-conductor`
+
+/**
  * Read a preview flag. Absent, unparseable, or storage-denied all mean OFF —
  * the whole point of the gate is that a surface stays hidden unless someone
  * deliberately turned it on, so it fails closed.

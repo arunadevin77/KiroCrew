@@ -4,7 +4,7 @@ import { ArrowRight } from 'lucide-react'
 import { SettingsSection, SettingsCard, SettingsToggle } from '../../components/settings'
 import { FeaturePreviewIntroButton, type FeaturePreviewIntro } from '../../components/FeaturePreviewIntroDialog'
 import { usePreviewFlag, useRemoteCrewChat } from '../../hooks/usePreviewFlag'
-import { PREVIEW_ARTIFACT_DEPLOY, PREVIEW_CREW, PREVIEW_DASHBOARD, PREVIEW_LAYOUT_HARNESS, PREVIEW_WEBHOOKS, setPreviewFlag, setRemoteCrewChat } from '../../utils/previewFlags'
+import { PREVIEW_ARTIFACT_DEPLOY, PREVIEW_CREW, PREVIEW_DASHBOARD, PREVIEW_FOLDER_CONDUCTOR, PREVIEW_LAYOUT_HARNESS, PREVIEW_WEBHOOKS, setPreviewFlag, setRemoteCrewChat } from '../../utils/previewFlags'
 import { DecisionsCard } from './DecisionsCard'
 import AutomaticCardSetting from '../chat/command-center/AutomaticCardSetting'
 import { i18nT } from '../../i18n/t'
@@ -135,6 +135,7 @@ export function FeaturePreviewsSection() {
   const remoteCrewChat = useRemoteCrewChat()
   const layoutHarness = usePreviewFlag(PREVIEW_LAYOUT_HARNESS)
   const dashboard = usePreviewFlag(PREVIEW_DASHBOARD)
+  const folderConductor = usePreviewFlag(PREVIEW_FOLDER_CONDUCTOR)
 
   return (
     // The wrapper exists for the legacy redirect: `?highlight=key:<anchor>`
@@ -320,6 +321,28 @@ export function FeaturePreviewsSection() {
         <div className="pt-1" data-testid="feature-preview-dashboard-settings">
           <AutomaticCardSetting active />
         </div>
+      </SettingsCard>
+      {/* A folder drawn around the session that conducts it: that card pinned
+          first inside the folder, with an accent bar and a `conductor` tag.
+
+          Flagged for the reason the others here are not: it is not a DOOR. The
+          cards above hold a page or a menu entry a reader can decline to open,
+          so shipping them visible costs nobody anything; this one re-orders a
+          list people read every day and there is nothing to decline. Held until
+          it has been lived with.
+
+          NO ingress button: turning it on redraws the Sessions list in the same
+          tick, and a link here would point at a list already on screen. NO "See
+          what it looks like" either -- the layout is still settling and a
+          capture would be stale by the next change, which is the same rule the
+          Dynamic Dashboard card above follows. */}
+      <SettingsCard>
+        <SettingsToggle
+          label={i18nT('pages.developer.featurePreviewsTab.folder_conductor')}
+          description={i18nT('pages.developer.featurePreviewsTab.folder_conductor_desc')}
+          checked={folderConductor}
+          onChange={v => setPreviewFlag(PREVIEW_FOLDER_CONDUCTOR, v)}
+        />
       </SettingsCard>
       {/* LAST, and the only card here whose switch is not a per-device flag: it
           writes the KEYSTONE `decisions_consent.json`, not a config path. It lives in
