@@ -193,7 +193,9 @@ async def test_list_reports_when_a_run_ended() -> None:
     runner = WorkflowRunner(agent_fn=_echo, audit=lambda *a, **k: None)
     rid = await runner.run_background(GOOD, registry=reg, run_id="wf_end1", now=NOW, name="d")
     snap = await _wait_terminal(reg, rid)
-    terminal = [e for e in reg.status(rid, include_events=True)["events"] if e["type"] == "run_finished"]
+    terminal = [
+        e for e in reg.status(rid, include_events=True)["events"] if e["type"] == "run_finished"
+    ]
 
     (row,) = reg.list()
     assert row["ended_at"] == snap["ended_at"] == terminal[-1]["ts"]
