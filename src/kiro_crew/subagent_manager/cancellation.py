@@ -153,6 +153,7 @@ class CancellationCoordinator(ManagerComponent):
                     # replacement as its first statement.
                     info._startup_deadline_stamp = None
                     info._exec_started = None
+                    info._exec_started_mono = None
                     # Then process identity, because samplers read the PID
                     # before sharing state; then ownership. The PID is the
                     # retired first attempt's (a shared runtime this run no
