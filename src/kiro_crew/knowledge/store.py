@@ -1036,7 +1036,9 @@ class KnowledgeStore:
             );
 
             CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
-
+            -- find_entity's case-insensitive fallback; without it every
+            -- query term that misses the exact name scans the whole table.
+            CREATE INDEX IF NOT EXISTS idx_entities_name_lower ON entities(LOWER(name));
             CREATE TABLE IF NOT EXISTS entity_relations (
                 id TEXT PRIMARY KEY,
                 source_id TEXT NOT NULL REFERENCES entities(id),
@@ -1058,6 +1060,9 @@ class KnowledgeStore:
                 created_at TEXT NOT NULL,
                 PRIMARY KEY (item_id, entity_id)
             );
+            -- The graph leg counts mentions by entity_id; the primary key leads
+            -- with item_id, so without this every search scans every mention.
+            CREATE INDEX IF NOT EXISTS idx_mentions_entity_item ON mentions(entity_id, item_id);
 
             CREATE TABLE IF NOT EXISTS source_locations (
                 id TEXT PRIMARY KEY,
@@ -3047,7 +3052,13 @@ Called by ``FolderWatcher.scan_source`` when it refuses such a row, which is
         row = self.db.execute("SELECT * FROM entities WHERE LOWER(name) = LOWER(?)", (name,)).fetchone()
         if row:
             return dict(row)
-        for row in self.db.execute("SELECT * FROM entities"):
+        # Only rows that can carry an alias. '' and '[]' (the column default)
+        # parse to no aliases, so filtering them in SQL returns the same row
+        # while sparing a json.loads per entity: on a 59k-entity library that
+        # scan was ~half of every knowledge search, and it holds the GIL.
+        for row in self.db.execute(
+            "SELECT * FROM entities WHERE aliases IS NOT NULL AND aliases NOT IN ('', '[]')"
+        ):
             aliases = json.loads(row["aliases"]) if row["aliases"] else []
             if any(a.lower() == name.lower() for a in aliases):
                 return dict(row)
