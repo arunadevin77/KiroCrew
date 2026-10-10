@@ -41,6 +41,7 @@ from kiro_crew.cron_script import (
     resolve_script_path,
     validate_secret_env_grant,
 )
+from kiro_crew.dashboard import cron_pending
 from kiro_crew.dashboard.chat_persistence import _restore_dismissed_source_links
 from kiro_crew.dashboard.cron_inject import (
     apply_cron_turn_timeout,
@@ -56,6 +57,7 @@ from kiro_crew.dashboard.handlers._shared import (
     require_owner_dashboard_request,
 )
 from kiro_crew.dashboard.handlers.source_providers import is_owner_dashboard_request
+from kiro_crew.dashboard.slot_create_transaction import open_named_slot, wait_for_pending_create
 from kiro_crew.dashboard.slot_ownership import app_holds_gateway_key
 from kiro_crew.dashboard.state import DashboardState, SlotOrigin, note_crew_log_class
 from kiro_crew.executors import discovery_executor
@@ -2125,9 +2127,13 @@ async def api_cron_to_chat(request: web.Request) -> web.Response:
             {"error": "this job's chat tab is unavailable", "code": "cron_slot_unavailable"},
             status=409,
         )
+    # A dashboard create of this key still building it: wait (bounded) so the
+    # tab opened below is its slot, as when the create registered up front.
+    await wait_for_pending_create(state, slot_name)
     jobs = state.crons.list_jobs(include_disabled=True)
     job = next((j for j in jobs if j.id == job_id), None)
     if job:
+        await cron_pending.load(state, job.id)
         history = (
             await asyncio.to_thread(state.conversation_log.read_messages, f"cron:{job.id}")
             if state.conversation_log
@@ -2154,7 +2160,9 @@ async def api_cron_to_chat(request: web.Request) -> web.Response:
             else []
         )
         if history:
-            slot = state.get_or_create_slot(name=slot_name, agent="", origin=SlotOrigin.CRON)
+            # A create of this key can begin during the read above: wait again,
+            # with nothing suspending between this wait and the open.
+            slot = await open_named_slot(state, slot_name, agent="", origin=SlotOrigin.CRON)
             if not slot.linked_session_key:
                 slot.linked_session_key = session_key
                 # A cron link is exempt from the channel class, so this records nothing
@@ -2207,7 +2215,8 @@ async def api_cron_to_chat(request: web.Request) -> web.Response:
             )
             if not notif:
                 return web.json_response({"error": "job not found"}, status=404)
-            slot = state.get_or_create_slot(name=slot_name, agent="", origin=SlotOrigin.CRON)
+            # The same window, after the read above: wait again before the open.
+            slot = await open_named_slot(state, slot_name, agent="", origin=SlotOrigin.CRON)
             body = notif.get("body", "")
             if body:
                 body, _ = redact_exfiltration_urls(body)
