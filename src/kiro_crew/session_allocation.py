@@ -2633,6 +2633,11 @@ class SessionAllocationService:
 
                         if provider.member_capabilities_supported is not True:
                             raise CapabilityStartupError("capability_harness_unsupported")
+                        if (
+                            preparation.tool_limited_servers
+                            and provider.member_tool_limits_supported is not True
+                        ):
+                            raise CapabilityStartupError("capability_tool_limits_unsupported")
                         if provider.process_instance:
                             raise CapabilityStartupError("capability_runtime_not_fresh")
                         await asyncio.to_thread(verify_saved, preparation, provider.cwd)

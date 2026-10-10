@@ -375,6 +375,11 @@ class LLMProvider(ABC):
         return False
 
     @property
+    def member_tool_limits_supported(self) -> bool:
+        """Whether a saved member spec's per-tool ``disabledTools`` is honoured."""
+        return False
+
+    @property
     def loaded_capability_template(self) -> str:
         """Confirmed active full-spec template; empty means no loading evidence."""
         return ""

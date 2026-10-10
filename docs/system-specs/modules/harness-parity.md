@@ -108,8 +108,12 @@ already reads TRUE for KAS on a plain public build.
 | H8 | New harness identifiers live in `agent_sdk/backends.py` — a LEAF module behind the agent-SDK boundary, so every consumer can name the constants rather than copy them — and are added to `ACP_BACKENDS_KNOWN`; every capability set is a subset of it; and `AcpProvider.__init__` rejects anything outside it. `ACP_BACKEND_KIRO` is the empty string, so a value that falls through every identity check spawns `kiro-cli` under a foreign label. `acp/types.py` and the `acp_backends` shim both re-export the vocabulary and remain import sites for existing callers. | `test_harness_parity.py::test_capability_sets_are_subsets_of_known_backends`, `::test_unknown_backend_rejected_at_construction`, `::test_codex_is_selectable_and_answerable` | `agent_sdk/backends.py` (`ACP_BACKENDS_KNOWN`), `providers/acp.py` (`AcpProvider.__init__`), `scripts/check_harness_parity.py` (`VOCABULARY_PATH`) |
 
 `ACP_BACKENDS_MEMBER_CAPABILITIES` is the H6 opt-in for loading an enrolled
-member's full saved agent spec. Only Kiro belongs today; this is separate from
-session sharing and per-session member dispatch. Both `AcpProvider` and
+member's full saved agent spec. Kiro and KAS belong: kiro-cli reads the saved
+file at spawn, and KAS receives it whole as `_meta.kiro.customAgents` and
+activates it by `session/set_mode`. `ACP_BACKENDS_MEMBER_TOOL_LIMITS` (Kiro
+only) says which of them honour a saved spec's per-tool `disabledTools`; on any
+other backend such a spec is refused before spawn with
+`capability_tool_limits_unsupported`, because the KAS wire discards the field. This is separate from session sharing and per-session member dispatch. Both `AcpProvider` and
 `AcpSessionProvider` answer `member_capabilities_supported` from this set.
 Support alone does not prove a template is loaded: dedicated runtime ownership,
 liveness, active-mode confirmation, saved-version checks and MCP readiness still

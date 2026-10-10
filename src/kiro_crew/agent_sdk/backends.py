@@ -89,6 +89,9 @@ with no row here.
      - pre-session registry query (subagent session allocation)
    * - ``ACP_BACKENDS_MEMBER_CAPABILITIES``
      - pre-session registry query (whether enrolled members can load a full saved spec)
+   * - ``ACP_BACKENDS_MEMBER_TOOL_LIMITS``
+     - pre-session registry query (whether a saved spec's per-tool ``disabledTools``
+       is honoured, or the spec is refused before spawn)
    * - ``ACP_BACKENDS_MEMBER_DISPATCH``
      - driver-internal (whether a per-session tool set can be mounted)
    * - ``ACP_BACKENDS_MEMBER_PANEL``
@@ -876,10 +879,28 @@ ACP_BACKENDS_SESSION_SHARING = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_CODEX})
 
 # Backends that can load an enrolled member's full saved agent spec at spawn.
 # Separate from session sharing and per-session dispatch (harness-parity H6):
-# support for either does not establish full-spec loading. Only kiro-cli has
-# demonstrated it; the provider still requires a live dedicated runtime and a
-# confirmed active template before reporting that the saved spec is loaded.
-ACP_BACKENDS_MEMBER_CAPABILITIES = frozenset({ACP_BACKEND_KIRO})
+# support for either does not establish full-spec loading. The provider still
+# requires a live dedicated runtime and a confirmed active template before
+# reporting that the saved spec is loaded.
+#
+# kiro-cli reads the saved file at spawn (``--agent``). KAS is a member because
+# the spec reaches it whole over the wire: the harness projects the saved file
+# onto ``_meta.kiro.customAgents`` (``acp/kas_agents.py``) and activates it with
+# ``session/set_mode``, and the handle records that mode as its active agent --
+# the same evidence the kiro path gives. It is the default member backend, so
+# a saved spec has to load here for a member chat to start at all.
+# The one restriction a saved spec can write that the KAS wire discards is a
+# per-tool ``disabledTools`` on an MCP server; see the set below.
+ACP_BACKENDS_MEMBER_CAPABILITIES = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS})
+
+# Backends of the set above that also honour a saved member spec's per-tool
+# ``disabledTools`` on an MCP server. kiro-cli reads the field off the saved file.
+# The KAS customAgents wire accepts it and then discards it
+# (``kas_agents._KAS_DISCARDED_ENTRY_KEYS``), so a server declared with one runs
+# there with those tools on. A saved spec that uses it is refused before spawn on
+# a non-member (``capability_tool_limits_unsupported``) rather than run wider than
+# it was saved.
+ACP_BACKENDS_MEMBER_TOOL_LIMITS = frozenset({ACP_BACKEND_KIRO})
 
 # Backends that can mount a DIFFERENT MCP tool set on one session than the
 # on-disk agent template declares — the capability crew-member dispatch rides

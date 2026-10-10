@@ -60,6 +60,7 @@ from kiro_crew.acp.types import (
     ACP_BACKENDS_KIRO_SLASH_COMMANDS,
     ACP_BACKENDS_KNOWN,
     ACP_BACKENDS_MEMBER_CAPABILITIES,
+    ACP_BACKENDS_MEMBER_TOOL_LIMITS,
     ACP_BACKENDS_SESSION_SHARING,
     ACP_BACKENDS_TOOL_SEARCH_OVERLAY,
     EVENT_COMPACTION_STATUS,
@@ -919,6 +920,11 @@ class AcpProvider(LLMProvider):
     def member_capabilities_supported(self) -> bool:
         """Full saved member-spec loading is opt-in (harness-parity H6)."""
         return self._client.backend in ACP_BACKENDS_MEMBER_CAPABILITIES
+
+    @property
+    def member_tool_limits_supported(self) -> bool:
+        """Per-tool ``disabledTools`` in a saved member spec is opt-in (H6)."""
+        return self._client.backend in ACP_BACKENDS_MEMBER_TOOL_LIMITS
 
     @property
     def loaded_capability_template(self) -> str:

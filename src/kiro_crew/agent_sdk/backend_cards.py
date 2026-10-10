@@ -407,6 +407,12 @@ OFF_CARD_SETS: Mapping[str, str] = {
         "whether the teardown verb Crew sends disposes a session on the shared process. "
         "Invisible when right, a memory leak when wrong, which is a defect"
     ),
+    "ACP_BACKENDS_MEMBER_TOOL_LIMITS": (
+        "whether a saved member spec's per-tool tool switch-off is honoured. A "
+        "non-member refuses such a spec before spawn with an error naming the fix, "
+        "so nothing runs wider than it was saved; the card's saved-agent line already "
+        "says whether the spec loads at all"
+    ),
     "ACP_BACKENDS_SPEC_SERVERS_OFF_WIRE": (
         "which channel carries the agent spec's own servers to the session, read by the "
         "unresolved-ref detector. The servers arrive either way; a wrong membership is a "
