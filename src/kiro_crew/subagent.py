@@ -3105,8 +3105,10 @@ class SubagentInfo:
     # from this one, or ``SUCCESSOR_PENDING`` while that start is in flight.
     # ``_continued_as``: the FIRST ``spawn_continue`` of this run that landed,
     # never overwritten. ``_continuation_starting``: a continuation start is in
-    # flight. A failed card stays failed for history, so these are what stop a
-    # retry from running its task beside another successor.
+    # flight, set and cleared with the conversation id it claims in
+    # ``SubagentManager._continuations_starting``; ``claim_retry`` reads it. A
+    # failed card stays failed for history, so these are what stop a retry from
+    # running its task beside another successor.
     _retried_as: str = ""
     _continued_as: str = ""
     _continuation_starting: bool = False
@@ -3902,6 +3904,12 @@ class SubagentManager:
         # prunes completed runs out of `_agents` and an eviction must not silently
         # release the hold.
         self._abandoned_state_writers: dict[str, set[asyncio.Future[Any]]] = {}
+        # Conversation ids whose continuation start is in flight: the start claim for
+        # every continuation, held here and not on the opening run's registry record,
+        # because ``evict_completed_agents`` can drop that record (or a restart left
+        # none) while a start awaits. Taken by ``_claim_continuation`` and released
+        # by ``_settle_continuation``.
+        self._continuations_starting: set[str] = set()
         # state.json is the source of truth for retention: give the
         # SessionManager's in-memory continuable cache a disk fallback so a
         # cache miss (restart window) cannot demote a promoted conversation.
@@ -5825,24 +5833,29 @@ class SubagentManager:
         A refusal when a retry already claimed the run (its task runs as that
         retry now), or while another continuation's start is still in flight
         (it is not yet visible to the conversation-busy lookup). Otherwise the
-        continuation claims the run before any await, so a retry or a second
-        continuation arriving while this start is in flight is refused.
+        continuation claims *conv_id* in ``_continuations_starting`` before any
+        await, so a retry or a second continuation arriving while this start is
+        in flight is refused. The claim is held by the manager, so it outlasts a
+        registry record that ``evict_completed_agents`` drops during the start,
+        and it covers a run with no record at all (evicted, or from before a
+        restart). A registered run's ``_continuation_starting`` flag is set with
+        it for ``claim_retry``. ``_settle_continuation`` ends both.
         """
         original = self._agents.get(conv_id)
-        if original is None:
-            return None, None
-        if original._retried_as:
+        if original is not None and original._retried_as:
             reason = (
                 f"run {conv_id} was retried as run {original._retried_as}, which "
                 "owns its task now; continue that run's conversation instead"
             )
-        elif original._continuation_starting:
+        elif conv_id in self._continuations_starting:
             reason = (
                 f"another continuation of run {conv_id} is starting — wait for its "
                 "completion event, or use spawn_steer once it is running"
             )
         else:
-            original._continuation_starting = True
+            self._continuations_starting.add(conv_id)
+            if original is not None:
+                original._continuation_starting = True
             return original, None
         refusal = SubagentInfo(
             id=self._mint_agent_id(),
@@ -5853,14 +5866,20 @@ class SubagentManager:
         )
         return original, refusal
 
-    @staticmethod
     def _settle_continuation(
-        original: SubagentInfo | None, result: SubagentInfo | None, *, raised: bool = False
+        self,
+        conv_id: str,
+        original: SubagentInfo | None,
+        result: SubagentInfo | None,
+        *,
+        raised: bool = False,
     ) -> None:
-        """End this start's in-flight claim. A start that landed records its id
-        only when no earlier continuation did; one that did not land leaves an
-        earlier successor in place. A start that RAISED may have accepted its
-        durable row first, so it counts as a continuation of unknown id."""
+        """End the in-flight claim a start took on *conv_id*. A start that landed
+        records its id only when no earlier continuation did; one that did not land
+        leaves an earlier successor in place. A start that RAISED may have accepted
+        its durable row first, so it counts as a continuation of unknown id.
+        Called once per granted claim, by its holder only."""
+        self._continuations_starting.discard(conv_id)
         if original is None:
             return
         original._continuation_starting = False
@@ -5887,6 +5906,8 @@ class SubagentManager:
         original, refusal = self._claim_continuation(conv_id, task, parent_session_key)
         if refusal is not None:
             return refusal
+        result: SubagentInfo | None = None
+        raised = True
         try:
             result = self._continuation.continue_conversation_impl(
                 conv_id,
@@ -5900,10 +5921,10 @@ class SubagentManager:
                 _memory_mode=_memory_mode,
                 _crew_log_asked=_crew_log_asked,
             )
-        except BaseException:
-            self._settle_continuation(original, None, raised=True)
-            raise
-        self._settle_continuation(original, result)
+            raised = False
+        finally:
+            # This call took the claim: every exit (a return, a raise, a cancel) ends it.
+            self._settle_continuation(conv_id, original, result, raised=raised)
         return result
 
     async def continue_conversation_async(
@@ -5922,6 +5943,8 @@ class SubagentManager:
         original, refusal = self._claim_continuation(conv_id, task, parent_session_key)
         if refusal is not None:
             return refusal
+        result: SubagentInfo | None = None
+        raised = True
         try:
             result = await self._continuation.continue_conversation_async_impl(
                 conv_id,
@@ -5935,10 +5958,10 @@ class SubagentManager:
                 _memory_mode,
                 _crew_log_asked,
             )
-        except BaseException:
-            self._settle_continuation(original, None, raised=True)
-            raise
-        self._settle_continuation(original, result)
+            raised = False
+        finally:
+            # This call took the claim: every exit (a return, a raise, a cancel) ends it.
+            self._settle_continuation(conv_id, original, result, raised=raised)
         return result
 
     def _continue_prelude(
