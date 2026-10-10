@@ -47,7 +47,9 @@ def _install_guest_agent() -> None:
         "includeMcpJson": False,
         "prompt": agent_mod.GUEST_AGENT_PROMPT,
     }
-    agent_mod._atomic_json_write(guest_path, guest_config)
+    auto_approve.write_governed_spec(
+        guest_path, guest_config, source="_install_guest_agent", kas_policy="none"
+    )
 
 
 def _install_lite_agent_fallback() -> None:
@@ -60,7 +62,11 @@ def _install_lite_agent_fallback() -> None:
         "mcpServers": {},
         "prompt": "",
     }
-    agent_mod._atomic_json_write(lite_path, lite_config)
+    # Mounts nothing, so the tail has no grant to govern; what it adds here is the
+    # ``includeMcpJson`` pin, without which kiro-cli merges the global ``mcp.json``.
+    auto_approve.write_governed_spec(
+        lite_path, lite_config, source="_install_lite_agent_fallback", kas_policy="none"
+    )
     # Cheap model for the claude_code (CC) provider. kiro-cli resolves the lite
     # model from `model` via --agent; the CC backend can't, so the provider
     # factory reads this cc_model for the lite agent. The kiro spec above uses
@@ -106,7 +112,9 @@ def _install_knowledge_agent() -> None:
         "tools": [],
     }
 
-    agent_mod._atomic_json_write(path, config)
+    auto_approve.write_governed_spec(
+        path, config, source="_install_knowledge_agent", kas_policy="none"
+    )
     agent_mod.logger.info("Installed knowledge agent config: %s (model=%s)", path, model)
 
 
@@ -149,7 +157,11 @@ def _install_research_agent() -> None:
     config["prompt"] = agent_mod._RESEARCH_SYSTEM_PROMPT
     agent_mod.kiro_agents_dir_path().mkdir(parents=True, exist_ok=True)
     path = agent_mod.kiro_agents_dir_path() / _RESEARCH_AGENT_FILENAME
-    agent_mod._atomic_json_write(path, config)
+    # ``build_agent_config`` carries the operator's ``agent.json`` block, and this spec
+    # has always carried it: keep its ``deny``/``ask`` rules, derive the allows.
+    auto_approve.write_governed_spec(
+        path, config, source="_install_research_agent", kas_policy="inherit_narrowing"
+    )
     agent_mod.logger.info("Installed research agent config: %s", path)
 
 
@@ -169,19 +181,19 @@ def _mount_team_lead_dispatch(config: dict) -> None:
 
     The verbs auto-approved on them are the goal conductor's own tuples,
     ``_CONDUCTOR_DASHBOARD_GRANTS`` and ``_LEDGER_CONDUCTOR_WORK_GRANTS``, reused
-    rather than restated, and the whole ``allowedTools`` list goes back through the
-    governance ceiling before it is written. A withheld verb stays mounted and
-    prompts. The KAS ``permissions`` block is derived from the filtered list, as the
-    conductor and worker installers derive theirs.
+    rather than restated. The installer writes the result through the shared tail
+    (``auto_approve.write_governed_spec``), which puts the whole ``allowedTools`` list
+    back through the governance ceiling, strips every inherited server's ungoverned
+    ``autoApprove`` and derives the KAS ``permissions`` block from the filtered list,
+    as the conductor and worker installers do. A withheld verb stays mounted and
+    prompts.
     """
     servers = config.get("mcpServers")
     if not isinstance(servers, dict):
         servers = {}
     servers["kirocrew-dashboard"] = managed_mcp._managed_opt_in_entry("mcp-dashboard")
     servers["kirocrew-work"] = managed_mcp._managed_opt_in_entry("mcp-work")
-    # An inherited server's own ``autoApprove`` must pass the ceiling too, as the
-    # default-spec and worker writers enforce, or a legacy client runs a denied verb.
-    config["mcpServers"] = auto_approve._strip_ungoverned_auto_approve(servers)
+    config["mcpServers"] = servers
     tools = [t for t in config.get("tools") or [] if isinstance(t, str)]
     for ref in ("@kirocrew-dashboard", "@kirocrew-work"):
         if ref not in tools:
@@ -190,10 +202,6 @@ def _mount_team_lead_dispatch(config: dict) -> None:
     allowed = [t for t in config.get("allowedTools") or [] if isinstance(t, str)]
     grants = (*agent_mod._CONDUCTOR_DASHBOARD_GRANTS, *agent_mod._LEDGER_CONDUCTOR_WORK_GRANTS)
     config["allowedTools"] = list(dict.fromkeys((*allowed, *grants)))
-    auto_approve._apply_allowed_tools_ceiling(config, source="_install_team_lead_agent")
-    auto_approve._write_derived_permissions(
-        config, config["allowedTools"], _TEAM_LEAD_AGENT_FILENAME
-    )
 
 
 def _install_team_lead_agent() -> None:
@@ -223,7 +231,7 @@ def _install_team_lead_agent() -> None:
     _mount_team_lead_dispatch(config)
     agent_mod.kiro_agents_dir_path().mkdir(parents=True, exist_ok=True)
     path = agent_mod.kiro_agents_dir_path() / _TEAM_LEAD_AGENT_FILENAME
-    agent_mod._atomic_json_write(path, config)
+    auto_approve.write_governed_spec(path, config, source="_install_team_lead_agent")
     agent_mod.logger.info("Installed team lead agent config: %s", path)
 
 
@@ -262,7 +270,8 @@ def _install_dashboard_manager_agent() -> None:
       work nor reads anybody's sessions. A page is all it touches.
 
     The assembled ``allowedTools`` goes through the governance ceiling before it is
-    written. This installer states its grants as literals rather than deriving them
+    written, in the shared tail (``auto_approve.write_governed_spec``), which also
+    derives the KAS policy from the filtered list. This installer states its grants as literals rather than deriving them
     from ``build_agent_config``, so it inherits no filter, and ``allowedTools`` is the
     one list whose entries never reach the PreToolUse gate: a ceiling that withholds
     one of the panel verbs from the crewmate has to withhold it here too, or this
@@ -292,8 +301,7 @@ def _install_dashboard_manager_agent() -> None:
         "allowedTools": ["fs_read", *agent_mod._MEMBER_PANEL_GRANTS],
         "mcpServers": {"kirocrew-panel": managed_mcp._managed_opt_in_entry("mcp-panel")},
     }
-    auto_approve._apply_allowed_tools_ceiling(config, source="_install_dashboard_manager_agent")
     agent_mod.kiro_agents_dir_path().mkdir(parents=True, exist_ok=True)
     path = agent_mod.kiro_agents_dir_path() / _DASHBOARD_MANAGER_AGENT_FILENAME
-    agent_mod._atomic_json_write(path, config)
+    auto_approve.write_governed_spec(path, config, source="_install_dashboard_manager_agent")
     agent_mod.logger.info("Installed dashboard-manager agent config: %s", path)

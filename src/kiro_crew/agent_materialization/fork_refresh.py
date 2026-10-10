@@ -189,8 +189,9 @@ def _apply_governance_passes(config: dict, *, source: str) -> None:
     """Re-filter the two grant lists kiro-cli honours before the PreToolUse gate, in place.
 
     ``allowedTools`` goes through the ceiling and every governed server loses its
-    ``autoApprove``. Shared by the fork refresh and the shared-template pass so the two
-    cannot drift apart.
+    ``autoApprove``. The shared-template pass runs these two alone: a shared template
+    is the user's own file, so its ``mcp.json`` merge and KAS block stay as written. A
+    fork gets the same two inside the governed tail (``auto_approve.govern_spec``).
     """
     auto_approve._apply_allowed_tools_ceiling(config, source=source)
     servers_map = config.get("mcpServers")
@@ -393,15 +394,21 @@ def _refresh_forked_templates_locked(*, gated_off: "frozenset[str] | None" = Non
                         agent_mod.logger.debug(
                             "refresh failed for forked template %r", fork_name, exc_info=True
                         )
-                # Governance passes, same as every other spec writer:
+                # Governance passes, the same tail every other spec writer runs:
                 # allowedTools and autoApprove are the two paths that never
                 # reach the PreToolUse gate, so a fork carrying grants the
                 # ceiling later tightened against must be re-filtered on every
                 # refresh — this writer is exactly where a stale grant would
-                # otherwise persist verbatim.
-                _apply_governance_passes(config, source=f"fork-refresh:{fork_name}")
+                # otherwise persist verbatim. The tail also pins the global
+                # ``mcp.json`` merge off, which a fork of a custom template
+                # (no plumbing refresh above) would otherwise keep: a server
+                # arriving through that merge is outside every filter here. A
+                # fork is the user's file, so its KAS block is seeded when
+                # absent and never edited, the primary spec's rule.
                 agent_state.lift_and_strip_bookkeeping(config, fork_name)
-                agent_mod._atomic_json_write(spec_path, config)
+                auto_approve.write_governed_spec(
+                    spec_path, config, source=f"fork-refresh:{fork_name}", kas_policy="seed"
+                )
         except Exception:
             failures.add(fork_name)
             agent_mod.logger.warning(
