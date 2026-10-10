@@ -1081,7 +1081,7 @@ version and auto-widget caps are the store's, in `kiro_crew.artifacts`.
 | `name` | ≤ 200 chars, non-empty |
 | `description` | ≤ 2,000 chars |
 | `tags` | ≤ 16 tags; each ≤ 64 code points of its NFC form (`MAX_TAG_LEN`), made of Unicode letters, the marks that attach to them (`Mn`/`Mc`, at most 4 on one character) and digits (`Nd`/`Nl`) plus `_`, `:`, `.`, `-`, opening with a letter or digit, every code point visible (no `Default_Ignorable_Code_Point`, no enclosing mark) and its own spelling (no compatibility form of other characters) (`normalize_tag`) |
-| `content` | ≤ 25 MiB (`MAX_CONTENT_BYTES`) |
+| `content` | ≤ 25 MiB (`MAX_CONTENT_BYTES`), and encodable as UTF-8: content holding an unpaired surrogate is refused for EVERY kind, because `_validate_content` measures the content by encoding it and content that cannot be encoded cannot be stored — so the line that asks how big it is also decides whether it can exist, and the refusal is an `ArtifactValidationError` a caller can act on rather than the `UnicodeEncodeError` that line would otherwise raise |
 | `kind` | one of `widget` / `html` / `markdown` / `svg` / `json` / `text` / `image` / `webapp` / `dashboard` (see [Dashboard packages](#dashboard-packages-kinddashboard)) |
 | `source` | stored values: `chat` / `cron` / `subagent` / `manual` / `import` / `dashboard` / `slack` / `cli` / `task-runner` / `unknown`; the MCP save schema accepts the first five explicitly |
 | `MAX_VERSIONS` | 50 (oldest pruned beyond cap) |
@@ -1283,6 +1283,16 @@ than history, so a record written before the check can still be re-themed,
 re-versioned and REBOUND. A revert is exempt for the same reason: it submits a
 past version's whole package and `revert_package` discards the binding in it, so
 the submitted value is one the store was never going to store.
+A crewmate writes its own package through the save route — the `dashboard_save`
+MCP tool on `kirocrew-panel` and `POST /api/agent-panel/dashboard/save`
+(`kiro_crew.dashboard.handlers.agent_panel`). The `bound_to` is derived from the
+vetted caller and never read from the request, so a body carrying `bound_to` or
+`kind` is refused; a declared field name or block id a redactor would mask is
+refused too, before anything is written. **One crewmate keeps exactly one
+package:** the save holds a per-binding lock across the lookup and the write, and
+a lookup that cannot prove whether a package already exists is refused rather
+than minting a second artifact. (No renderer serves a saved package on this base
+yet — the save stores it; a reader comes with a later change.)
 
 The kind is in `ALLOWED_KINDS` and deliberately NOT in
 `USER_SELECTABLE_KINDS`, and [Kind inference](#kind-inference) never returns it:

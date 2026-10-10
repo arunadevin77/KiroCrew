@@ -5770,6 +5770,7 @@ _MEMBER_PANEL_GRANTS: tuple[str, ...] = (
     # exist -- which is the read that stops it guessing one.
     "@kirocrew-panel/dashboard_types",
     "@kirocrew-panel/dashboard_write",
+    "@kirocrew-panel/dashboard_save",
     "@kirocrew-panel/dashboard_templates",
     "@kirocrew-panel/dashboard_preview",
     "@kirocrew-panel/dashboard_apply",

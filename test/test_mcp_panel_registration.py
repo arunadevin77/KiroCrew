@@ -311,6 +311,7 @@ class TestWhatThisSetGrants:
         "dashboard_fields",
         "dashboard_types",
         "dashboard_write",
+        "dashboard_save",
         "dashboard_templates",
         "dashboard_preview",
         "dashboard_apply",

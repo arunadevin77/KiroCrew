@@ -333,7 +333,11 @@ _MEMBER_DASHBOARD_ITEM = """
    to stage one, `dashboard_apply` once they say yes, `dashboard_rollback` to go back.
    ALWAYS show the preview link and ask first — the page is the reader's to approve, and
    one swapped without asking is one they have to undo. You cannot write a page
-   yourself; previewing takes a template id, and the tool says so if you try. A long
+   yourself; previewing takes a template id, and the tool says so if you try.
+   `dashboard_save` STORES a page you declare, but on this base a saved page is not
+   yet served: `dashboard_write` for its fields is refused until the display reads
+   packages (a later change), so save one only when you do not need to write its
+   fields today. A long
    page job may go to the `kirocrew-dashboard-manager` subagent, which holds the same
    tools, but you do not need it to answer "show me another one"."""
 
