@@ -40,17 +40,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final
+from typing import Final
 
 from kiro_crew.dashboard_agentic import Instance
-
-if TYPE_CHECKING:  # the manifest reaches the projection registry, so not at run time
-    from kiro_crew.dashboard_templates.manifest import TemplateManifest
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "PACKAGE_MANIFEST_SOURCE",
     "PACKAGE_STATES",
     "STATE_EMPTY",
     "STATE_ERROR",
@@ -66,7 +62,6 @@ STATE_LIVE: Final[str] = "live"
 STATE_EMPTY: Final[str] = "empty"
 #: A package is there and its Model does not parse.
 STATE_ERROR: Final[str] = "error"
-#: A package is there and this caller may not read it.
 
 #: Every state :func:`read_package_model` can answer with.
 #:
@@ -90,134 +85,37 @@ class PackageReadError(Exception):
 
 
 @dataclass(frozen=True)
-class _ReadModel:
-    """The three values :func:`_manifest_of` reads, and nothing else.
-
-    A local holder rather than the gate's fuller Model view, because this reader needs
-    the field table, the slug and the version, and none of the binding, the layout
-    fingerprint or the block subscriptions. Keeping it local also keeps the gate free to
-    shape its own view without this module following it.
-    """
-
-    slug: str
-    version: int
-    fields: dict[str, Any]
-
-
-@dataclass(frozen=True)
 class PackageRead:
     """What the write path is told about a member's current dashboard package."""
 
-    #: The Model as the write path needs it, or ``None`` for every non-live state.
+    #: The Model as the write path needs it, or ``None`` when there is none to check
+    #: against -- every non-live state, and a live PACKAGE, which this build does not
+    #: translate.
     #:
     #: :class:`~kiro_crew.dashboard_agentic.Instance` is REUSED rather than a new type
     #: minted beside it, and that reuse is what keeps this seam one function:
     #: ``check_write`` already accepts exactly this narrow view -- the field specs plus
     #: the version a write is stamped with -- so it is not touched by the move off
-    #: templates. ``instance_version`` carries the PACKAGE's version here.
+    #: templates.
     model: Instance | None
     #: One of :data:`PACKAGE_STATES`.
     state: str
     #: One sentence a person can be shown, and the one the refusal quotes.
     state_reason: str
+    #: Whether a real dashboard PACKAGE was read, as opposed to the template instance
+    #: this read falls through to when no package is bound.
+    #:
+    #: PROVENANCE, and nothing more. What it means for a write is the write route's to
+    #: decide -- today that route refuses, because the page a crewmate is shown still
+    #: renders the template -- and keeping the meaning there is what stops this module
+    #: from having to know what any page draws.
+    from_package: bool = False
 
 
 #: The ``bound_to`` scope a MEMBER's package is spelled under. The other scope the
 #: binding grammar admits is ``session:<slot key>``, which names a slot and not a
 #: crewmate, so it is never what a member resolves to.
 _CREWMATE_SCOPE: Final[str] = "crewmate:"
-
-#: The ``source`` a synthesized manifest declares. See :data:`manifest.SOURCES`: its own
-#: word, so the render gate and the catalogue scan can still tell a package from a
-#: template a person wrote.
-PACKAGE_MANIFEST_SOURCE: Final[str] = "package"
-
-#: One package data type -> the manifest type it is checked as.
-#:
-#: EXPLICIT and declarative, which is the shape this has to be while it is the only
-#: spelling. ``timestamp`` and ``enum`` both land on ``string``, so this is information
-#: the package catalogue does not carry yet and this table is the second place the
-#: mapping is written down. The package line has offered to put ``manifest_type`` and
-#: ``manifest_shape`` on its ``FieldType``; when that lands, a table lookup off the
-#: catalogue SUPERSEDES this dict and
-#: ``test_every_package_data_type_has_a_manifest_type`` is what names a type added
-#: upstream with no row here in the meantime.
-_PACKAGE_TYPE_TO_MANIFEST: Final[dict[str, str]] = {
-    "number": "number",
-    "text": "string",
-    "bool": "boolean",
-    # An instant is checked as the ISO string it is written as. The manifest has no
-    # temporal type, and inventing one here would be a type no page knows how to draw.
-    "timestamp": "string",
-    # A label out of a fixed set: a string, plus the choices as the field's own Shape,
-    # which is what makes a value outside the set refusable rather than merely odd.
-    "enum": "string",
-}
-
-
-class _ModelUntranslatable(Exception):
-    """A validated package this reader cannot express as manifest field specs."""
-
-
-def _manifest_of(model: object) -> "TemplateManifest":
-    """A package's Model as the ``TemplateManifest`` the write path checks against.
-
-    The translation lives in this module because the write path must not learn the
-    package's vocabulary -- that is the whole point of one seam. Every row of it is
-    recorded in ``INTERFACE.md``.
-
-    ``id`` is the SLUG. A package is not a template and has no template id, and this
-    string is read aloud to the agent in two refusal sentences ("is not a field of
-    template 'report'"), so it has to name something the agent can actually go and
-    look at. Rewording those two sentences for v3 belongs to the agent line.
-    """
-    from kiro_crew.dashboard_templates.manifest import (
-        FieldSpec,
-        Shape,
-        TemplateManifest,
-    )
-
-    slug = str(getattr(model, "slug", "") or "")
-    version = int(getattr(model, "version", 0) or 0)
-    specs: dict[str, FieldSpec] = {}
-    for name, spec in getattr(model, "fields", {}).items():
-        declared = str(spec.get("type") or "")
-        mapped = _PACKAGE_TYPE_TO_MANIFEST.get(declared)
-        if mapped is None:
-            raise _ModelUntranslatable(
-                f"this dashboard package declares field {name!r} as type {declared!r}, "
-                "which this gateway cannot check a write against -- it is newer than "
-                "this build's data-type mapping"
-            )
-        source = spec.get("source") or {}
-        agentic = source.get("agentic") is True
-        choices = spec.get("choices")
-        shape = (
-            Shape(type=mapped, enum=tuple(choices))
-            if agentic and declared == "enum" and isinstance(choices, list) and choices
-            # A fold-backed field declares no shape: the manifest refuses one there,
-            # because the fold writes the value and a shape would promise something no
-            # write path checks.
-            else None
-        )
-        specs[str(name)] = FieldSpec(
-            name=str(name),
-            type=mapped,
-            fold=str(source.get("fold")) if not agentic else None,
-            path=str(source.get("path")) if not agentic else None,
-            agentic=agentic,
-            shape=shape,
-        )
-    return TemplateManifest(
-        id=slug,
-        # A positive int or the manifest refuses it, and version 0 is what an artifact
-        # with no version reads as.
-        version=max(version, 1),
-        title=f"dashboard package {slug}" if slug else "dashboard package",
-        description="a dashboard composed by this crewmate",
-        source=PACKAGE_MANIFEST_SOURCE,
-        fields=specs,
-    )
 
 
 def read_package_model(member: str) -> PackageRead:
@@ -235,6 +133,10 @@ def read_package_model(member: str) -> PackageRead:
     write it makes. :data:`STATE_ERROR` does not fall through: a package that is present
     and broken is a real answer, and a template standing behind it would mask the one
     thing the crewmate has to be told.
+
+    A member key the crewmate binding grammar cannot spell reaches here as
+    :data:`STATE_EMPTY` and so falls through too -- see the branch in
+    :func:`_from_package` that logs it.
     """
     resolution = _from_package(member)
     if resolution.state != STATE_EMPTY:
@@ -247,16 +149,50 @@ def read_package_model(member: str) -> PackageRead:
 
 def _from_package(member: str) -> PackageRead:
     """Read the ``kind="dashboard"`` artifact bound to *member*."""
-    from kiro_crew.artifact_store.dashboard_package import parse_package, resolve_bound_slug
+    from kiro_crew.artifact_store.dashboard_package import (
+        BindingLookupIncomplete,
+        parse_package,
+        resolve_bound_slug,
+    )
     from kiro_crew.artifacts import ArtifactError, get_default_store
 
     bound_to = f"{_CREWMATE_SCOPE}{member}"
     try:
         slug = resolve_bound_slug(bound_to)
+    except BindingLookupIncomplete as exc:
+        # The scan could not open every record the listing showed as a dashboard, so
+        # one of THOSE may be this member's package and "no package" is unproven. ERROR
+        # rather than EMPTY, and the difference is the whole point: EMPTY falls through
+        # to the template instance store below, which hands back a BUILTIN page's
+        # Model, and a write checked against that can replace a cell with a value of
+        # the wrong shape.
+        return PackageRead(
+            None, STATE_ERROR, f"{member}'s dashboard package cannot be located: {exc}"
+        )
     except (ArtifactError, ValueError) as exc:
-        # A binding this reader cannot even spell is content, not IO: an agent
-        # given a 500 for a member name learns nothing it can act on.
-        return PackageRead(None, STATE_ERROR, f"{member!r} is not a dashboard binding: {exc}")
+        # A binding this reader cannot even spell is content, not IO: an agent given a
+        # 500 for a member name learns nothing it can act on. EMPTY and not ERROR,
+        # because unlike the branch above no ``kind="dashboard"`` record is implicated
+        # here at all: ``crewmate:<member>`` is not a binding the grammar admits, so no
+        # package can be stored under it and there is nothing present to be broken.
+        # The write is checked against the template instance, which is what the
+        # member's page draws and what its writes are checked against without this
+        # path.
+        #
+        # The population this covers is a member key that is not a crewmate slug: a
+        # root session resolves to ``session:<digest>``, which this reader spells
+        # ``crewmate:session:<digest>`` and the grammar rejects on the inner colon.
+        # Answering ERROR there refuses every write such a session makes, as a broken
+        # package, for a scope that is not the crewmate scope to begin with. A member
+        # key in the ``session:`` scope needs the lookup to use that scope rather than
+        # prefix it, and that belongs to the change that introduces the key.
+        logger.warning(
+            "dashboard package: %r is not a crewmate binding, so no package can be "
+            "bound to it; falling through to the template instance: %s",
+            member,
+            exc,
+        )
+        return PackageRead(None, STATE_EMPTY, f"{member!r} is not a dashboard binding: {exc}")
     except OSError as exc:
         raise PackageReadError(f"the dashboard packages cannot be listed: {exc}") from exc
     if not slug:
@@ -275,34 +211,29 @@ def _from_package(member: str) -> PackageRead:
         return PackageRead(
             None, STATE_ERROR, f"the dashboard package at {slug!r} does not load: {exc}"
         )
-    # The three values ``_manifest_of`` reads, taken off the parsed package rather than
-    # through a projection of it: the field table IS ``model.types``, and the slug and
-    # version are this read's own. Nothing here needs the binding, the layout
-    # fingerprint or the block subscriptions a fuller Model view would carry.
     types = (package.get("model") or {}).get("types")
     if not isinstance(types, Mapping):
         # The gate validated the package and this reader cannot find a field table in
         # it. A disagreement between two readers of one record, so it is a state with a
-        # sentence rather than a raise -- the same answer an untranslatable type gets.
+        # sentence rather than a raise, and it stays AHEAD of the live answer below: a
+        # package that is present and malformed is told so, rather than being folded
+        # into the one answer every readable package gets.
         return PackageRead(
             None, STATE_ERROR, f"the dashboard package at {slug!r} declares no field table"
         )
-    model = _ReadModel(
-        slug=slug,
-        version=int(getattr(loaded, "version", 0) or 0),
-        fields=dict(types),
-    )
-    try:
-        manifest = _manifest_of(model)
-    except _ModelUntranslatable as exc:
-        # The gate validated the package and this reader cannot express it as field
-        # specs -- a data type the mapping below has no row for. A disagreement between
-        # two readers, so it is a state with a sentence rather than a raise.
-        return PackageRead(None, STATE_ERROR, str(exc))
+    version = int(getattr(loaded, "version", 0) or 0)
+    # LIVE, and carrying NO Model. A package's field table is not translated into
+    # manifest field specs on this base, because the one caller refuses a package-bound
+    # write before it would check one: the page a crewmate is shown still renders the
+    # template instance, so checking the write against the package while the page draws
+    # something else is what lets an undrawable value land. The translation ships with
+    # the change that makes the display read the same package, which is the first place
+    # its output is used for anything.
     return PackageRead(
-        Instance(manifest=manifest, instance_version=model.version),
+        None,
         STATE_LIVE,
-        f"package {slug!r} version {model.version}, bound to {bound_to}",
+        f"package {slug!r} version {version}, bound to {bound_to}",
+        from_package=True,
     )
 
 

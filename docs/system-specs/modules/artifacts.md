@@ -1124,6 +1124,28 @@ from every other kind, both enforced in `kiro_crew.artifacts`:
   artifact INTO this kind, and `ArtifactStore.relocate` refuses one on an
   artifact already of this kind.
 
+**The binding lookup, and when "absent" is a claim it will not make.**
+`resolve_bound_slug(bound_to)` names the package bound to a crewmate or a slot.
+It reads the `kind="dashboard"` records newest-first, capped at
+`MAX_BINDING_SCAN` (256 — one package exists per crewmate or slot, so a library
+past that is one to prune), matches on the stored ENVELOPE rather than on a
+validated package so a layout the current validator rejects is still FOUND, and
+returns a match the moment it sees one. `None` means absent as far as the
+LISTING goes: every dashboard record the store listed was opened, every envelope
+decoded, and none names this binding. Three things leave even that unproven and
+raise `BindingLookupIncomplete` instead — a scan the cap cut short, a record
+this process could not open, and an envelope it could not decode. None of the
+three may answer `None`, because a caller reads `None` as "this member has no
+package" and validates its next write against a different Model; each of them
+names a record the listing proved is a dashboard, so one really may be the
+package bound here.
+
+What `None` does not rule out is a record whose own `meta.json` will not read.
+`ArtifactStore.list` drops it with a warning, so it never reaches the scan, and
+its `kind` is exactly what that file holds. A caller that must tell such a
+record apart needs the store to report it, which belongs to the change that has
+such a caller.
+
 The kind is in `ALLOWED_KINDS` and deliberately NOT in
 `USER_SELECTABLE_KINDS`, and [Kind inference](#kind-inference) never returns it:
 a caller passes it explicitly or does not get it. Hand-flipping a prose document
