@@ -257,6 +257,16 @@ async def api_session_control_create(request: web.Request) -> web.Response:
         agent_kind = body.get("agent_kind", "")
         if not isinstance(agent_kind, str):
             raise sc.SessionControlError("agent_kind must be a string", code="invalid_field_type")
+        # Strictly typed for the same reason: bool is an int subclass, so True
+        # would otherwise read as a threshold of 1. Range and NaN are
+        # create_session's to refuse, before its dry-run return.
+        autocompact_pct = body.get("autocompact_pct")
+        if autocompact_pct is not None and (
+            isinstance(autocompact_pct, bool) or not isinstance(autocompact_pct, (int, float))
+        ):
+            raise sc.SessionControlError(
+                "autocompact_pct must be a number", code="invalid_field_type"
+            )
         # Warmed AFTER the body read, which suspends: a config edit landing in that
         # window would change the fingerprint and leave `create_session`'s own
         # synchronous gate re-reading the file on the loop. Nothing suspends between
@@ -270,6 +280,7 @@ async def api_session_control_create(request: web.Request) -> web.Response:
             agent_kind=agent_kind,
             folder_id=str(body.get("folder_id") or ""),
             model=str(body.get("model") or ""),
+            autocompact_pct=autocompact_pct,
             dry_run=dry_run,
             # The fence verdict this request's admission already settled, for the
             # same reason every other route forwards it as

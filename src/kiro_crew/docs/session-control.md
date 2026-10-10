@@ -50,6 +50,7 @@ conductor: a session that can dispatch but cannot edit a file. Always pass
 | `agent_kind` | no | One value, `template`: run the shared template `agent` names on your own memory, even when a crewmate carries the same name. Omit for name-first resolution (a crewmate wins, with its own memory). Always pass it for `kirocrew-worker`, which needs no memory of its own. Requires `agent` (`agent_kind_requires_agent` otherwise); a kind that does not resolve is refused `agent_unresolved` rather than falling back to whoever answers by default |
 | `folder` | no | Sidebar folder id or `/`-separated path to file it into, atomically with creation. Missing path segments are created (`mkdir -p`). The create is checked first, so a create that would be refused normally leaves no new empty folder behind (a race can still leave one) |
 | `model` | no | Model the session starts on, pinned as if the person picked it in the model dropdown (same guard; refused with `model_rejected` when the picker would refuse it). Omit for the agent's or global default |
+| `autocompact_pct` | no | Context-usage percent (5 to 90) at which the NEW session auto-compacts, set as its own override as if the person set "Auto-compact at" in its context meter. Only the new session gets it; the global `session.autocompact_pct` and every other session are unchanged. The tool schema refuses an out-of-range value before any request reaches the dashboard. The reply is `Error: autocompact_pct: must be <= 90.0`, or `Error: autocompact_pct: must be >= 5.0` for a value below the range. Omit to follow the global value |
 
 No argument is formally required. The new session **starts empty** — nothing runs
 in it until the person types, or until you send it a message. The reply carries
@@ -807,6 +808,7 @@ gateway-issued key counts. Refusals you should expect, by code:
 | `model_owner_only` | HTTP 403: `auto` and **Auto (Jev)** can only be picked by the owner from the model picker |
 | `model_rejected` | The model id is missing, malformed, looks like a credential, or is one the target's backend would refuse |
 | `effort_rejected` | session_set_model: `reasoning_effort` is not one of the five standard levels (low, medium, high, xhigh, max). `""` is refused too; set it from the target's effort dropdown |
+| `pct_out_of_range` / `pct_not_finite` | HTTP 400 from POST /api/session-control/create: autocompact_pct is outside 5 to 90 (infinity included), or is NaN or an integer too large for a float. A tool caller never sees these codes. The tool schema refuses an out-of-range value first, and the reply is "Error: autocompact_pct: must be <= 90.0" (or ">= 5.0" below the range). NaN is the one bad value that passes the schema. The dashboard then refuses it, and the reply says "autocompact_pct must be a finite number" |
 | `target_replaced` | HTTP 409: the target was replaced by another session under the same key while the call ran; nothing was changed. Try again |
 | `invalid_field_type` | An argument had the wrong type (for example a broadcast target list that is not a list of strings) |
 

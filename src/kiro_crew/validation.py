@@ -39,7 +39,11 @@ from kiro_crew.artifact_store.rules import normalize_tag as _normalize_artifact_
 # no native library is loaded on any platform. Aliased so the schema block below
 # reads as "the computer-use vocabulary" rather than bare names.
 from kiro_crew.computer_use import types as _cu_types
-from kiro_crew.config.sections import SUBAGENT_MAX_TURNS_CEILING
+from kiro_crew.config.sections import (
+    AUTOCOMPACT_PCT_MAX,
+    AUTOCOMPACT_PCT_MIN,
+    SUBAGENT_MAX_TURNS_CEILING,
+)
 
 # ``MAX_SHORT_STRING`` is re-exported, not just used: it is part of this
 # module's surface and 15 other modules read it from here. It is DEFINED in
@@ -3992,6 +3996,19 @@ SESSION_CREATE_SCHEMA = ToolSchema(
             default="",
             max_len=MAX_SHORT_STRING,
             pattern=_MODEL_NAME_RE,
+        ),
+        # The new session's own compaction threshold: the same per-session
+        # override a person sets with "Auto-compact at" in the context meter.
+        # Omitted means None, so the session follows the global
+        # session.autocompact_pct exactly as before. The range check here is the
+        # early refusal; create_session repeats it and adds the NaN guard,
+        # because the HTTP route can be reached without this schema.
+        FieldSpec(
+            "autocompact_pct",
+            (int, float),
+            required=False,
+            min_val=AUTOCOMPACT_PCT_MIN,
+            max_val=AUTOCOMPACT_PCT_MAX,
         ),
     ],
 )
