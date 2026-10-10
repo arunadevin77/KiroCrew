@@ -5358,8 +5358,6 @@
         "close": "Close crew chat",
         "load_failed": "Could not load this session from {{name}}.",
         "empty": "No messages yet.",
-        "interrupted": "Turn interrupted",
-        "continue": "Continue",
         "action_failed": "{{name}} refused that action. Try again, or open the crew's own dashboard.",
         "offline": "{{name}} is not connected. Reconnect it to send.",
         "rewinding": "Rewinding: sending replaces the conversation from this message on.",
@@ -5374,7 +5372,10 @@
         "file_on_crew": "The agent on {{name}} sent {{file}}. The file stays on {{name}}.",
         "retry": "Retry",
         "running_on_header": "On {{name}}",
+        "unreachable": "Couldn't reach {{name}}. Try again once it is back online.",
+        "open_crew_dashboard": "Open {{name}}'s dashboard",
         "approval_elsewhere": "The agent on {{name}} is waiting for an approval this window cannot answer. Answer it on the crew's own dashboard.",
+        "stopping": "Stopping…",
         "yolo_elsewhere": "YOLO covers every session on {{name}}. Change it on the crew's own dashboard.",
         "mode_unknown": "Couldn't read the approval mode on {{name}}. Trying again…"
       }
