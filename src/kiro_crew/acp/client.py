@@ -113,7 +113,10 @@ from kiro_crew.acp.liveness import (
     _consume_future_exception,
     consult_offloaded,
 )
-from kiro_crew.acp.mcp_ref_guard import warn_unresolved_server_refs
+from kiro_crew.acp.mcp_ref_guard import (
+    warn_remote_header_secret_refs,
+    warn_unresolved_server_refs,
+)
 from kiro_crew.acp.mcp_session_report import BUCKET_CAP as MCP_REPORT_BUCKET_CAP
 from kiro_crew.acp.mcp_session_report import ERROR_CAP as MCP_REPORT_ERROR_CAP
 from kiro_crew.acp.mcp_session_report import NAME_CAP as MCP_REPORT_NAME_CAP
@@ -3114,6 +3117,14 @@ class AcpClient:
                 self._mcp_report.record_unresolved_refs(unresolved)
         except Exception:
             logger.debug("unresolved-ref guard: evaluation failed", exc_info=True)
+        try:
+            header_refs, omitted = warn_remote_header_secret_refs(
+                spec, wire_servers, backend=self.backend, agent=self._agent
+            )
+            if header_refs:
+                self._mcp_report.record_header_secret_refs(header_refs, omitted)
+        except Exception:
+            logger.debug("remote-header guard: evaluation failed", exc_info=True)
 
     def _session_mcp_servers(self) -> list[dict[str, Any]]:
         """MCP server array passed to this session's ``session/new`` / ``session/load``.
