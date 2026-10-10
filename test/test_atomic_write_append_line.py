@@ -59,6 +59,7 @@ def _append_with_space_running_out(tmp_path, kind: str, limit: int) -> dict:
     env = {**os.environ, "KIROCREW_HOME": str(tmp_path), "PYTHONDONTWRITEBYTECODE": "1"}
     done = subprocess.run(
         [sys.executable, "-c", _CHILD, kind, str(tmp_path / kind), str(limit), KEY],
+        cwd=str(tmp_path),
         env=env,
         capture_output=True,
         text=True,
@@ -124,12 +125,12 @@ def _half_then_enospc(fd, data, path):
 def test_append_line_takes_back_a_failed_write(tmp_path, monkeypatch):
     target = tmp_path / "log.jsonl"
     target.write_bytes(b'{"n": 1}\n')
-    monkeypatch.setattr(aw, "_write_all", _half_then_enospc)
-    with pytest.raises(OSError) as raised:
-        aw.append_line(target, json.dumps({"n": 2}))
+    with monkeypatch.context() as m:
+        m.setattr(aw, "_write_all", _half_then_enospc)
+        with pytest.raises(OSError) as raised:
+            aw.append_line(target, json.dumps({"n": 2}))
     assert raised.value.errno == errno.ENOSPC
     assert target.read_bytes() == b'{"n": 1}\n', "the file must be back at its old size"
-    monkeypatch.undo()
     aw.append_line(target, json.dumps({"n": 3}))
     rows = [json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()]
     assert rows == [{"n": 1}, {"n": 3}]
@@ -163,12 +164,12 @@ def test_atomic_write_keeps_the_old_file_and_raises_on_enospc(tmp_path, monkeypa
     def full(*_a, **_kw):
         raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
 
-    monkeypatch.setattr(aw, "_write_all", full)
-    with pytest.raises(OSError) as raised:
-        aw.atomic_write(target, '{"version": 2}')
+    with monkeypatch.context() as m:
+        m.setattr(aw, "_write_all", full)
+        with pytest.raises(OSError) as raised:
+            aw.atomic_write(target, '{"version": 2}')
     assert raised.value.errno == errno.ENOSPC
     assert target.read_text(encoding="utf-8") == '{"version": 1}'
     assert sorted(p.name for p in tmp_path.iterdir()) == ["store.json"], "temp file left behind"
-    monkeypatch.undo()
     aw.atomic_write(target, '{"version": 2}')
     assert target.read_text(encoding="utf-8") == '{"version": 2}'
