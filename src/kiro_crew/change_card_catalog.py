@@ -80,8 +80,9 @@ RISK_CODE_EXEC = "code_exec"
 OP_APPLY = "apply"
 OP_UNDO = "undo"
 
-#: The crewmate template the create-a-crewmate flow builds from
-#: (``MeetCrewmatesFlow.tsx`` ``DEFAULT_TEMPLATE``).
+#: The crewmate template a proposed crewmate is built from: the one the
+#: Crewmates page's New crewmate card builds from (``NewCrewmateDialog.tsx``
+#: ``DEFAULT_CREWMATE_TEMPLATE``).
 DEFAULT_CREWMATE_TEMPLATE = "kirocrew"
 
 REASON_MAX_CHARS = 500
@@ -1119,6 +1120,9 @@ def build_preview(
                     "kiro_agent": DEFAULT_CREWMATE_TEMPLATE,
                     "description": p["goal"],
                     "source": "kirocrew",
+                    # Its first chat opens with the crewmate asking about this
+                    # goal, as one made on the Crewmates page does.
+                    "first_greeting": True,
                 },
             )
         ]

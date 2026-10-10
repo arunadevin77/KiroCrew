@@ -4352,7 +4352,7 @@ polled by this watchdog.
 |---|---|
 | `routes.tsx` | `lazyPage` and the query-keeping redirect elements the route table mounts |
 | `boot/terminalRestore.ts` | The two looks at the terminal sessions that rule on the restored docked and side-panel terminal tabs; the ruling stays with `useBottomTerminal` and `usePanelTabs` |
-| `boot/firstRun.tsx`, `boot/startupVideo.tsx` | The first-run chapters (Import setup, Privacy, the Customize tour, Meet CrewMates) in `OnboardingShellHost`; the startup feature clip and what it yields to. In the look-preview frame (`utils/lookPreview.ts`: the scaled dashboard the Customize tour's "Pick your look" step embeds at `/chat?look-preview=1`) `App.tsx` mounts none of these hosts -- one block covering every self-opening launch surface, pinned by `test/App.lookPreviewFrame.test.tsx` -- so nothing ever shows over the dashboard inside its own preview |
+| `boot/firstRun.tsx`, `boot/startupVideo.tsx` | The first-run chapters (Import setup, Privacy, the Customize tour) in `OnboardingShellHost`; the startup feature clip and what it yields to. In the look-preview frame (`utils/lookPreview.ts`: the scaled dashboard the Customize tour's "Pick your look" step embeds at `/chat?look-preview=1`) `App.tsx` mounts none of these hosts -- one block covering every self-opening launch surface, pinned by `test/App.lookPreviewFrame.test.tsx` -- so nothing ever shows over the dashboard inside its own preview |
 | `nav/navItems.ts`, `nav/navTip.ts`, `nav/appRail.tsx`, `nav/railBadges.ts`, `nav/routeActive.ts`, `nav/railChrome.tsx`, `nav/adaptiveMobileRail.tsx` | The rail (`adaptiveMobileRail` folds the secondary tiles into the Apps scroller on a short phone rail): its static descriptors, the collapsed-row hover label, `advertisedNavItems` and the Apps order (drag reorder, hidden slots), the app, approval, Discover and notification badge maps and the apps' run states (`NavBadge` in `App.tsx` adds the registry's own counts and draws every indicator), the lit row, and the brand row and community links |
 | `nav/mobileConnect.tsx`, `nav/developerMode.ts` | The phone-connection methods behind the "Connect your phone" row, and its dialog; developer mode as the Developer row reads it |
 | `topbar/metricsReadout.tsx`, `topbar/kiroUsageReadout.tsx`, `topbar/requestFeature.ts` | The readout capsule's system-metrics segment and hover card, its Kiro credit segment, and Request a Feature |
@@ -5714,8 +5714,8 @@ reload the way a change card does: `pending` serves each slot's newest ended gui
 for 24 hours (unless a newer guide is in progress, the slot was closed, or the owner
 dismissed it), the row itself records the final status for after that, and ended
 guides are pruned after seven days, within the store's fixed cap. When a cancelled or
-expired guide leaves the creation flow it opened untouched, the Crewmates page
-closes that flow so the chat and its result line show; a flow the user edited
+expired guide leaves the New crewmate card it opened untouched, the Crewmates page
+closes that card so the chat and its result line show; a card the user edited
 stays open.
 
 **The offering agent's own words.** The dashboard stays the source of truth for where and
@@ -5763,7 +5763,9 @@ writes a dismissal, so the chat's result line stays.
 The actions are `settings.show`, `crewmate.create`, `mcp.open_add`, `ui.show` and `ui.find`. `ui.find {route?, label, role?, container?, caution?}` points at a control by its on-screen `label` on one page (the dashboard's language), searching the visible controls and, when none matches, side-effect-free containers (menus, popovers, disclosures, unselected tabs), restoring each before the next. It never opens or points at the agent's own trust-root pages (`TRUST_ROOT_ROUTES`) nor at a control whose name widens what the agent may do (`CEILING_LABEL_RE`); a removal label (`REMOVAL_LABEL_RE`) carries `caution`, so the press alone never ends the step. The tab reports only `found` / `ambiguous` / `none` with a count, role and the registered id or label key (`guide_catalog.clean_find_report`).
 Routes and anchors come from product registries, never model-supplied selectors
 or scripts. Settings guidance excludes credential and access-control controls
-and reports no setting values. Crewmate drafts reuse the embedded creation flow.
+and reports no setting values. A crewmate draft opens the New crewmate card with its name and goal filled in;
+`crewmate.create` has one step, that card's Create, completed only by the
+gateway from the crewmate it created.
 `mcp.open_add` carries no parameters and pre-fills nothing: it points at the
 existing MCP servers tab, then its Add Custom button, then the open form's
 server JSON box (where command, args and env go), and completes when the
