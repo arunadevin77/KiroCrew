@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Lock, RotateCw } from 'lucide-react'
+import { Lock, RotateCw, Eye } from 'lucide-react'
 import { api, type DashboardManifest } from '../../api/client'
+import { apiErrorCode, isNotFoundError } from '../../api/apiError'
+import { retryPolicy } from '../../api/queryClient'
 import { Badge, Btn } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
 import { useTheme } from '../../hooks/useTheme'
@@ -9,7 +11,6 @@ import { useSandboxDoc } from '../../hooks/useSandboxDoc'
 import { useFrameOpenLink } from '../../hooks/useFrameOpenLink'
 import { buildSrcdoc, readThemeVars } from '../../lib/widgetSrcdoc'
 import { i18nT } from '../../i18n/t'
-import { apiErrorCode } from '../../api/apiError'
 import { useLanguage } from '../../i18n/LanguageProvider'
 import { MEMBER_DASHBOARD_QUERY_PREFIX, SESSION_DASHBOARD_QUERY_PREFIX } from '../../hooks/useWebSocket'
 
@@ -96,6 +97,13 @@ const READY_TIMEOUT_MS = 6000
  */
 export const DASHBOARD_FALLBACK_REFETCH_MS = 60_000
 
+/** The preview read's own "nothing staged" answer: 404 `no_preview`. Only that one.
+ *  The same route answers 404 `member_not_found` for a crewmate that is gone, and
+ *  that is a load failure the reader must be told about, not a preview that ended. */
+function isNothingStaged(e: unknown): boolean {
+  return isNotFoundError(e) && apiErrorCode(e) === 'no_preview'
+}
+
 interface Loaded {
   html: string
   manifest: DashboardManifest
@@ -123,6 +131,11 @@ interface Loaded {
  * 2. the mint SUCCEEDED and the document never beaconed. Nothing below the frame
  *    can see that, so the held `Loaded` is re-mounted and the new html is dropped
  *    until the next read brings a different one.
+ *
+ * With `preview` it renders the STAGED page instead -- the one `dashboard_preview`
+ * offered, read from the same route with `preview=1` -- under a band that says
+ * nothing has changed, because the flow is "stage, show the person, ask, apply" and
+ * this is where the person is shown.
  */
 /** Whose dashboard this frame reads: a crewmate's, or one ROOT session's own page. */
 export type DashboardTarget =
@@ -138,7 +151,7 @@ export function dashboardQueryKey(target: DashboardTarget): readonly string[] {
     : [SESSION_DASHBOARD_QUERY_PREFIX, target.slot]
 }
 
-export default function CrewDynamicDashboard({ target, displayName, onAct, preview = false, onPreviewGone, onOpenProfileTab }: {
+export default function CrewDynamicDashboard({ target, displayName, onAct, preview = false, onPreviewGone, onOpenProfileTab, onExitPreview }: {
   target: DashboardTarget
   displayName: string
   /** Put a reply the page offered into the chat box. Absent: the page's options do nothing. */
@@ -147,10 +160,14 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
    *  live tab never shows a page nobody applied; still under the `member-dashboard`
    *  prefix, so the frame that says the page changed refetches it too. */
   preview?: boolean
-  /** Told whether the staged page is gone (applied or expired), so a host can drop its "not applied" label. */
+  /** Told whether the staged page is gone (applied or expired), so a host can drop its "not applied" label.
+   *  A host that passes it draws its own preview label and gone message, so this
+   *  component draws neither its band nor its nothing-staged notice. */
   onPreviewGone?: (gone: boolean) => void
   /** Called when the person clicks the Locked badge to jump to the Profile tab. */
   onOpenProfileTab?: () => void
+  /** Leave the preview for the live page. The band's button; absent, it has none. */
+  onExitPreview?: () => void
 }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const onActRef = useRef(onAct)
@@ -184,6 +201,11 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
       ? (staged ? api.memberDashboard(target.slug, target.member, locale, true) : api.memberDashboard(target.slug, target.member, locale))
       : api.sessionDashboard(target.slot, locale, staged),
     enabled: target.kind === 'member' ? Boolean(target.slug) && Boolean(target.member) : Boolean(target.slot),
+    // Nothing staged is a 404 that a retry cannot change: the page was kept,
+    // discarded or expired. Every other failure keeps the client's own ladder.
+    ...(staged
+      ? { retry: (failureCount: number, error: unknown) => !isNothingStaged(error) && retryPolicy(failureCount, error) }
+      : {}),
     // THE FALLBACK, not the mechanism. Liveness comes from the two WS frames
     // `handleDashboardMoved` listens for; this is what covers the gap when one is
     // missed -- a dropped socket, a fold that advanced while the tab was closed, a
@@ -427,10 +449,26 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
 
   // 404 `no_preview`: the staged page was applied or expired. Nothing is broken
   // and a retry reads the same answer, so no error styling and no Retry.
-  if (previewGone) {
+  if (previewGone && onPreviewGone) {
     return (
       <div className="p-4 text-sm text-muted" data-testid="crew-dashboard-preview-gone">
         {i18nT('pages.chat.dashboardPreviewPanel.gone')}
+      </div>
+    )
+  }
+
+  if (preview && isError && isNothingStaged(error)) {
+    return (
+      // NOTHING STAGED, which is an answer and not a fault: the page was kept,
+      // discarded or expired since the link was handed out. Plain text, no retry --
+      // re-reading returns the same 404 -- and the one way forward is the live page.
+      <div className="p-4 space-y-2" data-testid="crew-dashboard-preview-none">
+        <p className="text-sm text-muted">{i18nT('pages.membersPage.dashboard_preview_none', { crew: displayName })}</p>
+        {onExitPreview && (
+          <Btn onClick={onExitPreview} data-testid="crew-dashboard-preview-none-exit">
+            {i18nT('pages.membersPage.dashboard_preview_exit')}
+          </Btn>
+        )}
       </div>
     )
   }
@@ -517,7 +555,34 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col" data-testid="crew-dashboard-frame">
+    <div className="h-full min-h-0 flex flex-col" data-testid="crew-dashboard-frame" data-preview={preview ? 'true' : undefined}>
+      {preview && !onPreviewGone && (
+        // THE PREVIEW BAND, above the frame and never over it, and first: before
+        // anything else on this tab the reader must know the page below is one they
+        // are being SHOWN, not the one installed. A status region, so a screen reader
+        // hears it on arrival from the link.
+        <div
+          role="status"
+          // WRAPS, because the side panel can be phone-narrow and the badge and
+          // button do not shrink: the sentence keeps a readable width and the
+          // button drops to its own line rather than squeezing it to nothing.
+          className="shrink-0 border-b border-border p-2 flex flex-wrap items-center gap-x-2 gap-y-1"
+          data-testid="crew-dashboard-preview-band"
+        >
+          <Badge variant="warn" className="shrink-0">
+            <Eye className="lucide-inline" aria-hidden />
+            {i18nT('pages.membersPage.dashboard_preview_badge')}
+          </Badge>
+          <p className="flex-1 min-w-[12rem] text-sm">
+            {i18nT('pages.membersPage.dashboard_preview_band', { crew: displayName })}
+          </p>
+          {onExitPreview && (
+            <Btn onClick={onExitPreview} className="shrink-0" data-testid="crew-dashboard-preview-exit">
+              {i18nT('pages.membersPage.dashboard_preview_exit')}
+            </Btn>
+          )}
+        </div>
+      )}
       {lockBadge}
       {broken && (
         // The page on screen is the last one that parsed. Banded, never replaced: the

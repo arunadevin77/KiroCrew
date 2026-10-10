@@ -2239,7 +2239,7 @@ async def api_dashboard_preview(request: web.Request) -> web.Response:
         preview = instance_store.stage_preview(
             slug, template_id=template_id, html=html, manifest=manifest
         )
-        wire = preview.wire()
+        wire = preview.wire(crew_name)
         if not crew_name:
             # A session's page is read by its SLOT, and the store key is a one-way
             # digest of it, so the link is built from the slot this caller resolved to.
