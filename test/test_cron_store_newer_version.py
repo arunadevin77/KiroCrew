@@ -1,4 +1,4 @@
-"""A cron store written by a newer KiroCrew keeps its newer data through this build's save.
+"""A cron store written by a newer Kiro Crew keeps its newer data through this build's save.
 
 The desktop updater allows downgrades, so a store a newer build wrote can be loaded and
 saved by this one. Each test writes a store with the current code, edits it the way a
