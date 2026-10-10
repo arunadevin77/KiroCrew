@@ -34,7 +34,7 @@ _USER_EDIT = "my uncommitted work\n"
 
 def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
+        ["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8", check=False
     ).stdout
 
 
@@ -103,6 +103,42 @@ def test_a_restart_after_an_unrecorded_worktree_add_never_touches_the_users_chec
     )
     assert Path(run.work_dir) != repo
     assert run.git_enabled and run.branch_name == "kirocrew/task/t-crash"
+
+
+def test_a_cancelled_recovery_leaves_nothing_for_finalize_to_remove(repo, monkeypatch):
+    """A restart cancelled while recovery probes the leftover worktree.
+
+    ``init_workspace`` names the leftover in ``run.worktree_path`` before it awaits
+    ``reinit_workspace_for_retry``. The cancellation propagates, so the task runner's
+    ``finalize`` runs next with ``workspace_lost`` still false, and it removes
+    ``run.worktree_path`` with ``--force``. The fields must be cleared on the way out,
+    or the cancel deletes the leftover and the uncommitted work inside it.
+    """
+    before = _user_state(repo)
+    asyncio.run(git_coord.init_workspace(_run(repo, "t-cancel")))
+    leftover = Path(repo).parent / ".kirocrew-work" / "t-cancel"
+    (leftover / "draft.txt").write_text("uncommitted work inside the leftover\n")
+    real = git_coord._leftover_dir_is_ours
+
+    async def _cancelled_mid_probe(run, path=None):
+        # The pause or cancel lands while recovery awaits a git probe.
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(git_coord, "_leftover_dir_is_ours", _cancelled_mid_probe)
+    run = _run(repo, "t-cancel")
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(git_coord.init_workspace(run))
+    monkeypatch.setattr(git_coord, "_leftover_dir_is_ours", real)
+
+    assert not run.git_enabled
+    assert run.worktree_path == "" and run.branch_name == "" and run.repo_root == "", (
+        "a cancelled recovery left tentative worktree fields on the run: "
+        f"{run.worktree_path!r} {run.branch_name!r} {run.repo_root!r}"
+    )
+    # What the task runner does next.
+    asyncio.run(git_coord.finalize(run))
+    assert (leftover / "draft.txt").exists(), "finalize removed the leftover worktree"
+    assert _user_state(repo) == before
 
 
 def test_a_failed_init_leaves_git_disabled(repo, tmp_path):

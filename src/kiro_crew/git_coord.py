@@ -64,16 +64,22 @@ async def init_workspace(run: Project) -> None:
         # This run's own branch already exists: an earlier start created the
         # worktree and stopped before the run recorded it. A plain re-add with
         # ``-b`` would fail on the existing branch, so recover through the same
-        # ownership checks a retry uses. On a refusal, clear the fields again so
-        # ``finalize()`` -- which removes ``run.worktree_path`` -- cannot act on a
-        # directory recovery declined to claim.
+        # ownership checks a retry uses. The fields are tentative until recovery
+        # succeeds: on a refusal, an error or a cancellation they are cleared
+        # again, so ``finalize()`` -- which removes ``run.worktree_path`` with
+        # ``--force`` -- cannot act on a directory recovery did not claim.
         run.repo_root = repo_root
         run.branch_name = branch
         run.worktree_path = wt_dir
-        if await reinit_workspace_for_retry(run):
+        recovered = False
+        try:
+            recovered = await reinit_workspace_for_retry(run)
+        finally:
+            if not recovered:
+                run.repo_root = run.branch_name = run.worktree_path = ""
+                run.git_enabled = False
+        if recovered:
             return
-        run.repo_root = run.branch_name = run.worktree_path = ""
-        run.git_enabled = False
         raise RuntimeError(f"could not recover this run's leftover worktree at {wt_dir}")
     await _git(orig_dir, "worktree", "add", wt_dir, "-b", branch)
     run.work_dir = wt_dir
