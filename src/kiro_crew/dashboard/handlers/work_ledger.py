@@ -953,15 +953,68 @@ def _baseline_fields(item: Any, header: Any) -> dict[str, Any]:
 #: append and across a rebuild, so a rebuild can never fold between the two and
 #: write the cache back to before a mutation the log then records. Every writer
 #: and every rebuild runs on this gateway's one loop, which is what makes an
-#: in-process lock the complete answer.
-_BOARD_LOCKS: dict[str, asyncio.Lock] = {}
+#: in-process lock the complete answer. A board's entry lives only while someone
+#: holds or waits for its lock, so the map is bounded by the boards in use.
+_BOARD_LOCKS: dict[str, "_BoardEntry"] = {}
 
 
-def _board_lock(slot: str) -> asyncio.Lock:
-    lock = _BOARD_LOCKS.get(slot)
-    if lock is None:
-        lock = _BOARD_LOCKS[slot] = asyncio.Lock()
-    return lock
+class _BoardEntry:
+    __slots__ = ("lock", "users")
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.users = 0
+
+
+def _forget_board(slot: str, entry: _BoardEntry) -> None:
+    entry.users -= 1
+    if entry.users == 0 and _BOARD_LOCKS.get(slot) is entry:
+        del _BOARD_LOCKS[slot]
+
+
+class _BoardHold:
+    """One caller's hold on a board's lock (``async with`` or acquire/release).
+
+    The count is taken before the first await and given back after release or
+    a cancelled wait, both on the loop, so an entry is never dropped while a
+    holder or a waiter still uses it: two writers to one board keep one lock.
+    """
+
+    __slots__ = ("_slot", "_entry")
+
+    def __init__(self, slot: str) -> None:
+        self._slot = slot
+        self._entry: _BoardEntry | None = None
+
+    async def acquire(self) -> bool:
+        entry = _BOARD_LOCKS.get(self._slot)
+        if entry is None:
+            entry = _BOARD_LOCKS[self._slot] = _BoardEntry()
+        entry.users += 1
+        try:
+            await entry.lock.acquire()
+        except BaseException:
+            _forget_board(self._slot, entry)
+            raise
+        self._entry = entry
+        return True
+
+    def release(self) -> None:
+        entry, self._entry = self._entry, None
+        if entry is None:
+            raise RuntimeError("Lock is not acquired.")
+        entry.lock.release()
+        _forget_board(self._slot, entry)
+
+    async def __aenter__(self) -> None:
+        await self.acquire()
+
+    async def __aexit__(self, *exc: object) -> None:
+        self.release()
+
+
+def _board_lock(slot: str) -> _BoardHold:
+    return _BoardHold(slot)
 
 
 async def _drain_before_cancelling(coro: Any) -> Any:
