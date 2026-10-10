@@ -248,6 +248,191 @@ class TestUpdateCheckEndpoint:
         assert "auto_update" in payload
 
 
+# A stand-in ``git`` whose fetch starts a helper that inherits git's stderr and
+# outlives git, the way a real ``git fetch`` starts ``git remote-https``, ssh or
+# a credential helper; then git hangs so the fetch timeout fires.
+_HELPER_GIT = """#!{python}
+import os, subprocess, sys, time
+with open({pidfile!r} + ".git", "w") as f:
+    f.write(str(os.getpid()))
+if {with_helper}:
+    helper = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"], cwd=os.path.dirname({pidfile!r})
+    )
+    with open({pidfile!r}, "w") as f:
+        f.write(str(helper.pid))
+time.sleep(60)
+"""
+
+
+class _ShortGitWaits:
+    """``asyncio`` as the updates module sees it, with every git wait cut to 0.5 s.
+
+    Bound as that module's own ``asyncio``, never over the real module, so the
+    event loop, the test's own bound and ``platform_compat`` keep the real one.
+    """
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(asyncio, name)
+
+    async def wait_for(self, aw, timeout=None):
+        return await asyncio.wait_for(aw, timeout=0.5)
+
+
+class TestGitFetchTimeoutReapsTheHelper:
+    """A timed-out fetch returns even when git's transport helper holds stderr."""
+
+    def _stand_in_git(
+        self, monkeypatch, tmp_path, *, with_helper: bool, short_waits: bool = True
+    ) -> Path:
+        pidfile = tmp_path / "helper.pid"
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        git = bindir / "git"
+        git.write_text(
+            _HELPER_GIT.format(
+                python=sys.executable, with_helper=with_helper, pidfile=str(pidfile)
+            ),
+            encoding="utf-8",
+        )
+        git.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+        if short_waits:
+            monkeypatch.setattr(updates, "asyncio", _ShortGitWaits())
+        return pidfile
+
+    @staticmethod
+    def _exited(pid: int) -> bool:
+        """Whether *pid* has exited; a zombie awaiting its reaper counts as exited."""
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        try:
+            with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+                return f.read().rsplit(")", 1)[1].split()[0] == "Z"
+        except OSError:
+            return False
+
+    @staticmethod
+    def _kill_recorded(pidfile: Path) -> bool:
+        """Kill the helper by its recorded PID; True when it was still running."""
+        import signal
+
+        try:
+            pid = int(pidfile.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return False
+        return True
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+    @pytest.mark.asyncio
+    async def test_a_fetch_timeout_returns_while_a_helper_holds_stderr(self, monkeypatch, tmp_path):
+        pidfile = self._stand_in_git(monkeypatch, tmp_path, with_helper=True)
+        helper_exited = False
+        try:
+            try:
+                await asyncio.wait_for(
+                    updates._check_git_checkout(
+                        _git_proj(monkeypatch, tmp_path), _git_capability()
+                    ),
+                    timeout=10,
+                )
+            except asyncio.TimeoutError:
+                pytest.fail(
+                    "the fetch timeout handler did not return: it killed git and then "
+                    "waited on a stderr pipe the helper still holds open"
+                )
+            assert updates._update_info["error_code"] == updates.ERR_GIT_FETCH_FAILED
+            # Poll the helper's own exit by its recorded pid, under a monotonic
+            # bound, rather than sleeping a fixed time for the group kill.
+            helper_pid = int(pidfile.read_text(encoding="utf-8"))
+            deadline = time.monotonic() + 5.0
+            while not self._exited(helper_pid) and time.monotonic() < deadline:
+                await asyncio.sleep(0.02)
+            helper_exited = self._exited(helper_pid)
+        finally:
+            self._kill_recorded(pidfile)
+        assert helper_exited, "the timeout left git's helper running"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+    @pytest.mark.asyncio
+    async def test_a_fetch_timeout_without_a_helper_is_still_a_failed_check(
+        self, monkeypatch, tmp_path
+    ):
+        pidfile = self._stand_in_git(monkeypatch, tmp_path, with_helper=False)
+        await asyncio.wait_for(
+            updates._check_git_checkout(_git_proj(monkeypatch, tmp_path), _git_capability()),
+            timeout=10,
+        )
+        assert updates._update_info["error_code"] == updates.ERR_GIT_FETCH_FAILED
+        assert updates._update_info["check_status"] == updates.CHECK_FAILED
+        assert not pidfile.exists()
+
+    @staticmethod
+    def _recorded_pid(pidfile: Path) -> int | None:
+        """The pid in *pidfile* once the stand-in git has written it, else None."""
+        try:
+            return int(pidfile.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+    @pytest.mark.asyncio
+    async def test_a_cancelled_fetch_ends_git_and_its_helper(self, monkeypatch, tmp_path):
+        """A shutdown cancels the check while git fetch runs: git and its helper end too.
+
+        git runs in its own session, where a terminal's Ctrl-C does not reach
+        it, so the cancel arm is what stops it. Without that arm the
+        cancellation leaves git and its helper running.
+        """
+        import signal
+
+        pidfile = self._stand_in_git(monkeypatch, tmp_path, with_helper=True, short_waits=False)
+        task = asyncio.ensure_future(
+            updates._check_git_checkout(_git_proj(monkeypatch, tmp_path), _git_capability())
+        )
+        helper_pid = git_pid = None
+        git_exited = helper_exited = False
+        try:
+            deadline = time.monotonic() + 10.0
+            while helper_pid is None and not task.done() and time.monotonic() < deadline:
+                helper_pid = self._recorded_pid(pidfile)
+                if helper_pid is None:
+                    await asyncio.sleep(0.02)
+            assert helper_pid is not None, "the stand-in git never started its helper"
+            git_pid = self._recorded_pid(Path(f"{pidfile}.git"))
+            assert git_pid is not None, "the stand-in git never recorded its own pid"
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=10)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                git_exited, helper_exited = self._exited(git_pid), self._exited(helper_pid)
+                if git_exited and helper_exited:
+                    break
+                await asyncio.sleep(0.02)
+        finally:
+            if not task.done():
+                task.cancel()
+            # Signal by pid only what was last seen running: a process that has
+            # not exited is unreaped, so its pid cannot name another process.
+            for pid, exited in ((git_pid, git_exited), (helper_pid, helper_exited)):
+                if pid is not None and not exited:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+        assert git_exited, "the cancelled check left git running"
+        assert helper_exited, "the cancelled check left git's helper running"
+
+
 class TestGitCheckoutFailurePaths:
     """``_check_git_checkout`` — one ``wait_for`` per git call, one error each.
 
