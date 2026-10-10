@@ -3401,6 +3401,14 @@ env var overrides it.
 
     args = parser.parse_args()
 
+    # Cap glibc malloc arenas before the gateway starts any thread pool: an
+    # uncapped glibc gives a busy thread its own 64 MiB arena heaps, and on a
+    # many-core host those idle heaps were most of the gateway's RSS. In-process
+    # so every launcher (service unit, pod, detached, live re-exec) gets it; an
+    # operator's MALLOC_ARENA_MAX wins. No-op off Linux/glibc.
+    if args.command == "gateway":
+        platform_compat.limit_malloc_arenas()
+
     # The mcp-* stdio servers run one per agent session, so a gateway hosts
     # dozens. If any import reaches numpy, OpenBLAS/OpenMP start one spinning
     # thread per core. Cap both at one before anything below imports the
