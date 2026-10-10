@@ -1976,7 +1976,11 @@ class _SubAgentsStep(DeferredTool):
                     # event is not injected either: the reply is where that output
                     # reaches the caller.
                     failure["text"] = self._inline_result(aid, sa_st.get("result", ""))
-                if aid in self.sa_deferred and not sa_st.get("done"):
+                # The hint goes on a deferred child that is not done, and on any child
+                # whose answer carries no ``done`` at all: that is the error _get()
+                # returns when the gateway does not answer, so no row was read and the
+                # child, accepted at spawn time, may still be running.
+                if not sa_st.get("done") and (aid in self.sa_deferred or "done" not in sa_st):
                     failure["hint"] = (
                         "accepted at spawn time; its state couldn't be read now; "
                         "check spawn_status before re-spawning"
