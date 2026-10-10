@@ -918,48 +918,54 @@
       "fields": [
         {
           "name": "boards",
-          "type": "list",
+          "type": "array",
           "optional": false
         },
         {
           "name": "cycles",
-          "type": "int",
-          "optional": false
+          "type": "number",
+          "optional": false,
+          "integer": true
         },
         {
           "name": "dropped",
-          "type": "int",
-          "optional": false
+          "type": "number",
+          "optional": false,
+          "integer": true
         },
         {
           "name": "goal_chars",
-          "type": "int",
-          "optional": false
+          "type": "number",
+          "optional": false,
+          "integer": true
         },
         {
           "name": "limit",
-          "type": "int",
-          "optional": false
+          "type": "number",
+          "optional": false,
+          "integer": true
         },
         {
           "name": "owner_limit",
-          "type": "int",
-          "optional": false
+          "type": "number",
+          "optional": false,
+          "integer": true
         },
         {
           "name": "root",
-          "type": "str",
+          "type": "string",
           "optional": false
         },
         {
           "name": "roots",
-          "type": "list",
+          "type": "array",
           "optional": false
         },
         {
           "name": "unresolved",
-          "type": "int",
-          "optional": false
+          "type": "number",
+          "optional": false,
+          "integer": true
         }
       ]
     }
