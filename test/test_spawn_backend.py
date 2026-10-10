@@ -91,6 +91,16 @@ class TestSchema:
 # ── The tool's wire body ──────────────────────────────────────────────────────
 
 
+def _drive(result: Any) -> str:
+    """``spawn_run`` returns a :class:`DeferredTool` the stdio loop steps;
+    drive it to its text here, as ``_call_tool`` does."""
+    from kiro_crew import mcp_core, mcp_shared
+
+    if isinstance(result, mcp_shared.DeferredTool):
+        return mcp_shared.drive_deferred(result, clock=mcp_core.time)
+    return result
+
+
 def _run_tool(args: dict[str, Any]) -> list[dict]:
     from kiro_crew import mcp_core
 
@@ -106,7 +116,7 @@ def _run_tool(args: dict[str, Any]) -> list[dict]:
         patch.object(mcp_core, "_resolve_session_key", return_value="dashboard:chat-1"),
         patch.object(mcp_core, "sel", MagicMock()),
     ):
-        mcp_core._call_tool_inner("spawn_run", args)
+        _drive(mcp_core._call_tool_inner("spawn_run", args))
     return bodies
 
 
@@ -146,7 +156,7 @@ class TestToolForwarding:
             patch.object(mcp_core, "_resolve_session_key", return_value="dashboard:chat-1"),
             patch.object(mcp_core, "sel", MagicMock()),
         ):
-            out = mcp_core._call_tool_inner("spawn_run", {"task": "t1", "backend": "codex"})
+            out = _drive(mcp_core._call_tool_inner("spawn_run", {"task": "t1", "backend": "codex"}))
         assert "npm i -g @agentclientprotocol/codex-acp" in str(out)
 
 

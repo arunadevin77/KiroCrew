@@ -1014,6 +1014,32 @@ class TestDisconnectTeardown:
         recycle.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_forwarded_cancel_then_disconnect_still_recycles(self, peer_ok, monkeypatch):
+        backend = _fake_backend()
+        self._seed_in_flight(backend)
+        entry = backend._pending_requests["f1"]
+        recycle = AsyncMock(return_value=True)
+        backend.recycle_if_idle = recycle  # type: ignore[method-assign]
+        monkeypatch.setattr(gw, "_acquire_backend", AsyncMock(return_value=(backend, True)))
+
+        await _handle(
+            _ScriptedReader(
+                _register_frame(),
+                {"type": "ensure_backend"},
+                {"jsonrpc": "2.0", "method": "notifications/cancelled",
+                 "params": {"requestId": 7}},
+            ),
+            _FakeWriter(),
+            _fake_pool(),
+        )
+
+        # The cancel marks the entry instead of dropping it, so the sole
+        # stub's disconnect still sees its abandoned work and recycles.
+        assert entry.cancelled
+        assert backend.refcount == 0
+        recycle.assert_awaited_once()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("method", sorted(_RECYCLE_EXEMPT_METHODS))
     async def test_an_abandoned_listing_keeps_the_warm_backend(
         self, peer_ok, monkeypatch, method

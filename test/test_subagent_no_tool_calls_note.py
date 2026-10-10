@@ -24,6 +24,16 @@ from kiro_crew.subagent import SubagentInfo
 pytestmark = pytest.mark.usefixtures("healthy_host_memory")
 
 
+def _drive(result: Any) -> str:
+    """``spawn_run`` and ``spawn_sub_agents`` return a :class:`DeferredTool`
+    the stdio loop steps; drive it to its text here, as ``_call_tool`` does."""
+    from kiro_crew import mcp_core, mcp_shared
+
+    if isinstance(result, mcp_shared.DeferredTool):
+        return mcp_shared.drive_deferred(result, clock=mcp_core.time)
+    return result
+
+
 def _spawn_run(args: dict[str, Any]) -> str:
     from kiro_crew import mcp_core
 
@@ -37,7 +47,7 @@ def _spawn_run(args: dict[str, Any]) -> str:
         patch.object(mcp_core, "_resolve_session_key", return_value="dashboard:chat-1"),
         patch.object(mcp_core, "sel", MagicMock()),
     ):
-        return mcp_core._call_tool_inner("spawn_run", args)
+        return _drive(mcp_core._call_tool_inner("spawn_run", args))
 
 
 class TestSpawnRunDispatch:
@@ -63,9 +73,11 @@ class TestSpawnSubAgentsResultNote:
             patch.object(mcp_core, "_resolve_session_key", return_value="dashboard:chat-1"),
             patch.object(mcp_core, "sel", MagicMock()),
         ):
-            out = mcp_core._call_tool_inner(
-                "spawn_sub_agents",
-                {"agents": [{"agent_or_mode": "kirocrew-lite", "prompt": "write a.py"}]},
+            out = _drive(
+                mcp_core._call_tool_inner(
+                    "spawn_sub_agents",
+                    {"agents": [{"agent_or_mode": "kirocrew-lite", "prompt": "write a.py"}]},
+                )
             )
         return json.loads(out.split("\n\n")[0])
 

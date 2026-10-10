@@ -49,7 +49,7 @@ Blocking (a dashboard session with an attested identity and an attached client):
 agent calls ask_question
   └─ POST /api/agent-ask/open  (X-Internal-Secret, attested X-Session-Key)
        └─ question_card with ask_id on THAT session's own slot
-            └─ tool loops: /api/session-keepalive, then /api/agent-ask/<id>/wait (20 s slices)
+            └─ tool loops: /api/session-keepalive, then /api/agent-ask/<id>/wait (5 s slices)
                  └─ user submits → POST /api/ask-question/<id>/answer
                       └─ the next wait returns the outcome
                            └─ tool result → agent continues in the same turn
