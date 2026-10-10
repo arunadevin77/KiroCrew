@@ -1402,6 +1402,36 @@ IPv6 squatter from the real IPv4 gateway), so a name-based URL could deliver
 *printed* for the browser still uses `resolve_dashboard_host()` (`localhost`) —
 that must not change, because the SPA's per-origin `localStorage` is keyed on it.
 
+## Gateway PID Command
+
+`kirocrew gateway-pid` is a read-only probe that prints who holds this home's
+`gateway.lock` as one line of JSON on stdout. It resolves the holder through
+`gateway_lock.lock_holder`, the same non-destructive oracle `stop --expect-pid`
+and `restart` use, so the answer does not depend on the listener socket: it
+names a draining gateway that has released its socket but still holds the lock.
+The desktop app runs it during liveness and adopt-time drain recovery when its
+socket lookup names no incumbent (see `website/electron/gateway-supervisor.js`,
+`probeLockHolderPid`). It sends no signal, starts nothing and takes no lock.
+
+| stdout | exit | meaning | desktop verdict |
+|---|---|---|---|
+| `{"holder": "process", "pid": N, "alive": true, "source": "flock_owner"\|"recorded_pid"\|"home_anchor"}` | 0 | a live process holds the lock | `captured`: wait for pid N to exit |
+| `{"holder": "nobody"}` | 0 | the lock is free, or its recorded holder is dead | `released`: spawn |
+| `{"holder": "held", "reason": "..."}` | 0 | the lock is positively held and its stamped pid is unreadable (a gateway under a Windows mandatory lock) | `held`: poll until the lock is released |
+| `{"holder": "indeterminate", "reason": "..."}` | 2 | the lock state could not be established, or a forked inheritor holds it | `refused`: show the probe-failed error |
+
+`held` is reported only for the `LockProbeError.held` shape. Every other
+`LockProbeError` (an unopenable lock file, an unmeasurable filesystem, a dead
+kernel-named acquirer, a readable stamp naming a dead pid, a home anchor the
+lock file does not name) is `indeterminate`, because nothing guarantees that
+lock is ever released.
+
+The desktop caller treats a probe that produces no JSON by how it ended. A
+probe killed at its timeout (or reporting `ETIMEDOUT`) is `unverified` and is
+retried on the recovery backoff. A probe that could not be started (a spawn
+error code such as `ENOENT` or `EACCES`) or that exited without printing JSON
+is `refused`, since every later attempt gets the same result.
+
 ## Stop Command
 
 `kirocrew stop [--port PORT]` stops a running gateway:
