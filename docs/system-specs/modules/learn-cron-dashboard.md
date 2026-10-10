@@ -1420,10 +1420,19 @@ Modular aiohttp package at `127.0.0.1:5476` (configurable). Split into:
   `DashboardState`) types its payload as `WsPayload` (`Mapping[str, Any]`), so
   mypy rejects a coroutine handed over by an unawaited async payload builder,
   which `json.dumps` cannot serialize.
-  A tab that stays connected but stops reading is dropped: a tab holding more
-  than `WS_MAX_BUFFERED_BYTES` (4 MiB) unsent is unregistered before its next
-  send, and an awaited owner send in `deliver_ws_owners` that does not finish
-  within `WS_OWNER_SEND_TIMEOUT_S` (3 s) drops its tab the same way. Both abort
+  A tab that stays connected but stops reading is dropped: before each send, a
+  tab whose unsent bytes are over `WS_MAX_BUFFERED_BYTES` (4 MiB) and have not
+  shrunk for `WS_STALL_SECONDS` (5 s) is unregistered, and so is a tab past
+  `WS_HARD_MAX_BUFFERED_BYTES` (16 MiB), at once. A shrink, or a buffer at or
+  under the limit, restarts the window. The window needs a write-buffer level
+  that falls as the tab reads, and the proactor loop Windows runs gives none
+  (`write_buffer_level.level_is_progress_signal`): there only the ceiling and
+  the owner-send cap drop a tab. An awaited owner send in `deliver_ws_owners`
+  drops its tab the same way when the tab's buffer has not shrunk for
+  `WS_OWNER_SEND_TIMEOUT_S` (5 s, the same window) while the send waits, or when
+  the send has taken `WS_OWNER_SEND_MAX_S` (30 s) in all; where the level shows
+  no reading, only that cap applies. A tab that reads keeps its send however slow
+  its link, up to the cap. Both abort
   the transport, never `close()` it, so the buffer is freed and the sends waiting
   on it end. A dropped tab is not counted by `deliver_ws_owners`.
 
