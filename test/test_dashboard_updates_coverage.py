@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import contextlib
 import json
 import logging
 import os
@@ -36,6 +37,7 @@ import pytest
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
+from kiro_crew import platform_compat
 from kiro_crew.config.loader import ConfigReadError
 from kiro_crew.dashboard.handlers import updates
 from kiro_crew.platform import update_layout
@@ -250,19 +252,44 @@ class TestUpdateCheckEndpoint:
 
 # A stand-in ``git`` whose fetch starts a helper that inherits git's stderr and
 # outlives git, the way a real ``git fetch`` starts ``git remote-https``, ssh or
-# a credential helper; then git hangs so the fetch timeout fires.
+# a credential helper; then git hangs so the fetch timeout fires. It records its
+# own pid and its helper's, each with the start-time identity it reads at the one
+# moment that pid is provably the process meant: its own, and its helper's while
+# it has not reaped the helper (it never does). Each record is written whole.
 _HELPER_GIT = """#!{python}
 import os, subprocess, sys, time
-with open({pidfile!r} + ".git", "w") as f:
-    f.write(str(os.getpid()))
+sys.dont_write_bytecode = True  # the import below writes nothing into the checkout
+sys.path.insert(0, {src!r})
+from kiro_crew.platform_compat import get_process_start_id
+
+
+def record(path, pid):
+    with open(path + ".tmp", "w") as f:
+        f.write("%d %s" % (pid, get_process_start_id(pid) or ""))
+    os.replace(path + ".tmp", path)
+
+
+record({pidfile!r} + ".git", os.getpid())
 if {with_helper}:
     helper = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)"], cwd=os.path.dirname({pidfile!r})
     )
-    with open({pidfile!r}, "w") as f:
-        f.write(str(helper.pid))
+    record({pidfile!r}, helper.pid)
 time.sleep(60)
 """
+
+
+def _recorded(path: Path) -> tuple[int, str | None] | None:
+    """The (pid, start-time identity) the stand-in git recorded in *path*, or None before.
+
+    A record that exists is whole. Its identity is None when the stand-in could not
+    read one.
+    """
+    try:
+        fields = path.read_text(encoding="utf-8").split()
+        return int(fields[0]), (fields[1] if len(fields) > 1 else None)
+    except (OSError, ValueError, IndexError):
+        return None
 
 
 class _ShortGitWaits:
@@ -270,12 +297,23 @@ class _ShortGitWaits:
 
     Bound as that module's own ``asyncio``, never over the real module, so the
     event loop, the test's own bound and ``platform_compat`` keep the real one.
+    With *helper_record*, the first wait starts its 0.5 s only once the stand-in
+    git has recorded its helper (bounded at 5 s), so the timeout fires while the
+    helper holds git's stderr however long the stand-in takes to start.
     """
+
+    def __init__(self, helper_record: Path | None = None) -> None:
+        self._helper_record = helper_record
 
     def __getattr__(self, name: str) -> object:
         return getattr(asyncio, name)
 
     async def wait_for(self, aw, timeout=None):
+        record, self._helper_record = self._helper_record, None
+        if record is not None:
+            deadline = time.monotonic() + 5.0
+            while _recorded(record) is None and time.monotonic() < deadline:
+                await asyncio.sleep(0.02)
         return await asyncio.wait_for(aw, timeout=0.5)
 
 
@@ -291,45 +329,43 @@ class TestGitFetchTimeoutReapsTheHelper:
         git = bindir / "git"
         git.write_text(
             _HELPER_GIT.format(
-                python=sys.executable, with_helper=with_helper, pidfile=str(pidfile)
+                python=sys.executable,
+                src=str(Path(platform_compat.__file__).resolve().parents[1]),
+                with_helper=with_helper,
+                pidfile=str(pidfile),
             ),
             encoding="utf-8",
         )
         git.chmod(0o755)
         monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
         if short_waits:
-            monkeypatch.setattr(updates, "asyncio", _ShortGitWaits())
+            waits = _ShortGitWaits(helper_record=pidfile if with_helper else None)
+            monkeypatch.setattr(updates, "asyncio", waits)
         return pidfile
 
     @staticmethod
-    def _exited(pid: int) -> bool:
-        """Whether *pid* has exited; a zombie awaiting its reaper counts as exited."""
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return True
-        except PermissionError:
-            return False
-        try:
-            with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
-                return f.read().rsplit(")", 1)[1].split()[0] == "Z"
-        except OSError:
-            return False
+    def _gone(pid: int, identity: str) -> bool:
+        """Whether the process the stand-in git recorded as (*pid*, *identity*) has exited.
+
+        A zombie awaiting its reaper has exited. Once that process is reaped nothing
+        holds *pid*, and the kernel can give the number to another process, so a pid
+        whose start-time identity now differs, or reads None, is gone too. The state
+        is read first: a zombie at the number means ours is not running, whoever it is.
+        """
+        zombie = platform_compat.pid_is_zombie(pid) is True
+        return zombie or platform_compat.get_process_start_id(pid) != identity
 
     @staticmethod
-    def _kill_recorded(pidfile: Path) -> bool:
-        """Kill the helper by its recorded PID; True when it was still running."""
-        import signal
+    def _end_pinned(pid: int, identity: str | None) -> None:
+        """SIGKILL a recorded process the test has not seen exit, while its identity holds.
 
-        try:
-            pid = int(pidfile.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return False
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            return False
-        return True
+        A pid whose start-time identity now differs, or reads None, is a stranger or
+        nothing, so it is not signalled; nor is a record that carries no identity.
+        """
+        if identity is None or platform_compat.get_process_start_id(pid) != identity:
+            return
+        with contextlib.suppress(OSError):
+            platform_compat.kill_pid_pinned(pid, identity, platform_compat.SIGKILL)
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
     @pytest.mark.asyncio
@@ -350,15 +386,22 @@ class TestGitFetchTimeoutReapsTheHelper:
                     "waited on a stderr pipe the helper still holds open"
                 )
             assert updates._update_info["error_code"] == updates.ERR_GIT_FETCH_FAILED
-            # Poll the helper's own exit by its recorded pid, under a monotonic
+            helper = _recorded(pidfile)
+            assert helper is not None, "the stand-in git never started its helper"
+            helper_pid, helper_identity = helper
+            assert helper_identity is not None, f"no start-time identity for helper {helper_pid}"
+            # Poll the helper's own exit by its recorded identity, under a monotonic
             # bound, rather than sleeping a fixed time for the group kill.
-            helper_pid = int(pidfile.read_text(encoding="utf-8"))
             deadline = time.monotonic() + 5.0
-            while not self._exited(helper_pid) and time.monotonic() < deadline:
+            while not self._gone(helper_pid, helper_identity) and time.monotonic() < deadline:
                 await asyncio.sleep(0.02)
-            helper_exited = self._exited(helper_pid)
+            helper_exited = self._gone(helper_pid, helper_identity)
         finally:
-            self._kill_recorded(pidfile)
+            # Never signal a helper seen exit: nothing holds its pid once it is
+            # reaped. Otherwise only while that pid still has the helper's identity.
+            recorded = _recorded(pidfile)
+            if recorded is not None and not helper_exited:
+                self._end_pinned(*recorded)
         assert helper_exited, "the timeout left git's helper running"
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
@@ -375,14 +418,6 @@ class TestGitFetchTimeoutReapsTheHelper:
         assert updates._update_info["check_status"] == updates.CHECK_FAILED
         assert not pidfile.exists()
 
-    @staticmethod
-    def _recorded_pid(pidfile: Path) -> int | None:
-        """The pid in *pidfile* once the stand-in git has written it, else None."""
-        try:
-            return int(pidfile.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
     @pytest.mark.asyncio
     async def test_a_cancelled_fetch_ends_git_and_its_helper(self, monkeypatch, tmp_path):
@@ -392,45 +427,131 @@ class TestGitFetchTimeoutReapsTheHelper:
         it, so the cancel arm is what stops it. Without that arm the
         cancellation leaves git and its helper running.
         """
-        import signal
-
         pidfile = self._stand_in_git(monkeypatch, tmp_path, with_helper=True, short_waits=False)
         task = asyncio.ensure_future(
             updates._check_git_checkout(_git_proj(monkeypatch, tmp_path), _git_capability())
         )
-        helper_pid = git_pid = None
+        helper = git = None
         git_exited = helper_exited = False
         try:
             deadline = time.monotonic() + 10.0
-            while helper_pid is None and not task.done() and time.monotonic() < deadline:
-                helper_pid = self._recorded_pid(pidfile)
-                if helper_pid is None:
+            while helper is None and not task.done() and time.monotonic() < deadline:
+                helper = _recorded(pidfile)
+                if helper is None:
                     await asyncio.sleep(0.02)
-            assert helper_pid is not None, "the stand-in git never started its helper"
-            git_pid = self._recorded_pid(Path(f"{pidfile}.git"))
-            assert git_pid is not None, "the stand-in git never recorded its own pid"
+            assert helper is not None, "the stand-in git never started its helper"
+            git = _recorded(Path(f"{pidfile}.git"))
+            assert git is not None, "the stand-in git never recorded its own pid"
+            assert git[1] is not None, f"no start-time identity for git {git[0]}"
+            assert helper[1] is not None, f"no start-time identity for helper {helper[0]}"
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(task, timeout=10)
             deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline:
-                git_exited, helper_exited = self._exited(git_pid), self._exited(helper_pid)
+                git_exited, helper_exited = self._gone(*git), self._gone(*helper)
                 if git_exited and helper_exited:
                     break
                 await asyncio.sleep(0.02)
         finally:
             if not task.done():
                 task.cancel()
-            # Signal by pid only what was last seen running: a process that has
-            # not exited is unreaped, so its pid cannot name another process.
-            for pid, exited in ((git_pid, git_exited), (helper_pid, helper_exited)):
-                if pid is not None and not exited:
-                    try:
-                        os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+            # Never signal a process seen exit; otherwise only while its pid still
+            # has the start-time identity the stand-in recorded for it.
+            for recorded, exited in ((git, git_exited), (helper, helper_exited)):
+                if recorded is not None and not exited:
+                    self._end_pinned(*recorded)
         assert git_exited, "the cancelled check left git running"
         assert helper_exited, "the cancelled check left git's helper running"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+    @pytest.mark.asyncio
+    async def test_the_timeout_tests_cleanup_signals_no_helper_it_saw_exit(
+        self, monkeypatch, tmp_path
+    ):
+        """Drives the timeout test above with a recorder in place of ``os.kill``.
+
+        That test sees the helper exit before its cleanup runs, and nothing holds the
+        helper's pid once the helper is reaped: a signal sent to the pid then reaches
+        whatever process holds the number. After the fetch timeout returns, the
+        recorder passes a signal to that pid on only while the pid still runs the
+        helper (its recorded start-time identity, not a zombie). It records any other
+        and never sends it.
+        """
+        pidfile = tmp_path / "helper.pid"
+        real_kill = os.kill
+        timed_out = False
+        late: list[tuple[int, int]] = []
+
+        def aimed_at_a_gone_helper(pid: int) -> bool:
+            try:
+                fields = pidfile.read_text(encoding="utf-8").split()
+            except OSError:
+                return False
+            if not fields or fields[0] != str(pid):
+                return False
+            identity = fields[1] if len(fields) > 1 else None
+            if identity is None or platform_compat.pid_is_zombie(pid) is True:
+                return True
+            return platform_compat.get_process_start_id(pid) != identity
+
+        def recorder(pid: int, sig: int) -> None:
+            if timed_out and sig != 0 and aimed_at_a_gone_helper(pid):
+                late.append((pid, sig))
+                return
+            real_kill(pid, sig)
+
+        check = updates._check_git_checkout
+
+        async def check_then_mark(*args: object, **kwargs: object) -> None:
+            nonlocal timed_out
+            try:
+                await check(*args, **kwargs)
+            finally:
+                timed_out = True
+
+        monkeypatch.setattr(os, "kill", recorder)
+        monkeypatch.setattr(updates, "_check_git_checkout", check_then_mark)
+        await self.test_a_fetch_timeout_returns_while_a_helper_holds_stderr(monkeypatch, tmp_path)
+        assert not late, (
+            f"the cleanup sent signal {late[0][1]} to pid {late[0][0]}, the helper's, after "
+            "the helper had exited; nothing held that pid any more"
+        )
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+    def test_the_cleanup_signals_a_recorded_pid_only_while_its_identity_holds(
+        self, monkeypatch, tmp_path
+    ):
+        """The failure-path kill: a pid whose start-time identity differs is not signalled.
+
+        A child of this test stands in for the recorded process. This test holds it
+        unreaped, so its pid cannot name another process, and its identity is read here.
+        """
+        import signal
+        import subprocess
+
+        sent: list[tuple[int, str, int]] = []
+        pinned = platform_compat.kill_pid_pinned
+
+        def record(pid: int, identity: str, sig: int) -> bool:
+            sent.append((pid, identity, sig))
+            return pinned(pid, identity, sig)
+
+        monkeypatch.setattr(platform_compat, "kill_pid_pinned", record)
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], cwd=tmp_path)
+        try:
+            identity = platform_compat.get_process_start_id(proc.pid)
+            assert identity is not None, "precondition: the child's identity is readable"
+            self._end_pinned(proc.pid, f"{identity}0")
+            self._end_pinned(proc.pid, None)
+            assert sent == [], f"a pid whose identity did not match was signalled: {sent}"
+            self._end_pinned(proc.pid, identity)
+            assert sent == [(proc.pid, identity, platform_compat.SIGKILL)]
+            assert proc.wait(timeout=10) == -signal.SIGKILL
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=10)
 
 
 class TestGitCheckoutFailurePaths:
