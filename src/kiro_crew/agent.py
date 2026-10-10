@@ -3692,6 +3692,13 @@ _pending_projection_warned_generation: int | None = None
 #: reaches it, not only the first, and a retry that rewrites every spec clears it.
 _conductor_spec_held: bool = False
 
+#: The conductor installers' own share of ``_conductor_spec_held`` from the last rebuild,
+#: before it folds in the crew-bound shared-template hold
+#: (``fork_refresh._shared_template_held``). The two are retried differently
+#: (:func:`_held_rebuild_would_repeat`) and named apart in the warnings that report a
+#: hold (:func:`_hold_cause`).
+_conductor_installers_held: bool = False
+
 #: Governance answer generation (ceiling plus profiles) the last
 #: ``rebuild_agent_config`` read before deriving any grant, so
 #: :func:`prime_ceiling_projection` seeds the baseline with the answer the boot rebuild
@@ -3737,11 +3744,11 @@ def prime_ceiling_projection() -> None:
     if _conductor_spec_held:
         _projected_ceiling_generation = None
         logger.warning(
-            "a conductor spec was left unwritten by the boot rebuild (it could not be "
-            "read or written), so the ceiling baseline stays unseeded: the first "
-            "distribution poll, or the hourly maintenance wake where no distribution "
-            "is configured, retries the rebuild, and on-disk auto-approvals reflect "
-            "the previous ceiling until it lands"
+            "the boot rebuild left a hold (%s), so the ceiling baseline stays unseeded: "
+            "the first distribution poll, or the hourly maintenance wake where no "
+            "distribution is configured, retries the rebuild, and on-disk auto-approvals "
+            "reflect the previous ceiling until it lands",
+            _hold_cause(),
         )
         return
     # The answer the last rebuild derived its grants under, read before it derived any:
@@ -3785,6 +3792,40 @@ def _answer_generation_after_profile_poll() -> int:
 
     poll_profiles_fresh()
     return governance_answer_generation()
+
+
+def _hold_cause() -> str:
+    """What the current hold (``_conductor_spec_held``) is on, for the warnings that name it."""
+    causes = []
+    if _conductor_installers_held:
+        causes.append("a conductor spec could not be read or written")
+    if fork_refresh._shared_template_held:
+        causes.append("a crew-bound shared template could not be read or re-filtered")
+    return " and ".join(causes) or "an agent spec could not be read or written"
+
+
+def _held_rebuild_would_repeat(generation: int) -> bool:
+    """Whether a rebuild now could only end held on the same files as the last one.
+
+    True when the hold rests only on crew-bound shared-template files the last pass could
+    not read (no conductor installer held, the last rebuild completed), that rebuild
+    derived every grant under this same *generation* (``_rebuild_answer_generation``, so a
+    move during the rebuild, after the owned specs were written, still rebuilds), and
+    ``fork_refresh.shared_template_hold_unchanged`` finds every held file as that pass
+    did under *generation*. Such a file may be the one that declares a bound
+    name, so the hold stands and the memo stays behind; but the rebuild would rewrite
+    ``kirocrew.json`` and the owned specs kiro-cli watches and end held again, so the
+    ceiling hook and the maintenance wake skip it. A conductor installer's hold, or a
+    rebuild that raised, may clear with nothing on disk changing, so it is retried as
+    before. MAY BLOCK: the probe reads each held file once.
+    """
+    return (
+        _conductor_spec_held
+        and not _conductor_installers_held
+        and not _rebuild_incomplete
+        and _rebuild_answer_generation == generation
+        and fork_refresh.shared_template_hold_unchanged(generation)
+    )
 
 
 #: Answer generation the gateway's profile watch last attempted a projection for, and
@@ -3836,8 +3877,12 @@ def reproject_for_profile_change() -> None:
     poll, so the gateway calls this on a short interval in a worker thread (it re-stats
     the profiles directory and MAY BLOCK).
 
-    Nothing to do while the projection memo records the current answer and the last
-    rebuild completed. A rebuild that raised (``_rebuild_incomplete``) may have written
+    Nothing to do while the projection memo records the current answer, the last
+    rebuild completed and no spec is held (``_conductor_spec_held``). A hold can be set
+    after the baseline was seeded (the boot path's deferred template pass), and on a
+    host with no distribution poll this watch and the hourly maintenance wake are its
+    only retries, so a held spec keeps an unchanged answer unprojected here too. A
+    rebuild that raised (``_rebuild_incomplete``) may have written
     grants derived under an older answer before it failed, so the memo is cleared and the
     projection re-run. Otherwise it calls :func:`reproject_for_ceiling_change` once for
     the answer, and again only after :data:`_PROFILE_WATCH_RETRY_S` if the projection
@@ -3851,7 +3896,7 @@ def reproject_for_profile_change() -> None:
             # The last rebuild raised, possibly after writing grants derived under an
             # older answer, so no recorded projection can be trusted until one completes.
             _projected_ceiling_generation = None
-        if generation == _projected_ceiling_generation:
+        if generation == _projected_ceiling_generation and not _conductor_spec_held:
             _profile_watch_generation = None
             return
         now = _watch_clock()
@@ -3863,7 +3908,11 @@ def reproject_for_profile_change() -> None:
             _profile_watch_generation = generation
             _profile_watch_retry_at = now + _PROFILE_WATCH_RAISE_RETRY_S
             raise
-        if generation == _projected_ceiling_generation and not _rebuild_incomplete:
+        if (
+            generation == _projected_ceiling_generation
+            and not _rebuild_incomplete
+            and not _conductor_spec_held
+        ):
             _profile_watch_generation = None
             return
         _profile_watch_generation = generation
@@ -3900,6 +3949,12 @@ def retry_held_conductor_specs() -> bool:
     """
     if not _conductor_spec_held:
         return True
+    from kiro_crew.platform.governance_profiles import governance_answer_generation
+
+    if _held_rebuild_would_repeat(governance_answer_generation()):
+        # Only unreadable shared-template files hold, and none has changed since the
+        # pass that held on them: a rebuild would end held on them again.
+        return False
     logger.info("retrying the conductor specs the last agent-config rebuild left unwritten")
     held_out: list[bool] = []
     _path, wrote = rebuild_agent_config_reporting(_held_out=held_out)
@@ -3910,10 +3965,11 @@ def retry_held_conductor_specs() -> bool:
         )
         return True
     logger.warning(
-        "a conductor spec is still unwritten after the retry (it could not be read or "
-        "written); its on-disk auto-approvals reflect the previous ceiling until the next "
-        "maintenance wake rewrites it -- repair it, or run "
-        "`kirocrew setup --agent-only --clean` to rebuild it"
+        "an agent spec is still unwritten after the retry (%s); its on-disk "
+        "auto-approvals reflect the previous ceiling until the next maintenance wake "
+        "rewrites it -- repair it, or run `kirocrew setup --agent-only --clean` to "
+        "rebuild a conductor spec",
+        _hold_cause(),
     )
     return False
 
@@ -3975,7 +4031,13 @@ def _reproject_holding_the_lock() -> None:
     governance_generation = _answer_generation_after_profile_poll
 
     generation = governance_generation()
-    if _projected_ceiling_generation == generation:
+    if _projected_ceiling_generation == generation and not _conductor_spec_held:
+        # A hold set after the baseline was seeded (the boot path's deferred
+        # template pass) keeps an unchanged generation unprojected.
+        return
+    if _held_rebuild_would_repeat(generation):
+        # Held only on shared-template files that still cannot be read and have not
+        # changed under this answer: the memo stays behind, no rebuild runs.
         return
     held_out: list[bool] = []
     _path, wrote = rebuild_agent_config_reporting(_held_out=held_out)
@@ -4010,8 +4072,9 @@ def _reproject_holding_the_lock() -> None:
             _pending_projection_warned_generation = generation
             logger.warning(
                 "ceiling generation %s is pending: this instance may not rewrite "
-                "the shared agent home, or a conductor spec on disk could not be "
-                "read or written and was left unchanged, so on-disk auto-approvals "
+                "the shared agent home, or an agent spec on disk (a conductor spec or "
+                "a crew-bound shared template) could not be read or written and was "
+                "left unchanged, so on-disk auto-approvals "
                 "still reflect the previous ceiling until the owning instance "
                 "projects the new one (or this instance's refusal clears)",
                 generation,
@@ -4308,7 +4371,7 @@ def rebuild_agent_config(
     # raise past their own arms, and a leaked flag would exempt every later
     # write in the process -- a worker dispatch, a dashboard edit -- from the
     # guard this change exists to add.
-    global _conductor_spec_held
+    global _conductor_spec_held, _conductor_installers_held
     _rebuild_admitted_token = _rebuild_spec_install_admitted.set(True)
     try:
         # Install Kiro Crew AIM capabilities package (includes kirocrew-lite)
@@ -4396,6 +4459,7 @@ def rebuild_agent_config(
         # baseline from this after the boot rebuild, and a rebuild that raises further
         # down must still leave the installers' verdict behind, not the previous one.
         _conductor_spec_held = conductor_held
+        _conductor_installers_held = conductor_held
 
         # Install kirocrew-dashboard-author agent (authors one dashboard template and lands
         # it as a PR). EAGER for the same forced reason spelled out on the worker above:
@@ -4434,6 +4498,7 @@ def rebuild_agent_config(
             # rewrite on the next maintenance poll (GPT 6.1 F1: boot-time author install
             # failures lose the governance retry).
             _conductor_spec_held = True
+            _conductor_installers_held = True
             logger.warning(
                 "kirocrew-dashboard-author agent install failed; completing independent repairs "
                 "then failing the rebuild so a tightened ceiling is retried, not marked synced",
@@ -4465,6 +4530,12 @@ def rebuild_agent_config(
         sync_aim_packages()
 
         fork_refresh.refresh_after_rebuild(refresh_forks, gated_off)
+        if refresh_forks is True and fork_refresh._shared_template_held:
+            # A crew-bound shared template kept grants the ceiling may now deny
+            # because its rewrite failed. Held like a conductor spec, so the
+            # ceiling memo stays behind and the next poll or wake retries.
+            conductor_held = True
+            _conductor_spec_held = True
 
         # Security: sanitize invalid hook keys in agent configs
         repair_agent_configs()
