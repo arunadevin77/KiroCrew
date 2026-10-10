@@ -182,3 +182,54 @@ describe('usePanelDocumentActions.openArtifact with a staged-dashboard reference
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['member-dashboard', 'atlas'] })
   })
 })
+
+describe('either preview link form, clicked in chat, opens the staged page in the side panel', () => {
+  function wire(queryClient: QueryClient) {
+    const openTab = vi.fn()
+    const showActionError = vi.fn()
+    const tabsCtl = { openArtifact: openTab } as unknown as ReturnType<typeof usePanelTabs>
+    const { result } = renderHook(() => usePanelDocumentActions({
+      tabsCtl, slotRef: { current: 'chat-1' }, queryClient, showActionError,
+    }))
+    return { openTab, showActionError, openArtifact: result.current.openArtifact }
+  }
+
+  async function clickLink(href: string, openArtifact: (ref: string) => Promise<void>) {
+    let pending: Promise<void> = Promise.resolve()
+    const { container } = render(
+      <MarkdownRenderer content={`[Open the dashboard preview](${href})`} onArtifactOpen={ref => { pending = openArtifact(ref) }} onFileOpen={vi.fn()} />,
+    )
+    const anchor = container.querySelector('a') as HTMLAnchorElement
+    const notCancelled = fireEvent.click(anchor)
+    await pending
+    return notCancelled
+  }
+
+  it('the old JSON-read link /api/members/<slug>/dashboard?preview=1', async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(['kirocrew-agents', 'members-roster'], [{ name: 'Atlas', slug: 'atlas' }])
+    const { openTab, showActionError, openArtifact } = wire(queryClient)
+    expect(await clickLink('/api/members/atlas/dashboard?preview=1', openArtifact)).toBe(false)
+    expect(openTab).toHaveBeenCalledWith({ slug: 'dashboard-preview:atlas', kind: 'html', title: 'Atlas (preview)' }, '', 'chat-1')
+    expect(showActionError).not.toHaveBeenCalled()
+  })
+
+  it('the page link /members?member=<name>&dashboard=preview, carried by exact name', async () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+    const { openTab, showActionError, openArtifact } = wire(queryClient)
+    expect(await clickLink('/members?member=BI%20Buddy&dashboard=preview', openArtifact)).toBe(false)
+    expect(openTab).toHaveBeenCalledWith({ slug: 'dashboard-preview:member:BI%20Buddy', kind: 'html', title: 'BI Buddy (preview)' }, '', 'chat-1')
+    expect(showActionError).not.toHaveBeenCalled()
+    // No slug to key on: every open dashboard read is re-read, so the staged page is fresh.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['member-dashboard'] })
+  })
+
+  it('reads the page link only on this origin, on /members, with the preview value', () => {
+    expect(dashboardPreviewTargetFromHref('/members?member=Atlas&dashboard=preview')).toEqual({ kind: 'member-name', member: 'Atlas' })
+    expect(dashboardPreviewTargetFromHref('https://elsewhere.test/members?member=Atlas&dashboard=preview')).toBeNull()
+    expect(dashboardPreviewTargetFromHref('/members?member=Atlas')).toBeNull()
+    expect(dashboardPreviewTargetFromHref('/members?dashboard=preview')).toBeNull()
+    expect(dashboardPreviewTargetFromHref('/chat?member=Atlas&dashboard=preview')).toBeNull()
+  })
+})

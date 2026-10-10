@@ -17,10 +17,3 @@ export const DASHBOARD_PREVIEW_VALUE = 'preview'
 export function isDashboardPreview(params: URLSearchParams): boolean {
   return params.get(DASHBOARD_PREVIEW_PARAM) === DASHBOARD_PREVIEW_VALUE
 }
-
-/** The same query with the preview request taken out, everything else kept. */
-export function withoutDashboardPreview(params: URLSearchParams): URLSearchParams {
-  const next = new URLSearchParams(params)
-  next.delete(DASHBOARD_PREVIEW_PARAM)
-  return next
-}

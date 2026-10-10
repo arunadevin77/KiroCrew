@@ -29,13 +29,13 @@ test('the link dashboard_preview returns opens the staged page in the Dashboard 
   const staged = stagedPreview()
 
   // The UI route renders it: opening the link as given lands on the Dashboard tab,
-  // under its preview band, with the STAGED template in the frame. `approvals_pending`
+  // under the preview label, with the STAGED template in the frame. `approvals_pending`
   // is a standup field the default page (project-report) does not have, so a tab
   // showing the live page cannot pass this -- nor can a link a browser shows as JSON.
   await page.goto(staged.url)
-  const band = page.getByTestId('crew-dashboard-preview-band')
-  await expect(band).toBeVisible({ timeout: 15000 })
-  await expect(band).toContainText(`${staged.member} made this draft for you to look at.`)
+  const badge = page.getByTestId('dashboard-preview-badge')
+  await expect(badge).toBeVisible({ timeout: 15000 })
+  await expect(badge).toContainText('Preview, not applied')
   await expect(page.getByTestId('crew-dashboard-iframe')).toBeVisible({ timeout: 15000 })
   const frame = page.frameLocator('[data-testid="crew-dashboard-iframe"]')
   await expect(frame.locator('[data-dashboard-field="approvals_pending"]').first()).toBeAttached({ timeout: 15000 })

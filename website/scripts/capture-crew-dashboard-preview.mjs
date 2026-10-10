@@ -1,6 +1,6 @@
 /**
  * Evidence for the dashboard preview link: the link `dashboard_preview` hands a crewmate opens
- * the Members page with the Dashboard tab on the STAGED page, under a preview band.
+ * the Members page with the Dashboard tab on the STAGED page, under the preview label.
  *
  * Drives the existing isolated entry website/capture/members-page.html (the REAL
  * MembersPage) with ?route= set to the exact link `instance.preview_url` builds.
@@ -105,9 +105,9 @@ async function open({ theme, staged = true, viewport = { width: 1360, height: 82
 
 for (const theme of ['dark', 'light']) {
   const { page, dashboardReads } = await open({ theme })
-  const band = page.getByTestId('crew-dashboard-preview-band')
-  await band.waitFor({ state: 'visible', timeout: 15000 })
-  check(`${theme}: preview band names the crewmate`, /radar made this draft/.test((await band.textContent()) || ''))
+  const badge = page.getByTestId('dashboard-preview-badge')
+  await badge.waitFor({ state: 'visible', timeout: 15000 })
+  check(`${theme}: label says it is a preview`, /Preview, not applied/.test((await badge.textContent()) || ''))
   await page.getByTestId('crew-dashboard-iframe').waitFor({ state: 'visible', timeout: 15000 })
   const frame = page.frameLocator('[data-testid="crew-dashboard-iframe"]')
   await frame.getByText('Project report').waitFor({ timeout: 15000 })
@@ -118,25 +118,24 @@ for (const theme of ['dark', 'light']) {
   await page.close()
 }
 
-// Phone width, where the panel is a full-width overlay: the band must wrap so the
-// sentence keeps a readable width and the button drops to its own line.
+// Phone width, where the panel is a full-width overlay: the label's hint keeps a
+// full line under the badge.
 {
   const { page } = await open({ theme: 'dark', viewport: { width: 390, height: 844 } })
-  const band = page.getByTestId('crew-dashboard-preview-band')
-  await band.waitFor({ state: 'visible', timeout: 15000 })
-  const text = await band.locator('p').boundingBox()
-  check('narrow: sentence keeps a readable width', !!text && text.width >= 180)
-  const exit = await page.getByTestId('crew-dashboard-preview-exit').boundingBox()
-  check('narrow: button does not overlap the sentence', !!text && !!exit && (exit.y >= text.y + text.height - 1 || exit.x >= text.x + text.width - 1))
+  const label = page.getByTestId('dashboard-preview-label')
+  await label.waitFor({ state: 'visible', timeout: 15000 })
+  const hint = await label.locator('span.basis-full').boundingBox()
+  check('narrow: hint keeps a readable width', !!hint && hint.width >= 180)
   await page.screenshot({ path: `${OUT}/preview-narrow-dark.png` })
   await page.close()
 }
 
 {
   const { page } = await open({ theme: 'dark', staged: false })
-  const none = page.getByTestId('crew-dashboard-preview-none')
-  await none.waitFor({ state: 'visible', timeout: 15000 })
-  check('nothing-staged: notice shown', /There's no draft to show/.test((await none.textContent()) || ''))
+  const gone = page.getByTestId('crew-dashboard-preview-gone')
+  await gone.waitFor({ state: 'visible', timeout: 15000 })
+  check('nothing-staged: notice shown', /This preview has closed/.test((await gone.textContent()) || ''))
+  check('nothing-staged: label dropped', (await page.getByTestId('dashboard-preview-badge').count()) === 0)
   check('nothing-staged: no error retry', (await page.getByTestId('crew-dashboard-error-retry').count()) === 0)
   await page.screenshot({ path: `${OUT}/preview-none-dark.png` })
   await page.close()

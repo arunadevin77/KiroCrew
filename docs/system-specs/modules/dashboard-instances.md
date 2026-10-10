@@ -304,8 +304,10 @@ the person to look at still works.
 The link `dashboard_preview` hands back (`instance.preview_url`) is a PAGE:
 `/members?member=<exact crew name>&dashboard=preview`. The Members page opens that
 crewmate, opens the side panel on its Dashboard tab, and draws the staged page in the
-same sandboxed frame as the live one, under a band that says it is a preview and that
-nothing has changed. A button on the band returns the tab to the live page; switching
+same sandboxed frame as the live one, under the one preview label the chat's side
+panel also uses (`DashboardPreviewLabel`: **Preview, not applied**, and that nothing
+changes until the person answers in chat). The label drops once the staged page is
+applied or expires, and the tab says the preview has closed. Switching
 crewmate drops the query, so the preview never follows a person to another crewmate.
 The tab shows the dynamic dashboard for a preview whether or not the Dynamic Dashboard
 Feature Preview is on: the staged page exists only in that form, and the person was

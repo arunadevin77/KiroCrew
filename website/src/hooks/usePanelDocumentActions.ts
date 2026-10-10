@@ -154,6 +154,11 @@ export function usePanelDocumentActions({ tabsCtl, slotRef, queryClient, showAct
         // The roster's own name when it is cached and unambiguous; the slug otherwise.
         const named = (queryClient.getQueryData<MemberRosterRow[]>(MEMBERS_ROSTER_QUERY_KEY) ?? []).filter(r => r.slug === preview.slug)
         name = named.length === 1 ? named[0].name : preview.slug
+      } else if (preview.kind === 'member-name') {
+        // The page link names the crew, not the slug: no slug to key on, so every
+        // open crewmate read is re-read. The panel resolves the slug from the roster.
+        void queryClient.invalidateQueries({ queryKey: ['member-dashboard'] })
+        name = preview.member
       } else {
         void queryClient.invalidateQueries({ queryKey: ['session-dashboard', preview.slot] })
         name = i18nT('commandCenter.title')

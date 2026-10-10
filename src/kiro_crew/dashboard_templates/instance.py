@@ -1310,7 +1310,7 @@ def preview_url(member: str) -> str:
     """The link a person opens to SEE the staged page: a page, never the JSON read.
 
     The Members page with this crewmate open and its Dashboard tab showing the staged
-    page under a preview band. The tab reads it from the ordinary dashboard route with
+    page under a preview label. The tab reads it from the ordinary dashboard route with
     ``preview=1`` rather than a route of its own: that route is already owner-only and
     a staged page carries the same crewmate's fold values as the live one, so a second
     route would be a second place to get that gate right.

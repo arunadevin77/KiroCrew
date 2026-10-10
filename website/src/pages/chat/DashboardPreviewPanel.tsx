@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import ErrorBoundary from '../../components/ErrorBoundary'
 import ErrorNotice from '../../components/ErrorNotice'
-import { Badge } from '../../components/ui'
+import DashboardPreviewLabel from './DashboardPreviewLabel'
 import { membersRosterQuery } from '../../api/membersQuery'
 import type { DashboardPreviewTarget } from '../../utils/dashboardPreview'
 
@@ -27,23 +27,22 @@ const CrewDynamicDashboard = lazy(() => import('../members/CrewDynamicDashboard'
  */
 export default function DashboardPreviewPanel({ target }: { target: DashboardPreviewTarget }) {
   const { t } = useTranslation()
-  const slug = target.kind === 'member' ? target.slug : ''
-  // A crewmate's read is keyed by member NAME as well as slug. The roster names it;
-  // a slug two names share is not resolved by guessing, so the frame is withheld.
-  // A session's page is keyed by its slot alone, so it needs no roster.
-  const { data: rows, isLoading, isError } = useQuery({ ...membersRosterQuery, enabled: target.kind === 'member' })
-  const matches = (rows ?? []).filter(r => r.slug === slug)
-  const member = matches.length === 1 ? matches[0].name : null
+  // A crewmate's read is keyed by member NAME as well as slug. The roster names it:
+  // a `member` target carries the slug and is matched to one name, a `member-name`
+  // target (the `/members` page link) carries the exact name and is matched to one
+  // slug, and neither is resolved by guessing, so the frame is withheld when no
+  // single row matches. A session's page is keyed by its slot alone, so it needs
+  // no roster.
+  const { data: rows, isLoading, isError } = useQuery({ ...membersRosterQuery, enabled: target.kind !== 'session' })
+  const matches = (rows ?? []).filter(r => (
+    target.kind === 'member' ? r.slug === target.slug : target.kind === 'member-name' ? r.name === target.member : false
+  ))
+  const row = matches.length === 1 ? matches[0] : null
   // Once the staged page is applied or expires, "not applied" would be false.
   const [gone, setGone] = useState(false)
   return (
     <div className="h-full min-h-0 flex flex-col" data-testid="dashboard-preview-panel">
-      {!gone && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 border-b border-border">
-          <Badge variant="warn" data-testid="dashboard-preview-badge">{t('pages.chat.dashboardPreviewPanel.badge')}</Badge>
-          <span className="text-xs text-muted min-w-0 basis-full">{t('pages.chat.dashboardPreviewPanel.hint')}</span>
-        </div>
-      )}
+      {!gone && <DashboardPreviewLabel />}
       <div className="flex-1 min-h-0 overflow-auto">
         {target.kind === 'session' ? (
           <ErrorBoundary retryOnly>
@@ -56,10 +55,10 @@ export default function DashboardPreviewPanel({ target }: { target: DashboardPre
           // reported even over a cached name. No agent hand-off: it navigates, and the
           // side panel's other tabs can hold unsaved file edits.
           <ErrorNotice className="m-3" message={t('pages.chat.dashboardPreviewPanel.roster_failed')} testId="dashboard-preview-roster-error" />
-        ) : member ? (
+        ) : row ? (
           <ErrorBoundary retryOnly>
             <Suspense fallback={null}>
-              <CrewDynamicDashboard key={slug} target={{ kind: 'member', slug, member }} displayName={member} preview onPreviewGone={setGone} />
+              <CrewDynamicDashboard key={row.slug} target={{ kind: 'member', slug: row.slug, member: row.name }} displayName={row.name} preview onPreviewGone={setGone} />
             </Suspense>
           </ErrorBoundary>
         ) : isLoading ? null : (

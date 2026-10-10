@@ -10,10 +10,11 @@ import { createTestStore } from './helpers'
  * staged page beside the chat; any other artifact tab is still the artifact. */
 const previewFails = { on: false }
 vi.mock('../pages/chat/DashboardPreviewPanel', () => ({
-  default: ({ target }: { target: { kind: string; slug?: string; slot?: string } }) => {
+  default: ({ target }: { target: { kind: string; slug?: string; slot?: string; member?: string } }) => {
     const slug = target.slug
+    const member = target.member
     if (previewFails.on) throw new Error('chunk load failed')
-    return <div data-testid="dashboard-preview-stub" data-slug={slug} />
+    return <div data-testid="dashboard-preview-stub" data-slug={slug ?? ''} data-member={member ?? ''} />
   },
 }))
 vi.mock('../components/ArtifactPanel', () => ({
@@ -87,6 +88,11 @@ describe('a staged-dashboard tab in the side panel', () => {
     } finally {
       previewFails.on = false
     }
+  })
+
+  it('renders a page-link preview by the crew name it carries', async () => {
+    renderPanel('dashboard-preview:member:BI%20Buddy')
+    expect((await screen.findByTestId('dashboard-preview-stub', undefined, LAZY)).dataset.member).toBe('BI Buddy')
   })
 
   it('leaves an ordinary artifact tab to the artifact viewer', async () => {

@@ -73,6 +73,21 @@ describe('DashboardPreviewPanel', () => {
     expect(await screen.findByTestId('crew-dashboard-frame', undefined, LAZY)).toBeInTheDocument()
   })
 
+  it('a page link names the crewmate by exact name, never by a guessed slug', async () => {
+    roster([{ name: 'BI Buddy', slug: 'bi-buddy' }, { name: 'bi buddy 2', slug: 'bi-buddy-2' }])
+    const read = vi.spyOn(api, 'memberDashboard').mockResolvedValue(staged())
+    renderWithProviders(<DashboardPreviewPanel target={{ kind: 'member-name', member: 'BI Buddy' }} />)
+    await waitFor(() => expect(read).toHaveBeenCalledWith('bi-buddy', 'BI Buddy', 'en', true), LAZY)
+  })
+
+  it('a page link naming no crewmate shows no page and says so', async () => {
+    roster([{ name: 'Atlas', slug: 'atlas' }])
+    const read = vi.spyOn(api, 'memberDashboard').mockResolvedValue(staged())
+    renderWithProviders(<DashboardPreviewPanel target={{ kind: 'member-name', member: 'Ghost' }} />)
+    expect(await screen.findByTestId('dashboard-preview-no-member', undefined, LAZY)).toBeInTheDocument()
+    expect(read).not.toHaveBeenCalled()
+  })
+
   it('applies nothing and offers no Apply control', async () => {
     roster([{ name: 'Atlas', slug: 'atlas' }])
     vi.spyOn(api, 'memberDashboard').mockResolvedValue(staged())

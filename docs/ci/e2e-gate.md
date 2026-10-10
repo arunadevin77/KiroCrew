@@ -324,7 +324,7 @@ Its retention is seven days, and it does not fail when setup produced no images.
 
 `website/playwright/dashboard-preview-link.spec.ts` opens the link
 `dashboard_preview` hands a crewmate and asserts that it resolves: the Members page
-draws the staged page under its preview band, and the dashboard read accepts the
+draws the staged page under its **Preview, not applied** label, and the dashboard read accepts the
 crewmate the link names. Before the browser starts, the harness
 (`test_playwright_e2e._stage_dashboard_preview`) seeds one crewmate in the disposable
 config, stages the `standup` template for it with the production store, and passes
