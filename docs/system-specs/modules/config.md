@@ -1556,7 +1556,10 @@ a present value the reader cannot use takes the reader's value:
   stub set a legacy install was running, whatever the field defaults are. When
   `mcp_gateway` omits `stub_servers`, it reads an omitted or non-boolean `enabled`
   as off and the roster as empty, and with `enabled: true` an omitted
-  `poolable_servers` as an empty roster.
+  `poolable_servers` as an empty roster. `_resolve_stub_base` layers
+  `MANAGED_STUB_FOLLOWERS` on top of that roster whenever `kirocrew-core` is
+  stubbed; `_resolve_stub_servers` applies `stub_overrides` to that base. Neither
+  the base nor the followers are ever written back to `stub_servers`.
 
 This list describes the build stage. Values that the read stage's schema
 validation rejects never reach it. The deliberate departures, all unchanged by the

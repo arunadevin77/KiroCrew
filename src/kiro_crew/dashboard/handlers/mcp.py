@@ -36,6 +36,7 @@ from kiro_crew.config.loader import (
     read_config_text,
 )
 from kiro_crew.config.paths import data_home, kiro_agents_dir
+from kiro_crew.config.sections import MANAGED_STUB_FOLLOWERS
 from kiro_crew.dashboard.chat_utils import run_to_completion
 from kiro_crew.dashboard.handlers._shared import AGENT_SPEC_NOT_REWRITTEN, read_bounded_json
 from kiro_crew.dashboard.state import DashboardState
@@ -3827,9 +3828,16 @@ def _record_stub_decisions(section: dict, names: list[str], stub: bool) -> None:
     produce a spurious diff.
     """
     roster = set(_resolve_stub_roster(section))
+    # A follower's default moves with the leader (``_resolve_stub_base``), so a
+    # decision that agrees with it today can disagree after the leader's next
+    # toggle -- including one later in this same call. Pruning it would let that
+    # toggle silently undo the operator's choice, so a follower decision is always
+    # stored. Everything else is pruned against the roster, as before.
     overrides = dict(_resolve_stub_overrides(section))
     for name in names:
-        if (name in roster) == stub:
+        if name in MANAGED_STUB_FOLLOWERS:
+            overrides[name] = stub
+        elif (name in roster) == stub:
             overrides.pop(name, None)
         else:
             overrides[name] = stub

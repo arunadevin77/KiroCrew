@@ -106,11 +106,72 @@ def _resolve_stub_overrides(mcp_gateway_data: dict) -> dict[str, bool]:
     }
 
 
+#: The managed server whose stub decision the followers below inherit.
+MANAGED_STUB_LEADER = "kirocrew-core"
+
+#: Kiro Crew's own managed servers that are stubbed whenever
+#: :data:`MANAGED_STUB_LEADER` is, unless an operator override says otherwise.
+#:
+#: Each one is launched from Kiro Crew's own install (so its launch needs no
+#: operator approval, see ``rewriter._is_managed_launch``), is handed the
+#: per-session token by gatewayd (``daemon.control_plane.CONTROL_PLANE_BACKENDS``)
+#: and advertises ``kirocrew.caller-identity``, refusing a caller the gateway
+#: cannot name. That is the same footing ``kirocrew-core`` stands on, so an
+#: install that stubs it has already accepted everything sharing these costs.
+#: Leaving them out cost a full Python process per session for each one a spec
+#: declares (``kirocrew-guide`` is in every default spec).
+#:
+#: Being in the stub set mounts nothing: the rewriter wraps only servers a spec
+#: already declares, so an opt-in server still reaches only the agents granted it.
+#:
+#: This is ``mcp_discovery._MANAGED_SERVERS_CALLER_AWARE`` minus the leader,
+#: ``kirocrew-computer`` and ``kirocrew-cron``. It is spelled out rather than
+#: derived because this module may import only ``config.fields`` (the config
+#: boundary contract) and ``mcp_discovery`` pulls in aiohttp and the probe
+#: executor. A ratchet test pins the equality, so a new caller-aware server fails
+#: it until it is placed here or in the test's exclusions with a reason.
+#:
+#: ``kirocrew-computer`` drives the desktop and pools only behind a
+#: per-connection tenant nonce (``mcp_caller.POOLING_REQUIRES_TENANT_NONCE``), so
+#: it stays an explicit choice. ``kirocrew-cron`` is not excluded for a known
+#: hazard: it is simply outside what this layer was measured on, and stays one
+#: operator toggle away like any other server.
+MANAGED_STUB_FOLLOWERS: tuple[str, ...] = (
+    "kirocrew-guide",
+    "kirocrew-mate",
+    "kirocrew-panel",
+    "kirocrew-dashboard",
+    "kirocrew-work",
+    "kirocrew-crew-log",
+    "kirocrew-debug",
+)
+
+
+def _resolve_stub_base(mcp_gateway_data: dict) -> list[str]:
+    """The roster plus the managed servers that follow the control plane.
+
+    This is the answer an operator who has said nothing about a server gets: the
+    layer :func:`_resolve_stub_overrides` deviates FROM. It differs from
+    :func:`_resolve_stub_roster` only by :data:`MANAGED_STUB_FOLLOWERS`, appended
+    when the leader is stubbed by the roster or by an override. Writers persist the
+    roster, never this. The seed asks this whether a name is already stubbed. The
+    dashboard writer never prunes a follower decision at all (see
+    ``_record_stub_decisions``), because this base moves with the leader.
+    """
+    roster = _resolve_stub_roster(mcp_gateway_data)
+    overrides = _resolve_stub_overrides(mcp_gateway_data)
+    if not overrides.get(MANAGED_STUB_LEADER, MANAGED_STUB_LEADER in roster):
+        return roster
+    present = set(roster)
+    return roster + [name for name in MANAGED_STUB_FOLLOWERS if name not in present]
+
+
 def _resolve_stub_servers(mcp_gateway_data: dict) -> list[str]:
     """Which MCP servers are given a stub, roster and operator decisions together.
 
-    The set in EFFECT: :func:`_resolve_stub_roster` supplies the configured base
-    and :func:`_resolve_stub_overrides` the operator's deviations from it, so a
+    The set in EFFECT: :func:`_resolve_stub_base` supplies the configured base
+    (the roster, plus :data:`MANAGED_STUB_FOLLOWERS` when the leader is
+    stubbed) and :func:`_resolve_stub_overrides` the operator's deviations from it, so a
     distribution can grow the roster without overwriting a choice the operator
     made, and the operator can turn any single server off without pinning
     themselves to today's roster.
@@ -120,7 +181,7 @@ def _resolve_stub_servers(mcp_gateway_data: dict) -> list[str]:
     write); servers added by an override are appended in sorted order, because
     they have no position in the file to preserve.
     """
-    roster = _resolve_stub_roster(mcp_gateway_data)
+    roster = _resolve_stub_base(mcp_gateway_data)
     overrides = _resolve_stub_overrides(mcp_gateway_data)
     if not overrides:
         return roster

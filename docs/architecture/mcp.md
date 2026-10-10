@@ -848,6 +848,19 @@ Python server configured through `env.PYTHONPATH` fails the probe while working
 in a session, and unexplained that reads as a probe bug rather than the
 launcher boundary it is.
 
+### Managed servers that follow kirocrew-core
+
+When `kirocrew-core` is in the stub set, Kiro Crew's other caller-aware managed
+servers join it (`config.integration_sections.MANAGED_STUB_FOLLOWERS`), so each
+is one shared backend instead of one process per session. They already need no
+launch approval (managed launch), get the per-session token from gatewayd, and
+consume the injected caller block. `kirocrew-computer` stays out (tenant-nonce
+gated), and so does `kirocrew-cron` (outside what this layer was measured on).
+Joining the stub set mounts nothing: only
+servers a spec already declares are wrapped. An operator can turn any one off in
+MCP Management; that choice is stored as an override and survives later
+`kirocrew-core` toggles.
+
 ### Stub launch approval
 
 A stub roster entry selects routing, while
