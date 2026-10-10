@@ -148,12 +148,20 @@ def attach_gateway(state: Any) -> None:
 async def on_startup(ctx: Any) -> None:
     # Startup and enable share this hook. Provisioning is off the gateway loop.
     await _await_owned(asyncio.create_task(asyncio.to_thread(ensure_team)))
+    from .runner import get_supervisor
+
+    # Built here, off the loop, rather than at the first run request: building it reads the run
+    # record back, and after an in-place restart that read is what saves the run the restart cut
+    # off as interrupted, which a stdio MCP server cannot tell on its own.
+    await _await_owned(asyncio.create_task(asyncio.to_thread(get_supervisor)))
 
 
 async def on_shutdown(ctx: Any) -> None:
     from .runner import get_supervisor
 
-    await _await_owned(asyncio.create_task(asyncio.to_thread(get_supervisor().stop)))
+    # The lookup rides inside the hop: on first use it builds the supervisor, which reads the run
+    # record back from disk.
+    await _await_owned(asyncio.create_task(asyncio.to_thread(lambda: get_supervisor().stop())))
 
 
 def build_runner(*, stop_check, on_activity):

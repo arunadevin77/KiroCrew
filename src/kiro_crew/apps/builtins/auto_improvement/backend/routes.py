@@ -1548,10 +1548,15 @@ async def _handle_run_start(request: web.Request) -> web.StreamResponse:
 
 
 async def _handle_run_status(_request: web.Request) -> web.StreamResponse:
-    """Live run status. Reads in-memory state only, so it stays responsive while the
-    worker thread is deep in a measurement."""
+    """Live run status, read in a worker thread so the event loop never waits on the store.
 
-    return web.json_response(runner.get_supervisor().status())
+    The supervisor lookup rides inside the hop, as in :func:`_refuse_while_running`:
+    ``get_supervisor()`` builds the singleton on first use, which reads the run record back
+    (``RunSupervisor._hydrate_terminal_record``), and ``status()`` re-reads that record while
+    the run is live in another process. Neither touches the run's worker thread, so a poll stays
+    answered while that thread is deep in a measurement."""
+
+    return web.json_response(await asyncio.to_thread(lambda: runner.get_supervisor().status()))
 
 
 async def _handle_run_stop(request: web.Request) -> web.StreamResponse:
@@ -1654,7 +1659,9 @@ def register_routes(app: web.Application) -> None:
         """
         try:
 
-            await asyncio.to_thread(runner.get_supervisor().stop)
+            # The lookup rides inside the hop too: on first use it builds the supervisor, which
+            # reads the run record back (see `_stop_on_disable` below).
+            await asyncio.to_thread(lambda: runner.get_supervisor().stop())
         except Exception:  # pragma: no cover - defensive
             logger.warning("%s: run shutdown failed", store.APP_NAME, exc_info=True)
 

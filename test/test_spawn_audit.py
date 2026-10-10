@@ -820,6 +820,9 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         "apps/builtins/auto_improvement/tests/test_profile_capture.py::_git",
         "apps/builtins/auto_improvement/tests/test_runner.py::_git",
         "apps/builtins/auto_improvement/tests/test_runner.py::_tiny_repo",
+        # Stand-in for a run's writer: fixed command and argv, cwd=tmp_path, not agent-influenced.
+        "apps/builtins/auto_improvement/tests/test_runner.py"
+        "::test_a_run_another_live_process_wrote_reads_as_running_until_that_process_exits",
         # NOT a subprocess spawn: the AST heuristic matches ``asyncio.run`` (attr
         # ``run`` on base ``asyncio``). This is a TEST helper that drives one
         # in-process aiohttp handler coroutine to completion so the PR-action routes
