@@ -19,6 +19,8 @@ import { api } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { postNativeNotification, nativeNotificationPermitted } from '../lib/nativeNotify'
 import { isWindowAway } from '../hooks/windowAway'
+import { isSlotMuted } from '../hooks/sessionMute'
+import { sseSlots } from '../store/dashboardSlice'
 
 vi.mock('../lib/nativeNotify', () => ({
   postNativeNotification: vi.fn(),
@@ -154,5 +156,22 @@ describe('interactive approval OS toast from the permission row', () => {
     const ws = await connect()
     ws.frame('chat_message', { slot: SLOT, role: 'assistant', content: 'hi', ts: '2026-01-01T00:00:00Z', meta: { mid: 'mid-1' } })
     expect(postNativeNotification).not.toHaveBeenCalled()
+  })
+
+  // A prompt is the session waiting on the user, so neither mute silences its
+  // toast: the per-row mute and the creator's "mute sessions it opens" rule
+  // behave the same here.
+  it.each([
+    ['its own row', [{ key: SLOT, messages: 1, running: true, muted: true }]],
+    ['its creator', [
+      { key: 'chat-creator', messages: 1, running: false, mutes_opened: true },
+      { key: SLOT, messages: 1, running: true, created_by: 'chat-creator' },
+    ]],
+  ])('a session muted by %s still toasts its prompt', async (_who, slots) => {
+    const ws = await connect()
+    act(() => { testStore.dispatch(sseSlots(slots)) })
+    expect(isSlotMuted(testStore.getState().dashboard.slots, SLOT)).toBe(true)
+    ws.frame('chat_message', permissionRow(SLOT, 'req-1', 'mid-1'))
+    expect(postNativeNotification).toHaveBeenCalledTimes(1)
   })
 })

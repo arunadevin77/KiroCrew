@@ -362,7 +362,7 @@ constructed by the socket's turn-completion owner
 surface with its own `kirocrew-chat-done:<slot>` tag; it shares only the away
 predicate.
 
-An interactive chat's tool prompt (the chat runner's `permission` row, which has no feed note) is toasted by the socket's transcript owner `website/src/hooks/websocket/chatStream.ts` on the row's live arrival, behind the same gate as its chime (`shouldChimeOnPermissionRow`: not `resolved`, not a reconnect replay). It is on by default, posts only with the OS permission granted and while `isWindowAway()`, is `silent`, reads like the chat-complete toast (session title as the title, `Waiting for your approval: <tool>` as the body), and carries a `kirocrew-approval:<slot>:<request_id>` tag, so one pending prompt is one banner however many windows receive the row. A session's creator mute does not suppress it: a prompt is the session waiting on the user.
+An interactive chat's tool prompt (the chat runner's `permission` row, which has no feed note) is toasted by the socket's transcript owner `website/src/hooks/websocket/chatStream.ts` on the row's live arrival, behind the same gate as its chime (`shouldChimeOnPermissionRow`: not `resolved`, not a reconnect replay). It is on by default, posts only with the OS permission granted and while `isWindowAway()`, is `silent`, reads like the chat-complete toast (session title as the title, `Waiting for your approval: <tool>` as the body), and carries a `kirocrew-approval:<slot>:<request_id>` tag, so one pending prompt is one banner however many windows receive the row. Neither mute suppresses it, the session's own per-row mute or its creator's: a prompt is the session waiting on the user.
 
 ## Bell sheet dismissal (client)
 

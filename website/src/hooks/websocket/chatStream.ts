@@ -7,7 +7,7 @@ import { markSlotUnread } from '../../store/dashboardSlice'
 import { sseChatMessage, appendSlotMessage, setSlotStatusDetail, sseToolActivity, queueEntryQuote } from '../../store/chatSlice'
 import { dispatchMcNotification, APPROVAL_KIND, shouldChimeOnPermissionRow } from '../notificationEvent'
 import { chatMessageMarksUnread, isMemberThreadSlot, memberThreadRowMarksUnread, noteMemberThreadRow, unreadWatermarkTs } from '../unreadOnAttention'
-import { isSlotMutedByCreator } from '../sessionMute'
+import { isSlotMuted } from '../sessionMute'
 import { isTerminalErrorRow, noteTurnErrorRow, takeTurnErrored } from '../turnError'
 import { noteUnsavedRowTs } from '../../lib/slotReadRelay'
 import { emitThemeSound } from '../themeSound'
@@ -61,8 +61,9 @@ export function useChatStream({ dispatch, buffers, voice, reconnectingRef }: Cha
         // One toast per pending prompt (the tag names slot and request, so
         // every window that receives the row collapses onto one banner),
         // silent because WebAudio owns the sound, and only with the OS
-        // permission granted. A session's creator mute does not apply: a
-        // prompt is the session waiting on the user, as for turn-done.
+        // permission granted. Neither mute applies (the session's own per-row
+        // mute or its creator's): a prompt is the session waiting on the
+        // user, as for turn-done, so no `isSlotMuted` gate here.
         if (data.slot && nativeNotificationPermitted() && isWindowAway()) {
           const slotTitle = store.getState().dashboard.slots.find(s => s.key === data.slot)?.title || data.slot
           const requestId = String(data.meta?.approval_id ?? data.ts ?? '')
@@ -107,12 +108,12 @@ export function useChatStream({ dispatch, buffers, voice, reconnectingRef }: Cha
         const marks = isMemberThreadSlot(slot, slots)
           ? memberThreadRowMarksUnread(data.role, data.meta?.notice)
           : chatMessageMarksUnread(data.role, data.meta?.notice)
-        // Criterion 7: a session muted by its creator never becomes
+        // Criterion 7: a muted session (per row or by its creator) never becomes
         // unread from its own activity. This is the chat_message half of the
         // two automatic markSlotUnread sites; turnCompletion.ts has the other.
         // A terminal error row is exempt: the worker has stopped, and a
         // silenced failure stalls it unseen just as a silenced approval would.
-        if (marks && (!isSlotMutedByCreator(slots, slot) || isTerminalErrorRow(data))) {
+        if (marks && (!isSlotMuted(slots, slot) || isTerminalErrorRow(data))) {
           dispatch(markSlotUnread({ slot, ts: unreadWatermarkTs(data.role, data.ts), localTs: data.ts || undefined }))
         }
       })
