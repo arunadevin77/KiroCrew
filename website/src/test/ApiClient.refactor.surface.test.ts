@@ -134,7 +134,7 @@ const API_KEY_ORDER = [
   'knowledgeSearch', 'notifications', 'deleteNotification', 'clearNotifications',
   'ackNotification', 'unackNotification', 'ackAllNotifications', 'notificationChannels',
   'updateNotificationChannelSettings', 'sessions', 'sessionsSearch', 'instancesSearchSessions',
-  'instancesCapabilities', 'instanceChatSlots', 'crewPeerGet', 'crewPeerPost', 'sessionDetail', 'sessionMeta', 'deleteSession',
+  'instancesCapabilities', 'instancesApprovalState', 'instanceChatSlots', 'crewPeerGet', 'crewPeerPost', 'sessionDetail', 'sessionMeta', 'deleteSession',
   'clearSessions', 'autocomplete', 'spawnList', 'spawn',
   'spawnStatus', 'spawnDelete', 'spawnStopAll', 'spawnRetry',
   'approvals', 'resolveApproval', 'pendingQuestions', 'answerQuestion',

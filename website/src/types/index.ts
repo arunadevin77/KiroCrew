@@ -1091,6 +1091,12 @@ export interface ConfiguredChannelTarget {
  * by the picker and then fail on the first send, which is worse than not offering
  * it at all.
  */
+/** `GET /api/instances/{id}/approval-state`: one field of the peer's status. */
+export interface RemoteCrewApprovalState {
+  /** Whether the peer's machine-wide YOLO is on; null when its status could not be read. */
+  yolo: boolean | null
+}
+
 export interface RemoteCrewCapabilities {
   instance_id: string
   /** The peer's gateway version, or "" when it could not be read. */

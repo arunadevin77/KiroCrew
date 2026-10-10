@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
+import { Fragment, Suspense, lazy, useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useNavigationType, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -320,8 +320,11 @@ import { rewindWithRollback } from '../lib/rewindCall'
 import { isChatPageSurface } from '../utils/channelOrigin'
 import { sessionTitleRoster } from '../utils/sessionRoster'
 import { errMessage } from '../utils/thunkError'
-import CrewChatWindow from './chat/crew-window/CrewChatWindow'
 import { closeCrewWindow, crewWindowShown, useCrewWindow } from './chat/crew-window/crewWindowStore'
+// Only a crew session mounts the window, so its code loads on first open.
+const CrewChatWindow = lazy(() => import('./chat/crew-window/CrewChatWindow'))
+// Eager: holds the window's isolation guards until its chunk arrives.
+import CrewWindowGuard from './chat/crew-window/CrewWindowGuard'
 
 
 import { i18nT } from '../i18n/t'
@@ -5703,8 +5706,10 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       <div ref={setChatPaneEl} className={`relative flex flex-col bg-bg min-w-0 min-h-0 h-full overflow-hidden ${(activityOpen && !activitySlot) || search.isOpen ? 'flex-[1_1_60%]' : 'flex-1'}`} style={{ transition: 'flex 0.2s', ...(!sidebarOpen && !isMobile ? { marginLeft: -COLLAPSED_PANE_RECLAIM_PX } : {}), '--mc-content-width': scaleContentWidth(CONTENT_WIDTH[chatConfig.contentWidth], chatConfig.contentWidth, chatConfig.messageFontSize).messages, '--mc-input-width': scaleContentWidth(CONTENT_WIDTH[chatConfig.contentWidth], chatConfig.contentWidth, chatConfig.messageFontSize).input } as React.CSSProperties}>
         {crewWindow && (
           <div className="absolute inset-0 z-[48] bg-bg" data-crew-cover>
-            <CrewChatWindow key={`${crewWindow.instanceId}:${crewWindow.key}`} target={crewWindow}
-              onClose={embedded ? () => navigate('/embed/sessions') : undefined} />
+            <Suspense fallback={<CrewWindowGuard onClose={embedded ? () => navigate('/embed/sessions') : undefined} />}>
+              <CrewChatWindow key={`${crewWindow.instanceId}:${crewWindow.key}`} target={crewWindow}
+                onClose={embedded ? () => navigate('/embed/sessions') : undefined} />
+            </Suspense>
           </div>
         )}
         {snipFrame && (

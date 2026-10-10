@@ -1775,7 +1775,7 @@ def _cap_str(value: object, limit: int = _CAP_MAX_STR) -> str:
 def _cap_list(payload: object, key: str) -> object:
     """The row list out of a peer reply that is either bare or wrapped in *key*.
 
-    The five capability endpoints do not agree on a shape: ``/api/models`` and
+    The roster endpoints do not agree on a shape: ``/api/models`` and
     ``/api/effort-levels`` answer a bare list, while ``/api/agents`` and
     ``/api/workspaces`` answer ``{"<key>": [...]}`` next to a sibling default.
     Normalizing here is what keeps a wrapped reply from reaching ``_cap_rows``,
@@ -1948,6 +1948,50 @@ async def api_instances_capabilities(request: web.Request) -> web.Response:
             "unavailable": unavailable,
         }
     )
+
+
+async def api_instances_approval_state(request: web.Request) -> web.Response:
+    """GET /api/instances/{id}/approval-state — a connected peer's machine-wide YOLO flag.
+
+    The crew window's approval-mode picker must show the mode the peer is really
+    in, and a peer's YOLO is not on its slot rows. So this reads the peer's
+    ``/api/status`` through the closed capability carrier and forwards one field
+    and nothing else: ``yolo``, ``None`` when the read failed or carried no
+    boolean, so the window can tell "off" from "unknown". A route of its own, not
+    a field of ``/capabilities``: the window polls it, and the roster reads must
+    not ride every poll. Owner-only, the same bar as the capability read.
+    """
+    denied = _guard(request, "approval_state")
+    if denied is not None:
+        return denied
+    from kiro_crew.dashboard.handlers._shared import _owner_denial_response
+    from kiro_crew.dashboard.handlers.source_providers import is_owner_dashboard_request
+
+    if not is_owner_dashboard_request(request):
+        _audit("approval_state", "denied", error="non-owner identity rejected")
+        return _owner_denial_response(request, "remote-crew approval state is owner-only")
+    state: DashboardState = request.app["state"]
+    instance_id = request.match_info.get("id", "")
+    mgr = getattr(state, "instances_manager", None)
+    if mgr is None:
+        _audit("approval_state", "denied", error="instances manager unavailable")
+        return web.json_response(
+            {"error": "remote crews are not available", "code": "instances_unavailable"},
+            status=503,
+        )
+    peer_yolo: bool | None = None
+    try:
+        ok, payload = await mgr.peer_capability(instance_id, "/api/status")
+    except Exception as e:  # a dead tunnel reports "unknown", never a 500
+        logger.info("Peer status on %s raised (%s)", instance_id, type(e).__name__)
+        ok, payload = False, {"code": "capability_unreachable"}
+    if ok and isinstance(payload, dict):
+        yolo = payload.get("yolo")
+        # Only a real boolean is an answer: a missing or odd value is unknown,
+        # never "off", which would offer a Normal pick that ends a live YOLO.
+        peer_yolo = yolo if isinstance(yolo, bool) else None
+    _audit("approval_state", "success", request_id=instance_id)
+    return web.json_response({"yolo": peer_yolo})
 
 
 #: Every field ``useInstanceSessions.ts`` reads off a peer slot, with the clamp
