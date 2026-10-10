@@ -356,6 +356,69 @@ async def test_rerun_of_parallel_calls_that_finished_out_of_order(
     assert again == []
 
 
+PARALLEL_SAME_CALL = (
+    'META = {"name": "same"}\n'
+    "async def workflow(ctx):\n"
+    "    async def branch(item):\n"
+    "        own = await ctx.agent('first:' + item)\n"
+    "        shared = await ctx.agent('same')\n"
+    "        return [own, shared]\n"
+    "    return await ctx.parallel([lambda: branch('A'), lambda: branch('B')])\n"
+)
+
+PIPELINE_SAME_CALL = (
+    'META = {"name": "same"}\n'
+    "async def workflow(ctx):\n"
+    "    async def first(item):\n"
+    "        return await ctx.agent('first:' + item)\n"
+    "    async def second(prev):\n"
+    "        return [prev, await ctx.agent('same')]\n"
+    "    return await ctx.pipeline(['A', 'B'], first, second)\n"
+)
+
+
+@pytest.mark.parametrize(
+    "script", [PARALLEL_SAME_CALL, PIPELINE_SAME_CALL], ids=["parallel", "pipeline"]
+)
+async def test_rerun_gives_each_branch_its_own_result_for_the_same_call(
+    monkeypatch, script
+) -> None:
+    """Two branches (or pipeline items) make the same call, with the same prompt and
+    options, and got different answers. Branch B's call started first, so it holds the
+    lower call index; on the rerun branch A reaches its call first. Each branch must
+    replay its own answer."""
+    agents = _patch_agent_fn(monkeypatch)
+    b_same_started = asyncio.Event()
+    answers: list = []
+
+    async def answers_in_start_order(prompt: str, opts: dict):
+        if prompt == "first:A":
+            await asyncio.wait_for(b_same_started.wait(), timeout=5)
+        if prompt == "same":
+            answers.append(prompt)
+            b_same_started.set()
+            answer = "same#" + str(len(answers))
+            await asyncio.sleep(0)
+            return answer
+        await asyncio.sleep(0)
+        return "R(" + prompt + ")"
+
+    agents["fn"] = answers_in_start_order
+    svc = WorkflowService(sessions=FakeSessions(), pool_agents=False)
+    rid = (await svc.start(script, name="same"))["run_id"]
+    first = await _wait(svc, rid)
+    assert first["result"] == [["R(first:A)", "same#2"], ["R(first:B)", "same#1"]]
+
+    again: list = []
+    agents["fn"] = _logging_agent(again)
+    rr = await svc.rerun_subtree(rid, from_index=4)
+    second = await _wait(svc, rr["run_id"])
+    assert again == [], f"the rerun made live calls: {again}"
+    assert (
+        second["result"] == first["result"]
+    ), f"the branches swapped their replayed answers: {second['result']}"
+
+
 async def test_restart_of_a_run_a_gateway_restart_interrupted_replays_its_finished_calls(
     tmp_path, monkeypatch
 ) -> None:

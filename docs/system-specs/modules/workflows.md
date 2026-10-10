@@ -941,20 +941,42 @@ existence check.
 ### Resume and restart-subtree
 
 Resume is prefix replay, not checkpointing of arbitrary state. `runner.run` takes
-`replay_results` (a `call_index -> result` map from a prior run) and
-`replay_before` (an index): a call with `call_index < replay_before` that has a
-cached entry returns that entry instead of calling the model; calls at or after the
-index re-execute live. Determinism is what makes this sound: no `time`/`random` in
-scope plus a stable `call_index` means the same script and args produce the same
-call order. A replayed call whose prior result was `None` records
+`replay_results` (a `call_index -> result` map from a prior run),
+`replay_fingerprints` (a `call_index -> fingerprint` map from the same run) and
+`replay_before` (an index). A prior call is eligible when its
+`call_index < replay_before` and it has both a cached result and a fingerprint. A
+call of the new run replays the eligible prior result whose fingerprint equals its
+own instead of calling the model; any other call runs live.
+
+A call's fingerprint (`_call_fingerprint` in `runner.py`) is a SHA-256 over its
+position, its prompt and every option that reaches the model (not the display-only
+`label` and `phase`). Its position (`_CallScope`) is the path of `ctx.parallel`
+branches and `ctx.pipeline` items it runs in, plus its ordinal within that branch.
+The calls of one branch run one after another, so a position comes from the script
+and its args, not from the order the scheduler starts calls in. `call_index` does
+follow that order, and a replayed call returns without suspending, so a rerun's
+calls take their indices in a different order than the prior run's did; matching by
+index would hand a call another call's result. Every call of a run has its own
+position, so a fingerprint names at most one prior call. Determinism is what makes
+this sound: no `time`/`random` in scope, and no concurrency but `ctx.parallel` and
+`ctx.pipeline`, because a script imports nothing (B1, so no `asyncio`), reaches no
+private `ctx` attribute (B2) and runs with only `SAFE_BUILTINS` plus `ctx` (B7). A
+call whose options cannot be serialized has no fingerprint and always runs live. A
+replayed call whose prior result was `None` records
 `"replayed a call that had already failed in the prior run"`.
+
+The fingerprints persist with the run: `RunHandle.agent_fingerprints`, written to
+the record as `agent_fingerprints`. Each one lands with its call's result at the
+per-call checkpoint (`RunRegistry.record_agent_result`), so a run a gateway restart
+interrupted can still be restarted with replay. A record without fingerprints
+replays nothing: every call of its rerun runs live.
 
 `WorkflowService.rerun_subtree(run_id, from_index, source=None)` drives it from the
 stored handle. If `source` is supplied and differs from the stored script, the
 rerun is treated as **edited**: the edited source is validated first (rejected with
 errors if invalid) and the replay cache is **not** reused (`replay_before=0`,
-`replay_results={}`), because editing the script can shift call indices and a
-mismatched index would replay the wrong result into the wrong step. An unedited
+`replay_results={}`), because editing the script can change what its calls mean, and
+a cached result could then replay into a call it no longer answers. An unedited
 rerun of a saved definition retains its definition id, slug, and revision so it
 remains an exact saved invocation and cannot be promoted into a duplicate. An
 edited rerun clears that saved-definition identity because its submitted source

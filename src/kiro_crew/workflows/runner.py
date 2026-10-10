@@ -30,10 +30,11 @@ Spec: ``docs/system-specs/modules/workflows.md``.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
+import inspect
 import json
 import time
-from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -43,6 +44,7 @@ from kiro_crew.metrics.events import WORKFLOW_RUNS, emit_counter
 
 from . import BudgetExceeded, WorkflowEvent
 from .context import DEFAULT_MAX_AGENTS_PER_RUN, AgentCounter, Budget, build_safe_globals
+from .dsl import _call_stage, _maybe_await
 from .dsl import parallel as _parallel
 from .dsl import pipeline as _pipeline
 from .events import EventStream
@@ -166,19 +168,56 @@ def describe_agent_error(exc: BaseException) -> str:
     return text
 
 
-def _call_fingerprint(prompt: str, opts: dict) -> str:
-    """Identity of one agent call for replay: the prompt and every option that
-    reaches the model, without the display-only ``label`` and ``phase``.
+def _call_fingerprint(prompt: str, opts: dict, position: tuple) -> str:
+    """Identity of one agent call for replay: its *position* in the run (see
+    :class:`_CallScope`), the prompt, and every option that reaches the model,
+    without the display-only ``label`` and ``phase``.
 
+    The position keeps apart two branches that make the same call with the same
+    options: each replays the answer its own call got, not the other branch's.
     Returns "" when the options cannot be serialized; a call without a
     fingerprint is never replayed and always runs live.
     """
     keyed = {k: v for k, v in opts.items() if k not in ("label", "phase")}
     try:
-        blob = json.dumps({"prompt": prompt, "opts": keyed}, sort_keys=True, default=str)
+        blob = json.dumps(
+            {"position": list(position), "prompt": prompt, "opts": keyed},
+            sort_keys=True,
+            default=str,
+        )
     except (TypeError, ValueError):
         return ""
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+class _CallScope:
+    """Where a call sits in its run: the branch path and the next ordinal in it.
+
+    The root scope's path is ``()``. Each ``ctx.parallel`` / ``ctx.pipeline``
+    fan-out takes one ordinal in the scope that starts it, and branch (or item)
+    ``i`` runs in the scope ``path + (ordinal, i)``. A call's position is its
+    scope's path plus the ordinal it takes there. The calls inside one branch run
+    one after another, so a call's position is set by the script and its
+    arguments, whatever order the scheduler starts the branches' calls in.
+    """
+
+    __slots__ = ("owner", "path", "_next")
+
+    def __init__(self, owner: object, path: tuple) -> None:
+        self.owner = owner
+        self.path = path
+        self._next = 0
+
+    def take(self) -> int:
+        ordinal = self._next
+        self._next += 1
+        return ordinal
+
+
+#: The scope of the branch the running task belongs to; see ``_RunContext._scope``.
+_CALL_SCOPE: "contextvars.ContextVar[Optional[_CallScope]]" = contextvars.ContextVar(
+    "workflow_call_scope", default=None
+)
 
 
 @asynccontextmanager
@@ -387,16 +426,21 @@ class _RunContext:
         # by call_index. Inside ``parallel``/``pipeline`` a replayed call returns
         # without suspending, so the calls of a rerun start in a different order
         # than the prior run's did, and the same index names a different call.
-        # fingerprint → prior call indices with that fingerprint, oldest first.
-        # Only prior calls before ``replay_before`` that carry a fingerprint
-        # are eligible; any other call runs live.
+        # The fingerprint includes the call's position in its branch
+        # (``_CallScope``), so two branches that make the same call each get
+        # their own result back. Every call in a run has its own position, so
+        # no two calls of one run share a fingerprint.
+        # fingerprint → the prior call index with that fingerprint. Only prior
+        # calls before ``replay_before`` that carry a fingerprint are eligible;
+        # any other call runs live.
         prior_fingerprints = replay_fingerprints or {}
-        self._replay_queues: dict[str, deque[int]] = {}
+        self._replay_indices: dict[str, int] = {}
         for prior_index in sorted(k for k in self._replay_results if isinstance(k, int)):
             prior_fp = prior_fingerprints.get(prior_index)
             if prior_index < replay_before and isinstance(prior_fp, str) and prior_fp:
-                self._replay_queues.setdefault(prior_fp, deque()).append(prior_index)
+                self._replay_indices.setdefault(prior_fp, prior_index)
         self.agent_results: dict[int, Any] = {}
+        self._root_scope = _CallScope(self, ())
         # call_index → why that call failed (bounded/redacted). Kept alongside
         # agent_results so "no result" is always accompanied by a reason.
         self.agent_errors: dict[int, str] = {}
@@ -446,6 +490,9 @@ class _RunContext:
     ) -> Any:
         # B6 cap + A4 ceiling are checked BEFORE the call so a script cannot run
         # past either limit. would_exceed lets us stop at the boundary cleanly.
+        # Taken before the first await, so calls that start together in one
+        # branch keep their start order.
+        position = self._call_position()
         guard = getattr(self, "_execution_guard", None)
         if guard is not None:
             await guard()
@@ -476,16 +523,15 @@ class _RunContext:
             "session": session,
             "nudge": nudge,
         }
-        fingerprint = _call_fingerprint(prompt, opts)
-        replay_queue = self._replay_queues.get(fingerprint) if fingerprint else None
+        fingerprint = _call_fingerprint(prompt, opts, position)
+        replay_index = self._replay_indices.pop(fingerprint, None) if fingerprint else None
         error = ""
         try:
-            if replay_queue:
-                # Resume: replay the prior run's result for this same call
-                # (same fingerprint, oldest first) instead of re-calling the
-                # model. The lookup and the popleft run with no await between
-                # them, so two concurrent calls never take the same result.
-                result = self._replay_results[replay_queue.popleft()]
+            if replay_index is not None:
+                # Resume: replay the prior run's result for this same call (same
+                # position in the same branch, same prompt and options: the
+                # fingerprint) instead of re-calling the model.
+                result = self._replay_results[replay_index]
                 ok = result is not None
                 if not ok:
                     error = "replayed a call that had already failed in the prior run"
@@ -563,10 +609,49 @@ class _RunContext:
     # combinator limit preserves per-fan-out shape, the global slot is what stops
     # overlapping combinators from exceeding the cap in aggregate.
     async def parallel(self, thunks: list) -> list:
-        return await _parallel(thunks, limit=self._concurrency)
+        group = self._call_position()
+
+        def in_branch(index: int, thunk: Any) -> Callable[[], Awaitable[Any]]:
+            async def run() -> Any:
+                token = _CALL_SCOPE.set(_CallScope(self, group + (index,)))
+                try:
+                    return await _maybe_await(thunk if inspect.isawaitable(thunk) else thunk())
+                finally:
+                    _CALL_SCOPE.reset(token)
+
+            return run
+
+        branches = [in_branch(i, t) for i, t in enumerate(thunks)]
+        return await _parallel(branches, limit=self._concurrency)
 
     async def pipeline(self, items: list, *stages: Callable) -> list:
-        return await _pipeline(items, *stages, limit=self._concurrency)
+        group = self._call_position()
+        # One scope per item, shared by its stages: an item's stages run one
+        # after another, so its calls keep one ordinal sequence.
+        chains: dict[int, _CallScope] = {}
+
+        def in_chain(stage: Callable) -> Callable[[Any, Any, int], Awaitable[Any]]:
+            async def run(prev: Any, item: Any, index: int) -> Any:
+                chain = chains.setdefault(index, _CallScope(self, group + (index,)))
+                token = _CALL_SCOPE.set(chain)
+                try:
+                    return await _call_stage(stage, prev, item, index)
+                finally:
+                    _CALL_SCOPE.reset(token)
+
+            return run
+
+        return await _pipeline(items, *[in_chain(s) for s in stages], limit=self._concurrency)
+
+    def _scope(self) -> _CallScope:
+        """The scope of the branch this task runs in, or the run's root scope."""
+        scope = _CALL_SCOPE.get()
+        return scope if scope is not None and scope.owner is self else self._root_scope
+
+    def _call_position(self) -> tuple:
+        """Take the next position in the current scope (see :class:`_CallScope`)."""
+        scope = self._scope()
+        return scope.path + (scope.take(),)
 
     async def workflow(self, name: str, args: Optional[dict] = None) -> Any:
         # Contract-only. ``workflow`` is not in CORE_CTX_SURFACE and no shipped host
