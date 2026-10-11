@@ -96,6 +96,8 @@ def _is_bundled_skill_asset(path: Path) -> bool:
     * ``builtin_skills/**`` -- the top-level bundled skills.
     * ``apps/builtins/<app>/skills/**`` -- skills an app ships with itself
       (dev-fleet's recording and pod-e2e scripts).
+    * ``dashboard_templates/builtin/<id>/helpers/**`` -- a Dashboard template's upkeep
+      helpers, which ``dashboard_upkeep`` copies into the crewmate's upkeep skill.
 
     Both are scripts the AGENT runs in the USER's repo/shell, not code the
     gateway imports or spawns; they ship under the package only for packaging,
@@ -107,6 +109,10 @@ def _is_bundled_skill_asset(path: Path) -> bool:
     """
     parts = path.relative_to(_SRC_ROOT).parts
     if "builtin_skills" in parts:
+        return True
+    if parts[:2] == ("dashboard_templates", "builtin") and parts[3:4] == ("helpers",):
+        # A Dashboard template's upkeep helper: copied into the crewmate's upkeep
+        # skill and run by the agent in its shell, exactly like a skill script.
         return True
     return parts[:2] == ("apps", "builtins") and "skills" in parts[2:]
 

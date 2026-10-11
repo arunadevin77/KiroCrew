@@ -46,6 +46,13 @@ whose keys the page never reads is still an array. The shape keys are:
 
 A nested shape is ``{"type": ...}`` plus the same keys, and nothing else.
 
+An agentic field may also declare ``upkeep``: ``{"means", "when", "how"}``, three
+short sentences, plus an optional ``helper`` -- a file under the template's own
+``helpers/`` that fetches data the crew log does not hold and prints a ready
+``dashboard_write`` payload. ``dashboard_upkeep`` turns them into the crewmate's
+upkeep skill. A fold field has no upkeep: the fold writes it. Only a ``builtin``
+template names a helper, because a helper is code and this format carries none.
+
 This is declarative on purpose: a user template carries no code, so the gateway can
 load one at run time without running anything an agent wrote. Built-in templates use
 the same format, so one loader, one parity check and one registry serve all three
@@ -70,6 +77,7 @@ __all__ = [
     "ManifestError",
     "Shape",
     "TemplateManifest",
+    "Upkeep",
     "load_template",
     "parse_manifest",
 ]
@@ -126,6 +134,50 @@ _PROPERTY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
 MAX_SHAPE_DEPTH: Final[int] = 8
 #: How many values one ``enum`` may list.
 MAX_ENUM: Final[int] = 32
+#: Longest ``upkeep`` sentence.
+MAX_UPKEEP_CHARS: Final[int] = 200
+#: The sentences an ``upkeep`` object carries, every one required.
+UPKEEP_KEYS: Final[tuple[str, ...]] = ("means", "when", "how")
+#: A helper's file name under the template's ``helpers/``.
+_HELPER = re.compile(r"^[a-z][a-z0-9_]{0,40}\.py\Z")
+
+
+@dataclass(frozen=True)
+class Upkeep:
+    """What an agentic field means, when the crewmate writes it, and how."""
+
+    means: str
+    when: str
+    how: str
+    #: A file under the template's ``helpers/``, or ``None``.
+    helper: str | None = None
+
+
+def _upkeep(name: str, raw: Any, problems: list[str]) -> Upkeep | None:
+    """Parse a field's ``upkeep`` object; every problem is appended, never raised."""
+    where = f"field {name!r}: upkeep"
+    if not isinstance(raw, dict):
+        problems.append(f"{where} must be an object with {list(UPKEEP_KEYS)}")
+        return None
+    extra = sorted(str(k) for k in raw if k not in UPKEEP_KEYS and k != "helper")
+    if extra:
+        problems.append(f"{where}: unknown key(s) {extra}")
+    texts: dict[str, str] = {}
+    for key in UPKEEP_KEYS:
+        value = raw.get(key)
+        if not (isinstance(value, str) and value.strip() and len(value) <= MAX_UPKEEP_CHARS):
+            problems.append(
+                f"{where}.{key} must be a non-empty string of at most {MAX_UPKEEP_CHARS} characters"
+            )
+        else:
+            texts[key] = " ".join(value.split())
+    helper = raw.get("helper")
+    if "helper" in raw and not (isinstance(helper, str) and _HELPER.match(helper)):
+        problems.append(f"{where}.helper must be a file name matching {_HELPER.pattern}")
+        helper = None
+    if len(texts) != len(UPKEEP_KEYS):
+        return None
+    return Upkeep(texts["means"], texts["when"], texts["how"], helper)
 
 
 class ManifestError(ValueError):
@@ -172,6 +224,8 @@ class FieldSpec:
     agentic: bool
     #: The value's declared shape, or ``None`` when only ``type`` is declared.
     shape: Shape | None = None
+    #: What it means and when and how the crewmate writes it, or ``None``.
+    upkeep: Upkeep | None = None
 
 
 def _enum_member_ok(declared: str, value: Any) -> bool:
@@ -300,11 +354,14 @@ def _field(name: str, raw: Any, problems: list[str]) -> FieldSpec | None:
         shape = None
         if declares_shape and isinstance(ftype, str) and ftype in FIELD_TYPES:
             shape = _shape(f"field {name!r}", raw, problems, 1)
-        return FieldSpec(name, str(ftype), None, None, True, shape)
+        upkeep = _upkeep(name, raw["upkeep"], problems) if "upkeep" in raw else None
+        return FieldSpec(name, str(ftype), None, None, True, shape, upkeep)
     if declares_shape:
         # The fold writes these values, so a shape here would be a promise about
         # bytes nothing on the write path checks.
         problems.append(f"field {name!r}: only an agentic field declares a shape")
+    if "upkeep" in raw:
+        problems.append(f"field {name!r}: only an agentic field declares upkeep")
     fold, path = source.get("fold"), source.get("path")
     if not isinstance(fold, str) or fold not in FOLD_NAMES:
         problems.append(f"field {name!r}: fold {fold!r} is not one of {sorted(FOLD_NAMES)}")
@@ -341,6 +398,11 @@ def parse_manifest(raw: Any) -> TemplateManifest:
                 fields[parsed.name] = parsed
     if problems:
         raise ManifestError(problems)
+    helpers = sorted(n for n, f in fields.items() if f.upkeep and f.upkeep.helper)
+    if helpers and tsource != "builtin":
+        raise ManifestError(
+            [f"field {n!r}: only a builtin template names an upkeep helper" for n in helpers]
+        )
     assert isinstance(tid, str) and isinstance(version, int)  # narrowed by the checks above
     return TemplateManifest(
         id=tid,
@@ -386,4 +448,11 @@ def load_template(directory: Path) -> tuple[TemplateManifest, str]:
         raise ManifestError([f"{directory.name}: {exc}"]) from None
     manifest = parse_manifest(raw)
     check_parity(manifest, html)
+    missing = [
+        f"field {n!r}: upkeep helper helpers/{f.upkeep.helper} is not in {directory.name}"
+        for n, f in sorted(manifest.fields.items())
+        if f.upkeep and f.upkeep.helper and not (directory / "helpers" / f.upkeep.helper).is_file()
+    ]
+    if missing:
+        raise ManifestError(missing)
     return manifest, html

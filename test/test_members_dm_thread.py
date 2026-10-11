@@ -3186,9 +3186,60 @@ class TestMemberBriefingEndpoint:
             "updated_ts",
             "redacted",
             "truncated",
+            "upkeep",
         }
         assert data["redacted"] is False
         assert data["truncated"] is False
+
+    @pytest.mark.asyncio
+    async def test_the_upkeep_skill_is_the_one_the_crewmate_is_pointed_at(self, tmp_path):
+        """Same renderer as the pointer's skill, so the person reads exactly what the
+        crewmate reads -- and not the briefing read, so it is there even where notes
+        cannot be read."""
+        from kiro_crew import dashboard_agentic, dashboard_upkeep
+
+        state = _make_state(tmp_path)
+        with (
+            _patched_config([CREW]),
+            patch("kiro_crew.members.member_briefing_supported", return_value=False),
+        ):
+            async with TestClient(TestServer(_make_members_app(state))) as client:
+                resp = await client.get(
+                    "/api/members/code-reviewer/briefing", params={"member": CREW}
+                )
+                assert resp.status == 200
+                data = await resp.json()
+        upkeep = data["upkeep"]
+        assert not dashboard_upkeep.scripts_dir("code-reviewer").exists(), "a read wrote scripts"
+        assert upkeep["pointer"] == dashboard_upkeep.POINTER
+        assert upkeep["pointer"] in dashboard_agentic.turn_block("code-reviewer")
+        assert [row["field"] for row in upkeep["fields"]] == ["ci", "for_you", "verdict"]
+        ci = next(row for row in upkeep["fields"] if row["field"] == "ci")
+        assert set(ci) == {"field", "means", "when", "how", "helper"}
+        assert upkeep["scripts"] == ["project_report_ci.py"]
+
+    @pytest.mark.asyncio
+    async def test_the_upkeep_text_crosses_the_redaction_chain(self, tmp_path):
+        """Field names come from the crewmate's editable copy of the manifest."""
+        token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+        state = _make_state(tmp_path)
+        fake = {
+            "pointer": "p",
+            "fields": [{"field": "ci", "means": f"see {token}", "when": "w", "how": "h"}],
+            "scripts": [],
+        }
+        with (
+            _patched_config([CREW]),
+            patch("kiro_crew.dashboard_upkeep.view", return_value=fake),
+        ):
+            async with TestClient(TestServer(_make_members_app(state))) as client:
+                resp = await client.get(
+                    "/api/members/code-reviewer/briefing", params={"member": CREW}
+                )
+                assert resp.status == 200
+                data = await resp.json()
+        assert token not in data["upkeep"]["fields"][0]["means"]
+        assert data["redacted"] is True
 
     @pytest.mark.asyncio
     async def test_no_briefing_yet_is_empty_not_404(self, tmp_path):

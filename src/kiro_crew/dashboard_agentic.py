@@ -732,8 +732,16 @@ def fields_for_agent(
     rollback_versions: Sequence[int] | None = None,
     values: Mapping[str, Any] | None = None,
     written_at: Mapping[str, str] | None = None,
+    slug: str | None = None,
 ) -> dict[str, Any]:
     """What an agent is told BEFORE it writes: the fields, their sources, its mistakes.
+
+    Each agentic row also carries ``upkeep``: what the field means, when to write it,
+    how, and -- for a field whose data lives outside the crew log -- the absolute path
+    of the helper script that fetches it (``dashboard_upkeep.upkeep_rows``, read from
+    the SHIPPED template when this is called, so it cannot go stale). *slug* is what
+    makes that path absolute; without it the row carries the text and no helper. A page
+    with no agentic field gets ``upkeep_note`` instead: it updates itself.
 
     *values* is the page's current read, by field name, and *written_at* the host's
     stamp for each agentic cell. Each agentic row then carries its current value and
@@ -762,9 +770,12 @@ def fields_for_agent(
             "history": _recent_history(history),
             "rollback_versions": sorted(rollback_versions or ()),
         }
+    from kiro_crew import dashboard_upkeep  # the upkeep module reads this one
+
     listed: list[dict[str, Any]] = []
     current = values if isinstance(values, Mapping) else None
     stamps = written_at if isinstance(written_at, Mapping) else {}
+    upkeep = dashboard_upkeep.upkeep_rows(instance.manifest, slug)
     for name, spec in sorted(instance.manifest.fields.items()):
         row: dict[str, Any] = {"field": name, "type": spec.type}
         # The WHOLE shape, so the first write can be the right one: a type alone
@@ -772,6 +783,8 @@ def fields_for_agent(
         row["schema"] = spec.shape.describe() if spec.shape is not None else {"type": spec.type}
         if spec.agentic:
             row["source"] = "agentic"
+            if name in upkeep:
+                row["upkeep"] = upkeep[name]
             if current is not None:
                 # What is on the page NOW, so a write that edits one card of a list
                 # starts from the list that is there rather than from a guess.
@@ -789,11 +802,13 @@ def fields_for_agent(
                 # board, and the agent cannot write it anyway.
                 row["summary"] = fold_summary(current[name]) if name in current else "no value"
         listed.append(row)
+    agentic = sorted(agentic_fields(instance.manifest))
     return {
         "template": {"id": instance.manifest.id, "version": instance.manifest.version},
         "instance_version": instance.instance_version,
         "fields": listed,
-        "agentic": sorted(agentic_fields(instance.manifest)),
+        "agentic": agentic,
+        **({} if agentic else {"upkeep_note": dashboard_upkeep.NOTHING_TO_WRITE}),
         "mistakes": _recent_mistakes(mistakes),
         "retry_budget": AGENTIC_RETRY_BUDGET,
         "history": _recent_history(history),
@@ -829,44 +844,76 @@ def fold_summary(value: Any) -> str:
         return type(value).__name__
 
 
-def turn_block(slug: str) -> str:
-    """The ``[DASHBOARD]`` lines for a crewmate's turn, or ``""`` when it has none.
+def _read_page(slug: str) -> tuple[Any, TemplateManifest | None, str]:
+    """The record a crewmate's tab shows, its parsed manifest, and the lock line.
 
-    A few lines on purpose: which page is in force and which fields are the
-    crewmate's to write. The shapes and the mistake book stay behind
-    ``dashboard_fields``, because a block on every turn is paid for on every turn.
-    TOTAL: a dashboard that cannot be read costs the turn this block, nothing else.
+    The record is ``None`` when there is no page in force. The lock line is the
+    store's own refusal (``LOCKED_REFUSAL``) while the person's lock is set, else
+    ``""``; it is read off the stored record BEFORE any fallback, because the default
+    page carries no lock of its own, so it can be set while the page is ``None``.
+    TOTAL: a record that cannot be read is no page and no lock line.
     """
     try:
         from kiro_crew.dashboard_templates import instance as instance_store
         from kiro_crew.dashboard_templates.manifest import parse_manifest
 
         record = instance_store.read(slug)
-        # Read BEFORE any fallback: the default page carries no lock of its own. The
-        # line is the store's own refusal, so the turn and the tool never disagree.
-        locked = record.structure_locked
-        locked_line = instance_store.LOCKED_REFUSAL
+        locked = instance_store.LOCKED_REFUSAL if getattr(record, "structure_locked", False) else ""
         if record.state == instance_store.STATE_EMPTY:
             fallback = instance_store.default_instance(slug)
             if fallback is None:
-                return f"[DASHBOARD]\n{locked_line}" if locked else ""
+                return None, None, locked
             record = fallback
         elif record.state not in (instance_store.STATE_LIVE, instance_store.STATE_STALE):
-            return f"[DASHBOARD]\n{locked_line}" if locked else ""
-        manifest = parse_manifest(dict(record.manifest))
+            return None, None, locked
+        return record, parse_manifest(dict(record.manifest)), locked
     except Exception:
-        logger.debug("no [DASHBOARD] block for %r", slug, exc_info=True)
-        return ""
+        logger.debug("no dashboard page in force for %r", slug, exc_info=True)
+        return None, None, ""
+
+
+def page_in_force(slug: str) -> tuple[Any, TemplateManifest] | None:
+    """The instance record a crewmate's tab shows and its parsed manifest, or ``None``.
+
+    The one lookup :func:`turn_block` and ``dashboard_upkeep`` share, so the block and
+    the upkeep scripts always describe one page.
+    """
+    record, manifest, _locked = _read_page(slug)
+    if record is None or manifest is None:
+        return None
+    return record, manifest
+
+
+def turn_block(slug: str) -> str:
+    """The ``[DASHBOARD]`` lines for a crewmate's turn, or ``""`` when it has none.
+
+    A few lines on purpose: which page is in force, which fields are the crewmate's
+    to write, and -- when it has fields to write -- the ONE pointer line saying that
+    ``dashboard_fields`` also tells it what each means and when and how to write it.
+    The shapes, the mistake book and the upkeep text stay behind ``dashboard_fields``,
+    because a block on every turn is paid for on every turn. Building the block also
+    syncs the page's helper scripts, so a crewmate on the default page, which never
+    commits, still has them.
+    TOTAL: a dashboard that cannot be read costs the turn this block, nothing else.
+    """
+    record, manifest, locked_line = _read_page(slug)
+    if record is None or manifest is None:
+        # The line is the store's own refusal, so the turn and the tool never disagree.
+        return f"[DASHBOARD]\n{locked_line}" if locked_line else ""
     names = sorted(agentic_fields(manifest))
     writes = ", ".join(names) if names else "none (every field is folded)"
-    return (
+    block = (
         "[DASHBOARD]\n"
         f"Your dynamic dashboard is template {manifest.id} v{manifest.version}; the "
         "Dashboard tab shows it only with the 'Dynamic Dashboard' Feature Preview on.\n"
-        + (f"{locked_line}\n" if locked else "")
+        + (f"{locked_line}\n" if locked_line else "")
         + f"Fields you write: {writes}. Call dashboard_fields for their shapes and "
         "current values before dashboard_write."
     )
+    from kiro_crew import dashboard_upkeep  # the upkeep module reads this one
+
+    dashboard_upkeep.sync(slug, page=(record, manifest))
+    return block + ("\n" + dashboard_upkeep.pointer() if names else "")
 
 
 def _recent_history(history: Sequence[Mapping[str, Any]] | None) -> list[dict[str, Any]]:

@@ -558,10 +558,12 @@ def build_member_section(
             "thread instead)"
         )
     if not desk_withheld:
-        # Which page is in force and which of its fields are the member's, so a
-        # write starts from the right names. Rides with item 7: both describe the
-        # desk's own Dashboard tab. The shapes and the mistake book stay behind
-        # `dashboard_fields`; this block is paid for on every turn.
+        # Which page is in force, which of its fields are the member's, and the one
+        # pointer line naming its upkeep skill. Rides with item 7: both describe the
+        # desk's own Dashboard tab, and with this section the pointer is re-injected
+        # after a compaction. The shapes and the mistake book stay behind
+        # `dashboard_fields`, the upkeep behind the skill; this block is paid for on
+        # every build.
         from kiro_crew import dashboard_agentic
 
         dashboard = dashboard_agentic.turn_block(slug)

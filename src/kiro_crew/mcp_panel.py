@@ -501,7 +501,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return redact(f"Error: {api_err}")
         return redact(
             f"Your crewmate's page is now version {d.get('instance_version')}, "
-            f"from template `{d.get('template_id')}`.\n{DASHBOARD_PREVIEW_NOTE}"
+            f"from template `{d.get('template_id')}`.\n{DASHBOARD_PREVIEW_NOTE}" + _guide_tail(d)
         )
 
     if name == "dashboard_rollback":
@@ -523,10 +523,20 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         return redact(
             f"Restored version {d.get('restored_from')} as version "
             f"{d.get('instance_version')} -- a rollback moves forward, so the page you "
-            "were on is still there to go back to."
+            "were on is still there to go back to." + _guide_tail(d)
         )
 
     return f"Error: unknown tool '{name}'"
+
+
+def _guide_tail(d: dict[str, Any]) -> str:
+    """The new page's ``[DASHBOARD]`` block and upkeep pointer, after a blank line.
+
+    The prompt carries them only from the next session start or compaction, so the
+    reply that changed the page hands over the new ones now.
+    """
+    block = d.get("dashboard")
+    return f"\n\n{block}" if isinstance(block, str) and block else ""
 
 
 def _render_templates(payload: dict[str, Any]) -> str:
@@ -744,6 +754,9 @@ def _render_fields(payload: dict[str, Any]) -> str:
             f"{template.get('version')}, your copy at version "
             f"{payload.get('instance_version')}."
         )
+        note = payload.get("upkeep_note")
+        if isinstance(note, str) and note:
+            lines.append(note)
         rows = payload.get("fields")
         if isinstance(rows, list) and rows:
             lines.append("")
@@ -753,6 +766,19 @@ def _render_fields(payload: dict[str, Any]) -> str:
                     continue
                 if row.get("source") == "agentic":
                     lines.append(f"  {row.get('field')} ({row.get('type')}) -- YOURS to write")
+                    upkeep = row.get("upkeep")
+                    if isinstance(upkeep, dict):
+                        # What it means, when to write it, how -- and the helper that
+                        # fetches the data when the crew log does not hold it.
+                        lines.append(f"    means: {upkeep.get('means')}")
+                        lines.append(f"    when: {upkeep.get('when')}")
+                        lines.append(f"    how: {upkeep.get('how')}")
+                        if upkeep.get("helper"):
+                            lines.append(
+                                f"    helper: python3 {upkeep['helper']} --help (prints the "
+                                "dashboard_write payload; if you have no shell, write the "
+                                "value you can read instead)"
+                            )
                     schema = row.get("schema")
                     if isinstance(schema, dict) and set(schema) != {"type"}:
                         # The nested shape whole: the write is refused for any key

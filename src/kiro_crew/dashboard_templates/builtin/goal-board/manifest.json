@@ -14,6 +14,6 @@
     "entries": { "type": "number", "source": { "fold": "work", "path": "conductor.entries" } },
     "items": { "type": "array", "source": { "fold": "work", "path": "items" } },
     "omitted": { "type": "number", "source": { "fold": "work", "path": "omitted" } },
-    "asks": { "type": "object", "values": { "type": "object", "properties": { "options": { "type": "array", "items": { "type": "string" } } } }, "source": { "agentic": true } }
+    "asks": { "type": "object", "values": { "type": "object", "properties": { "options": { "type": "array", "items": { "type": "string" } } } }, "source": { "agentic": true }, "upkeep": {"means": "the answers you offer for each item waiting on the person, keyed by item id", "when": "in the same turn a question for the person opens or is answered", "how": "set {item_id: {options: [short answers]}}; drop the entry once they answer; write it with dashboard_write; call dashboard_fields first for its shape"} }
   }
 }

@@ -2065,6 +2065,10 @@ async def api_member_briefing(request: web.Request) -> web.Response:
     fails closed to ``""`` and the panel explains that from the flag rather
     than presenting an empty briefing as "no notes yet". ``updated_ts`` is the
     file's own mtime (epoch seconds) or ``null`` when there is no file.
+    ``upkeep`` is the SYSTEM-owned text beside it (:func:`dashboard_upkeep.view`):
+    the pointer line its ``[DASHBOARD]`` block carries, each agentic field's upkeep
+    text as ``dashboard_fields`` returns it, and its helper script names -- or
+    ``null`` when it has no page.
     ``redacted`` and ``truncated`` each say the wire text shows less than the
     file holds (a secret replaced by its placeholder; a tail past the cap not
     shown), so the panel can say so above the notes instead of leaving
@@ -2161,6 +2165,28 @@ async def api_member_briefing(request: web.Request) -> web.Response:
     # can say so above the notes: ``redacted`` when a placeholder replaced a
     # secret, ``truncated`` when the marker stands in for the tail.
     redacted = bool(url_hits or cred_hits)
+    # The system-owned half of what the crewmate is told about its page: each
+    # agentic field's upkeep text exactly as `dashboard_fields` returns it, plus the
+    # pointer line and the helper names (`dashboard_upkeep.view`). Not the briefing
+    # read, so it does not depend on `supported`, and a read that writes nothing.
+    from kiro_crew import dashboard_upkeep
+
+    upkeep = await asyncio.to_thread(dashboard_upkeep.view, slug)
+    if upkeep is not None:
+        # Field names come from the crewmate's own copy of the manifest, which it can
+        # edit, so every string crosses the same redaction chain as the notes.
+        def _clean(text: str) -> str:
+            nonlocal redacted
+            value, url_hits_u = _h.redact_exfiltration_urls(text)
+            value, cred_hits_u = _h.redact_credentials(value)
+            redacted = redacted or bool(url_hits_u or cred_hits_u)
+            return value
+
+        upkeep["pointer"] = _clean(upkeep["pointer"])
+        upkeep["fields"] = [
+            {key: _clean(value) for key, value in row.items()} for row in upkeep["fields"]
+        ]
+        upkeep["scripts"] = [_clean(name) for name in upkeep["scripts"]]
 
     # Audit the disclosure, as the rules read does: WHO read a crewmate's
     # private notes matters as much as who was refused, and a denied-only
@@ -2186,6 +2212,7 @@ async def api_member_briefing(request: web.Request) -> web.Response:
             "updated_ts": updated_ts,
             "redacted": redacted,
             "truncated": truncated,
+            "upkeep": upkeep,
         }
     )
 

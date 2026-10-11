@@ -51,6 +51,9 @@ recursive-include src/kiro_crew/dashboard_templates *.html
 # one without the other -- so without this line the sdist ships half-templates and the
 # registry discovers none of them.
 recursive-include src/kiro_crew/dashboard_templates/builtin *.json
+# A template's upkeep helpers (`helpers/*.py`): not a package, so only these lines ship
+# them, and `load_template` refuses a manifest whose helper is missing.
+recursive-include src/kiro_crew/dashboard_templates/builtin *.py
 recursive-include src/kiro_crew/connections *.json
 recursive-include src/kiro_crew/data *.json
 recursive-include src/kiro_crew/decisions/local_servers *.py *.txt

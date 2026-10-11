@@ -54,6 +54,11 @@
       },
       "source": {
         "agentic": true
+      },
+      "upkeep": {
+        "means": "each deliverable's type (deck, mail, sheet, doc), file name, button label and one-line note, keyed by item id",
+        "when": "whenever a draft is created, changes state, or is handed over",
+        "how": "set {item_id: {type, file, action, meta}} for every draft you own; write it with dashboard_write; call dashboard_fields first for its shape"
       }
     },
     "steps": {
@@ -63,6 +68,11 @@
       },
       "source": {
         "agentic": true
+      },
+      "upkeep": {
+        "means": "the step each board is on right now, one line keyed by board id",
+        "when": "as each step starts or finishes",
+        "how": "set {board_id: 'the step'} for every board with open work; write it with dashboard_write; call dashboard_fields first for its shape"
       }
     }
   }

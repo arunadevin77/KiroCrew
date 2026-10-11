@@ -21,15 +21,21 @@
  * later refetch fails, stays on screen under a notice saying it may be stale,
  * and which says so above the text when part of it is hidden (a secret
  * replaced by its placeholder, a tail past the cap).
+ *
+ * Above the notes, when the crewmate has a Dashboard page: its DASHBOARD UPKEEP,
+ * the text `dashboard_fields` gives the crewmate for each field it writes -- what it
+ * means, when to write it, how -- plus the helper script names and the pointer line
+ * its prompt carries. Same read as the tool, so the person sees exactly what the
+ * crewmate is told.
  */
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
-import { EyeOff } from 'lucide-react'
+import { ChevronDown, ChevronRight, EyeOff } from 'lucide-react'
 import { api } from '../../api/client'
 import { ApiError } from '../../api/apiError'
 import { memberBriefingQueryKey } from '../../api/membersQuery'
-import { Skeleton } from '../../components/ui'
+import { Btn, Skeleton } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
 import MarkdownRenderer from '../../components/MarkdownRenderer'
 import { timeAgo } from '../../utils/timeAgo'
@@ -80,6 +86,10 @@ export default function CrewNotesTab({ slug, member, displayName, header, visibl
   const collision = query.isError && isSlugCollision(query.error)
   const failed = data === undefined && query.isError && !collision
   const stale = data !== undefined && query.isError && !collision
+  // The system-owned upkeep skill. Withdrawn on a collision like the notes: the
+  // slug is nobody's, so neither is its page.
+  const upkeep = !collision ? data?.upkeep : undefined
+  const [upkeepOpen, setUpkeepOpen] = useState(false)
   // Part of the text is not what the file holds: a secret replaced by its
   // placeholder, or a tail past the cap standing behind the marker. Said in a
   // visible line above the notes -- a placeholder with no reason reads as the
@@ -104,6 +114,67 @@ export default function CrewNotesTab({ slug, member, displayName, header, visibl
         {t('pages.membersPage.notes_agent_only', { name: member })}
       </p>
       <div className="flex-1 min-h-0 overflow-y-auto px-3 pt-2 pb-3">
+        {upkeep ? (
+          // Folded by default: the notes are this tab's main job, and the upkeep text
+          // is fixed text the person opens when they want to check it. A real button
+          // with a chevron (the shared `Btn`), so the folded state reads as something to open.
+          <section className="mb-3 pb-3 border-b border-border" data-testid="member-upkeep">
+            <Btn
+              type="button"
+              className="flex items-center gap-1 text-[12px] font-semibold"
+              aria-expanded={upkeepOpen}
+              aria-controls="member-upkeep-body"
+              onClick={() => setUpkeepOpen((open) => !open)}
+              data-testid="member-upkeep-toggle"
+            >
+              {upkeepOpen ? (
+                <ChevronDown className="lucide-inline shrink-0" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="lucide-inline shrink-0" aria-hidden="true" />
+              )}
+              {t('pages.membersPage.notes_upkeep_heading')}
+            </Btn>
+            <p className="mt-0.5 text-[11.5px] text-muted">
+              {t('pages.membersPage.notes_upkeep_lead', { name: displayName ?? member })}
+            </p>
+            {upkeepOpen ? (
+              <div id="member-upkeep-body" className="mt-1.5">
+                {upkeep.fields.length ? (
+                  <dl className="text-[12.5px] leading-relaxed" data-testid="member-upkeep-fields">
+                    {upkeep.fields.map((row) => (
+                      <div key={row.field} className="mb-2">
+                        <dt className="font-mono font-semibold text-text">{row.field}</dt>
+                        <dd className="ml-3 text-text">
+                          {t('pages.membersPage.notes_upkeep_means', { value: row.means })}
+                        </dd>
+                        <dd className="ml-3 text-text">
+                          {t('pages.membersPage.notes_upkeep_when', { value: row.when })}
+                        </dd>
+                        <dd className="ml-3 text-text">
+                          {t('pages.membersPage.notes_upkeep_how', { value: row.how })}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : (
+                  <p className="text-[12.5px] text-text" data-testid="member-upkeep-none">
+                    {t('pages.membersPage.notes_upkeep_none', { name: displayName ?? member })}
+                  </p>
+                )}
+                {upkeep.scripts.length ? (
+                  <p className="mt-1.5 text-[11.5px] text-muted" data-testid="member-upkeep-scripts">
+                    {t('pages.membersPage.notes_upkeep_scripts', { names: upkeep.scripts.join(', ') })}
+                  </p>
+                ) : null}
+                {upkeep.pointer ? (
+                  <p className="mt-1.5 text-[11px] text-muted break-words" data-testid="member-upkeep-pointer">
+                    {t('pages.membersPage.notes_upkeep_pointer_label', { name: displayName ?? member, line: upkeep.pointer })}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
         {loading ? (
           <div className="space-y-2" data-testid="member-notes-loading" aria-hidden>
             <Skeleton className="h-3 w-3/4" />

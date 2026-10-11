@@ -262,8 +262,19 @@ class TestWhatDashboardFieldsReturns:
         rows = {row["field"]: row for row in self._listing()["fields"]}
         manifest = json.loads((BUILTIN / "project-report/manifest.json").read_text())
         for name, spec in manifest["fields"].items():
-            want = {k: v for k, v in spec.items() if k != "source"}
+            # `upkeep` is prose for the crewmate's upkeep skill, not part of the shape.
+            want = {k: v for k, v in spec.items() if k not in ("source", "upkeep")}
             assert rows[name]["schema"] == want, name
+
+    def test_an_agentic_row_carries_its_upkeep_and_a_fold_row_does_not(self) -> None:
+        rows = {row["field"]: row for row in self._listing()["fields"]}
+        shipped = _builtin("project-report").fields["verdict"].upkeep
+        assert rows["verdict"]["upkeep"] == {
+            "means": shipped.means,
+            "when": shipped.when,
+            "how": shipped.how,
+        }
+        assert "upkeep" not in rows["items"]
 
     def test_an_agentic_field_carries_its_current_value(self) -> None:
         rows = {row["field"]: row for row in self._listing()["fields"]}

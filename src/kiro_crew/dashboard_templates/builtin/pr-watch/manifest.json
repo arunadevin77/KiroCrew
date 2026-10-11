@@ -8,7 +8,7 @@
     "lanes": {
       "type": "array",
       "items": {"type": "object", "properties": {"name": {"type": "string"}, "state": {"type": "string"}, "owner": {"type": "string"}, "pr": {"type": "number"}}},
-      "source": { "agentic": true }
+      "source": { "agentic": true }, "upkeep": {"means": "every CI lane of the watched PRs: name, state (fail, skipped, running, pass), owner, PR number", "when": "whenever a watched lane changes state or owner", "how": "run the helper per PR, fill each owner, and write the joined list", "helper": "pr_watch_lanes.py"}
     },
     "goal": { "type": "string", "source": { "fold": "work", "path": "conductor.goal" } },
     "round": { "type": "number", "source": { "fold": "work", "path": "conductor.round" } },

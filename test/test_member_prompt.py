@@ -581,6 +581,21 @@ class TestMemberSectionInjection:
         assert "[MEMBER IDENTITY]" in full
         assert "Never merge PRs." in full
 
+    def test_upkeep_pointer_reinjected_after_compaction(self, tmp_path):
+        """The pointer rides the member section, so a compaction cannot drop it."""
+        from kiro_crew import dashboard_upkeep
+
+        with patch("kiro_crew.context.KiroCrewConfig.load", return_value=_fake_config()):
+            full, _ = _builder(tmp_path).build_message(
+                "hello again",
+                False,  # not a new session
+                "dashboard:member-code-reviewer",
+                agent=CREW,
+                member=CREW,
+                needs_reinjection=True,
+            )
+        assert dashboard_upkeep.POINTER in full
+
     def test_minimal_member_reinjection_withholds_member_section(self, tmp_path):
         write_member_rules(CREW, member=CREW, text="Never merge PRs.")
         with patch("kiro_crew.context.KiroCrewConfig.load", return_value=_fake_config()):

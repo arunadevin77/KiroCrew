@@ -3091,6 +3091,28 @@ class TestTheApplyAndRollbackRoutesOverHttp:
         assert "saved_template_id" not in body, "apply still promises a saved template"
         assert frames == [("dashboard_instance_changed", {"slug": SLUG})], frames
 
+    @pytest.mark.parametrize(
+        ("path", "body"),
+        [(APPLY_PATH, {}), (ROLLBACK_PATH, {"to_version": 2})],
+        ids=["apply", "rollback"],
+    )
+    async def test_the_reply_hands_the_new_page_block_and_upkeep_pointer(
+        self, vetted, monkeypatch, path, body
+    ) -> None:
+        """The member section is rebuilt at session start and after a compaction, not
+        every turn, so the reply that changed the page carries its new pointer."""
+        from kiro_crew import dashboard_agentic
+
+        _page_store(monkeypatch)
+        monkeypatch.setattr(
+            dashboard_agentic, "turn_block", lambda slug: f"[DASHBOARD for {slug}]\nUpkeep: x"
+        )
+        async with _client() as c:
+            resp = await c.post(path, json=body, headers={"X-Session-Key": "dashboard:chat-1"})
+            assert resp.status == 200, await resp.text()
+            reply = await resp.json()
+        assert reply["dashboard"] == f"[DASHBOARD for {SLUG}]\nUpkeep: x"
+
     async def test_apply_with_nothing_staged_is_a_refusal(self, vetted, monkeypatch) -> None:
         store = _page_store(monkeypatch)
 

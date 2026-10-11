@@ -298,6 +298,34 @@ and a gateway restart all leave it set. The member record does not grow.
 While locked, the crewmate's `[DASHBOARD]` turn block carries a LOCKED line telling
 it not to apply, roll back or propose another page, while noting that previewing for
 the person to look at still works.
+## Every commit syncs the upkeep helpers
+
+A fold field fills itself from the crew log; an agentic field is the crewmate's to
+write. `dashboard_upkeep` supplies two things for the agentic fields, from the field's
+`upkeep` key (`means`, `when`, `how`, optional `helper`): the TEXT, which
+`dashboard_fields` puts on each agentic row of its reply when it is called
+(`dashboard_upkeep.upkeep_rows`), so it cannot go stale and a crewmate with no file
+tools reads it; and the HELPER SCRIPTS, copies of the shipped
+`builtin/<id>/helpers/<file>` under `<skills dir>/.dashboard-upkeep/<slug>/scripts/`,
+which fetch data the crew log does not hold (PR checks via `gh`) and print a ready
+`dashboard_write` payload. The reply names each helper's absolute path. The dot
+directory keeps the scripts out of the skills index, and it holds nothing else.
+
+`_commit` calls `dashboard_upkeep.sync` with the record it just wrote, so adopt, apply,
+rollback and edit each copy the helpers the new page names and drop one it does not.
+`turn_block` calls it too -- a crewmate on the default page never commits, and a gateway
+upgrade can change a shipped helper -- and, when the page has fields to write, adds the
+one pointer line saying `dashboard_fields` carries the upkeep text, which rides the
+member section through every compaction. `sync` writes only what differs, so it also
+puts back a hand edit. A root session's own dashboard (`is_session_key`) has no
+crewmate shell and gets no scripts and no helper path.
+
+The text and the helpers are read from the SHIPPED catalog entry. The crewmate's copy
+of the manifest is on the agent-writable side and `edit` may change it, so its `upkeep`
+is never read; only a `builtin` template may name a helper. The profile's Notes tab
+shows the same text (`GET /api/members/{slug}/briefing` `upkeep`). Decision:
+`rfc-crewmate-dashboard-upkeep-skill.md`.
+
 
 ## The preview link opens the Dashboard tab; the tab reads `?preview=1`
 

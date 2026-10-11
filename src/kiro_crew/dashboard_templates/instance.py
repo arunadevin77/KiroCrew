@@ -974,7 +974,28 @@ def _commit(
         "at_ms": at_ms,
     }
     _append_history(slug, entry, session_id)
-    return read(slug)
+    record = read(slug)
+    _sync_upkeep(record)
+    return record
+
+
+def _sync_upkeep(record: Instance) -> None:
+    """Copy the crewmate's upkeep helper scripts for the version just committed.
+
+    Every adopt, apply, rollback and edit reaches here, so a page swap copies the new
+    page's helpers and drops the old page's in the same call. Handed the record, so the
+    scripts are built without a second read of the store while its lock is held. A
+    root session's own dashboard (:func:`is_session_key`) has no crewmate shell, so it
+    gets none. Best effort: the version is already written.
+    """
+    if is_session_key(record.slug):
+        return
+    try:
+        from kiro_crew import dashboard_upkeep
+
+        dashboard_upkeep.sync(record.slug, page=(record, parse_manifest(dict(record.manifest))))
+    except Exception:
+        logger.warning("dashboard instance: upkeep scripts not synced", exc_info=True)
 
 
 def _append_history(slug: str, entry: dict[str, Any], session_id: str) -> None:

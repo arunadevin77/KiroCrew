@@ -359,6 +359,16 @@ export function createAgentsEndpoints({ post, put, del, j, jfetch: fetch, sessio
         /** The file ran past the briefing cap, so the text above ends in the
          *  truncation marker instead of the tail; the panel says so above the
          *  notes. */
+        /** SYSTEM-owned, beside the agent's notes: what the crewmate is told about
+         *  its Dashboard page -- the pointer line its prompt carries, each field it
+         *  writes with what it means / when / how (and a helper script path where the
+         *  data lives outside the crew log), and the helper names -- or null when it
+         *  has no page. Absent from an older gateway. */
+        upkeep?: {
+          pointer: string
+          fields: { field: string; means: string; when: string; how: string; helper?: string }[]
+          scripts: string[]
+        } | null
         truncated: boolean
       }>,
     // The work a crewmate holds (open goals, recent sessions), read for its

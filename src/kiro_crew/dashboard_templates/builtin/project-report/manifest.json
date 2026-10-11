@@ -74,6 +74,11 @@
       },
       "source": {
         "agentic": true
+      },
+      "upkeep": {
+        "means": "the action cards for the person: each {text, ask, context, why, how, options, workstream}",
+        "when": "in the same turn something starts or stops needing the person",
+        "how": "keep one item per open ask and drop it once they act; write it with dashboard_write; call dashboard_fields first for its shape"
       }
     },
     "verdict": {
@@ -168,6 +173,11 @@
       ],
       "source": {
         "agentic": true
+      },
+      "upkeep": {
+        "means": "one line above the page: on_track, needs_you, blocked or no_word, the headline, and the one thing most in the way",
+        "when": "on every change to whether the work is on track, blocked or needs the person",
+        "how": "set {state, headline, blocker} in the language you speak with the person; write it with dashboard_write; call dashboard_fields first for its shape"
       }
     },
     "ci": {
@@ -222,6 +232,12 @@
       },
       "source": {
         "agentic": true
+      },
+      "upkeep": {
+        "means": "the CI board of the PR you watch: PR, head, per-task check counts, and the red or never-ran lanes",
+        "when": "after every CI run you watch finishes or changes state",
+        "how": "run the helper with the repo, PR and task item id, set each lane owner to yours or maintainer, and write the value",
+        "helper": "project_report_ci.py"
       }
     }
   }
