@@ -1895,23 +1895,38 @@ describe('MarkdownRenderer LaTeX-native delimiters (#7803)', () => {
     // 6000 unclosed `<customblock>` openers before one math delimiter. Both the
     // renderer's verbatim-unknown-tags pass and the plugin's verbatim context
     // used to run a full-suffix close scan per opener -- O(n²): 3x the input
-    // cost 7.5x the time (1.1 s -> 8.0 s). With the shared single-pass pairing
-    // map, 3x the input costs ~2.5x. A scaling RATIO is asserted, not a
-    // wall-clock bound, so the guard reads the same on any runner. A warm-up
-    // render absorbs JIT and module-load cost from the first measurement, and
-    // the ratio is of medians over three interleaved samples per size.
-    const time = (n: number) => {
+    // cost 7.5x the time. With the shared single-pass pairing map it is linear.
+    //
+    // The guard compares the opener flood against an EQUAL-BYTE-SIZE flood of a
+    // plain word with no opener to pair, exactly as the empty-display-pair test
+    // above does: both inputs are the same length and pay the same remark parse,
+    // so machine speed and shard load scale BOTH measurements together and
+    // cancel in the ratio. What is left is the per-opener work. The current
+    // single-pass pairing keeps that at a stable ~3x of the no-opener baseline
+    // (both floods are 84 KB); a per-opener close scan would make only the
+    // opener side quadratic -- the no-opener baseline can never go quadratic --
+    // pushing the ratio into the tens. Asserting a ratio of equal-size inputs,
+    // not a size-scaling ratio and not a wall-clock bound, is why the earlier
+    // 6000-vs-2000 form read 5.24 against a limit of 5 on a loaded shard: at
+    // only 3x input the renderer's superlinear remark cost already drifts the
+    // "linear" ratio close to the limit, with no load headroom (issue #18623).
+    // '<customblock> ' and the baseline word are both 14 chars so the two
+    // floods match byte for byte. A warm-up render absorbs JIT and module-load
+    // cost; the ratio is of medians over three interleaved samples per shape.
+    const openerFlood = (n: number) => '<customblock> '.repeat(n) + '\\(x\\)'
+    const plainFlood = (n: number) => 'plainwordxyz. '.repeat(n) + '\\(x\\)'
+    const time = (s: string) => {
       const t0 = performance.now()
-      render(<MarkdownRenderer content={'<customblock> '.repeat(n) + '\\(x\\)'} />)
+      render(<MarkdownRenderer content={s} />)
       return performance.now() - t0
     }
-    time(2000)
+    time(openerFlood(6000))
     const ratio = medianRatio(
-      () => time(6000),
-      () => time(2000),
+      () => time(openerFlood(6000)),
+      () => time(plainFlood(6000)),
     )
-    expect(ratio).toBeLessThan(5)
-    const { container } = render(<MarkdownRenderer content={'<customblock> '.repeat(6000) + '\\(x\\)'} />)
+    expect(ratio).toBeLessThan(4.5)
+    const { container } = render(<MarkdownRenderer content={openerFlood(6000)} />)
     // Unclosed openers are lone tags shown as source; the math after them is prose math.
     expect(container.querySelectorAll('.katex').length).toBe(1)
     expect(container.textContent).toContain('<customblock>')
