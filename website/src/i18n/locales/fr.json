@@ -6990,8 +6990,7 @@
       "failed_to_open_new_chat": "Impossible d’ouvrir un nouveau chat",
       "open_new_chat_in_project": "Ouvrir un nouveau chat dans {{path}} sans worktree, car ce n’est pas un dépôt git",
       "open_new_chat": "Ouvrir un nouveau chat sans worktree, car cette session n’a aucun répertoire de projet",
-      "new_chat_footer_not_a_git_repository": "Les deux actions pré-remplissent un champ de saisie — rien n’est envoyé avant que tu appuies sur Envoyer. Le répertoire de projet de cette session n’est pas un dépôt git, donc le nouveau chat s’y ouvre sans worktree.",
-      "new_chat_footer_no_project_directory": "Les deux actions pré-remplissent un champ de saisie — rien n’est envoyé avant que tu appuies sur Envoyer. Cette session n’a aucun répertoire de projet, donc le nouveau chat s’ouvre sans worktree."
+      "new_chat_footer_same_project_directory": "Les deux actions pré-remplissent le champ de saisie — rien n’est envoyé avant que tu appuies sur Envoyer. Le nouveau chat s’ouvre dans le répertoire de projet de cette session."
     },
     "inboundLinkChip": {
       "driven_from": "Pilotée depuis {{label}}",

@@ -2431,8 +2431,7 @@
       "failed_to_open_new_chat": "Failed to open a new chat",
       "open_new_chat_in_project": "Open a new chat in {{path}} without a worktree, because it is not a git repository",
       "open_new_chat": "Open a new chat without a worktree, because this session has no project directory",
-      "new_chat_footer_not_a_git_repository": "Both actions pre-fill a composer — nothing is sent until you press send. This session's project directory is not a git repository, so the new chat opens there without a worktree.",
-      "new_chat_footer_no_project_directory": "Both actions pre-fill a composer — nothing is sent until you press send. This session has no project directory, so the new chat opens without a worktree."
+      "new_chat_footer_same_project_directory": "Both actions pre-fill the composer — nothing is sent until you press send. The new chat opens in this session's project directory."
     },
     "inboundLinkChip": {
       "driven_from": "Driven from {{label}}",

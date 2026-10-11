@@ -196,13 +196,13 @@ function FollowUpCard({
         )
       })}
       <div className="px-4 pb-3 text-[11px] text-muted">
-        {canWorktree
+        {/* The standard footer covers a session with no project directory.
+            With one, the footer also says where the new chat opens; why no
+            worktree is created lives in the tooltip, so the always-visible
+            line stays in session terms. */}
+        {canWorktree || !notRepo
           ? i18nT('components.followUpCard.both_actions_pre_fill_the_composer_nothing_is_se')
-          // The footer is where the user learns why the first action is a plain
-          // chat rather than a worktree, without having to hover for it.
-          : notRepo
-          ? i18nT('components.followUpCard.new_chat_footer_not_a_git_repository')
-          : i18nT('components.followUpCard.new_chat_footer_no_project_directory')}
+          : i18nT('components.followUpCard.new_chat_footer_same_project_directory')}
       </div>
     </div>
   )

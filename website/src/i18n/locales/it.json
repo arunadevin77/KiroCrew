@@ -6990,8 +6990,7 @@
       "failed_to_open_new_chat": "Impossibile aprire una nuova chat",
       "open_new_chat_in_project": "Apri una nuova chat in {{path}} senza worktree, perché non è un repository git",
       "open_new_chat": "Apri una nuova chat senza worktree, perché questa sessione non ha una directory di progetto",
-      "new_chat_footer_not_a_git_repository": "Entrambe le azioni precompilano un campo di scrittura — nulla viene inviato finché non premi invia. La directory di progetto di questa sessione non è un repository git, quindi la nuova chat si apre lì senza worktree.",
-      "new_chat_footer_no_project_directory": "Entrambe le azioni precompilano un campo di scrittura — nulla viene inviato finché non premi invia. Questa sessione non ha una directory di progetto, quindi la nuova chat si apre senza worktree."
+      "new_chat_footer_same_project_directory": "Entrambe le azioni precompilano il campo di scrittura — nulla viene inviato finché non premi invia. La nuova chat si apre nella directory di progetto di questa sessione."
     },
     "inboundLinkChip": {
       "driven_from": "Pilotata da {{label}}",

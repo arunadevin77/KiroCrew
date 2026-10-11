@@ -94,10 +94,10 @@ describe('FollowUpCard', () => {
     expect(onStartInWorktree).not.toHaveBeenCalled()
   })
 
-  it('says in the footer that the unscoped new chat opens without a worktree', () => {
+  it('keeps the standard footer for an unscoped session, with no git terms', () => {
     setup({ projectDir: undefined })
-    expect(screen.getByText(/this session has no project directory, so the new chat opens without a worktree/i)).toBeInTheDocument()
-    expect(screen.queryByText(/unavailable/i)).not.toBeInTheDocument()
+    expect(screen.getByText('Both actions pre-fill the composer — nothing is sent until you press send.')).toBeInTheDocument()
+    expect(screen.queryByText(/unavailable|worktree|git/i)).not.toBeInTheDocument()
   })
 
   it('offers an enabled "Start in new chat" when the project is not a git repo', async () => {
@@ -106,12 +106,15 @@ describe('FollowUpCard', () => {
     const newChat = screen.getByRole('button', { name: /start in new chat/i })
     expect(newChat).not.toBeDisabled()
     expect(newChat.className).toContain('bg-accent')
+    // The tooltip carries the reason; the always-visible footer says where the
+    // chat opens, in session terms.
     expect(newChat.getAttribute('title')).toContain('/repo')
+    expect(newChat.getAttribute('title')).toMatch(/not a git repository/)
     fireEvent.click(newChat)
     await waitFor(() => expect(onStartInNewChat).toHaveBeenCalledWith(item()))
     expect(onStartInWorktree).not.toHaveBeenCalled()
-    expect(screen.getByText(/is not a git repository, so the new chat opens there without a worktree/i)).toBeInTheDocument()
-    expect(screen.queryByText(/unavailable/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/the new chat opens in this session's project directory/i)).toBeInTheDocument()
+    expect(screen.queryByText(/unavailable|worktree|git/i)).not.toBeInTheDocument()
   })
 
   it('renders a new-chat failure inline and lets the user retry', async () => {

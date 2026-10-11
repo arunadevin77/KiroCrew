@@ -6880,8 +6880,7 @@
       "failed_to_open_new_chat": "Neuer Chat konnte nicht geöffnet werden",
       "open_new_chat_in_project": "Einen neuen Chat in {{path}} ohne Worktree öffnen, da es kein Git-Repository ist",
       "open_new_chat": "Einen neuen Chat ohne Worktree öffnen, da diese Sitzung kein Projektverzeichnis hat",
-      "new_chat_footer_not_a_git_repository": "Beide Aktionen füllen ein Eingabefeld vor — es wird nichts gesendet, bis du auf Senden drückst. Das Projektverzeichnis dieser Sitzung ist kein Git-Repository, daher öffnet sich der neue Chat dort ohne Worktree.",
-      "new_chat_footer_no_project_directory": "Beide Aktionen füllen ein Eingabefeld vor — es wird nichts gesendet, bis du auf Senden drückst. Diese Sitzung hat kein Projektverzeichnis, daher öffnet sich der neue Chat ohne Worktree."
+      "new_chat_footer_same_project_directory": "Beide Aktionen füllen das Eingabefeld vor — es wird nichts gesendet, bis du auf Senden drückst. Der neue Chat öffnet sich im Projektverzeichnis dieser Sitzung."
     },
     "inboundLinkChip": {
       "driven_from": "Gesteuert von {{label}}",
