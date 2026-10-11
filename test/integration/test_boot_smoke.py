@@ -468,7 +468,13 @@ _KNOWN_SECOND_BOOT_CHANGES: dict[tuple[str, str], str] = {
     ("kiro_crew.dashboard.handlers.mcp", "_mcp_probe_ts"): "keyed cache",
     ("kiro_crew.mcp_discovery", "_probe_cache"): "keyed cache",
     ("kiro_crew.agent_discovery", "_PARSED_SPECS_CACHE"): "keyed cache",
-    # Process-wide thread pools created on first use, home-independent.
+    # Process-wide values resolved on first use, home-independent: the thread
+    # pools, and the umask-derived default file mode (``0o666 & ~umask``) that
+    # the first atomic write OUTSIDE the data home resolves -- inside the home
+    # the default is owner-only and never consults it. A boot's background
+    # session writes the workspace ``.kiro/cli.json`` overlay from a task that
+    # races shutdown, so either boot may be the one that fills it.
+    ("kiro_crew.atomic_write", "_default_mode"): "lazy umask cache",
     ("kiro_crew.executors", "_pool"): "lazy thread pool",
     ("kiro_crew.executors", "_subprocess_pool"): "lazy thread pool",
     ("kiro_crew.executors", "_kiro_spawn_pool"): "lazy thread pool",
