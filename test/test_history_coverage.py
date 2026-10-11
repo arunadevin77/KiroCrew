@@ -28,6 +28,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from windows_sim import same_tick_file_stat
 
 from kiro_crew import history as H
 from kiro_crew.execution_context import STRICTEST_MEMORY_MODE
@@ -1701,6 +1702,33 @@ class TestReadMessagesSkipsBlankLines:
             + _jsonl({"role": "user", "content": "only"}),
         )
         assert [m["content"] for m in log._read_messages("k")] == ["only"]
+
+
+class TestReadMessagesSeesASameTickRewrite:
+    """A rewrite that lands on the cached stat's clock tick is still a new file.
+
+    ``_msg_cache`` is keyed on the file's stat. NTFS stamps writes in ~1-16 ms
+    ticks and Windows ``st_ctime`` is the creation time, so an external writer
+    that appends rows right after a read leaves mtime, ctime and inode all equal;
+    only the size moves. The cached parse must not be served for it.
+    """
+
+    def test_rows_appended_within_the_tick_are_read(self, tmp_path: Path) -> None:
+        log = _log(tmp_path)
+        path = log._path("k")
+        _write(path, _jsonl({"_type": "metadata"}, {"role": "user", "content": "q0"}))
+        with same_tick_file_stat(match=path.name):
+            assert [m["content"] for m in log.read_messages_chained("k")] == ["q0"]
+            # An external append: in place, same inode, same pinned timestamps.
+            with open(path, "a", encoding="utf-8", newline="\n") as handle:
+                handle.write(_jsonl({"role": "assistant", "content": "a0"}))
+            assert [m["content"] for m in log.read_messages_chained("k")] == ["q0", "a0"]
+
+    def test_the_stamp_still_names_the_timestamps_and_inode(self, tmp_path: Path) -> None:
+        path = tmp_path / "k.jsonl"
+        _write(path, "x\n")
+        st = path.stat()
+        assert H._cache_identity(st) == (st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino)
 
 
 class TestIsIncognitoTranscript:

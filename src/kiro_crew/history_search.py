@@ -1751,7 +1751,7 @@ class SessionCatalogProjection:
     def _build_folded(
         self,
         key: str,
-        identity: tuple[int, int, int],
+        identity: tuple[int, int, int, int],
         gen: int,
     ) -> tuple[int, str] | None:
         """Parse *key* and fold its content — the cache-miss half of

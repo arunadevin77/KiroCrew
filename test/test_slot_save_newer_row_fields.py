@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from chat_test_helpers import _make_ready_kiro_prerequisite
+from windows_sim import same_tick_file_stat
 
 from kiro_crew.dashboard.chat_persistence import (
     _rehydrate_slot_from_history,
@@ -299,12 +300,10 @@ def test_a_channel_window_rebuild_past_the_slot_budget_drops_the_oldest_rows_fie
     _assert_within_the_slot_budget_oldest_dropped_first(_kept_fields(slot))
 
 
-@pytest.mark.asyncio
-async def test_a_drop_keeps_every_row_the_same_dict(tmp_path, monkeypatch):
-    """Rewind and edit-resend find rows that arrived during an await by ``id(row)``.
+async def _reconciled_after_a_late_writer(tmp_path, monkeypatch):
+    """Restore 100 rows of newer fields, let another writer append 50, reconcile.
 
-    A reconcile that appends past the slot budget must drop the older rows' fields in
-    place: a row replaced by a copy would read as arrived and be re-appended.
+    Returns the window rows as restored and the slot after the reconcile.
     """
     from kiro_crew.dashboard.chat_handlers import _reconcile_slot_window
     from kiro_crew.dashboard.chat_utils import UNKNOWN_ROW_FIELDS_KEY
@@ -323,7 +322,35 @@ async def test_a_drop_keeps_every_row_the_same_dict(tmp_path, monkeypatch):
 
     _edit_rows(path, another_writer)
     await _reconcile_slot_window(state, restored)
-    assert len(restored.messages) == len(before) + 50, "precondition: the reconcile appended"
+    return before, restored
+
+
+@pytest.mark.asyncio
+async def test_a_reconcile_sees_rows_appended_on_the_same_file_clock_tick(tmp_path, monkeypatch):
+    """The late writer's rewrite lands on the restore read's stat tick: NTFS stamps
+    writes in ~1-16 ms steps and Windows ``st_ctime`` is the creation time, so only
+    the file's size tells the transcript cache the file changed. The reconcile must
+    still see the 50 new rows, not the cached 100."""
+    with same_tick_file_stat(match="s1.jsonl"):
+        before, restored = await _reconciled_after_a_late_writer(tmp_path, monkeypatch)
+    assert len(restored.messages) == len(before) + 50, (
+        f"the reconcile read a stale transcript: {len(restored.messages)} rows in the window, "
+        f"the last is {restored.messages[-1].get('content')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_drop_keeps_every_row_the_same_dict(tmp_path, monkeypatch):
+    """Rewind and edit-resend find rows that arrived during an await by ``id(row)``.
+
+    A reconcile that appends past the slot budget must drop the older rows' fields in
+    place: a row replaced by a copy would read as arrived and be re-appended.
+    """
+    before, restored = await _reconciled_after_a_late_writer(tmp_path, monkeypatch)
+    assert len(restored.messages) == len(before) + 50, (
+        f"precondition: the reconcile appended; {len(restored.messages)} rows in the window, "
+        f"the last is {restored.messages[-1].get('content')!r}"
+    )
     kept = _kept_fields(restored)
     assert kept[0] is None, "precondition: the append passed the budget and dropped fields"
     now = {id(m) for m in restored.messages}
