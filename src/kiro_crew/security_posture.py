@@ -1797,6 +1797,12 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         # gateway log and to the app backend's own log file. Defensive
         # scrubbing at the point of capture, not an output boundary.
         "apps/backend_runtime/provisioning.py",
+        # Log hygiene, same shape: the loop-stall enrichment formats the loop
+        # thread's innermost frame with the diag frame redactor before writing
+        # it to the stall WARNING in the gateway log, so the frame's absolute
+        # path carries no home directory into the log ring / /api/logs stream.
+        # It is an operational log line, not an output boundary of its own.
+        "dashboard/stall_enrichment.py",
         # Capture-side, not egress: the per-session MCP report scrubs a server
         # name and a failing server's startup error as it RECORDS them, so a
         # credential never enters the accumulator at all. Deliberately earlier
