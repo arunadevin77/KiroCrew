@@ -7,8 +7,8 @@ text cannot be a dashboard. So the fragment is treated the way dsh-visualize
 treats a visualization: the page author writes the body, and the host writes
 everything around it.
 
-Two ways a value reaches the page, and the page chooses per element
-------------------------------------------------------------------
+Three ways a value reaches the page, and the page chooses per element
+--------------------------------------------------------------------
 1. ``data-dashboard-field="<name>"`` on an element: the host sets that element's
    TEXT to the field's value. No markup, no attributes, no HTML -- a text node, so
    a value can never become an element. This is the path for every cell a reader
@@ -17,9 +17,14 @@ Two ways a value reaches the page, and the page chooses per element
    draw from. :data:`WINDOW_GLOBAL` also carries ``agentic`` (the names the
    crewmate wrote rather than the gateway folded), ``seq`` (the fold watermark) and
    ``stale``.
+3. ``window.kirocrew.subscribe(name, cb)``: ``cb(value, name)`` on first load and
+   again on every push that carries that field, returning a disposer. For a page
+   that DRAWS -- a tree, a chart, a scene -- where (2) is a value read once and the
+   generic :data:`PAGE_EVENT` only says that something landed, leaving the page to
+   diff a whole read to find out what.
 
-The host fills (1) itself, from the same object it hands to (2), so a page cannot
-show one number in a cell and a different one in its chart.
+The host fills (1) itself, from the same object it hands to (2) and (3), so a page
+cannot show one number in a cell and a different one in its chart.
 
 What the host refuses to let the page do
 ----------------------------------------
@@ -285,19 +290,69 @@ _BOOTSTRAP_JS: Final[str] = f"""
     for (var key of Object.keys(value)) freeze(value[key]);
     return Object.freeze(value);
   }}
-  // CONFIGURABLE, which looks like a weakening and is not. The REFILL below has
-  // to redefine this property, so a non-configurable definition here makes the
-  // first refill throw -- and the same throw hits any host that puts a second
-  // document in one window, where the first document's definition is still
-  // standing. What protects the values is the deep freeze, not the descriptor: a
-  // page that wanted to lie about its numbers could draw anything it liked
-  // regardless, so an attribute that only breaks the refill buys nothing.
-  Object.defineProperty(window, {WINDOW_GLOBAL!r}, {{
-    value: freeze(read),
-    writable: false,
-    configurable: true,
-    enumerable: true,
-  }});
+  // ONE REGISTRY for the whole document's lifetime, held in this closure rather
+  // than on the global the refill replaces. A page subscribes once, during parse,
+  // and keeps drawing across every push: a registry living on the published object
+  // would be discarded with it and every callback would silently stop.
+  var subscribers = [];
+  function deliver(entry, source) {{
+    if (!entry.live) return;
+    var fields = source && source.fields;
+    if (!fields || typeof fields !== 'object') return;
+    // PRESENCE, not truthiness. A field is ABSENT when its fold path did not
+    // resolve, and `0`, `''` and `false` are values a fold legitimately holds --
+    // reading them as absent would stop a counter's subscriber at exactly the
+    // moment the counter reached zero.
+    if (!Object.prototype.hasOwnProperty.call(fields, entry.name)) return;
+    try {{
+      entry.cb(fields[entry.name], entry.name);
+    }} catch (err) {{
+      // ONE SUBSCRIBER'S THROW COSTS ONLY ITSELF. Two blocks on one page redraw
+      // from one push, and letting the first one's error abort the loop leaves the
+      // second showing the value from before it -- a page of fields at two
+      // different ages with nothing on it saying so.
+    }}
+  }}
+  function notify(source) {{
+    // A COPY of the list, because a callback may subscribe or dispose during
+    // delivery and mutating the array under the loop would skip its neighbour.
+    var current = subscribers.slice();
+    for (var i = 0; i < current.length; i++) deliver(current[i], source);
+  }}
+  function subscribe(name, cb) {{
+    if (typeof name !== 'string' || typeof cb !== 'function') return function () {{}};
+    var entry = {{ name: name, cb: cb, live: true }};
+    subscribers.push(entry);
+    // FIRES NOW, against the read the page already holds. A page's inline script
+    // runs during parse, before a single binding is filled, so a callback that only
+    // fired on a push would draw nothing on first paint -- over a log that has the
+    // numbers in it. This is what makes the callback a page's one entry point
+    // rather than something it needs a binding beside.
+    deliver(entry, read);
+    return function () {{ entry.live = false; }};
+  }}
+  function publish(value) {{
+    // `subscribe` travels ON the published object, because the object is replaced
+    // wholesale by every refill: a page that read `window.kirocrew.subscribe` on
+    // first load and called it after a push would otherwise meet `undefined`. The
+    // function is the same one every time, so two blocks subscribing from either
+    // side of a push land in one registry.
+    value.subscribe = subscribe;
+    // CONFIGURABLE, which looks like a weakening and is not. The REFILL below has
+    // to redefine this property, so a non-configurable definition here makes the
+    // first refill throw -- and the same throw hits any host that puts a second
+    // document in one window, where the first document's definition is still
+    // standing. What protects the values is the deep freeze, not the descriptor: a
+    // page that wanted to lie about its numbers could draw anything it liked
+    // regardless, so an attribute that only breaks the refill buys nothing.
+    Object.defineProperty(window, {WINDOW_GLOBAL!r}, {{
+      value: freeze(value),
+      writable: false,
+      configurable: true,
+      enumerable: true,
+    }});
+  }}
+  publish(read);
   function text(value) {{
     if (value === null || value === undefined) return '\\u2014';
     if (typeof value === 'object') return JSON.stringify(value);
@@ -353,11 +408,13 @@ _BOOTSTRAP_JS: Final[str] = f"""
     // The FROZEN global is replaced wholesale rather than mutated, for the reason
     // it is frozen: a page holding a reference to the old object keeps reading
     // consistent numbers from it, and nothing half-updates.
-    read = freeze(data.read);
-    Object.defineProperty(window, {WINDOW_GLOBAL!r}, {{
-      value: read, writable: false, configurable: true, enumerable: true,
-    }});
+    read = data.read;
+    publish(read);
     fill();
+    // AFTER the fill, so a callback that reads its own bound element finds the text
+    // the host wrote for this push rather than the previous one's. Before the
+    // generic event, so a page using both hears the specific signal first.
+    notify(read);
     window.dispatchEvent(new Event({'"kirocrew-dashboard"'}));
   }});
   if (document.readyState === 'loading') addEventListener('DOMContentLoaded', fill);

@@ -58,6 +58,16 @@ MAX_PACKAGE_BYTES = 256 * 1024
 
 MAX_MODEL_FIELDS = 64
 MAX_VIEW_BLOCKS = 48
+#: Cap on an agent-written ``view.html`` page, in bytes of UTF-8.
+#:
+#: Half the package cap, so the page cannot be the whole package and leave no room for
+#: the model that says what may be pushed into it. Well under
+#: :data:`kiro_crew.dashboard_frame.MAX_PAGE_BYTES`, which bounds what the FRAME will
+#: compose: a page can arrive at that host from a shipped template directory, where a
+#: megabyte of inlined markup is somebody's reviewed work, while a page this size
+#: inside a stored package is the signal the whole kind exists to avoid -- values
+#: baked into layout.
+MAX_VIEW_HTML_BYTES = 128 * 1024
 MAX_THEME_TOKENS = 64
 MAX_THEME_CSS_BYTES = 32 * 1024
 #: Cap on a human-readable string inside the package (a label, a title, a unit).
@@ -496,9 +506,83 @@ def _validate_model(raw: Any) -> dict[str, Any]:
     return {"types": fields}
 
 
+#: A text binding in an agent-written page, in either quote an author may have typed.
+#:
+#: MIRRORS :data:`kiro_crew.dashboard_frame.BINDING_ATTRIBUTE`, pinned equal by test.
+#: Matched with a regex rather than parsed, because this check runs on the artifact
+#: write path and pulling in the html parser there would put it behind every caller of
+#: :mod:`kiro_crew.artifacts`. The cost is a page that MENTIONS the attribute in its own
+#: prose being read as binding it -- a refusal the author can act on, where the parse's
+#: own cost would be paid by every artifact write in the product.
+_HTML_BINDING_RE = re.compile(r"data-dashboard-field\s*=\s*(?:\"([^\"]*)\"|'([^']*)')")
+
+
+def _validate_view_html(raw: Any, declared_fields: Mapping[str, Any]) -> str:
+    """One agent-written page, or raise saying why it is not one.
+
+    What is NOT checked here is the point of the shape: the markup is free, the script
+    is free, and nothing in this function looks for a dangerous construct. Containment
+    is :mod:`kiro_crew.dashboard_frame` -- ``default-src 'none'``, ``connect-src
+    'none'``, no dynamic-exec primitive, ``allow-scripts`` and nothing else over an
+    opaque origin -- and a page cannot loosen a policy by being written differently. A
+    denylist here would be a second, weaker gate that an author would read as the real
+    one.
+
+    What IS checked is the author's own mistake, while the author is still present.
+    """
+    if not isinstance(raw, str):
+        raise _refuse("view.html", f"must be a string of HTML, got {type(raw).__name__}")
+    if not raw.strip():
+        raise _refuse(
+            "view.html",
+            "is empty: write the page's inline HTML, binding each field with "
+            "data-dashboard-field or reading it from window.kirocrew.subscribe",
+        )
+    size = len(raw.encode("utf-8"))
+    if size > MAX_VIEW_HTML_BYTES:
+        raise _refuse(
+            "view.html",
+            f"is {size} bytes, over the {MAX_VIEW_HTML_BYTES}-byte limit for a page -- "
+            "a page this large usually has values baked into it, which belong in the "
+            "crew log and reach the page through the fold / bus / controller path",
+        )
+    # The frame's own refusals, asked here so the author meets them at save time rather
+    # than seeing a page that renders wrong. Imported lazily: this module is imported by
+    # `kiro_crew.artifacts` and must stay cheap.
+    from kiro_crew import dashboard_frame
+
+    try:
+        dashboard_frame.validate_page(raw)
+    except dashboard_frame.PageError as exc:
+        raise _refuse("view.html", str(exc)) from None
+    bound = sorted({(a or b) for a, b in _HTML_BINDING_RE.findall(raw)})
+    unknown = [name for name in bound if name not in declared_fields]
+    if unknown:
+        raise _refuse(
+            "view.html",
+            f"binds {unknown}, which model.types does not declare "
+            f"(declared: {sorted(declared_fields)}). The model is also the list of "
+            "fields the controller will push, so a name only the page knows is a cell "
+            "nothing ever fills",
+        )
+    return raw
+
+
 def _validate_view(raw: Any, declared_fields: Mapping[str, Any]) -> dict[str, Any]:
     view = _an_object(raw, "view")
-    _check_keys(view, "view", ("blocks",))
+    _check_keys(view, "view", ("blocks", "html"))
+    # EXACTLY ONE. Two views has no answer to "what does this page look like", and
+    # drawing one while ignoring the other picks for the author silently -- when the
+    # half that was ignored is the half they were editing. None is the same question
+    # with no answer at all.
+    if ("html" in view) == ("blocks" in view):
+        raise _refuse(
+            "view",
+            "must hold exactly one of 'html' (a page its owner wrote) or 'blocks' (a "
+            f"list of block types out of the catalog); this one holds {sorted(view)}",
+        )
+    if "html" in view:
+        return {"html": _validate_view_html(view["html"], declared_fields)}
     raw_blocks = view.get("blocks")
     if not isinstance(raw_blocks, list):
         raise _refuse("view.blocks", f"must be a list, got {type(raw_blocks).__name__}")
@@ -659,6 +743,53 @@ def validate_package(raw: Any) -> dict[str, Any]:
         "view": view,
         "theme": theme,
     }
+
+
+#: How a field's source is spelled for a reader: the fold and the dotted path it walks,
+#: or the key the owner writes itself.
+SOURCE_FOLD_PREFIX = "fold:"
+SOURCE_CUSTOM_PREFIX = "custom:"
+
+
+def subscribed_fields(package: Mapping[str, Any]) -> dict[str, str]:
+    """Every field this page may be sent, by name, each with where its value comes from.
+
+    THE ALLOWLIST, and the reason it is one function rather than a rule each caller
+    applies: the controller asks it what may be pushed, and the write gate has already
+    validated the page's bindings against the same table. A field the model does not
+    declare therefore cannot reach the page by either route -- it is not pushed, and a
+    binding naming it is refused at save time.
+
+    The source is a STRING for a reader -- a log line, a refusal, an evidence file --
+    spelled ``fold:<fold>.<path>`` or ``custom:<key>``. The caller that needs to
+    subscribe reads ``package["model"]["types"]`` itself; collapsing a fold and a path
+    into one string and splitting it again would be a second grammar for something the
+    package already says in two fields.
+
+    *package* must be CANONICAL -- the output of :func:`validate_package` or
+    :func:`parse_package` -- because a field with no validated ``source`` has no answer
+    here and this function does not re-validate one.
+    """
+    types = (package.get("model") or {}).get("types")
+    if not isinstance(types, Mapping):
+        return {}
+    out: dict[str, str] = {}
+    for name in sorted(types):
+        spec = types[name]
+        source = spec.get("source") if isinstance(spec, Mapping) else None
+        if not isinstance(source, Mapping):
+            continue
+        if source.get("agentic") is True:
+            # Keyed by the FIELD NAME, which is what the agentic fold stores a value
+            # under. There is no second key to carry, so a reader seeing
+            # ``custom:boards`` knows both the source kind and the key.
+            out[name] = f"{SOURCE_CUSTOM_PREFIX}{name}"
+            continue
+        fold = str(source.get("fold") or "")
+        path = str(source.get("path") or "")
+        if fold and path:
+            out[name] = f"{SOURCE_FOLD_PREFIX}{fold}.{path}"
+    return out
 
 
 def parse_package(content: str) -> dict[str, Any]:

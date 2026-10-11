@@ -227,7 +227,15 @@ class TestTheComposedDocument:
         values; the descriptor only decides whether a refill is possible."""
         doc = self.doc()
         assert "configurable: false" not in doc
-        assert doc.count("configurable: true") == 2
+        defines = doc.count("Object.defineProperty(window")
+        assert defines == 1, (
+            "the global is defined from more than one site, so each one is its own "
+            "chance to drop the descriptor the refill needs"
+        )
+        assert doc.count("configurable: true") == defines
+        # The refill reaches that ONE definition rather than carrying its own, which is
+        # what keeps the count above worth asserting.
+        assert doc.count("publish(read);") == 2, "first load and the refill must both publish"
 
     def test_a_title_cannot_carry_markup_into_the_head(self) -> None:
         read = dashboard_frame.read_payload({})
