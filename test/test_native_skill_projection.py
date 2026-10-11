@@ -28,8 +28,8 @@ from kiro_crew.hooks import FileTooLargeError
 
 
 def _hold_the_prune_clock(monkeypatch):
-    """Freeze ``time.monotonic`` for a test that asserts how many aliases one
-    prune walk RECLAIMS rather than how the time budget cuts it short.
+    """Freeze ``monotonic`` for a test that asserts how many aliases one prune
+    walk RECLAIMS rather than how the time budget cuts it short.
 
     Those counts only hold if the walk finishes. The budget is real wall-clock
     time, so on a slow CI runner it ends a nine-candidate walk one reclaim early
@@ -37,8 +37,21 @@ def _hold_the_prune_clock(monkeypatch):
     advances leaves the budget itself untouched and simply never spends it;
     the budget's own semantics are pinned by :func:`_prune_walk`, which drives
     this same clock one tick per candidate, and by the zero-budget tests.
+
+    Freeze ONLY the projection module's own ``monotonic`` reads: rebinding
+    ``projection.time`` to a delegating proxy overrides ``monotonic`` while every
+    other name (``sleep``, ``time``, ...) falls through to the real module. The
+    shared stdlib ``time.monotonic`` is left untouched, so unrelated readers --
+    asyncio's ``loop.time()`` among them -- keep the real clock.
     """
-    monkeypatch.setattr(projection.time, "monotonic", lambda: 0.0)
+
+    class _FrozenMonotonicTime:
+        monotonic = staticmethod(lambda: 0.0)
+
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+    monkeypatch.setattr(projection, "time", _FrozenMonotonicTime())
 
 
 def _alias_is_live(directory, alias):
@@ -3072,6 +3085,14 @@ def test_prune_scans_the_lease_directory_once_for_many_candidates(native_tree, m
     on fcef4c9a4 (four candidates -> four scans there, one here).
     """
     _home, agents, _project = native_tree
+    # The walk below must reach and reclaim every unleased candidate; that only
+    # holds if the real wall-clock prune budget is not spent mid-walk. A slow
+    # shared runner can spend it before the last candidate and leave the rest
+    # "for later spawns", which is correct product behaviour but reads here as a
+    # candidate that was not reclaimed. Freeze the clock so the reclaim is
+    # runner-speed independent; the scandir-count assertion the test is named for
+    # is unaffected either way.
+    _hold_the_prune_clock(monkeypatch)
     candidates = [_legacy_alias(agents, f"{index:024x}") for index in range(4)]
     walked = [_legacy_alias(agents, f"{index:024x}") for index in range(100, 104)]
     external = projection._acquire_projection_lease(agents, {p.stem for p in candidates})
