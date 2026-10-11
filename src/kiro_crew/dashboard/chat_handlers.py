@@ -7284,11 +7284,10 @@ async def api_chat_slot_turn_timeout(request: web.Request) -> web.Response:
     The value lives on the slot and in the session's metadata line, so it
     survives a gateway restart; the turn dispatch reads it when each turn
     starts (``turn_dispatch.resolve_turn_limit``), so a turn already running
-    keeps the limit it started with. The write runs the same transaction as the
-    compaction-threshold route (see :func:`api_chat_slot_autocompact` for the
-    reasoning behind each step), under the same per-transcript lock, so two
-    overrides written to one transcript at once never persist each other's
-    unconfirmed value.
+    keeps the limit it started with. The write holds the compaction-threshold
+    route's per-transcript lock and pins the save to the authorized
+    transcript, and the live field changes only once the write has committed
+    (see the comment at the save).
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["slot"]
@@ -7322,59 +7321,73 @@ async def api_chat_slot_turn_timeout(request: web.Request) -> web.Response:
         authorized_history_key = slot_history_key(slot)
         if authorized_history_key != locked_history_key:
             return _gone()
-        prior = slot.turn_timeout_secs
-        slot.turn_timeout_secs = secs
+        committed = False
         if state.conversation_log:
-            mirrored: list = []
+            # Persist before publishing. The new value reaches disk as a STAGED
+            # value while the live field keeps the committed one, so a turn
+            # dispatched during the save still runs under the committed limit
+            # and a failed save leaves nothing to undo. The live field (and the
+            # live field of every alias slot on this transcript) flips in the
+            # save's commit hook, which runs under the transcript lock right
+            # after the write lands: an alias flush needs that lock to
+            # serialize, so none can write the old value back over this one.
+            # The aliases are listed inside the hook, so a slot bound to this
+            # transcript while the save ran is published to as well.
 
-            def _roll_back(*, dirty: bool) -> None:
-                for other, other_prior in mirrored:
+            def _publish_committed() -> None:
+                nonlocal committed
+                committed = True
+                others = [other for other in list(state._slots.values()) if other is not slot]
+                for other in (slot, *others):
                     if slot_history_key(other) == authorized_history_key:
-                        other.turn_timeout_secs = other_prior
-                        other._dirty = True
-                slot.turn_timeout_secs = prior
-                if dirty:
-                    slot._dirty = True
+                        other.turn_timeout_secs = secs
+                        other._turn_timeout_hydrated = True
 
-            for confirm in (False, True):
-                try:
-                    saved = await save_slot_off_loop(
-                        state,
-                        slot,
-                        force=True,
-                        best_effort=False,
-                        expected_history_key=authorized_history_key,
-                    )
-                except Exception:
-                    _roll_back(dirty=True)
-                    logger.exception("Slot %s turn_timeout_secs persist failed", name)
-                    return web.json_response(
-                        {"error": "could not persist turn time limit", "code": "persist_failed"},
-                        status=500,
-                    )
-                if not saved:
-                    _roll_back(dirty=False)
-                    return _gone()
-                if not confirm:
-                    # Alias slots on this transcript would write their stale
-                    # value back on their next flush; the second save re-orders
-                    # the durable record after any flush already queued.
-                    for other in list(state._slots.values()):
-                        if other is not slot and slot_history_key(other) == authorized_history_key:
-                            mirrored.append((other, other.turn_timeout_secs))
-                            other.turn_timeout_secs = secs
-        # The persist awaits are a rebind window: the field is this slot's live
-        # state, so a slot that now routes elsewhere must not keep the value.
-        stale = _reauthorize_after_await(state, slot, name, request_app, "slot_turn_timeout")
-        if stale is not None:
-            slot.turn_timeout_secs = prior
-            return stale
-        if slot_history_key(slot) != authorized_history_key:
-            slot.turn_timeout_secs = prior
-            return _gone()
-        committed = slot.turn_timeout_secs
-        logger.info("Slot %s turn_timeout_secs set to %r", name, committed)
-        return web.json_response({"ok": True, **await _turn_timeout_payload(committed)})
+            try:
+                saved = await save_slot_off_loop(
+                    state,
+                    slot,
+                    force=True,
+                    best_effort=False,
+                    expected_history_key=authorized_history_key,
+                    turn_timeout_override=(secs,),
+                    after_commit_under_lock=_publish_committed,
+                )
+            except Exception:
+                # Nothing committed and nothing was published. Dirty only so an
+                # unrelated flush re-converges the unchanged durable record.
+                slot._dirty = True
+                logger.exception("Slot %s turn_timeout_secs persist failed", name)
+                return web.json_response(
+                    {"error": "could not persist turn time limit", "code": "persist_failed"},
+                    status=500,
+                )
+            if not saved:
+                # Refused without writing: the session was deleted, or the slot
+                # was rebound to another transcript mid-request.
+                return _gone()
+            # The persist await is a rebind window. A slot that now routes to
+            # another transcript holds THAT transcript's limit, set by whatever
+            # rebound it, so a rejection here leaves the slot's field alone.
+            stale = _reauthorize_after_await(state, slot, name, request_app, "slot_turn_timeout")
+            if stale is not None:
+                return stale
+            if slot_history_key(slot) != authorized_history_key:
+                return _gone()
+            if not committed:
+                # A tab with no metadata line yet: the empty-window merge does
+                # not materialize one, so there is no durable record to be the
+                # authority. The slot is the only copy until the tab's first
+                # full save, which writes this field, the same way a model
+                # picked on a fresh tab persists.
+                slot.turn_timeout_secs = secs
+        else:
+            slot.turn_timeout_secs = secs
+        # The picked value is now the slot's own, read or not before.
+        slot._turn_timeout_hydrated = True
+        committed_secs = slot.turn_timeout_secs
+        logger.info("Slot %s turn_timeout_secs set to %r", name, committed_secs)
+        return web.json_response({"ok": True, **await _turn_timeout_payload(committed_secs)})
 
 
 async def api_chat_slots_model(request: web.Request) -> web.Response:

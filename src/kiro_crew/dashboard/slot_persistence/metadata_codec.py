@@ -465,6 +465,11 @@ class SaveFolds:
     mutes_opened: bool | None = None
     # Staged per-row ``muted`` value; same contract as ``mutes_opened`` above.
     muted: bool | None = None
+    # Staged ``turn_timeout_secs``, the same shape for the turn-time-limit
+    # endpoint. Wrapped in a 1-tuple because ``None`` is a real value there (it
+    # clears the session's limit): ``None`` here means "nothing staged, read the
+    # live slot", ``(value,)`` means "write *value*".
+    turn_timeout_secs: tuple[int | None] | None = None
 
 
 @dataclass
@@ -669,6 +674,14 @@ def _read_autocompact_pct(r: _Read) -> None:
 
 def _read_turn_timeout_secs(r: _Read) -> None:
     r.slot.turn_timeout_secs = _validate_turn_timeout_secs(r.meta.get("turn_timeout_secs"))
+
+
+def _staged_turn_timeout(slot: Any, folds: SaveFolds) -> int | None:
+    """The turn time limit a save writes: the endpoint's staged value, else the slot's."""
+    if folds.turn_timeout_secs is not None:
+        return folds.turn_timeout_secs[0]
+    value: int | None = slot.turn_timeout_secs
+    return value
 
 
 def _read_dismissed_source_links(r: _Read) -> None:
@@ -1029,13 +1042,13 @@ FIELDS: tuple[Field, ...] = (
         "turn_timeout_secs",
         _ALL,
         attr="turn_timeout_secs",
-        line=_truthy(lambda s: s.turn_timeout_secs),
-        merge=_always(lambda s: s.turn_timeout_secs),
+        line=lambda s, f: _staged_turn_timeout(s, f) or OMIT,
+        merge=_staged_turn_timeout,
         read=_read_turn_timeout_secs,
         why=(
             "the full save omits the key while the session follows the global "
             "limit; the merge writes null so clearing it reaches a line already "
-            "on disk"
+            "on disk. Both forms prefer the endpoint's staged value"
         ),
     ),
     Field(

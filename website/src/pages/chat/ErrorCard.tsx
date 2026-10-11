@@ -236,9 +236,9 @@ export interface ErrorCardProps {
    */
   onOpenTurnLimit?: () => void
   /**
-   * The other fix for a `turn_timeout` row: the session whose turn stopped,
-   * so the card can offer that session's own turn time limit in place. Beside
-   * the Settings link, which changes the limit for every session.
+   * The other fix for a `turn_timeout` row: the session whose turn stopped.
+   * With it, the card's limit control becomes a menu offering that session's
+   * own turn time limit, with the Settings link (every session) inside it.
    */
   turnLimitSlot?: string
 }
@@ -501,7 +501,12 @@ export const ErrorCard = memo(function ErrorCard({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {resumeButton}
-          {onOpenTurnLimit && (
+          {/* One limit control beside Resume: with a known session it is a
+              menu holding this session's limit and the Settings link;
+              without one, the Settings link alone. */}
+          {turnLimitSlot ? (
+            <SessionTurnLimitButton slotKey={turnLimitSlot} className={secondaryBtn} onOpenSettings={onOpenTurnLimit} />
+          ) : (
             <button
               type="button"
               onClick={onOpenTurnLimit}
@@ -513,7 +518,6 @@ export const ErrorCard = memo(function ErrorCard({
               {i18nT('pages.chat.errorCard.turn_limit')}
             </button>
           )}
-          {turnLimitSlot && <SessionTurnLimitButton slotKey={turnLimitSlot} className={secondaryBtn} />}
         </div>
       </div>
     )

@@ -1,17 +1,18 @@
 import { useId, useState, type ComponentType, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, ChevronDown, ChevronRight, Timer } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Settings, Timer } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api/client'
 import type { SlotTurnTimeout } from '../api/client/chatSlotSettings'
 import { fmtDuration } from '../i18n/format'
-import ErrorNotice from './ErrorNotice'
+import ErrorNotice, { ErrorNoticeMenuItem, type ErrorNoticeMenuItemComponent } from './ErrorNotice'
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem,
-  DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem,
+  DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from './ui/dropdown-menu'
 import {
-  ContextMenuRadioGroup, ContextMenuRadioItem, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger,
+  ContextMenuItem, ContextMenuLabel, ContextMenuRadioGroup, ContextMenuRadioItem, ContextMenuSub, ContextMenuSubContent,
+  ContextMenuSubTrigger,
 } from './ui/context-menu'
 
 /** The limits offered as one click each, in seconds. Every one sits inside the
@@ -59,16 +60,20 @@ type RadioItemComponent = ComponentType<{
  * The menu stays open on a pick (`preventDefault` on select; Radix still
  * delivers the radio value change). The check moving to the new row is the
  * confirmation that it saved, and a refused write stays on screen as an
- * `ErrorNotice` instead of vanishing with a closed menu.
+ * `ErrorNotice` instead of vanishing with a closed menu. Inside menu content
+ * the agent hand-off is a sibling `ErrorNoticeMenuItem` (the menu's roving
+ * focus skips a button nested in a notice), described by the notice's id.
  */
-function TurnLimitChoices({ slotKey, RadioGroup, RadioItem }: {
+function TurnLimitChoices({ slotKey, RadioGroup, RadioItem, Item }: {
   slotKey: string
   RadioGroup: RadioGroupComponent
   RadioItem: RadioItemComponent
+  Item: ErrorNoticeMenuItemComponent
 }) {
   const { t: i18nT } = useTranslation()
   const queryClient = useQueryClient()
   const errorId = useId()
+  const loadErrorId = useId()
   const [saveError, setSaveError] = useState('')
   const query = useQuery({
     queryKey: turnLimitQueryKey(slotKey),
@@ -89,21 +94,30 @@ function TurnLimitChoices({ slotKey, RadioGroup, RadioItem }: {
     },
   })
   const data = query.data
+  // A failed read shows its notice whether or not an earlier read is cached: a
+  // refetch that fails after the stale period keeps the cached values, and
+  // those checked rows must not stand in for a read that just failed.
+  const loadError = query.isError
+    ? (query.error instanceof Error ? query.error.message : String(query.error))
+    : ''
+  const loadErrorNotice = loadError ? (
+    <>
+      <div className="max-w-[260px] px-2 py-1.5">
+        <ErrorNotice
+          id={loadErrorId}
+          variant="inline"
+          className="flex-wrap"
+          title={i18nT('components.sessionTurnLimit.load_failed')}
+          message={loadError}
+          messagePlacement="below"
+          testId="session-turn-limit-load-error"
+        />
+      </div>
+      <ErrorNoticeMenuItem Item={Item} message={loadError} describedBy={loadErrorId} />
+    </>
+  ) : null
   if (!data) {
-    if (query.isError) {
-      return (
-        <div className="max-w-[260px] px-2 py-1.5">
-          <ErrorNotice
-            variant="inline"
-            className="flex-wrap"
-            title={i18nT('components.sessionTurnLimit.load_failed')}
-            message={query.error instanceof Error ? query.error.message : String(query.error)}
-            messagePlacement="below"
-            testId="session-turn-limit-load-error"
-          />
-        </div>
-      )
-    }
+    if (loadErrorNotice) return loadErrorNotice
     return <div className="px-3 py-1.5 text-[12px] text-muted">{i18nT('components.sessionTurnLimit.loading')}</div>
   }
   const value = data.secs == null ? FOLLOW_GLOBAL : String(data.secs)
@@ -117,6 +131,7 @@ function TurnLimitChoices({ slotKey, RadioGroup, RadioItem }: {
     : null)
   return (
     <>
+      {loadErrorNotice}
       <RadioGroup value={value} onValueChange={choose}>
         <RadioItem value={FOLLOW_GLOBAL} disabled={mutation.isPending} onSelect={keepOpen}>
           <span className="truncate">
@@ -132,17 +147,20 @@ function TurnLimitChoices({ slotKey, RadioGroup, RadioItem }: {
         ))}
       </RadioGroup>
       {saveError && (
-        <div className="max-w-[260px] px-2 py-1.5">
-          <ErrorNotice
-            id={errorId}
-            variant="inline"
-            className="flex-wrap"
-            title={i18nT('components.sessionTurnLimit.save_failed')}
-            message={saveError}
-            messagePlacement="below"
-            testId="session-turn-limit-save-error"
-          />
-        </div>
+        <>
+          <div className="max-w-[260px] px-2 py-1.5">
+            <ErrorNotice
+              id={errorId}
+              variant="inline"
+              className="flex-wrap"
+              title={i18nT('components.sessionTurnLimit.save_failed')}
+              message={saveError}
+              messagePlacement="below"
+              testId="session-turn-limit-save-error"
+            />
+          </div>
+          <ErrorNoticeMenuItem Item={Item} message={saveError} describedBy={errorId} />
+        </>
       )}
     </>
   )
@@ -157,6 +175,7 @@ export function SessionTurnLimitSubmenu({ slotKey, variant }: {
   const Sub = variant === 'context' ? ContextMenuSub : DropdownMenuSub
   const SubTrigger = variant === 'context' ? ContextMenuSubTrigger : DropdownMenuSubTrigger
   const SubContent = variant === 'context' ? ContextMenuSubContent : DropdownMenuSubContent
+  const Label = variant === 'context' ? ContextMenuLabel : DropdownMenuLabel
   return (
     <Sub>
       <SubTrigger title={i18nT('components.sessionTurnLimit.hint')} data-testid="session-turn-limit-submenu">
@@ -165,18 +184,32 @@ export function SessionTurnLimitSubmenu({ slotKey, variant }: {
         <ChevronRight size={12} className="text-muted" />
       </SubTrigger>
       <SubContent className="min-w-[200px]">
+        {/* The same heading the timeout card's picker carries, so both read as one control. */}
+        <Label>{i18nT('components.sessionTurnLimit.this_session')}</Label>
         <TurnLimitChoices
           slotKey={slotKey}
           RadioGroup={variant === 'context' ? ContextMenuRadioGroup : DropdownMenuRadioGroup}
           RadioItem={variant === 'context' ? ContextMenuRadioItem : DropdownMenuRadioItem}
+          Item={variant === 'context' ? ContextMenuItem : DropdownMenuItem}
         />
       </SubContent>
     </Sub>
   )
 }
 
-/** The timeout card's button: the same picker, opened from the card itself. */
-export function SessionTurnLimitButton({ slotKey, className }: { slotKey: string; className?: string }) {
+/**
+ * The timeout card's one limit control: a menu holding this session's limit
+ * and, when the surface has a settings route, the way to the global setting.
+ * One trigger rather than two buttons, so the card's action row stays at
+ * Resume plus one control, and the two scopes are told apart inside it.
+ */
+export function SessionTurnLimitButton({ slotKey, className, onOpenSettings }: {
+  slotKey: string
+  className?: string
+  /** Opens Settings on the global Turn Time Limit field. Omitted on a surface
+   *  with no settings route (embed, popout). */
+  onOpenSettings?: () => void
+}) {
   const { t: i18nT } = useTranslation()
   return (
     <DropdownMenu>
@@ -188,13 +221,31 @@ export function SessionTurnLimitButton({ slotKey, className }: { slotKey: string
           data-testid="error-card-session-turn-limit"
         >
           <Timer size={12} className="lucide-inline shrink-0" aria-hidden="true" />
-          {i18nT('components.sessionTurnLimit.card_button')}
+          {i18nT('pages.chat.errorCard.turn_limit')}
           <ChevronDown size={12} className="lucide-inline shrink-0" aria-hidden="true" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-[200px]">
-        <DropdownMenuLabel>{i18nT('components.sessionTurnLimit.label')}</DropdownMenuLabel>
-        <TurnLimitChoices slotKey={slotKey} RadioGroup={DropdownMenuRadioGroup} RadioItem={DropdownMenuRadioItem} />
+      <DropdownMenuContent align="start" className="min-w-[220px]">
+        <DropdownMenuLabel>{i18nT('components.sessionTurnLimit.this_session')}</DropdownMenuLabel>
+        <TurnLimitChoices
+          slotKey={slotKey}
+          RadioGroup={DropdownMenuRadioGroup}
+          RadioItem={DropdownMenuRadioItem}
+          Item={DropdownMenuItem}
+        />
+        {onOpenSettings && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={onOpenSettings}
+              title={i18nT('pages.chat.errorCard.turn_limit_hint')}
+              data-testid="error-card-turn-limit"
+            >
+              <Settings size={13} className="shrink-0 text-muted" aria-hidden="true" />
+              {i18nT('components.sessionTurnLimit.all_sessions')}
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )

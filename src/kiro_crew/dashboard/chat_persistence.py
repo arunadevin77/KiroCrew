@@ -2541,6 +2541,7 @@ def _save_slot_to_history(
     muted_override: bool | None = None,
     after_commit_under_lock: Callable[[], None] | None = None,
     refuse_stale_empty_merge: bool = False,
+    turn_timeout_override: tuple[int | None] | None = None,
 ) -> bool:
     """Persist slot messages to JSONL history (append-safe).
 
@@ -2722,6 +2723,7 @@ def _save_slot_to_history(
                 mutes_opened_override=mutes_opened_override,
                 muted_override=muted_override,
                 after_commit_under_lock=after_commit_under_lock,
+                turn_timeout_override=turn_timeout_override,
             )
             if refusal is not None:
                 logger.warning("Slot %s empty-window save refused: %s", slot.key, refusal)
@@ -2828,6 +2830,7 @@ def _save_slot_to_history(
                     rows_only=rows_only,
                     mutes_opened_override=mutes_opened_override,
                     muted_override=muted_override,
+                    turn_timeout_override=turn_timeout_override,
                 )
             )
             meta_str = json.dumps(meta_line) + "\n"
@@ -2992,6 +2995,7 @@ async def save_slot_off_loop(
     mutes_opened_override: bool | None = None,
     muted_override: bool | None = None,
     after_commit_under_lock: Callable[[], None] | None = None,
+    turn_timeout_override: tuple[int | None] | None = None,
 ) -> bool:
     """Persist a slot from the event loop without blocking or dropping the save.
 
@@ -3075,6 +3079,7 @@ async def save_slot_off_loop(
             mutes_opened_override=mutes_opened_override,
             muted_override=muted_override,
             after_commit_under_lock=after_commit_under_lock,
+            turn_timeout_override=turn_timeout_override,
         )
 
     def _begin_guarded_metadata_write() -> None:

@@ -40,11 +40,13 @@ from kiro_crew.cron_script import (
 )
 from kiro_crew.dashboard.chat_persistence import _restore_dismissed_source_links
 from kiro_crew.dashboard.cron_inject import (
+    apply_cron_turn_timeout,
     chat_folder_exists,
     hydrate_slot_from_history,
     inject_cron_result_to_dashboard,
     move_cron_job_tab,
     prefetch_cron_dismissed,
+    restore_cron_turn_timeout,
 )
 from kiro_crew.dashboard.handlers._shared import (
     _owner_denial_response,
@@ -2108,6 +2110,7 @@ async def api_cron_to_chat(request: web.Request) -> web.Response:
             dismissed=await prefetch_cron_dismissed(state, job.id),
             include_prompt=False,
         )
+        await restore_cron_turn_timeout(state, job.id)
     else:
         # Job deleted (one-shot with delete_after_run). Create slot from history or notification.
         session_key = f"cron:{job_id}"
@@ -2144,6 +2147,10 @@ async def api_cron_to_chat(request: web.Request) -> web.Response:
                 slot._dismissed_source_links = set()
                 slot.invalidate_source_links()
                 slot._dismissed_hydrated = False
+                # The tab's own turn time limit is unread for the same reason:
+                # its saves carry the on-disk value until the read below lands.
+                slot.turn_timeout_secs = None
+                slot._turn_timeout_hydrated = False
                 if state.conversation_log is not None:
                     try:
                         _meta, _readable = await asyncio.to_thread(
@@ -2153,6 +2160,11 @@ async def api_cron_to_chat(request: web.Request) -> web.Response:
                         _meta, _readable = {}, False
                     if _readable:
                         _restore_dismissed_source_links(slot, _meta.get("dismissed_source_links"))
+                        # The read is a rebind window: a limit the user set while
+                        # it ran wins over the older line, and a tab now bound to
+                        # another transcript takes nothing from this one.
+                        if slot.linked_session_key == session_key:
+                            apply_cron_turn_timeout(slot, _meta)
         else:
             # No session log — fall back to notification body.
             notif = next(

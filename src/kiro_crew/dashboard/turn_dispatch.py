@@ -324,16 +324,23 @@ TURN_TIMEOUT_KIND = "turn_timeout"
 TURN_TIME_LIMIT_SETTING = "Turn Time Limit"
 
 _RAISE_LIMIT_HINT = (
-    f" To allow longer turns, raise {TURN_TIME_LIMIT_SETTING} in Settings → Chat → Advanced."
+    f" To allow longer turns, raise {TURN_TIME_LIMIT_SETTING} in Settings → Chat → Advanced,"
+    " or give this session a limit of its own from the session menu."
 )
 
 #: The session menu entry that sets one session's own limit, as the English
 #: catalog renders it.
 SESSION_TURN_LIMIT_MENU = "Turn time limit"
 
+#: The timeout card's own limit button, as the English catalog renders it. The
+#: card holds this session's picker, so the hint names it first; the session
+#: menu covers surfaces that draw the prose without the card's buttons.
+CARD_TURN_LIMIT_BUTTON = "Change turn time limit"
+
 _RAISE_SESSION_LIMIT_HINT = (
-    f" This session has its own limit. To allow longer turns here, change "
-    f"{SESSION_TURN_LIMIT_MENU} in the session's ⋮ menu."
+    f" This session has its own limit. To allow longer turns here, pick a longer one "
+    f"under {CARD_TURN_LIMIT_BUTTON} on this card, or under {SESSION_TURN_LIMIT_MENU} "
+    "in the session menu."
 )
 
 

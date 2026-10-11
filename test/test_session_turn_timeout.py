@@ -11,13 +11,16 @@ Pinned where each defect would live:
 - **Transport**: the limit a turn runs under reaches the ACP prompt wait, so a
   session limit above the transport's default is one the system honours.
 - **HTTP endpoint** (``/api/chat/slots/{slot}/turn-timeout``): the global
-  setting's range and unit, null clears, and the value persists.
+  setting's range and unit, null clears, and the value is persisted before the
+  slot runs under it.
 - **Restore**: the metadata codec and the channel surfacing path read it back.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,6 +35,17 @@ from kiro_crew.dashboard.chat_persistence import _validate_turn_timeout_secs
 from kiro_crew.dashboard.chat_utils import slot_history_key
 from kiro_crew.dashboard.state import DashboardState, _ChatSlot
 from kiro_crew.turn_limit import TURN_LIMIT_SECS, current_turn_limit_secs
+
+
+@contextlib.contextmanager
+def _running_turn_limit(secs: float) -> Iterator[None]:
+    """Publish *secs* as the running turn's limit, restoring the previous value."""
+    previous = TURN_LIMIT_SECS.get()
+    TURN_LIMIT_SECS.set(secs)
+    try:
+        yield
+    finally:
+        TURN_LIMIT_SECS.set(previous)
 
 
 def _slot(secs: object = None) -> MagicMock:
@@ -154,12 +168,16 @@ class TestDispatch:
         card = td.format_turn_timeout_card(28800.0, limit_scope=td.TURN_LIMIT_SESSION)
         assert "8-hour" in card
         assert td.SESSION_TURN_LIMIT_MENU in card
+        # The card's own picker comes first: the user is looking at it.
+        assert card.index(td.CARD_TURN_LIMIT_BUTTON) < card.index(
+            td.SESSION_TURN_LIMIT_MENU + " in the session menu"
+        )
         assert "Settings → Chat → Advanced" not in card
 
-    def test_global_card_still_points_at_settings(self) -> None:
+    def test_global_card_points_at_settings_and_names_the_session_option(self) -> None:
         card = td.format_turn_timeout_card(14400.0)
         assert "Settings → Chat → Advanced" in card
-        assert td.SESSION_TURN_LIMIT_MENU not in card
+        assert "session menu" in card
 
     @pytest.mark.asyncio
     async def test_approval_window_sizes_against_the_running_turn_limit(self, monkeypatch) -> None:
@@ -168,11 +186,8 @@ class TestDispatch:
         holder = MagicMock()
         holder.load.return_value.agent.tool_approval_timeout_secs = 7200
         monkeypatch.setattr(td, "KiroCrewConfig", holder)
-        token = TURN_LIMIT_SECS.set(900.0)
-        try:
+        with _running_turn_limit(900.0):
             window = td.tool_approval_timeout_secs()
-        finally:
-            TURN_LIMIT_SECS.reset(token)
         assert window <= 900.0 - td.APPROVAL_TURN_MARGIN_SECS
 
 
@@ -183,20 +198,14 @@ class TestTransportFollowsTheTurnLimit:
 
     def test_a_turn_limit_above_the_default_lengthens_the_wait(self, monkeypatch) -> None:
         _transport_config(monkeypatch)
-        token = TURN_LIMIT_SECS.set(28800.0)
-        try:
+        with _running_turn_limit(28800.0):
             wait = acp_client.resolve_prompt_timeout()
-        finally:
-            TURN_LIMIT_SECS.reset(token)
         assert wait == 28800.0 + acp_client._PROMPT_TIMEOUT_MARGIN_SECS
 
     def test_a_turn_limit_below_the_default_never_shortens_it(self, monkeypatch) -> None:
         _transport_config(monkeypatch)
-        token = TURN_LIMIT_SECS.set(600.0)
-        try:
+        with _running_turn_limit(600.0):
             wait = acp_client.resolve_prompt_timeout()
-        finally:
-            TURN_LIMIT_SECS.reset(token)
         assert wait == acp_client._DEFAULT_PROMPT_TIMEOUT
 
     def test_unreadable_config_still_honours_the_turn_limit(self, monkeypatch) -> None:
@@ -206,11 +215,8 @@ class TestTransportFollowsTheTurnLimit:
             raise RuntimeError("no config here")
 
         monkeypatch.setattr(loader.KiroCrewConfig, "load", classmethod(_boom))
-        token = TURN_LIMIT_SECS.set(28800.0)
-        try:
+        with _running_turn_limit(28800.0):
             wait = acp_client.resolve_prompt_timeout()
-        finally:
-            TURN_LIMIT_SECS.reset(token)
         assert wait == 28800.0 + acp_client._PROMPT_TIMEOUT_MARGIN_SECS
 
     @pytest.mark.asyncio
@@ -229,48 +235,50 @@ class TestTransportFollowsTheTurnLimit:
         assert waits == [43200.0 + acp_client._PROMPT_TIMEOUT_MARGIN_SECS]
 
 
-class TestWatchdogFollowsTheTurnLimit:
-    """Watchdog windows are bounded against the limit the turn runs under."""
+class TestStagedSave:
+    """The endpoint's staged value is what a save writes, whatever the slot holds."""
 
-    def _settings(self, monkeypatch, *, turn: int, hard_cap: float):
-        from kiro_crew.acp.session_handle import _load_watchdog_settings
-        from kiro_crew.config.loader import KiroCrewConfig
-        from kiro_crew.config.sections import AgentConfig
-        from kiro_crew.config.service_sections import WatchdogConfig
+    def _slot(self, tmp_path, monkeypatch):
+        from kiro_crew.history import ConversationLog
 
-        cfg = KiroCrewConfig(
-            agent=AgentConfig(chat_turn_timeout_secs=turn),
-            watchdog=WatchdogConfig(tool_stall_hard_cap_secs=hard_cap),
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = DashboardState(
+            sessions=MagicMock(count=0),
+            crons=MagicMock(
+                list_jobs=MagicMock(return_value=[]), status=MagicMock(return_value={})
+            ),
+            lessons=MagicMock(load_all=MagicMock(return_value=[])),
+            start_time=0.0,
+            conversation_log=ConversationLog(base_dir=tmp_path),
         )
-        monkeypatch.setattr(KiroCrewConfig, "load", classmethod(lambda cls: cfg))
-        return _load_watchdog_settings()
+        return state.get_or_create_slot("staged")
 
-    def test_a_longer_turn_limit_lifts_a_window_the_global_ceiling_cut(self, monkeypatch) -> None:
-        wd = self._settings(monkeypatch, turn=14400, hard_cap=40000.0)
-        cut = acp_client._DEFAULT_PROMPT_TIMEOUT * 0.9
-        assert wd.tool_stall_hard_cap_secs == cut
-        lifted = wd.for_turn_limit(86400.0)
-        assert lifted.tool_stall_hard_cap_secs == 40000.0
-        # Every other window keeps its configured value.
-        assert lifted.stale_window_secs == wd.stale_window_secs
+    def test_a_staged_limit_reaches_both_save_forms(self, tmp_path, monkeypatch) -> None:
+        from kiro_crew.dashboard.slot_persistence import metadata_codec as codec
 
-    def test_the_lifted_window_stays_inside_the_turn_limit(self, monkeypatch) -> None:
-        wd = self._settings(monkeypatch, turn=14400, hard_cap=80000.0)
-        lifted = wd.for_turn_limit(28800.0)
-        budget = (28800.0 + acp_client._PROMPT_TIMEOUT_MARGIN_SECS) * 0.9
-        assert lifted.tool_stall_hard_cap_secs == budget
+        slot = self._slot(tmp_path, monkeypatch)
+        folds = codec.SaveFolds(memory_mode="persistent", turn_timeout_secs=(28800,))
+        assert codec.encode(slot, folds=folds)["turn_timeout_secs"] == 28800
+        assert codec.encode(slot, merge=True, folds=folds)["turn_timeout_secs"] == 28800
+        assert slot.turn_timeout_secs is None
 
-    def test_a_shorter_or_absent_turn_limit_changes_nothing(self, monkeypatch) -> None:
-        wd = self._settings(monkeypatch, turn=14400, hard_cap=40000.0)
-        assert wd.for_turn_limit(None) is wd
-        assert wd.for_turn_limit(600.0) is wd
-        assert wd.for_turn_limit(14400.0) is wd
+    def test_a_staged_clear_overrides_the_live_limit(self, tmp_path, monkeypatch) -> None:
+        from kiro_crew.dashboard.slot_persistence import metadata_codec as codec
 
-    def test_a_snapshot_with_no_configured_windows_is_left_alone(self) -> None:
-        from kiro_crew.acp.session_handle import WatchdogSettings
+        slot = self._slot(tmp_path, monkeypatch)
+        slot.turn_timeout_secs = 28800
+        folds = codec.SaveFolds(memory_mode="persistent", turn_timeout_secs=(None,))
+        assert "turn_timeout_secs" not in codec.encode(slot, folds=folds)
+        assert codec.encode(slot, merge=True, folds=folds)["turn_timeout_secs"] is None
 
-        wd = WatchdogSettings()
-        assert wd.for_turn_limit(86400.0) is wd
+    def test_nothing_staged_writes_the_live_limit(self, tmp_path, monkeypatch) -> None:
+        from kiro_crew.dashboard.slot_persistence import metadata_codec as codec
+
+        slot = self._slot(tmp_path, monkeypatch)
+        slot.turn_timeout_secs = 7200
+        folds = codec.SaveFolds(memory_mode="persistent")
+        assert codec.encode(slot, folds=folds)["turn_timeout_secs"] == 7200
+        assert codec.encode(slot, merge=True, folds=folds)["turn_timeout_secs"] == 7200
 
 
 def _make_app(state: DashboardState, request_app: str | None = None) -> web.Application:
@@ -298,6 +306,14 @@ def _mock_state(*slots: _ChatSlot) -> DashboardState:
 
 
 _SAVE = "kiro_crew.dashboard.chat_handlers.save_slot_off_loop"
+
+
+async def _committing_save(*args, **kwargs):  # type: ignore[no-untyped-def]
+    """A save whose write commits: it runs the commit hook, as the real one does."""
+    kwargs["after_commit_under_lock"]()
+    return True
+
+
 _GLOBAL = "kiro_crew.dashboard.chat_handlers.chat_turn_timeout_secs"
 
 
@@ -318,41 +334,74 @@ class TestEndpoint:
                 }
 
     @pytest.mark.asyncio
-    async def test_post_sets_the_session_limit_and_persists_it(self) -> None:
+    async def test_post_persists_the_limit_before_the_slot_runs_under_it(self) -> None:
         slot = _ChatSlot("test")
         state = _mock_state(slot)
+        during_save: list[tuple[object, float]] = []
+
+        async def _save(*args, **kwargs):  # type: ignore[no-untyped-def]
+            # While the write is in flight the live field still holds the
+            # committed value: a turn dispatched now runs under the old limit.
+            during_save.append((slot.turn_timeout_secs, td.resolve_turn_limit(slot)[0]))
+            kwargs["after_commit_under_lock"]()
+            return True
+
         with (
-            patch(_SAVE, new=AsyncMock(return_value=True)) as saver,
+            patch(_SAVE, new=AsyncMock(side_effect=_save)) as saver,
             patch(_GLOBAL, return_value=14400.0),
+            patch.object(td, "chat_turn_timeout_secs", return_value=14400.0),
         ):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post("/api/chat/slots/test/turn-timeout", json={"secs": 28800})
                 assert resp.status == 200
                 data = await resp.json()
         assert data["ok"] is True and data["secs"] == 28800 and data["global_secs"] == 14400
+        assert during_save == [(None, 14400.0)]
         assert slot.turn_timeout_secs == 28800
-        # The commit, then the confirm save that re-orders the durable record
-        # after any alias flush; both confirmed and pinned to the transcript the
-        # authorization covered.
-        assert saver.await_count == 2
-        for call in saver.await_args_list:
-            assert call.args == (state, slot)
-            assert call.kwargs == {
-                "force": True,
-                "best_effort": False,
-                "expected_history_key": slot_history_key(slot),
-            }
+        # One confirmed save, pinned to the transcript the authorization
+        # covered, carrying the new value as a staged fold.
+        assert saver.await_count == 1
+        call = saver.await_args_list[0]
+        assert call.args == (state, slot)
+        assert call.kwargs["turn_timeout_override"] == (28800,)
+        assert {
+            k: v
+            for k, v in call.kwargs.items()
+            if k not in ("turn_timeout_override", "after_commit_under_lock")
+        } == {
+            "force": True,
+            "best_effort": False,
+            "expected_history_key": slot_history_key(slot),
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_tab_with_no_record_yet_keeps_the_limit_in_memory(self) -> None:
+        """No metadata line exists to be the authority: the save reports success
+        without committing, and the slot's first full save writes the field."""
+        slot = _ChatSlot("test")
+        with (
+            patch(_SAVE, new=AsyncMock(return_value=True)),
+            patch(_GLOBAL, return_value=14400.0),
+        ):
+            async with TestClient(TestServer(_make_app(_mock_state(slot)))) as client:
+                resp = await client.post("/api/chat/slots/test/turn-timeout", json={"secs": 7200})
+                assert resp.status == 200
+        assert slot.turn_timeout_secs == 7200
 
     @pytest.mark.asyncio
     async def test_post_null_returns_the_session_to_the_global(self) -> None:
         slot = _ChatSlot("test")
         slot.turn_timeout_secs = 28800
-        with patch(_SAVE, new=AsyncMock(return_value=True)), patch(_GLOBAL, return_value=14400.0):
+        with (
+            patch(_SAVE, new=AsyncMock(side_effect=_committing_save)) as saver,
+            patch(_GLOBAL, return_value=14400.0),
+        ):
             async with TestClient(TestServer(_make_app(_mock_state(slot)))) as client:
                 resp = await client.post("/api/chat/slots/test/turn-timeout", json={"secs": None})
                 assert resp.status == 200
                 assert (await resp.json())["secs"] is None
         assert slot.turn_timeout_secs is None
+        assert saver.await_args.kwargs["turn_timeout_override"] == (None,)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -394,7 +443,7 @@ class TestEndpoint:
             assert resp.status == 404
 
     @pytest.mark.asyncio
-    async def test_a_failed_persist_rolls_the_limit_back(self) -> None:
+    async def test_a_failed_persist_leaves_the_limit_unchanged(self) -> None:
         slot = _ChatSlot("test")
         slot.turn_timeout_secs = 3600
         with patch(_SAVE, new=AsyncMock(side_effect=OSError("disk full"))):
@@ -415,7 +464,7 @@ class TestEndpoint:
         assert slot.turn_timeout_secs is None
 
     @pytest.mark.asyncio
-    async def test_a_failed_confirm_save_undoes_the_alias_mirror(self) -> None:
+    async def test_a_failed_persist_never_reaches_alias_slots(self) -> None:
         slot = _ChatSlot("test")
         alias = _ChatSlot("alias")
         alias.turn_timeout_secs = 3600
@@ -424,7 +473,7 @@ class TestEndpoint:
             patch(
                 "kiro_crew.dashboard.chat_handlers.slot_history_key", return_value="one-transcript"
             ),
-            patch(_SAVE, new=AsyncMock(side_effect=[True, OSError("disk full")])),
+            patch(_SAVE, new=AsyncMock(side_effect=OSError("disk full"))),
         ):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post("/api/chat/slots/test/turn-timeout", json={"secs": 7200})
@@ -441,7 +490,7 @@ class TestEndpoint:
             patch(
                 "kiro_crew.dashboard.chat_handlers.slot_history_key", return_value="one-transcript"
             ),
-            patch(_SAVE, new=AsyncMock(return_value=True)),
+            patch(_SAVE, new=AsyncMock(side_effect=_committing_save)),
             patch(_GLOBAL, return_value=14400.0),
         ):
             async with TestClient(TestServer(_make_app(state))) as client:
@@ -449,6 +498,84 @@ class TestEndpoint:
                 assert resp.status == 200
         assert slot.turn_timeout_secs == 7200
         assert alias.turn_timeout_secs == 7200
+
+    @pytest.mark.asyncio
+    async def test_an_alias_bound_while_the_save_runs_gets_the_committed_limit(self) -> None:
+        # A second tab on the same transcript appears during the persist await,
+        # holding the old limit; the commit reaches it, so its next save cannot
+        # write the old value back.
+        slot = _ChatSlot("test")
+        state = _mock_state(slot)
+        late = _ChatSlot("late")
+        late.turn_timeout_secs = 3600
+
+        async def _alias_appears_then_commit(*args, **kwargs):  # type: ignore[no-untyped-def]
+            state._slots[late.key] = late
+            kwargs["after_commit_under_lock"]()
+            return True
+
+        with (
+            patch(
+                "kiro_crew.dashboard.chat_handlers.slot_history_key", return_value="one-transcript"
+            ),
+            patch(_SAVE, new=AsyncMock(side_effect=_alias_appears_then_commit)),
+            patch(_GLOBAL, return_value=14400.0),
+        ):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post("/api/chat/slots/test/turn-timeout", json={"secs": 7200})
+                assert resp.status == 200
+        assert slot.turn_timeout_secs == 7200
+        assert late.turn_timeout_secs == 7200
+        assert late._turn_timeout_hydrated is True
+
+    @pytest.mark.asyncio
+    async def test_a_slot_rebound_during_the_persist_keeps_its_new_transcripts_limit(self) -> None:
+        # The write commits, then the tab is bound to another transcript and that
+        # transcript's limit is restored before the request resumes. The request
+        # is refused, and the slot keeps the restored limit rather than the
+        # value it held before the request.
+        slot = _ChatSlot("test")
+        slot.linked_session_key = "first"
+        slot.turn_timeout_secs = 600
+        state = _mock_state(slot)
+
+        async def _commit_then_rebind(*args, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["after_commit_under_lock"]()
+            slot.linked_session_key = "second"
+            slot.turn_timeout_secs = 28800
+            slot._turn_timeout_hydrated = True
+            return True
+
+        with (
+            patch(_SAVE, new=AsyncMock(side_effect=_commit_then_rebind)),
+            patch(_GLOBAL, return_value=14400.0),
+        ):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post("/api/chat/slots/test/turn-timeout", json={"secs": 7200})
+                assert resp.status == 409
+        assert slot.turn_timeout_secs == 28800
+        assert slot._turn_timeout_hydrated is True
+
+    @pytest.mark.asyncio
+    async def test_the_commit_hook_does_not_publish_to_a_slot_already_rebound(self) -> None:
+        slot = _ChatSlot("test")
+        slot.linked_session_key = "first"
+        state = _mock_state(slot)
+
+        async def _rebind_then_commit(*args, **kwargs):  # type: ignore[no-untyped-def]
+            slot.linked_session_key = "second"
+            slot.turn_timeout_secs = 28800
+            kwargs["after_commit_under_lock"]()
+            return True
+
+        with (
+            patch(_SAVE, new=AsyncMock(side_effect=_rebind_then_commit)),
+            patch(_GLOBAL, return_value=14400.0),
+        ):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post("/api/chat/slots/test/turn-timeout", json={"secs": 7200})
+                assert resp.status == 409
+        assert slot.turn_timeout_secs == 28800
 
     @pytest.mark.asyncio
     async def test_an_app_cannot_set_a_slot_it_does_not_own(self) -> None:
@@ -503,3 +630,100 @@ class TestRestore:
         )
         assert slot is not None
         assert slot.turn_timeout_secs == 28800
+
+
+def _cron_job(job_id: str = "j1") -> MagicMock:
+    job = MagicMock()
+    job.id = job_id
+    job.name = "nightly"
+    job.agent_id = ""
+    job.member_id = ""
+    job.memory_store = ""
+    job.persistent_session = True
+    job.hide_in_chat = False
+    return job
+
+
+class TestCronReopen:
+    """A cron tab closed with its own limit gets it back when it reopens."""
+
+    def _closed_tab(self, tmp_path, monkeypatch, secs: int = 28800) -> DashboardState:
+        from kiro_crew.dashboard.chat_persistence import _save_slot_to_history
+        from kiro_crew.history import ConversationLog
+
+        monkeypatch.setattr("kiro_crew.dashboard.state.config_dir", lambda: tmp_path)
+        state = DashboardState(
+            sessions=MagicMock(count=0),
+            crons=MagicMock(
+                list_jobs=MagicMock(return_value=[]), status=MagicMock(return_value={})
+            ),
+            lessons=MagicMock(load_all=MagicMock(return_value=[])),
+            start_time=0.0,
+            conversation_log=ConversationLog(base_dir=tmp_path),
+        )
+        slot = state.get_or_create_slot("cron-j1")
+        slot.linked_session_key = "cron:j1"
+        slot.turn_timeout_secs = secs
+        slot.append("assistant", "run one", "")
+        assert _save_slot_to_history(state, slot, force=True)
+        state._slots.pop("cron-j1")
+        assert state.conversation_log.get_metadata("cron:j1")["turn_timeout_secs"] == secs
+        return state
+
+    @pytest.mark.asyncio
+    async def test_a_reopened_tab_runs_under_its_own_limit_again(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from kiro_crew.dashboard.cron_inject import ensure_cron_slot
+
+        state = self._closed_tab(tmp_path, monkeypatch)
+        await ensure_cron_slot(state, _cron_job())
+        slot = state.get_slot("cron-j1")
+        assert slot is not None and slot.linked_session_key == "cron:j1"
+        assert slot.turn_timeout_secs == 28800
+        assert slot._turn_timeout_hydrated is True
+
+    @pytest.mark.asyncio
+    async def test_a_save_before_the_limit_is_read_keeps_it_on_disk(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from kiro_crew.dashboard.chat_persistence import _save_slot_to_history
+        from kiro_crew.dashboard.cron_inject import _bind_cron_slot, restore_cron_turn_timeout
+
+        state = self._closed_tab(tmp_path, monkeypatch)
+        log = state.conversation_log
+        assert log is not None
+        slot = _bind_cron_slot(state, _cron_job(), log.read_messages("cron:j1"), [])
+        assert slot is not None
+        assert slot.turn_timeout_secs is None and slot._turn_timeout_hydrated is False
+        slot.append("assistant", "run two", "")
+        assert _save_slot_to_history(state, slot, force=True)
+        assert log.get_metadata("cron:j1")["turn_timeout_secs"] == 28800
+        await restore_cron_turn_timeout(state, "j1")
+        assert slot.turn_timeout_secs == 28800
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_line_leaves_the_tab_carrying_the_limit(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from kiro_crew.dashboard.cron_inject import _bind_cron_slot, restore_cron_turn_timeout
+
+        state = self._closed_tab(tmp_path, monkeypatch)
+        log = state.conversation_log
+        assert log is not None
+        slot = _bind_cron_slot(state, _cron_job(), log.read_messages("cron:j1"), [])
+        assert slot is not None
+        monkeypatch.setattr(log, "get_metadata_status", MagicMock(side_effect=OSError("disk")))
+        await restore_cron_turn_timeout(state, "j1")
+        assert slot.turn_timeout_secs is None and slot._turn_timeout_hydrated is False
+
+    def test_the_save_fold_prefers_a_staged_value_then_the_slot_once_read(self) -> None:
+        from kiro_crew.dashboard.slot_persistence.metadata_line import _turn_timeout_fold
+
+        on_disk = {"turn_timeout_secs": 28800}
+        slot = MagicMock(_turn_timeout_hydrated=False)
+        assert _turn_timeout_fold(slot, None, on_disk) == (28800,)
+        assert _turn_timeout_fold(slot, (3600,), on_disk) == (3600,)
+        assert _turn_timeout_fold(slot, None, {"turn_timeout_secs": "x"}) == (None,)
+        slot._turn_timeout_hydrated = True
+        assert _turn_timeout_fold(slot, None, on_disk) is None

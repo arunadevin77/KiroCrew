@@ -5170,14 +5170,15 @@
       "tags": "Tags…"
     },
     "sessionTurnLimit": {
-      "card_button": "Set this session's limit",
-      "card_button_hint": "Give this session its own turn time limit. Applies from the next turn. Other sessions keep theirs.",
-      "follow_global": "Same as Settings ({{limit}})",
+      "all_sessions": "All sessions: open Settings",
+      "card_button_hint": "Pick a turn time limit for this session only, or open Settings to change it for every session. Applies from the next turn.",
+      "follow_global": "Same as all sessions (now {{limit}})",
       "hint": "How long one turn in this session may run before it is stopped. Applies from the next turn.",
       "label": "Turn time limit",
       "load_failed": "Could not load this session's turn time limit",
       "loading": "Loading…",
-      "save_failed": "Could not save the turn time limit"
+      "save_failed": "Could not save the turn time limit",
+      "this_session": "This session"
     },
     "sessionColorSwatches": {
       "custom_color": "Custom color",

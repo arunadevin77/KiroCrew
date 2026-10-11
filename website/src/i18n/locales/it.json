@@ -8402,14 +8402,15 @@
       "unmute_failed": "Impossibile riattivare l'audio di questa sessione"
     },
     "sessionTurnLimit": {
-      "card_button": "Imposta il limite di questa sessione",
-      "card_button_hint": "Assegna a questa sessione un proprio limite di tempo per turno. Si applica dal turno successivo. Le altre sessioni mantengono il loro.",
-      "follow_global": "Come nelle Impostazioni ({{limit}})",
+      "all_sessions": "Tutte le sessioni: apri le Impostazioni",
+      "card_button_hint": "Scegli un limite di tempo per turno solo per questa sessione, o apri le Impostazioni per cambiarlo per tutte. Si applica dal turno successivo.",
+      "follow_global": "Come tutte le sessioni (ora {{limit}})",
       "hint": "Quanto può durare un turno di questa sessione prima di essere interrotto. Si applica dal turno successivo.",
       "label": "Limite di tempo per turno",
       "load_failed": "Impossibile caricare il limite di tempo per turno di questa sessione",
       "loading": "Caricamento…",
-      "save_failed": "Impossibile salvare il limite di tempo per turno"
+      "save_failed": "Impossibile salvare il limite di tempo per turno",
+      "this_session": "Questa sessione"
     },
     "sessionColorSwatches": {
       "custom_color": "Colore personalizzato",

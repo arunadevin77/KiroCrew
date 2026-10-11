@@ -339,6 +339,7 @@ def merge_empty_window(
     muted_override: bool | None = None,
     after_commit_under_lock: Callable[[], None] | None = None,
     queue_deferred_under_lock: Callable[[dict], bool] | None = None,
+    turn_timeout_override: tuple[int | None] | None = None,
 ) -> str | None:
     """Commit a forced or closing save of a message-less slot as a metadata merge.
 
@@ -453,6 +454,8 @@ def merge_empty_window(
             # this branch ignored the staged value and wrote the stale live flag).
             mutes_opened=mutes_opened_override,
             muted=muted_override,
+            # The turn-time-limit endpoint's staged value, the same way.
+            turn_timeout_secs=_turn_timeout_fold(slot, turn_timeout_override, meta),
         )
         merged_fields.update(cp._metadata_codec.encode(slot, merge=True, folds=folds))
         if queue_deferred_under_lock is not None and queue_deferred_under_lock(meta):
@@ -543,6 +546,24 @@ def _full_dismissed_line(slot: _ChatSlot, existing_meta: dict) -> list[str] | No
     return None
 
 
+def _turn_timeout_fold(
+    slot: _ChatSlot, override: tuple[int | None] | None, on_disk: dict
+) -> tuple[int | None] | None:
+    """The staged ``turn_timeout_secs`` a save writes, or ``None`` to read the slot.
+
+    A slot bound to a transcript whose own turn time limit has not been read
+    back yet (``_turn_timeout_hydrated is False``, a reopened cron tab before
+    its off-loop metadata read) holds ``None``, which would write "follow the
+    global limit" over the saved one. Until that read lands the on-disk value
+    is carried forward instead. The endpoint's staged value always wins.
+    """
+    if override is not None or getattr(slot, "_turn_timeout_hydrated", True):
+        return override
+    from kiro_crew.dashboard import chat_persistence as cp  # circular import: facade imports owners
+
+    return (cp._validate_turn_timeout_secs(on_disk.get("turn_timeout_secs")),)
+
+
 def build_full_line(
     slot: _ChatSlot,
     existing_meta: dict,
@@ -557,6 +578,7 @@ def build_full_line(
     rows_only: bool,
     mutes_opened_override: bool | None = None,
     muted_override: bool | None = None,
+    turn_timeout_override: tuple[int | None] | None = None,
 ) -> tuple[dict, str, list[dict], set[str], str | None]:
     """The line a full save writes: ``(line, mode, queue, retired note ids, tab_id)``.
 
@@ -732,6 +754,7 @@ def build_full_line(
             # session has a window or not.
             mutes_opened=mutes_opened_override,
             muted=muted_override,
+            turn_timeout_secs=_turn_timeout_fold(slot, turn_timeout_override, existing_meta),
         ),
     )
     # The drop records this write retires are CONSUMED only after the

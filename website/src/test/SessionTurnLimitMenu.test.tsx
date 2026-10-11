@@ -4,12 +4,16 @@
  *
  * Locked here:
  *   (1) the picker reads the session's limit when it opens and marks the row in
- *       effect as the checked radio, with "same as Settings" naming the global;
- *   (2) a pick writes that number of seconds, and "same as Settings" writes null;
+ *       effect as the checked radio, with "Same as all sessions" naming the global;
+ *   (2) a pick writes that number of seconds, and "Same as all sessions" writes null;
  *   (3) the menu stays open and the check moves once the write lands, and a
- *       refused write leaves the check where it was with the reason on screen;
- *   (4) the timeout card offers the picker only when it knows the session.
+ *       refused write leaves the check where it was with the reason on screen
+ *       and the agent hand-off as its own menu item;
+ *   (4) the timeout card keeps Resume plus ONE limit control: a menu holding
+ *       this session's limit and the Settings link, or the Settings link alone
+ *       when the session is unknown.
  */
+import * as React from 'react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -31,6 +35,7 @@ import {
   TURN_LIMIT_PRESETS_SECS,
   fmtTurnLimit,
   turnLimitOptions,
+  turnLimitQueryKey,
 } from '../components/SessionTurnLimitMenu'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '../components/ui/dropdown-menu'
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '../components/ui/context-menu'
@@ -39,8 +44,7 @@ import { i18nT } from '../i18n/t'
 
 const RANGE = { min: 300, max: 86400 }
 
-function renderButton() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+function renderButton(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return render(
     <QueryClientProvider client={client}>
       <SessionTurnLimitButton slotKey="slot-1" />
@@ -131,6 +135,7 @@ describe('SessionTurnLimitButton', () => {
     const menu = await openPicker(user)
     await user.click(await within(menu).findByRole('menuitemradio', { name: '8h' }))
     expect(await screen.findByTestId('session-turn-limit-save-error')).toHaveTextContent('session was deleted or rebound')
+    expect(screen.getByRole('menuitem', { name: i18nT('components.askAgent.ask_the_agent') })).toBeVisible()
     expect(within(screen.getByRole('menu')).getByRole('menuitemradio', { name: '8h' })).toHaveAttribute('aria-checked', 'false')
   })
 
@@ -140,6 +145,25 @@ describe('SessionTurnLimitButton', () => {
     renderButton()
     await openPicker(user)
     expect(await screen.findByTestId('session-turn-limit-load-error')).toHaveTextContent('gateway offline')
+    // Inside a menu the agent hand-off is its own item, described by the notice.
+    const handoff = screen.getByRole('menuitem', { name: i18nT('components.askAgent.ask_the_agent') })
+    expect(handoff.getAttribute('aria-describedby')).toBe(
+      screen.getByTestId('session-turn-limit-load-error').closest('[id]')?.id,
+    )
+  })
+
+  it('says so when a refetch fails while an earlier read is still cached', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    // An earlier read, old enough to be stale, so opening the menu refetches it.
+    client.setQueryData(turnLimitQueryKey('slot-1'), { secs: 28800, global_secs: 14400, ...RANGE }, { updatedAt: 1 })
+    mocks.chatSlotTurnTimeout.mockRejectedValue(new Error('gateway offline'))
+    const user = userEvent.setup()
+    renderButton(client)
+    const menu = await openPicker(user)
+    expect(await screen.findByTestId('session-turn-limit-load-error')).toHaveTextContent('gateway offline')
+    // The cached choices stay visible beside the notice, with its hand-off item.
+    expect(within(menu).getByRole('menuitemradio', { name: '8h' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('menuitem', { name: i18nT('components.askAgent.ask_the_agent') })).toBeVisible()
   })
 })
 
@@ -171,38 +195,73 @@ describe('SessionTurnLimitSubmenu', () => {
     // The limit is read when the submenu opens, not when the parent menu does.
     expect(mocks.chatSlotTurnTimeout).not.toHaveBeenCalled()
   })
+
+  it.each(['dropdown', 'context'] as const)('heads the open %s submenu with "This session", like the card picker', async (variant) => {
+    mocks.chatSlotTurnTimeout.mockResolvedValue({ secs: null, global_secs: 14400, min: 300, max: 86400 })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const Menu = variant === 'context' ? ContextMenu : DropdownMenu
+    const Trigger = variant === 'context' ? ContextMenuTrigger : DropdownMenuTrigger
+    const Content = variant === 'context' ? ContextMenuContent : DropdownMenuContent
+    render(
+      <QueryClientProvider client={client}>
+        <Menu {...(variant === 'dropdown' ? { defaultOpen: true } : {})}>
+          <Trigger>open</Trigger>
+          <Content forceMount>
+            <SessionTurnLimitSubmenu slotKey="slot-1" variant={variant} />
+          </Content>
+        </Menu>
+      </QueryClientProvider>,
+    )
+    if (variant === 'context') fireEvent.contextMenu(screen.getByText('open'))
+    const trigger = screen.getByTestId('session-turn-limit-submenu')
+    trigger.focus()
+    fireEvent.keyDown(trigger, { key: 'ArrowRight' })
+    expect(await screen.findByText(i18nT('components.sessionTurnLimit.this_session'))).toBeInTheDocument()
+  })
 })
 
 describe('ErrorCard — a session limit on the timeout card', () => {
-  beforeEach(() => { cleanup() })
-
-  it('offers the session picker beside the Settings link when it knows the session', () => {
-    const client = new QueryClient()
-    render(
-      <QueryClientProvider client={client}>
-        <ErrorCard content="⏱️ This turn hit the 4-hour limit." onOpenTurnLimit={() => {}} turnLimitSlot="slot-1" />
-      </QueryClientProvider>,
-    )
-    expect(screen.getByTestId('error-card-turn-limit')).toBeVisible()
-    expect(screen.getByTestId('error-card-session-turn-limit')).toHaveTextContent(
-      i18nT('components.sessionTurnLimit.card_button'),
-    )
+  beforeEach(() => {
+    cleanup()
+    mocks.chatSlotTurnTimeout.mockReset()
+    mocks.chatSlotTurnTimeout.mockResolvedValue({ secs: 28800, global_secs: 14400, ...RANGE })
   })
 
-  it('offers only the session picker on a surface with no settings route', () => {
-    const client = new QueryClient()
-    render(
+  function renderCard(props: Partial<React.ComponentProps<typeof ErrorCard>>) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return render(
       <QueryClientProvider client={client}>
-        <ErrorCard content="⏱️ limit" turnLimitSlot="slot-1" />
+        <ErrorCard content="⏱️ This turn hit the 8-hour limit." onContinue={() => {}} {...props} />
       </QueryClientProvider>,
     )
+  }
+
+  it('keeps Resume and one limit control, with both scopes inside it', async () => {
+    const onOpenTurnLimit = vi.fn()
+    const user = userEvent.setup()
+    renderCard({ onOpenTurnLimit, turnLimitSlot: 'slot-1' })
+    const card = screen.getByTestId('error-card')
+    expect(within(card).getAllByRole('button')).toHaveLength(2)
+    expect(screen.getByTestId('error-card-session-turn-limit')).toHaveTextContent(i18nT('pages.chat.errorCard.turn_limit'))
+    const menu = await openPicker(user)
+    expect(within(menu).getByText(i18nT('components.sessionTurnLimit.this_session'))).toBeVisible()
+    expect(await within(menu).findByRole('menuitemradio', { name: '8h' })).toHaveAttribute('aria-checked', 'true')
+    await user.click(within(menu).getByRole('menuitem', { name: i18nT('components.sessionTurnLimit.all_sessions') }))
+    expect(onOpenTurnLimit).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves the Settings link out on a surface with no settings route', async () => {
+    const user = userEvent.setup()
+    renderCard({ turnLimitSlot: 'slot-1' })
     expect(screen.getByTestId('error-card')).toHaveAttribute('data-turn-timeout', 'true')
-    expect(screen.queryByTestId('error-card-turn-limit')).toBeNull()
-    expect(screen.getByTestId('error-card-session-turn-limit')).toBeVisible()
+    const menu = await openPicker(user)
+    await within(menu).findByRole('menuitemradio', { name: '8h' })
+    expect(within(menu).queryByRole('menuitem', { name: i18nT('components.sessionTurnLimit.all_sessions') })).toBeNull()
   })
 
-  it('leaves the picker off when the session is unknown', () => {
+  it('keeps the plain Settings button when the session is unknown', () => {
     render(<ErrorCard content="⏱️ limit" onOpenTurnLimit={() => {}} />)
+    expect(screen.getByTestId('error-card-turn-limit')).toBeVisible()
     expect(screen.queryByTestId('error-card-session-turn-limit')).toBeNull()
   })
 })
