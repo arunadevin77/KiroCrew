@@ -236,6 +236,42 @@ def matches_trusted_pattern(command: str, patterns: set[str]) -> str | None:
     return next((p for p in patterns if _tool_matches(p, normalized)), None)
 
 
+def redirect_outside_grant(command: str, patterns: set[str]) -> bool:
+    """Whether ``command`` writes through a redirect no matching grant spelled.
+
+    A base grant such as ``gh *`` vouches for a program and whatever arguments
+    it is given. An output redirect is not one of those arguments: the shell
+    opens the target before the program starts, so honouring ``gh *`` for
+    ``gh pr view 42 > /tmp/x`` would let a grant for ``gh`` write any file.
+
+    A segment that writes through a redirect is covered only by a pattern that
+    matches it AND spells a write redirect itself (the exact-command grant for
+    that line, or a pattern written with one), or by the broad ``*`` grant.
+    Discard redirects (``2>/dev/null``, ``2>&1``) are not writes and need no
+    such pattern. What counts as a write is the read-only classifier's rule,
+    :func:`kiro_crew.security.readonly_bash.writes_through_redirect`.
+
+    ``False`` when the command cannot be segmented: such a command matches no
+    pattern in the first place.
+    """
+    # Imported here: ``kiro_crew.security`` imports this module at package load.
+    from kiro_crew.security.readonly_bash import writes_through_redirect
+
+    split = split_command_segments(command)
+    if split is None:
+        return False
+    normalized, segments = split
+    for segment in segments if len(segments) > 1 else [normalized]:
+        if not writes_through_redirect(segment):
+            continue
+        if not any(
+            pattern == "*" or (writes_through_redirect(pattern) and _tool_matches(pattern, segment))
+            for pattern in patterns
+        ):
+            return True
+    return False
+
+
 def extract_base_command(command: str) -> str:
     """Return comma-joined base binaries for a grant, or ``""`` if unsafe.
 

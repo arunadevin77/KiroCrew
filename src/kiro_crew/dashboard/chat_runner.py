@@ -624,6 +624,7 @@ from kiro_crew.trust_patterns import extract_base_command as _extract_base_comma
 from kiro_crew.trust_patterns import extract_bash_command as _extract_bash_command
 from kiro_crew.trust_patterns import extract_full_command as _extract_full_command
 from kiro_crew.trust_patterns import matches_trusted_pattern as _matches_trusted_pattern
+from kiro_crew.trust_patterns import redirect_outside_grant as _redirect_outside_grant
 from kiro_crew.trust_patterns import (  # noqa: F401 -- compatibility re-export
     split_command_segments as _split_command_segments,
 )
@@ -14215,6 +14216,41 @@ async def _run_chat(
                         if _tp_command
                         else None
                     )
+                    if (
+                        matched
+                        and event.is_shell
+                        and _tp_command
+                        and _redirect_outside_grant(_tp_command, slot._trusted_patterns)
+                    ):
+                        # The user granted a program, not the files the shell
+                        # opens for it: a write redirect needs a grant that
+                        # spells it. Declining costs one interactive prompt;
+                        # the command is neither blocked nor rewritten.
+                        logger.info(
+                            "trusted pattern not applied: the grant does not cover a write redirect"
+                        )
+                        sel().log_tool_invocation(
+                            session_key=session_key,
+                            agent=slot.agent or "kirocrew",
+                            source="dashboard",
+                            tool_name=_redact_display_text(event.title),
+                            tool_kind=event.tool_kind,
+                            outcome="auto_approve_declined",
+                            request_id=event.request_id,
+                            error="the command writes through a redirect the grant does not cover",
+                            metadata={
+                                "reason": "redirect_outside_grant",
+                                "tier": "trusted_pattern",
+                            },
+                        )
+                        slot.append(
+                            "system",
+                            "🛡️ Trusted pattern not applied — the command writes to a file "
+                            "through an output redirect, which the grant does not cover. "
+                            "Approve this command explicitly.",
+                            "msg msg-info",
+                        )
+                        matched = None
                     if matched and event.is_shell and _tp_command:
                         # The user granted a PROGRAM NAME. Do not honour it when
                         # that name no longer identifies the program it appears

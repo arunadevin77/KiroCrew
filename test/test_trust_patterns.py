@@ -15,6 +15,7 @@ from kiro_crew.history import ConversationLog
 from kiro_crew.trust_patterns import (
     approval_command,
     approval_display_command,
+    base_trust_patterns,
     canonical_non_shell_tool,
     canonical_non_shell_trust_key,
     exact_trust_pattern,
@@ -22,6 +23,9 @@ from kiro_crew.trust_patterns import (
 from kiro_crew.trust_patterns import extract_base_command as _canonical_extract_base_command
 from kiro_crew.trust_patterns import extract_full_command as _canonical_extract_full_command
 from kiro_crew.trust_patterns import matches_trusted_pattern as _canonical_matches_trusted_pattern
+from kiro_crew.trust_patterns import (
+    redirect_outside_grant,
+)
 
 
 def _legacy_title_command(value: str) -> str:
@@ -1454,6 +1458,84 @@ class TestApproveHandlerTrustCommand:
         set_policy.assert_not_called()
 
 
+class TestRedirectOutsideGrant:
+    """A grant for a program does not cover the files the shell opens for it."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "gh pr view 42 > /tmp/x",
+            "gh pr view 42 >/tmp/x",
+            "gh pr view 42 >> /tmp/x",
+            "gh pr view 42 &> /tmp/x",
+            "gh pr view 42 &>> /tmp/x",
+            "gh pr view 42 2>/tmp/err",
+            "gh pr view 42 >&2x",
+            "gh api user <> /tmp/x",
+            "gh pr view 42 2>&1 > /tmp/x",
+        ],
+    )
+    def test_a_base_grant_does_not_cover_a_write_redirect(self, command):
+        patterns = base_trust_patterns("gh")
+        assert _canonical_matches_trusted_pattern(command, patterns) is not None
+        assert redirect_outside_grant(command, patterns) is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "gh pr view 42",
+            "gh pr view 42 > /dev/null",
+            "gh pr view 42 2>/dev/null",
+            "gh pr view 42 &>/dev/null",
+            "gh pr view 42 2>&1",
+            "gh pr view 42 1>&2",
+            "gh pr view 42 < /tmp/in",
+        ],
+    )
+    def test_a_discard_or_no_redirect_stays_covered(self, command):
+        patterns = base_trust_patterns("gh")
+        assert _canonical_matches_trusted_pattern(command, patterns) is not None
+        assert redirect_outside_grant(command, patterns) is False
+
+    def test_an_exact_grant_for_the_line_covers_its_redirect(self):
+        command = "gh pr view 42 > /tmp/x"
+        patterns = {exact_trust_pattern(command)}
+        assert _canonical_matches_trusted_pattern(command, patterns) is not None
+        assert redirect_outside_grant(command, patterns) is False
+
+    def test_an_exact_grant_for_one_target_does_not_cover_another(self):
+        patterns = {exact_trust_pattern("gh pr view 42 > /tmp/x"), *base_trust_patterns("gh")}
+        assert redirect_outside_grant("gh pr view 42 > /tmp/y", patterns) is True
+
+    def test_a_pattern_that_spells_the_redirect_covers_it(self):
+        patterns = {"make * > build.log"}
+        assert _canonical_matches_trusted_pattern("make all > build.log", patterns) is not None
+        assert redirect_outside_grant("make all > build.log", patterns) is False
+        # The redirect the pattern spells, not any redirect at all.
+        assert redirect_outside_grant("make all > other.log", {"make *", *patterns}) is True
+
+    def test_a_pattern_spelling_only_a_discard_does_not_cover_a_write(self):
+        patterns = {"gh * 2>&1"}
+        command = "gh pr view 42 > /tmp/x 2>&1"
+        assert _canonical_matches_trusted_pattern(command, patterns) is not None
+        assert redirect_outside_grant(command, patterns) is True
+
+    def test_the_broad_star_grant_keeps_covering_everything(self):
+        assert redirect_outside_grant("gh pr view 42 > /tmp/x", {"*"}) is False
+
+    def test_each_segment_is_judged_on_its_own(self):
+        patterns = base_trust_patterns("gh") | base_trust_patterns("ls")
+        assert redirect_outside_grant("ls /tmp && gh pr view 42 > /tmp/x", patterns) is True
+        assert redirect_outside_grant("ls /tmp > /tmp/l; gh pr view 42", patterns) is True
+        assert redirect_outside_grant("ls /tmp 2>/dev/null | gh pr view 42", patterns) is False
+
+    def test_an_unsegmentable_command_is_left_to_the_matcher(self):
+        patterns = base_trust_patterns("gh")
+        command = "gh pr view $(id) > /tmp/x"
+        assert _canonical_matches_trusted_pattern(command, patterns) is None
+        assert redirect_outside_grant(command, patterns) is False
+
+
 class TestMatchesTrustedPatternPiped:
     """Piped commands: each segment checked independently, ALL must match."""
 
@@ -1571,9 +1653,15 @@ class TestMatchesTrustedPatternPiped:
         assert _matches_trusted_pattern(cmd, patterns) == "ls *"
 
     def test_redirect_append_both_not_split(self):
+        """``&>>`` stays inside its segment, and that segment writes a file.
+
+        The matcher still reads the line as one ``ls`` segment; the write it
+        carries is what the grant does not cover.
+        """
         patterns = {"ls *"}
         cmd = "Running: ls /tmp &>> /var/log/out"
         assert _matches_trusted_pattern(cmd, patterns) == "ls *"
+        assert redirect_outside_grant(_legacy_title_command(cmd), patterns) is True
 
     def test_newline_split(self):
         patterns = {"ls *"}

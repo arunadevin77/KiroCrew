@@ -3034,7 +3034,7 @@ When the dashboard presents a tool approval prompt, users can now choose from th
 | Action | Scope | What it trusts |
 |--------|-------|---------------|
 | `trust_command` | Session-scoped | Exact command/tool (e.g., `ls /tmp`) |
-| `trust_base` | Session-scoped | Base command glob (e.g., `ls *` — trusts `ls` with any arguments) |
+| `trust_base` | Session-scoped | Base command glob (e.g., `ls *` — trusts `ls` with any arguments; a write redirect is not an argument, see below) |
 | `yolo` | Global | All tools across all slots (existing behavior, now time-limited) |
 
 Trust patterns are stored per-slot as session-scoped fnmatch globs
@@ -3066,6 +3066,22 @@ becoming broad globs. Command parsing and matching live in the shared
 `trust_patterns.py` module so another approval surface consumes a command-shaped
 API instead of importing dashboard runner internals or fabricating a
 `Running: ...` title.
+
+**A program grant does not cover a write redirect.** A shell segment that sends
+output through a redirect to a real target (`> file`, `>> file`, `&> file`,
+`2> file`, `<> file`, `>&2x`) auto-approves only when a matching pattern itself
+spells a write redirect — the exact-command grant for that line, or a pattern
+written with one — or the broad `*` grant matches. `gh *` therefore covers
+`gh pr view 42` and `gh pr view 42 2>/dev/null` but not `gh pr view 42 > /tmp/x`.
+The tier declines: the command goes to the approval card with a one-line notice,
+and the decline is SEL-audited as `auto_approve_declined` with
+`reason=redirect_outside_grant`, `tier=trusted_pattern`. It is never blocked.
+`redirect_outside_grant` (`trust_patterns.py`) judges each segment, and what
+counts as a write is the read-only classifier's own rule
+(`readonly_bash.writes_through_redirect`), so the trust-reads and trusted-pattern
+tiers agree: the discard idioms `>/dev/null`, `2>/dev/null`, `&>/dev/null` and
+`N>&M` are not writes, provided the idiom ends its shell word, and every other
+`>` is, quoted or not.
 
 **Child-fidelity split: identity vs arguments.** A backend-subagent permission
 event whose structured params never reached the tool_call cache is low-fidelity

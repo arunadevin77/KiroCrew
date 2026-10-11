@@ -5196,6 +5196,65 @@ class TestRunChatAutoApproveRungs:
         )
 
     @pytest.mark.asyncio
+    async def test_a_base_grant_is_not_applied_to_a_write_redirect(self, tmp_path):
+        """``gh *`` vouches for gh, not for the file the shell opens for it."""
+        state, client = _runner_state(tmp_path)
+        slot = _slot()
+        slot._trusted_patterns = {"gh", "gh *"}
+        _set_stream(
+            client,
+            [
+                _permission(
+                    title="Running: gh pr view 42 > /tmp/x",
+                    tool_input=json.dumps({"command": "gh pr view 42 > /tmp/x"}),
+                ),
+                _complete(),
+            ],
+        )
+        slot._empty_response_retries = 2
+        with (
+            patch.object(chat_runner, "sel") as mock_sel,
+            patch.object(chat_runner, "tool_approval_timeout_secs", return_value=0.0),
+        ):
+            audit = MagicMock()
+            mock_sel.return_value = audit
+            await chat_runner._run_chat(state, slot, "hello")
+        await _settle(slot)
+
+        client.approve_tool.assert_not_awaited()
+        declined = [
+            c.kwargs
+            for c in audit.log_tool_invocation.call_args_list
+            if c.kwargs.get("outcome") == "auto_approve_declined"
+        ]
+        assert declined, audit.log_tool_invocation.call_args_list
+        assert declined[0]["metadata"] == {
+            "reason": "redirect_outside_grant",
+            "tier": "trusted_pattern",
+        }
+        assert any("Trusted pattern not applied" in m.get("content", "") for m in slot.messages)
+
+    @pytest.mark.asyncio
+    async def test_a_base_grant_still_covers_a_discard_redirect(self, tmp_path):
+        state, client = _runner_state(tmp_path)
+        slot = _slot()
+        slot._trusted_patterns = {"gh", "gh *"}
+        _set_stream(
+            client,
+            [
+                _permission(
+                    title="Running: gh pr view 42 2>/dev/null",
+                    tool_input=json.dumps({"command": "gh pr view 42 2>/dev/null"}),
+                ),
+                _complete(),
+            ],
+        )
+
+        await _drive(state, slot)
+
+        client.approve_tool.assert_awaited_once_with("req-cov-1")
+
+    @pytest.mark.asyncio
     async def test_trusted_pattern_rejects_an_invalid_tool_name(self, tmp_path):
         state, client = _runner_state(tmp_path)
         slot = _slot()
