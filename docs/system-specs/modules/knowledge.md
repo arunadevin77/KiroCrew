@@ -301,20 +301,27 @@ evidence (an `agent_ingest_intent` marker naming their hash, created at or after
 attempt began). Its first step, `_adopt_agent_sole_copy_residue`, covers the one case where
 that evidence names a document's last copy: a slug whose ownership row names a non-empty
 group of which no id still exists in `items` at all (an item set non-active, or detached
-to another source, still exists and keeps the row's claim). That slug's most recently
-started marker's unowned items are ADOPTED into the row (hash, group and `active` status
-rewritten — the state a completed replace would have left) and the marker is retired;
-older attempts' residue at the slug is then reaped normally. A first-add crash (no row)
-and a row that owned nothing (refused / `deduped`) are reaped as before, since nothing was
-replaced. A hash marked at more than one such slug cannot be attributed to one document
-and is spared — neither adopted nor deleted, and nothing older is adopted in its place. The
-state cannot tell a crash apart from a user having deleted every item of a document while
-a stale marker for it remained; that case now adopts the (already searchable) residue
-rather than reaping it, which is accepted: it keeps content rather than losing it. A
-double crash on a store written before the transaction existed can adopt a truncated
-newer attempt over an older complete one; chunk sets carry no completeness marker, so
-this is not distinguishable either. A store written before the transaction
-above existed is repaired by this step rather than emptied.
+to another source, still exists and keeps the row's claim). The unowned items of EVERY
+marker at that slug are ADOPTED into the row (group and `active` status rewritten) and
+those markers are retired; nothing at the slug is reaped. The row's `content_hash` is
+cleared rather than set to an attempt's hash: chunk sets carry no completeness marker, so
+a hard kill after any chunk commit leaves residue that looks the same as a finished
+attempt, and a matching hash is what makes the next add of the same text return
+"unchanged since last add" -- a truncated attempt adopted under it would never get its
+missing chunks written. Keeping every attempt rather than the newest follows from the
+same gap: the newest may be a truncated edit and an older attempt the last complete
+version. The next add at the slug, of any content, replaces the whole adopted group. Until
+then the group is left out of de-duplication: `enumerate_docs` keeps its items claimed but
+builds no document for them, because a mixed group has no single hash and an exact match on
+any one attempt's hash would delete the other versions with it. A
+first-add crash (no row) and a row that owned nothing (refused / `deduped`) are reaped as
+before, since nothing was replaced. A hash marked at more than one such slug cannot be
+attributed to one document and is spared — neither adopted nor deleted — and so is every
+other attempt at a slug holding one. The state cannot tell a crash apart from a user
+having deleted every item of a document while a stale marker for it remained; that case
+now adopts the (already searchable) residue rather than reaping it, which is accepted: it
+keeps content rather than losing it. A store written before the transaction above existed
+is repaired by this step rather than emptied.
 
 The tool takes the document TEXT and **never opens a file**. A path opened here on
 behalf of whatever supplied it is exactly the case where a component can be swapped for a

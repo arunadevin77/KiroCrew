@@ -1565,16 +1565,28 @@ class KnowledgeStore:
         unowned items and their intent marker. Reaping those items, as the
         marker alone would authorize, deletes the document's last copy. So for
         a slug whose row names a non-empty group of which NOTHING still exists
-        (under any source or status), the unowned items of the slug's most
-        recently started marker are written into that row instead -- the state
-        a completed replace would have left -- and that marker is retired.
+        (under any source or status), the unowned items of EVERY marker at that
+        slug are written into its row instead, and those markers are retired.
+
+        Nothing stored proves an attempt finished: a hard kill can land after
+        any chunk commit, and no record says how many chunks the attempt meant
+        to write. So adoption keeps the residue but claims no content for it.
+        The row's ``content_hash`` is cleared rather than set to an attempt's
+        hash, because that hash is what tells the next add of the same text
+        "unchanged since last add" -- a truncated attempt adopted under it would
+        never get its missing chunks written. And every attempt is kept, not
+        only the newest, because the newest may be the truncated one and an
+        older one the last complete version. The next add at the slug, of any
+        content, replaces the whole adopted group.
 
         Left to the sweep, unchanged: a slug with no row (a first add that
         crashed -- nothing was replaced, so nothing is lost), and a row that
         owned nothing (a refused or deduped document whose content another row
         holds). A hash marked at more than one such slug cannot be attributed to
-        one document; it is SPARED rather than adopted or reaped -- a leaked
-        duplicate is recoverable, a deleted sole copy is not.
+        one document; it is SPARED rather than adopted or reaped, and so is
+        every other attempt at a slug holding one, so nothing there is deleted
+        while its ownership is unclear -- a leaked duplicate is recoverable, a
+        deleted sole copy is not.
 
         Returns the spared hashes for the sweep to leave alone, or ``None`` --
         "cannot tell, do not sweep" -- when an ownership group is unreadable.
@@ -1633,9 +1645,10 @@ class KnowledgeStore:
                     candidate_slugs_by_hash[content_hash] += 1
             adopted_total = 0
             for slug in candidates:
-                # Newest attempt first: it is the content the agent last meant
-                # this document to hold. Older attempts' residue is reaped by the
-                # sweep once this row names a live group again.
+                # Every attempt's residue, newest attempt first. None of them can
+                # be proven complete, so none is chosen over another: the newest
+                # may be a truncated edit and an older one the last full version.
+                attempts: list[tuple[str, list[str]]] = []
                 for content_hash, started in sorted(
                         markers[slug], key=lambda m: m[1], reverse=True):
                     ids = [
@@ -1647,26 +1660,33 @@ class KnowledgeStore:
                         if r["id"] not in owned
                         and (r["created_at"] or "") >= started
                     ]
-                    if not ids:
-                        continue
-                    if candidate_slugs_by_hash[content_hash] > 1:
-                        # Cannot attribute it to one document: neither adopt
-                        # nor reap it, and adopt nothing older in its place.
-                        spared.add(content_hash)
-                        break
-                    self.db.execute(
-                        "UPDATE agent_item_state SET content_hash = ?, "
-                        "item_ids = ?, status = 'active', updated_at = ? "
-                        "WHERE source_id = ? AND slug = ?",
-                        (content_hash, json.dumps(ids),
-                         datetime.now().isoformat(), source_id, slug))
+                    if ids:
+                        attempts.append((content_hash, ids))
+                if not attempts:
+                    continue
+                if any(candidate_slugs_by_hash[h] > 1 for h, _ in attempts):
+                    # One of them cannot be attributed to this document alone:
+                    # adopt nothing here and reap nothing here either, so no
+                    # attempt at this slug is lost while ownership is unclear.
+                    spared.update(h for h, _ in attempts)
+                    continue
+                group = [i for _, ids in attempts for i in ids]
+                # ``content_hash`` is cleared, not set to an attempt's hash: the
+                # add path reads a matching hash as "unchanged since last add",
+                # and this group is not proven to hold any attempt in full.
+                self.db.execute(
+                    "UPDATE agent_item_state SET content_hash = NULL, "
+                    "item_ids = ?, status = 'active', updated_at = ? "
+                    "WHERE source_id = ? AND slug = ?",
+                    (json.dumps(group), datetime.now().isoformat(),
+                     source_id, slug))
+                for content_hash, _ids in attempts:
                     self.db.execute(
                         "DELETE FROM agent_ingest_intent "
                         "WHERE source_id = ? AND slug = ? AND content_hash = ?",
                         (source_id, slug, content_hash))
-                    owned.update(ids)
-                    adopted_total += len(ids)
-                    break
+                owned.update(group)
+                adopted_total += len(group)
             self.db.execute("COMMIT")
         except Exception:
             self.db.execute("ROLLBACK")
