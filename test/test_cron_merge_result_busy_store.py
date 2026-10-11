@@ -73,13 +73,17 @@ class _BusyStore:
         service._merge_job_result = merge  # type: ignore[method-assign]
 
 
-async def _service(tmp_path, runs: list[str], *, flag: str | None = None) -> CronService:
+async def _service(
+    tmp_path, runs: list[str], *, flag: str | None = None, fail: bool = False
+) -> CronService:
     """A started service whose timer only fires when the test ticks it."""
 
     async def on_job(job: CronJob) -> None:
         runs.append(job.id)
         if flag is not None:
             setattr(job, flag, True)
+        if fail:
+            raise RuntimeError("agent failed")
 
     service = CronService(base_dir=tmp_path, on_job=on_job)
     await service.start()
@@ -180,4 +184,107 @@ async def test_busy_merge_keeps_a_one_shot_that_owes_no_delete(
     assert runs == [job.id]
     assert job.id not in service._pending_removals
     assert CronService(base_dir=tmp_path).get_job(job.id) is not None
+    assert _one_shot_removals(recorder) == []
+
+
+def _assert_parked(tmp_path, job_id: str) -> None:
+    stored = CronService(base_dir=tmp_path).get_job(job_id)
+    assert stored is not None, "a failed one-shot was deleted instead of parked"
+    assert stored.enabled is False, "a failed one-shot was left due on disk"
+    assert stored.auto_paused is True
+    assert "agent failed" in (stored.last_error or "")
+
+
+@pytest.mark.asyncio
+async def test_busy_merge_parks_a_failed_one_shot_on_disk(tmp_path, recorder):
+    # A failed delete_after_run one-shot owes a park, not a delete. When its
+    # merge meets a busy store, the first tick that wins the lock must land the
+    # park (the held run record), not consume the job and lose its error.
+    runs: list[str] = []
+    service = await _service(tmp_path, runs, fail=True)
+    job = await service.add_job_async(
+        "remind-once", "msg", at_ts=time.time() - 1, delete_after_run=True
+    )
+    store = _BusyStore(service, merges_only=True)
+    try:
+        with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+            store.on = True
+            await _tick(service, job.id)  # fires and fails; its merge cannot lock
+            store.on = False
+            await _tick(service, job.id)  # the store is free again
+            assert job.id not in service._pending_removals
+            _assert_parked(tmp_path, job.id)
+    finally:
+        store.on = False
+        await service.stop()
+
+    assert runs == [job.id]
+    assert _one_shot_removals(recorder) == []
+
+
+@pytest.mark.asyncio
+async def test_busy_merge_park_survives_another_writers_reload(tmp_path, recorder):
+    # Race: while the merge is busy, another process rewrites the store, so the
+    # next tick reloads a disk copy that never got the run. The park must still
+    # reach disk and the job must not run again.
+    runs: list[str] = []
+    service = await _service(tmp_path, runs, fail=True)
+    job = await service.add_job_async(
+        "remind-once", "msg", at_ts=time.time() - 1, delete_after_run=True
+    )
+    store = _BusyStore(service, merges_only=True)
+    try:
+        with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+            store.on = True
+            await _tick(service, job.id)
+            store.on = False
+            other = CronService(base_dir=tmp_path)
+            await other.add_job_async("other", "msg", at_ts=time.time() + 3600)
+            for _ in range(2):
+                await _tick(service, job.id)
+            _assert_parked(tmp_path, job.id)
+    finally:
+        store.on = False
+        await service.stop()
+
+    assert runs == [job.id], f"failed one-shot ran {len(runs)} times"
+    assert _one_shot_removals(recorder) == []
+
+
+@pytest.mark.asyncio
+async def test_failed_save_in_the_merge_parks_a_failed_one_shot(tmp_path, recorder):
+    # The merge wins the lock but its save fails. The park must land on the next
+    # tick's save instead of the job being queued for a delete.
+    runs: list[str] = []
+    service = await _service(tmp_path, runs, fail=True)
+    job = await service.add_job_async(
+        "remind-once", "msg", at_ts=time.time() - 1, delete_after_run=True
+    )
+    real_save, real_merge = service._save, service._merge_job_result
+    merging = {"on": False}
+
+    def save(*args, **kwargs):
+        if merging["on"]:
+            raise OSError(28, "simulated: no space left on device")
+        return real_save(*args, **kwargs)
+
+    def merge(terminal: CronJob) -> None:
+        merging["on"] = True
+        try:
+            real_merge(terminal)
+        finally:
+            merging["on"] = False
+
+    service._save = save  # type: ignore[method-assign]
+    service._merge_job_result = merge  # type: ignore[method-assign]
+    try:
+        with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+            await _tick(service, job.id)  # fires and fails; the merge's save fails
+            await _tick(service, job.id)
+            assert job.id not in service._pending_removals
+            _assert_parked(tmp_path, job.id)
+    finally:
+        await service.stop()
+
+    assert runs == [job.id]
     assert _one_shot_removals(recorder) == []

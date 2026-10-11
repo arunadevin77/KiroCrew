@@ -4172,10 +4172,15 @@ class CronService:
                     # one-shot consume did not run. A delete_after_run at-job
                     # is still enabled (the consume is what stops it), so
                     # without the deferral it is due again on the next tick.
-                    # Same owed rule as the consume in _merge_job_result.
+                    # Same owed rule as the consume in _merge_job_result. A
+                    # FAILED run owes a park, not a delete: its auto-pause is in
+                    # the run record held above, which every reload re-applies
+                    # and the next save under the lock persists.
                     logger.warning("Result merge for job '%s' skipped: %s", job.name, exc)
-                    if terminal.delete_after_run and not (
-                        terminal.fire_time_denied or terminal.run_never_started
+                    if (
+                        terminal.delete_after_run
+                        and terminal.last_status != "error"
+                        and not (terminal.fire_time_denied or terminal.run_never_started)
                     ):
                         self.defer_removal(terminal.id)
                 except Exception:
@@ -4449,12 +4454,15 @@ class CronService:
             # unreadable store to an empty job list WITHOUT raising, so presence
             # is exactly what a corrupt store destroys, and the deferred queue
             # below then never fired for a delete that was still owed on disk.
-            # A failed run's auto-pause is only in memory until the save lands, so
-            # a save fault keeps the plain consume rule (as the busy path does).
-            consume_on_fault = job.delete_after_run and not (
-                job.fire_time_denied or job.run_never_started
+            # A failed run is parked, not consumed. Its auto-pause is in the run
+            # record the finalizer holds until a save lands it, so a save fault
+            # leaves the park to the next save under the lock, as the busy path
+            # does.
+            delete_owed = (
+                job.delete_after_run
+                and job.last_status != "error"
+                and not (job.fire_time_denied or job.run_never_started)
             )
-            delete_owed = consume_on_fault and job.last_status != "error"
             removed_one_shot = False
             restore: list[tuple[CronJob, str]] = []
             consumed_row = False
@@ -4525,10 +4533,10 @@ class CronService:
                 # reload, and the save never landed, so the disk copy is still
                 # enabled. Without a queue entry the reloaded one-shot comes back
                 # enabled and runs a second time on the next tick. Keyed on
-                # consume_on_fault, NOT presence: an absent id proves nothing about
+                # delete_owed, NOT presence: an absent id proves nothing about
                 # whether the delete is owed, and the drain intersects the queue
                 # with what is present and drops the rest.
-                if consume_on_fault:
+                if delete_owed:
                     self._pending_removals.add(job.id)
                 if isinstance(exc, CronStoreUnreadable):
                     # Return WITHOUT auditing: the emit below records only a SAVED

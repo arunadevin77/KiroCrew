@@ -3713,7 +3713,7 @@ class TestFailedOneShotIsParkedNotDeleted:
         assert on_disk.enabled is True, "an older failed record parked a newer run"
 
     @pytest.mark.asyncio
-    async def test_save_fault_on_a_failed_one_shot_still_queues_its_consume(self, tmp_path):
+    async def test_save_fault_on_a_failed_one_shot_queues_no_consume(self, tmp_path):
         from kiro_crew.cron_service.execution import close_run
         from kiro_crew.cron_service.store import CronStoreUnreadable
 
@@ -3732,9 +3732,9 @@ class TestFailedOneShotIsParkedNotDeleted:
 
         svc._save = _unreadable
         await asyncio.to_thread(svc._merge_job_result, terminal)
-        # The auto-pause never reached disk, so the deferred consume must be queued,
-        # or the still-enabled disk row would run again on the next tick.
-        assert job.id in svc._pending_removals
+        # A failed one-shot owes a park, not a delete. The park rides in the run
+        # record the finalizer holds, so the save fault must not queue a consume.
+        assert job.id not in svc._pending_removals
 
     @pytest.mark.asyncio
     async def test_cancel_during_failure_alert_still_parks_the_one_shot(self, tmp_path):
