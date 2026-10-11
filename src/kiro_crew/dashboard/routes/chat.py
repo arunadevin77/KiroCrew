@@ -118,6 +118,8 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/chat/slots/{slot}/model", chat.api_chat_slot_model)
     app.router.add_get("/api/chat/slots/{slot}/autocompact", chat.api_chat_slot_autocompact)
     app.router.add_post("/api/chat/slots/{slot}/autocompact", chat.api_chat_slot_autocompact)
+    app.router.add_get("/api/chat/slots/{slot}/turn-timeout", chat.api_chat_slot_turn_timeout)
+    app.router.add_post("/api/chat/slots/{slot}/turn-timeout", chat.api_chat_slot_turn_timeout)
     app.router.add_post(
         "/api/chat/slots/{slot}/reasoning-effort", chat.api_chat_slot_reasoning_effort
     )

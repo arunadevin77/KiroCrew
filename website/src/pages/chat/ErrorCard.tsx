@@ -8,6 +8,7 @@ import { isStopEvent } from '../../lib/stopEvent'
 import { isSystemNoticeKind } from '../../lib/systemNotice'
 import type { ChatMessage } from '../../types'
 import { withOriginLink } from '../../components/withOriginLink'
+import { SessionTurnLimitButton } from '../../components/SessionTurnLimitMenu'
 import { injectOpensTurn } from './RecoveryCard'
 
 /** Error code the backend stamps (`meta.code`) when a crew member's private
@@ -234,6 +235,12 @@ export interface ErrorCardProps {
    * one avoids the cut. Omitted on a surface with no settings route.
    */
   onOpenTurnLimit?: () => void
+  /**
+   * The other fix for a `turn_timeout` row: the session whose turn stopped,
+   * so the card can offer that session's own turn time limit in place. Beside
+   * the Settings link, which changes the limit for every session.
+   */
+  turnLimitSlot?: string
 }
 
 // No `shrink-0` and no `truncate`: every action sits in a flex row, and a
@@ -301,6 +308,7 @@ export const ErrorCard = memo(function ErrorCard({
   sessionStartRepeat,
   onOpenCapabilities,
   onOpenTurnLimit,
+  turnLimitSlot,
 }: ErrorCardProps) {
   useLanguageGeneration() // memo() bails out of the provider-level repaint; subscribe directly
   // Swap the gateway's "please retry" wording ONLY on a row that renders the
@@ -479,7 +487,8 @@ export const ErrorCard = memo(function ErrorCard({
       {i18nT('pages.chat.errorCard.resume')}
     </button>
   )
-  if (onOpenTurnLimit) {
+  if (onOpenTurnLimit || turnLimitSlot) {
+    const secondaryBtn = `${ACTION_BTN} bg-transparent text-text ring-1 ring-inset ring-border hover:bg-bg-elevated`
     return (
       <div
         className="bg-danger-subtle ring-1 ring-inset forced-colors:border ring-danger/20 rounded-md self-center w-full max-w-full min-w-0 px-3 py-2 flex flex-col gap-2 animate-scale-in"
@@ -492,16 +501,19 @@ export const ErrorCard = memo(function ErrorCard({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {resumeButton}
-          <button
-            type="button"
-            onClick={onOpenTurnLimit}
-            className={`${ACTION_BTN} bg-transparent text-text ring-1 ring-inset ring-border hover:bg-bg-elevated`}
-            title={i18nT('pages.chat.errorCard.turn_limit_hint')}
-            data-testid="error-card-turn-limit"
-          >
-            <Settings size={12} className="lucide-inline shrink-0" aria-hidden="true" />
-            {i18nT('pages.chat.errorCard.turn_limit')}
-          </button>
+          {onOpenTurnLimit && (
+            <button
+              type="button"
+              onClick={onOpenTurnLimit}
+              className={secondaryBtn}
+              title={i18nT('pages.chat.errorCard.turn_limit_hint')}
+              data-testid="error-card-turn-limit"
+            >
+              <Settings size={12} className="lucide-inline shrink-0" aria-hidden="true" />
+              {i18nT('pages.chat.errorCard.turn_limit')}
+            </button>
+          )}
+          {turnLimitSlot && <SessionTurnLimitButton slotKey={turnLimitSlot} className={secondaryBtn} />}
         </div>
       </div>
     )

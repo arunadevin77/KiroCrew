@@ -3273,6 +3273,7 @@ from kiro_crew.dashboard.slot_persistence.metadata_codec import (  # noqa: E402,
     _restore_model_fields,
     _restored_mode,
     _validate_autocompact_pct,
+    _validate_turn_timeout_secs,
 )
 from kiro_crew.dashboard.slot_persistence.metadata_line import (  # noqa: E402,F401
     _META_LAST_USER_AT,

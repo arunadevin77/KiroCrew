@@ -39,6 +39,7 @@ vi.mock('./FolderMoveSubmenu', () => ({
 vi.mock('./SendToInstanceSubmenu', () => ({ default: () => <div>zzq-send</div> }))
 vi.mock('./SessionColorSwatches', () => ({ default: () => <div>zzq-colors</div> }))
 vi.mock('./LinkedSurfacesSection', () => ({ default: () => <div>zzq-links</div> }))
+vi.mock('./SessionTurnLimitMenu', () => ({ SessionTurnLimitSubmenu: () => <div>zzq-turn-limit</div> }))
 
 const actions = vi.hoisted(() => ({
   toggleRead: vi.fn(),

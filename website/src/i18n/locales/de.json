@@ -8278,6 +8278,16 @@
       "mute_failed": "Diese Sitzung konnte nicht stummgeschaltet werden",
       "unmute_failed": "Stummschaltung dieser Sitzung konnte nicht aufgehoben werden"
     },
+    "sessionTurnLimit": {
+      "card_button": "Limit für diese Sitzung festlegen",
+      "card_button_hint": "Gibt dieser Sitzung ein eigenes Zeitlimit pro Zug. Gilt ab dem nächsten Zug. Andere Sitzungen behalten ihres.",
+      "follow_global": "Wie in den Einstellungen ({{limit}})",
+      "hint": "Wie lange ein Zug in dieser Sitzung laufen darf, bevor er gestoppt wird. Gilt ab dem nächsten Zug.",
+      "label": "Zeitlimit pro Zug",
+      "load_failed": "Das Zeitlimit pro Zug dieser Sitzung konnte nicht geladen werden",
+      "loading": "Wird geladen…",
+      "save_failed": "Das Zeitlimit pro Zug konnte nicht gespeichert werden"
+    },
     "sessionColorSwatches": {
       "custom_color": "Benutzerdefinierte Farbe",
       "hex_color_code": "Hex-Farbcode",

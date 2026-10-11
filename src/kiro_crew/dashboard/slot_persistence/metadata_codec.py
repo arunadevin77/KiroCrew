@@ -53,7 +53,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from kiro_crew import model_registry
-from kiro_crew.config.loader import AUTOCOMPACT_PCT_MAX, AUTOCOMPACT_PCT_MIN
+from kiro_crew.config.loader import (
+    AUTOCOMPACT_PCT_MAX,
+    AUTOCOMPACT_PCT_MIN,
+    CHAT_TURN_TIMEOUT_MAX,
+    CHAT_TURN_TIMEOUT_MIN,
+)
 from kiro_crew.dashboard.chat_title import (
     _TITLE_ORIGINS,
     _counts_as_user_turn,
@@ -286,6 +291,22 @@ def _validate_autocompact_pct(raw: object) -> float | None:
         return min(max(value, AUTOCOMPACT_PCT_MIN), AUTOCOMPACT_PCT_MAX)
     if raw is not None:
         logger.warning("Discarding invalid persisted autocompact_pct: %r", raw)
+    return None
+
+
+def _validate_turn_timeout_secs(raw: object) -> int | None:
+    """Return *raw* as a turn time limit in whole seconds within range, else None.
+
+    Restore-path twin of the endpoint validation, on a line the agent's own
+    tools can write: an integer outside the global setting's range clamps to
+    it, the way the loader treats ``agent.chat_turn_timeout_secs``, and anything
+    that is not an integer (a bool, a float, a string) is discarded so the
+    session follows the global limit.
+    """
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return min(max(raw, CHAT_TURN_TIMEOUT_MIN), CHAT_TURN_TIMEOUT_MAX)
+    if raw is not None:
+        logger.warning("Discarding invalid persisted turn_timeout_secs: %r", raw)
     return None
 
 
@@ -646,6 +667,10 @@ def _read_autocompact_pct(r: _Read) -> None:
         r.slot.autocompact_pct = _validate_autocompact_pct(r.meta["autocompact_pct"])
 
 
+def _read_turn_timeout_secs(r: _Read) -> None:
+    r.slot.turn_timeout_secs = _validate_turn_timeout_secs(r.meta.get("turn_timeout_secs"))
+
+
 def _read_dismissed_source_links(r: _Read) -> None:
     _restore_dismissed_source_links(r.slot, r.meta.get("dismissed_source_links"))
 
@@ -999,6 +1024,19 @@ FIELDS: tuple[Field, ...] = (
         line=_always(lambda s: s.autocompact_pct),
         merge=_always(lambda s: s.autocompact_pct),
         read=_read_autocompact_pct,
+    ),
+    Field(
+        "turn_timeout_secs",
+        _ALL,
+        attr="turn_timeout_secs",
+        line=_truthy(lambda s: s.turn_timeout_secs),
+        merge=_always(lambda s: s.turn_timeout_secs),
+        read=_read_turn_timeout_secs,
+        why=(
+            "the full save omits the key while the session follows the global "
+            "limit; the merge writes null so clearing it reaches a line already "
+            "on disk"
+        ),
     ),
     Field(
         "dismissed_source_links",
@@ -1421,6 +1459,7 @@ LINE_ORDER: tuple[str, ...] = (
     "model",
     "reasoning_effort",
     "autocompact_pct",
+    "turn_timeout_secs",
     "dismissed_source_links",
     "mode",
     "workspace",
@@ -1475,6 +1514,7 @@ MERGE_ORDER: tuple[str, ...] = (
     "model",
     "queued_prompts",
     "autocompact_pct",
+    "turn_timeout_secs",
     "title",
     "title_origin",
     "title_refresh_mark",

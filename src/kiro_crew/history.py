@@ -195,6 +195,7 @@ SLOT_OWNED_META_KEYS: frozenset[str] = frozenset(
         "model",
         "reasoning_effort",
         "autocompact_pct",
+        "turn_timeout_secs",
         # Source-link dismissals: the slot save is authoritative (it rebuilds the
         # line from ``slot._dismissed_source_links``), so on a FULL save absence
         # means "no dismissals". Naming it here also folds it into

@@ -8155,6 +8155,16 @@
       "mute_failed": "无法静音此会话",
       "unmute_failed": "无法取消静音此会话"
     },
+    "sessionTurnLimit": {
+      "card_button": "设置此会话的上限",
+      "card_button_hint": "为此会话单独设置单轮时间上限。从下一轮开始生效。其他会话保持各自的设置。",
+      "follow_global": "与设置相同（{{limit}}）",
+      "hint": "此会话中的一轮在被停止前最多可运行多长时间。从下一轮开始生效。",
+      "label": "单轮时间上限",
+      "load_failed": "无法读取此会话的单轮时间上限",
+      "loading": "正在加载…",
+      "save_failed": "无法保存单轮时间上限"
+    },
     "sessionColorSwatches": {
       "custom_color": "自定义颜色",
       "hex_color_code": "十六进制颜色代码",

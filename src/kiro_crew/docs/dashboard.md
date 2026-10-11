@@ -47,6 +47,7 @@ Multi-session parallel chat with full Markdown rendering, syntax-highlighted cod
 - **Memory mode**: per-session choice — persistent (default), incognito (blocks learn_add), or temporary (no memory consolidation).
 - **Merge queued messages**: optionally merge queued messages into a single prompt.
 - **Cooperative stop**: soft-stop sends cancel first, falls back to hard kill after budget (preserves session state).
+- **Turn time limit per session**: a turn stops when it reaches the turn time limit, **Turn Time Limit** under Settings → Chat → Advanced (4 hours by default). To give one session a different limit, open its `⋮` menu (or right-click its sidebar row) and pick a value under **Turn time limit**. The card a stopped turn leaves has the same choice under **Set this session's limit**. The limit applies from the session's next turn, other sessions keep the Settings value, and **Same as Settings** returns the session to it. The card says which limit stopped the turn and where to change it.
 - **Tool input preview**: expandable tool input display in approval cards.
 - **File upload**: on desktop, use **Upload file** from the `+` menu or drop a file into Chat. On a phone or other touch device, tap `+` to open the native system Files picker directly. Both paths accept images and regular files such as `.zip`, `.csv`, and `.docx`.
 - **Folder management**: create, rename, and organize sessions into sidebar folders with indent borders.

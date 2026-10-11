@@ -614,6 +614,11 @@ def surface_channel_session(
         slot.autocompact_pct = _validate_autocompact_pct(meta["autocompact_pct"])
         if slot.autocompact_pct is not None and state.sessions:
             state.sessions.set_autocompact_pct(effective_session_key(slot), slot.autocompact_pct)
+    # The session's own turn time limit, for the same reason: without it a
+    # surfaced slot follows the global limit and its next save drops the key.
+    from kiro_crew.dashboard.chat_persistence import _validate_turn_timeout_secs
+
+    slot.turn_timeout_secs = _validate_turn_timeout_secs(meta.get("turn_timeout_secs"))
     # Restore the dismissed source-link tombstones, mirroring the persistence
     # loaders: this surfacing path applies metadata by hand rather than going
     # through _rehydrate_slot_from_history, so without it an unlinked chip

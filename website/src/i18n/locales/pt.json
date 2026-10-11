@@ -8401,6 +8401,16 @@
       "mute_failed": "Não foi possível silenciar esta sessão",
       "unmute_failed": "Não foi possível reativar o som desta sessão"
     },
+    "sessionTurnLimit": {
+      "card_button": "Definir o limite desta sessão",
+      "card_button_hint": "Dá a esta sessão o seu próprio tempo máximo por turno. Vale a partir do próximo turno. As outras sessões mantêm o delas.",
+      "follow_global": "Igual às Configurações ({{limit}})",
+      "hint": "Quanto tempo um turno desta sessão pode durar antes de ser interrompido. Vale a partir do próximo turno.",
+      "label": "Tempo máximo por turno",
+      "load_failed": "Não foi possível carregar o tempo máximo por turno desta sessão",
+      "loading": "Carregando…",
+      "save_failed": "Não foi possível salvar o tempo máximo por turno"
+    },
     "sessionColorSwatches": {
       "custom_color": "Cor personalizada",
       "hex_color_code": "Código de cor hexadecimal",

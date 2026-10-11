@@ -14,6 +14,14 @@ import type { ClientTransport } from './transport'
  *  explain. Rationale in the CR description. */
 export const SLASH_COMMANDS_TIMEOUT_MS = 15_000
 
+/** A session's turn time limit as `/api/chat/slots/{slot}/turn-timeout` reports it. */
+export interface SlotTurnTimeout {
+  secs: number | null
+  global_secs: number
+  min: number
+  max: number
+}
+
 export function createChatSlotSettingsEndpoints({ post, j, jfetch: fetch }: ClientTransport) {
   const selection = {
     models: () => fetch('/api/models').then(j),
@@ -53,6 +61,13 @@ export function createChatSlotSettingsEndpoints({ post, j, jfetch: fetch }: Clie
     /** Set (number) or clear (null) this slot's auto-compact threshold override. */
     setChatSlotAutocompact: (slot: string, pct: number | null) =>
       post('/api/chat/slots/' + encodeURIComponent(slot) + '/autocompact', { pct }).then(j) as Promise<{ ok?: boolean; pct: number | null; global_pct: number; agent_pct?: number | null; agent?: string | null }>,
+    /** This slot's own turn time limit in seconds (null = follows the global
+     *  `agent.chat_turn_timeout_secs`, reported as `global_secs`). */
+    chatSlotTurnTimeout: (slot: string) =>
+      fetch('/api/chat/slots/' + encodeURIComponent(slot) + '/turn-timeout').then(j) as Promise<SlotTurnTimeout>,
+    /** Give this slot its own turn time limit (whole seconds), or null to follow the global. */
+    setChatSlotTurnTimeout: (slot: string, secs: number | null) =>
+      post('/api/chat/slots/' + encodeURIComponent(slot) + '/turn-timeout', { secs }).then(j) as Promise<SlotTurnTimeout & { ok?: boolean }>,
     chatSlotsModel: (model: string, skip_running: boolean) =>
       post('/api/chat/slots/model', { model, skip_running }).then(j) as Promise<{ ok: boolean; model: string; switched: string[]; skipped_running: string[]; unchanged: string[]; failed: string[] }>,
     chatSlotReasoningEffort: (slot: string, reasoning_effort: string) =>

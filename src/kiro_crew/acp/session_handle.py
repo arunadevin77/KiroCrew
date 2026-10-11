@@ -20,10 +20,11 @@ working.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from kiro_crew import acp_tool_gate, model_registry, permission_floor
@@ -196,6 +197,7 @@ from kiro_crew.platform.context import redact_log_via_context
 from kiro_crew.recovery.ladder import InfraError, classify_infra_error
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 from kiro_crew.sel import sel
+from kiro_crew.turn_limit import current_turn_limit_secs
 from kiro_crew.validation import MAX_ACP_SESSION_ID_LEN
 
 logger = logging.getLogger(__name__)
@@ -331,6 +333,32 @@ class WatchdogSettings:
     # Sourced from ``agent.interactive_command_policy`` by
     # ``_load_watchdog_settings``; an unknown value falls back to cancel.
     interactive_command_policy: str = INTERACTIVE_POLICY_CANCEL
+    # The windows as configured, before the ceiling pass, and the turn ceiling
+    # that pass bounded them against. Kept so a turn whose own limit is above
+    # that ceiling (a session's turn time limit) can re-bound them against the
+    # limit it actually runs under (:meth:`for_turn_limit`). Not compared: two
+    # snapshots that bound to the same windows are the same snapshot.
+    configured_windows: tuple[tuple[str, float], ...] = field(default=(), compare=False)
+    bounded_against: float = field(default=0.0, compare=False)
+
+    def for_turn_limit(self, turn_limit: float | None) -> "WatchdogSettings":
+        """These windows, bounded against *turn_limit* when it is the longer limit.
+
+        The snapshot is bounded against ``agent.chat_turn_timeout_secs``, but a
+        session can run its turns under a longer limit of its own, and the
+        transport's wait follows that limit. A window cut to the global
+        ceiling's fraction would then act long before that turn's own deadline,
+        so it is bounded against the turn's limit instead. A shorter limit
+        changes nothing: a window above the dashboard ceiling is reported and
+        left alone (:func:`_warn_if_above_chat_ceiling`), whichever limit set it.
+        """
+        if not turn_limit or turn_limit <= self.bounded_against or not self.configured_windows:
+            return self
+        budget = prompt_timeout_for_ceiling(turn_limit) * _TURN_CEILING_WINDOW_FRACTION
+        windows: dict[str, Any] = {
+            key: min(value, budget) for key, value in self.configured_windows
+        }
+        return dataclasses.replace(self, bounded_against=float(turn_limit), **windows)
 
 
 # Fraction of a turn's deadline that a watchdog idle window may occupy. A window
@@ -458,6 +486,8 @@ def _load_watchdog_settings(crew_agent: str = "", cfg: Any = None) -> WatchdogSe
             wellness_sample_secs=float(w.wellness_sample_secs),
             agent_override=overridden,
             interactive_command_policy=policy,
+            configured_windows=tuple(raw.items()),
+            bounded_against=chat_ceiling,
             **bounded,
         )
     except Exception:
@@ -4819,6 +4849,12 @@ class AcpSessionHandle:
         """
         deadline = time.monotonic() + timeout
         last_data_ts = time.monotonic()
+        # The limit this turn runs under, when the dispatch published one (a
+        # session's own turn time limit can be longer than the ceiling the
+        # watchdog snapshot was bounded against). Read once: it is the turn's.
+        turn_limit = current_turn_limit_secs()
+        wd_source: WatchdogSettings | None = None
+        wd = self._watchdog
         # Cleared per turn: armed by the compaction branch below on a
         # `failed` status, then read by the post-failure budget check at the
         # loop top (mirrors AcpClient._prompt_loop).
@@ -5001,7 +5037,11 @@ class AcpSessionHandle:
                     # ownerless fanned-out frame or keepalive does not defer it).
                     if self._cancelled:
                         continue
-                    wd = self._watchdog
+                    # Re-derived only when a rebind swapped the snapshot, so
+                    # the per-tick cost is one identity check.
+                    if self._watchdog is not wd_source:
+                        wd_source = self._watchdog
+                        wd = wd_source.for_turn_limit(turn_limit)
                     now = time.monotonic()
                     # Consumer time since the last frame. Both clocks below are
                     # meant to measure how long the RUNTIME has been silent, but
@@ -5091,7 +5131,9 @@ class AcpSessionHandle:
                             # observed the tool at the end of its await, so
                             # the pre-consult clock would shorten the window.
                             tool_moved_ts = time.monotonic()
-                            if not self._working_tool_bound_reached(evidence, _tool_idle):
+                            if not self._working_tool_bound_reached(
+                                evidence, _tool_idle, wd.tool_stall_hard_cap_secs
+                            ):
                                 self._log_working_deferral(_tool_idle, evidence, timeout)
                                 continue
                             # Opaque-MCP WORKING past the hard cap: fall
@@ -6062,16 +6104,17 @@ class AcpSessionHandle:
                 refused,
             )
 
-    def _working_tool_bound_reached(self, evidence: str, tool_idle: float) -> bool:
+    def _working_tool_bound_reached(self, evidence: str, tool_idle: float, hard_cap: float) -> bool:
         """Whether a tool-branch WORKING reading has run out of forbearance.
 
         Only the opaque-MCP reading is bounded. It says some process in the
         runtime's tree moved, which a warm sibling MCP server does too, so a
         call whose result frame was lost would otherwise hold the turn to its
-        deadline. The bound is ``watchdog.tool_stall_hard_cap_secs``, the same
-        ceiling an UNKNOWN reading gets, measured on the session's own frame
-        clock. A matched shell child, the declared-duration ``wait`` verdict
-        and a kirocrew-core tool that pings the session keepalive
+        deadline. The bound is *hard_cap*, the turn's
+        ``watchdog.tool_stall_hard_cap_secs`` and the same ceiling an UNKNOWN
+        reading gets, measured on the session's own frame clock. A matched
+        shell child, the declared-duration ``wait`` verdict and a kirocrew-core
+        tool that pings the session keepalive
         (:meth:`ToolCallState.is_trusted_keepalive_tool`) keep deferring.
         """
         if not evidence.startswith(EVIDENCE_MCP_SUBTREE_ACTIVE):
@@ -6079,7 +6122,7 @@ class AcpSessionHandle:
         tool = self._inflight_tool
         if tool is not None and tool.is_trusted_keepalive_tool():
             return False
-        return tool_idle > self._watchdog.tool_stall_hard_cap_secs
+        return tool_idle > hard_cap
 
     def _log_working_deferral(self, idle: float, evidence: str, turn_timeout: float) -> None:
         """Evidence trail for a WORKING deferral, rate-limited to one line per

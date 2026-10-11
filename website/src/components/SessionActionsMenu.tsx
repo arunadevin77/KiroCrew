@@ -11,6 +11,7 @@ import ImportSessionItem from './ImportSessionItem'
 import CrewBoardMenuItem from './CrewBoardMenuItem'
 import SessionColorSwatches from './SessionColorSwatches'
 import SourceLinksSubmenu from './SourceLinksSubmenu'
+import { SessionTurnLimitSubmenu } from './SessionTurnLimitMenu'
 import LinkedSurfacesSection from './LinkedSurfacesSection'
 import { DropdownMenuItem, DropdownMenuSeparator } from './ui/dropdown-menu'
 import { ContextMenuItem, ContextMenuSeparator } from './ui/context-menu'
@@ -425,6 +426,10 @@ export default function SessionActionsMenu({
     // data-[disabled]:pointer-events-none, so a hover `title` can never fire
     // there and the grey row would otherwise explain nothing.
     [
+      // This session's own turn time limit: how long one of its turns may run
+      // before it is stopped, instead of the global Settings value. Beside
+      // Reload because both are about how this session's agent runs.
+      <SessionTurnLimitSubmenu key="turn-limit" slotKey={slotKey} variant={variant} />,
       <Item
         key="reload"
         disabled={reloadBlocked}

@@ -31,10 +31,13 @@ from typing import Any, Literal
 from kiro_crew.acp.client import resolve_prompt_timeout
 from kiro_crew.config.loader import (
     APPROVAL_TURN_MARGIN_SECS,
+    CHAT_TURN_TIMEOUT_MAX,
+    CHAT_TURN_TIMEOUT_MIN,
     TOOL_APPROVAL_TIMEOUT_MIN,
     KiroCrewConfig,
 )
 from kiro_crew.constants import CHAT_TURN_TIMEOUT, TOOL_APPROVAL_TIMEOUT
+from kiro_crew.turn_limit import TURN_LIMIT_SECS, current_turn_limit_secs
 
 # The native-cancellation outcome, kept in lockstep with
 # ``kiro_crew.providers.base.CancelOutcome``. Spelled locally rather than
@@ -136,6 +139,40 @@ def chat_turn_timeout_secs() -> float:
     return configured
 
 
+#: Which limit bounded a turn: the session's own, or the global setting.
+TURN_LIMIT_SESSION = "session"
+TURN_LIMIT_GLOBAL = "global"
+
+
+def session_turn_timeout_secs(slot: Any) -> int | None:
+    """*slot*'s own turn time limit in seconds, or ``None`` when it follows the global.
+
+    Read defensively: the value arrives from the session's metadata line, which
+    the agent's own tools can write, so anything but an integer is ignored and
+    an integer outside the global setting's range is held to that range.
+    """
+    value = getattr(slot, "turn_timeout_secs", None)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return min(max(value, CHAT_TURN_TIMEOUT_MIN), CHAT_TURN_TIMEOUT_MAX)
+
+
+def resolve_turn_limit(slot: Any = None) -> tuple[float, str]:
+    """The limit a turn in *slot* runs under, and which setting supplied it.
+
+    A session's own limit wins over ``agent.chat_turn_timeout_secs`` for that
+    session's turns. It is not clamped to the transport's prompt timeout the
+    way the global value is: :func:`_bounded_turn` publishes the limit for the
+    turn and the transport sizes its wait from it
+    (``acp.client.resolve_prompt_timeout``), so a session limit above the
+    transport's default is one the system honours.
+    """
+    override = session_turn_timeout_secs(slot) if slot is not None else None
+    if override is not None:
+        return float(override), TURN_LIMIT_SESSION
+    return chat_turn_timeout_secs(), TURN_LIMIT_GLOBAL
+
+
 def native_cancel_ack_timeout_secs() -> float:
     """Resolve the bounded wait for a native turn-cancellation acknowledgement."""
     try:
@@ -188,10 +225,12 @@ def tool_approval_timeout_secs() -> float:
     The value is bounded twice, because two different things can make it
     outlive the turn it belongs to:
 
-    * against the turn ceiling :func:`chat_turn_timeout_secs` resolves. The
-      config loader already applies this to the two config fields; repeating it
-      here catches a RESOLVED ceiling lower than the configured one (the ACP
-      transport's prompt timeout clamps it).
+    * against the turn ceiling: the limit the running turn was dispatched with
+      (a session's own limit when it has one), else the one
+      :func:`chat_turn_timeout_secs` resolves. The config loader already
+      applies this to the two config fields; repeating it here catches a
+      RESOLVED ceiling lower than the configured one (the ACP transport's
+      prompt timeout clamps it, or the session's own limit is lower).
     * against the budget REMAINING in the turn that is already running. A prompt
       arming late in a long agentic turn has far less than the full ceiling left,
       so a ceiling-relative bound alone still lets the turn die first — the exact
@@ -208,7 +247,7 @@ def tool_approval_timeout_secs() -> float:
         # An approval prompt cannot be disabled by zeroing its window — that
         # would make wait_for raise immediately and auto-decline every tool.
         configured = TOOL_APPROVAL_TIMEOUT
-    ceiling = chat_turn_timeout_secs()
+    ceiling = current_turn_limit_secs() or chat_turn_timeout_secs()
     budget = max(float(TOOL_APPROVAL_TIMEOUT_MIN), ceiling - APPROVAL_TURN_MARGIN_SECS)
     window = configured
     if window > budget:
@@ -288,27 +327,43 @@ _RAISE_LIMIT_HINT = (
     f" To allow longer turns, raise {TURN_TIME_LIMIT_SETTING} in Settings → Chat → Advanced."
 )
 
+#: The session menu entry that sets one session's own limit, as the English
+#: catalog renders it.
+SESSION_TURN_LIMIT_MENU = "Turn time limit"
+
+_RAISE_SESSION_LIMIT_HINT = (
+    f" This session has its own limit. To allow longer turns here, change "
+    f"{SESSION_TURN_LIMIT_MENU} in the session's ⋮ menu."
+)
+
 
 def format_turn_timeout_card(
     timeout_secs: float,
     native_cancel_outcome: "CancelOutcome | None" = None,
+    limit_scope: str = TURN_LIMIT_GLOBAL,
 ) -> str:
-    """User-facing text for a turn that hit the ceiling."""
+    """User-facing text for a turn that hit the ceiling.
+
+    *limit_scope* names which limit applied, so the hint points at the place
+    that sets it: the session's own menu for a session limit, Settings for the
+    global one.
+    """
     if timeout_secs >= 3600:
         limit = f"{timeout_secs / 3600:.1f}".rstrip("0").rstrip(".") + "-hour"
     else:
         limit = f"{max(1, round(timeout_secs / 60))}-minute"
+    hint = _RAISE_SESSION_LIMIT_HINT if limit_scope == TURN_LIMIT_SESSION else _RAISE_LIMIT_HINT
     if native_cancel_outcome in ("timeout", "no_turn", "error"):
         return (
             f"⏱️ This turn hit the {limit} limit. The native agent did not "
             "acknowledge the stop request, so its previous tool may still be "
             "finishing. Do not resume this session until it becomes idle. Work "
-            "already written to disk is still there — nothing was rolled back." + _RAISE_LIMIT_HINT
+            "already written to disk is still there — nothing was rolled back." + hint
         )
     return (
         f"⏱️ This turn hit the {limit} limit and was stopped. Work already "
         "written to disk is still there — nothing was rolled back. Send a "
-        "message to continue from where it stopped." + _RAISE_LIMIT_HINT
+        "message to continue from where it stopped." + hint
     )
 
 
@@ -317,6 +372,7 @@ def _report_turn_timeout(
     slot: Any,
     timeout_secs: float,
     native_cancel_outcome: "CancelOutcome | None" = None,
+    limit_scope: str = TURN_LIMIT_GLOBAL,
 ) -> None:
     """Record and surface one wall-clock timeout outcome."""
     logger.warning(
@@ -340,9 +396,9 @@ def _report_turn_timeout(
         # broadcast_ws here or the UI renders a duplicate.
         slot.append(
             "error",
-            format_turn_timeout_card(timeout_secs, native_cancel_outcome),
+            format_turn_timeout_card(timeout_secs, native_cancel_outcome, limit_scope),
             "msg msg-err",
-            meta={"kind": TURN_TIMEOUT_KIND},
+            meta={"kind": TURN_TIMEOUT_KIND, "limit_scope": limit_scope},
         )
         state.push_slots_update()
     except Exception:
@@ -354,12 +410,14 @@ def finish_turn_task(
     slot: Any,
     task: "asyncio.Task[Any]",
     timeout_secs: float,
+    limit_scope: str = TURN_LIMIT_GLOBAL,
 ) -> None:
     """Retrieve *task*'s outcome so a ceiling hit becomes a visible card.
 
     Replaces the bare ``state._background_tasks.discard`` callback. Still
     discards, but also consumes the exception — which is what turns a silent
-    death into something the user can see.
+    death into something the user can see. *limit_scope* is the setting that
+    supplied *timeout_secs*, so the card names it.
     """
     state._background_tasks.discard(task)
     if task.cancelled():
@@ -378,6 +436,7 @@ def finish_turn_task(
             slot,
             timeout_secs,
             exc.native_cancel_outcome if isinstance(exc, TurnTimeoutError) else None,
+            limit_scope,
         )
         return
     # Anything else escaped _run_chat's own handler chain. Log it rather than
@@ -501,9 +560,12 @@ async def _bounded_turn(
     # full-length ceiling. Set before the task is created so the task's context
     # copy carries it; reset in the finally so a direct `await _bounded_turn(...)`
     # cannot leak a spent deadline into the caller's context and starve the next
-    # turn dispatched there.
+    # turn dispatched there. The limit itself is published beside it for the
+    # transport, which sizes its prompt wait to outlive it.
     previous_deadline = _TURN_DEADLINE.get()
+    previous_limit = TURN_LIMIT_SECS.get()
     _TURN_DEADLINE.set(loop.time() + timeout_secs)
+    TURN_LIMIT_SECS.set(float(timeout_secs))
     task: "asyncio.Task[Any] | None" = None
     handle: "asyncio.TimerHandle | None" = None
     _generator_exit = False
@@ -568,6 +630,7 @@ async def _bounded_turn(
         # Context (notably Windows xdist); reset(token) then raises and can take
         # down the whole worker because tokens are context-bound.
         _TURN_DEADLINE.set(previous_deadline)
+        TURN_LIMIT_SECS.set(previous_limit)
         if task is not None and not task.done():
             # The wrapper itself was cancelled, or setup failed after Task
             # creation.  Cancel AND join it: cancellation alone can leave an
@@ -594,13 +657,15 @@ async def bounded_chat_turn(
     state: Any = None,
     slot: Any = None,
 ) -> Any:
-    """Bound *coro* by the configured turn ceiling, resolved off the event loop.
+    """Bound *coro* by the turn ceiling, resolved off the event loop.
 
     ``state`` and ``slot`` enable the exact-owner native cancellation phase.
     They remain optional for compatibility with non-session utility callers.
+    With a ``slot`` the ceiling is that session's own limit when it has one
+    (:func:`resolve_turn_limit`).
     """
-    timeout, cancel_ack_timeout = await asyncio.to_thread(
-        lambda: (chat_turn_timeout_secs(), native_cancel_ack_timeout_secs())
+    (timeout, limit_scope), cancel_ack_timeout = await asyncio.to_thread(
+        lambda: (resolve_turn_limit(slot), native_cancel_ack_timeout_secs())
     )
     native_cancel = (
         _owned_native_timeout_cancel(state, slot, cancel_ack_timeout)
@@ -618,7 +683,9 @@ async def bounded_chat_turn(
         )
     except TurnTimeoutError as exc:
         if state is not None and slot is not None:
-            _report_turn_timeout(state, slot, exc.timeout_secs, exc.native_cancel_outcome)
+            _report_turn_timeout(
+                state, slot, exc.timeout_secs, exc.native_cancel_outcome, limit_scope
+            )
         raise
 
 
@@ -639,11 +706,17 @@ def spawn_guarded_turn(
     Callers that also track the task (``slot.task``, a per-session map) should
     keep doing so; this helper deliberately does not own those fields, because
     they carry site-specific stop/steer semantics.
+
+    Without an explicit *timeout_secs* the ceiling is the slot's own turn time
+    limit when it has one, else the global setting (:func:`resolve_turn_limit`).
     """
     started: list[None] = []
     bounded = None
     try:
-        timeout = chat_turn_timeout_secs() if timeout_secs is None else timeout_secs
+        if timeout_secs is None:
+            timeout, limit_scope = resolve_turn_limit(slot)
+        else:
+            timeout, limit_scope = timeout_secs, TURN_LIMIT_GLOBAL
         cancel_ack_timeout = (
             native_cancel_ack_timeout_secs()
             if cancel_ack_timeout_secs is None
@@ -673,7 +746,7 @@ def spawn_guarded_turn(
             # A Task cancelled before its first loop step closes the bounded
             # wrapper but not the input coroutine stored in its arguments.
             coro.close()
-        finish_turn_task(state, slot, t, timeout)
+        finish_turn_task(state, slot, t, timeout, limit_scope)
 
     task.add_done_callback(_finish)
     return task

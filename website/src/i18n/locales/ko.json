@@ -8155,6 +8155,16 @@
       "mute_failed": "이 세션을 음소거할 수 없습니다",
       "unmute_failed": "이 세션의 음소거를 해제할 수 없습니다"
     },
+    "sessionTurnLimit": {
+      "card_button": "이 세션의 제한 설정",
+      "card_button_hint": "이 세션에만 적용되는 턴 시간 제한을 설정합니다. 다음 턴부터 적용됩니다. 다른 세션은 각자의 설정을 유지합니다.",
+      "follow_global": "설정과 동일 ({{limit}})",
+      "hint": "이 세션의 턴이 중지되기 전까지 실행될 수 있는 시간입니다. 다음 턴부터 적용됩니다.",
+      "label": "턴 시간 제한",
+      "load_failed": "이 세션의 턴 시간 제한을 불러올 수 없습니다",
+      "loading": "불러오는 중…",
+      "save_failed": "턴 시간 제한을 저장할 수 없습니다"
+    },
     "sessionColorSwatches": {
       "custom_color": "사용자 지정 색상",
       "hex_color_code": "16진수 색상 코드",

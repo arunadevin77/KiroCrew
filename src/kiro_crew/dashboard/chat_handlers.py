@@ -34,6 +34,8 @@ from kiro_crew.agent_switch_command import switch_announcement
 from kiro_crew.config.loader import (
     AUTOCOMPACT_PCT_MAX,
     AUTOCOMPACT_PCT_MIN,
+    CHAT_TURN_TIMEOUT_MAX,
+    CHAT_TURN_TIMEOUT_MIN,
     KiroCrewConfig,
     _workspace_name_for_dir,
     config_dir,
@@ -268,7 +270,7 @@ from kiro_crew.dashboard.state import (  # noqa: F401
     row_mid,
 )
 from kiro_crew.dashboard.system_notices import SESSION_RELOAD_KIND, is_system_notice
-from kiro_crew.dashboard.turn_dispatch import spawn_guarded_turn
+from kiro_crew.dashboard.turn_dispatch import chat_turn_timeout_secs, spawn_guarded_turn
 from kiro_crew.history import (  # noqa: F401
     HUMAN_TURN_META_KEY,
     carry_provenance,
@@ -7228,6 +7230,151 @@ def _slot_next_agent_autocompact_default(session_key: str, slot: Any) -> tuple[s
     crew = bindings.resolved_alias or ""
     pct = crew_autocompact_pct(cfg, crew)
     return None if pct is None else (crew, pct)
+
+
+def _turn_timeout_body_value(body: dict[str, Any]) -> tuple[int | None, web.Response | None]:
+    """The ``secs`` a turn-timeout POST asks for, or the 400 that refuses it.
+
+    Held to the same range and the same whole-seconds unit as the global
+    ``agent.chat_turn_timeout_secs`` write gate, so a session can be given any
+    limit Settings could save and nothing Settings would refuse. ``null`` asks
+    to follow the global limit again.
+    """
+
+    def _refuse(error: str, code: str) -> tuple[None, web.Response]:
+        return None, web.json_response({"error": error, "code": code}, status=400)
+
+    if "secs" not in body:
+        return _refuse("secs is required (integer or null)", "secs_required")
+    secs = body["secs"]
+    if secs is None:
+        return None, None
+    # bool is an int subclass; refuse it by name rather than as 0 or 1 seconds.
+    if isinstance(secs, bool) or not isinstance(secs, int):
+        return _refuse("secs must be a whole number of seconds or null", "secs_not_an_integer")
+    if not (CHAT_TURN_TIMEOUT_MIN <= secs <= CHAT_TURN_TIMEOUT_MAX):
+        return _refuse(
+            f"secs must be between {CHAT_TURN_TIMEOUT_MIN} and {CHAT_TURN_TIMEOUT_MAX}",
+            "secs_out_of_range",
+        )
+    return secs, None
+
+
+async def _turn_timeout_payload(secs: int | None) -> dict[str, Any]:
+    """What the session menu shows: this session's limit and the global one."""
+    global_secs = await asyncio.to_thread(chat_turn_timeout_secs)
+    return {
+        "secs": secs,
+        "global_secs": int(global_secs),
+        "min": CHAT_TURN_TIMEOUT_MIN,
+        "max": CHAT_TURN_TIMEOUT_MAX,
+    }
+
+
+async def api_chat_slot_turn_timeout(request: web.Request) -> web.Response:
+    """GET/POST /api/chat/slots/{slot}/turn-timeout — this session's turn time limit.
+
+    GET returns the session's own limit (``secs``, null while it follows the
+    global), the global ``agent.chat_turn_timeout_secs`` (``global_secs``) and
+    the valid range. POST takes ``{"secs": <integer|null>}``: an integer gives
+    this session its own limit, which its next turn runs under instead of the
+    global one; null returns it to the global. Out-of-range values are refused,
+    matching the global setting's write gate.
+
+    The value lives on the slot and in the session's metadata line, so it
+    survives a gateway restart; the turn dispatch reads it when each turn
+    starts (``turn_dispatch.resolve_turn_limit``), so a turn already running
+    keeps the limit it started with. The write runs the same transaction as the
+    compaction-threshold route (see :func:`api_chat_slot_autocompact` for the
+    reasoning behind each step), under the same per-transcript lock, so two
+    overrides written to one transcript at once never persist each other's
+    unconfirmed value.
+    """
+    state: DashboardState = request.app["state"]
+    name = request.match_info["slot"]
+    slot = state._slots.get(name)
+    if not slot:
+        return web.json_response({"error": "not found", "code": "slot_not_found"}, status=404)
+    request_app = request.get("app", "")
+    denied = deny_app_slot_session_access(request_app, slot, name, "slot_turn_timeout")
+    if denied is not None:
+        return denied
+    if request.method == "GET":
+        return web.json_response(await _turn_timeout_payload(slot.turn_timeout_secs))
+    body, body_err = await read_bounded_json(request)
+    if body_err is not None:
+        return body_err
+    assert body is not None  # read_bounded_json returns (dict, None) on success
+    secs, refused = _turn_timeout_body_value(body)
+    if refused is not None:
+        return refused
+
+    def _gone() -> web.Response:
+        return web.json_response(
+            {"error": "session was deleted or rebound", "code": "session_gone"}, status=409
+        )
+
+    locked_history_key = slot_history_key(slot)
+    async with _autocompact_txn_lock(locked_history_key):
+        stale = _reauthorize_after_await(state, slot, name, request_app, "slot_turn_timeout")
+        if stale is not None:
+            return stale
+        authorized_history_key = slot_history_key(slot)
+        if authorized_history_key != locked_history_key:
+            return _gone()
+        prior = slot.turn_timeout_secs
+        slot.turn_timeout_secs = secs
+        if state.conversation_log:
+            mirrored: list = []
+
+            def _roll_back(*, dirty: bool) -> None:
+                for other, other_prior in mirrored:
+                    if slot_history_key(other) == authorized_history_key:
+                        other.turn_timeout_secs = other_prior
+                        other._dirty = True
+                slot.turn_timeout_secs = prior
+                if dirty:
+                    slot._dirty = True
+
+            for confirm in (False, True):
+                try:
+                    saved = await save_slot_off_loop(
+                        state,
+                        slot,
+                        force=True,
+                        best_effort=False,
+                        expected_history_key=authorized_history_key,
+                    )
+                except Exception:
+                    _roll_back(dirty=True)
+                    logger.exception("Slot %s turn_timeout_secs persist failed", name)
+                    return web.json_response(
+                        {"error": "could not persist turn time limit", "code": "persist_failed"},
+                        status=500,
+                    )
+                if not saved:
+                    _roll_back(dirty=False)
+                    return _gone()
+                if not confirm:
+                    # Alias slots on this transcript would write their stale
+                    # value back on their next flush; the second save re-orders
+                    # the durable record after any flush already queued.
+                    for other in list(state._slots.values()):
+                        if other is not slot and slot_history_key(other) == authorized_history_key:
+                            mirrored.append((other, other.turn_timeout_secs))
+                            other.turn_timeout_secs = secs
+        # The persist awaits are a rebind window: the field is this slot's live
+        # state, so a slot that now routes elsewhere must not keep the value.
+        stale = _reauthorize_after_await(state, slot, name, request_app, "slot_turn_timeout")
+        if stale is not None:
+            slot.turn_timeout_secs = prior
+            return stale
+        if slot_history_key(slot) != authorized_history_key:
+            slot.turn_timeout_secs = prior
+            return _gone()
+        committed = slot.turn_timeout_secs
+        logger.info("Slot %s turn_timeout_secs set to %r", name, committed)
+        return web.json_response({"ok": True, **await _turn_timeout_payload(committed)})
 
 
 async def api_chat_slots_model(request: web.Request) -> web.Response:

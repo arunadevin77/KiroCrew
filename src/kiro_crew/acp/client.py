@@ -315,6 +315,7 @@ from kiro_crew.security.credential_sources import tool_output_fingerprints
 from kiro_crew.sel import sel
 from kiro_crew.session_token_sig import schedule_session_token_publish
 from kiro_crew.skill_usage import get_global_skill_read_observer, names_skill_file
+from kiro_crew.turn_limit import current_turn_limit_secs
 from kiro_crew.user_json import loads_user_json
 
 logger = logging.getLogger(__name__)
@@ -1458,12 +1459,17 @@ def resolve_prompt_timeout() -> float:
 
     This ONE wait is shared by every prompt dispatch, so it bounds against the
     LARGEST such deadline rather than the turn ceiling alone.
-    ``agent.subagent_timeout_secs`` is the other one: a subagent's outer
+    ``agent.subagent_timeout_secs`` is one of them: a subagent's outer
     ``asyncio.wait_for`` runs on that value while its prompt runs on this wait,
     so a transport cut below it kills a healthy subagent early and reports a
     transport failure rather than the deadline the operator configured. ``0``
     there is the "use the default" sentinel, resolved the same way the manager
     resolves it.
+
+    The other is the limit of the chat turn this prompt runs in
+    (:func:`kiro_crew.turn_limit.current_turn_limit_secs`). A session can carry
+    its own turn time limit above the global one, and only the dispatch knows
+    it, so the dispatch publishes it for the turn and the wait follows it here.
 
     Never returns less than :data:`_DEFAULT_PROMPT_TIMEOUT`: a LOWERED turn
     ceiling is enforced by the dashboard's own deadline, and shrinking the
@@ -1473,16 +1479,17 @@ def resolve_prompt_timeout() -> float:
     Config is imported lazily: ``config.loader`` reaches this module through
     ``acp.session_handle``, so a module-level import would be a cycle.
     """
+    turn_limit = current_turn_limit_secs() or 0.0
     try:
         from kiro_crew.config.loader import KiroCrewConfig
         from kiro_crew.constants import SUBAGENT_TIMEOUT_SECS
 
         agent = KiroCrewConfig.load().agent
         subagent = float(agent.subagent_timeout_secs) or float(SUBAGENT_TIMEOUT_SECS)
-        configured = max(float(agent.chat_turn_timeout_secs), subagent)
+        configured = max(float(agent.chat_turn_timeout_secs), subagent, turn_limit)
     except Exception:
         logger.debug("turn-ceiling config unavailable; transport keeps default", exc_info=True)
-        return _DEFAULT_PROMPT_TIMEOUT
+        return prompt_timeout_for_ceiling(turn_limit)
     return prompt_timeout_for_ceiling(configured)
 
 
