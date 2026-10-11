@@ -1,26 +1,34 @@
 ---
 title: Crewmate dynamic dashboard -- a project report beside every crewmate's chat
-status: in-progress
+status: partial
 author: chenmingwei23, with kirocrew-lead
 created: 2026-10-03
-last-audited: 2026-10-03
-audited-at: f31e2f7091
-doc-pr: null
-implementation-prs: []
-tracking-issues: []
+last-audited: 2026-10-11
+audited-at: 22a7358cf9
+doc-pr: 19204
+implementation-prs: [17507, 17998, 18014, 18994]
+tracking-issues: [18642]
 supersedes: []
 superseded-by: []
 ---
 
 # RFC: Crewmate dynamic dashboard -- a project report beside every crewmate's chat
 
-- Status: in-progress. This document ships INSIDE its implementing pull
-  request: the repository takes no standalone RFC pull requests, so `doc-pr` is
-  null and the implementation is the one named in `implementation-prs`. The
-  First Principles lane reads an RFC's status off the **base** branch, so until
-  this document is on main it reads as absent to that lane; clearing the lane is
-  a maintainer's call (an override on the final head, or merging this document
-  first), not this pull request's.
+- Status: partial. P1's template contract, its instance store, the agentic write
+  path and the crewmate Dashboard tab are on main, under the pull requests named
+  in `implementation-prs`. P2 onward are open, and the agent-written page line is
+  in flight under
+  [issue #18642](https://github.com/kirodotdev/KiroCrew/issues/18642). This
+  document is itself on main now, as the pull request named in `doc-pr`, so the
+  First Principles lane -- which reads an RFC's status off the **base** branch --
+  reads it as a recorded decision rather than as absent. The earlier reading of
+  this bullet, that the repository takes no standalone RFC pull request and so
+  this document could only ship inside its implementation, no longer holds: the
+  amendment of 2026-10-11 below landed on its own.
+- Where this document and its amendment disagree, **the amendment holds**. The
+  one of 2026-10-11 at the end supersedes §Migration plan's P2 row and the three
+  passages that withheld an agent-written page until this gateway minted a
+  wrapper document around it.
 - Author: written up by the crew that implements it.
 - Created: 2026-10-03
 - Related:
@@ -636,3 +644,97 @@ meet first: no workstream, nothing waiting, nothing spent, and a line saying
 what will appear here once it has a goal. The accounting line is hidden rather
 than printed as a row of zeroes.
 
+## Amendment 2026-10-11 -- an agent-written page renders with no minted wrapper
+
+**This section records an accepted decision, not a proposal.** It was decided on
+2026-10-11 by this document's author for the dashboard line tracked in
+[issue #18642](https://github.com/kirodotdev/KiroCrew/issues/18642), and it
+lands on main on its own so that the decision is readable off a base branch
+rather than proposed inside each pull request that depends on it.
+
+It SUPERSEDES three passages above, each of which held an agent-written page
+behind a wrapper document this gateway mints with the frame's own navigation
+withheld: §Migration plan's **P2** row and its exit criterion, the
+"Only a page that shipped with the product can be staged" passage in §The agent
+surface for the page itself, and the "Only a `builtin` template may become a
+live dashboard" bullet of §Security considerations.
+The body above is left as written; where the two disagree, this section is what
+holds.
+
+### The decision
+
+A page the owner agent wrote renders in the dashboard frame **without a
+gateway-minted navigation-blocking wrapper**. The host loads the package's own
+`view.html` into the frame and fills the fields the page subscribed to. No
+wrapper document is minted around the authored markup, and no
+navigation-stripping rewrite is applied to it. A page an agent wrote is
+therefore renderable, which is what P2 refused.
+
+Four reasons, and the fourth carries a condition:
+
+1. **Only the owner agent writes the HTML.** The page is a file inside a
+   `kind="dashboard"` package the calling agent owns, resolved from the calling
+   session and never from an argument. No other agent, no sender and no reader
+   can put markup there. The author test P2 was built to enforce -- a directory
+   in this repository went through review, and a page an agent produced in the
+   turn before did not -- is answered by ownership rather than by a wrapper: the
+   page a crewmate renders is the page that crewmate's own owner agent wrote.
+2. **Pushed values are text-only, so crew-log content cannot inject code or a
+   URL.** Every value the controller pushes is a string, a number or a boolean,
+   type-checked against the model the package declares, redacted, and bounded in
+   size and nesting depth. A value is DATA the page reads; it is never markup,
+   never a script source and never a navigable target. So a crew-log entry a
+   third party influenced cannot become code or a host inside the page, which is
+   the exfiltration route a wrapper was supposed to close.
+3. **The frame holds only the `subscribed_fields` allowlist.** The push surface
+   is the set of field names the package's model declares and the page
+   subscribed to. A field the model does not declare has no path to the page at
+   all -- the save gate refuses the binding, and the controller resolves every
+   value through the manifest built from that same model. The frame carries no
+   fold reader, no other crewmate's slot, and no name a page can ask for that
+   the model did not already admit.
+4. **The owner agent can already reach the network with its own tools.** A
+   navigation-blocking wrapper exists to stop values leaving through a URL. The
+   agent that wrote the page is the same agent that holds the values and already
+   has network tools of its own, so the wrapper withholds from the page a
+   capability its author has outside it. It buys no confidentiality against that
+   author; it only makes charts, which are script or nothing, unbuildable.
+
+### The admin-ceiling condition
+
+Reason 4 holds only while the owner agent really has network access. When an
+**admin ceiling DENIES the agent network access**, reason 4 fails: the wrapper
+would then be withholding a capability the author does not have, and a page that
+runs script would hand it one.
+
+Under such a ceiling the host renders the agent-written `view.html` **without
+`allow-scripts`**. The page is static, its subscribed fields are still filled by
+the host, and the document gains no new egress path. Everything else about the
+render is unchanged: the same file, the same frame, the same fields, the same
+ownership resolution. A page whose drawing needs script degrades to its static
+markup under that ceiling rather than being refused, because the reader's answer
+is in the fields and a refusal would show them nothing.
+
+### Ownership, and the flow a change goes through
+
+The reasons above rest on the page having exactly one author, so the write path
+is part of the decision rather than a detail beside it:
+
+- **Only the owner agent may write a value into the page or change its HTML.**
+  Both are resolved from the calling session's own ownership of the package, not
+  from an argument.
+- **The path is stage -> preview -> a person approves -> apply.** A write that
+  changes the page stages it and shows it; it does not take effect on write. The
+  person who reads the page is the one who approves the page they read, which is
+  what `dashboard_preview` and `dashboard_apply` already separate: a preview
+  records nothing, and apply installs the page that was STAGED, so what lands is
+  provably the page the person looked at.
+- **The controller pushes values only AFTER apply.** A staged page is never fed,
+  so a page nobody approved never receives a value.
+
+This is also the resolution of the preview-gate question raised against the
+save-side pull request: a save-style write is held behind preview-ask-apply
+rather than taking effect immediately, and a save-time lint on a hard-coded
+number WARNS rather than refuses. Keep this text when that work lands -- the
+flow is the premise the wrapper exemption above was granted on, so removing the
+gate would reopen the decision rather than simplify it.
