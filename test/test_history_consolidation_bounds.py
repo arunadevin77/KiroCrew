@@ -13,6 +13,7 @@ alike. These tests pin the split, the separator accounting, the oversized-messag
 case, and that no offset ever advances past what a model actually read.
 """
 
+import asyncio
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -300,8 +301,13 @@ class TestTheBudgetIsNotABehaviourChangeForOrdinarySessions:
         assert log.consolidation_retry_state(KEY) == (0, 0.0)
         c._last_activity[KEY] = time.time() - 10
         c._tasks.clear()
-        c.check_idle_sessions()
-        assert not c._tasks
+        # The sweep counts off the loop, so the count is drained before the
+        # check that nothing was consolidated.
+        with patch.object(c, "_consolidate", AsyncMock()) as again:
+            c.check_idle_sessions()
+            while c._tasks:
+                await asyncio.gather(*list(c._tasks))
+        again.assert_not_awaited()
 
 
 class TestABoundedAttemptIsNotReleasedByGrowth:

@@ -13,6 +13,7 @@ import asyncio
 import errno
 import json
 import os
+import threading
 import time
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -355,21 +356,27 @@ async def _sweep(
 ) -> tuple[list[str], AsyncMock]:
     """One idle sweep with ``_consolidate`` stubbed; returns the keys whose transcript it read.
 
-    *after_read* runs right after each read, as a writer in another thread would.
+    The sweep's read is the off-loop count (``_count_rows``, in a worker thread). A
+    turn's own count still in flight defers the idle count to the next sweep, so the
+    counts ``_live``'s turns started are drained first. *after_read* runs right after
+    each read, in the worker thread, as a writer in another thread would.
     """
+    await asyncio.wait_for(
+        asyncio.gather(*list(consolidator._tasks), return_exceptions=True), timeout=30
+    )
     reads: list[str] = []
-    counts = log.consolidation_counts
+    counts = consolidator._count_rows
 
-    def counting(key: str) -> tuple[int, int]:
+    def counting(key: str, floor: int | None) -> object:
         reads.append(key)
-        found = counts(key)
+        found = counts(key, floor)
         if after_read is not None:
             after_read(key)
         return found
 
     fake = AsyncMock(return_value=None)
     with (
-        patch.object(log, "consolidation_counts", counting),
+        patch.object(consolidator, "_count_rows", counting),
         patch.object(consolidator, "_consolidate", fake),
     ):
         consolidator.check_idle_sessions()
@@ -477,11 +484,17 @@ async def test_an_idle_session_with_rows_left_stays_tracked(tmp_path):
     log, consolidator = _live(tmp_path, [key], consolidated=False)
 
     first, fake = await _sweep(consolidator, log)  # the stub leaves its rows unconsolidated
-    second, _ = await _sweep(consolidator, log)
-
+    second, _ = await _sweep(consolidator, log)  # inside the pass's idle window: not counted
     fake.assert_awaited_once_with(key, include_history=True)
-    assert first == [key] and second == [key]
-    assert key in consolidator._last_activity
+    assert first == [key] and second == []
+    assert key in consolidator._last_activity and key not in consolidator._idle_clean
+
+    consolidator._running.discard(key)  # the real ``_consolidate`` releases it; the stub does not
+    consolidator._history_consolidated[key] = 0.0  # the idle window has passed
+    third, again = await _sweep(consolidator, log)
+
+    assert third == [key]  # rows left: never stamped clean, so counted again
+    again.assert_awaited_once_with(key, include_history=True)
 
 
 _IDLE_RECORDS = ("_last_activity", "_seeded_keys", "_history_consolidated", "_idle_clean")
@@ -535,28 +548,87 @@ async def test_a_deleted_session_is_forgotten_once_its_pass_has_ended(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_deleted_session_is_forgotten_once_its_count_has_ended(tmp_path):
+    """An off-loop count still running for the session records its clean stamp when it ends,
+    so the records go after the count, never before it: a forget under the count would be
+    undone by the count's own write and leave a stamp for a key no sweep visits again."""
+    key = "dashboard:chat-counting"
+    log, consolidator = _live(tmp_path, [key], consolidated=True)
+    await asyncio.wait_for(
+        asyncio.gather(*list(consolidator._tasks), return_exceptions=True), timeout=30
+    )
+    entered, release = threading.Event(), threading.Event()
+    counts = consolidator._count_rows
+
+    def held(k: str, floor: int | None) -> object:
+        found = counts(k, floor)  # the thread has read the transcript ...
+        entered.set()
+        assert release.wait(timeout=30)  # ... and returns only after the delete
+        return found
+
+    with patch.object(consolidator, "_count_rows", held):
+        consolidator.check_idle_sessions()  # starts the idle count, held in its thread
+        try:
+            assert await asyncio.to_thread(entered.wait, 30)
+            stamp = consolidator._transcript_stamp(key)
+            _delete(log, key)
+            consolidator.check_idle_sessions()  # the transcript is gone, the count still runs
+            assert key in consolidator._last_activity
+        finally:
+            release.set()
+        await asyncio.wait_for(
+            asyncio.gather(*list(consolidator._tasks), return_exceptions=True), timeout=30
+        )
+    assert consolidator._idle_clean.get(key) == stamp  # the count recorded its result
+
+    await _sweep(consolidator, log)
+
+    for name in _IDLE_RECORDS:
+        assert key not in getattr(consolidator, name), name
+
+
+@pytest.mark.asyncio
 async def test_a_transcript_that_cannot_be_statted_is_not_a_deleted_one(tmp_path):
     """Only an absent file means the session is gone. A stat that fails otherwise (permissions,
     a stale mount) keeps the key tracked and falls back to reading it."""
     key = "dashboard:chat-denied"
     log, consolidator = _live(tmp_path, [key], consolidated=True)
     await _sweep(consolidator, log)
-    path = log._path(key)
-    real_stat = type(path).stat
+    assert key in consolidator._idle_clean
 
-    def denied(self, *args, **kwargs):
-        if self.name == path.name:
-            raise PermissionError(errno.EACCES, "Permission denied", str(self))
-        return real_stat(self, *args, **kwargs)
+    def denied(stat_result: os.stat_result) -> object:
+        # The stamp's stat fails inside ``_transcript_stamp``; the off-loop count still
+        # reads the file, so only the stamp is denied here.
+        raise PermissionError(errno.EACCES, "Permission denied")
 
-    with (
-        patch.object(type(path), "stat", denied),
-        patch.object(log, "consolidation_counts", return_value=(3, 0)) as counts,
-    ):
-        consolidator.check_idle_sessions()
+    with patch.object(log, "_cache_identity", denied):
+        reads, _ = await _sweep(consolidator, log)
 
-    counts.assert_called_once_with(key)  # read: not skipped on the old stamp, not forgotten
+    assert reads == [key]  # read: not skipped on the old stamp, not forgotten
     assert key in consolidator._last_activity
+
+
+@pytest.mark.asyncio
+async def test_a_count_that_reads_nothing_leaves_no_clean_stamp(tmp_path):
+    """Only a count that found nothing left stamps the key. A count that failed (or was
+    refused by the retry deadline) proved nothing, so the next sweep counts again."""
+    key = "dashboard:chat-unread"
+    log, consolidator = _live(tmp_path, [key], consolidated=True)
+    await asyncio.wait_for(
+        asyncio.gather(*list(consolidator._tasks), return_exceptions=True), timeout=30
+    )
+
+    with patch.object(consolidator, "_count_rows", side_effect=OSError(errno.EIO, "I/O error")):
+        consolidator.check_idle_sessions()
+        await asyncio.wait_for(
+            asyncio.gather(*list(consolidator._tasks), return_exceptions=True), timeout=30
+        )
+    assert key not in consolidator._idle_clean
+
+    reads, _ = await _sweep(consolidator, log)
+
+    assert reads == [key]
+    assert key in consolidator._idle_clean  # this count found nothing left
 
 
 @pytest.mark.asyncio

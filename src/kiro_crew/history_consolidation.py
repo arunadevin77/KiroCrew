@@ -1016,6 +1016,16 @@ def _session_touched_sensitive(messages: list[dict]) -> bool:
     return False
 
 
+class _CountClaim:
+    """One transcript's off-loop row count, held from claim until its thread is done."""
+
+    __slots__ = ("name", "reader")
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.reader: asyncio.Future[tuple[int, int] | None] | None = None
+
+
 class HistoryConsolidator:
     """Summarize old messages into structured memory via LLM.
 
@@ -1073,6 +1083,10 @@ class HistoryConsolidator:
         self._last_lifecycle: float = 0.0
         self._running: set[str] = set()
         self._tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
+        # Transcript files whose rows are being counted off the loop, keyed by
+        # file name like _busy so alias spellings of one transcript share one
+        # claim. See _claim_count and _release_count.
+        self._counting: dict[str, _CountClaim] = {}
         # Called as ``on_abandoned(key, message_count, reason, char_count=0,
         # last_slice=False, retired=False)`` when a span is abandoned, so the
         # owner can tell the user. ``message_count`` is the whole messages
@@ -1190,6 +1204,17 @@ class HistoryConsolidator:
         if attempts >= _CONSOLIDATION_MAX_ATTEMPTS:
             return False
         return (_time.time() if now is None else now) >= retry_at
+
+    def _inside_retry_deadline(self, key: str, now: float | None = None) -> bool:
+        """True while *key*'s backoff deadline is still ahead: one metadata read.
+
+        The scheduling short-circuit the turn check, the idle sweep and the
+        worker-thread count share before any count runs. It reads only the
+        deadline, which survives a new span (the cap may not), so it never
+        refuses a key that :meth:`retry_eligible` with the counted total would
+        admit. The gate inside ``_consolidate`` remains the enforcement.
+        """
+        return (_time.time() if now is None else now) < self._log.consolidation_retry_state(key)[1]
 
     async def _advance_history_marker(self, key: str, span: AttemptedSpan) -> None:
         """Make durable the progress a finished history span represents.
@@ -1472,45 +1497,186 @@ class HistoryConsolidator:
                 self._seeded_keys.add(key)
 
     def maybe_consolidate(self, key: str) -> None:
-        """Fire preferences/projects consolidation if message threshold exceeded."""
+        """Fire preferences/projects consolidation if message threshold exceeded.
+
+        Called on the event loop after every completed turn, so it never reads
+        the transcript itself: the turn that just ended moved the file, the
+        message cache misses, and counting rows there would parse the whole
+        file on the loop. The count runs in a worker thread through
+        :meth:`_count_off_loop`, one at a time per transcript. A turn that ends
+        while a count is in flight starts nothing: the next turn's count
+        includes its rows, and the idle and session-end passes extract
+        preferences and projects from the same tail.
+        """
         self._last_activity[key] = _time.time()
         self._seeded_keys.discard(key)  # a key with live activity is not a restored seed
         if _persistence_disabled():
             return
         if self._busy(key):
             return
-        total = len(self._log._read_messages(key))
-        prefs_off = self._prefs_offset.get(key, 0)
-        if total - prefs_off < _CONSOLIDATION_THRESHOLD:
+        # A key inside its retry deadline would be refused after the count, so
+        # it schedules nothing: one metadata read on the loop, as the idle sweep
+        # does. _count_rows repeats the check for a deadline armed meanwhile.
+        if self._inside_retry_deadline(key):
             return
-        # Cheap pre-check mirroring the other automatic entry points. This
-        # runs on every user turn, so during a backoff window every message
-        # past the threshold would otherwise schedule a task whose snapshot
-        # takes the per-file lock (the same one appends contend on) and reads
-        # the transcript, only to be refused by the gate inside _consolidate().
-        # retry_eligible costs one metadata-line read and no transcript read;
-        # the inner gate remains the enforcement backstop.
-        if not self.retry_eligible(key, message_count=total):
+        claim = self._claim_count(key)
+        if claim is not None:
+            self._start_counted(claim, self._threshold_pass(key, claim))
+
+    async def _threshold_pass(self, key: str, claim: _CountClaim) -> None:
+        """Count *key*'s rows off the loop, then run a prefs pass at the threshold."""
+        try:
+            counted = await self._count_off_loop(key, claim, floor=self._prefs_offset.get(key, 0))
+            if counted is None:
+                return
+            total = counted[0]
+            # Re-checked after the await: an idle or session-end pass may have
+            # claimed this transcript, or finished one, while the count ran.
+            if self._busy(key):
+                return
+            if total - self._prefs_offset.get(key, 0) < _CONSOLIDATION_THRESHOLD:
+                return
+            # Cheap pre-check mirroring the other automatic entry points. During
+            # a backoff window every message past the threshold would otherwise
+            # start a pass whose snapshot takes the per-file lock (the same one
+            # appends contend on) and reads the transcript, only to be refused by
+            # the gate inside _consolidate(). retry_eligible costs one
+            # metadata-line read and no transcript read; the inner gate remains
+            # the enforcement backstop.
+            if not self.retry_eligible(key, message_count=total):
+                return
+            # No await between the busy check above and this claim.
+            self._running.add(key)
+        finally:
+            self._release_count(claim)
+        try:
+            result = await self._consolidate(key, include_history=False)
+        except Exception:
+            # _consolidate has already logged it and released its claim; a
+            # failed pass leaves the offset alone so the window is retried.
             return
-        self._running.add(key)
-        t = asyncio.create_task(self._consolidate(key, include_history=False))
+        # A refusal ran no pass over the window. Advancing the offset anyway
+        # would mark the window consolidated, so once the backoff expires the
+        # threshold test skips it until a whole new threshold of messages
+        # accumulates — silently dropping its preference/project extraction.
+        # A cancellation propagates and leaves the offset alone too.
+        if result is not _CONSOLIDATION_REFUSED:
+            self._prefs_offset[key] = total
+
+    def _claim_count(self, key: str) -> _CountClaim | None:
+        """Claim *key*'s transcript for one off-loop count; None when one is in flight."""
+        name = self._log._path(key).name
+        if name in self._counting:
+            return None
+        claim = self._counting[name] = _CountClaim(name)
+        return claim
+
+    def _start_counted(self, claim: _CountClaim, work: Awaitable[None]) -> None:
+        """Run *work*, which owns *claim*, as a tracked task."""
+        t = asyncio.ensure_future(work)
         self._tasks.add(t)
+        t.add_done_callback(self._tasks.discard)
+        # A task cancelled before its first step never reaches its own release.
+        t.add_done_callback(lambda _t: self._release_count(claim))
 
-        def _on_done(fut: asyncio.Task, k: str = key, off: int = total) -> None:  # type: ignore[type-arg]
-            self._tasks.discard(fut)
+    def _release_count(self, claim: _CountClaim) -> None:
+        """Drop *claim* now, or once its worker thread stops reading.
+
+        A cancelled caller cannot stop the thread, so the claim stays until the
+        thread is done; otherwise the next turn would start a second read of the
+        same file beside it. Compared by identity, so a late release never drops
+        a newer claim on the same transcript.
+        """
+        if self._counting.get(claim.name) is not claim:
+            return
+        if claim.reader is not None and not claim.reader.done():
+            claim.reader.add_done_callback(lambda _f: self._release_count(claim))
+            return
+        del self._counting[claim.name]
+
+    async def _count_off_loop(
+        self, key: str, claim: _CountClaim, *, floor: int | None
+    ) -> tuple[int, int] | None:
+        """``(total, total - floor)`` for *key*, counted in a worker thread.
+
+        The one row count the per-turn check and the idle sweep share. It runs
+        in a worker thread, shielded: cancelling the caller leaves the thread
+        to finish, and *claim* covers it until then. *floor* None means the
+        transcript's consolidated offset. None means nothing was counted: the
+        key is inside its retry deadline, or the read failed (logged as a
+        warning), so the check is skipped.
+        """
+        claim.reader = asyncio.ensure_future(asyncio.to_thread(self._count_rows, key, floor))
+        try:
+            return await asyncio.shield(claim.reader)
+        except Exception:
+            self._logger.warning(
+                "Could not count messages for %s; skipping this check", key, exc_info=True
+            )
+            return None
+
+    def _count_rows(self, key: str, floor: int | None) -> tuple[int, int] | None:
+        """Worker thread: count *key*'s rows one line at a time.
+
+        A key inside its retry deadline is refused by ``retry_eligible`` after
+        the count anyway, so it is not counted. Both callers skip such a key on
+        the loop first; this repeats the check for a deadline armed after that
+        and before the thread ran. The count is
+        ``ConversationLog._count_messages``, the streaming count that shares
+        ``message_row`` with the full read, so it materializes nothing and
+        holds the GIL for one line at a time. It never takes the per-file
+        writer lock, so an event-loop writer never waits out the count.
+        """
+        if self._inside_retry_deadline(key):
+            return None
+        if floor is None:
+            floor = self._log.consolidated_offset(key)
+        total = self._log._count_messages(key, hold_writer_lock=False)
+        return total, max(0, total - floor)
+
+    async def _idle_pass(
+        self, key: str, claim: _CountClaim, now: float, stamp: tuple[CacheIdentity, int] | None
+    ) -> None:
+        """Count an idle *key* off the loop, then run its history pass if one is due.
+
+        *stamp* is the transcript stamp taken before the count. A count that finds
+        nothing left records it, so later sweeps skip the key until a row moves
+        it. A count that finds rows drops it. A skipped count (retry deadline,
+        failed read) records nothing, so the next sweep counts again.
+        """
+        try:
+            counted = await self._count_off_loop(key, claim, floor=None)
+            if counted is None:
+                return
+            total, unconsolidated = counted
+            if stamp is not None:
+                if unconsolidated < 1:
+                    self._idle_clean[key] = stamp
+                else:
+                    self._idle_clean.pop(key, None)
             if (
-                not fut.cancelled()
-                and fut.exception() is None
-                # A refusal ran no pass over the window. Advancing the offset
-                # anyway would mark the window consolidated, so once the
-                # backoff expires the threshold test skips it until a whole new
-                # threshold of messages accumulates — silently dropping its
-                # preference/project extraction.
-                and fut.result() is not _CONSOLIDATION_REFUSED
+                unconsolidated < 1
+                or now - self._history_consolidated.get(key, 0) < self._history_idle_secs
+                or self._busy(key)
+                # Durable backoff with the counted total, so a span that grew
+                # past its charged extent gets its fresh budget. The in-memory
+                # throttle is set only when a pass ends without an exception and
+                # is lost on restart, so it alone cannot stop a repeatedly
+                # failing span from re-billing an LLM turn every tick.
+                or not self.retry_eligible(key, now, message_count=total)
             ):
-                self._prefs_offset[k] = off
-
-        t.add_done_callback(_on_done)
+                return
+            self._running.add(key)
+        finally:
+            self._release_count(claim)
+        try:
+            result = await self._consolidate(key, include_history=True)
+        except Exception:
+            return  # logged by _consolidate; no throttle, so the next sweep retries
+        # A refusal is not a completed pass; setting the throttle for it would
+        # delay the retry past the backoff deadline.
+        if result is not _CONSOLIDATION_REFUSED:
+            self._history_consolidated[key] = now
 
     def check_idle_sessions(self) -> None:
         """Check all tracked sessions for idle-based history consolidation."""
@@ -1532,44 +1698,38 @@ class HistoryConsolidator:
                 seeded_budget -= 1
                 # Re-queue at the end so a seed that keeps being skipped cannot starve the rest.
                 self._last_activity[key] = self._last_activity.pop(key)
-            # A seed's transcript may be cold and large, so it is never read here on the
-            # loop: ``_consolidate`` snapshots it off the loop and enforces the backoff.
-            #
-            # A key whose last read found nothing left is skipped while its transcript's
+            # A key whose last count found nothing left is skipped while its transcript's
             # stamp is unchanged, so a finished session costs a stat, not a read, per
-            # sweep. The stamp is taken before the read, so a row that lands in between
-            # makes the next sweep read again. The key stays tracked: turns that skip
-            # ``maybe_consolidate`` (monitor wakes, recoveries, cancelled turns) and other
-            # processes append rows too, and the stamp sees all of them. A key whose
-            # transcript is gone was deleted: it is forgotten once no pass for it is
-            # running, because a running pass records its throttle when it ends.
+            # sweep. The stamp is taken here, before the off-loop count, so a row that
+            # lands in between makes the next sweep count again. The key stays tracked:
+            # turns that skip ``maybe_consolidate`` (monitor wakes, recoveries, cancelled
+            # turns) and other processes append rows too, and the stamp sees all of them.
+            # A key whose transcript is gone was deleted: it is forgotten once no pass
+            # and no off-loop count for it is running, because each records its result
+            # for the key when it ends.
             try:
                 stamp = None if seeded else self._transcript_stamp(key)
             except FileNotFoundError:
-                if not self._busy(key):
+                if not self._busy(key) and self._log._path(key).name not in self._counting:
                     self._forget_key(key)
                 continue
             if stamp is not None and self._idle_clean.get(key) == stamp:
                 continue
-            total, unconsolidated = (0, 1) if seeded else self._log.consolidation_counts(key)
-            if stamp is not None:
-                if unconsolidated < 1:
-                    self._idle_clean[key] = stamp
-                else:
-                    self._idle_clean.pop(key, None)
-            if (
-                unconsolidated < 1
-                or now - self._history_consolidated.get(key, 0) < self._history_idle_secs
-                or self._busy(key)
-                # Durable backoff, checked last so it only costs a metadata read
-                # once the cheap conditions pass. The in-memory throttle above is
-                # set only when the task ends without an exception and is lost on
-                # restart, so it alone cannot stop a repeatedly failing span from
-                # re-billing an LLM turn every tick. *total* comes from the read
-                # above, so the check adds no transcript read on the loop.
-                or (not seeded and not self.retry_eligible(key, now, message_count=total))
-            ):
+            throttled = now - self._history_consolidated.get(key, 0) < self._history_idle_secs
+            if throttled or self._busy(key):
                 continue
+            if not seeded:
+                # Never counted here on the loop: _idle_pass counts off the loop
+                # and re-checks all of this. A key still inside its retry
+                # deadline is skipped first, for one metadata read.
+                if self._inside_retry_deadline(key, now):
+                    continue
+                claim = self._claim_count(key)
+                if claim is not None:
+                    self._start_counted(claim, self._idle_pass(key, claim, now, stamp))
+                continue
+            # A seed's transcript may be cold and large, so it is never read here:
+            # ``_consolidate`` snapshots it off the loop and enforces the backoff.
             self._running.add(key)
             captured_now = now
             t = asyncio.create_task(self._consolidate(key, include_history=True))

@@ -3444,12 +3444,15 @@ class ConversationLog:
         hit instead of a full stream of the file per tick.
         """
         total = len(self._read_messages(key))
+        return total, max(0, total - self.consolidated_offset(key))
+
+    def consolidated_offset(self, key: str) -> int:
+        """Rows already consolidated, from the metadata line; 0 when unreadable."""
         offset = self._read_metadata(key).get("last_consolidated", 0)
         try:
-            offset = int(offset or 0)
+            return int(offset or 0)
         except (TypeError, ValueError, OverflowError):
-            offset = 0
-        return total, max(0, total - offset)
+            return 0
 
     def consolidation_retry_state(
         self, key: str, message_count: int | None = None
@@ -4032,8 +4035,8 @@ class ConversationLog:
     def _read_messages(self, key: str) -> list[dict]:
         return self._read_projection._read_messages(key)
 
-    def _count_messages(self, key: str) -> int:
-        return self._read_projection._count_messages(key)
+    def _count_messages(self, key: str, *, hold_writer_lock: bool = True) -> int:
+        return self._read_projection._count_messages(key, hold_writer_lock=hold_writer_lock)
 
     @contextlib.contextmanager
     def _cache_fill_lock(self, key: str) -> Iterator[bool]:

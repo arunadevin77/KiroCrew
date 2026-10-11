@@ -1772,6 +1772,51 @@ V1 store and a private V2 member store write structured records only (see
 `_fmt_message`, which replaces image references with the stripped-image marker, so
 the extraction turn carries text and no image data.
 
+**Row counts off the loop.** `maybe_consolidate(key)` runs on the event loop
+after every completed dashboard, Slack and task-runner turn, and
+`check_idle_sessions()` on every sweep. Neither reads the transcript there: the
+turn that just ended moved the file, so the message cache misses and a count on
+the loop would read and decode the whole transcript. Both go through one counter,
+`HistoryConsolidator._count_off_loop`, which runs in a worker thread
+(`asyncio.to_thread`):
+
+1. A key inside its retry deadline is not counted: `retry_eligible` would
+   refuse its pass anyway. This is what stops a backed-off chat counting every
+   turn after a restart, when `_prefs_offset` starts again at 0. Both callers
+   check the deadline on the loop first (one metadata read) and schedule no task
+   for such a key; the worker thread checks again for a deadline armed between
+   that check and the count.
+2. Otherwise `ConversationLog._count_messages(key, hold_writer_lock=False)` gives
+   the exact count. It streams the file one line at a time through
+   `transcript_count.count_messages`, which shares `message_row` with
+   `_read_messages_locked`, so the count and the full read cannot disagree and
+   rows other processes appended are counted too. It materializes no row list and
+   fills no cache. It never takes the per-file writer lock, because an on-loop
+   `_locked` caller acquires that lock blocking and would otherwise wait out the
+   whole count.
+
+`_read_messages_locked`, which every `_read_messages` caller shares (the
+consolidation pass's off-loop snapshot among them), reads one
+`_TRANSCRIPT_READ_CHUNK` (1 MiB) at a time and splits lines across chunks into
+the same pieces a whole-file `splitlines()` gives. A single whole-file `read()`
+or `splitlines()` holds the GIL for the whole file, so it froze the loop even
+from a worker thread (0.67 s on a 400 MB transcript).
+
+One count runs per transcript file at a time, claimed by file name like `_busy`,
+so two spellings of one key share the claim. The thread future is shielded: a
+cancelled caller cannot stop the read, so the claim is kept until the thread
+finishes. A turn that ends while a count runs starts nothing, because the next
+turn's count includes its rows and the idle and session-end passes extract from
+the same tail. After the count, the busy check is repeated (an idle or
+session-end pass may have claimed the transcript meanwhile), then the
+`retry_eligible` check with the counted total, and the pass runs inside the same
+task. The idle sweep schedules a count only for a key past its throttle, not busy
+and outside its retry deadline, so a key in backoff costs one metadata read and no
+count. `_prefs_offset` advances to the counted total only when the prefs pass
+completes without a refusal, raise or cancellation, and the idle throttle is set
+only when the history pass completes without one. A pass that raises has already
+logged it. A count that fails to read logs a warning and skips that check.
+
 The two `*_update` values replace the whole file, so each is gated by
 `_is_plausible_memory_file()` before writing: a value that does not start with
 the file's mandated markdown header (`# User Preferences` / `# Active

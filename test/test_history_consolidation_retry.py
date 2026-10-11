@@ -1122,8 +1122,13 @@ class TestAttemptCap:
         assert log.consolidation_retry_state(KEY) == (0, 0.0)
         c._last_activity[KEY] = time.time() - 10
         c._tasks.clear()
-        c.check_idle_sessions()
-        assert not c._tasks
+        # The sweep counts off the loop, so the count is drained before the
+        # check that nothing was consolidated.
+        with patch.object(c, "_consolidate", AsyncMock()) as again:
+            c.check_idle_sessions()
+            while c._tasks:
+                await asyncio.gather(*list(c._tasks))
+        again.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_cap_without_a_marker_write_stays_ineligible(self, tmp_path):
@@ -2661,20 +2666,22 @@ class TestConsolidateIsTheEligibilityChokePoint:
         """A caller whose pre-check misses — a future entry point without one,
         or a pre-check that raced the backoff being recorded — still cannot
         bill the span: the gate inside _consolidate is the enforcement, the
-        pre-checks are scheduling short-circuits. The first retry_eligible
-        answer (the pre-check) lies True; the second (the inner gate) tells
-        the truth."""
+        pre-checks are scheduling short-circuits. The deadline short-circuit
+        is bypassed and the first retry_eligible answer (the pre-check) lies
+        True; the second (the inner gate) tells the truth."""
         log = _seed_log(tmp_path, count=history_mod._CONSOLIDATION_THRESHOLD)
         c = _make_consolidator(log)
         self._arm_backoff(log)
 
         with (
             patch.object(c, "_call_llm", new_callable=AsyncMock) as spy,
-            patch.object(c, "retry_eligible", side_effect=[True, False]),
+            patch.object(c, "retry_eligible", side_effect=[True, False]) as eligible,
+            patch.object(c, "_inside_retry_deadline", return_value=False),
         ):
             c.maybe_consolidate(KEY)
             assert c._tasks, "premise broken: the bypassed pre-check did not schedule"
             await asyncio.gather(*list(c._tasks), return_exceptions=True)
+        assert eligible.call_count == 2, "premise broken: the inner gate was never reached"
 
         spy.assert_not_awaited()
         assert KEY not in c._running, "the refusal leaked the running claim"
@@ -2684,8 +2691,8 @@ class TestConsolidateIsTheEligibilityChokePoint:
     async def test_a_refusal_does_not_strand_the_key_in_running(self, tmp_path):
         """Callers add the key to _running before the task and rely on
         done-callbacks to release it; a refusal path that skipped the release
-        would wedge consolidation for the session permanently. The pre-check
-        is bypassed (first retry_eligible answer lies True) so the inner
+        would wedge consolidation for the session permanently. The pre-checks
+        are bypassed (no deadline, first retry_eligible answer lies True) so the inner
         gate's refusal path actually runs."""
         log = _seed_log(tmp_path, count=history_mod._CONSOLIDATION_THRESHOLD)
         c = _make_consolidator(log)
@@ -2693,11 +2700,13 @@ class TestConsolidateIsTheEligibilityChokePoint:
 
         with (
             patch.object(c, "_call_llm", new_callable=AsyncMock),
-            patch.object(c, "retry_eligible", side_effect=[True, False]),
+            patch.object(c, "retry_eligible", side_effect=[True, False]) as eligible,
+            patch.object(c, "_inside_retry_deadline", return_value=False),
         ):
             c.maybe_consolidate(KEY)
             assert c._tasks, "premise broken: the bypassed pre-check did not schedule"
             await asyncio.gather(*list(c._tasks), return_exceptions=True)
+        assert eligible.call_count == 2, "premise broken: the inner gate was never reached"
 
         assert KEY not in c._running, "the refusal leaked the running claim"
 
@@ -2731,8 +2740,8 @@ class TestConsolidateIsTheEligibilityChokePoint:
         """Advancing the offset on a refusal marks the window consolidated with
         no pass run — once the backoff expires the threshold test would skip it
         until a whole new threshold of messages accumulates, silently dropping
-        its preference/project extraction. The pre-check is bypassed (first
-        retry_eligible answer lies True) so the inner gate's refusal path
+        its preference/project extraction. The pre-checks are bypassed (no
+        deadline, first retry_eligible answer lies True) so the inner gate's refusal path
         actually runs."""
         log = _seed_log(tmp_path, count=history_mod._CONSOLIDATION_THRESHOLD)
         c = _make_consolidator(log)
@@ -2740,11 +2749,13 @@ class TestConsolidateIsTheEligibilityChokePoint:
 
         with (
             patch.object(c, "_call_llm", new_callable=AsyncMock) as spy,
-            patch.object(c, "retry_eligible", side_effect=[True, False]),
+            patch.object(c, "retry_eligible", side_effect=[True, False]) as eligible,
+            patch.object(c, "_inside_retry_deadline", return_value=False),
         ):
             c.maybe_consolidate(KEY)
             assert c._tasks, "premise broken: the bypassed pre-check did not schedule"
             await asyncio.gather(*list(c._tasks), return_exceptions=True)
+        assert eligible.call_count == 2, "premise broken: the inner gate was never reached"
 
         spy.assert_not_awaited()
         assert KEY not in c._prefs_offset, "a refused pass advanced the prefs offset"
