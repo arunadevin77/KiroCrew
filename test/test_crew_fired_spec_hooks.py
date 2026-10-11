@@ -20,7 +20,15 @@ import kiro_crew.config.paths as paths_mod
 import kiro_crew.hooks as hooks_mod
 from kiro_crew.acp.kas_permissions import kas_tool_match_names
 from kiro_crew.agent_sdk import spec_hooks
-from kiro_crew.agent_sdk.backends import ACP_BACKEND_KAS, ACP_BACKEND_KIRO
+from kiro_crew.agent_sdk.backends import (
+    ACP_BACKEND_CLAUDE,
+    ACP_BACKEND_CODEX,
+    ACP_BACKEND_GOOSE,
+    ACP_BACKEND_KAS,
+    ACP_BACKEND_KIRO,
+    ACP_BACKEND_OPENCODE,
+    ACP_BACKEND_PI,
+)
 from kiro_crew.agent_sdk.capabilities import capabilities_for
 from kiro_crew.dashboard import chat_runner
 from kiro_crew.hooks import (
@@ -113,6 +121,53 @@ def test_tools_settings_notice_fires_once_per_session(agents_dir, notices):
     assert len(notices) == 1
     assert "toolsSettings" in notices[0]
     assert "hooks" not in notices[0]
+
+
+_PROMPT_AND_STOP_HOOKS = {
+    "stop": [{"command": "done.sh"}],
+    "userPromptSubmit": [{"command": "stamp.sh"}],
+}
+_RUN_NOWHERE = "does not run an agent's hooks"
+
+
+@pytest.mark.parametrize("backend", [ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX])
+def test_a_new_session_where_nothing_runs_spec_hooks_names_their_events(
+    backend, agents_dir, notices
+):
+    _write_spec(agents_dir, "a1", hooks=_PROMPT_AND_STOP_HOOKS)
+    assert _prepare(_client(backend), "a1", is_new=True) == ([], False, None)
+    assert len(notices) == 1
+    assert _RUN_NOWHERE in notices[0]
+    assert "a1 has hooks on userPromptSubmit, stop." in notices[0]
+
+
+@pytest.mark.parametrize("backend", [ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX])
+def test_the_run_nowhere_notice_needs_a_new_session_and_a_spec_with_hooks(
+    backend, agents_dir, notices
+):
+    _write_spec(agents_dir, "a1", hooks=_PROMPT_AND_STOP_HOOKS)
+    _write_spec(agents_dir, "plain")
+    _prepare(_client(backend), "a1", is_new=False)
+    _prepare(_client(backend), "plain", is_new=True)
+    assert notices == []
+
+
+@pytest.mark.parametrize(
+    "backend",
+    [ACP_BACKEND_KIRO, ACP_BACKEND_KAS, ACP_BACKEND_GOOSE, ACP_BACKEND_OPENCODE, ACP_BACKEND_PI],
+)
+def test_no_run_nowhere_notice_where_spec_hooks_run_or_nothing_is_ruled(
+    backend, agents_dir, notices
+):
+    _write_spec(agents_dir, "a1", hooks=_PROMPT_AND_STOP_HOOKS)
+    _prepare(_client(backend), "a1", is_new=True)
+    assert not any(_RUN_NOWHERE in text for text in notices)
+
+
+def test_an_unreadable_spec_renders_no_run_nowhere_notice(agents_dir, notices):
+    (agents_dir / "a1.json").write_text("{not json", encoding="utf-8")
+    assert _prepare(_client(ACP_BACKEND_CLAUDE), "a1", is_new=True) == ([], False, None)
+    assert notices == []
 
 
 def test_disabled_and_confirm_documents_do_not_run():

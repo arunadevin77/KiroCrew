@@ -89,6 +89,8 @@ from kiro_crew.agent_sdk.spec_hooks import (
     refuse_stale_switch,
     reproject_claimed_session,
     session_agent,
+    spec_hook_events,
+    spec_hooks_run_nowhere,
     spec_project_dir,
 )
 from kiro_crew.agent_sdk.tool_search import resume_takes_tool_search_replay
@@ -282,6 +284,7 @@ from kiro_crew.dashboard.chat_turn.tool_approval import (  # noqa: F401
     _pre_tool_hooks_should_block,
     _slot_is_trusted,
     _spec_confirm_hooks_notice,
+    _spec_hooks_run_nowhere_notice,
     _spec_keys_notice,
 )
 from kiro_crew.dashboard.chat_turn.turn_context import (  # noqa: F401
@@ -994,13 +997,17 @@ async def _prepare_spec_hooks(
 
     Only for a backend whose capabilities say Crew fires the spec's hooks: kiro-cli
     runs the field itself, and firing it here too would run every hook twice, so
-    every other session gets ``([], False, None)`` without the spec being read.
+    every other session gets ``([], False, None)``.
 
     On a new session, a spec that sets a key nothing carries to this backend gets
     one notice row, and so does a spec with ``confirm: true`` hooks, which Crew
-    skips because it cannot ask for the confirmation. Neither runs silently.
+    skips because it cannot ask for the confirmation. A new session on a backend
+    where nothing runs the spec's hooks (``spec_hooks_run_nowhere``) gets one
+    notice row naming their events. None of them runs silently.
     """
     if not capabilities_of(client).crew_fires_spec_hooks:
+        if is_new and spec_hooks_run_nowhere(client):
+            await _notice_spec_hooks_run_nowhere(state, slot, client, agent)
         return [], False, None
     cwd = getattr(client, "cwd", "")
     work_dir = cwd if isinstance(cwd, str) and cwd else None
@@ -1037,6 +1044,34 @@ async def _prepare_spec_hooks(
             "msg msg-info",
         )
     return hooks, False, work_dir
+
+
+async def _notice_spec_hooks_run_nowhere(
+    state: "DashboardState", slot: "_ChatSlot", client: Any, agent: str
+) -> None:
+    """One notice row naming the spec hook events a session on *client* never runs.
+
+    Best-effort: nothing is gated on these hooks, so a spec that cannot be read
+    renders no row rather than failing the turn.
+    """
+    agent = session_agent(client, agent)
+    if not agent:
+        return
+    try:
+        events = await asyncio.to_thread(spec_hook_events, agent, spec_project_dir(client))
+    except Exception:  # noqa: BLE001 - an informational row must never fail a turn
+        logger.debug(
+            "agent spec hooks for %r could not be read for the notice", agent, exc_info=True
+        )
+        return
+    if events:
+        append_and_surface(
+            state,
+            slot,
+            "notice",
+            _redact_display_text(_spec_hooks_run_nowhere_notice(agent, events)),
+            "msg msg-info",
+        )
 
 
 def _redacted_hook_block(event: Any, pre_hook_results: Any) -> tuple[str, str]:

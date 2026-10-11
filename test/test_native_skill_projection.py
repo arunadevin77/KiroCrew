@@ -466,6 +466,30 @@ def test_spawn_passes_through_a_no_view_name_when_no_spec_was_refused(native_tre
     assert prepared.spawn_agent("bar") == "bar"
 
 
+def test_the_spawned_view_keeps_the_specs_hooks(native_tree):
+    """kiro-cli runs the spec's ``hooks`` itself, from the view it is launched with.
+
+    So the ``--agent`` view a spawn resolves to carries the source's ``hooks``
+    unchanged; a view without them would leave a hook-gated agent with no hooks
+    on any backend.
+    """
+    home, agents, project = native_tree
+    hooks = {
+        "agentSpawn": [{"command": "init.sh"}],
+        "userPromptSubmit": [{"command": "stamp.sh"}],
+        "preToolUse": [{"matcher": "execute_bash", "command": "guard.sh"}],
+        "stop": [{"command": "done.sh"}],
+    }
+    (agents / "custom.json").write_text(
+        json.dumps({"name": "custom", "hooks": hooks}), encoding="utf-8"
+    )
+    prepared = projection.prepare_native_skill_projection(project)
+    alias = prepared.spawn_agent("custom")
+    assert alias != "custom"
+    view = json.loads((agents / f"{alias}.json").read_text(encoding="utf-8"))
+    assert view["hooks"] == hooks
+
+
 def test_spawn_agent_keeps_the_authored_name_when_no_view_is_prepared():
     """A spawn of an agent the projection never prepared uses its own name.
 
