@@ -725,6 +725,29 @@ class TestTheFoldScope:
         for name in FOLD_NAMES:
             assert dashboard_feed.scope_for(name), name
 
+    def test_the_manifest_does_not_accept_a_fold_it_cannot_reach(self) -> None:
+        """The other half of the ratchet above, stated as the thing that must stay true
+        while a key kind has no reader.
+
+        A TREE-keyed fold is registered in the projection kernel but has no bus scope
+        and, on this base, no read path either -- its reader lives with the page host.
+        So it must not be a name the manifest ACCEPTS: a binding the save gate admits
+        and the feed can neither key nor read is a block that only ever draws the stale
+        band. The exclusion is in `manifest.FOLD_NAMES`, not in the kernel's registry,
+        so the fold stays registered for the key-kind machinery while being unbindable.
+
+        This is what keeps the check above honest rather than exempted: when the read
+        path lands beside the fold, the tree set joins `FOLD_NAMES` and `scope_for`
+        gains a tree answer together, and this test is what fails if only one of the
+        two arrives.
+        """
+        from kiro_crew.crew_log.projection import TREE_PROJECTION_NAMES
+        from kiro_crew.dashboard_templates.manifest import FOLD_NAMES
+
+        assert TREE_PROJECTION_NAMES, "no tree fold is registered; this test guards none"
+        for name in TREE_PROJECTION_NAMES:
+            assert name not in FOLD_NAMES, name
+
 
 class TestThePathWalk:
     def test_a_dotted_path_walks_the_folded_value(self) -> None:
