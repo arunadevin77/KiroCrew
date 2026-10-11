@@ -489,10 +489,49 @@ def key_new_crew(name: str, display_name: str, agents: Mapping[str, object]) -> 
     else:
         key, label = crew_id_for_display_name(name, agents), display_name or name
     shown = label or key
-    for other_key, other in agents.items():
-        if (getattr(other, "display_name", "") or other_key) == shown:
-            return NewCrewKey(key, label, shown)
+    if crew_showing(shown, agents):
+        return NewCrewKey(key, label, shown)
     return NewCrewKey(key, label, "")
+
+
+def crew_showing(name: str, agents: Mapping[str, object], *, exclude: str = "") -> str:
+    """The key of a crew other than *exclude* that shows *name*, else ``""``.
+
+    A crew shows its ``display_name`` when it has one, else its key. Exact
+    comparison, the same one :func:`key_new_crew` refuses a create on.
+    """
+    for key, agent in agents.items():
+        if key != exclude and (getattr(agent, "display_name", "") or key) == name:
+            return key
+    return ""
+
+
+class MemberNameTaken(MemberNameError):
+    """Raised when another crew already shows the name a relabel would show."""
+
+    def __init__(self, other: str) -> None:
+        super().__init__(f"agent '{other}' already shows that name")
+        self.other = other
+
+
+def check_crew_label(key: str, label: str, agents: Mapping[str, object]) -> str:
+    """Return *label* when crew *key* may show it, else raise :class:`MemberNameError`.
+
+    ``""`` is a real value: the crew then shows its key. A non-empty label must
+    pass :func:`validate_member_name` and must not be credential-shaped, since
+    every roster surface and the crewmate's own prompt render it. Either way the
+    name the crew would show must not be one another crew already shows
+    (:class:`MemberNameTaken`), the rule a create is held to. Only the label is
+    judged: the key, slug, thread and memory of the crew never move.
+    """
+    if label:
+        validate_member_name(label)
+        if external_text_requires_redaction(label):
+            raise MemberNameError("name must not be credential-shaped text")
+    other = crew_showing(label or key, agents, exclude=key)
+    if other:
+        raise MemberNameTaken(other)
+    return label
 
 
 def is_valid_member_name(value: object) -> bool:
@@ -778,7 +817,9 @@ def rename_member_display(member: str, raw_name: object, *, expected_store: str 
 
     Only the label changes: the key, slug, thread and memory stay. The reserved
     ``default`` member and the configured default crew are refused, as is a
-    member that is not a configured crewmate. *expected_store*, when given, is
+    member that is not a configured crewmate, and so is a name
+    :func:`check_crew_label` refuses (another crew shows it, or it is
+    credential-shaped). *expected_store*, when given, is
     the memory store the caller's thread was opened on: a row under the same
     key with any other store (a crewmate deleted and created again while the old
     thread still ran) is refused, and the persisted row is checked against it
@@ -799,6 +840,12 @@ def rename_member_display(member: str, raw_name: object, *, expected_store: str 
         raise SelfRenameError("not_a_crewmate", "only a crewmate can rename itself")
     if expected_store and agent.memory_store != expected_store:
         raise SelfRenameError("not_a_crewmate", "this chat belongs to a crewmate that was removed")
+    try:
+        check_crew_label(member, name, cfg.agents)
+    except MemberNameTaken:
+        raise SelfRenameError("name_taken", "another crewmate already goes by that name") from None
+    except MemberNameError as exc:
+        raise SelfRenameError("invalid_name", str(exc)) from None
     before = agent.display_name
     agent.display_name = name
     if before != name:

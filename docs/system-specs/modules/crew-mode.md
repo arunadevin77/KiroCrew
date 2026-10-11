@@ -1040,7 +1040,8 @@ so the hidden welcome kickoff, a wake or a cron turn is refused 403
 `not_user_turn`). The name is cleaned (control and format characters dropped, spaces
 collapsed, refused when empty) and checked by `validate_member_name`
 (`MEMBER_NAME_MAX_CHARS`); the reserved `default` member and the configured default
-crew are refused. The rename is a `member/config` event, so the open chat header,
+crew are refused, and so is a name `members.check_crew_label` refuses: one another crew
+already shows (`400 name_taken`) or a credential-shaped one (`400 invalid_name`). The rename is a `member/config` event, so the open chat header,
 the roster and the switcher show the new name at once through the roster projection,
 with no reload and no confirm card. The kickoff says the user has typed nothing,
 forbids "welcome back", and allows a user name only when the User Preferences block

@@ -3187,6 +3187,10 @@ Examples:
     agent_update.add_argument("--kiro-agent", help="New kiro agent name")
     agent_update.add_argument("--workspace", help="New workspace name")
     agent_update.add_argument(
+        "--display-name",
+        help='New label the dashboard shows; "" clears it back to the agent name',
+    )
+    agent_update.add_argument(
         "--memory-store",
         help=(
             "Existing memory store identity (cannot be changed, except to 'default' "

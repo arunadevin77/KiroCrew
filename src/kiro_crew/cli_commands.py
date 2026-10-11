@@ -124,7 +124,12 @@ from kiro_crew.mcp_cron import (
     _vet_shell_command,
 )
 from kiro_crew.member_memory_auth import require_member_memory_creation
-from kiro_crew.members import MemberNameError, key_new_crew, validate_member_name
+from kiro_crew.members import (
+    MemberNameError,
+    check_crew_label,
+    key_new_crew,
+    validate_member_name,
+)
 from kiro_crew.memory import MemoryStore
 from kiro_crew.memory_stores import (
     DEFAULT_MEMORY_STORE,
@@ -1482,6 +1487,21 @@ def _finding_store_suffix(finding: dict) -> str:
     return f" (store {name})" if name else ""
 
 
+def _agent_list_label(label: str) -> str:
+    """*label* as one ``kirocrew agent list`` cell.
+
+    The label is written by the dashboard, the CLI and a crewmate's own
+    ``rename_self``, so it is printed confined to one line with no live
+    terminal controls, and a credential-shaped one is masked the way the
+    dashboard roster masks it.
+    """
+    if not label:
+        return ""
+    if external_text_requires_redaction(label):
+        return "(hidden: credential-shaped)"
+    return safe_terminal_line(label)
+
+
 def _handle_agent(args: argparse.Namespace) -> None:
     """Dispatch agent subcommands: list, create, update, delete."""
 
@@ -1492,14 +1512,15 @@ def _handle_agent(args: argparse.Namespace) -> None:
         default = cfg.default_agent
         print(
             f"{'NAME':<20} {'KIRO_AGENT':<20} {'WORKSPACE':<15} "
-            f"{'MEMORY_STORE':<15} {'SOURCE':<12}"
+            f"{'MEMORY_STORE':<15} {'SOURCE':<12} DISPLAY_NAME"
         )
         for name, agent in cfg.agents.items():
             marker = " *" if name == default else ""
             print(
                 f"{name + marker:<20} {agent.kiro_agent:<20} "
                 f"{agent.workspace:<15} {agent.memory_store:<15} "
-                f"{getattr(agent, 'source', 'kirocrew'):<12}"
+                f"{getattr(agent, 'source', 'kirocrew'):<12} "
+                f"{_agent_list_label(agent.display_name)}".rstrip()
             )
 
     elif action == "create":
@@ -1590,10 +1611,17 @@ def _handle_agent(args: argparse.Namespace) -> None:
             agent.kiro_agent = args.kiro_agent
         if args.workspace is not None:
             agent.workspace = args.workspace
+        new_label = getattr(args, "display_name", None)
+        if new_label is not None:
+            try:
+                agent.display_name = check_crew_label(args.name, new_label.strip(), cfg.agents)
+            except MemberNameError as exc:
+                print(f"Error: invalid display name ({exc})", file=sys.stderr)
+                sys.exit(1)
         try:
             changed_fields = {
                 field
-                for field in ("kiro_agent", "workspace")
+                for field in ("kiro_agent", "workspace", "display_name")
                 if getattr(args, field, None) is not None
             }
             if agent.memory_store != prior_memory_store:
@@ -1609,7 +1637,11 @@ def _handle_agent(args: argparse.Namespace) -> None:
                 raise
             print(f"Error: {exc}", file=sys.stderr)
             sys.exit(1)
-        print(f"Updated agent: {args.name}")
+        if new_label is not None:
+            shown = agent.display_name or args.name
+            print(f"Updated agent: {args.name} (display name: {shown})")
+        else:
+            print(f"Updated agent: {args.name}")
 
     elif action == "delete":
         if args.name not in cfg.agents:
