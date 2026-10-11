@@ -127,7 +127,6 @@ dead-identifier	docs/system-specs/modules/kas-auth.md	shape_idp
 dead-identifier	docs/system-specs/modules/knowledge.md	rank_of_first_relevant
 dead-identifier	docs/system-specs/modules/learn-cron-dashboard.md	fenced_code
 dead-identifier	docs/system-specs/modules/learn-cron-dashboard.md	on_output
-dead-identifier	docs/system-specs/modules/learn-cron-dashboard.md	parse_wakeup
 dead-identifier	docs/system-specs/modules/md-notebook.md	showDirectoryPicker
 dead-identifier	docs/system-specs/modules/memory-skills-hooks.md	SessionSlot
 dead-identifier	docs/system-specs/modules/memory-skills-hooks.md	add_dll_directory
