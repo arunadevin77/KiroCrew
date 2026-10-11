@@ -489,41 +489,54 @@ def stall_brief(*, item_id: str, status: str | None) -> str:
 #: list it joins (``irq._MAX_LIST`` entries, then a "(+n more)" tail) and every brief
 #: this module builds is one short line, so a body past this is a kernel or probe
 #: defect rather than a busy conductor -- and a defect must not be able to push the
-#: snapshot out of the turn it rides with.
+#: read pointer out of the turn it rides with.
 MAX_WAKE_BRIEF_CHARS = 4_000
 
-#: What the snapshot is labelled as in a delivered wake. The conductor reads this
-#: line to know the board below it is the ledger as of this turn, which is what makes
-#: the first ``work_ledger_read`` of a wake cycle unnecessary.
-SNAPSHOT_HEADER = (
-    "[work-ledger snapshot] the board as of this turn, equivalent to "
-    "work_ledger_read(compact=true). Act on it; do not re-read the ledger to "
-    "learn what changed."
+#: The POINTER that closes a delivered wake: where the conductor goes for the state,
+#: rather than the state itself.
+#:
+#: A wake names what moved and says where to look, and carries no copy of the board.
+#: Inlining the board costs a payload proportional to the WHOLE goal for news that
+#: only ever means that ONE item moved: on a twenty-item board that is tens of
+#: kilobytes of mostly-closed rows per wake, every one of them already read on the
+#: wake before, spent to save a tool call the conductor can make for a fraction of
+#: the context. A pointer is constant in size and leaves the ledger as the single
+#: source of truth rather than something a wake hands out stale copies of.
+#:
+#: Both read shapes are spelled because the two next moves need different reads: the
+#: item that moved is one row, and the conductor's periodic sweep of everything else
+#: is the compact board. The ``<id>`` is deliberately a placeholder -- the ids are on
+#: the brief lines above this one, and one wake can name several.
+WAKE_READ_POINTER = (
+    "[work-ledger] read the ledger before acting: work_ledger_read(item_id=<id>) "
+    "for an item named above, or work_ledger_read(compact=true) for the board."
 )
 
 
-def wake_turn_text(briefs: str, snapshot: str) -> str:
-    """The text a work-ledger wake delivers: which items moved, then the board.
+def wake_turn_text(briefs: str) -> str:
+    """The text a work-ledger wake delivers: which items moved, then where to read.
 
     Assembled here rather than at the delivery site because the ORDER is policy, not
-    plumbing: the briefs name what moved and the snapshot is the state to act on, so
-    a conductor reading top-down learns the news before the board it has to apply it
-    to. The delivery site owns where this string goes -- prefixed onto the nudge
+    plumbing: the briefs name what moved and the pointer says what to do about it, so
+    a conductor reading top-down learns the news before the instruction that acts on
+    it. The delivery site owns where this string goes -- prefixed onto the nudge
     prompt, or steered into a turn already running -- and both get the same text.
 
-    Each half is optional and the other still delivers. A snapshot the store could
-    not produce leaves the briefs, which is the shape that shipped; briefs the kernel
-    did not hand over leave the snapshot, which still tells the conductor the board
-    moved. Both empty answers ``""``, and the caller then delivers the plain nudge.
+    NO BOARD. The wake is a notification, not a transfer of state: it tells the
+    conductor which item moved and leaves the ledger where the ledger lives, so the
+    cost of a wake does not grow with the size of the goal. ``work_ledger_read`` is
+    the conductor's own identity-gated read and is available to it in that same turn.
+
+    Empty briefs answer ``""`` rather than a pointer to nothing -- a tick that
+    observed no news has no item to point AT, and the caller then delivers the plain
+    nudge.
 
     The briefs are TRUNCATED rather than dropped at :data:`MAX_WAKE_BRIEF_CHARS`, so
-    an over-long body costs the tail of the list and never the snapshot beneath it.
+    an over-long body costs the tail of the list and never the pointer beneath it.
     """
     head = (briefs or "").strip()
+    if not head:
+        return ""
     if len(head) > MAX_WAKE_BRIEF_CHARS:
         head = head[:MAX_WAKE_BRIEF_CHARS].rstrip() + "\n(brief list truncated)"
-    board = (snapshot or "").strip()
-    if not board:
-        return head
-    body = f"{SNAPSHOT_HEADER}\n{board}"
-    return f"{head}\n\n{body}" if head else body
+    return f"{head}\n{WAKE_READ_POINTER}"

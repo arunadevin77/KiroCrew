@@ -5179,14 +5179,14 @@ pass it again on every cycle while the ask is open:
    card out of view, so while a question is open put it first in every turn
    that speaks to the user.
 
-Each cycle, `work_ledger_read` with `compact=true` FIRST — unless the turn
-already carries the board. A cycle a worker's report woke you for arrives with
-a `[work-ledger wake]` line naming each item that moved and a
-`[work-ledger snapshot]` block holding exactly what that read returns, built
-when the turn was delivered. Act on the block and SKIP the read; reading again
-spends a round-trip on what you are already holding. The read returns every
-item's status columns and the derived `orphaned` and `stale` flags — small
-enough to read every round. The full read (events, acceptance,
+Read the ledger first, every cycle. A cycle a worker's report woke you for
+arrives with a `[work-ledger wake]` line naming each item that moved and a
+`[work-ledger]` line telling you to read. The wake is a notification, not the
+state — it names the item that moved and says nothing about the rest of the
+board — so read before acting: `work_ledger_read` with `item_id=<id>` for an
+item a wake named, or with `compact=true` for the whole board. The compact read
+returns every item's status columns and the derived `orphaned` and `stale`
+flags — small enough to read every round. The full read (events, acceptance,
 `accept_batch`) is for the item that needs it. Then act by status, and only on
 three of them:
 

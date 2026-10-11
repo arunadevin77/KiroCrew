@@ -302,23 +302,22 @@ python3 <this skill's dir>/scripts/patrol_budget.py renew \
 
 Each cycle:
 
-1. **`work_ledger_read` with `compact=true` first, every cycle, unless the turn
-   already carries the board.** A cycle a worker's report woke you for arrives with a
-   `[work-ledger wake]` line naming each item that moved and a
-   `[work-ledger snapshot]` block holding the same document this read returns,
-   built when the turn was delivered. When you see that block, **act on it and
-   skip this read**: repeating it spends a round-trip to re-fetch what you are
-   already holding. Read for yourself when the turn carries no snapshot (a
-   scheduled patrol tick), or when you need a field the compact form omits.
+1. **Read the ledger first, every cycle.** A cycle a worker's report woke you
+   for arrives with a `[work-ledger wake]` line naming each item that moved and
+   a `[work-ledger]` line telling you to read. The wake is a notification, not
+   the state: it says WHICH item moved and nothing about the rest of the board.
+   So read before you act — `work_ledger_read` with `item_id=<id>` for the item
+   a wake named, or `work_ledger_read` with `compact=true` for the whole board
+   on a scheduled patrol tick.
 
-   The read returns the
+   The compact read returns the
    conductor record and, per item, the status columns plus the derived
    `orphaned`, `stale` and `acceptance_concrete` flags — no events, acceptance or
    `accept_batch`. This one read replaces the whole transcript-reading cycle, and
    it stays small however many items the board holds. The full read (no
    `compact`) adds every field, the newest events and a ready-to-pipe
-   `accept_batch`; take it, or `item_id=<id>` for one item, only when a `done`
-   item needs its bar (step 3). A full read too large for the tool-result limit
+   `accept_batch`; take it when a `done` item needs its bar (step 3). A full
+   read too large for the tool-result limit
    comes back trimmed with `truncated: true` and says what it left out. An item is never `stale` on the strength of silence alone: its worker
    also has to be not running, and its last word has to have left the next move
    with the worker, so a `done` item waiting on you is not flagged.

@@ -12,14 +12,20 @@ tick forward, and the kernel answers WAKE.
   toward the loop's own deadline. Measured 14 to 30 minutes late on real boards.
 * And when a wake DID land, the delivered turn carried the cycle header and the loop's
   own patrol message alone: the probe's briefs lived only in the verdict the gate read
-  and threw away, so the conductor was not told which item had moved and spent a
-  ``work_ledger_read`` finding out.
+  and threw away, so the conductor was not told which item had moved.
 
 The fix is one seam -- the wake's text becomes a value the claim carries from the gate
-to delivery -- and these cases pin both ends of it: the text reaches the turn (with the
-board built at delivery, not at observation), and a wake that lands mid-turn is steered
-into the running turn rather than held, with the turn-end retry behind it when a steer
-is not available.
+to delivery -- and these cases pin both ends of it: the text reaches the turn, and a
+wake that lands mid-turn is steered into the running turn rather than held, with the
+turn-end retry behind it when a steer is not available.
+
+WHAT THE TEXT IS: the kernel's structural briefs plus ONE line pointing the conductor
+at ``work_ledger_read``. No board. An inline board costs a payload proportional to the
+whole goal for news that means one item moved, and it is ledger prose, which may enter
+only a turn whose cross-surface publication is fenced for that turn's whole life -- a
+steer can be requeued, which drops that fence, so prose cannot ride one and the two
+delivery routes would carry different text. The pointer discloses nothing, so both
+routes carry one string.
 """
 
 from __future__ import annotations
@@ -34,7 +40,6 @@ import pytest
 from kiro_crew import irq, ledger_wake, work_ledger
 from kiro_crew.autonudge import AutoNudgeService, NudgeLoop
 from kiro_crew.config.loader import KiroCrewConfig
-from kiro_crew.dashboard.handlers import work_ledger as wl_routes
 from kiro_crew.monitoring.models import MONITOR_STATE_VERSION, MonitorState
 from kiro_crew.slack import gateway as gw
 
@@ -58,37 +63,48 @@ def _isolated_home(tmp_path, _floor_monkeypatch):
 
 
 class TestWakeTurnText:
-    """``ledger_wake.wake_turn_text``: the news first, then the board."""
+    """``ledger_wake.wake_turn_text``: the news first, then where to read it."""
 
-    def test_the_briefs_come_before_the_board(self):
-        text = ledger_wake.wake_turn_text("[work-ledger wake] item=it_1 status=done", '{"a": 1}')
-        assert text.index("item=it_1") < text.index(ledger_wake.SNAPSHOT_HEADER)
-        assert text.index(ledger_wake.SNAPSHOT_HEADER) < text.index('{"a": 1}')
+    def test_the_briefs_come_before_the_pointer(self):
+        text = ledger_wake.wake_turn_text("[work-ledger wake] item=it_1 status=done")
+        assert text.index("item=it_1") < text.index(ledger_wake.WAKE_READ_POINTER)
 
-    def test_a_snapshot_the_store_could_not_build_still_delivers_the_briefs(self):
-        """The shape that shipped before the snapshot existed must still work."""
-        assert ledger_wake.wake_turn_text("[work-ledger wake] item=it_1 status=done", "") == (
-            "[work-ledger wake] item=it_1 status=done"
-        )
+    def test_the_pointer_names_the_read_and_both_of_its_shapes(self):
+        """A conductor told only "read the ledger" has two tools and one wake."""
+        text = ledger_wake.wake_turn_text("[work-ledger wake] item=it_1 status=done")
+        assert "work_ledger_read(item_id=<id>)" in text
+        assert "work_ledger_read(compact=true)" in text
 
-    def test_briefs_the_kernel_did_not_hand_over_still_deliver_the_board(self):
-        text = ledger_wake.wake_turn_text("", '{"a": 1}')
-        assert text.startswith(ledger_wake.SNAPSHOT_HEADER)
-        assert '{"a": 1}' in text
+    def test_no_board_rides_the_wake(self):
+        """THE POINT: a wake is a notification, not a copy of the board.
 
-    def test_neither_half_is_no_text_at_all(self):
-        """So the caller delivers the plain nudge rather than an empty header."""
-        assert ledger_wake.wake_turn_text("", "") == ""
+        Pinned on the shape rather than on a byte count, because a board is what a
+        regression puts back: the compact document's own keys. On a twenty-item goal
+        an inline board is tens of kilobytes of mostly-closed rows per wake, and a
+        wake only ever means that ONE item moved.
+        """
+        text = ledger_wake.wake_turn_text("[work-ledger wake] item=it_1 status=done")
+        assert '"items"' not in text and '"compact"' not in text
+        assert "accept_batch" not in text
+        assert len(text.splitlines()) == 2, f"a wake is two lines, not a document: {text!r}"
 
-    def test_an_over_long_brief_list_loses_its_tail_and_not_the_board(self):
-        """A kernel or probe defect must not push the board out of the turn."""
-        text = ledger_wake.wake_turn_text("x" * (ledger_wake.MAX_WAKE_BRIEF_CHARS * 3), "BOARD")
+    def test_briefs_the_kernel_did_not_hand_over_are_no_text_at_all(self):
+        """So the caller delivers the plain nudge rather than a pointer to nothing."""
+        assert ledger_wake.wake_turn_text("") == ""
+        assert ledger_wake.wake_turn_text("   \n ") == ""
+
+    def test_an_over_long_brief_list_loses_its_tail_and_not_the_pointer(self):
+        """A kernel or probe defect must not push the pointer out of the turn."""
+        text = ledger_wake.wake_turn_text("x" * (ledger_wake.MAX_WAKE_BRIEF_CHARS * 3))
         assert "(brief list truncated)" in text
-        assert "BOARD" in text, "the snapshot must survive an over-long brief list"
+        assert ledger_wake.WAKE_READ_POINTER in text, (
+            "the pointer must survive an over-long brief list, or the conductor is "
+            "woken with no instruction to read the ledger"
+        )
         assert len(text) < ledger_wake.MAX_WAKE_BRIEF_CHARS * 2
 
 
-# ── the snapshot, built at delivery ───────────────────────────────────────
+# ── the board is the conductor's own read, never the wake's ───────────────
 
 
 def _seed_board() -> str:
@@ -118,196 +134,24 @@ def _state() -> SimpleNamespace:
     )
 
 
-def _wake(
-    text: str, *, briefs: str | None = None, slot: object = None, admission: dict | None = None
-):
-    """A ``WakeSnapshot`` for the cases that stand in for the board builder.
+def _no_prose_outside_the_store(item_id: str, text: str) -> None:
+    """Assert the worker's own summary is in NEITHER the wake nor the watch state.
 
-    *briefs* defaults to *text* so a case that does not care which half a path
-    takes still reads the same string from either.
+    The boundary ``wake_brief`` exists for, now covering the delivered text too.
+    ``irq`` persists an observation's brief beside the watch state, which is not
+    under the store's identity-gated read path -- so the briefs carry item ids and
+    statuses and nothing else. The DELIVERED text is those same briefs plus a read
+    pointer, so the same assertion holds at both ends: the only way to the worker's
+    prose is the conductor's own ``work_ledger_read``.
     """
-    return wl_routes.WakeSnapshot(text, text if briefs is None else briefs, slot, admission)
-
-
-def _admitted():
-    """Patch the containment gate to its ADMITTED answer, recording nothing.
-
-    The gate itself is exercised by the refusal cases below and by the one that
-    asserts the admitted audience is recorded. A test about the board's SHAPE
-    should not also have to stand up a slot table, a verified channel surface and
-    an owner roster for ``judge_owner_dm`` to read, and with none of those the
-    real predicate fails closed -- correctly -- and there is no board to inspect.
-    """
-    return patch.object(wl_routes, "caller_admission", return_value=("", None, None))
-
-
-class TestCompactWakeSnapshot:
-    @pytest.mark.asyncio
-    async def test_it_carries_the_compact_columns_and_the_accept_batch(self):
-        item_id = _seed_board()
-        doc = json.loads((await wl_routes.compact_wake_snapshot(_state(), CONDUCTOR)).text)
-        assert doc["compact"] is True
-        assert [row["item_id"] for row in doc["items"]] == [item_id]
-        row = doc["items"][0]
-        assert row["status"] == "done", "the report that woke the conductor must be in the board"
-        assert row["summary"] == "opened the PR"
-        assert set(row) == set(wl_routes._COMPACT_ROW_FIELDS), (
-            "the snapshot must publish exactly the columns the compact read does, or a "
-            "conductor is shown one board by its wake and another by its read"
-        )
-        assert "accept_batch" in doc, "a done report's next move is to evaluate its bar"
-
-    @pytest.mark.asyncio
-    async def test_it_carries_no_acceptance_bars_and_no_event_tails(self):
-        """The compact contract: nothing that is a document in its own right."""
-        _seed_board()
-        doc = json.loads((await wl_routes.compact_wake_snapshot(_state(), CONDUCTOR)).text)
-        assert "acceptance" not in doc["items"][0]
-        assert "events" not in doc["items"][0]
-
-    @pytest.mark.asyncio
-    async def test_a_session_with_no_ledger_gets_no_snapshot(self):
-        """And the wake then delivers its briefs alone, as it did before."""
-        assert (await wl_routes.compact_wake_snapshot(_state(), "chat-nobody")).text == ""
-
-    @pytest.mark.asyncio
-    async def test_a_ledger_with_no_items_yet_gets_no_snapshot(self):
-        """An empty board is a header over nothing; the briefs say more."""
-        work_ledger.ensure_conductor(CONDUCTOR, goal="ship the thing")
-        with _admitted():
-            assert (await wl_routes.compact_wake_snapshot(_state(), CONDUCTOR)).text == ""
-
-    @pytest.mark.asyncio
-    async def test_an_unnameable_slot_gets_no_snapshot(self):
-        assert (await wl_routes.compact_wake_snapshot(_state(), "")).text == ""
-
-    @pytest.mark.asyncio
-    async def test_a_restricted_session_gets_no_snapshot(self):
-        """A ledger is durable state those modes promise not to leave behind."""
-        _seed_board()
-        with patch.object(wl_routes, "_is_restricted_session_key", return_value=True):
-            assert (await wl_routes.compact_wake_snapshot(_state(), CONDUCTOR)).text == ""
-
-    @pytest.mark.asyncio
-    async def test_a_session_reaching_a_channel_gets_no_snapshot(self):
-        """The gate ``work_ledger_read`` applies, applied here through the same call.
-
-        A conductor tab mirrored to a channel that is not the owner's own DM would
-        otherwise have the board, worker prose included, republished to that channel
-        by the very turn this text enters.
-        """
-        _seed_board()
-        with patch.object(
-            wl_routes,
-            "caller_admission",
-            return_value=("the mirror is not the owner's DM", None, None),
-        ):
-            assert (await wl_routes.compact_wake_snapshot(_state(), CONDUCTOR)).text == ""
-
-    @pytest.mark.asyncio
-    async def test_an_audience_that_widens_during_the_read_gets_no_snapshot(self):
-        """The post-read re-check, for the reason the route takes one."""
-        _seed_board()
-        with (
-            patch.object(wl_routes, "caller_admission", return_value=("", None, None)),
-            patch.object(
-                wl_routes, "contained_channel_caller", return_value="a mirror was retargeted"
-            ),
-        ):
-            assert (await wl_routes.compact_wake_snapshot(_state(), CONDUCTOR)).text == ""
-
-    @pytest.mark.asyncio
-    async def test_an_admitted_read_hands_its_audience_out_rather_than_recording_it(self):
-        """The recorder writes only inside a runner turn, and a wake to an IDLE
-        conductor is built before its turn starts.
-
-        Recording here would be a no-op on that path, and the publisher, finding no
-        entry, would republish board-derived text to a mirror linked during the very
-        turn this board enters. So the admission travels WITH the board and whoever
-        owns the receiving turn fences it.
-        """
-        _seed_board()
-        slot = object()
-        admission = {"linked": False}
-        with (
-            patch.object(wl_routes, "caller_admission", return_value=("", slot, admission)),
-            patch.object(wl_routes.session_control, "record_audience_admission") as recorded,
-        ):
-            built = await wl_routes.compact_wake_snapshot(_state(), CONDUCTOR)
-        assert built.text
-        assert built.slot is slot
-        assert built.admission is admission
-        recorded.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_a_successful_read_is_audited_and_not_only_its_refusals(self):
-        """A trail of refusals alone says nothing about what was disclosed."""
-        _seed_board()
-        with _admitted(), patch.object(wl_routes, "_audit") as audited:
-            assert (await wl_routes.compact_wake_snapshot(_state(), CONDUCTOR)).text
-        assert any(
-            call.args[2] == "ok" and call.args[1] == wl_routes._WAKE_OPERATION
-            for call in audited.call_args_list
-        ), f"no ok row was written: {audited.call_args_list}"
-
-    @pytest.mark.asyncio
-    async def test_a_dirty_cache_is_never_served_as_the_board(self):
-        """It may hold a mutation the record never saw, and this text tells the
-        conductor not to re-read."""
-        _seed_board()
-        with patch.object(wl_routes.work_ledger, "cache_dirty", return_value="an undo failed"):
-            assert (await wl_routes.compact_wake_snapshot(_state(), CONDUCTOR)).text == ""
-
-    @pytest.mark.asyncio
-    async def test_a_store_failure_costs_the_snapshot_and_never_the_wake(self):
-        _seed_board()
-        with patch.object(wl_routes.work_ledger, "list_work_items", side_effect=OSError("gone")):
-            assert (await wl_routes.compact_wake_snapshot(_state(), CONDUCTOR)).text == ""
-
-    @pytest.mark.asyncio
-    async def test_it_is_bounded_and_stays_valid_json(self):
-        """Trimmed by the tool layer's own fitter, so a cut never tears the document."""
-        _seed_board()
-        text = (await wl_routes.compact_wake_snapshot(_state(), CONDUCTOR, budget=400)).text
-        assert len(text) <= 400
-        json.loads(text)
-
-    @pytest.mark.asyncio
-    async def test_the_conductors_prefixed_slot_spelling_reads_its_own_board(self):
-        """One session is legitimately spelled both ways; the fold is why it works."""
-        item_id = _seed_board()
-        with _admitted():
-            doc = json.loads(
-                (await wl_routes.compact_wake_snapshot(_state(), f"dashboard_{CONDUCTOR}")).text
-            )
-        assert [row["item_id"] for row in doc["items"]] == [item_id]
-
-    @pytest.mark.asyncio
-    async def test_nothing_from_the_snapshot_reaches_the_watch_state_directory(self):
-        """The boundary ``wake_brief`` exists for, asserted on the files themselves.
-
-        ``irq`` persists an observation's brief beside the watch state, which is not
-        under the store's identity-gated read path. So the snapshot is built at
-        delivery and must leave no trace there -- checked by waking the kernel over
-        the same board and grepping every file it wrote for the worker's prose.
-        """
-        _seed_board()
-        from kiro_crew.probes import work_ledger as probe_mod
-
-        config = json.dumps({"conductor": CONDUCTOR})
-        verdict = await asyncio.to_thread(
-            irq.poll, "loop-snapshot", config, probe_mod.WorkLedgerProbe()
-        )
-        assert verdict.outcome is irq.Outcome.WAKE
-        with _admitted():
-            snapshot = (await wl_routes.compact_wake_snapshot(_state(), CONDUCTOR)).text
-        assert "opened the PR" in snapshot, "the control: the prose IS in the snapshot"
-        root = irq.state_path("work-ledger", CONDUCTOR, "probe").parent
-        written = [path for path in root.rglob("*") if path.is_file()]
-        assert written, "the kernel wrote no state at all, so this proves nothing"
-        for path in written:
-            body = path.read_text(encoding="utf-8", errors="replace")
-            assert "opened the PR" not in body, f"worker prose reached {path.name}"
+    assert f"item={item_id}" in text, "the control: the wake must name the item"
+    assert "opened the PR" not in text, "worker prose reached the delivered wake"
+    root = irq.state_path("work-ledger", CONDUCTOR, "probe").parent
+    written = [path for path in root.rglob("*") if path.is_file()]
+    assert written, "the kernel wrote no state at all, so this proves nothing"
+    for path in written:
+        body = path.read_text(encoding="utf-8", errors="replace")
+        assert "opened the PR" not in body, f"worker prose reached {path.name}"
 
 
 # ── the claim carries the kernel's text ───────────────────────────────────
@@ -414,7 +258,11 @@ class TestAWakeOwedAfterTheTurnEnds:
         try:
             with (
                 patch.object(service, "_arm_timer", lambda _loop, delay=None: armed.append(delay)),
-                patch.object(service, "_arm_from_deadline", lambda _loop: armed.append("deadline")),
+                patch.object(
+                    service,
+                    "_arm_from_deadline",
+                    lambda _loop: armed.append("deadline"),
+                ),
             ):
                 service._pending_monitor_wake[loop.id] = "[work-ledger wake] item=it_1 status=done"
                 service.notify_turn_complete(loop.slot_key)
@@ -434,7 +282,11 @@ class TestAWakeOwedAfterTheTurnEnds:
         try:
             with (
                 patch.object(service, "_arm_timer", lambda _loop, delay=None: armed.append(delay)),
-                patch.object(service, "_arm_from_deadline", lambda _loop: armed.append("deadline")),
+                patch.object(
+                    service,
+                    "_arm_from_deadline",
+                    lambda _loop: armed.append("deadline"),
+                ),
             ):
                 service.notify_turn_complete(loop.slot_key)
             assert armed == ["deadline"]
@@ -456,7 +308,11 @@ class TestAWakeOwedAfterTheTurnEnds:
             service._pending_monitor_wake[loop.id] = "[work-ledger wake] item=it_1 status=done"
             with (
                 patch.object(service, "_arm_timer", lambda _loop, delay=None: armed.append(delay)),
-                patch.object(service, "_arm_from_deadline", lambda _loop: armed.append("deadline")),
+                patch.object(
+                    service,
+                    "_arm_from_deadline",
+                    lambda _loop: armed.append("deadline"),
+                ),
             ):
                 service.notify_turn_complete(loop.slot_key)
             assert armed == [], "nothing may arm during the fire window"
@@ -550,116 +406,81 @@ class TestSteeringAWakeIntoARunningTurn:
             patch("kiro_crew.dashboard.chat_delivery.steer_into_running_turn", steer),
             patch("kiro_crew.dashboard.session_control.containment_meta", return_value={}),
             patch.object(
-                orch, "_work_ledger_wake_text", AsyncMock(return_value=_wake("WAKE TEXT"))
+                orch, "_work_ledger_wake_text", AsyncMock(return_value="WAKE TEXT")
             ) as text,
         ):
             assert await orch._fire_dashboard_nudge(loop) is True
         assert (
             text.await_count == 1
-        ), "the board costs a ledger read, so both delivery routes must share one build"
-        assert steer.await_args.args[2] == "WAKE TEXT"  # the briefs half
+        ), "one text, built once, whichever of the two routes below delivers it"
+        assert steer.await_args.args[2] == "WAKE TEXT"
         assert steer.await_args.kwargs["user_origin"] is False, (
             "nobody typed this into the session's own surface, so it must not inherit "
             "the composer's exemption from the drain's linked drop"
         )
 
     @pytest.mark.asyncio
-    async def test_the_steer_carries_the_briefs_and_never_the_board(self):
-        """THE BOUNDARY: ledger prose may enter only a turn fenced for its whole life.
+    async def test_the_steer_carries_the_whole_wake_and_fences_nothing(self):
+        """Both routes carry the SAME text, and the pointer is why.
 
-        A steer's text can be requeued -- the teardown clears the running turn's
-        fence and the drain starts a successor nothing re-fences -- so the board
-        cannot ride it. The briefs can: they are item ids and statuses, the text
-        ``irq`` is already allowed to persist outside the store's gated read path.
+        Ledger prose may enter only a turn whose cross-surface publication is fenced
+        for that turn's whole life, and a steer's text can be requeued -- the
+        teardown clears the running turn's fence and the drain starts a successor
+        nothing re-fences. So a board cannot ride a steer. A wake that is briefs plus
+        a ``work_ledger_read`` pointer discloses nothing, so there is no half to hold
+        back and no fence to record.
         """
         orch = _orchestrator()
         loop = _ledger_loop()
         slot = _slot(running=True)
         orch.dashboard_state.get_slot = MagicMock(return_value=slot)
         steer = AsyncMock(return_value="steered")
+        wake = ledger_wake.wake_turn_text("[work-ledger wake] item=it_1 status=done")
         with (
             patch("kiro_crew.dashboard.chat_delivery.steer_into_running_turn", steer),
             patch("kiro_crew.dashboard.session_control.containment_meta", return_value={}),
             patch("kiro_crew.dashboard.session_control.record_audience_admission") as fenced,
-            patch.object(
-                orch,
-                "_work_ledger_wake_text",
-                AsyncMock(
-                    return_value=_wake(
-                        "[work-ledger wake] item=it_1 status=done\n\nTHE BOARD",
-                        briefs="[work-ledger wake] item=it_1 status=done",
-                        slot=object(),
-                        admission={"linked": False},
-                    )
-                ),
-            ),
+            patch.object(orch, "_work_ledger_wake_text", AsyncMock(return_value=wake)),
         ):
             assert await orch._fire_dashboard_nudge(loop) is True
         injected = steer.await_args.args[2]
-        assert injected == "[work-ledger wake] item=it_1 status=done"
-        assert "THE BOARD" not in injected, "ledger prose must not ride a steer"
+        assert injected == wake
+        assert ledger_wake.WAKE_READ_POINTER in injected, (
+            "the steered conductor must be told to read the ledger, or it acts on a "
+            "one-line notification as if it were the board"
+        )
         fenced.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_an_idle_turn_is_fenced_as_a_pending_turn(self):
-        """The turn that runs records the fence right before ``_run_chat``.
+    async def test_a_fired_wake_turn_records_no_audience_fence(self):
+        """THE DELETION, pinned: there is nothing in a wake for a fence to withhold.
 
-        The fence lives inside the turn coro, after admission, so a spawn that runs
-        the coro records it as a pending turn -- the one ``_run_chat`` is guaranteed
-        to clear in its teardown.
+        A fence is the publisher's fail-closed withholding of the cross-surface
+        legs, and it is owed by a turn carrying worker-authored ledger prose. This
+        turn carries briefs and a read pointer, and the one read of the board is the
+        conductor's own ``work_ledger_read``, which judges containment and records
+        its own admission inside this very turn. So a fence here would be a promise
+        about text that is not here.
         """
         orch = _orchestrator()
         loop = _ledger_loop()
         slot = _slot()
         orch.dashboard_state.get_slot = MagicMock(return_value=slot)
-        target, admission = object(), {"linked": False}
         spawn = _running_spawn()
+        wake = ledger_wake.wake_turn_text("[work-ledger wake] item=it_1 status=done")
         with (
             patch.object(gw, "spawn_guarded_turn", spawn),
-            patch.object(gw, "_run_chat", new=AsyncMock()),
+            patch("kiro_crew.dashboard.chat._run_chat", new=AsyncMock()) as ran,
             patch("kiro_crew.dashboard.session_control.record_audience_admission") as fenced,
-            patch.object(
-                orch,
-                "_work_ledger_wake_text",
-                AsyncMock(return_value=_wake("WAKE", slot=target, admission=admission)),
-            ),
+            patch.object(orch, "_work_ledger_wake_text", AsyncMock(return_value=wake)),
         ):
             assert await orch._fire_dashboard_nudge(loop) is True
-            # Run the turn coro the spawn scheduled through to its _run_chat.
+            # Run the turn coro the spawn scheduled through to its _run_chat, which
+            # is the statement a fence would have to be recorded before.
             await asyncio.gather(*spawn.tasks, return_exceptions=True)
-        assert fenced.call_args.args[:2] == (target, admission)
-        assert fenced.call_args.kwargs["for_pending_turn"] is True
-
-    @pytest.mark.asyncio
-    async def test_a_cancelled_queued_wake_leaves_no_fence(self):
-        """A queued wake cancelled before ``_run_chat`` must record NO fence.
-
-        The regression this guards: recording the fence BEFORE ``spawn_guarded_turn``
-        meant a wake cancelled or timed out waiting for background capacity -- so
-        ``_run_chat`` never ran and its teardown never fired -- left a fence nothing
-        cleared, and the publisher then withheld the next unrelated mirror reply
-        (fail-closed). With the fence inside the turn coro, right before
-        ``_run_chat``, a turn that never reaches that statement records nothing.
-        """
-        orch = _orchestrator()
-        loop = _ledger_loop()
-        slot = _slot()
-        orch.dashboard_state.get_slot = MagicMock(return_value=slot)
-        target, admission = object(), {"linked": False}
-        # ``_fake_spawn`` closes the coro without running it -- exactly a wake that
-        # never reaches ``_run_chat`` because its admission was cancelled/timed out.
-        with (
-            patch.object(gw, "spawn_guarded_turn", _fake_spawn()),
-            patch.object(gw, "_run_chat", new=AsyncMock()),
-            patch("kiro_crew.dashboard.session_control.record_audience_admission") as fenced,
-            patch.object(
-                orch,
-                "_work_ledger_wake_text",
-                AsyncMock(return_value=_wake("WAKE", slot=target, admission=admission)),
-            ),
-        ):
-            assert await orch._fire_dashboard_nudge(loop) is True
         fenced.assert_not_called()
+        assert ran.await_count == 1, "the turn must still run; only the fence is gone"
+        assert ledger_wake.WAKE_READ_POINTER in ran.await_args.args[2]
 
     @pytest.mark.asyncio
     async def test_a_requeued_steer_counts_as_delivered(self):
@@ -679,9 +500,7 @@ class TestSteeringAWakeIntoARunningTurn:
                 AsyncMock(return_value="requeued"),
             ),
             patch("kiro_crew.dashboard.session_control.containment_meta", return_value={}),
-            patch.object(
-                orch, "_work_ledger_wake_text", AsyncMock(return_value=_wake("WAKE TEXT"))
-            ),
+            patch.object(orch, "_work_ledger_wake_text", AsyncMock(return_value="WAKE TEXT")),
         ):
             assert await orch._fire_dashboard_nudge(loop) is True
 
@@ -698,9 +517,7 @@ class TestSteeringAWakeIntoARunningTurn:
                 AsyncMock(return_value="unavailable"),
             ),
             patch("kiro_crew.dashboard.session_control.containment_meta", return_value={}),
-            patch.object(
-                orch, "_work_ledger_wake_text", AsyncMock(return_value=_wake("WAKE TEXT"))
-            ),
+            patch.object(orch, "_work_ledger_wake_text", AsyncMock(return_value="WAKE TEXT")),
         ):
             assert await orch._fire_dashboard_nudge(loop) is False
 
@@ -765,7 +582,7 @@ class TestSteeringAWakeIntoARunningTurn:
         steer = AsyncMock(return_value="steered")
         with (
             patch("kiro_crew.dashboard.chat_delivery.steer_into_running_turn", steer),
-            patch.object(orch, "_work_ledger_wake_text", AsyncMock(return_value=_wake(""))),
+            patch.object(orch, "_work_ledger_wake_text", AsyncMock(return_value="")),
         ):
             assert await orch._fire_dashboard_nudge(loop) is False
         steer.assert_not_awaited()
@@ -777,12 +594,10 @@ class TestSteeringAWakeIntoARunningTurn:
         loop = _ledger_loop()
         steer = AsyncMock(return_value="steered")
         with patch("kiro_crew.dashboard.chat_delivery.steer_into_running_turn", steer):
-            assert (
-                await orch._steer_work_ledger_wake(loop, _slot(running=True), _wake(""))
-            ) is False
+            assert (await orch._steer_work_ledger_wake(loop, _slot(running=True), "")) is False
             closing = _slot(running=True)
             closing.is_closing = True
-            assert await orch._steer_work_ledger_wake(loop, closing, _wake("WAKE")) is False
+            assert await orch._steer_work_ledger_wake(loop, closing, "WAKE") is False
         steer.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -797,13 +612,13 @@ class TestSteeringAWakeIntoARunningTurn:
                 side_effect=RuntimeError("no probe"),
             ),
         ):
-            assert (
-                await orch._steer_work_ledger_wake(loop, _slot(running=True), _wake("WAKE"))
-            ) is False
+            assert (await orch._steer_work_ledger_wake(loop, _slot(running=True), "WAKE")) is False
         steer.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_a_steer_that_raises_leaves_the_wake_owed_rather_than_failing_the_fire(self):
+    async def test_a_steer_that_raises_leaves_the_wake_owed_rather_than_failing_the_fire(
+        self,
+    ):
         orch = _orchestrator()
         loop = _ledger_loop()
         with (
@@ -813,40 +628,37 @@ class TestSteeringAWakeIntoARunningTurn:
             ),
             patch("kiro_crew.dashboard.session_control.containment_meta", return_value={}),
         ):
-            assert (
-                await orch._steer_work_ledger_wake(loop, _slot(running=True), _wake("WAKE"))
-            ) is False
+            assert (await orch._steer_work_ledger_wake(loop, _slot(running=True), "WAKE")) is False
 
 
-# ── the wake turn carries the board ───────────────────────────────────────
+# ── the wake turn carries the news and the pointer ──────────────────
 
 
 class TestTheNudgeTurnCarriesTheWake:
     @pytest.mark.asyncio
     async def test_an_idle_conductors_turn_is_prefixed_with_the_wake(self):
-        """The bar: the briefs plus the compact board, in that order."""
+        """The bar: the news, then the read pointer, then the patrol instruction."""
         orch = _orchestrator()
         loop = _ledger_loop()
         slot = _slot()
         orch.dashboard_state.get_slot = MagicMock(return_value=slot)
         spawn = _fake_spawn()
+        wake = ledger_wake.wake_turn_text("[work-ledger wake] item=it_1 status=done")
         with (
             patch.object(gw, "spawn_guarded_turn", spawn),
             patch("kiro_crew.dashboard.chat._run_chat", new=AsyncMock()),
-            patch.object(
-                orch,
-                "_work_ledger_wake_text",
-                AsyncMock(return_value=_wake("[work-ledger wake] item=it_1 status=done\n\nBOARD")),
-            ),
+            patch.object(orch, "_work_ledger_wake_text", AsyncMock(return_value=wake)),
         ):
             assert await orch._fire_dashboard_nudge(loop) is True
         appended = [call for call in slot.append.call_args_list if call.args[0] == "nudge"]
         assert appended, "the nudge row was never written"
         body = appended[0].args[1]
         assert body.index("item=it_1") < body.index(
+            ledger_wake.WAKE_READ_POINTER
+        ), "the news has to come before the instruction that acts on it"
+        assert body.index(ledger_wake.WAKE_READ_POINTER) < body.index(
             "patrol the work ledger"
-        ), "the news has to come before the standing patrol instruction"
-        assert "BOARD" in body
+        ), "both have to come before the standing patrol instruction"
 
     @pytest.mark.asyncio
     async def test_a_cycle_with_nothing_owed_delivers_the_body_it_always_did(self):
@@ -858,7 +670,7 @@ class TestTheNudgeTurnCarriesTheWake:
         with (
             patch.object(gw, "spawn_guarded_turn", spawn),
             patch("kiro_crew.dashboard.chat._run_chat", new=AsyncMock()),
-            patch.object(orch, "_work_ledger_wake_text", AsyncMock(return_value=_wake(""))),
+            patch.object(orch, "_work_ledger_wake_text", AsyncMock(return_value="")),
         ):
             assert await orch._fire_dashboard_nudge(loop) is True
         appended = [call for call in slot.append.call_args_list if call.args[0] == "nudge"]
@@ -867,20 +679,17 @@ class TestTheNudgeTurnCarriesTheWake:
         assert "work-ledger wake" not in body
 
     @pytest.mark.asyncio
-    async def test_a_cycle_with_no_owed_wake_reads_no_board_at_all(self):
-        """A floor tick or a fallback observed no news, so there is nothing for a
-        board to be the state FOR, and nothing for the steer to inject.
+    async def test_a_cycle_with_no_owed_wake_delivers_no_wake_text(self):
+        """A floor tick or a fallback observed no news, so there is no item to point
+        AT, and nothing for the steer to inject.
 
         A quiet-streak floor tick on a busy slot must stay declined: steering one
-        would interrupt the turn the user is driving to hand it a board nobody
-        asked for, and charge a cycle for doing so.
+        would interrupt the turn the user is driving to say nothing, and charge a
+        cycle for doing so.
         """
-        _seed_board()
         orch = _orchestrator()
         orch.autonudge_svc.pending_wake_briefs = MagicMock(return_value="")
-        with patch.object(wl_routes, "compact_wake_snapshot", AsyncMock()) as board:
-            assert (await orch._work_ledger_wake_text(_ledger_loop())).text == ""
-        board.assert_not_awaited()
+        assert await orch._work_ledger_wake_text(_ledger_loop()) == ""
 
     @pytest.mark.asyncio
     async def test_a_floor_tick_on_a_busy_slot_is_still_declined(self):
@@ -896,24 +705,79 @@ class TestTheNudgeTurnCarriesTheWake:
         steer.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_a_gateway_with_no_dashboard_yet_builds_no_wake_text(self):
-        """``_init_autonudge`` can run before ``_init_dashboard``, and --no-dashboard
-        skips it entirely, so the absence has to answer rather than raise."""
+    async def test_a_gateway_with_no_autonudge_service_builds_no_wake_text(self):
+        """``_init_autonudge`` can be skipped, so the absence has to answer rather
+        than raise: the service is the only holder of the owed claim, which is now
+        this method's only input."""
         orch = _orchestrator()
-        orch.dashboard_state = None
-        assert (await orch._work_ledger_wake_text(_ledger_loop())).text == ""
+        orch.autonudge_svc = None
+        assert await orch._work_ledger_wake_text(_ledger_loop()) == ""
 
     @pytest.mark.asyncio
-    async def test_the_text_joins_the_owed_briefs_to_a_board_read_at_delivery(self):
-        """End to end through the real composer: the claim's text plus a live read."""
+    async def test_the_text_is_the_owed_briefs_and_the_pointer_and_no_ledger_prose(
+        self,
+    ):
+        """End to end through the real composer, over a REAL board with a real report.
+
+        The bar: the conductor is told which item moved and to go read it, and the
+        worker's own summary -- which an inline board carries in full on every wake
+        -- is not in the turn at all. ``_no_prose_outside_the_store`` also checks the
+        watch-state files, so the one text and the one persisted brief are held to
+        the same boundary.
+        """
         item_id = _seed_board()
         orch = _orchestrator()
         loop = _ledger_loop()
         orch.autonudge_svc.pending_wake_briefs = MagicMock(
             return_value=ledger_wake.wake_brief(item_id=item_id, status="done")
         )
-        with _admitted():
-            text = (await orch._work_ledger_wake_text(loop)).text
+        from kiro_crew.probes import work_ledger as probe_mod
+
+        verdict = await asyncio.to_thread(
+            irq.poll,
+            "loop-pointer",
+            json.dumps({"conductor": CONDUCTOR}),
+            probe_mod.WorkLedgerProbe(),
+        )
+        assert verdict.outcome is irq.Outcome.WAKE, "the kernel wrote no state to check"
+        text = await orch._work_ledger_wake_text(loop)
         assert f"item={item_id} status=done" in text
-        assert ledger_wake.SNAPSHOT_HEADER in text
-        assert "opened the PR" in text, "the board must carry the report that woke the conductor"
+        assert ledger_wake.WAKE_READ_POINTER in text
+        _no_prose_outside_the_store(item_id, text)
+
+    @pytest.mark.asyncio
+    async def test_the_text_does_not_grow_with_the_size_of_the_ledger(self):
+        """THE DEFECT, measured rather than described.
+
+        An inline board carries a row per item, bounded only at tens of kilobytes,
+        so one item moving costs a wake proportional to the WHOLE goal -- on a
+        twenty-item ledger, mostly-closed rows re-sent on every wake. The bar is
+        therefore not "smaller" but "constant": the same single report, delivered
+        over a one-item ledger and then over a twenty-item one, has to produce the
+        SAME BYTES.
+
+        Measured against the composer the fire path calls, not against
+        ``wake_turn_text`` alone, because the read that grows the text belongs to the
+        delivery site and that is where a regression puts it.
+        """
+        item_id = _seed_board()
+        orch = _orchestrator()
+        loop = _ledger_loop()
+        orch.autonudge_svc.pending_wake_briefs = MagicMock(
+            return_value=ledger_wake.wake_brief(item_id=item_id, status="done")
+        )
+        small = await orch._work_ledger_wake_text(loop)
+        for n in range(19):
+            work_ledger.apply_conductor_action(
+                CONDUCTOR,
+                "create",
+                title=f"filler {n} with a title long enough to show up in a board row",
+                acceptance={"kind": "human_approval"},
+            )
+        assert len(work_ledger.list_work_items(CONDUCTOR)) == 20, "the board did not grow"
+        large = await orch._work_ledger_wake_text(loop)
+        assert large == small, (
+            "the wake grew with the ledger: one item moved, so one brief and one "
+            "pointer are the whole payload however many items the board holds"
+        )
+        assert len(large) < 400, f"a wake is two short lines, not a document: {large!r}"

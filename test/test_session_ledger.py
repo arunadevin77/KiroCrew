@@ -476,7 +476,7 @@ def test_gateway_fire_callbacks_use_the_composer():
     assert not offenders, (
         "these fire adapters neither call compose_nudge_body nor delegate to a "
         "fire path that does, so their surface's loops start each cycle without "
-        f"the work-ledger snapshot: {offenders}"
+        f"the session ledger snapshot: {offenders}"
     )
 
 

@@ -4001,9 +4001,7 @@ def _not_creator_reason(
 AUDIENCE_ADMISSION_KEY_PREFIX = "admission:"
 
 
-def record_audience_admission(
-    slot: Any, admission: dict[str, Any], *, for_pending_turn: bool = False
-) -> None:
+def record_audience_admission(slot: Any, admission: dict[str, Any]) -> None:
     """Record *admission* on *slot* as the audience its current turn was admitted under.
 
     *admission* is the ``admission`` of the :class:`OwnerDmVerdict` the gate just
@@ -4056,19 +4054,18 @@ def record_audience_admission(
     A caller with no slot record of its own leaves nothing, which is the behaviour
     such a caller has today.
 
-    ``for_pending_turn`` lifts the in-a-turn requirement for ONE kind of caller: a
-    producer that is about to START the turn this admission is about, and that has
-    no suspension point between this call and the turn's admission. The guard above
-    exists because an entry nothing clears would make the publisher withhold the
-    mirror leg of an UNRELATED later reply, judged by an admission that was never
-    about it; a caller whose next statement starts the turn leaves an entry that
-    turn's own teardown empties, so the hazard is not present. It stays opt-in
-    because no other caller can promise that, and the safe default is the guard.
+    NO OPT-OUT from the in-a-turn guard, because every caller is inside the turn its
+    admission is about. A producer that merely has a turn PENDING cannot be: an entry
+    nothing clears makes the publisher withhold the mirror leg of an unrelated later
+    reply, judged by an admission that was never about it. The work-ledger wake is
+    the one shape that could want it -- it delivers into a turn it starts -- and it
+    carries a pointer to ``work_ledger_read`` rather than a board, so the read that
+    needs an admission is the conductor's own call inside its own turn.
     """
     fences = getattr(slot, "_steer_audience_fences", None)
     if slot is None or not isinstance(fences, dict):
         return
-    if not (for_pending_turn or _in_runner_turn(slot)):
+    if not _in_runner_turn(slot):
         return
     key = AUDIENCE_ADMISSION_KEY_PREFIX + json.dumps(
         admission.get(QUEUED_CONTAINMENT_META_KEY, {}), sort_keys=True, default=str
