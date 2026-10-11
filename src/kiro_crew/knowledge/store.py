@@ -1036,9 +1036,7 @@ class KnowledgeStore:
             );
 
             CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
-            -- find_entity's case-insensitive fallback; without it every
-            -- query term that misses the exact name scans the whole table.
-            CREATE INDEX IF NOT EXISTS idx_entities_name_lower ON entities(LOWER(name));
+
             CREATE TABLE IF NOT EXISTS entity_relations (
                 id TEXT PRIMARY KEY,
                 source_id TEXT NOT NULL REFERENCES entities(id),
@@ -1060,9 +1058,6 @@ class KnowledgeStore:
                 created_at TEXT NOT NULL,
                 PRIMARY KEY (item_id, entity_id)
             );
-            -- The graph leg counts mentions by entity_id; the primary key leads
-            -- with item_id, so without this every search scans every mention.
-            CREATE INDEX IF NOT EXISTS idx_mentions_entity_item ON mentions(entity_id, item_id);
 
             CREATE TABLE IF NOT EXISTS source_locations (
                 id TEXT PRIMARY KEY,
@@ -1192,6 +1187,34 @@ class KnowledgeStore:
             );
 
         """)
+        self.db.commit()
+        # An empty library gets its search indexes now, for free. A populated
+        # one does not: building them is O(data) (seconds on a cold 59k-entity
+        # library) and this runs before the gateway listener binds. The gateway
+        # builds them post-bind via ensure_search_indexes(); until then a search
+        # returns the same rows, only slower. Both indexed tables must be empty:
+        # entities can outlive their mentions until the orphan sweep runs.
+        if (
+            self.db.execute("SELECT 1 FROM mentions LIMIT 1").fetchone() is None
+            and self.db.execute("SELECT 1 FROM entities LIMIT 1").fetchone() is None
+        ):
+            self.ensure_search_indexes()
+
+    #: Indexes that only make knowledge search faster. Results never depend on
+    #: them, so a store may serve queries before they exist.
+    _SEARCH_INDEXES = (
+        # find_entity's case-insensitive fallback; without it every query term
+        # that misses the exact name scans the whole table.
+        "CREATE INDEX IF NOT EXISTS idx_entities_name_lower ON entities(LOWER(name))",
+        # The graph leg counts mentions by entity_id; the primary key leads with
+        # item_id, so without this every search scans every mention.
+        "CREATE INDEX IF NOT EXISTS idx_mentions_entity_item ON mentions(entity_id, item_id)",
+    )
+
+    def ensure_search_indexes(self) -> None:
+        """Create the search-only indexes if missing. O(data) the first time, then a no-op."""
+        for stmt in self._SEARCH_INDEXES:
+            self.db.execute(stmt)
         self.db.commit()
 
     def _migrate(self):
@@ -2657,15 +2680,16 @@ class KnowledgeStore:
     def ensure_fts_index_current(self) -> None:
         """Rebuild ``items_fts`` if it holds a stale term representation.
 
-        Called by each of the three FTS readers before it matches --
-        :meth:`search_items_fts`, ``HybridRetriever._keyword_search``, and the
-        dashboard's entity-items lookup. Deliberately NOT called
+        Called first by the gateway's post-bind knowledge maintenance task
+        (``_kick_knowledge_orphan_reclaim``, on a worker thread), and by each of
+        the three FTS readers before it matches -- :meth:`search_items_fts`,
+        ``HybridRetriever._keyword_search``, and the dashboard's entity-items
+        lookup -- as the fallback when that task could not take the writer lock.
+        Deliberately NOT called
         from ``__init__``: the constructor runs on the gateway's boot path, and a
         rebuild is proportional to corpus size, so migrating there would stall
-        the gateway at boot for a large legacy library. All three readers run on
-        a worker thread
-        (``run_in_embed_pool`` / ``asyncio.to_thread``), so the one-time cost
-        lands on the first search instead of on startup.
+        the gateway at boot for a large legacy library. Every caller runs on a
+        worker thread, so the one-time cost lands after the listener binds.
 
         Steady state is a single boolean check. The first caller takes the lock
         and does the work; concurrent readers wait rather than each starting

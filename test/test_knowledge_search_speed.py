@@ -65,9 +65,58 @@ class TestFindEntity:
 
     def test_graph_indexes_exist(self, store):
         names = {
-            r[0] for r in store.db.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
+            r[0] for r in store.db.execute("SELECT name FROM sqlite_schema WHERE type = 'index'")
         }
         assert {"idx_entities_name_lower", "idx_mentions_entity_item"} <= names
+
+
+def _index_names(store) -> set[str]:
+    return {r[0] for r in store.db.execute("SELECT name FROM sqlite_schema WHERE type = 'index'")}
+
+
+class TestSearchIndexesOffConstruction:
+    """A populated library must not build the O(data) indexes while opening.
+
+    The gateway opens the store before its listener binds; on a cold 59k-entity
+    library these two indexes took ~11 s, which landed on time-to-ready.
+    """
+
+    @staticmethod
+    def _populated_without_indexes(tmp_path: Path) -> str:
+        path = str(tmp_path / "kb.db")
+        s = KnowledgeStore(path)
+        eid = s.add_entity("widget", "concept")
+        s.add_mention(s.add_item("doc", "c", "doc"), eid)
+        for name in ("idx_entities_name_lower", "idx_mentions_entity_item"):
+            s.db.execute(f"DROP INDEX {name}")
+        s.db.commit()
+        return path
+
+    def test_reopen_of_populated_store_defers_them(self, tmp_path):
+        reopened = KnowledgeStore(self._populated_without_indexes(tmp_path))
+        assert not {"idx_entities_name_lower", "idx_mentions_entity_item"} & _index_names(reopened)
+
+    def test_entities_without_mentions_still_defer_them(self, tmp_path):
+        path = self._populated_without_indexes(tmp_path)
+        s = KnowledgeStore(path)
+        s.db.execute("DELETE FROM mentions")
+        s.db.commit()
+        s.close()
+        reopened = KnowledgeStore(path)
+        assert not {"idx_entities_name_lower", "idx_mentions_entity_item"} & _index_names(reopened)
+
+    def test_ensure_search_indexes_builds_them_and_is_idempotent(self, tmp_path):
+        reopened = KnowledgeStore(self._populated_without_indexes(tmp_path))
+        reopened.ensure_search_indexes()
+        reopened.ensure_search_indexes()
+        assert {"idx_entities_name_lower", "idx_mentions_entity_item"} <= _index_names(reopened)
+
+    def test_search_results_do_not_depend_on_them(self, tmp_path):
+        reopened = KnowledgeStore(self._populated_without_indexes(tmp_path))
+        before = (reopened.find_entity("WIDGET"), HybridRetriever(reopened)._graph_search("widget"))
+        reopened.ensure_search_indexes()
+        after = (reopened.find_entity("WIDGET"), HybridRetriever(reopened)._graph_search("widget"))
+        assert before == after
 
 
 class TestGraphTieOrder:

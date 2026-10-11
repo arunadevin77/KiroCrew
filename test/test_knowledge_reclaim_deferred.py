@@ -788,3 +788,121 @@ class TestHandoffJoinsTheHoldersAdmission:
             assert asyncio.run(scenario()) is False
         finally:
             store._close_all_for_tests()
+
+
+class TestFtsMigrationRunsPostBind:
+    """The one-time FTS re-index runs in the post-bind kick, not in the first search."""
+
+    @staticmethod
+    def _legacy_store(tmp_path):
+        path = str(tmp_path / "kb.db")
+        seed = KnowledgeStore(path)
+        seed.add_item("How the gateway starts", "project notes on boot", "doc")
+        seed.db.execute("PRAGMA user_version = 0")  # an index from before format v1
+        seed.db.commit()
+        seed._close_all_for_tests()
+        return KnowledgeStore(path)
+
+    def test_kick_migrates_and_the_first_search_does_not(self, tmp_path, monkeypatch):
+        from kiro_crew.knowledge.retrieval import HybridRetriever
+
+        store = self._legacy_store(tmp_path)
+        try:
+            assert store.db.execute("PRAGMA user_version").fetchone()[0] == 0
+            state = SimpleNamespace(_knowledge_store=store, _background_tasks=set())
+
+            async def run():
+                srv._kick_knowledge_orphan_reclaim(state)
+                await asyncio.gather(*state._background_tasks)
+
+            asyncio.run(run())
+            version = store.db.execute("PRAGMA user_version").fetchone()[0]
+            assert version == store_mod.FTS_INDEX_VERSION
+            assert store._fts_index_current is True
+
+            def no_second_migration():
+                raise AssertionError("the first search re-ran the FTS migration")
+
+            monkeypatch.setattr(store, "_migrate_fts_index", no_second_migration)
+            hits = HybridRetriever(store)._keyword_search("gateway", limit=5)
+            assert hits, "the migrated index must still match"
+        finally:
+            store._close_all_for_tests()
+
+    def test_a_migration_failure_is_logged_and_left_to_the_next_reader(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        store = self._legacy_store(tmp_path)
+        try:
+
+            def boom():
+                raise RuntimeError("disk gone")
+
+            monkeypatch.setattr(store, "ensure_fts_index_current", boom)
+            state = SimpleNamespace(_knowledge_store=store, _background_tasks=set())
+
+            async def run():
+                srv._kick_knowledge_orphan_reclaim(state)
+                await asyncio.gather(*state._background_tasks)
+
+            asyncio.run(run())
+            assert "FTS index migration failed" in caplog.text
+            assert store._fts_index_current is False
+        finally:
+            store._close_all_for_tests()
+
+    def test_the_one_time_builds_run_with_ingestion_held_off(self, tmp_path, monkeypatch):
+        store = self._legacy_store(tmp_path)
+        try:
+            seen: list[tuple[str, bool]] = []
+            gate = store._ingestion_gate
+            real_idx, real_fts = store.ensure_search_indexes, store.ensure_fts_index_current
+
+            def idx():
+                seen.append(("indexes", gate._maintenance))
+                real_idx()
+
+            def fts():
+                seen.append(("fts", gate._maintenance))
+                real_fts()
+
+            monkeypatch.setattr(store, "ensure_search_indexes", idx)
+            monkeypatch.setattr(store, "ensure_fts_index_current", fts)
+            state = SimpleNamespace(_knowledge_store=store, _background_tasks=set())
+
+            async def run():
+                srv._kick_knowledge_orphan_reclaim(state)
+                await asyncio.gather(*state._background_tasks)
+
+            asyncio.run(run())
+            assert seen == [("indexes", True), ("fts", True)]
+        finally:
+            store._close_all_for_tests()
+
+    def test_builds_run_after_the_window_when_ingestion_never_drains(self, tmp_path, monkeypatch):
+        """A window that did not drain yields while holding the gate's condition
+        lock, and ingestion releases the gate on the event loop. The builds must
+        therefore run after the window is left, never under that lock."""
+        store = self._legacy_store(tmp_path)
+        try:
+            seen: list[tuple[str, bool, bool]] = []
+            gate = store._ingestion_gate
+            real_idx, real_fts = store.ensure_search_indexes, store.ensure_fts_index_current
+
+            def idx():
+                seen.append(("indexes", gate._maintenance, gate._cond._is_owned()))
+                real_idx()
+
+            def fts():
+                seen.append(("fts", gate._maintenance, gate._cond._is_owned()))
+                real_fts()
+
+            monkeypatch.setattr(store, "ensure_search_indexes", idx)
+            monkeypatch.setattr(store, "ensure_fts_index_current", fts)
+            worker = _kick_worker(store, timeout=0.2)
+            with store.ingestion_in_flight():
+                worker()
+            assert seen == [("indexes", False, False), ("fts", False, False)]
+            assert store._fts_index_current is True
+        finally:
+            store._close_all_for_tests()

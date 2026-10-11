@@ -287,7 +287,12 @@ def _kick_knowledge_orphan_reclaim(state: DashboardState) -> None:
         if store is None:
             return
         with store.maintenance_window() as quiescent:
+            # The one-time builds first. Both take SQLite's writer lock for an
+            # O(data) pass (the mentions index alone measured 9.2 s on a cold
+            # 308k-mention library), so they run with ingestion held off: an
+            # ingest waits at the gate instead of hitting busy_timeout.
             if quiescent:
+                _one_time_builds(store)
                 store.reclaim_orphans()
                 # Same drained window: an interrupted agent-document ingest can
                 # leave committed items that no agent_item_state row names, and
@@ -295,6 +300,30 @@ def _kick_knowledge_orphan_reclaim(state: DashboardState) -> None:
                 # KnowledgeStore.reclaim_agent_source_residue). Running it here
                 # means it only ever sees fully-settled ingests.
                 store.reclaim_agent_source_residue()
+        if not quiescent:
+            # The store never drained. A window that did not drain yields while
+            # still holding the gate's condition lock, and ingestion releases
+            # the gate on the event loop, so the builds run only after the
+            # window has been left: ingestion keeps going, and may meet the
+            # writer lock for the length of a build.
+            _one_time_builds(store)
+
+    def _one_time_builds(store) -> None:
+        # Search-only indexes a populated library skipped at construction
+        # (O(data), so never before the listener binds). A no-op after the
+        # first boot; search still works without them.
+        try:
+            store.ensure_search_indexes()
+        except Exception:  # noqa: BLE001 -- search still works without them
+            logger.warning("Knowledge search index build failed", exc_info=True)
+        # The one-time FTS re-index (format v1, CJK-segmented terms). Done here,
+        # post-bind and off the loop, so the first keyword search finds the
+        # index current; ~2.5 s of CPU on a 22k-item library. A no-op once done;
+        # a writer-lock miss leaves it to the next reader.
+        try:
+            store.ensure_fts_index_current()
+        except Exception:  # noqa: BLE001 -- the first search retries it
+            logger.warning("Knowledge FTS index migration failed", exc_info=True)
 
     async def _knowledge_orphan_reclaim() -> None:
         try:
