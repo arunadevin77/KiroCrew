@@ -23,6 +23,7 @@ import errno
 import json
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -49,6 +50,59 @@ _FAMILY_PREFIX = "/api/chat/slots/{"
 #: Header the sweep's identity stand-in reads: absent is no claim at all, "-" is
 #: the dashboard user's empty claim, anything else is that app's claim.
 _CALLER = "X-Test-Caller"
+
+#: Lost-run ceiling for a hook's hop onto the event loop, not a race to tune. The
+#: interleaving hooks below block an executor thread until the loop has finished
+#: real durable work -- a session delete is a SQLite commit, a WAL checkpoint, an
+#: fsync and sidecar unlinks; a save-and-close is a locked transcript rewrite.
+#: MEASURED: 0.03 s per call at ``-n 4`` on a quiet 32-core Linux host (the repeats
+#: in the pull request); on CI the hop has only ever been seen truncated, at the
+#: former 5 s bound, on ``Backend Tests (Windows) (2)`` (runs 38123311632 and
+#: 38145187438), so the Windows worst case is "over 5 s", not a number. 60 s is
+#: over 10x the truncated reading and half the suite's 120 s ``--timeout``, so a
+#: hop that never lands fails here by name instead of killing the xdist worker.
+_LOOP_HOP_LOST_RUN_SECS = 60.0
+
+
+class _LoopHop:
+    """Run loop-side coroutines from an off-loop hook, and fail the TEST on a hang.
+
+    A hook under test calls :meth:`run` while the handler awaits the hook off the
+    loop. An exception raised inside the hook reaches aiohttp, not pytest: a
+    ``TimeoutError`` becomes a bodiless 504 and anything else a 500, so the test
+    would read a status instead of a cause. So an expired ceiling is recorded
+    here with the elapsed time and the last step the coroutine noted, the hook
+    still raises (the handler must not continue as if the hop landed), and the
+    test calls :meth:`check` right after its request to fail on that record.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self.steps: list[str] = []
+        self.failure = ""
+
+    def note(self, step: str) -> None:
+        """Record progress from inside the coroutine, for the failure message."""
+        self.steps.append(step)
+
+    def run(self, coro, what: str):
+        started = time.monotonic()
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        try:
+            return future.result(timeout=_LOOP_HOP_LOST_RUN_SECS)
+        except TimeoutError:
+            future.cancel()
+            last = self.steps[-1] if self.steps else "nothing noted yet"
+            self.failure = (
+                f"{what} was still pending on the loop after "
+                f"{time.monotonic() - started:.1f}s (lost-run ceiling "
+                f"{_LOOP_HOP_LOST_RUN_SECS:.0f}s); last step: {last}"
+            )
+            raise AssertionError(self.failure) from None
+
+    def check(self) -> None:
+        """Fail by name if a hop expired; call it before reading the response."""
+        assert not self.failure, self.failure
 
 
 @pytest.fixture
@@ -854,6 +908,7 @@ class TestTranscriptOwnershipWithoutALiveSlot:
         assert not await asyncio.to_thread(log.has_log, destination_key)
         loop = asyncio.get_running_loop()
         loop_thread = threading.get_ident()
+        hop = _LoopHop(loop)
         before = {}
         load_cfg = chat_handlers._load_restore_cfg
 
@@ -861,18 +916,21 @@ class TestTranscriptOwnershipWithoutALiveSlot:
             assert "b1" not in state._slots_under_construction
             # The reopen write runs after construction, so the source is still closed.
             assert (await asyncio.to_thread(log.get_metadata, source_key)).get("closed")
+            hop.note("source still closed")
             await _persist_and_close(state, state.get_or_create_slot("b1", origin=SlotOrigin.USER))
+            hop.note("destination persisted and closed")
             before["meta"] = await asyncio.to_thread(log.get_metadata, destination_key)
             before["rows"] = await asyncio.to_thread(log.read_messages, destination_key)
 
         def restore_cfg():
             assert threading.get_ident() != loop_thread
-            asyncio.run_coroutine_threadsafe(create_and_close_destination(), loop).result(timeout=5)
+            hop.run(create_and_close_destination(), "the destination's create-and-close")
             return load_cfg()
 
         monkeypatch.setattr(chat_handlers, "_load_restore_cfg", restore_cfg)
         async with _client(state, caller) as client:
             resp = await client.post("/api/chat/slots/b1/resume", json={"key": source_key})
+            hop.check()
             assert before["meta"]["closed"], "the destination interleaving did not occur"
             assert before["rows"], "the destination must contain the person's persisted rows"
             if caller:
@@ -907,16 +965,19 @@ class TestTranscriptOwnershipWithoutALiveSlot:
         )
         loop = asyncio.get_running_loop()
         loop_thread = threading.get_ident()
+        hop = _LoopHop(loop)
         reservations = []
         read_owner = chat_handlers.transcript_acquisition_reason
 
         async def while_destination_is_reserved():
             with pytest.raises(ValueError, match="still being built"):
                 state.get_or_create_slot("b1", origin=SlotOrigin.USER)
+            hop.note("create of the reserved destination refused")
             if source_change == "owner":
                 await asyncio.to_thread(log.update_metadata, source_key, {"app": ""})
             elif source_change:
                 await asyncio.to_thread(log.delete_session, source_key)
+                hop.note("source deleted")
                 if source_change == "identity":
                     await asyncio.to_thread(
                         log.update_metadata, source_key, {"app": APP, "created_at": "replacement"}
@@ -929,14 +990,13 @@ class TestTranscriptOwnershipWithoutALiveSlot:
                 reserved = "b1" in state._slots_under_construction
                 reservations.append(reserved)
                 if reserved:
-                    asyncio.run_coroutine_threadsafe(while_destination_is_reserved(), loop).result(
-                        timeout=5
-                    )
+                    hop.run(while_destination_is_reserved(), f"the source change {source_change!r}")
             return reason
 
         monkeypatch.setattr(chat_handlers, "transcript_acquisition_reason", inspect_destination)
         async with _client(state, APP) as client:
             resp = await client.post("/api/chat/slots/b1/resume", json={"key": source_key})
+            hop.check()
             assert reservations == [False, True]
             if source_change == "owner":
                 assert (resp.status, await resp.json()) == (404, _NOT_FOUND)
@@ -1011,7 +1071,7 @@ class TestTranscriptOwnershipWithoutALiveSlot:
         await asyncio.to_thread(
             log.update_metadata, source_key, {"app": APP, "closed": True, "closed_at": 1.0}
         )
-        loop = asyncio.get_running_loop()
+        hop = _LoopHop(asyncio.get_running_loop())
         read_owner = chat_handlers.transcript_acquisition_reason
         published = []
 
@@ -1021,12 +1081,13 @@ class TestTranscriptOwnershipWithoutALiveSlot:
         def inspect_destination(log_arg, key, app):
             reason = read_owner(log_arg, key, app)
             if key == "dashboard:b1" and "b1" in state._slots_under_construction:
-                asyncio.run_coroutine_threadsafe(publish_same_transcript(), loop).result(timeout=5)
+                hop.run(publish_same_transcript(), "the same-transcript publish")
             return reason
 
         monkeypatch.setattr(chat_handlers, "transcript_acquisition_reason", inspect_destination)
         async with _client(state, APP) as client:
             resp = await client.post("/api/chat/slots/b1/resume", json={"key": source_key})
+            hop.check()
             assert resp.status == 200, await resp.text()
             assert (await resp.json())["key"] == "a1"
         assert published and state._slots["a1"] is published[0]
@@ -1817,7 +1878,7 @@ class TestModeRereadsTheGrantAfterTheBody:
     @pytest.mark.asyncio
     async def test_a_slot_replaced_during_the_grant_read_is_not_trusted(self, state) -> None:
         state.get_or_create_slot("shared", app=APP)
-        loop = asyncio.get_running_loop()
+        hop = _LoopHop(asyncio.get_running_loop())
         replacement = []
         calls = []
 
@@ -1828,12 +1889,13 @@ class TestModeRereadsTheGrantAfterTheBody:
         def grant(_app: str) -> bool:
             calls.append(None)
             if len(calls) == 2:
-                asyncio.run_coroutine_threadsafe(replace(), loop).result(timeout=5)
+                hop.run(replace(), "the slot replacement")
             return True
 
         with patch(_GRANT, grant):
             async with _client(state, APP) as client:
                 resp = await client.post("/api/chat/mode", json={"mode": "trust", "slot": "shared"})
+                hop.check()
                 assert (resp.status, await resp.json()) == (404, _NOT_FOUND)
         assert len(calls) == 2
         assert replacement and not replacement[0]._trust
