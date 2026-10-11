@@ -1086,7 +1086,7 @@ itself opened. Member sessions also bypass the provider warm pool
 default backend, so a warm hit would skip both the member backend route and
 the mount. The member backend is `agent.member_acp_backend` (default `kas`),
 and requires a wire-capable backend (`ACP_BACKENDS_MEMBER_DISPATCH`: the
-claude seam, KAS, codex, opencode and goose); kiro-cli v2 reads its template from disk and
+claude seam, KAS, codex, opencode, goose and deepseek); kiro-cli v2 reads its template from disk and
 exposes no per-session channel, so a member session on it runs as plain chat —
 the tools are simply not mounted, never mounted-and-refused. Codex qualifies
 because `providers/mirrors/codex.py` already gives it a per-session array and
@@ -1098,7 +1098,7 @@ mechanism. `tool_gate.is_enforced` is true for opencode as well, on
 BACK from the harness's own config resolution before the first prompt, so a session
 that cannot establish the asking posture is refused there too, and
 `providers/mirrors/opencode.py` documents `permission_surface_owned` as
-accepted-and-ignored for exactly that reason.
+accepted-and-ignored for exactly that reason. deepseek's routing, `VERIFIED_GATE_EXTENSION`, is enforced too: Crew's gate plugin answers every tool call with `ask`, and its load marker is read back before the first prompt. deepseek has no mirror, so its member array comes from `AcpClient._mirrorless_member_mounts`: only the member mounts, with `disabled` honoured and a narrowed tool withholding its whole server, since no mirror carries a per-tool deny there. An element that cannot start fails the whole deepseek session, so an entry that does not resolve is never placed.
 
 ### The crew panel rides the same vehicle
 
