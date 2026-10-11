@@ -627,14 +627,19 @@ export function InlineCode({ children, ...props }: { children?: React.ReactNode 
     activatePath(path, kind, e.shiftKey, actions, reveal.onError, targetLine, targetEndLine)
   }
   // Right-click opens the shared file-path menu (Open in default app / reveal /
-  // copy path), additive to the existing click/shift-click activation. The menu
-  // items self-gate on directLocal, so a remote session sees only Copy path.
+  // copy path), additive to the existing click/shift-click activation. The
+  // native items self-gate on directLocal; the in-app items ("Open in side
+  // panel", "Show in Files panel") come from this host's own handlers, so a
+  // remote session still gets an entry that works on the viewer's screen.
   // `kind` is threaded through so a directory chip hides "Open with default
   // app" — the reveal endpoint 400s an `open` on a directory, which would land
   // the user on an error for a click they cannot fix.
+  const openFileFromMenu = actions.onFileOpen
+    ? () => activatePath(path, kind, false, actions, reveal.onError, targetLine, targetEndLine)
+    : undefined
   return (
     <>
-    <FilePathMenu filePath={path} kind={kind}>
+    <FilePathMenu filePath={path} kind={kind} onFileOpen={openFileFromMenu} onFolderOpen={actions.onFolderOpen}>
       <code
         className={CHIP_ACTIONABLE}
         // eslint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role -- <code> is intentionally interactive (click-to-open path chip), same pattern as CopyableCode

@@ -519,7 +519,7 @@ export default function SidePanel({
   expanded, fillWidth, canDockBottom = true,
   leadingTabs, extraReserveW = 0, defaultWidth = 460, hiddenViews: hostHiddenViews, onActiveTabChange,
 }: SidePanelProps) {
-  const { tabs, activeId: storedActiveId, openView, openPanelTab, openTerminal, setActive, closeTab, patchTab, setOrder, syncPinned } = tabsCtl
+  const { tabs, activeId: storedActiveId, openView, openPanelTab, openTerminal, openFolder, setActive, closeTab, patchTab, setOrder, syncPinned } = tabsCtl
   // The Dynamic Dashboard is a Feature Preview (Settings > Developer). While it
   // is off its view is withheld exactly as a host withdrawal is — out of the +
   // menu, off the strip even when a persisted tab holds it, never the active
@@ -1465,6 +1465,8 @@ export default function SidePanel({
                 onPathChange={(p) => patchTab(t.id, { path: p, title: p.replace(/\/+$/, '').split('/').pop() || p })}
                 onFileSave={onFileSave}
                 onFileOpen={onFileOpen}
+                // A folder opened from a file tab keeps that tab's origin chat.
+                onFolderOpen={(p) => openFolder(p, t.slot ?? null)}
                 onAddToContext={onAddToContext}
                 projectDir={projectDir}
                 onSubmitComments={onSubmitComments}
@@ -1610,7 +1612,7 @@ function McpAppTabBody({ tab, slot }: { tab: PanelTab; slot: string }) {
  * and file-open host it stays mounted through tree-read failures so its notice,
  * toggle, and Refresh escape hatch remain reachable.
  */
-function FileTabBody({ tab, active, projectDir, scrollMemoryKey, onContentChange, onDiskContent, onDiffModeChange, onFileSave, onFileOpen, onAddToContext, onClose, onSubmitComments, connected = true, onRevealConsumed }: {
+function FileTabBody({ tab, active, projectDir, scrollMemoryKey, onContentChange, onDiskContent, onDiffModeChange, onFileSave, onFileOpen, onFolderOpen, onAddToContext, onClose, onSubmitComments, connected = true, onRevealConsumed }: {
   tab: PanelTab
   /** Is this the visible tab? Background file tabs stay mounted, so the panel
    *  needs this to keep its Cmd+F handler off a document the user cannot see. */
@@ -1626,6 +1628,8 @@ function FileTabBody({ tab, active, projectDir, scrollMemoryKey, onContentChange
   onDiffModeChange: (diffMode: boolean) => void
   onFileSave: (fp: string, c: string) => Promise<void>
   onFileOpen?: (p: string, opts?: { diffMode?: boolean; line?: number; replaceId?: string; canReplace?: () => boolean }) => void
+  /** The header path menu's "Show in Files panel" target. */
+  onFolderOpen?: (p: string) => void
   /** Right-click "Add to context" on a rail row. */
   onAddToContext?: (absPath: string, kind: 'file' | 'dir') => void
   onClose: () => void
@@ -1661,6 +1665,7 @@ function FileTabBody({ tab, active, projectDir, scrollMemoryKey, onContentChange
       connected={connected}
       revealLine={tab.revealLine}
       onRevealConsumed={onRevealConsumed}
+      onFolderOpen={onFolderOpen}
       railOpen={railUsable && railOpen}
       onRailToggle={railUsable ? () => setRailOpen(v => !v) : undefined}
       browserRail={railUsable ? (
@@ -1770,7 +1775,7 @@ function HydratingFileTab({ path, onDiskContent }: { path: string; onDiskContent
   return <div data-testid="file-tab-hydrating" className="h-full p-4"><ContentSkeleton rows={8} /></div>
 }
 
-function TabBody({ tab, active, slot, projectDir, onClose, onContentChange, onDiskContent, onDiffModeChange, onRevealConsumed, onPathChange, onFileSave, onFileOpen, onAddToContext, onSubmitComments, connected = true, onTerminalSendToChat, diffLineNumbers, setDiffLineNumbers, diffSideBySide, setDiffSideBySide }: {
+function TabBody({ tab, active, slot, projectDir, onClose, onContentChange, onDiskContent, onDiffModeChange, onRevealConsumed, onPathChange, onFileSave, onFileOpen, onFolderOpen, onAddToContext, onSubmitComments, connected = true, onTerminalSendToChat, diffLineNumbers, setDiffLineNumbers, diffSideBySide, setDiffSideBySide }: {
   tab: PanelTab; active: boolean; slot: string
   /** The chat's project directory — the file-browser rail's tree root. */
   projectDir?: string
@@ -1787,6 +1792,9 @@ function TabBody({ tab, active, slot, projectDir, onClose, onContentChange, onDi
   onPathChange: (p: string) => void
   onFileSave: (fp: string, c: string) => Promise<void>
   onFileOpen?: (p: string, opts?: { diffMode?: boolean; line?: number; replaceId?: string; canReplace?: () => boolean }) => void
+  /** Open a directory as a folder tab: the file tab header's "Show in Files
+   *  panel" row. */
+  onFolderOpen?: (p: string) => void
   /** Right-click "Add to context" on a file-browser rail row. */
   onAddToContext?: (absPath: string, kind: 'file' | 'dir') => void
   onSubmitComments?: (m: string) => void | boolean | Promise<void | boolean>
@@ -1828,6 +1836,7 @@ function TabBody({ tab, active, slot, projectDir, onClose, onContentChange, onDi
         onDiffModeChange={onDiffModeChange}
         onFileSave={onFileSave}
         onFileOpen={onFileOpen}
+        onFolderOpen={onFolderOpen}
         onAddToContext={onAddToContext}
         onClose={onClose}
         onSubmitComments={onSubmitComments}

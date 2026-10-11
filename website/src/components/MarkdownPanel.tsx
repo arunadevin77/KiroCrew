@@ -134,12 +134,15 @@ export function breadcrumbSegments(filePath: string): BreadcrumbSegment[] {
  *
  * `tabIndex={0}` is what puts the element in the tab order in the first place.
  * The label and the readout both ARE the path (runtime data), so no localized
- * string is added. Right-click still opens the FilePathMenu.
+ * string is added. Right-click still opens the FilePathMenu, which offers "Show
+ * in Files panel" for the file's folder when the host passes `onFolderOpen`.
+ * The file is already on screen here, so the menu gets no "Open in side panel"
+ * handler.
  *
  * Exported so the accessibility contract is unit-testable without mounting the
  * whole panel (which drags in the Pierre editor tree).
  */
-export function FileHeaderBreadcrumb({ filePath }: { filePath: string }) {
+export function FileHeaderBreadcrumb({ filePath, onFolderOpen }: { filePath: string; onFolderOpen?: (path: string) => void }) {
   const crumbs = breadcrumbSegments(filePath)
   const [focused, setFocused] = useState(false)
   return (
@@ -149,7 +152,7 @@ export function FileHeaderBreadcrumb({ filePath }: { filePath: string }) {
     // header BAR (its relative ancestor), not to this row, so its width is the
     // panel's, not the compressed breadcrumb's -- see the readout comment.
     <>
-      <FilePathMenu filePath={filePath}>
+      <FilePathMenu filePath={filePath} onFolderOpen={onFolderOpen}>
         {/* Focusable so a keyboard user can read the full path: a screen reader
             from the accessible name, a sighted keyboard user from the readout
             below. Same focusable-region pattern as CodeBlock / FileRenderers. */}
@@ -378,6 +381,10 @@ interface Props {
    *  this is what lets the document come back where the user left it (see
    *  `useScrollMemory`). Omitted by hosts without that lifecycle. */
   scrollMemoryKey?: string
+  /** Open a folder in the host's Files panel. When passed, the header path's
+   *  right-click menu offers "Show in Files panel" for the file's folder, an
+   *  in-app action that works whichever machine the browser is on. */
+  onFolderOpen?: (path: string) => void
 }
 
 import { PierreFilePair, type PierreEditorHandle, type RevealTarget } from '../pierre'
@@ -1216,7 +1223,7 @@ export interface MarkdownPanelHandle {
   requestNavigate: (nav: (stillClean: () => boolean) => void) => void
 }
 
-export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPanel({ filePath, content, binary, partial, onContentChange, onDiskContent, onSave, onClose, liveWatch, onSubmitComments, connected = true, onRefresh, reserveWidth, initialDiffMode, readOnly = false, onDiffModeChange, embedded, active = true, savedBaseline, revealLine, onRevealConsumed, browserRail, railOpen, onRailToggle, scrollMemoryKey }: Props, ref) {
+export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPanel({ filePath, content, binary, partial, onContentChange, onDiskContent, onSave, onClose, liveWatch, onSubmitComments, connected = true, onRefresh, reserveWidth, initialDiffMode, readOnly = false, onDiffModeChange, embedded, active = true, savedBaseline, revealLine, onRevealConsumed, browserRail, railOpen, onRailToggle, scrollMemoryKey, onFolderOpen }: Props, ref) {
   useLanguageGeneration() // memo() bails out of the provider-level repaint; subscribe directly
   const ime = useImeGuard()
   const qc = useQueryClient()
@@ -2795,7 +2802,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
         <div className="shrink-0 border-b border-border">
           <div className="relative flex items-center gap-2 h-[38px] px-3">
             <FileText size={14} className="text-muted shrink-0" />
-            <FileHeaderBreadcrumb filePath={filePath} />
+            <FileHeaderBreadcrumb filePath={filePath} onFolderOpen={onFolderOpen} />
             {diffMode && !diffUnavailable && (diffStats.added > 0 || diffStats.removed > 0) && (
               <span className="text-[11px] font-mono font-semibold shrink-0">
                 {diffStats.added > 0 && <span className="text-ok">+{diffStats.added}</span>}

@@ -9189,9 +9189,11 @@
     "filePathMenu": {
       "copy_failed": "Pfad konnte nicht kopiert werden",
       "copy_path": "Pfad kopieren",
+      "open_in_side_panel": "Im Seitenpanel öffnen",
       "path_copied": "Pfad kopiert",
       "reveal_blocked": "Dieser Pfad ist geschützt und kann nicht geöffnet werden.",
-      "reveal_failed": "Dieser Pfad konnte auf dem Computer, auf dem {{productName}} läuft, nicht geöffnet werden."
+      "reveal_failed": "Dieser Pfad konnte auf dem Computer, auf dem {{productName}} läuft, nicht geöffnet werden.",
+      "show_in_files_panel": "Im Dateien-Panel anzeigen"
     },
     "pendingQuestionCard": {
       "answer_failed": "Ihre Antwort konnte nicht gesendet werden. Der Agent wartet noch; bitte erneut versuchen.",

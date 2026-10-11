@@ -9317,9 +9317,11 @@
     "filePathMenu": {
       "copy_failed": "Não foi possível copiar o caminho",
       "copy_path": "Copiar caminho",
+      "open_in_side_panel": "Abrir no painel lateral",
       "path_copied": "Caminho copiado",
       "reveal_blocked": "Este caminho está protegido e não pode ser aberto.",
-      "reveal_failed": "Não foi possível abrir este caminho na máquina que executa o {{productName}}."
+      "reveal_failed": "Não foi possível abrir este caminho na máquina que executa o {{productName}}.",
+      "show_in_files_panel": "Mostrar no painel Arquivos"
     },
     "pendingQuestionCard": {
       "answer_failed": "Não foi possível enviar sua resposta. O agente ainda está aguardando, então tente novamente.",

@@ -9317,9 +9317,11 @@
     "filePathMenu": {
       "copy_failed": "Impossible de copier le chemin",
       "copy_path": "Copier le chemin",
+      "open_in_side_panel": "Ouvrir dans le panneau latéral",
       "path_copied": "Chemin copié",
       "reveal_blocked": "Ce chemin est protégé et ne peut pas être ouvert.",
-      "reveal_failed": "Impossible d'ouvrir ce chemin sur la machine qui exécute {{productName}}."
+      "reveal_failed": "Impossible d'ouvrir ce chemin sur la machine qui exécute {{productName}}.",
+      "show_in_files_panel": "Afficher dans le panneau Fichiers"
     },
     "pendingQuestionCard": {
       "answer_failed": "Impossible d’envoyer votre réponse. L’agent attend toujours, réessayez.",
