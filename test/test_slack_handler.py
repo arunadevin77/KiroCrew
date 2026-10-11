@@ -1969,6 +1969,7 @@ class TestPerThreadAgent:
         log.get_metadata.side_effect = lambda key: (
             {"agent": "sisyphus"} if key == owner_key else {}
         )
+        log.get_metadata_status.side_effect = lambda key: (log.get_metadata(key), True)
 
         slack = MockSlackClient()
         sessions = LinkedSessions()
@@ -2077,6 +2078,7 @@ class TestPerThreadAgent:
         log.get_metadata.side_effect = lambda key: (
             {"agent": "sisyphus"} if key == asker_key else {}
         )
+        log.get_metadata_status.side_effect = lambda key: (log.get_metadata(key), True)
 
         slack = MockSlackClient()
         sessions = FakeSessionManager()

@@ -219,7 +219,17 @@ def _read_thread_overrides(
 async def _hydrate_thread_overrides(
     session_key: str, conversation_log: ConversationLog | None
 ) -> None:
-    """Resolve private identity off-loop, then preserve any newer live selections."""
+    """Resolve private identity off-loop, then preserve any newer live selections.
+
+    The thread is marked hydrated only after a read the conversation log reports as
+    readable (``thread_override_slots.read_back``): a line it could not read is not
+    published, and the thread's next message reads it again.
+    A read that a ``!ta`` or ``!project`` metadata write may postdate is not published:
+    the commands count their writes, and a read the count moved across is made again,
+    at most ``HYDRATION_READ_ATTEMPTS`` times. When every read overlapped a write,
+    nothing is published and the thread is not marked hydrated, so its next message
+    hydrates it. A kind a command pinned is never published over.
+    """
     from kiro_crew.slack import thread_override_slots as slots
 
     if session_key in _hydrated_sessions:
@@ -230,15 +240,42 @@ async def _hydrate_thread_overrides(
         return
     agent_before = _thread_agents.get(session_key)
     project_before = _thread_projects.get(session_key)
-    agent, project = await asyncio.to_thread(_read_thread_overrides, session_key, conversation_log)
-    # A concurrent hydration/command may have settled this session while the
-    # worker read it. Never publish a stale result over that live selection.
-    if session_key in _hydrated_sessions:
+    agent = project = ""
+    for _attempt in range(slots.HYDRATION_READ_ATTEMPTS):
+        writes_before = slots.command_writes()
+        read = await asyncio.to_thread(
+            slots.read_back, session_key, conversation_log, _read_thread_overrides
+        )
+        # A concurrent hydration/command may have settled this session while the
+        # worker read it. Never publish a stale result over that live selection.
+        if session_key in _hydrated_sessions:
+            return
+        if read is None:
+            # The conversation log already warned about the read it could not make.
+            logger.debug(
+                "Thread overrides for %s not hydrated: the metadata could not be read; "
+                "the next message reads it again",
+                session_key,
+            )
+            return
+        agent, project = read
+        if slots.command_writes() == writes_before:
+            break
+    else:
+        logger.warning(
+            "Thread overrides for %s not hydrated: a !ta or !project metadata write "
+            "landed during each of %d reads; the next message reads them again",
+            session_key,
+            slots.HYDRATION_READ_ATTEMPTS,
+        )
         return
     slots.note_hydrated(session_key, _hydrated_sessions, _thread_agents, _thread_projects)
-    if agent and _thread_agents.get(session_key) == agent_before:
+    # Never over a kind a command pinned: a pinned thread whose hydration gave up hydrates again.
+    agent_pinned = slots.kind_is_pinned(session_key, "agent")
+    project_pinned = slots.kind_is_pinned(session_key, "project")
+    if agent and not agent_pinned and _thread_agents.get(session_key) == agent_before:
         _thread_agents[session_key] = agent
-    if project and _thread_projects.get(session_key) == project_before:
+    if project and not project_pinned and _thread_projects.get(session_key) == project_before:
         _thread_projects[session_key] = project
 
 
