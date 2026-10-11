@@ -946,6 +946,16 @@ class TestPastedTableBlocks:
         block = {"type": "table", "rows": [None, "x", [None, {"type": "raw_text", "text": None}, {"type": "raw_text", "text": "ok"}]]}
         assert _extract_blocks_text([block]) == "| ok"
 
+    def test_blank_rows_add_no_line_and_inner_separators_are_kept(self):
+        raw = lambda t: {"type": "raw_text", "text": t}  # noqa: E731
+        block = {"type": "table", "rows": [[raw("a"), raw("")], [raw(""), raw("")], [raw("b"), raw("c")]]}
+        assert _extract_blocks_text([block]) == "a | \nb | c"
+
+    def test_table_rendering_stays_within_the_budget(self):
+        rows = [[{"type": "raw_text", "text": "x" * 100}] for _ in range(1000)]
+        rendered = _extract_blocks_text([{"type": "table", "rows": rows}], 250)
+        assert len(rendered) == 250
+
     async def _routed_text(self, event: dict) -> str:
         orch = AsyncMock()
         ch_cfg = MagicMock(activation="mention", thread_follow=True)
