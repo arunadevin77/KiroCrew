@@ -49,8 +49,11 @@ def _release(env, run_id: str, session: str):
     )
 
 
-async def _deferring_manager(monkeypatch) -> tuple[SubagentManager, asyncio.Event, dict]:
-    """A manager whose memory floor defers every spawn until ``free`` is raised."""
+async def _deferring_manager(monkeypatch) -> tuple[SubagentManager, list[str], dict]:
+    """A manager whose memory floor defers every spawn until ``free`` is raised.
+
+    The list is the id of every run that started, in start order.
+    """
     cfg = KiroCrewConfig()
     cfg.agent.subagent_cost_gb = 0.5
     cfg.agent.spawn_min_memory_gb = 4.0
@@ -69,10 +72,10 @@ async def _deferring_manager(monkeypatch) -> tuple[SubagentManager, asyncio.Even
     await wait_taskq_open(mgr)
     mgr._spawn_stagger_secs = 0.0
     mgr._taskq_admit_wait_secs = 30.0
-    started = asyncio.Event()
+    started: list[str] = []
 
     async def worker(info) -> None:
-        started.set()
+        started.append(info.id)
         await asyncio.sleep(3600)
 
     monkeypatch.setattr(mgr, "_run", AsyncMock(side_effect=worker))
@@ -118,20 +121,30 @@ async def test_the_parent_cancels_its_own_deferred_spawn_and_it_never_starts(
         assert record is not None and record.queued is True and record.user_stopped is True
         assert record._stop_origin == "cancelled by its parent session"
 
-        # The memory floor clears: the cancelled row is never claimed or started.
-        free["gb"] = 32.0
-        mgr._taskq_admit_wait_secs = 0.05
-        for _ in range(25):
-            mgr._drain_queue()
-            await asyncio.sleep(0.02)
-        assert not started.is_set(), "a cancelled spawn started"
-
         # Once its stop report has run, nothing holds the parent attached.
         for _ in range(250):
             if not await subagents_attached_async(env.state, None, PARENT, "reload"):
                 break
             await asyncio.sleep(0.02)
         assert await subagents_attached_async(env.state, None, PARENT, "reload") is False
+
+        # A control spawn, deferred the same way and newer than the cancelled
+        # row. The memory floor clears and both rows are made eligible now: a
+        # pass that starts the control has read past the older, cancelled row,
+        # which it would have claimed first had it still been waiting.
+        control = await mgr.spawn_async("the work still needed", parent_session_key=PARENT)
+        assert control is not None and control.queued is True
+        free["gb"] = 32.0
+        mgr._taskq_admit_wait_secs = 0.05
+        await mgr._taskq.run(mgr._taskq.defer, info.id, wait=-1.0, reason="test: eligible now")
+        await mgr._taskq.run(mgr._taskq.defer, control.id, wait=-1.0, reason="test: eligible now")
+        for _ in range(250):
+            if control.id in started:
+                break
+            mgr._drain_queue()
+            await asyncio.sleep(0.02)
+        assert control.id in started, "the control spawn never started"
+        assert started == [control.id], "a cancelled spawn started"
     finally:
         await _close(mgr)
 
@@ -158,6 +171,40 @@ async def test_a_cancel_that_finds_the_run_started_releases_it_instead(env, monk
         mgr.cancel_queued.assert_awaited_once_with(
             info.id, PARENT, stop_origin="cancelled by its parent session"
         )
+    finally:
+        await _close(mgr)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_the_cancel_never_touches_the_store_on_the_event_loop(env, monkeypatch) -> None:
+    """The row's store cancel runs on the store's writer thread, not in the request.
+
+    A store read or write on the loop holds every session's turn for the store's
+    busy timeout whenever another connection contends for it. The single-run
+    ``cancel`` takes that call on the loop for a queued row, so the route uses the
+    queued stop's off-loop store phase instead.
+    """
+    import threading
+
+    mgr, _started, _free = await _deferring_manager(monkeypatch)
+    env.state.subagents = mgr
+    loop_thread = threading.get_ident()
+    cancel_threads: list[int] = []
+    original = SpawnAdmissionCoordinator.taskq_cancel_queued
+
+    def recording(self, agent_id, **kwargs):
+        cancel_threads.append(threading.get_ident())
+        return original(self, agent_id, **kwargs)
+
+    monkeypatch.setattr(SpawnAdmissionCoordinator, "taskq_cancel_queued", recording)
+    try:
+        info = await mgr.spawn_async("summarize the log", parent_session_key=PARENT)
+        assert info is not None and info.queued is True
+        resp = await messaging.api_spawn_release(_release(env, info.id, PARENT))
+        assert json.loads(resp.text)["status"] == "cancelled"
+        assert cancel_threads, "the store cancel never ran"
+        assert loop_thread not in cancel_threads, "the store cancel ran on the event loop"
     finally:
         await _close(mgr)
 
