@@ -4,6 +4,7 @@ import { renderWithProviders } from '../../test/helpers'
 import { NavigationLeaveGuardProvider, useMayLeaveForNavigation } from '../../components/NavigationLeaveGuard'
 import { api } from '../../api/client'
 import NewCrewmateDialog from './NewCrewmateDialog'
+import { POSE_IDS, seedIconPose } from '../../lib/avatarPoses'
 import { seededTraits } from '../../components/CrewAvatar'
 
 vi.mock('../../api/client', async importOriginal => {
@@ -114,24 +115,20 @@ describe('NewCrewmateDialog', () => {
       const region = await screen.findByRole('region', { name: 'New crewmate' })
       expect(screen.getByRole('textbox', { name: 'Name' })).toBeInTheDocument()
       expect(screen.getByTestId('crewmate-create-look')).toBeInTheDocument()
-      // The look is the hero: the tile centred with its caption under it,
-      // and no visible small-caps labels over it or over the name.
+      // The look is the hero: the tile centred alone, and the name sits
+      // under its own visible label.
       const identity = screen.getByTestId('crewmate-create-identity')
-      expect(Array.from(identity.children)).toEqual([
-        screen.getByTestId('crewmate-create-look'),
-        screen.getByTestId('crewmate-create-look-caption'),
-      ])
+      expect(Array.from(identity.children)).toEqual([screen.getByTestId('crewmate-create-look')])
       expect(identity).toHaveClass('flex-col', 'items-center')
-      expect(screen.getByTestId('crewmate-create-look-caption')).toHaveTextContent('Tap the picture for another look')
-      expect(screen.getByTestId('crewmate-create-look-caption')).toHaveClass('text-center')
       expect(identity).not.toContainElement(screen.getByRole('textbox', { name: 'Name' }))
       expect(within(region).queryByText('Avatar')).toBeNull()
-      expect(within(region).queryByText('Name')).toBeNull()
-      // The tile is the one re-roll control, named by the old button's string.
-      expect(screen.getAllByRole('button', { name: 'Try another look' })).toEqual([screen.getByTestId('crewmate-create-look')])
+      expect(screen.getByTestId('crewmate-create-name-label')).toHaveTextContent('Name')
+      // The tile is the one avatar control and it edits, never re-rolls.
+      expect(screen.getAllByRole('button', { name: 'Edit avatar' })).toEqual([screen.getByTestId('crewmate-create-look')])
+      expect(screen.queryByRole('button', { name: 'Try another look' })).toBeNull()
       // The hint is the shared tooltip, not the native one.
       expect(screen.getByTestId('crewmate-create-look')).not.toHaveAttribute('title')
-      expect(screen.getByTestId('crewmate-create-quick-hint')).toBeInTheDocument()
+      expect(screen.queryByTestId('crewmate-create-quick-hint')).toBeNull()
       expect(screen.getAllByRole('textbox')).toHaveLength(1)
       expect(screen.queryByRole('combobox')).toBeNull()
       expect(screen.queryByTestId('crewmate-create-advanced')).toBeNull()
@@ -179,11 +176,11 @@ describe('NewCrewmateDialog', () => {
         kiro_agent: 'kirocrew',
         description: 'Watch PRs',
         first_greeting: true,
-        avatar: { kind: 'ghost', traits: seededTraits('Scout') },
       })
+      expect(vi.mocked(api.createKirocrewAgent).mock.calls[0][0]).not.toHaveProperty('avatar')
     })
 
-    it('Create from the folded card builds from kirocrew, pinning the shown look and asking for the first greeting', async () => {
+    it('Create from the folded card builds from kirocrew, follows the name\'s own look and asks for the first greeting', async () => {
       card()
       await screen.findByTestId('crewmate-create-embedded')
       typeName('Scout')
@@ -193,56 +190,131 @@ describe('NewCrewmateDialog', () => {
       expect(body).toMatchObject({
         name: 'Scout',
         kiro_agent: 'kirocrew',
-        workspace: 'default',
+        workspace: '',
         description: '',
         first_greeting: true,
-        avatar: { kind: 'ghost', traits: seededTraits('Scout') },
       })
       expect(body).not.toHaveProperty('model')
+      // No pick: the record keeps no pinned look, so it wears the name's own face.
+      expect(body).not.toHaveProperty('avatar')
     })
 
-    it('a re-rolled look is the one sent: the tile and its corner badge each draw another', async () => {
+    it('the pencil opens the icon-only avatar editor, and the picked icon is sent even after a rename', async () => {
       card()
       await screen.findByTestId('crewmate-create-embedded')
       typeName('Scout')
-      const badge = screen.getByTestId('crewmate-create-look-reroll')
+      const badge = screen.getByTestId('crewmate-create-look-edit')
       expect(screen.getByTestId('crewmate-create-look')).toContainElement(badge)
       fireEvent.click(screen.getByTestId('crewmate-create-look'))
-      fireEvent.click(badge)
+      // Icon tier only: no tier strip, no reset link back to another tier.
+      await screen.findByTestId('avatar-icon-pane')
+      expect(screen.queryByTestId('avatar-builder-tabs')).toBeNull()
+      expect(screen.queryByTestId('avatar-builder-reset')).toBeNull()
+      const pose = POSE_IDS[POSE_IDS.length - 1]
+      fireEvent.click(screen.getByTestId(`avatar-icon-pose-${pose}`))
+      fireEvent.click(screen.getByTestId('avatar-builder-save'))
+      await waitFor(() => expect(screen.queryByTestId('avatar-icon-pane')).toBeNull())
+      // The pick is pinned: renaming the draft keeps it.
+      typeName('Scribe')
       fireEvent.click(screen.getByTestId('crewmate-create-submit'))
       await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
-      const body = vi.mocked(api.createKirocrewAgent).mock.calls[0][0] as { avatar: { kind: string; traits: ReturnType<typeof seededTraits> } }
-      expect(body.avatar.kind).toBe('ghost')
-      // Some later roll of the same name, never the name's own look.
-      const rolls = Array.from({ length: 64 }, (_, i) => seededTraits(`Scout#${i + 1}`))
-      expect(rolls).toContainEqual(body.avatar.traits)
-      expect(body.avatar.traits).not.toEqual(seededTraits('Scout'))
+      const body = vi.mocked(api.createKirocrewAgent).mock.calls[0][0] as { name: string; avatar: { kind: string; pose: string; bg: string } }
+      expect(body.name).toBe('Scribe')
+      expect(body.avatar).toMatchObject({ kind: 'icon', pose })
+      expect(body.avatar.bg).toMatch(/^#[0-9a-f]{6}$/i)
     })
 
-    it('every re-roll changes the tile colour, even where the next draw would repeat it', async () => {
-      // A name whose first re-draw keeps its tile colour: a press that only
-      // advanced one draw would show the same colour again.
-      const name = Array.from({ length: 400 }, (_, i) => `Mate ${i}`)
-        .find((n) => seededTraits(n).tile === seededTraits(`${n}#1`).tile)
-      expect(name).toBeDefined()
+    it('the name\'s own seeded pose is a pick like any other: clicking it marks it and Apply sends it', async () => {
       card()
       await screen.findByTestId('crewmate-create-embedded')
-      typeName(name!)
+      typeName('Scout')
       fireEvent.click(screen.getByTestId('crewmate-create-look'))
+      await screen.findByTestId('avatar-icon-pane')
+      expect(screen.getByTestId('avatar-builder-save')).toBeDisabled()
+      const pose = seedIconPose('Scout')
+      fireEvent.click(screen.getByTestId(`avatar-icon-pose-${pose}`))
+      expect(screen.getByTestId('avatar-builder-save')).not.toBeDisabled()
+      fireEvent.click(screen.getByTestId('avatar-builder-save'))
+      await waitFor(() => expect(screen.queryByTestId('avatar-icon-pane')).toBeNull())
       fireEvent.click(screen.getByTestId('crewmate-create-submit'))
       await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
-      const body = vi.mocked(api.createKirocrewAgent).mock.calls[0][0] as { avatar: { traits: ReturnType<typeof seededTraits> } }
-      expect(body.avatar.traits.tile).not.toBe(seededTraits(name!).tile)
+      expect(vi.mocked(api.createKirocrewAgent).mock.calls[0][0]).toMatchObject({ avatar: { kind: 'icon', pose } })
     })
 
-    it('the re-roll badge shows the shared tooltip on hover, and the tile keeps its name', async () => {
+    it('the original look comes back after a pick: the editor offers it and the create then sends no avatar', async () => {
+      card()
+      await screen.findByTestId('crewmate-create-embedded')
+      typeName('Scout')
+      fireEvent.click(screen.getByTestId('crewmate-create-look'))
+      await screen.findByTestId('avatar-icon-pane')
+      // Before any applied pick the card already wears that face: no link.
+      expect(screen.queryByTestId('avatar-builder-use-original')).toBeNull()
+      fireEvent.click(screen.getByTestId(`avatar-icon-pose-${POSE_IDS[POSE_IDS.length - 1]}`))
+      fireEvent.click(screen.getByTestId('avatar-builder-save'))
+      await waitFor(() => expect(screen.queryByTestId('avatar-icon-pane')).toBeNull())
+      fireEvent.click(screen.getByTestId('crewmate-create-look'))
+      await screen.findByTestId('avatar-icon-pane')
+      fireEvent.click(screen.getByRole('button', { name: "Back to Scout's original look" }))
+      await waitFor(() => expect(screen.queryByTestId('avatar-icon-pane')).toBeNull())
+      fireEvent.click(screen.getByTestId('crewmate-create-submit'))
+      await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
+      expect(vi.mocked(api.createKirocrewAgent).mock.calls[0][0]).not.toHaveProperty('avatar')
+    })
+
+    it('the avatar tile, the Advanced toggle and the close X are the shared Btn, with its press feedback', async () => {
+      card()
+      await screen.findByTestId('crewmate-create-embedded')
+      for (const id of ['crewmate-create-look', 'crewmate-create-advanced-toggle', 'crewmate-create-close']) {
+        expect(screen.getByTestId(id)).toHaveClass('active:scale-[0.97]')
+      }
+    })
+
+    it('Apply waits for a pick, so an untouched editor never swaps the card\'s own face', async () => {
+      card()
+      await screen.findByTestId('crewmate-create-embedded')
+      typeName('Scout')
+      fireEvent.click(screen.getByTestId('crewmate-create-look'))
+      await screen.findByTestId('avatar-icon-pane')
+      expect(screen.getByTestId('avatar-builder-save')).toBeDisabled()
+      expect(screen.getByTestId('avatar-icon-preview-current')).toBeInTheDocument()
+      expect(screen.getByTestId('avatar-icon-bg-custom')).toHaveValue(seededTraits('Scout').tile)
+      expect(screen.queryByTestId('avatar-icon-preview')).toBeNull()
+      fireEvent.click(screen.getByTestId(`avatar-icon-pose-${POSE_IDS.find((p) => p !== seedIconPose('Scout'))}`))
+      expect(screen.getByTestId('avatar-builder-save')).toBeEnabled()
+      expect(screen.getByTestId('avatar-icon-preview')).toBeInTheDocument()
+    })
+
+    it('an open avatar editor counts as a draft, so leaving asks even before Apply', async () => {
+      const onDraftStateChange = vi.fn()
+      card({ onDraftStateChange })
+      await screen.findByTestId('crewmate-create-embedded')
+      expect(onDraftStateChange).toHaveBeenLastCalledWith({ edited: false, busy: false })
+      fireEvent.click(screen.getByTestId('crewmate-create-look'))
+      await screen.findByTestId('avatar-icon-pane')
+      expect(onDraftStateChange).toHaveBeenLastCalledWith({ edited: true, busy: false })
+    })
+
+    it('cancelling the avatar editor keeps the name\'s own face and sends no avatar', async () => {
+      card()
+      await screen.findByTestId('crewmate-create-embedded')
+      typeName('Scout')
+      fireEvent.click(screen.getByTestId('crewmate-create-look'))
+      await screen.findByTestId('avatar-icon-pane')
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      await waitFor(() => expect(screen.queryByTestId('avatar-icon-pane')).toBeNull())
+      fireEvent.click(screen.getByTestId('crewmate-create-submit'))
+      await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
+      expect(vi.mocked(api.createKirocrewAgent).mock.calls[0][0]).not.toHaveProperty('avatar')
+    })
+
+    it('the edit badge shows the shared tooltip on hover, and the tile keeps its name', async () => {
       card()
       await screen.findByTestId('crewmate-create-embedded')
       const tile = screen.getByTestId('crewmate-create-look')
-      expect(tile).toHaveAccessibleName('Try another look')
-      fireEvent.mouseEnter(screen.getByTestId('crewmate-create-look-reroll'))
-      expect(await screen.findByRole('tooltip')).toHaveTextContent('Try another look')
-      fireEvent.mouseLeave(screen.getByTestId('crewmate-create-look-reroll'))
+      expect(tile).toHaveAccessibleName('Edit avatar')
+      fireEvent.mouseEnter(screen.getByTestId('crewmate-create-look-edit'))
+      expect(await screen.findByRole('tooltip')).toHaveTextContent('Edit avatar')
+      fireEvent.mouseLeave(screen.getByTestId('crewmate-create-look-edit'))
       await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
     })
 
@@ -256,7 +328,7 @@ describe('NewCrewmateDialog', () => {
       expect(await screen.findByRole('combobox', { name: 'Built from' })).toBeInTheDocument()
     })
 
-    it('reads top to bottom: look, caption, name, hint, Create, then the Advanced settings toggle last', async () => {
+    it('reads top to bottom: look, Name label, name, hint, Create, then the Advanced settings toggle last', async () => {
       card()
       const region = await screen.findByRole('region', { name: 'New crewmate' })
       // Document order, read off one walk of the card.
@@ -265,17 +337,16 @@ describe('NewCrewmateDialog', () => {
       const order = [
         screen.getByRole('heading', { name: 'New crewmate' }),
         screen.getByTestId('crewmate-create-look'),
-        screen.getByTestId('crewmate-create-look-caption'),
+        screen.getByTestId('crewmate-create-name-label'),
         screen.getByRole('textbox', { name: 'Name' }),
-        screen.getByTestId('crewmate-create-quick-hint'),
         screen.getByTestId('crewmate-create-submit'),
         screen.getByTestId('crewmate-create-secondary'),
       ]
       for (const el of order) expect(at(el)).toBeGreaterThan(-1)
       for (let i = 1; i < order.length; i++) expect(at(order[i])).toBeGreaterThan(at(order[i - 1]))
-      // Create sits right after the hint, and the folded card ends with the
-      // secondary line: its toggle is the last control, and no second Create.
-      expect(screen.getByTestId('crewmate-create-submit').previousElementSibling).toBe(screen.getByTestId('crewmate-create-quick-hint'))
+      // No hint line between the name and Create, and the folded card ends
+      // with the secondary line: its toggle is the last control, and no second Create.
+      expect(screen.queryByTestId('crewmate-create-quick-hint')).toBeNull()
       expect(within(region).getAllByRole('button').at(-1)).toBe(toggle())
       expect(screen.queryByTestId('crewmate-create-submit-end')).toBeNull()
       expect(screen.getByTestId('crewmate-create-submit')).toHaveClass('w-full')
@@ -365,23 +436,6 @@ describe('NewCrewmateDialog', () => {
       expect(screen.getByTestId('crewmate-create-look')).toBeDisabled()
       expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
       expect(screen.getByTestId('crewmate-create-submit')).toBeDisabled()
-    })
-
-    it('the hint is shown only where a first greeting is asked for', async () => {
-      renderWithProviders(<NewCrewmateDialog open embedded {...props} />)
-      await screen.findByTestId('crewmate-create-embedded')
-      expect(screen.queryByTestId('crewmate-create-quick-hint')).toBeNull()
-    })
-
-    it('a written job turns the hint from "will ask" into "will confirm this job"', async () => {
-      card()
-      const hint = await screen.findByTestId('crewmate-create-quick-hint')
-      expect(hint).toHaveTextContent("your crewmate will ask what you'd like it to do")
-      fireEvent.click(toggle())
-      fireEvent.change(screen.getByRole('textbox', { name: 'What it looks after' }), { target: { value: 'Watch PRs' } })
-      expect(hint).toHaveTextContent('your crewmate will confirm this job with you')
-      fireEvent.change(screen.getByRole('textbox', { name: 'What it looks after' }), { target: { value: '  ' } })
-      expect(hint).toHaveTextContent("your crewmate will ask what you'd like it to do")
     })
   })
 

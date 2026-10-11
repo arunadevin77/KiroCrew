@@ -1324,11 +1324,14 @@ export default function MembersPage() {
    *  asked: `leaveGranted`); refused, it stays as it is. The chat behind the card
    *  stays mounted, so its unsent draft is there again on the way back. */
   const openCreate = useCallback((expanded: boolean, draft?: CrewmateDraft, leaveGranted = false) => {
-    // A create in flight keeps its card as sent: nothing re-fills it.
-    if (createOpenRef.current && createBusyRef.current) return
+    // A create in flight keeps its card as sent, open or left: a second
+    // opening would blank a form still locked on that create, and its
+    // settle would then close or error the card the user just opened.
+    if (createBusyRef.current) return
     if (createOpenRef.current && !leaveGranted && !mayLeave()) return
     createEditedRef.current = false
     if (!createBusyRef.current) leftCreateRef.current = false
+    setLeftCreateFailure(null)
     // Always a new object, even with no proposal: the card resets by the
     // draft's identity, and a card already open must drop what was typed.
     setCreateDraft(draft ? { ...draft } : { name: '', goal: '' })
@@ -1404,7 +1407,9 @@ export default function MembersPage() {
   // so; the create itself is never in doubt here (the server has the
   // crewmate), so the dialog does not reopen.
   const [postCreateError, setPostCreateError] = useState<
-    | { kind: 'roster'; created: CreatedCrewmate }
+    // `stay`: the user had already chosen another chat when the create
+    // landed, so the retry only re-reads the roster and opens nothing.
+    | { kind: 'roster'; created: CreatedCrewmate; stay?: boolean }
     | null
   >(null)
   // Mirror for the thread mutation's callbacks, which must read the CURRENT
@@ -3636,6 +3641,17 @@ export default function MembersPage() {
     setSearchParams({ [MEMBER_PARAM]: created.name }, { replace: true })
   }, [rosterQuery, openMember, setSearchParams, queryClient])
 
+  // The roster re-read for a create the user already left: the chat they
+  // chose stays open. A re-read that did not land (an error, or a cancelled
+  // refetch that reverted to the pre-create roster, see `openCreated`) is
+  // reported through the same notice, whose retry repeats only this read.
+  const listCreated = useCallback(async (created: CreatedCrewmate) => {
+    const before = queryClient.getQueryState(MEMBERS_ROSTER_QUERY_KEY)?.dataUpdatedAt ?? 0
+    const res = await rosterQuery.refetch()
+    if (!pageMounted.current) return
+    if (res.isError || res.dataUpdatedAt <= before) setPostCreateError({ kind: 'roster', created, stay: true })
+  }, [rosterQuery, queryClient])
+
   const handleCreated = useCallback((created: CreatedCrewmate) => {
     // The form's work is done: the open that follows must not ask to leave it.
     createOpenRef.current = false
@@ -3643,18 +3659,27 @@ export default function MembersPage() {
     if (leftCreateRef.current) {
       // The user already chose another chat: list the new crewmate, stay put.
       leftCreateRef.current = false
-      void rosterQuery.refetch()
+      void listCreated(created)
       return
     }
     void openCreated(created)
-  }, [openCreated, rosterQuery])
+  }, [openCreated, listCreated])
+  // A create the user walked away from that then FAILED: the card that says so
+  // is hidden, so the page says it instead, in the card's own words. Cleared by
+  // the next opening of the card, which shows its own state again.
+  const [leftCreateFailure, setLeftCreateFailure] = useState<string | null>(null)
+  const handleCreateFailed = useCallback((message: string) => {
+    if (!leftCreateRef.current) return
+    leftCreateRef.current = false
+    setLeftCreateFailure(message)
+  }, [])
 
   const retryPostCreate = useCallback(() => {
     const failed = postCreateError
     if (!failed) return
     setPostCreateError(null)
-    void openCreated(failed.created)
-  }, [postCreateError, openCreated])
+    void (failed.stay ? listCreated(failed.created) : openCreated(failed.created))
+  }, [postCreateError, openCreated, listCreated])
 
   // URL -> open crewmate. Once the roster is in: a URL that names a crewmate
   // opens it; a URL that names none (a fresh visit, the sidebar entry, a
@@ -4473,6 +4498,18 @@ export default function MembersPage() {
         }}
       >
         {postCreateNotice}
+        {leftCreateFailure && (
+          /* No hand-off: the chat the user chose is mounted under this line
+             with its own draft, and a hand-off would navigate away from it. */
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2" data-testid="member-left-create-failed">
+            <ErrorNotice
+              message={leftCreateFailure}
+              variant="inline"
+              onDismiss={() => setLeftCreateFailure(null)}
+              className="min-w-0"
+            />
+          </div>
+        )}
         {/* The hero yields to a post-create notice: after the FIRST create a
             failed re-read leaves the cached roster at [] while the crewmate
             exists, and "No crewmates yet" under "Radar was created" would be
@@ -5130,6 +5167,7 @@ export default function MembersPage() {
             initialDraft={createDraft}
             guided
             onDraftStateChange={onCreateDraftState}
+            onFailed={handleCreateFailed}
             firstGreeting
             onClose={() => setCreateOpen(false)}
             onCreated={handleCreated}

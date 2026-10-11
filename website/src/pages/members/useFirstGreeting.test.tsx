@@ -42,7 +42,7 @@ describe('useFirstGreeting', () => {
     })
     await waitFor(() => expect(greet).toHaveBeenCalledWith('scout'))
     rerender({ slot: 'member-scout' })
-    await new Promise((r) => setTimeout(r, 0))
+    await act(async () => {})
     expect(greet).toHaveBeenCalledTimes(1)
   })
 

@@ -99,7 +99,8 @@ A few situations make Kiro Crew refuse to open a thread rather than guess:
 **New crewmate** — the hero button on an empty roster, or the **+** menu in the
 roster header once one exists (its one row is **New crewmate**)
 — opens an in-page form on the Crewmates page. It asks for a **Name** and
-shows an **Avatar** (press **Try another look** for a different face); press
+shows the crewmate's picture (press its pencil to pick an icon and a colour);
+press
 **Create** and the crewmate is made at once. Below the avatar, **Advanced
 settings** unfolds the rest of the form in the same card: what the crewmate is
 **Built from** (the starting setup it copies; `kirocrew` unless you pick

@@ -369,6 +369,7 @@ export default function CrewAvatarBuilder({
   value,
   retiredCue = null,
   savedReactions,
+  iconOnly = false,
   onCancel,
   onSave,
 }: {
@@ -377,6 +378,12 @@ export default function CrewAvatarBuilder({
   name: string
   /** The pinned override currently held by the editor, or null for default. */
   value: CrewAvatarOverride | null
+  /**
+   * Offer the icon tier alone: a pose and a background colour, with no tier
+   * strip. The New crewmate card uses it, because a crewmate that does not
+   * exist yet has no record for a picture upload or a pack to attach to.
+   */
+  iconOnly?: boolean
   /**
    * The SAVED record still names a preset sound on a tier that no longer plays
    * one (a picture, a pack), so the crew went quiet without the user doing
@@ -437,6 +444,9 @@ export default function CrewAvatarBuilder({
   const [iconBg, setIconBg] = useState<string>(
     value?.kind === 'icon' ? resolvePoseBg(value.bg) : seedIconBg(),
   )
+  // Any pose, swatch or colour pick sets this, so the seeded pose itself is
+  // a pick like any other once the user chooses it.
+  const [iconTouched, setIconTouched] = useState(false)
   /** Per-state reactions. Held flat (not nested under the tier) so a trip
    *  through the Picture tab and back never discards them — the pane is hidden
    *  there, not reset. Only a ghost result carries them out. */
@@ -476,6 +486,7 @@ export default function CrewAvatarBuilder({
       setPackId(value?.kind === 'pack' ? value.id : null)
       setIconPose(value?.kind === 'icon' ? value.pose : seedIconPose(name))
       setIconBg(value?.kind === 'icon' ? resolvePoseBg(value.bg) : seedIconBg())
+      setIconTouched(false)
       setMotions(value?.kind === 'ghost' ? (value.motions ?? {}) : {})
       setSounds(value?.kind === 'ghost' ? (value.sounds ?? {}) : {})
       setPending(value?.kind === 'image' ? (value.pendingData ?? null) : null)
@@ -613,8 +624,14 @@ export default function CrewAvatarBuilder({
       ? value
       : null
 
+  // The icon-only door opens on a seeded pose over the theme colour, not on
+  // the face the card shows. Until the user picks, the preview shows the
+  // card's own face and Apply waits, so opening the editor never swaps the
+  // crewmate's face for a plain ghost the user never chose.
+  const iconUntouched = iconOnly && value === null && !iconTouched
   const applyDisabled =
     (tier === 'picture' && pictureResult === null) || (tier === 'pack' && packId === null)
+    || iconUntouched
 
   /**
    * The override Apply commits.
@@ -814,7 +831,7 @@ export default function CrewAvatarBuilder({
               every shipped locale at 320px, but the strip must stay reachable
               rather than clipped if a longer one ever lands. It shows no
               scrollbar while nothing overflows, which is every desktop width. */}
-          <div className="mb-3 overflow-x-auto" data-testid="avatar-builder-tabs">
+          {!iconOnly && <div className="mb-3 overflow-x-auto" data-testid="avatar-builder-tabs">
             <SegmentedControl
               segments={[
                 {
@@ -869,13 +886,21 @@ export default function CrewAvatarBuilder({
               collapse={false}
               layoutId="avatar-builder-mode"
             />
-          </div>
+          </div>}
           {pane === 'icon' ? (
             <div className="flex flex-col gap-4 md:flex-row" data-testid="avatar-icon-pane">
               {/* Left: large live preview of the chosen pose on the chosen
                   background, mirroring the Face pane's layout so switching tiers
                   does not jump the dialog's shape. */}
               <div className="flex w-full flex-col items-center gap-3 md:w-[200px] md:flex-none">
+                {/* The icon-only door, before any pick: preview the face the
+                    card shows (the name's own), so opening the editor never
+                    looks like it already changed the picture. */}
+                {iconUntouched ? (
+                  <span className="flex" data-testid="avatar-icon-preview-current">
+                    <CrewAvatar seed={name} size={176} className="!rounded-xl border border-border" />
+                  </span>
+                ) : (
                 <img
                   src={poseDataUri(iconPose, iconBg)}
                   alt=""
@@ -885,6 +910,7 @@ export default function CrewAvatarBuilder({
                   className="rounded-xl border border-border"
                   data-testid="avatar-icon-preview"
                 />
+                )}
                 {/* Background colour. Swatches first (a curated set that reads
                     well behind the white ghost), plus a native picker for a free
                     choice — the swatch is the fast path, the picker the escape
@@ -900,7 +926,7 @@ export default function CrewAvatarBuilder({
                     aria-label={t('components.avatarBuilder.icon_background')}
                   >
                     {ICON_BG_OPTIONS.map(colour => {
-                      const selected = iconBg.toLowerCase() === colour.toLowerCase()
+                      const selected = !iconUntouched && iconBg.toLowerCase() === colour.toLowerCase()
                       return (
                         <button
                           key={colour}
@@ -910,7 +936,7 @@ export default function CrewAvatarBuilder({
                           aria-label={
                             TILE_LABEL_KEYS[colour] ? t(TILE_LABEL_KEYS[colour]) : colour
                           }
-                          onClick={() => setIconBg(colour)}
+                          onClick={() => { setIconBg(colour); setIconTouched(true) }}
                           className={`aspect-square rounded-md border-2 transition-colors ${
                             selected ? 'border-ring' : 'border-transparent hover:border-border-strong'
                           }`}
@@ -924,8 +950,8 @@ export default function CrewAvatarBuilder({
                     <span>{t('components.avatarBuilder.icon_custom_color')}</span>
                     <input
                       type="color"
-                      value={iconBg}
-                      onChange={e => setIconBg(e.target.value)}
+                      value={iconUntouched ? seededTraits(name).tile : iconBg}
+                      onChange={e => { setIconBg(e.target.value); setIconTouched(true) }}
                       className="h-7 w-10 cursor-pointer rounded border border-border bg-transparent"
                       aria-label={t('components.avatarBuilder.icon_custom_color')}
                       data-testid="avatar-icon-bg-custom"
@@ -943,7 +969,7 @@ export default function CrewAvatarBuilder({
                   aria-label={t('components.avatarBuilder.mode_icon')}
                 >
                   {POSE_IDS.map(pose => {
-                    const selected = iconPose === pose
+                    const selected = !iconUntouched && iconPose === pose
                     return (
                       <button
                         key={pose}
@@ -953,7 +979,7 @@ export default function CrewAvatarBuilder({
                         aria-label={t('components.avatarBuilder.icon_pose_label', {
                           n: pose.replace('pose-', ''),
                         })}
-                        onClick={() => setIconPose(pose)}
+                        onClick={() => { setIconPose(pose); setIconTouched(true) }}
                         className={`flex items-center justify-center rounded-lg border-2 p-1.5 transition-colors ${
                           selected ? 'border-ring bg-accent-subtle' : 'border-transparent hover:bg-bg-hover'
                         }`}
@@ -1203,6 +1229,22 @@ export default function CrewAvatarBuilder({
               without it, Apply reads as the final save and the editor's own
               Save changes step is a silent second commit the user can miss. */}
           <div className="mr-auto flex min-w-0 flex-col gap-0.5">
+            {/* The icon-only door has no tier to reset to and no second save
+                step: Cancel keeps the current look, Apply is the pick, and
+                this link returns to the name's own face, so a pick is never
+                a one-way door. It shows once a pick is applied: before that
+                the card already wears that face, and Cancel keeps it. */}
+            {iconOnly && value !== null && (
+              <button
+                type="button"
+                onClick={() => onSave(null)}
+                className="self-start text-[12px] text-muted underline underline-offset-2 hover:text-text"
+                data-testid="avatar-builder-use-original"
+              >
+                {t('components.avatarBuilder.use_original_look', { name })}
+              </button>
+            )}
+            {!iconOnly && <>
             <button
               type="button"
               onClick={() => {
@@ -1231,6 +1273,7 @@ export default function CrewAvatarBuilder({
               {t('components.avatarBuilder.reset_default')}
             </button>
             <span className="text-[11px] text-muted">{t('components.avatarBuilder.apply_hint')}</span>
+            </>}
           </div>
           <Btn onClick={onCancel}>{t('components.avatarBuilder.cancel')}</Btn>
           <Btn

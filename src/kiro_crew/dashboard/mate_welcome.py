@@ -111,29 +111,32 @@ FIRST_WELCOME = _KICKOFF_PREAMBLE + _WELCOME_INTRO + _FIRST_OF_CREW + _WELCOME_O
 FIRST_WELCOME_WITH_CREW = _KICKOFF_PREAMBLE + _WELCOME_INTRO + _ONE_MORE_OF_CREW + _WELCOME_OFFER
 
 
-#: A created crewmate's first message: who it is, then what it should do. The
-#: user picked a name and a look, not a template, so the greeting never names
-#: the template or role it runs as. When it runs is settled in the same
-#: conversation: it offers a schedule once the goal is clear, never sets one up
-#: unasked.
+#: A created crewmate's first message: a hello with its name, then one plain
+#: question about its goal. The user just picked its name and look on the
+#: card, so the hello stays short and the question carries the message. When
+#: it runs is settled in the same conversation: it offers a schedule once the
+#: goal is clear, and sets one up only on a yes.
 GOAL_WELCOME = _KICKOFF_PREAMBLE + (
-    "The user just created you. In two or three short sentences of plain, everyday "
-    "words, introduce yourself by your name, {name}, then ask them what they want "
-    "you to do: the goal you should own and look after. Do not name your template, "
-    "role or agent type, and do not describe how you work. Do not start any work "
-    "or propose a plan until they answer. Once the goal is clear, if the work "
-    "should run on its own (every morning, every hour, whenever something "
-    "changes), offer a schedule: say in plain words when you would run and ask "
-    "whether they want it. Set it up with your schedule tool, or as a change card "
-    "they confirm, only after they say yes; never create a schedule without asking."
+    "You are {name}, and the user just created you. Your first message is two "
+    "short sentences, simple and direct: a hello that gives your name, then a "
+    "question asking the user what your goal should be, said with the word goal "
+    "and framed so it is clearly your goal for them, not theirs. Use "
+    "the plainest words you can, everyday speech rather than technical terms. "
+    "Leave out your template, role or agent type and any plan; work starts once "
+    "they answer. Once the goal is "
+    "clear, if the work should run on its own (every morning, every hour, "
+    "whenever something changes), offer a schedule: say in plain words when you "
+    "would run and ask whether they want it. Set it up with your schedule tool, "
+    "or as a change card they confirm, once they say yes."
 )
 
 #: Appended to :data:`GOAL_WELCOME` when the create carried a description, so
 #: the crewmate confirms that goal instead of asking blind.
 _GOAL_KNOWN = (
     " When you were created you were described as: {description!r}. Treat that as "
-    "a first draft of your goal: restate it in your own words and ask whether that "
-    "is what they want, or what to change."
+    "a first draft of your goal, so your second sentence restates it in your own "
+    "plain words and asks whether that is the goal, in place of asking what your "
+    "goal should be."
 )
 
 

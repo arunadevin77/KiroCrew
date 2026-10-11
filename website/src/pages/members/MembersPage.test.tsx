@@ -285,7 +285,6 @@ vi.mock('react-router-dom', async (importOriginal) => {
 import { api } from '../../api/client'
 import NewCrewmateDialog, { CACHE_WARM_BOUND_MS, RECONCILE_BOUND_MS } from './NewCrewmateDialog'
 import { MobileRosterBarContext } from '../../components/MobileNavRailContext'
-import { seededTraits } from '../../components/CrewAvatar'
 import MembersPage, { CREW_DASHBOARD_TAB_ID, CREW_PANEL_TAB_IDS, MEMBERS_UNCONFIRMED_WITHHELD_VIEWS, MEMBERS_UNFED_VIEWS, MEMBERS_WITHHELD_VIEWS, lastChattedMember, rememberedMember, resolveDefaultMember, resolveMateLanding } from './MembersPage'
 import { resetFirstGreetingRequests } from './useFirstGreeting'
 import { __resetPanelTabs, VIEW_DATA_SOURCE } from '../../hooks/usePanelTabs'
@@ -910,7 +909,7 @@ describe('MembersPage roster cache (React Query)', () => {
     await act(async () => {
       completeRepair({ slot_key: 'member-oncall-confirmed', slug: 'oncall', member: 'oncall', created: false })
     })
-    await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-oncall-confirmed'))
+    await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-oncall-confirmed'), PANE_READY)
     expect(utils.queryClient.getQueryData(memberThreadQueryKey('oncall'))).toEqual({
       slot_key: 'member-oncall-confirmed',
     })
@@ -1992,7 +1991,7 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
     fireEvent.click(within(firstView).getByTestId('team-back'))
     await waitFor(() => expect(screen.queryByTestId('team-view')).toBeNull())
     await waitFor(() => expect(threadPosts()).toBe(postsBeforeBack + 1))
-    await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-oncall'))
+    await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-oncall'), PANE_READY)
     const postsBeforeReopen = threadPosts()
     let confirm!: (value: Awaited<ReturnType<typeof api.memberThread>>) => void
     vi.mocked(api.memberThread).mockReturnValueOnce(new Promise((resolve) => { confirm = resolve }))
@@ -3204,7 +3203,7 @@ describe('New crewmate dialog', () => {
     })
     fireEvent.click(screen.getByTestId('crewmate-create-submit'))
     // The SAME payload the crew manager's create form sends, plus the job as
-    // the record's `description`, the look the card showed, and this page's
+    // the record's `description` and this page's
     // ask for a first greeting; no `model` key while inheriting.
     await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledWith({
       name: 'radar',
@@ -3215,7 +3214,6 @@ describe('New crewmate dialog', () => {
       description: 'Triage new issues',
       triggers: '',
       session_color: '',
-      avatar: { kind: 'ghost', traits: seededTraits('radar') },
       first_greeting: true,
     }))
     // Roster re-read BEFORE the URL names the new crewmate, then its chat
@@ -3233,7 +3231,7 @@ describe('New crewmate dialog', () => {
     await waitFor(() => expect(screen.queryByTestId('crewmate-create-form')).toBeNull())
   })
 
-  it('the + New crewmate creates from a name alone: built from the built-in agent, its look pinned, and its chat opens asking its goal through the hidden greeting', async () => {
+  it('the + New crewmate creates from a name alone: built from the built-in agent, wearing its name\'s own face, and its chat opens asking its goal through the hidden greeting', async () => {
     const membersMock = api.members as ReturnType<typeof vi.fn>
     await renderPage([row()])
     expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-oncall')
@@ -3251,12 +3249,12 @@ describe('New crewmate dialog', () => {
       kiro_agent: 'kirocrew',
       description: '',
       first_greeting: true,
-      avatar: expect.objectContaining({ kind: 'ghost' }),
     }))
+    expect(vi.mocked(api.createKirocrewAgent).mock.calls[0][0]).not.toHaveProperty('avatar')
     await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-radar'), PANE_READY)
     await waitFor(() => expect(api.memberGreet).toHaveBeenCalledWith('radar'), PANE_READY)
     // Once, and never as a message the user typed.
-    await new Promise((r) => setTimeout(r, 50))
+    await act(async () => {})
     expect(api.memberGreet).toHaveBeenCalledTimes(1)
     expect(api.sendChat).not.toHaveBeenCalled()
   })
@@ -3264,7 +3262,7 @@ describe('New crewmate dialog', () => {
   it('a crewmate not created on the dashboard asks for no greeting when opened', async () => {
     await renderPage([row({ name: 'synced', slug: 'synced' })], 'kirocrew', { route: '/members?member=synced' })
     expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-synced')
-    await new Promise((r) => setTimeout(r, 50))
+    await act(async () => {})
     expect(api.memberGreet).not.toHaveBeenCalled()
   })
 
@@ -3281,7 +3279,7 @@ describe('New crewmate dialog', () => {
     })
     fireEvent.click(screen.getByTestId('crewmate-create-submit'))
     await waitFor(() => expect(api.memberThread).toHaveBeenCalledWith('launch-notes'), PANE_READY)
-    await waitFor(() => expect(currentUrl()).toBe('/members?member=launch-notes'))
+    await waitFor(() => expect(currentUrl()).toBe('/members?member=launch-notes'), PANE_READY)
     await waitFor(() => expect(api.memberGreet).toHaveBeenCalledWith('launch-notes'), PANE_READY)
     expect(api.sendChat).not.toHaveBeenCalled()
   })
@@ -4568,7 +4566,7 @@ describe('MembersPage create links open the New crewmate card', () => {
     expect(within(card()).getByTestId('crewmate-create-advanced-toggle')).toHaveAttribute('aria-expanded', 'false')
     expect(goalField()).toBeNull()
     noGuidedFlow()
-    await waitFor(() => expect(currentUrl()).toBe('/members?member=alpha'))
+    await waitFor(() => expect(currentUrl()).toBe('/members?member=alpha'), PANE_READY)
     closeCard()
     await waitFor(() => expect(cardOpen()).toBe(false))
     expect(currentUrl()).toBe('/members?member=alpha')
@@ -4606,8 +4604,8 @@ describe('MembersPage create links open the New crewmate card', () => {
     expect(api.createKirocrewAgent).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'scout', description: 'Watch the release train', first_greeting: true }),
     )
-    await waitFor(() => expect(currentUrl()).toBe('/members?member=scout'))
-    await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-scout'))
+    await waitFor(() => expect(currentUrl()).toBe('/members?member=scout'), PANE_READY)
+    await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-scout'), PANE_READY)
     expect(cardOpen()).toBe(false)
     // No schedule is written by the card: when it runs is settled in the chat.
     expect(api.createCron).not.toHaveBeenCalled()
@@ -4746,7 +4744,7 @@ describe('MembersPage create links open the New crewmate card', () => {
       fireEvent.click(screen.getByTestId('chat-link-proposal'))
       await waitFor(() => expect(cardOpen()).toBe(true))
       fireEvent.click(await rosterRow('alpha'))
-      await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha'))
+      await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha'), PANE_READY)
       expect(cardOpen()).toBe(false)
       expect(confirm).not.toHaveBeenCalled()
       expect(hiddenByStyle(screen.getByTestId('chat-pane-stub'))).toBe(false)
@@ -4768,7 +4766,7 @@ describe('MembersPage create links open the New crewmate card', () => {
       await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
       // The user picks alpha mid-create and agrees to leave the card.
       fireEvent.click(await rosterRow('alpha'))
-      await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha'))
+      await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha'), PANE_READY)
       expect(confirm).toHaveBeenLastCalledWith(expect.stringMatching(/^Leave while the crewmate is being created\?/))
       const membersMock = api.members as ReturnType<typeof vi.fn>
       membersMock.mockResolvedValue({
@@ -4784,6 +4782,87 @@ describe('MembersPage create links open the New crewmate card', () => {
       expect(api.memberThread).not.toHaveBeenCalledWith('radar')
       expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha')
       expect(currentUrl()).not.toContain('member=radar')
+    } finally {
+      confirm.mockRestore()
+    }
+  })
+
+  it('New crewmate pressed again while a left create still runs does not reopen a card that create would then close', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      let finish: (v: unknown) => void = () => {}
+      ;(api.createKirocrewAgent as ReturnType<typeof vi.fn>).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+      await openAssistant()
+      await clickAddCrewmate()
+      await screen.findByTestId('crewmate-create-embedded')
+      fireEvent.change(nameField(), { target: { value: 'radar' } })
+      fireEvent.click(screen.getByTestId('crewmate-create-submit'))
+      await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
+      fireEvent.click(await rosterRow('alpha'))
+      await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha'), PANE_READY)
+      await waitFor(() => expect(screen.getByTestId('member-create-pane')).toHaveClass('hidden'))
+      await clickAddCrewmate()
+      expect(screen.getByTestId('member-create-pane')).toHaveClass('hidden')
+      expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha')
+      await act(async () => { finish({ ok: true }) })
+      expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha')
+    } finally {
+      confirm.mockRestore()
+    }
+  })
+
+  it('a create that fails after the user left it says so on the page, keeps the chosen chat, and the notice dismisses', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      let fail: (e: unknown) => void = () => {}
+      ;(api.createKirocrewAgent as ReturnType<typeof vi.fn>).mockReturnValueOnce(new Promise((_, reject) => { fail = reject }))
+      await openAssistant()
+      await clickAddCrewmate()
+      await screen.findByTestId('crewmate-create-embedded')
+      fireEvent.change(nameField(), { target: { value: 'radar' } })
+      fireEvent.click(screen.getByTestId('crewmate-create-submit'))
+      await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
+      fireEvent.click(await rosterRow('alpha'))
+      await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha'), PANE_READY)
+      await act(async () => { fail(new ApiError(500, 'boom')) })
+      const notice = await screen.findByTestId('member-left-create-failed', undefined, PANE_READY)
+      expect(notice).toHaveTextContent("Couldn't create the crewmate.")
+      expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha')
+      fireEvent.click(within(notice).getByRole('button'))
+      await waitFor(() => expect(screen.queryByTestId('member-left-create-failed')).toBeNull())
+    } finally {
+      confirm.mockRestore()
+    }
+  })
+
+  it('a failed roster re-read after leaving a create says so, keeps the chosen chat, and its retry only re-reads', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      let finish: (v: unknown) => void = () => {}
+      ;(api.createKirocrewAgent as ReturnType<typeof vi.fn>).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+      await openAssistant()
+      await clickAddCrewmate()
+      await screen.findByTestId('crewmate-create-embedded')
+      fireEvent.change(nameField(), { target: { value: 'radar' } })
+      fireEvent.click(screen.getByTestId('crewmate-create-submit'))
+      await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledTimes(1))
+      fireEvent.click(await rosterRow('alpha'))
+      await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha'), PANE_READY)
+      const membersMock = api.members as ReturnType<typeof vi.fn>
+      membersMock.mockRejectedValue(new Error('roster down'))
+      await act(async () => { finish({ ok: true }) })
+      expect(await screen.findByTestId('member-post-create-error', undefined, PANE_READY)).toBeInTheDocument()
+      expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha')
+      membersMock.mockResolvedValue({
+        members: [...assistantAndAlpha(), row({ name: 'radar', slug: 'radar', dashboard_created: true })],
+        default_agent: 'kirocrew',
+      })
+      fireEvent.click(screen.getByTestId('member-post-create-retry'))
+      expect(await rosterRow('radar')).toBeInTheDocument()
+      await waitFor(() => expect(screen.queryByTestId('member-post-create-error')).toBeNull(), PANE_READY)
+      // The retry listed it; the chat the user picked is still the one open.
+      expect(api.memberThread).not.toHaveBeenCalledWith('radar')
+      expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha')
     } finally {
       confirm.mockRestore()
     }
@@ -4983,7 +5062,7 @@ describe('MembersPage default member, memory and URL', () => {
     const first = await renderPage(rows)
     expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-alpha')
     fireEvent.click(await rosterRow('default'))
-    await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-default'))
+    await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-default'), PANE_READY)
     expect(localStorage.getItem(LAST_MEMBER_KEY)).toBe('default')
     first.unmount()
 
@@ -5382,7 +5461,7 @@ describe('MembersPage default member, memory and URL', () => {
     // The return to `/members` is a navigate() issued from an effect once the
     // roster has loaded; on a slow runner the notice can render a tick before
     // that effect has run, so wait for the URL like the other redirect tests do.
-    await waitFor(() => expect(currentUrl()).toBe('/members'))
+    await waitFor(() => expect(currentUrl()).toBe('/members'), PANE_READY)
     // Nothing was opened, so nothing is remembered.
     expect(localStorage.getItem(LAST_MEMBER_KEY)).toBeNull()
   })
@@ -5472,7 +5551,7 @@ describe('MembersPage default member, memory and URL', () => {
       // The URL names no one and there is nothing REMEMBERED to restore, but
       // the roster is not empty, so the MRU fallback (alpha) opens rather than
       // leaving beta's thread standing over a bare URL.
-      await waitFor(() => expect(currentUrl()).toBe('/members?member=alpha'))
+      await waitFor(() => expect(currentUrl()).toBe('/members?member=alpha'), PANE_READY)
       expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-alpha')
       expect(roster().getByText('beta').closest('button')).not.toHaveAttribute('aria-current')
     } finally {
@@ -5616,7 +5695,7 @@ describe('MembersPage default member, memory and URL', () => {
     // One Back: off the page. A pushed open at either step would have left an
     // intermediate entry behind it, costing extra presses.
     fireEvent.click(screen.getByTestId('history-back'))
-    await waitFor(() => expect(currentUrl()).toBe('/elsewhere'))
+    await waitFor(() => expect(currentUrl()).toBe('/elsewhere'), PANE_READY)
     expect(screen.queryByTestId('chat-pane-stub')).toBeNull()
   })
 
@@ -5669,7 +5748,7 @@ describe('MembersPage default member, memory and URL', () => {
     expect(currentUrl()).toBe('/members?member=alpha')
     // One Back: off the page — the switches replaced, they did not stack.
     fireEvent.click(screen.getByTestId('history-back'))
-    await waitFor(() => expect(currentUrl()).toBe('/elsewhere'))
+    await waitFor(() => expect(currentUrl()).toBe('/elsewhere'), PANE_READY)
     expect(screen.queryByTestId('chat-pane-stub')).toBeNull()
     // The memory still holds the last member the user chose.
     expect(localStorage.getItem(LAST_MEMBER_KEY)).toBe('alpha')
@@ -5857,7 +5936,7 @@ describe('MembersPage default member, memory and URL', () => {
       expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha')
       // The drawer's entry is spent: the next Back is off the page.
       fireEvent.click(screen.getByTestId('history-back'))
-      await waitFor(() => expect(currentUrl()).toBe('/elsewhere'))
+      await waitFor(() => expect(currentUrl()).toBe('/elsewhere'), PANE_READY)
     })
 
     it('a scrim tap closes the drawer and spends its entry without switching', async () => {

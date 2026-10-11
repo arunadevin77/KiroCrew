@@ -234,21 +234,28 @@ class TestGoalWelcome:
         row = SimpleNamespace(display_name="Scout", description="")
         kickoff = cg.goal_kickoff(row, "scout")
         assert kickoff.startswith("[First welcome]")
-        assert "introduce yourself by your name, Scout," in kickoff
-        assert "ask them what they want you to do" in kickoff
-        assert "Do not name your template, role or agent type" in kickoff
-        assert "never create a schedule without asking" in kickoff
+        assert "You are Scout," in kickoff
+        # A short hello with its name, then the goal question in plain words.
+        assert "simple and direct" in kickoff
+        assert "a hello that gives your name" in kickoff
+        assert "asking the user what your goal should be, said with the word goal" in kickoff
+        assert "clearly your goal for them, not theirs" in kickoff
+        assert "rather than technical terms" in kickoff
+        assert "own and look after" not in kickoff
+        assert "Leave out your template, role or agent type" in kickoff
+        assert "once they say yes" in kickoff
         assert "described as" not in kickoff
         # An unlabelled crewmate is named by its key.
         unlabelled = cg.goal_kickoff(SimpleNamespace(display_name="", description=""), "scout")
-        assert "introduce yourself by your name, scout," in unlabelled
+        assert "You are scout," in unlabelled
 
     def test_a_written_goal_is_confirmed_rather_than_asked(self):
         row = SimpleNamespace(display_name="Scout", description="  Review open PRs ")
         kickoff = cg.goal_kickoff(row, "scout")
         assert kickoff.startswith(cg.GOAL_WELCOME.format(name="Scout"))
         assert "described as: 'Review open PRs'" in kickoff
-        assert "restate it in your own words" in kickoff
+        assert "restates it in your own" in kickoff
+        assert "in place of asking what your goal should be" in kickoff
 
 
 class TestHiddenKickoff:

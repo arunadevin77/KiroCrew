@@ -121,16 +121,16 @@ Decided:
 - With no crewmates, the Crewmates tab is a hero: the ghost avatar, "No
   crewmates yet", the one-line positioning sentence in its singular form, and
   one button, **New crewmate**.
-- **New crewmate** opens one card in place of the chat: Name; an Avatar with
-  **Try another look**; a line saying the crewmate will ask what it should do;
-  Cancel and Create. Everything else (Built from, the default agent unless
+- **New crewmate** opens one card in place of the chat: the avatar, whose
+  pencil opens the avatar editor (icon and colour only); Name, under its own
+  label; Cancel and Create. Everything else (Built from, the default agent unless
   another is picked; What it looks after; the workspace, model, triggers and
   session colour) sits behind **Advanced settings**, folded, in the same card.
   The empty state's Advanced link and the crew manager's door open it unfolded.
 - After create, the new crewmate's chat opens and the crewmate speaks first: it
-  introduces itself by name and asks what the user wants it to do, or confirms
-  the job written under Advanced settings. There is no separate confirmation,
-  and nothing is sent in the user's name.
+  says hello with its name and asks, in everyday words, what its goal is, or
+  confirms the job written under Advanced settings. There is no separate
+  confirmation, and nothing is sent in the user's name.
 - A crewmate's proposal link and the `crewmate.create` guide open the same card
   with the proposed name and goal filled in. Nothing is created until the user
   presses Create.

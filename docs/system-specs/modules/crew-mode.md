@@ -1179,12 +1179,11 @@ missing. A refused press shows a notice by cause:
 A crewmate created on the New crewmate card owes a goal welcome (`kind: "goal"`).
 Its first turn runs the same once-only claim, emptiness and busy checks and the
 same "no transcript row" dispatch, with the hidden kickoff
-`mate_welcome.goal_kickoff` (`GOAL_WELCOME`): in two or three short sentences of
-plain words the crewmate introduces itself by its label and asks what the user
-wants it to do, the goal it should own and look after, without starting work or
-proposing a plan until they answer. The user chose a name and a look, not a
-template, so the kickoff also tells it not to name its template, role or agent
-type and not to describe how it works. When the record carries a `description`,
+`mate_welcome.goal_kickoff` (`GOAL_WELCOME`): the crewmate's first message is
+two short sentences of everyday words, a hello with its name and then a question
+asking what its goal is, with no plan until they answer. The user chose a name
+and a look, not a template, so the kickoff also keeps its template, role and
+agent type out of that message. When the record carries a `description`,
 the kickoff appends it as a first draft of the goal, which the crewmate restates
 and asks the user to confirm or change. Once the goal is clear, a crewmate whose
 work should run on its own may offer a schedule in plain words, and sets one up
@@ -1192,14 +1191,17 @@ with its schedule tool only after the user says yes.
 
 The primary New crewmate action (the header **+** menu's one row, the empty
 roster's hero and the switcher's New crewmate) opens the embedded
-`NewCrewmateDialog`: one card headed **New crewmate** with a **Name** field, an
-**Avatar** preview with **Try another look**, an **Advanced settings** row, a
-one-line hint that the crewmate will ask what it should do (or confirm the job
-written under Advanced settings), and **Cancel** / **Create**. Create builds the
+`NewCrewmateDialog`: one card headed **New crewmate** with the avatar tile, a
+**Name** field under its own visible label, an **Advanced settings** row, and
+**Cancel** / **Create**; no line under the name explains what happens after
+Create, since the new crewmate's first message says it. Create builds the
 crewmate from `kirocrew`, and the folded card does not name that template. The
-look is a name-seeded ghost (`seededTraits`), re-rolled by appending `#<n>` to the
-seed, and is pinned on the record as `avatar: {kind: 'ghost', traits}`, so the
-face shown is the face kept. The **Advanced settings** row unfolds inline below
+tile shows the name's own face until the user presses it (or its pencil badge),
+which opens `CrewAvatarBuilder` with `iconOnly`: a pose and a background colour,
+no tier strip and no reset link, since a crewmate that does not exist yet has no
+record for a picture or a pack. Apply pins the pick and sends it as
+`avatar: {kind: 'icon', pose, bg}`, and it survives a renamed draft; with no
+pick the create carries no `avatar` and the record wears the name's own face. The **Advanced settings** row unfolds inline below
 the avatar, in the same card: Built from, What it looks after, and the crew
 editor fields (workspace, model, triggers, session colour), ending with a second
 Create. It is folded by default; `startExpanded` opens it unfolded, which is what

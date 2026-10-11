@@ -6,8 +6,8 @@
  * the crew manager's create form uses; the two stay one write path with two
  * front doors.
  *
- * One card, top to bottom: the look as its hero (a centred ghost tile that
- * re-rolls on a press), the name, the hint, Create, and a centred
+ * One card, top to bottom: the look as its hero (a centred tile whose pencil
+ * opens the avatar editor), the name under its label, Create, and a centred
  * "Advanced settings" toggle under it, so the primary action follows the name
  * directly. The way out is the header's X: the modal's own, or, in place, an
  * X beside the card's heading. Create builds the crewmate from the built-in `kirocrew` agent
@@ -35,10 +35,11 @@
  * one free-text field the record already carries for a human-readable
  * account of the crew, and the line the crewmate's first greeting is seeded
  * from (see MembersPage). Memory is provisioned by the server on create
- * (a private store per crewmate, never a choice here). The look is a
- * name-seeded ghost the user can re-roll; it is pinned on the record so
- * the face shown here is the face the crewmate keeps, and anything richer
- * (a picture, a pack) is edited on the detail page afterwards.
+ * (a private store per crewmate, never a choice here). The look follows the
+ * name until the user picks an icon and colour in the avatar editor (icon
+ * tier only); a pick is pinned on the record and survives a renamed draft,
+ * and anything richer (a picture, a pack) is edited on the detail page
+ * afterwards.
  *
  * `firstGreeting` asks the server to open the new crewmate's first chat with
  * the crewmate asking what it should do (`first_greeting` on the create; the
@@ -60,12 +61,13 @@
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, RefreshCw, X } from 'lucide-react'
+import { ChevronDown, Pencil, X } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 
 import Modal from '../../components/Modal'
-import CrewAvatar, { seededTraits } from '../../components/CrewAvatar'
+import CrewAvatar, { type CrewAvatarOverride } from '../../components/CrewAvatar'
+import CrewAvatarBuilder from '../../components/CrewAvatarBuilder'
 import SimpleSelect from '../../components/SimpleSelect'
 import ErrorNotice from '../../components/ErrorNotice'
 import { InstantTip, useInstantTip } from '../../components/InstantTip'
@@ -99,10 +101,9 @@ export const DEFAULT_CREWMATE_TEMPLATE = 'kirocrew'
 /** The look seed while the name is still blank, so the preview is never empty. */
 const BLANK_LOOK_SEED = 'crewmate'
 
-/** The ghost a look seed draws: the name, plus a re-roll count once re-rolled. */
-function lookSeed(name: string, roll: number): string {
-  const base = name.trim() || BLANK_LOOK_SEED
-  return roll > 0 ? `${base}#${roll}` : base
+/** The name-derived face a look falls back to until the user picks one. */
+function lookSeed(name: string): string {
+  return name.trim() || BLANK_LOOK_SEED
 }
 
 /** The id the Advanced settings row's `aria-controls` points at. */
@@ -155,7 +156,7 @@ function AdvancedSettingsToggle({ open, onToggle, label }: {
 }) {
   const reduceMotion = useReducedMotion()
   return (
-    <button
+    <Btn
       type="button"
       onClick={onToggle}
       aria-expanded={open}
@@ -174,7 +175,7 @@ function AdvancedSettingsToggle({ open, onToggle, label }: {
         <ChevronDown size={15} />
       </motion.span>
       <span className="min-w-0">{label}</span>
-    </button>
+    </Btn>
   )
 }
 
@@ -183,41 +184,23 @@ function AdvancedSettingsToggle({ open, onToggle, label }: {
 const SUBTLE_TEXT_BUTTON =
   'flex min-h-11 items-center gap-1 rounded-md border-none bg-transparent px-2 text-[13px] text-muted cursor-pointer hover:bg-bg-hover hover:text-text focus-ring disabled:cursor-default disabled:opacity-60 sm:min-h-8'
 
-/** How far past the current roll a re-roll looks for a tile colour of its
- *  own before settling for the next roll. The tile palette is small, so a
- *  differing colour is found within a few draws; the cap only bounds the walk. */
-const REROLL_SEARCH_LIMIT = 32
-
 /**
- * The roll a re-roll press moves to: the first one after `roll` whose tile
- * colour differs from the one on screen, so every press is visibly a new
- * look and not just a new face on the same colour.
- */
-function nextDistinctRoll(name: string, roll: number): number {
-  const shown = seededTraits(lookSeed(name, roll)).tile
-  for (let next = roll + 1; next <= roll + REROLL_SEARCH_LIMIT; next++) {
-    if (seededTraits(lookSeed(name, next)).tile !== shown) return next
-  }
-  return roll + 1
-}
-
-/**
- * The look, as the card's hero: the crewmate's ghost on a 96px tile, and the
- * tile IS the re-roll button. The round re-roll badge on its corner is part of
- * the same button, so the tile and the badge are one tab stop and one name
- * rather than two controls doing the same thing; a press on either draws
- * another look. 96px clears the 44px touch-target floor on its own.
+ * The look, as the card's hero: the crewmate's face on a 96px tile, with a
+ * round pencil badge on its corner. The tile and the badge are one button,
+ * one tab stop and one name; a press opens the avatar editor (icon tier
+ * only). Until the user picks one, the face follows the name, exactly as the
+ * roster draws a crewmate with no pinned look; once picked, it stays put
+ * while the name changes.
  *
  * The badge carries the shared `InstantTip` hint: pointer hover on the badge
- * shows it, and so does keyboard focus on the tile (only `:focus-visible`, so
- * a mouse press on the tile body leaves no bubble behind). The hint repeats
- * the button's `aria-label`, so it is not wired as its description as well,
- * which would have a screen reader say the same words twice. The touch-replay
- * notes sit on the whole tile, so a tap anywhere on it opens no bubble.
+ * shows it, and so does keyboard focus on the tile (only `:focus-visible`).
+ * The hint repeats the button's `aria-label`, so it is not wired as its
+ * description as well.
  */
-function LookTile({ seed, onReroll, label, disabled }: {
+function LookTile({ seed, avatar, onEdit, label, disabled }: {
   seed: string
-  onReroll: () => void
+  avatar: CrewAvatarOverride | null
+  onEdit: () => void
   label: string
   disabled: boolean
 }) {
@@ -225,9 +208,9 @@ function LookTile({ seed, onReroll, label, disabled }: {
   const { onPointerEnter, onPointerDown, onPointerUp, onMouseEnter, onMouseLeave, onFocus, onBlur } = tipHandlers
   return (
     <>
-      <button
+      <Btn
         type="button"
-        onClick={onReroll}
+        onClick={onEdit}
         disabled={disabled}
         aria-label={label}
         onPointerEnter={onPointerEnter}
@@ -238,17 +221,17 @@ function LookTile({ seed, onReroll, label, disabled }: {
         className="group relative shrink-0 rounded-[24px] border-none bg-transparent p-0 cursor-pointer focus-ring disabled:cursor-default disabled:opacity-60"
         data-testid="crewmate-create-look"
       >
-        <CrewAvatar seed={seed} avatar={{ kind: 'ghost', traits: seededTraits(seed) }} size={96} className="!rounded-[24px]" />
+        <CrewAvatar seed={seed} avatar={avatar ?? undefined} size={96} className="!rounded-[24px]" />
         <span
           aria-hidden="true"
           onMouseEnter={onMouseEnter}
           onMouseLeave={onMouseLeave}
           className="absolute -bottom-1.5 -right-1.5 flex size-7 items-center justify-center rounded-full border border-border-strong bg-bg text-text shadow-md transition-colors group-hover:bg-bg-hover group-focus-visible:ring-2 group-focus-visible:ring-[var(--ring)] group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-[var(--bg)]"
-          data-testid="crewmate-create-look-reroll"
+          data-testid="crewmate-create-look-edit"
         >
-          <RefreshCw size={16} />
+          <Pencil size={14} />
         </span>
-      </button>
+      </Btn>
       <InstantTip tip={tip} tipId={tipId} className="w-max max-w-[calc(100vw-1rem)] whitespace-nowrap text-text">
         {label}
       </InstantTip>
@@ -293,7 +276,7 @@ interface CreateBody {
   triggers: string
   session_color: string
   model?: string
-  avatar?: { kind: 'ghost'; traits: ReturnType<typeof seededTraits> }
+  avatar?: CrewAvatarOverride
   first_greeting?: true
 }
 
@@ -305,7 +288,7 @@ export interface CrewmateDraft {
 
 export default function NewCrewmateDialog({
   open, onClose, onCreated, existingNames, embedded = false, startExpanded = false, firstGreeting = false,
-  initialDraft, guided = false, onDraftStateChange,
+  initialDraft, guided = false, onDraftStateChange, onFailed,
 }: {
   open: boolean
   /** Pre-fills the opening (see the header comment). A new object re-fills an
@@ -317,6 +300,9 @@ export default function NewCrewmateDialog({
   /** Whether the user changed the opening (`edited`) and whether a create is
    *  in flight (`busy`), for a host that steps a pristine card aside. */
   onDraftStateChange?: (state: { edited: boolean; busy: boolean }) => void
+  /** A create that failed, in the words the card shows: lets a page that
+   *  hid the card mid-create still tell the user nothing was made. */
+  onFailed?: (message: string) => void
   /** Every open starts with Advanced settings unfolded: the doors that ask
    *  for every setting up front. Folded otherwise. */
   startExpanded?: boolean
@@ -346,8 +332,9 @@ export default function NewCrewmateDialog({
   const reduceMotion = useReducedMotion()
 
   const [name, setName] = useState('')
-  // The look: how many times it was re-rolled (0 = the name's own ghost).
-  const [lookRoll, setLookRoll] = useState(0)
+  // The look the user picked in the avatar editor; null = the name's own face.
+  const [look, setLook] = useState<CrewAvatarOverride | null>(null)
+  const [lookOpen, setLookOpen] = useState(false)
   const [builtFrom, setBuiltFrom] = useState('')
   const [job, setJob] = useState('')
   const [advanced, setAdvanced] = useState(startExpanded)
@@ -412,7 +399,7 @@ export default function NewCrewmateDialog({
     if (!open) return
     const draftName = initialDraft?.name ?? ''
     const draftGoal = initialDraft?.goal ?? ''
-    setLookRoll(0)
+    setLook(null); setLookOpen(false)
     setName(draftName); setBuiltFrom(''); setJob(draftGoal); setAdvanced(startExpanded || draftGoal.trim() !== '')
     setWorkspace(OWN_WORKSPACE); setModel(INHERIT_MODEL); setTriggers(''); setSessionColor('')
     setHint(''); setError(''); setNameRefused(false); setUnconfirmed(false); setPendingWorkspace(null)
@@ -519,7 +506,7 @@ export default function NewCrewmateDialog({
   const dirty = Boolean(
     name !== (initialDraft?.name ?? '') || job !== (initialDraft?.goal ?? '') || builtFrom
     || workspace !== OWN_WORKSPACE || model !== INHERIT_MODEL || triggers || sessionColor
-    || lookRoll > 0,
+    || look !== null || lookOpen,
   )
 
   // The mutation callbacks below outlive the dialog. A route change the user
@@ -570,6 +557,14 @@ export default function NewCrewmateDialog({
   }, [queryClient])
   const guideHeaders = useGuideRequestHeaders('crewmate.create')
   const guideSave = useGuideSaveLifecycle('crewmate.create')
+  const onFailedRef = useRef(onFailed)
+  onFailedRef.current = onFailed
+  // Every failed create is said on the card AND reported up, so a card the
+  // user left while it was busy cannot swallow the failure out of sight.
+  const fail = useCallback((message: string) => {
+    setError(message)
+    onFailedRef.current?.(message)
+  }, [])
   const createMut = useMutation({
     mutationFn: async (body: CreateBody) => {
       // A guided create (the human pressed Start on a crewmate's guide and is now
@@ -586,7 +581,7 @@ export default function NewCrewmateDialog({
     onSuccess: async ({ r, credited }, body) => {
       // A 2xx whose body still carries `error` is a refusal in the server's
       // words; like every other failure it is said in the product's.
-      if (r?.error) { if (guided) guideSave.refused(); setError(t('pages.membersPage.create_failed')); return }
+      if (r?.error) { if (guided) guideSave.refused(); fail(t('pages.membersPage.create_failed')); return }
       // Saved, but without the guide's headers (the guide had not reached its
       // Create step): the guide is closed honestly rather than left asking for
       // the press the user already made.
@@ -641,7 +636,7 @@ export default function NewCrewmateDialog({
           // stale (the name got past `existingNames`): refresh it, so the row
           // shows and the next attempt is refused here, without a request.
           refreshRosterReaders()
-          setError(t('pages.membersPage.create_name_taken', { name: body.name }))
+          fail(t('pages.membersPage.create_name_taken', { name: body.name }))
           setNameRefused(true)
           return
         }
@@ -653,7 +648,7 @@ export default function NewCrewmateDialog({
         // same name forever with the cause hidden. The server deliberately does
         // not echo such a name, and neither does the notice.
         if (e.status === 400 && code === 'credential_shaped_name') {
-          setError(t('pages.membersPage.create_name_credential_shaped'))
+          fail(t('pages.membersPage.create_name_credential_shaped'))
           setNameRefused(true)
           return
         }
@@ -673,7 +668,7 @@ export default function NewCrewmateDialog({
         // perfectly ordinary and still carry a non-canonical spelling, and
         // retyping needs no knowledge of which byte was wrong.
         if (e.status === 400 && code === 'invalid_member_name') {
-          setError(t('pages.membersPage.create_name_unusable'))
+          fail(t('pages.membersPage.create_name_unusable'))
           setNameRefused(true)
           return
         }
@@ -681,7 +676,7 @@ export default function NewCrewmateDialog({
         // (above); every other answer — a 5xx, a refused body — is said in the
         // product's words with its next step, never as the server's raw
         // sentence. The server answered, so nothing was created.
-        setError(t('pages.membersPage.create_failed'))
+        fail(t('pages.membersPage.create_failed'))
         return
       }
       // No server answer at all (a dropped connection, a parse error): the
@@ -710,7 +705,7 @@ export default function NewCrewmateDialog({
       if (!mounted.current) return
       if (present) {
         refreshRosterReaders()
-        setError(t('pages.membersPage.create_name_taken', { name: body.name }))
+        fail(t('pages.membersPage.create_name_taken', { name: body.name }))
         setNameRefused(true)
         return
       }
@@ -729,10 +724,10 @@ export default function NewCrewmateDialog({
         // the one thing that tells the two states apart on a glance is WHICH
         // crewmate is in doubt — the one just typed, which the list is then
         // checked for.
-        setError(t('pages.membersPage.create_unconfirmed', { name: body.name }))
+        fail(t('pages.membersPage.create_unconfirmed', { name: body.name }))
         return
       }
-      setError(t('pages.membersPage.create_failed'))
+      fail(t('pages.membersPage.create_failed'))
     },
   })
   const busy = createMut.isPending
@@ -814,7 +809,7 @@ export default function NewCrewmateDialog({
       triggers,
       session_color: sessionColor,
       ...(model !== INHERIT_MODEL ? { model } : {}),
-      avatar: { kind: 'ghost' as const, traits: seededTraits(lookSeed(n, lookRoll)) },
+      ...(look ? { avatar: look } : {}),
       ...(firstGreeting ? { first_greeting: true as const } : {}),
     })
   }
@@ -837,32 +832,33 @@ export default function NewCrewmateDialog({
         className="contents min-w-0 m-0 p-0 border-0"
         data-testid="crewmate-create-fieldset"
       >
-      {/* One column, top to bottom: the look, the name, the hint, Create,
+      {/* One column, top to bottom: the look, the name, Create,
           the secondary line, then the Advanced fields. Spacing is each
           element's own margin, so the space above the unfolding region is
           its own padding and moves with it. */}
       <div className="flex flex-col">
-        {/* The look is the hero: the tile centred, a caption under it that
-            says the tile is what re-rolls. No visible label over it. */}
+        {/* The look is the hero: the tile centred; its pencil opens the
+            avatar editor. */}
         <div className="flex flex-col items-center gap-2" data-testid="crewmate-create-identity">
           <LookTile
-            seed={lookSeed(name, lookRoll)}
-            onReroll={() => setLookRoll((r) => nextDistinctRoll(name, r))}
-            label={t('pages.membersPage.create_avatar_reroll')}
+            seed={lookSeed(name)}
+            avatar={look}
+            onEdit={() => setLookOpen(true)}
+            label={t('components.avatarBuilder.edit_avatar')}
             disabled={busy}
           />
-          <p className="m-0 text-center text-[12px] leading-relaxed text-muted" data-testid="crewmate-create-look-caption">
-            {t('pages.membersPage.create_avatar_caption')}
-          </p>
         </div>
-        {/* Full width under the look. No visible label: the placeholder
-            shows what goes here and `aria-label` names it. The row wrapper
-            is what `Input`'s own `flex-1` grows along. */}
-        <div className="mt-4 flex">
+        {/* Full width under the look, under a visible Name label; the
+            placeholder shows an example. The row wrapper is what `Input`'s
+            own `flex-1` grows along. */}
+        <label htmlFor="crewmate-create-name" className="mt-4 mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted" data-testid="crewmate-create-name-label">
+          {t('pages.membersPage.create_name')}
+        </label>
+        <div className="flex">
           <Input
+            id="crewmate-create-name"
             value={name}
             onChange={(e) => { setName(e.target.value); setHint(''); setError(''); setNameRefused(false); setUnconfirmed(false) }}
-            aria-label={t('pages.membersPage.create_name')}
             aria-invalid={hint || nameRefused ? true : undefined}
             aria-describedby={hint ? 'crewmate-create-name-hint' : undefined}
             placeholder={t('pages.membersPage.create_name_placeholder')}
@@ -880,12 +876,6 @@ export default function NewCrewmateDialog({
           <span id="crewmate-create-name-hint" role="alert" className="mt-1.5 text-[11.5px] leading-relaxed text-danger" data-testid="crewmate-create-name-hint">
             {hint}
           </span>
-        )}
-        {/* Only where it is true: the door that asks for a first greeting. */}
-        {firstGreeting && (
-          <p className="m-0 mt-3 text-[12px] leading-relaxed text-muted" data-testid="crewmate-create-quick-hint">
-            {t(job.trim() ? 'pages.membersPage.create_quick_hint_with_job' : 'pages.membersPage.create_quick_hint')}
-          </p>
         )}
         {/* No hand-off on either notice: both sit over this unsaved form --
             the name, job and every Advanced pick live only in local state --
@@ -1036,7 +1026,7 @@ export default function NewCrewmateDialog({
           >
             <div className="flex items-center justify-between gap-3" data-testid="crewmate-create-header">
               <h2 id={titleId} className="m-0 min-w-0 truncate text-[15px] font-semibold text-text-strong">{title}</h2>
-              <button
+              <Btn
                 type="button"
                 onClick={onClose}
                 disabled={busy || wsModalOpen}
@@ -1045,7 +1035,7 @@ export default function NewCrewmateDialog({
                 data-testid="crewmate-create-close"
               >
                 <X size={16} aria-hidden="true" />
-              </button>
+              </Btn>
             </div>
             {formEl}
           </div>
@@ -1057,16 +1047,27 @@ export default function NewCrewmateDialog({
         title={title}
         maxWidth={480}
         guardAccidentalDismiss={dirty}
-        dismissDisabled={busy || wsModalOpen}
+        dismissDisabled={busy || wsModalOpen || lookOpen}
         // The nested New workspace dialog is a Radix layer portaled to
         // document.body, outside this panel: while it is open, this panel is
         // inert and its Tab trap stands down with it, or every Tab in that
         // form is pulled back here (the shared trap's stacked-dialog contract).
-        interactionDisabled={wsModalOpen}
+        interactionDisabled={wsModalOpen || lookOpen}
       >
         {formEl}
       </Modal>
       )}
+      {/* The avatar editor, icon tier only: a crewmate that does not exist
+          yet has no record for a picture or a pack. Saving pins the pick;
+          resetting goes back to the name's own face. */}
+      <CrewAvatarBuilder
+        open={lookOpen}
+        name={lookSeed(name)}
+        value={look}
+        iconOnly
+        onCancel={() => setLookOpen(false)}
+        onSave={(next) => { setLook(next); setLookOpen(false) }}
+      />
       <WorkspaceModal
         open={wsModalOpen}
         onDirtyChange={setWsDirty}
