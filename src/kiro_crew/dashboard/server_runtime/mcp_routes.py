@@ -264,6 +264,9 @@ def _register_mcp_routes(app: web.Application) -> None:
         ("POST", "/api/cards/{card_id}/dismiss", "api_cards_dismiss"),
     ):
         app.router.add_route(_method, _path, _deferred("change_cards", _name))
+    app.router.add_get(
+        "/api/chat/slots/{slot}/dashboard", _deferred("member_dashboard", "api_session_dashboard")
+    )
     app.router.add_get("/api/crons", handlers.api_crons)
     app.router.add_post("/api/crons", handlers.api_crons_create)
     app.router.add_delete("/api/crons", handlers.api_cron_batch_delete)

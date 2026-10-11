@@ -82,7 +82,7 @@ import {
   type SessionActions,
 } from './markdown/contexts'
 import { artifactSlugFromHref, classifySessionLink, soleLinkInParagraph, useSessionChip, useUnfurlHref } from './markdown/linkTargets'
-import { dashboardPreviewRef, dashboardPreviewSlugFromHref } from '../utils/dashboardPreview'
+import { dashboardPreviewRef, dashboardPreviewTargetFromHref } from '../utils/dashboardPreview'
 import { ClosedSessionNotice } from './markdown/ClosedSessionNotice'
 import { activatePath, usePathResolution } from './markdown/pathReferences'
 import { ELEMENT_OVERRIDES, sp } from './markdown/elements'
@@ -1082,10 +1082,10 @@ export default memo(function MarkdownRenderer({ content, streaming = false, onFi
     // the real href, so the browser can still open the URL itself.
     if (onArtifactOpen && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
       const anchor = el.closest('a[href]') as HTMLAnchorElement | null
-      const previewSlug = dashboardPreviewSlugFromHref(anchor?.getAttribute('href'))
-      if (previewSlug) {
+      const previewTarget = dashboardPreviewTargetFromHref(anchor?.getAttribute('href'))
+      if (previewTarget) {
         e.preventDefault()
-        onArtifactOpen(dashboardPreviewRef(previewSlug))
+        onArtifactOpen(dashboardPreviewRef(previewTarget))
       }
     }
   }, [onArtifactOpen])

@@ -29,9 +29,6 @@ export type PaneLeading = { inset?: boolean; control?: React.ReactNode }
 import PendingQuestionCard from './PendingQuestionCard'
 import QueueStack, { SubagentDeliveryProgress, splitPaneMessages } from './QueueStack'
 import SubagentProgressBar from '../pages/chat/SubagentProgressBar'
-import CommandCenterDock from '../pages/chat/command-center/CommandCenterDock'
-import { usePreviewFlag } from '../hooks/usePreviewFlag'
-import { PREVIEW_DASHBOARD } from '../utils/previewFlags'
 import ChatFooter from '../pages/chat/ChatFooter'
 import PinnedPrompt from '../pages/chat/PinnedPrompt'
 import SessionTitleControl from '../pages/chat/SessionTitleControl'
@@ -150,7 +147,6 @@ export default function ChatPane({
   crewmate,
   crewmateGreeting,
   onOpenCrewWorkLog,
-  onOpenCommandCenter,
   threads,
   onSessionOpen,
   sessions,
@@ -159,7 +155,6 @@ export default function ChatPane({
   foldBefore,
 }: {
   slotKey: string
-  onOpenCommandCenter?: () => void
   focused?: boolean
   onFocus?: () => void
   onRemove?: () => void
@@ -288,9 +283,6 @@ export default function ChatPane({
   // Same gate the main chat uses: hide a Connections-owned OAuth banner only
   // while the card that owns that flow is reachable.
   const connectionsUiOn = useConnectionsUiEnabled()
-  // The Dynamic Dashboard is a Feature Preview (Settings > Developer): its
-  // dock is offered only to someone who turned it on, whatever the host wired.
-  const dashboardPreview = usePreviewFlag(PREVIEW_DASHBOARD)
   const [input, setInput] = useState('')
   const [pendingFiles, setPendingFiles] = useState<string[]>([])
   const pendingDirs = useMemo(() => parseDirTokens(input).map(t => t.rel), [input])
@@ -1947,7 +1939,6 @@ export default function ChatPane({
 
         <div className="dock-inert" data-testid="composer-status-stack">
         <SubagentProgressBar slot={slotKey} />
-        {dashboardPreview && onOpenCommandCenter && <CommandCenterDock slot={slotKey} onOpen={onOpenCommandCenter} />}
 
         <SubagentDeliveryProgress count={systemDeliveryCount} />
         {/* Rendered on server state only. A `steer-only` host never ASKS for a
