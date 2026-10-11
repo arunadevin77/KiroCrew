@@ -993,7 +993,7 @@ class TestReplaceNeverLosesTheSoleCopy:
         # still names the DELETED previous group, the new version's items are
         # committed and unowned, and their intent marker survives. The new
         # version is the slug's only surviving content, so the sweep must adopt
-        # it -- the state a completed replace would have left.
+        # it. It is adopted under no hash: nothing proves the attempt finished.
         import hashlib
 
         from kiro_crew.knowledge.agent_source import mark_ingesting
@@ -1013,7 +1013,7 @@ class TestReplaceNeverLosesTheSoleCopy:
 
         assert removed == 0
         assert new_id in _live_ids(kstore, sid)
-        assert get_state(kstore, sid, slug) == (new_hash, [new_id])
+        assert get_state(kstore, sid, slug) == (None, [new_id])
         assert _searchable(kstore, "deltaword")
         row = kstore.db.execute(
             "SELECT status FROM agent_item_state WHERE source_id = ? AND slug = ?", (sid, slug)
@@ -1031,7 +1031,9 @@ class TestReplaceNeverLosesTheSoleCopy:
         assert _searchable(kstore, "epsilonword")
 
     @pytest.mark.asyncio
-    async def test_newest_attempt_is_adopted_and_older_residue_reaped(self, kstore, pipeline):
+    async def test_every_attempt_is_adopted_and_none_reaped(self, kstore, pipeline):
+        # Neither attempt can be proven complete, so the sweep cannot pick one:
+        # the newer may be a truncated edit and the older the last full version.
         import hashlib
 
         from kiro_crew.knowledge.agent_source import mark_ingesting
@@ -1058,11 +1060,17 @@ class TestReplaceNeverLosesTheSoleCopy:
 
         removed = kstore.reclaim_agent_source_residue()
 
-        newer_hash, newer_id = ids["newer body"]
-        assert get_state(kstore, sid, slug) == (newer_hash, [newer_id])
-        assert newer_id in _live_ids(kstore, sid)
-        assert removed == 1
-        assert ids["older body"][1] not in _live_ids(kstore, sid)
+        newer_id, older_id = ids["newer body"][1], ids["older body"][1]
+        assert removed == 0
+        assert get_state(kstore, sid, slug) == (None, [newer_id, older_id])
+        assert {newer_id, older_id} <= _live_ids(kstore, sid)
+        assert not kstore.db.execute(
+            "SELECT 1 FROM agent_ingest_intent WHERE source_id = ?", (sid,)
+        ).fetchone()
+        # The next add replaces everything the recovery kept.
+        await add_agent_document(pipeline, title="Doc", content="newer body", source_uri=URI)
+        assert not {newer_id, older_id} & _live_ids(kstore, sid)
+        assert len(_bodies(kstore, sid, "body")) == 1
 
     @pytest.mark.asyncio
     async def test_first_add_crash_is_still_reaped(self, kstore, pipeline):
@@ -1145,7 +1153,7 @@ class TestReplaceNeverLosesTheSoleCopy:
 
         kstore.reclaim_agent_source_residue()
 
-        assert get_state(kstore, sid, document_slug(URI)) == (h, [new_id])
+        assert get_state(kstore, sid, document_slug(URI)) == (None, [new_id])
         assert _searchable(kstore, "etaword")
 
 
@@ -1204,3 +1212,201 @@ class TestFinalizeCommitsDeleteAndOwnershipTogether:
         assert seen["old_present"] is False
         assert seen["ids"] and set(seen["ids"]) <= _live_ids(kstore, sid)
         assert old_id not in _live_ids(kstore, sid)
+
+
+class _HardKill(BaseException):
+    """Stands in for SIGKILL: no ``except Exception`` handler on the ingest path
+    catches it, so nothing after the raise runs."""
+
+
+def _paragraph_chunks(text, **kw):
+    """One chunk per blank-line paragraph, so a document spans several commits."""
+    parts = [p for p in text.split("\n\n") if p.strip()]
+    return [
+        {"content": p, "chunk_index": i, "section_title": None, "line_start": 0, "line_end": 0}
+        for i, p in enumerate(parts)
+    ]
+
+
+def _kill_after_first_chunk(pipeline, mp):
+    """Commit one chunk of the next ingest, then die before the next one."""
+
+    def _die(*_a, **_kw):
+        raise _HardKill()
+
+    mp.setattr(pipeline, "_store_entities", _die)
+
+
+def _legacy_window(kstore, sid, slug, text, started):
+    """Persist the end state a store from before the one-transaction finalize
+    could leave: the row still names the previous group, which is DELETED, and
+    the new version is committed in full, owned by no row, beside its marker."""
+    import hashlib
+
+    from kiro_crew.knowledge.agent_source import mark_ingesting
+
+    h = hashlib.sha256(text.encode()).hexdigest()
+    mark_ingesting(kstore, sid, slug, h, "Doc", source_uri=URI)
+    kstore.db.execute(
+        "UPDATE agent_ingest_intent SET started_at = ? WHERE source_id = ? AND content_hash = ?",
+        (started, sid, h),
+    )
+    kstore.db.commit()
+    for chunk in _paragraph_chunks(text):
+        kstore.add_item(
+            "Doc",
+            chunk["content"],
+            "document",
+            source_id=sid,
+            chunk_index=chunk["chunk_index"],
+            content_hash=h,
+        )
+    _, old_ids = get_state(kstore, sid, slug)
+    kstore.delete_items_batch(old_ids, owner_source_id=sid)
+    return h
+
+
+class TestAdoptionNeedsCompletionEvidence:
+    """Adoption must not publish a partial crashed attempt as a complete document.
+
+    A crashed attempt's residue is whatever chunks it committed before it died,
+    and nothing stored says how many chunks the attempt meant to write. Writing
+    its hash into the row tells the next add of the same text "unchanged since
+    last add", so the missing chunks are never written. And adopting only the
+    newest attempt lets the sweep reap an older attempt that may be the last
+    complete version.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_partial_attempt_does_not_satisfy_an_identical_re_add(
+        self, kstore, pipeline, monkeypatch
+    ):
+        for m in ("chunk", "chunk_markdown"):
+            getattr(pipeline.chunker, m).side_effect = _paragraph_chunks
+        sid, _ = ensure_agent_source(kstore)
+        slug = document_slug(URI)
+        await add_agent_document(pipeline, title="Doc", content="omegaword body", source_uri=URI)
+        _, old_ids = get_state(kstore, sid, slug)
+        kstore.delete_items_batch(old_ids, owner_source_id=sid)
+        full = "thetaword first part\n\niotaword second part"
+
+        with monkeypatch.context() as mp:
+            _kill_after_first_chunk(pipeline, mp)
+            with pytest.raises(_HardKill):
+                await add_agent_document(pipeline, title="Doc", content=full, source_uri=URI)
+        assert _searchable(kstore, "thetaword") and not _searchable(kstore, "iotaword")
+
+        kstore.reclaim_agent_source_residue()
+        # The partial chunk is the slug's only surviving content, so it is kept.
+        assert _searchable(kstore, "thetaword")
+
+        result = await add_agent_document(pipeline, title="Doc", content=full, source_uri=URI)
+
+        assert result["status"] == "added", result
+        assert _searchable(kstore, "iotaword")
+        assert len(_searchable(kstore, "thetaword")) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_partial_newer_attempt_does_not_reap_the_complete_older_one(
+        self, kstore, pipeline, monkeypatch
+    ):
+        for m in ("chunk", "chunk_markdown"):
+            getattr(pipeline.chunker, m).side_effect = _paragraph_chunks
+        sid, _ = ensure_agent_source(kstore)
+        slug = document_slug(URI)
+        await add_agent_document(pipeline, title="Doc", content="omegaword body", source_uri=URI)
+        _legacy_window(kstore, sid, slug, "kappaword one\n\nlambdaword two", "2024-01-01T00:00:00")
+        edited = "muword one\n\nnuword two"
+
+        with monkeypatch.context() as mp:
+            _kill_after_first_chunk(pipeline, mp)
+            with pytest.raises(_HardKill):
+                await add_agent_document(pipeline, title="Doc", content=edited, source_uri=URI)
+
+        kstore.reclaim_agent_source_residue()
+
+        # The complete earlier version is not deleted to make room for a
+        # partial one.
+        assert _searchable(kstore, "kappaword") and _searchable(kstore, "lambdaword")
+        # And the edited text is written in full on its next add.
+        result = await add_agent_document(pipeline, title="Doc", content=edited, source_uri=URI)
+        assert result["status"] == "added", result
+        assert _searchable(kstore, "nuword")
+        assert len(_searchable(kstore, "muword")) == 1
+        # That add replaced everything the recovery held for the document.
+        assert not _searchable(kstore, "kappaword")
+
+    @pytest.mark.asyncio
+    async def test_an_ambiguous_attempt_spares_the_slugs_other_attempts(self, kstore, pipeline):
+        # One attempt's hash is marked at two gone documents, so it belongs to
+        # neither for certain. The other attempt at the same document is not
+        # reaped in its place: nothing at that slug is deleted while it is unclear.
+        import hashlib
+
+        from kiro_crew.knowledge.agent_source import mark_ingesting
+
+        sid, _ = ensure_agent_source(kstore)
+        shared = hashlib.sha256(b"shared body").hexdigest()
+        own = hashlib.sha256(b"xiword body").hexdigest()
+        rows = {}
+        for uri, body in ((URI, "one body"), (OTHER_URI, "two body")):
+            await add_agent_document(pipeline, title="Doc", content=body, source_uri=uri)
+            rows[uri] = get_state(kstore, sid, document_slug(uri))
+            kstore.delete_items_batch(rows[uri][1], owner_source_id=sid)
+            mark_ingesting(kstore, sid, document_slug(uri), shared, "Doc", source_uri=uri)
+        mark_ingesting(kstore, sid, document_slug(URI), own, "Doc", source_uri=URI)
+        orphan = kstore.add_item(
+            "Doc", "shared body", "document", source_id=sid, content_hash=shared
+        )
+        mine = kstore.add_item("Doc", "xiword body", "document", source_id=sid, content_hash=own)
+
+        assert kstore.reclaim_agent_source_residue() == 0
+        assert {orphan, mine} <= _live_ids(kstore, sid)
+        for uri in (URI, OTHER_URI):
+            assert get_state(kstore, sid, document_slug(uri)) == rows[uri]
+
+    @pytest.mark.asyncio
+    async def test_a_recovered_group_is_left_out_of_dedup(self, kstore, pipeline, monkeypatch):
+        # The recovered group holds an older complete attempt and a newer
+        # truncated one. A folder holding either attempt's text must not make
+        # the sweep delete the group: whichever hash it matched on, the other
+        # version would go with it.
+        import hashlib
+
+        from kiro_crew.knowledge.dedup import dedup_sweep, enumerate_docs
+
+        for m in ("chunk", "chunk_markdown"):
+            getattr(pipeline.chunker, m).side_effect = _paragraph_chunks
+        sid, _ = ensure_agent_source(kstore)
+        slug = document_slug(URI)
+        await add_agent_document(pipeline, title="Doc", content="omegaword body", source_uri=URI)
+        older = _legacy_window(
+            kstore, sid, slug, "kappaword one\n\nlambdaword two", "2024-01-01T00:00:00"
+        )
+        edited = "muword one\n\nnuword two"
+        with monkeypatch.context() as mp:
+            _kill_after_first_chunk(pipeline, mp)
+            with pytest.raises(_HardKill):
+                await add_agent_document(pipeline, title="Doc", content=edited, source_uri=URI)
+        kstore.reclaim_agent_source_residue()
+        _, group = get_state(kstore, sid, slug)
+        assert len(group) == 3
+
+        folder = kstore.add_source(name="Projects", source_type="local_folder", uri="/tmp/p")
+        for path, h in (
+            ("/tmp/p/old.md", older),
+            ("/tmp/p/new.md", hashlib.sha256(edited.encode()).hexdigest()),
+        ):
+            iid = kstore.add_item("f", "folder copy", "document", source_id=folder, content_hash=h)
+            kstore.db.execute(
+                "INSERT INTO folder_file_state "
+                "(source_id, file_path, content_hash, mtime, item_ids, last_seen, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (folder, path, "bytes", 1.0, json.dumps([iid]), "2026-01-01T00:00:00", "done"),
+            )
+        kstore.db.commit()
+
+        assert not any(set(d.item_ids) & set(group) for d in enumerate_docs(kstore))
+        dedup_sweep(kstore, apply=True)
+        assert set(group) <= _live_ids(kstore, sid)
+        assert get_state(kstore, sid, slug) == (None, group)

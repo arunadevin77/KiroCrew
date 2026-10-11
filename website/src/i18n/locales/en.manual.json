@@ -3117,7 +3117,11 @@
       "reload_blocked_subagents": "sub-agents working",
       "reload_session": "Reload session",
       "reload_session_tooltip": "Restarts the agent process to pick up MCP/config changes. The conversation is kept.",
-      "unpin": "Unpin"
+      "unpin": "Unpin",
+      "mute": "Mute this session",
+      "unmute": "Unmute this session",
+      "mute_failed": "Couldn't mute this session",
+      "unmute_failed": "Couldn't unmute this session"
     },
     "sessionGridView": {
       "fork_child_session": "Fork {{name}} (child session)",
@@ -4582,6 +4586,8 @@
       "connections_label": "Connections",
       "connections_description": "Connect official services and manage custom MCP servers",
       "skills_label": "Skills",
+      "skills_awaiting_review": "Skills awaiting review ({{count}})",
+      "skills_awaiting_review_failed": "Couldn't check for skills awaiting review",
       "skills_description": "Specialized knowledge files your agent loads on demand for specific tasks",
       "steering_label": "Steering",
       "steering_description": "Markdown conventions from ~/.kiro/steering and your project’s .kiro/steering, applied per each file’s inclusion mode",
@@ -5614,7 +5620,8 @@
       "unlink_source_link": "Select a PR or Issue chip to permanently hide from this session. The source and transcript stay unchanged.",
       "unlink_source_link_confirm": "Select again to permanently hide “{{label}}”",
       "unlink_source_link_failed": "Could not hide. Try again.",
-      "waiting_for_memory": "Waiting for free RAM"
+      "waiting_for_memory": "Waiting for free RAM",
+      "muted": "Muted: no chime, toast or badge"
     },
     "connectionsPage": {
       "action_failed": "Action failed: {{error}}",
@@ -6539,6 +6546,7 @@
         "no_skills_match_query": "No skills match “{{query}}”.",
         "on_demand_skills_loaded_when_the_agent_determine": "On-demand skills loaded when the agent determines they're relevant.",
         "pending_review_count": "Pending review ({{count}})",
+        "new_candidate": "New",
         "proposed_change": "Proposed change",
         "review": "Review",
         "scripts_always_require_review": "Bundled scripts always require manual review, even when skill approval is turned off.",
@@ -6629,7 +6637,9 @@
         "credits": "Credits",
         "spend": "Spend",
         "tokens": "Tokens",
-        "usage_tracking_is_not_available_for": "Usage tracking is not available for {{provider}}."
+        "usage_tracking_is_not_available_for": "Usage tracking is not available for {{provider}}.",
+        "spend_over_time": "Spend over time (credits)",
+        "harness_unread": "Couldn’t read the agent backend setting, so the spend chart can’t tell whether this install bills in credits."
       },
       "vectorMemoryCard": {
         "embedding_status": "Embedding status",
@@ -6799,6 +6809,31 @@
         "err_name_reserved": "“{{name}}” is reserved for a built-in agent. Pick another name.",
         "err_generic": "The request failed. Try again.",
         "chat_with_caption": "Chat runs on the shared default memory — not a crewmate's own."
+      },
+      "usageSeriesChart": {
+        "layer_by": "Layer by",
+        "by_channel": "Channel",
+        "by_agent": "Agent",
+        "by_model": "Model",
+        "by_cohort": "Session start week",
+        "cumulative": "Cumulative",
+        "other": "Other ({{n}} more)",
+        "unattributed": "Unattributed",
+        "unattributed_hint": "Unattributed: turns that didn't record this detail.",
+        "channel_unrecognized": "Unrecognized sessions",
+        "cohort_week": "Week of {{date}}",
+        "cohort_started_by": "Started by {{date}}",
+        "cohort_caption": "Layers group spend by the week each session was first seen in this window; a session that began earlier counts from its first turn here, so the oldest layer, “Started by” a date, also holds older sessions.",
+        "total_to_date": "Total to date: {{value}}",
+        "total_that_day": "That day: {{value}}",
+        "empty": "No spend recorded yet.",
+        "truncated_notice": "Totals undercount: the oldest {{n}} turns weren't counted.",
+        "truncated_from": "Totals undercount: the oldest {{n}} turns weren't counted; each day from {{date}} counts all of its turns.",
+        "load_failed": "Couldn't load spend over time",
+        "retry": "Try again",
+        "loading": "Loading…",
+        "aria_label": "Stacked area chart of spend over time",
+        "keyboard_hint": "Use the left and right arrow keys to step through days."
       }
     },
     "overviewPage": {

@@ -415,7 +415,7 @@ def enumerate_docs(store) -> list[DocRef]:
         try:
             state_rows = store.db.execute(
                 f"SELECT st.source_id, st.slug, st.item_ids, st.updated_at, "  # noqa: S608
-                f"st.{name_col} AS label, s.source_type "
+                f"st.content_hash AS row_hash, st.{name_col} AS label, s.source_type "
                 f"FROM {table} st JOIN sources s ON s.id = st.source_id").fetchall()
         except Exception:  # pragma: no cover - table absent on an old schema
             continue
@@ -427,6 +427,14 @@ def enumerate_docs(store) -> list[DocRef]:
             if not ids:
                 continue  # a row that owns nothing is not a document to dedup
             claimed.update(ids)
+            if table == "agent_item_state" and not r["row_hash"]:
+                # Recovered crash residue (``_adopt_agent_sole_copy_residue``):
+                # the group may mix chunks of several attempts and none is proven
+                # complete, so no single hash describes it and a match on any one
+                # of them could delete a version nothing else holds. It stays
+                # claimed, so the hash fallback below does not enumerate it
+                # either, until the document's next add replaces the group.
+                continue
             doc = _build_doc(
                 store, source_id=r["source_id"], source_type=r["source_type"],
                 filename=(r["label"] or r["slug"]), item_ids=ids, file_path=None,

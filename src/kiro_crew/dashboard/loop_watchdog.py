@@ -57,8 +57,9 @@ things turn the silence that follows a wedge into an actionable artifact:
 
 2. **Soft observability (the daemon thread).**  A daemon thread measures the
    silence since the last beat on the **monotonic clock** and, in order:
-   emits stall enrichment (the stall timestamp and this process's
-   established TCP sockets) to the logger at WARNING at ``enrich_after``;
+   emits stall enrichment (the stall timestamp, this process's established
+   TCP sockets, and where the loop thread is, with the callback its current
+   asyncio handle is running) to the logger at WARNING at ``enrich_after``;
    dumps all thread stacks *without* exiting at ``stall_after``, re-arming on
    recovery.  While the exit is armed that soft dump stays on stderr, so a
    recovered stall is not classified as a fatal crash; when no exit can
@@ -97,7 +98,7 @@ import time
 import typing
 from collections.abc import Callable
 
-from kiro_crew.dashboard.stall_enrichment import collect_stall_enrichment
+from kiro_crew.dashboard.stall_enrichment import collect_stall_enrichment, describe_loop_thread
 from kiro_crew.platform_compat import arm_process_alarm, boottime_now, process_alarm_available
 
 logger = logging.getLogger("kiro_crew.dashboard.loop_watchdog")
@@ -316,6 +317,8 @@ class LoopStallWatchdog:
             recovered stall read as a fatal crash on the next startup.  Both
             production stalls to date froze the loop inside websocket frame
             parsing; this records *which* socket without needing a repro.
+            The watchdog appends where the loop thread is
+            (:func:`kiro_crew.dashboard.stall_enrichment.describe_loop_thread`).
         enrich: Enrichment collector ``silence_secs -> lines``, injectable for
             tests.  Defaults to
             :func:`kiro_crew.dashboard.stall_enrichment.collect_stall_enrichment`.
@@ -358,6 +361,9 @@ class LoopStallWatchdog:
         self._lag_next_at = 0.0
         self._log = log or logger
         self._last_beat = now()
+        # ``threading.get_ident()`` of the thread that last beat: the loop
+        # thread the enrichment locates.  None until the first beat.
+        self._loop_thread_id: int | None = None
         self._dumped = False
         # True only between start() and stop() when exit_after is set; gates the
         # alarm so a dashboard-only process (e.g. `kirocrew chat`, where
@@ -376,9 +382,11 @@ class LoopStallWatchdog:
         single atomic float store (the GIL makes it safe between the loop thread
         and the daemon thread).  While the alarm is armed, each beat cancels and
         re-arms it, so it only fires after a genuine ``exit_after`` gap with no
-        beats — i.e. a real wedge, not a transient lag.
+        beats — i.e. a real wedge, not a transient lag.  It also records the
+        calling thread as the loop thread the stall enrichment locates.
         """
         self._last_beat = self._now()
+        self._loop_thread_id = threading.get_ident()
         if self._later_active and self._exit_after is not None:
             try:
                 self._cancel_later()
@@ -439,6 +447,7 @@ class LoopStallWatchdog:
             except Exception:  # pragma: no cover - collector already degrades; belt & braces
                 self._log.exception("loop watchdog stall enrichment failed")
                 lines = ["=== STALL ENRICHMENT FAILED (collector raised) ==="]
+            lines = [*lines, *describe_loop_thread(self._loop_thread_id)]
             self._log.warning(
                 "event loop silent %.1fs — stall enrichment captured:\n%s",
                 silence,

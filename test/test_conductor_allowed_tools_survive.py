@@ -1148,7 +1148,12 @@ class TestASpecLeftInPlaceHoldsTheCeilingMemo:
         shared = tmp_path / "agents"
         _pretend_target_is_shared(monkeypatch, agent, shared)
         # The real rebuild below writes the hold memo; restored after the test.
+        from kiro_crew.agent_materialization import fork_refresh
+
         monkeypatch.setattr(agent, "_conductor_spec_held", False, raising=False)
+        monkeypatch.setattr(agent, "_conductor_installers_held", False, raising=False)
+        monkeypatch.setattr(fork_refresh, "_shared_template_held", False, raising=False)
+        monkeypatch.setattr(fork_refresh, "_shared_template_hold_record", None, raising=False)
         return shared
 
     @staticmethod
@@ -1231,6 +1236,205 @@ class TestASpecLeftInPlaceHoldsTheCeilingMemo:
         assert pending is None, "the memo advanced over a spec that was never rewritten"
         warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
         assert any("pending" in w and "read or written" in w for w in warnings), warnings
+
+    def test_a_bound_shared_template_whose_write_raises_holds_the_memo(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A crew-bound shared template carries a grant the ceiling now denies, and its
+        rewrite fails. The real rebuild must report the hold and the real hook must leave
+        the memo pending, so the next poll retries; once the write clears, the retry
+        re-filters the template and the hold is gone."""
+        from types import SimpleNamespace
+
+        from kiro_crew.agent_materialization import auto_approve, fork_refresh
+        from kiro_crew.config.loader import KiroCrewConfig
+
+        shared = self._shared_home_rig(monkeypatch, tmp_path)
+        agent.rebuild_agent_config()
+        template = shared / "reviewer.json"
+        template.write_text(
+            json.dumps({"name": "reviewer", "tools": ["*"], "allowedTools": ["web_fetch"]}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(fork_refresh, "_shared_template_held", False)
+        bindings = {"reviewer-crew": SimpleNamespace(kiro_agent="reviewer")}
+        monkeypatch.setattr(
+            KiroCrewConfig, "load", classmethod(lambda cls: SimpleNamespace(agents=bindings))
+        )
+        real_gate = auto_approve._may_auto_approve
+        monkeypatch.setattr(
+            auto_approve, "_may_auto_approve", lambda ref: ref != "web_fetch" and real_gate(ref)
+        )
+        before = template.read_bytes()
+        real_write = agent._atomic_json_write
+
+        def template_write_fails(path: Path, data: Any) -> None:
+            if path.name == "reviewer.json":
+                raise PermissionError(errno.EACCES, "Permission denied", str(path))
+            real_write(path, data)
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(agent, "_atomic_json_write", template_write_fails)
+            wrote, held = self._report()
+            self._pending_memo(scoped)
+            agent.reproject_for_ceiling_change()
+            pending = agent._projected_ceiling_generation
+
+        assert template.read_bytes() == before
+        assert wrote is True, "kirocrew.json was written; this is not a refusal"
+        assert held == [True], "a shared template left unfiltered must hold the ceiling memo"
+        assert pending is None, "the memo advanced over a template that was never rewritten"
+        assert self._report() == (True, [False])
+        assert json.loads(template.read_text(encoding="utf-8"))["allowedTools"] == []
+
+    def test_an_unrelated_hard_linked_file_holds_without_a_rebuild_per_poll(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A hard-linked file no crew binds is refused by the fenced reader, so it may be
+        the file that declares a bound name and the memo stays pending. A rebuild cannot
+        read it either until it changes, so a poll or maintenance wake that finds it
+        unchanged under the same answer runs no rebuild (each one rewrites files kiro-cli
+        watches). The poll after its extra link goes rebuilds, and that rebuild lands."""
+        from types import SimpleNamespace
+
+        from kiro_crew.agent_materialization import fork_refresh
+        from kiro_crew.config.loader import KiroCrewConfig
+
+        shared = self._shared_home_rig(monkeypatch, tmp_path)
+        agent.rebuild_agent_config()
+        (shared / "reviewer.json").write_text(
+            json.dumps({"name": "reviewer", "allowedTools": []}), encoding="utf-8"
+        )
+        notes = shared / "notes.json"
+        notes.write_text(json.dumps({"name": "notes"}), encoding="utf-8")
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        alias = elsewhere / "notes.json"
+        os.link(notes, alias)
+        monkeypatch.setattr(fork_refresh, "_shared_template_held", False)
+        bindings = {"reviewer-crew": SimpleNamespace(kiro_agent="reviewer")}
+        monkeypatch.setattr(
+            KiroCrewConfig, "load", classmethod(lambda cls: SimpleNamespace(agents=bindings))
+        )
+        rebuilds: list[int] = []
+        real_reporting = agent.rebuild_agent_config_reporting
+
+        def counting(**kw: Any) -> tuple[Path, bool]:
+            rebuilds.append(1)
+            return real_reporting(**kw)
+
+        monkeypatch.setattr(agent, "rebuild_agent_config_reporting", counting)
+        self._pending_memo(monkeypatch)
+        for _ in range(4):
+            agent.reproject_for_ceiling_change()
+        assert agent.retry_held_conductor_specs() is False
+        assert rebuilds == [1], "an unchanged hold under the same answer was rebuilt again"
+        assert agent._conductor_spec_held is True
+        assert agent._projected_ceiling_generation is None, "the memo advanced over the hold"
+
+        alias.unlink()
+        agent.reproject_for_ceiling_change()
+        assert rebuilds == [1, 1], "the poll after the held file changed must rebuild"
+        assert agent._conductor_spec_held is False
+        assert agent._projected_ceiling_generation is not None
+
+    def test_a_malformed_config_overlay_holds_without_a_rebuild_per_poll(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A ``config.local.json`` that does not parse may hide a crew binding, so the
+        pass holds. Its bytes are what they are until someone saves the file, so a poll
+        under the same answer runs no rebuild; the poll after the repair does, and lands."""
+        from kiro_crew.config import loader
+
+        shared = self._shared_home_rig(monkeypatch, tmp_path)
+        agent.rebuild_agent_config()
+        (shared / "reviewer.json").write_text(
+            json.dumps({"name": "reviewer", "allowedTools": []}), encoding="utf-8"
+        )
+        loader.config_path().write_text(
+            json.dumps({"agents": {"reviewer-crew": {"kiro_agent": "reviewer"}}}),
+            encoding="utf-8",
+        )
+        overlay = loader.config_local_path()
+        overlay.write_text("{not json", encoding="utf-8")
+        rebuilds: list[int] = []
+        real_reporting = agent.rebuild_agent_config_reporting
+
+        def counting(**kw: Any) -> tuple[Path, bool]:
+            rebuilds.append(1)
+            return real_reporting(**kw)
+
+        monkeypatch.setattr(agent, "rebuild_agent_config_reporting", counting)
+        self._pending_memo(monkeypatch)
+        for _ in range(4):
+            agent.reproject_for_ceiling_change()
+        assert agent.retry_held_conductor_specs() is False
+        assert rebuilds == [1], "an unchanged malformed overlay was rebuilt again"
+        assert agent._conductor_spec_held is True
+        assert agent._projected_ceiling_generation is None, "the memo advanced over the hold"
+
+        overlay.write_text("{}", encoding="utf-8")
+        agent.reproject_for_ceiling_change()
+        assert rebuilds == [1, 1], "the poll after the overlay was repaired must rebuild"
+        assert agent._conductor_spec_held is False
+        assert agent._projected_ceiling_generation is not None
+
+    @pytest.mark.skipif(
+        os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+        reason="a mode-000 file is still readable on Windows and to root",
+    )
+    def test_a_bound_template_made_unreadable_is_filtered_once_readable_again(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A bound template whose permissions deny the read during a tighten cannot be
+        filtered, and kiro-cli cannot load it either. Once the permissions are restored,
+        kiro-cli loads the revoked grant, and no ceiling move follows to retry. So the
+        memo stays pending, no poll rebuilds while the read stays denied, and the poll
+        after the restore filters the template."""
+        from types import SimpleNamespace
+
+        from kiro_crew.agent_materialization import auto_approve, fork_refresh
+        from kiro_crew.config.loader import KiroCrewConfig
+
+        shared = self._shared_home_rig(monkeypatch, tmp_path)
+        agent.rebuild_agent_config()
+        template = shared / "reviewer.json"
+        template.write_text(
+            json.dumps({"name": "reviewer", "tools": ["*"], "allowedTools": ["web_fetch"]}),
+            encoding="utf-8",
+        )
+        bindings = {"reviewer-crew": SimpleNamespace(kiro_agent="reviewer")}
+        monkeypatch.setattr(
+            KiroCrewConfig, "load", classmethod(lambda cls: SimpleNamespace(agents=bindings))
+        )
+        real_gate = auto_approve._may_auto_approve
+        monkeypatch.setattr(
+            auto_approve, "_may_auto_approve", lambda ref: ref != "web_fetch" and real_gate(ref)
+        )
+        rebuilds: list[int] = []
+        real_reporting = agent.rebuild_agent_config_reporting
+
+        def counting(**kw: Any) -> tuple[Path, bool]:
+            rebuilds.append(1)
+            return real_reporting(**kw)
+
+        monkeypatch.setattr(agent, "rebuild_agent_config_reporting", counting)
+        self._pending_memo(monkeypatch)
+        template.chmod(0o000)
+        try:
+            for _ in range(3):
+                agent.reproject_for_ceiling_change()
+        finally:
+            template.chmod(0o644)
+        assert rebuilds == [1], "a read that stays denied was rebuilt again"
+        assert fork_refresh._shared_template_held is True
+        assert agent._projected_ceiling_generation is None, "the memo advanced over the hold"
+
+        agent.reproject_for_ceiling_change()
+        assert rebuilds == [1, 1], "the poll after the read was restored must rebuild"
+        assert json.loads(template.read_text(encoding="utf-8"))["allowedTools"] == []
+        assert agent._conductor_spec_held is False
+        assert agent._projected_ceiling_generation is not None
 
     def test_the_hook_advances_only_when_the_rebuild_wrote_and_held_nothing(
         self, monkeypatch: pytest.MonkeyPatch

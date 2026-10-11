@@ -977,7 +977,95 @@ the fleet now forbids: the tool short-circuits inside the harness and never reac
 own PreToolUse gate. `agent.reproject_for_ceiling_change` re-derives the file, bounded to an
 actual ceiling move by `governance_generation` — hooks run on every confirming poll, so an
 unconditional rebuild would rewrite a file kiro-cli watches every refresh interval for nothing.
-Two details make that bound safe rather than merely cheap. The baseline is seeded by
+
+"The file" is every spec a session can be started on through a crew, not only `kirocrew.json`.
+The rebuild re-derives Kiro Crew's own specs, then the fork refresh
+(`agent_materialization.fork_refresh`) re-filters `allowedTools` and strips governed
+`autoApprove` on every corroborated fork, and then runs the same two passes over every
+**shared template** a crew in `config.json` is bound to: a spec created on the Agent
+templates tab, edited on the agent detail page, or turned into a shared template by publish.
+Those writers filter only when they write, so without this pass such a template would keep
+the grants the ceiling now denies. The shared-template pass touches nothing but those two
+lists, rewrites a file only when a pass removed something, and never writes a spec no crew is
+bound to. A spec counts as the bound template when its stem is the bound name or it declares
+that name, and when two specs claim it every JSON one is filtered, since which is live is
+undefined. That is why the pass does not resolve through `agent.agent_spec_path`: a resolver
+for a writer acting on one agent prefers a declared match over a stem match and refuses two
+declared matches, and either rule would leave a claimant's grants unfiltered here. The
+exemption for Kiro Crew's own specs and for forks is per file, not per name: the pass skips
+`<name>.json` for an owned name its installer governs and the file `agent.agent_spec_path`
+resolves for a fork, because those are the only files those writers rewrite, and filters
+every other file that claims the name. A second file declaring `kirocrew`, for example, is
+one kiro-cli may load as that agent while the installer re-filters only `kirocrew.json`. A
+fork whose name two files declare has no file the fork refresh wrote, so every claimant is
+filtered. The pass does
+not hold spawns the way the fork gate does. A bound template it fails to rewrite for a
+reason a retry can clear (a spec file raised an `OSError` on its read, the agents directory could not be listed, its write raised, `config.json` or
+`config.local.json` could not be read whole by this load) is folded into the rebuild's
+conductor hold (`_held_out` and `agent._conductor_spec_held`, below), so the ceiling memo
+stays behind and the next poll or maintenance wake retries it; the hook does not skip an
+unchanged generation while that hold is set, and neither does the gateway's profile watch
+(`agent.reproject_for_profile_change`, on its own retry backoff, the retry a host without
+distribution polling has between maintenance wakes), which covers a hold the boot path's deferred
+pass sets after `prime_ceiling_projection` seeded the baseline. The hold lasts until the
+template is filtered, like a held conductor spec: releasing it while the failure persists
+would mark the tightened ceiling projected with a denied grant possibly still on disk, and
+nothing would retry it once the failure cleared. That includes a read this process is
+denied (`PermissionError`). kiro-cli runs as the same user and cannot load the file while
+its permissions deny the read, but restoring them puts whatever grants it carries back in
+front of kiro-cli with no ceiling move to trigger a retry. A Windows sharing or lock
+violation arrives as the same `PermissionError` and clears when the other handle closes.
+Neither rebuilds on every poll: the probe below re-reads the file and lets the next tick
+rebuild once the read succeeds. The directory is listed with `os.scandir`, whose errors
+propagate (`agent_spec_format.iter_agent_spec_files_strict`): `Path.glob` swallows a failed
+listing and answers with an empty directory, which would let the memo advance past every
+bound template in it. A spec file with a second hard link is held too, until its link count is
+one again, and logged at WARNING with the remedy. The fenced reader refuses a
+multiply-linked inode for good, because the other name may be any file on the volume, but
+kiro-cli reads the same bytes without that fence, so its grants are live and this pass cannot
+filter them; the file is never written through the shared inode. Any other regular file the
+reader refuses is held the same way, since its link count or kernel path changed under the
+read and a retry may read it; a refused directory or pipe at a spec name is not held. Whether a config file could
+not be read is asked of the load itself (`KiroCrewConfig._base_unreadable` and
+`_overlay_unreadable`), not of `degraded_sections`, whose whole-config marker lasts the
+process: a hold on it would never clear after the file was repaired. A template no retry can
+fix (a markdown spec this writer
+cannot re-serialize, bytes that do not parse, a capability reconcile that refuses) is logged
+at WARNING and not held.
+
+A file the pass cannot read holds whether or not it claims a bound name, because an unread
+file may be the one that declares it. Such a hold cannot clear until the file changes or a
+read of it succeeds, so it does not rebuild on every poll. The same is true of a config file
+the load could not read whole. When the pass's hold rests only on what it could not read, it
+records each unreadable file's path, inode, link count and mtime, the loader's fingerprint of
+both config files when one was unreadable, and the governance answer generation it ran under
+(`fork_refresh._shared_template_hold_record`). The ceiling hook and the maintenance wake skip
+the rebuild while that answer is current and is also the one the last rebuild derived its
+grants under (`agent._rebuild_answer_generation`), every recorded file is unchanged and still reads as
+held, and a fresh config load still cannot read a file whole
+(`fork_refresh.shared_template_hold_unchanged`; it re-reads each file through the same fence
+and logs nothing, and the loader never caches a read that failed). The memo stays behind
+either way, so the tightened answer is still not recorded as projected. A new answer, any
+change to a held file or config file, or a read that now succeeds (a sharing violation that
+cleared, an extra link that was removed) runs the rebuild on the next tick. A hold with any
+other cause is retried as before, because it can clear with nothing on disk changing: a
+conductor installer's hold (`agent._conductor_installers_held`), a write or governance pass
+that raised, or a rebuild that raised. The boot, pending and retry warnings name which kind
+of spec is held.
+
+A spec no crew is bound to is not re-filtered, whoever wrote it. A file hand-placed in the
+agents directory is outside every Kiro Crew writer. A template created on the Agent
+templates tab and left unbound keeps the grants it was saved with, and a subagent started on
+it through `spawn` runs with them. That spawn path is not covered here.
+
+The removal is one-way. A denied `allowedTools` entry or governed `autoApprove` list is
+dropped from the template, not parked: when the ceiling later loosens, nothing puts it back,
+and the template's author re-adds it on the Agent templates tab or the detail page. That is
+the contract every writer of these lists already has (a template saved under a tight ceiling
+loses the same entries at write time), and keeping a restorable copy would mean storing a
+grant the fleet forbids beside a file kiro-cli reads.
+
+Two details make the generation bound safe rather than merely cheap. The baseline is seeded by
 `prime_ceiling_projection` **before the poller starts**, because the first poll can itself
 install a new ceiling and a first-call baseline would record that generation and skip the very
 rebuild it needed. And the memo advances **only after a confirmed write**: the hook calls

@@ -2228,13 +2228,18 @@ async def _handle_allowlist(
             resources=new_user_id,
         )
         label = f"✅ `{display_name or new_user_id}` added to allowlist"
-        # Notify the approved user
+        # Notify the approved user. Multi-user access is disabled: the gateway
+        # keeps the allowlist owner-only and prunes non-owner entries at startup,
+        # so a non-owner still cannot message the bot. Tell them that plainly
+        # rather than claiming "you can now message me", which would be false.
         if _orch.slack:
             try:
                 dm = await _orch.slack.open_dm(new_user_id)
                 await _orch.slack.post_message(
                     dm,
-                    "✅ You've been added to the allowlist. You can now message me!",
+                    "✅ Your allowlist request was approved by the owner. "
+                    "Note: this bot is currently owner-only, so you still "
+                    "cannot message it directly yet.",
                 )
             except Exception:
                 logger.debug("Failed to DM approved user %s", new_user_id, exc_info=True)

@@ -332,7 +332,9 @@ audit hook is not needed here), with everything else kept (`tools`,
 from besides the user's own checkout; see `config.md` § `kiro_agents_dir`). A
 PROJECT-scope base is named after its source, `<agent>--readonly-<8 hex of the
 project path>`, so two checkouts declaring the same agent never contend for one
-file. Derived from the live base spec on every turn — project scope first, the
+file; its `description` also records that path as a JSON string (`... of
+'<agent>' in project "<path>"; generated ...`), which is what lets the reaper
+below find the checkout again. Derived from the live base spec on every turn — project scope first, the
 way kiro-cli resolves `--agent` — off the event loop, written atomically and
 only when the content changed; a runtime resource, never hand-edited. The
 file's `description` starts with the owner marker `Kiro Crew derived read-only
@@ -365,6 +367,35 @@ with a coded error (`ReadOnlySpecError.code`: `unsafe_name`,
 `mcpServers`/`toolsSettings` value or entry that is neither an object nor
 `null`). The code is logged and SEL-audited (`chat.side_turn`, `denied`); the
 panel shows a generic message without it. The turn never runs under the base agent.
+
+**Orphaned derived specs are reaped.** kiro-cli lists every file in the
+registry as a selectable agent, so a derived spec whose base was deleted, or
+whose checkout was removed or does not declare the agent, would otherwise
+stay selectable for good. `side_readonly_spec.reap_orphaned_readonly_specs`
+runs in the gateway's boot agents-dir janitor task and on the hourly sweep
+wake, off the event loop and skipped in test mode. It removes a file only when
+all of these hold: it is a regular `.json` file directly in the registry
+(`lstat`; a symlink or other inode is never followed or removed, and the
+hardened reader refuses a hardlink); its declared `name` equals its stem and is
+the derived name of the base its owner-marked `description` names; no provider
+in the session registry was spawned under it; and the base does not resolve
+where publication looks. A user-scope base resolves while any
+`<agent>.json`/`.md` entry exists or `agent.agent_spec_path` finds a spec
+declaring it (two declaring it still resolves). A project variant is reaped
+only when its recorded checkout is gone, or that checkout's `.kiro/agents`
+holds no entry named or declaring the agent; an unreadable or protected
+checkout, a variant recording no checkout or a relative path, one whose
+checkout or `.kiro/agents` `hooks.validate_file_path` refuses (an untrusted
+UNC share, or a Windows link into one, is screened before anything follows
+it), and one whose `.kiro/agents` holds a spec-named link (never followed) are
+kept. The base is judged
+again under the lock publication holds from its base read to its write, with
+an `lstat` identity check, just before the unlink, so a racing publication
+either keeps its file or writes it again. A removal calls
+`clear_list_agents_cache` (moving the spec generation every agents-dir memo
+revision carries) and refreshes the materialized-agent snapshot. Nothing
+removed could serve a turn: a side turn whose base does not resolve is refused
+with `base_spec_missing` before a session exists.
 
 **The allowance is a harness capability, granted by positive membership.**
 Whether a side turn may execute read-only tools at all is

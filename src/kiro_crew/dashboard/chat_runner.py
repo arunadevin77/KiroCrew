@@ -3192,7 +3192,21 @@ async def _retire_sessions_on_identity_change(state: Any, *, unattended: bool = 
             pending = getattr(sessions, "pending_identity_sweep_fingerprint", "")
             if not pending:
                 return
-        retired, complete = await sessions.retire_kiro_identity_sessions(fingerprint=live)
+        # Defer an idle parent's live children only while its credential is still
+        # VALID. An empty ``live`` is an external logout (or an unreadable store),
+        # where the children must be cancelled rather than left running on a
+        # credential that is gone -- the same fail-safe the sign-out path takes.
+        # ``bool(live)`` alone is not enough: a PARTIAL loss (an external
+        # ``kiro-cli logout`` while the Crew vault stays populated) leaves the
+        # combined fingerprint nonempty, so a credential source that DROPPED since
+        # the baseline must also force the cancel path -- otherwise the children
+        # keep running on the logged-out store's in-memory credential. Only a
+        # proven switch between two real accounts (non-empty ``live`` with no
+        # dropped source) defers, which is the per-turn regression being fixed.
+        spare_children = bool(live) and not service.identity_component_dropped(live)
+        retired, complete = await sessions.retire_kiro_identity_sessions(
+            fingerprint=live, spare_children=spare_children
+        )
         # Advance THIS consumer's baseline ONLY on a complete sweep AND a real
         # identity. Anything left running -- a busy session, a child that would not
         # shut down, a start still in flight -- is still holding the previous
@@ -17854,6 +17868,16 @@ async def _run_chat(
         # must stay owed, so the debt correctly stays armed (GPT 6.1 F1).
         _stop_reason = STOP_REASON_CANCELLED
         await _persist_partial_reply(_cancel_reason)
+        if _cancel_reason != STOP_REASON_CANCELLED and slot.is_closing:
+            # Closing the chat cut this turn off: one tab, the bulk archive or
+            # ``close_target``, each of which fences the slot with ``begin_close``
+            # before it cancels. Land the row a restart lands, so the chat reopened
+            # from history reads as interrupted and offers Resume.
+            from kiro_crew.dashboard.slot_persistence.turn_marker import (
+                record_close_interruption,
+            )
+
+            record_close_interruption(slot)
     except AcpAuthRequired as exc:
         # The signed-out CLI is discovered HERE, not by a probe: this is the
         # authoritative logout signal now that readiness is latched at boot.

@@ -100,6 +100,7 @@ def _store(request: web.Request) -> GuideStore:
 async def _broadcast(state: Any, guide: dict[str, Any]) -> int:
     # Every public change of a guide passes here, so this is where its row in the
     # conversation learns the new status (and the crew log the outcome).
+    await chat_cards.load_conversation_window(state, guide)
     chat_cards.record_guide_status(state, guide)
     deliver = getattr(state, "deliver_ws_owners", None)
     if deliver is None:
@@ -288,6 +289,7 @@ async def api_guide_agent_start(request: web.Request) -> web.Response:
     # this point of the transcript, before the frame that makes it live.
     for old in superseded:
         await _broadcast(state, old)
+    await chat_cards.load_conversation_window(state, guide)
     chat_cards.record_guide_offered(state, guide)
     delivered = await _broadcast(state, guide)
     _audit(sk, "guide.start", "ok")
@@ -318,12 +320,12 @@ async def api_guide_agent_rename_self(request: web.Request) -> web.Response:
 
     The member is the one whose pinned thread the verified caller's slot is,
     never a name from the body: the body carries only the new display name. Like
-    every agent-half route it admits only a turn the user sent from the
-    dashboard (:func:`_resolve_agent_caller`), so a channel message, a schedule,
-    a subagent or an app cannot rename anyone.
+    every agent-half route it admits only a turn running in the caller's
+    dashboard slot that did not come from a messaging channel
+    (:func:`_resolve_agent_caller`); renaming is also one of the
+    :data:`_USER_TURN_OPERATIONS`, so that turn must be one the user sent. A
+    channel message, a schedule, a subagent or an app cannot rename anyone.
     """
-    import asyncio
-
     from kiro_crew import members as members_mod
 
     try:

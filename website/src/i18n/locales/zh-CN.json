@@ -7566,6 +7566,10 @@
         "allow": "允许",
         "not_now": "暂不",
         "save_failed": "无法保存。请重试。"
+      },
+      "crewmateNoteFace": {
+        "roster_load_failed": "无法加载队友信息，因此不显示发送者的名字和头像。",
+        "retry": "重试"
       }
     },
     "onboardingChapterShell": {
@@ -8145,7 +8149,11 @@
       "unpin": "取消置顶",
       "mute_sessions_it_opens": "静音此会话打开的会话",
       "unmute_sessions_it_opens": "取消静音此会话打开的会话",
-      "mute_sessions_it_opens_failed": "无法更改静音设置"
+      "mute_sessions_it_opens_failed": "无法更改静音设置",
+      "mute": "静音此会话",
+      "unmute": "取消静音此会话",
+      "mute_failed": "无法静音此会话",
+      "unmute_failed": "无法取消静音此会话"
     },
     "sessionColorSwatches": {
       "custom_color": "自定义颜色",
@@ -10480,6 +10488,8 @@
       "prompts_label": "提示词",
       "skills_description": "agent 按需加载、用于特定任务的专业知识文件",
       "skills_label": "技能",
+      "skills_awaiting_review": "待审阅的技能（{{count}}）",
+      "skills_awaiting_review_failed": "无法检查待审阅的技能",
       "steering_description": "来自 ~/.kiro/steering 和项目 .kiro/steering 的 Markdown 约定，按每个文件的包含模式生效",
       "steering_label": "引导规则",
       "knowledge_label": "知识库",
@@ -12008,7 +12018,8 @@
       "crew_enable": "启用",
       "crew_enable_named": "启用 {{name}}",
       "crew_spaces_unavailable": "无法加载 {{name}} 的文件夹。其聊天将不分文件夹列出。",
-      "crew_enable_failed": "无法启用 {{name}}"
+      "crew_enable_failed": "无法启用 {{name}}",
+      "muted": "已静音：无提示音、通知或徽标"
     },
     "connectionsPage": {
       "action_failed": "操作失败：{{error}}",
@@ -13916,6 +13927,7 @@
         "on_demand_skills_loaded_when_the_agent_determine": "按需技能，在代理判断相关时加载。",
         "package": "包",
         "pending_review_count": "待审阅（{{count}}）",
+        "new_candidate": "新",
         "pointer": "指针",
         "proposed_change": "建议的改动",
         "refresh_skills": "刷新技能",
@@ -14059,7 +14071,9 @@
         "total_sessions_30d": "会话总数（30 天）",
         "total_tokens": "令牌总数",
         "total_turns": "总轮次",
-        "usage_tracking_is_not_available_for": "{{provider}} 不支持用量跟踪。"
+        "usage_tracking_is_not_available_for": "{{provider}} 不支持用量跟踪。",
+        "spend_over_time": "支出走势（额度）",
+        "harness_unread": "无法读取代理后端设置，因此支出图表无法判断此安装是否按额度计费。"
       },
       "vectorMemoryCard": {
         "legacy_vectors_warning": "这些向量生成时尚未记录模型文件。如果你更换过该文件，请在嵌入模型设置中重新应用，以重建向量。",
@@ -14313,6 +14327,31 @@
         "err_name_reserved": "“{{name}}”是内置智能体的保留名称。请换一个名字。",
         "err_generic": "请求失败，请重试。",
         "chat_with_caption": "聊天使用共享的默认记忆，而不是某个队友自己的记忆。"
+      },
+      "usageSeriesChart": {
+        "layer_by": "分层依据",
+        "by_channel": "渠道",
+        "by_agent": "代理",
+        "by_model": "模型",
+        "by_cohort": "会话开始周",
+        "cumulative": "累计",
+        "other": "其他（另 {{n}} 项）",
+        "unattributed": "未归类",
+        "unattributed_hint": "未归类：未记录此信息的轮次。",
+        "channel_unrecognized": "无法识别的会话",
+        "cohort_week": "{{date}}当周",
+        "cohort_started_by": "{{date}}或之前开始",
+        "cohort_caption": "各层按每个会话在此时间窗内首次出现的那一周归类支出；更早开始的会话从它在此处首轮算起，因此“…或之前开始”这一最早层也包含更早会话。",
+        "total_to_date": "截至当日合计：{{value}}",
+        "total_that_day": "当日：{{value}}",
+        "empty": "尚未记录任何支出。",
+        "truncated_notice": "总计偏低：最早的 {{n}} 条轮次未计入。",
+        "truncated_from": "总计偏低：最早的 {{n}} 条轮次未计入；自 {{date}} 起，每一天都计入了全部轮次。",
+        "load_failed": "无法加载支出趋势",
+        "retry": "重试",
+        "loading": "加载中…",
+        "aria_label": "支出走势堆叠面积图",
+        "keyboard_hint": "使用左右方向键在日期间切换。"
       }
     },
     "overviewPage": {

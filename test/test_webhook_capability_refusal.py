@@ -25,7 +25,7 @@ _SESSION_KEY = f"{H._HOOK_SESSION_PREFIX}capability-refusal"
 
 
 def _state(error: BaseException) -> MagicMock:
-    state = MagicMock()
+    state = MagicMock(memory_startup_task=None)
     state.context_builder = None
     state.sessions.get_or_create = AsyncMock(side_effect=error)
     state.sessions.record_success = MagicMock()

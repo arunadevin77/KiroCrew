@@ -7566,6 +7566,10 @@
         "allow": "許可",
         "not_now": "今はしない",
         "save_failed": "保存できませんでした。もう一度お試しください。"
+      },
+      "crewmateNoteFace": {
+        "roster_load_failed": "クルーメイトの情報を読み込めなかったため、送信者の名前とアバターは表示されません。",
+        "retry": "再試行"
       }
     },
     "onboardingChapterShell": {
@@ -8145,7 +8149,11 @@
       "unpin": "ピン留め解除",
       "mute_sessions_it_opens": "このセッションが開くセッションをミュート",
       "unmute_sessions_it_opens": "このセッションが開くセッションのミュートを解除",
-      "mute_sessions_it_opens_failed": "ミュート設定を変更できませんでした"
+      "mute_sessions_it_opens_failed": "ミュート設定を変更できませんでした",
+      "mute": "このセッションをミュート",
+      "unmute": "このセッションのミュートを解除",
+      "mute_failed": "このセッションをミュートできませんでした",
+      "unmute_failed": "このセッションのミュートを解除できませんでした"
     },
     "sessionColorSwatches": {
       "custom_color": "カスタムカラー",
@@ -10480,6 +10488,8 @@
       "prompts_label": "プロンプト",
       "skills_description": "エージェントが特定のタスクで必要に応じて読み込む専門知識ファイル",
       "skills_label": "スキル",
+      "skills_awaiting_review": "レビュー待ちのスキル ({{count}})",
+      "skills_awaiting_review_failed": "レビュー待ちのスキルを確認できませんでした",
       "steering_description": "~/.kiro/steering とプロジェクトの .kiro/steering の Markdown 規約。各ファイルのインクルードモードに従って適用されます",
       "steering_label": "ステアリング",
       "knowledge_label": "ナレッジ",
@@ -12008,7 +12018,8 @@
       "crew_enable": "有効にする",
       "crew_enable_named": "{{name}} を有効にする",
       "crew_spaces_unavailable": "{{name}} のフォルダーを読み込めませんでした。チャットはフォルダーなしで表示されています。",
-      "crew_enable_failed": "{{name}} を有効にできませんでした"
+      "crew_enable_failed": "{{name}} を有効にできませんでした",
+      "muted": "ミュート中: 音・通知・バッジなし"
     },
     "connectionsPage": {
       "action_failed": "操作に失敗しました: {{error}}",
@@ -13916,6 +13927,7 @@
         "on_demand_skills_loaded_when_the_agent_determine": "エージェントが関連性があると判断したときにオンデマンドスキルを読み込みます。",
         "package": "パッケージ",
         "pending_review_count": "レビュー待ち ({{count}})",
+        "new_candidate": "新規",
         "pointer": "ポインタ",
         "proposed_change": "提案された変更",
         "refresh_skills": "スキルを更新",
@@ -14059,7 +14071,9 @@
         "total_sessions_30d": "合計セッション（30日）",
         "total_tokens": "合計トークン",
         "total_turns": "合計ターン",
-        "usage_tracking_is_not_available_for": "{{provider}} では使用量のトラッキングを利用できません。"
+        "usage_tracking_is_not_available_for": "{{provider}} では使用量のトラッキングを利用できません。",
+        "spend_over_time": "支出の推移（クレジット）",
+        "harness_unread": "エージェントバックエンドの設定を読み込めなかったため、支出グラフはこのインストールがクレジット課金かどうかを判断できません。"
       },
       "vectorMemoryCard": {
         "legacy_vectors_warning": "これらのベクトルはモデルファイルの記録前に生成されました。ファイルを変更した場合は、埋め込みモデル設定で再適用して再構築してください。",
@@ -14313,6 +14327,31 @@
         "err_name_reserved": "「{{name}}」は組み込みエージェント用に予約されています。別の名前を選んでください。",
         "err_generic": "リクエストに失敗しました。もう一度お試しください。",
         "chat_with_caption": "チャットは共有のデフォルトメモリで動きます。クルーメイト固有のメモリではありません。"
+      },
+      "usageSeriesChart": {
+        "layer_by": "内訳",
+        "by_channel": "チャネル",
+        "by_agent": "エージェント",
+        "by_model": "モデル",
+        "by_cohort": "セッション開始週",
+        "cumulative": "累積",
+        "other": "その他（他{{n}}件）",
+        "unattributed": "未分類",
+        "unattributed_hint": "未分類: この項目が記録されていないターンです。",
+        "channel_unrecognized": "認識できないセッション",
+        "cohort_week": "{{date}}の週",
+        "cohort_started_by": "{{date}}までに開始",
+        "cohort_caption": "各レイヤーはこの期間内でセッションが最初に現れた週ごとの支出で、それより前に始まったセッションはここでの最初のターンから数えるため、「…までに開始」と表示される最も古いレイヤーには古いセッションも含まれます。",
+        "total_to_date": "その日までの合計: {{value}}",
+        "total_that_day": "その日: {{value}}",
+        "empty": "まだ支出が記録されていません。",
+        "truncated_notice": "合計は実際より少なくなっています。最も古い{{n}}件のターンは集計されていません。",
+        "truncated_from": "合計は実際より少なくなっています。最も古い{{n}}件のターンは集計されていません。{{date}}以降は各日のすべてのターンが集計されています。",
+        "load_failed": "支出の推移を読み込めませんでした",
+        "retry": "再試行",
+        "loading": "読み込み中…",
+        "aria_label": "支出の推移を示す積み上げ面グラフ",
+        "keyboard_hint": "左右の矢印キーで日を移動できます。"
       }
     },
     "overviewPage": {

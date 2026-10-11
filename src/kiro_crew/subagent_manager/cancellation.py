@@ -14,6 +14,7 @@ if TYPE_CHECKING:
         _RECOVERY_SLOT_WAIT_SECS,
         _REPORT_DRAIN_TIMEOUT,
         _RESET_TIMEOUT,
+        _STATE_DRAIN_TIMEOUT,
         Stats,
         SubagentInfo,
         _audit_ids,
@@ -153,6 +154,7 @@ class CancellationCoordinator(ManagerComponent):
                     # replacement as its first statement.
                     info._startup_deadline_stamp = None
                     info._exec_started = None
+                    info._exec_started_mono = None
                     # Then process identity, because samplers read the PID
                     # before sharing state; then ownership. The PID is the
                     # retired first attempt's (a shared runtime this run no
@@ -168,10 +170,13 @@ class CancellationCoordinator(ManagerComponent):
                 # Re-acquire a slot through capacity, not blind increment:
                 # the old finally freed our slot and may have drained a queued
                 # spawn into it. Wait (bounded) for a free slot so recovery
-                # never pushes the pool past max_concurrent.
-                deadline = time.time() + _RECOVERY_SLOT_WAIT_SECS
+                # never pushes the pool past max_concurrent. The wait is measured
+                # on the monotonic clock: a wall-clock step forward (an NTP step,
+                # a manual change, a resume from suspend) would otherwise end it
+                # at once and fail the run as "cancelled (recovery failed)".
+                deadline = time.monotonic() + _RECOVERY_SLOT_WAIT_SECS
                 while self._manager._running_count >= self._manager._max_concurrent:
-                    if time.time() >= deadline or self._manager._shutting_down:
+                    if time.monotonic() >= deadline or self._manager._shutting_down:
                         raise RuntimeError("no free slot for recovery respawn")
                     await asyncio.sleep(0.25)
                 if info.done or info._reap_started or info.reaped or self._manager._shutting_down:
@@ -504,6 +509,38 @@ class CancellationCoordinator(ManagerComponent):
         """
         record = self._manager._agents.get(agent_id) if agent_id else None
         return record is not None and record.queued and record._finalized
+
+    def has_live_or_queued_children_impl(self, parent_session_key: str) -> bool:
+        """Whether *parent_session_key* owns a live or queued run, read with no await.
+
+        A pure query: it answers the same live/queued question the snapshot's
+        return value answers, but mutates nothing. The snapshot arms the delivery
+        gate, clears follow-ups and cancels follow-up watchers as a side effect, so
+        it belongs only on the retire path that actually ends the children. A caller
+        that is deciding whether to retire at all needs the answer without the
+        teardown, which this gives.
+
+        Matched against the same ``_agents`` and queue reads the snapshot uses, and
+        synchronous for the same reason: an ``await`` here would reopen the window
+        in which a cold start registers a successor under the key.
+        """
+        if not parent_session_key:
+            return False
+        for info in self._manager._agents.values():
+            if (
+                info.parent_session_key == parent_session_key
+                and not info.done
+                and not _parked_at_spawn_approval(info)
+            ):
+                return True
+        for params in [*self._manager._queue, *self._manager._undurable_in_dispatch.values()]:
+            if (
+                params.get("parent_session_key", "") == parent_session_key
+                and not params.get("_resume_id")
+                and str(params.get("_preassigned_id") or "")
+            ):
+                return True
+        return False
 
     def snapshot_teardown_children_impl(self, parent_session_key: str) -> tuple[str, ...]:
         """The run ids belonging to *parent_session_key*, read with no await.
@@ -1008,6 +1045,92 @@ class CancellationCoordinator(ManagerComponent):
                 self._manager._teardown_store_sweeps.append((parent_session_key, fence))
         return fence
 
+    def has_fenced_children_impl(self, parent_session_key: str) -> bool:
+        """Whether this parent's OPEN identity-sweep fence recorded any admitted
+        child.
+
+        The identity sweep opens a TENTATIVE fence under the registry lock and
+        reads it at the async teardown; a child the admission path accepted in
+        between is recorded into it (``note_teardown_store_accept``), so this
+        answers "did a child arrive since the fence opened" without a store read.
+        Read under the fence lock, the same lock the admission records under.
+        """
+        with self._manager._teardown_fence_lock:
+            fence = self._manager._identity_sweep_fences.get(parent_session_key)
+            return bool(fence)
+
+    def open_identity_sweep_fence_inner(self, parent_session_key: str) -> "set[str] | None":
+        """Open a TENTATIVE identity-sweep fence that records admissions but does
+        NOT suppress delivery.
+
+        The identity sweep opens this before it decides retire-vs-defer. Unlike
+        :meth:`note_teardown_snapshot`'s committed fence, it is kept in
+        ``_identity_sweep_fences`` and is invisible to
+        :meth:`accepted_before_open_teardown`, so an expiring row's delivery is
+        NOT dropped on the strength of a retirement that has not committed (the
+        parent may be spared). The admission path records into it alongside the
+        committed fences, so :meth:`has_fenced_children_impl` sees a concurrent
+        admission. Returns the set so the sweep can release exactly its own.
+        """
+        if self._manager._admission.taskq_store() is None or not parent_session_key:
+            return None
+        fence: set[str] = set()
+        with self._manager._teardown_fence_lock:
+            self._manager._identity_sweep_fences[parent_session_key] = fence
+        return fence
+
+    def release_teardown_fence_impl(
+        self, parent_session_key: str, expected: "AbstractSet[str] | None" = None
+    ) -> None:
+        """Drop this parent's TENTATIVE identity-sweep fence (DEFER or commit).
+
+        The sweep opened it with :meth:`open_identity_sweep_fence_inner`; whichever
+        way the decision goes, the tentative fence has served its purpose (a commit
+        promotes it via :meth:`commit_identity_sweep_retire_inner`). The drop is
+        identity-guarded: a second sweep of the same key that opened a new tentative
+        fence during this one's read keeps its own.
+        ``None`` keeps the unconditional drop. Harmless if none is open."""
+        with self._manager._teardown_fence_lock:
+            if expected is None:
+                self._manager._identity_sweep_fences.pop(parent_session_key, None)
+                return
+            current = self._manager._identity_sweep_fences.get(parent_session_key)
+            if current is expected:
+                self._manager._identity_sweep_fences.pop(parent_session_key, None)
+
+    def commit_identity_sweep_retire_inner(
+        self, parent_session_key: str, expected: "AbstractSet[str]"
+    ) -> bool:
+        """Atomically decide the final commit vs defer and open the committed fence.
+
+        Under ``_teardown_fence_lock`` -- the SAME lock the admission path records a
+        new child under (:meth:`note_teardown_store_accept`) -- so there is no
+        window between the final fenced-child check and the committed fence opening
+        for an ``/api/spawn`` to slip a child into only the tentative fence and have
+        the teardown's store sweep then cancel it (GPT F1):
+
+          * If *expected* (this sweep's tentative fence) recorded ANY child since it
+            opened, a child arrived: return False, the caller defers and releases.
+          * Otherwise PROMOTE the tentative fence to the committed teardown fence
+            for this key -- the same set object, so an id recorded concurrently is
+            carried into ``accepted_since`` -- and from here the admission path
+            records into it as the committed fence. Return True, the caller commits.
+
+        Refused when the stored tentative fence is not *expected* (a newer sweep's),
+        or no store: the caller treats a False as "defer, release".
+        """
+        with self._manager._teardown_fence_lock:
+            current = self._manager._identity_sweep_fences.get(parent_session_key)
+            if current is not expected or current is None:
+                return False
+            if current:
+                return False
+            # Promote: the tentative set becomes the committed teardown fence, so
+            # the cancel's accepted_since inherits any concurrent admission.
+            self._manager._identity_sweep_fences.pop(parent_session_key, None)
+            self._manager._teardown_store_fences[parent_session_key] = current
+            return True
+
     def _owe_teardown_sweep(
         self, parent_session_key: str, fence: AbstractSet[str], verb: str
     ) -> None:
@@ -1072,6 +1195,9 @@ class CancellationCoordinator(ManagerComponent):
             fence = self._manager._teardown_store_fences.get(parent_session_key)
             if fence is not None:
                 fence.add(agent_id)
+            tentative = self._manager._identity_sweep_fences.get(parent_session_key)
+            if tentative is not None:
+                tentative.add(agent_id)
             for key, held in self._manager._teardown_store_sweeps:
                 if key == parent_session_key:
                     held.add(agent_id)
@@ -1546,6 +1672,24 @@ class CancellationCoordinator(ManagerComponent):
         # answers, which is after the first snapshot here. So the drain
         # re-reads ``_report_tasks`` and waits for what joined it, all inside
         # the one budget, and whatever joined it is a straggler like the rest.
+        # A tombstone whose write failed (a full disk) is tried once more before
+        # exit, so a run already reported is not reported again at the next start.
+        # Before the drain below: a straggler it re-admits to orphan recovery has
+        # its tombstone cleared there, after this write, not before it.
+        from kiro_crew.subagent_persistence import has_owed_tombstones, retry_owed_tombstones
+
+        # Bounded like every off-loop writer at shutdown: it waits at most
+        # _STATE_DRAIN_TIMEOUT for a reaper retry still writing and writes until
+        # that deadline, and the await allows one more such span for a write in
+        # progress, so a wedged disk cannot hold shutdown here.
+        if has_owed_tombstones():
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(retry_owed_tombstones, budget=_STATE_DRAIN_TIMEOUT),
+                    2 * _STATE_DRAIN_TIMEOUT,
+                )
+            except Exception:
+                logger.debug("cancel_all: owed tombstone retry failed", exc_info=True)
         pending_reports = [t for t in self._manager._report_tasks if not t.done()]
         if pending_reports:
             drain_deadline = asyncio.get_running_loop().time() + _REPORT_DRAIN_TIMEOUT

@@ -210,6 +210,44 @@ def test_an_unusable_name_is_refused_and_nothing_changes(raw: object, code: str)
     assert _labels()[ASSISTANT_MEMBER_NAME] == ""
 
 
+@pytest.mark.parametrize(
+    "taken",
+    [
+        "Scout",  # another crewmate's label
+        DEFAULT,  # another crew's key, which it shows for want of a label
+    ],
+)
+def test_a_name_another_crew_shows_is_refused_and_nothing_changes(taken: str, _events) -> None:
+    _seed()
+    state = FakeState()
+    _thread(state, ASSISTANT_MEMBER_NAME)
+    status, body = _rename(state, {"name": taken})
+    assert (status, body["code"]) == (400, "name_taken")
+    assert _labels()[ASSISTANT_MEMBER_NAME] == ""
+    assert _events == []
+
+
+def test_a_credential_shaped_name_is_refused_and_not_echoed(_events) -> None:
+    _seed()
+    state = FakeState()
+    _thread(state, ASSISTANT_MEMBER_NAME)
+    raw = "https://user:password@example.com"
+    status, body = _rename(state, {"name": raw})
+    assert (status, body["code"]) == (400, "invalid_name")
+    assert raw not in str(body)
+    assert _labels()[ASSISTANT_MEMBER_NAME] == ""
+    assert _events == []
+
+
+def test_its_own_current_name_is_kept_without_a_write(_events) -> None:
+    _seed()
+    state = FakeState()
+    _thread(state, ORDINARY, key="member-scout")
+    status, body = _rename(state, {"name": "Scout"}, key="member-scout")
+    assert (status, body["display_name"]) == (200, "Scout")
+    assert _events == []
+
+
 def test_the_shim_sends_only_the_name(monkeypatch) -> None:
     sent: list[tuple[str, dict, str]] = []
     monkeypatch.setattr(mcp_guide, "_strict_session_key", lambda: ("dashboard:member-mate", ""))

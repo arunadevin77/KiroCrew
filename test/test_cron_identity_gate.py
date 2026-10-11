@@ -55,6 +55,13 @@ class _Prerequisites:
     async def identity_changed_since_sessions(self) -> tuple[bool, str]:
         return self._changed, self._live
 
+    def identity_component_dropped(self, live: str) -> bool:
+        # The retire path reads this to tell a clean switch between two real
+        # accounts (defer the idle parent's children) from a partial credential
+        # LOSS (cancel them). These cases model a real-account switch, so no
+        # component dropped.
+        return False
+
     def note_sessions_reconciled(
         self, fingerprint: str, *, observations_before: int | None = None
     ) -> None:
@@ -74,7 +81,7 @@ def _record_gate_and_acquire(sessions: MagicMock, order: list[str], acquire_erro
         order.append("flag")
         return []
 
-    async def _retire(fingerprint: str = "") -> tuple[list[str], bool]:
+    async def _retire(fingerprint: str = "", **_kwargs) -> tuple[list[str], bool]:
         order.append(f"retire:{fingerprint}")
         return [], True
 

@@ -3011,6 +3011,18 @@ class SubagentInfo:
     # startup watchdog measures from THIS timestamp so it never reaps an agent
     # that is merely waiting for approval. None until execution starts.
     _exec_started: float | None = None
+    # ``_exec_started`` on the monotonic clock, stamped and cleared beside it.
+    # When it is set the startup watchdogs measure from it, so a wall-clock step
+    # cannot reap a start in progress.
+    _exec_started_mono: float | None = None
+    # The run's registration on the monotonic clock. The reaper measures the run
+    # timeout from it, so a wall-clock step cannot reap a healthy run or spare a
+    # stuck one; ``started`` stays wall-clock for display and state.json.
+    _started_mono: float = field(default_factory=time.monotonic)
+    # ``last_activity`` on the monotonic clock, written beside it. The
+    # first-prompt-silent watchdog measures from it; ``last_activity`` stays
+    # wall-clock for the dashboard's idle display and the stall flag.
+    _last_activity_mono: float = field(default_factory=time.monotonic)
     # Wall-clock moment this execution's own session first answered its prompt
     # (``SubagentManager._leave_startup``): the first frame addressed to this
     # session, or a dependency verdict on the prompt. None until then, and reset
@@ -3037,6 +3049,8 @@ class SubagentInfo:
     # permit is not start time. Cleared by ``_gate_exit_reset`` at acquisition,
     # which adds the wait to ``_start_queue_wait_ms``.
     _gate_wait_started: float | None = None
+    # ``_gate_wait_started`` on the monotonic clock, marked and cleared beside it.
+    _gate_wait_started_mono: float | None = None
     # Learned-cost high-water marks (dynamic-subagent-sizing.md §4.1), sampled
     # periodically by the reaper loop and folded into the cost store at exit.
     peak_rss_gb: float = 0.0
@@ -3162,6 +3176,9 @@ class SubagentInfo:
     # Time this start spent queued at its start queues in total, ms (the paused
     # part of the startup clock); 0 when every queue was free.
     _start_queue_wait_ms: float = 0.0
+    # ``_start_queue_wait_ms`` measured on the monotonic clock, accumulated beside
+    # it; the startup watchdogs subtract it from a span measured on that clock.
+    _start_queue_wait_mono_ms: float = 0.0
     # True once the durable row was written ``running`` -- at the FIRST stream
     # event addressed to the run's own session, not at execution start, so a row is never
     # ``running`` while the session is still being created (RFC §4.4).
@@ -3419,6 +3436,7 @@ DELIVERY_ROUTING_FIELDS: "dict[str, str]" = {
     # Recovery clears the first attempt's startup clocks before waiting to
     # launch its replacement. They govern startup reaping, not delivery.
     "_exec_started": NOT_DELIVERY_STATE,
+    "_exec_started_mono": NOT_DELIVERY_STATE,
     "_startup_deadline_stamp": NOT_DELIVERY_STATE,
     # Context-overflow recovery clears the retired shared runtime's identity
     # before it waits to start the dedicated replacement. These fields govern
@@ -3638,6 +3656,12 @@ class SubagentManager:
         # A snapshot whose cancel never ran is replaced by the next one.
         self._teardown_store_fences: dict[str, set[str]] = {}
         self._teardown_store_sweeps: list[tuple[str, set[str]]] = []
+        # TENTATIVE admission fences the identity sweep opens before it decides
+        # retire-vs-defer: they record admissions (so a concurrent /api/spawn is
+        # seen by the retire-vs-defer re-check) but do NOT drive delivery
+        # suppression, because the parent may be SPARED. Only a committed teardown
+        # fence (``_teardown_store_fences``) suppresses an expiring row's delivery.
+        self._identity_sweep_fences: dict[str, set[str]] = {}
         # Sweeps whose store read was refused: ``(key, fence, verb)``. Each fence
         # stays in ``_teardown_store_sweeps`` (recording, and gating an expiry of
         # the retired rows) until a reaper sweep's retry has read the store.
@@ -3747,9 +3771,10 @@ class SubagentManager:
         self.hook_store: Any = None  # Optional ScriptHookStore, set by server.py
         self._agents: dict[str, SubagentInfo] = {}
         # Continuable conversations: session_key ("subagent:<conv-id>") →
-        # last-used unix ts. Drives the reaper's idle-TTL sweep. Rebuilt from
-        # state.json (keep=True runs) on the reaper's first pass after a
-        # gateway restart, so promoted conversations stay owned by
+        # last-used ``time.monotonic()`` reading. Drives the reaper's idle-TTL
+        # sweep. Rebuilt from state.json (keep=True runs) on the reaper's first
+        # pass after a gateway restart, which turns each stored wall-clock stamp
+        # into an age, so promoted conversations stay owned by
         # the TTL sweep across restarts; a spawn_continue on an unknown key
         # also re-registers it on demand.
         self._conversations: dict[str, float] = {}
@@ -4427,8 +4452,10 @@ class SubagentManager:
         derived = int(handshakes + collect + _STARTUP_LAUNCH_MARGIN_SECS)
         return max(_STARTUP_TIMEOUT_SECS, derived)
 
-    def _is_startup_stalled(self, info: SubagentInfo, now: float) -> bool:
-        return self._monitor._is_startup_stalled_impl(info, now)
+    def _is_startup_stalled(
+        self, info: SubagentInfo, now: float, mono_now: float | None = None
+    ) -> bool:
+        return self._monitor._is_startup_stalled_impl(info, now, mono_now)
 
     @staticmethod
     def _note_tool_dispatch(info: SubagentInfo, event: Any) -> None:
@@ -4976,6 +5003,7 @@ class SubagentManager:
         that preceded the PID is never charged to it.
         """
         info.last_activity = time.time()
+        info._last_activity_mono = time.monotonic()
         try:
             self._drain_queue()
         except Exception:
@@ -6201,7 +6229,7 @@ class SubagentManager:
             info, reason=reason, timeout=timeout, request=request
         )
 
-    async def _yield_for_dependency(self, info: SubagentInfo, signal: Any) -> bool:
+    async def _yield_for_dependency(self, info: SubagentInfo, signal: Any) -> bool | None:
         return await self._run_events._yield_for_dependency_impl(info, signal)
 
     async def _yield_for_infra_retry(self, info: SubagentInfo, infra: Any) -> str | None:
@@ -6384,6 +6412,76 @@ class SubagentManager:
     async def cancel_for_parent(self, parent_session_key: str) -> tuple[int, int]:
         return await self._cancellation.cancel_for_parent_impl(parent_session_key)
 
+    def has_live_or_queued_children(self, parent_session_key: str) -> bool:
+        """Whether *parent_session_key* owns a live or queued run, read with no await.
+
+        A side-effect-free query, unlike :meth:`snapshot_teardown_children` which
+        arms the delivery gate and tears down follow-ups. Lets a caller decide whether
+        to defer a parent's retirement without touching its children's completion path.
+        """
+        return self._cancellation.has_live_or_queued_children_impl(parent_session_key)
+
+    async def has_pending_store_children(self, parent_session_key: str) -> bool:
+        """Whether *parent_session_key* owns a waiting child only the store holds.
+
+        The off-loop companion to :meth:`has_live_or_queued_children`: it reads the
+        task store on the writer thread, so the identity-retire deferral can count a
+        durable-only or window-held child (which the teardown cancels) without a
+        synchronous store read on the event loop. Routed through
+        ``taskq_pending_ids_for_async(include_window=True)`` -- the SAME reading the
+        teardown's own store sweep uses (window rows kept, admitted rows left out,
+        raises when the store is unavailable) -- so the decision and the cancel can
+        never disagree about which rows count. A read failure propagates, so the
+        caller can defer rather than read an accepted child as absent.
+        """
+        rows = await self._admission.taskq_pending_ids_for_async(
+            parent_session_key, include_window=True
+        )
+        return bool(rows)
+
+    def open_teardown_fence(self, parent_session_key: str) -> "set[str] | None":
+        """Open the teardown fence for *parent_session_key* WITHOUT snapshotting.
+
+        The identity sweep opens the fence while it still holds the registry lock,
+        then decides retire-vs-defer at the async teardown. From the moment the
+        fence opens, the admission path records every child it accepts for this
+        parent into it (``note_teardown_store_accept`` under
+        ``_teardown_fence_lock``), so a child admitted between the open and the
+        off-loop read is seen by :meth:`has_fenced_children` rather than raced.
+        Unlike :meth:`snapshot_teardown_children` this takes NO in-memory snapshot:
+        it arms no delivery gate and tears down no follow-ups, so a parent that is
+        then spared keeps its children's completion path intact.
+
+        Returns the fence set, so a sweep that DEFERS can release exactly its own
+        fence (:meth:`release_teardown_fence`) and never one a concurrent teardown
+        opened. ``None`` when there is no store.
+        """
+        return self._cancellation.open_identity_sweep_fence_inner(parent_session_key)
+
+    def has_fenced_children(self, parent_session_key: str) -> bool:
+        """Whether any child was recorded in this parent's OPEN teardown fence.
+
+        Synchronous and cheap (a set read under ``_teardown_fence_lock``): the
+        admissions that landed since :meth:`open_teardown_fence`. Combined with
+        :meth:`has_live_or_queued_children` (in memory) and
+        :meth:`has_pending_store_children` (off-loop, pre-existing rows), it is the
+        third source the retire-vs-defer decision reads.
+        """
+        return self._cancellation.has_fenced_children_impl(parent_session_key)
+
+    def release_teardown_fence(
+        self, parent_session_key: str, expected: "AbstractSet[str] | None" = None
+    ) -> None:
+        """Discard this parent's teardown fence when the decision was to DEFER.
+
+        A spared parent runs no cancel sweep, so its fence has no consumer; drop it
+        so a later real teardown of the same key opens a fresh one. *expected* is
+        the fence the sweep opened; the drop happens only when the stored fence IS
+        it, so a concurrent ``destroy``'s fence is never dropped out from under its
+        own cancel.
+        """
+        self._cancellation.release_teardown_fence_impl(parent_session_key, expected)
+
     def snapshot_teardown_children(self, parent_session_key: str) -> tuple[str, ...]:
         """Run ids under *parent_session_key*, taken with no await. Parent-end use.
 
@@ -6400,6 +6498,30 @@ class SubagentManager:
         selected = self._cancellation.snapshot_teardown_children_impl(parent_session_key)
         self._cancellation.note_teardown_snapshot(parent_session_key)
         return selected
+
+    def commit_identity_sweep_retire(
+        self, parent_session_key: str, expected: "AbstractSet[str]"
+    ) -> bool:
+        """Atomically decide the identity sweep's final commit-vs-defer.
+
+        Returns True (commit) only when *expected* (the sweep's tentative fence)
+        recorded no child since it opened; it then becomes this key's COMMITTED
+        teardown fence, so the cancel's store sweep inherits any concurrent
+        admission. False means a child arrived (or a newer sweep owns the key) and
+        the caller must defer and release. Removes the F1 window between the final
+        fenced-child check and the committed fence opening.
+        """
+        return self._cancellation.commit_identity_sweep_retire_inner(parent_session_key, expected)
+
+    def snapshot_teardown_children_only(self, parent_session_key: str) -> tuple[str, ...]:
+        """Select the run ids to cancel WITHOUT opening a fresh committed fence.
+
+        The identity sweep's commit path has already promoted its tentative fence
+        to the committed one (:meth:`commit_identity_sweep_retire`), so re-opening
+        a fresh fence here would discard the promoted set and the concurrent
+        admissions it carries. This takes only the selection half.
+        """
+        return self._cancellation.snapshot_teardown_children_impl(parent_session_key)
 
     async def cancel_for_teardown(
         self,

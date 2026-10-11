@@ -448,6 +448,16 @@ class OrphanStallMonitor(ManagerComponent):
             # injection path batches naturally via the parent slot's pending-
             # failures drain.)
             dm_pending: list[str] = []
+            # Written after the scan: a DM-bound notice's tombstone waits for the
+            # digest DM below, and a run whose notifier raised is tombstoned with them.
+            held_tombstones: list[tuple[str, dict[str, Any]]] = []
+
+            def _tombstone_unless_present(agent_id: str, fields: dict[str, Any]) -> None:
+                from kiro_crew.subagent_persistence import read_tombstone
+
+                if read_tombstone(agent_id) is None:
+                    write_tombstone(agent_id, **fields)
+
             for state in orphans:
                 agent_id = state.get("id", "")
                 if not agent_id or agent_id in self._manager._agents:
@@ -463,24 +473,22 @@ class OrphanStallMonitor(ManagerComponent):
                             reason=f"orphaned subagent {agent_id} from a prior gateway run",
                         )
 
-                    try:
-                        # Off the loop: this writes a file and reads any existing
-                        # tombstone to preserve a recorded terminal outcome, and
-                        # this call site is a coroutine on the gateway's loop.
-                        await asyncio.to_thread(
-                            write_tombstone,
-                            agent_id,
-                            cause="gateway_restart",
-                            recovery_action=recovery,
-                            pid=pid,
-                            turns=state.get("turns", 0),
-                            last_tool=state.get("last_tool", ""),
-                            # A run that finished is completed, whichever reader
-                            # asks: the panel, this notice and the task queue.
-                            **({"outcome": "completed"} if result_is_whole(state) else {}),
-                        )
-                    except Exception:
-                        logger.debug("Failed to tombstone orphan %s", agent_id, exc_info=True)
+                    # The tombstone excludes the folder from every later
+                    # reconciliation, so it is written only once the notice is
+                    # recorded: by _notify_orphan when a slot took it, or after the
+                    # digest below for a notice bound for the owner DM. A notice
+                    # that is not recorded leaves the folder to the next start,
+                    # which announces the run again rather than never.
+                    tombstone: dict[str, Any] = {
+                        "cause": "gateway_restart",
+                        "recovery_action": recovery,
+                        "pid": pid,
+                        "turns": state.get("turns", 0),
+                        "last_tool": state.get("last_tool", ""),
+                        # A run that finished is completed, whichever reader
+                        # asks: the panel, this notice and the task queue.
+                        **({"outcome": "completed"} if result_is_whole(state) else {}),
+                    }
 
                     # Retain-by-default: session files are deliberately NOT
                     # deleted here — an orphaned run's transcript is still
@@ -504,8 +512,25 @@ class OrphanStallMonitor(ManagerComponent):
                         )
                         if undelivered:
                             dm_pending.append(undelivered)
+                            held_tombstones.append((agent_id, tombstone))
+                        else:
+                            # A slot took the notice: _notify_orphan writes its
+                            # delivered tombstone after the injection. When none
+                            # landed, this boot's own is written, as before.
+                            try:
+                                await asyncio.to_thread(
+                                    _tombstone_unless_present, agent_id, tombstone
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "Failed to tombstone orphan %s", agent_id, exc_info=True
+                                )
                     except Exception:
                         logger.debug("Notification failed for orphan %s", agent_id, exc_info=True)
+                        # A notifier that raises would raise again at every start,
+                        # so the run is tombstoned as before, after the scan; only a
+                        # process that dies first leaves it to the next start.
+                        held_tombstones.append((agent_id, tombstone))
                 except Exception:
                     logger.warning("Failed to reconcile orphan %s", agent_id, exc_info=True)
 
@@ -526,7 +551,16 @@ class OrphanStallMonitor(ManagerComponent):
                 try:
                     await self._manager._send_orphan_slack_dm(digest)
                 except Exception:
+                    # Raised rather than died: tombstoned as before. A process that
+                    # dies before the DM leaves these runs to the next start.
                     logger.debug("Orphan digest DM failed", exc_info=True)
+            for agent_id, tombstone in held_tombstones:
+                try:
+                    # Off the loop: this writes a file and reads any existing
+                    # tombstone to preserve a recorded terminal outcome.
+                    await asyncio.to_thread(write_tombstone, agent_id, **tombstone)
+                except Exception:
+                    logger.debug("Failed to tombstone orphan %s", agent_id, exc_info=True)
         except Exception:
             logger.warning("Orphan reconciliation failed", exc_info=True)
 
@@ -793,6 +827,9 @@ class OrphanStallMonitor(ManagerComponent):
                             pid=state.get("pid"),
                             turns=state.get("turns", 0),
                             last_tool=state.get("last_tool", ""),
+                            # Written after the notice, so no earlier tombstone
+                            # carries the outcome forward: it is stated here.
+                            **({"outcome": "completed"} if result_is_whole(state) else {}),
                         )
                     except Exception:
                         pass
@@ -1033,6 +1070,11 @@ class OrphanStallMonitor(ManagerComponent):
         while True:
             await asyncio.sleep(_REAPER_INTERVAL)
             now = time.time()
+            # The ages that decide a reap or a release are measured on the
+            # monotonic clock: a wall-clock step (an NTP correction, a manual
+            # change) must not reap every healthy run, spare a stuck one, or
+            # expire every continuable conversation at once.
+            mono_now = time.monotonic()
             if not self._manager._conv_registry_rebuilt:
                 # First pass after (re)start: re-seed the conversation TTL
                 # registry from state.json so promoted conversations survive
@@ -1075,7 +1117,7 @@ class OrphanStallMonitor(ManagerComponent):
             except Exception:
                 logger.debug("Reaper: digest-hold sweep failed", exc_info=True)
             try:
-                await self._manager._sweep_conversations_async(now)
+                await self._manager._sweep_conversations_async(mono_now)
             except Exception:
                 logger.debug("Reaper: conversation sweep failed", exc_info=True)
             # Wait deadlines + due dependency scopes: the pump's own one-shot
@@ -1104,6 +1146,23 @@ class OrphanStallMonitor(ManagerComponent):
                 await self._manager.retry_owed_teardown_sweeps()
             except Exception:
                 logger.debug("Reaper: teardown store-sweep retry failed", exc_info=True)
+            # A tombstone whose write failed (a full disk) is written once space
+            # returns, so a run already reported is not reported again at the next
+            # start. Off the loop: it writes files. Not during shutdown: cancel_all
+            # retries before it re-admits undelivered runs to orphan recovery, and
+            # a retry still writing when shutdown begins stops before its next write.
+            from functools import partial
+
+            from kiro_crew.subagent_persistence import has_owed_tombstones, retry_owed_tombstones
+
+            if has_owed_tombstones() and not self._manager._shutting_down:
+                try:
+                    await asyncio.get_running_loop().run_in_executor(
+                        maintenance_executor(),
+                        partial(retry_owed_tombstones, stop=lambda: self._manager._shutting_down),
+                    )
+                except Exception:
+                    logger.debug("Reaper: owed tombstone retry failed", exc_info=True)
             try:
                 compact_cost_log()  # periodic FIFO trim (also bounds a long-running gateway)
             except Exception:
@@ -1111,14 +1170,14 @@ class OrphanStallMonitor(ManagerComponent):
             for agent_id, info in list(self._manager._agents.items()):
                 if info.done or info._ending_claimed:
                     continue
-                elapsed = now - info.started
+                elapsed = mono_now - info._started_mono
                 # Startup watchdog: a subagent that entered execution but is
                 # still on turn 0 with no runtime PID after the startup window
                 # is wedged in startup (e.g. a hung provider/ACP handshake that
                 # never launches the child process). Reap it fast with a clear
                 # "failed to start" error instead of burning the full deadline
                 # and surfacing a misleading 30-minute turn-0 timeout.
-                queued_for = self._start_queue_saturated_secs(info, now)
+                queued_for = self._start_queue_saturated_secs(info, now, mono_now)
                 if queued_for:
                     logger.warning(
                         "Reaper: subagent %s never started: start queues saturated for %.0fs, "
@@ -1130,13 +1189,13 @@ class OrphanStallMonitor(ManagerComponent):
                         await self._manager._force_reap(
                             agent_id,
                             info,
-                            now - (info._exec_started or now),
+                            self._startup_elapsed(info, now, mono_now),
                             reason="start_queue_saturated",
                         )
                     except Exception:
                         logger.exception("Reaper: failed to reap %s", agent_id)
                     continue
-                if self._manager._is_startup_stalled(info, now):
+                if self._manager._is_startup_stalled(info, now, mono_now):
                     # The in-startup population is diagnostic only: the
                     # deadline is the fixed ``_startup_deadline`` whatever the
                     # crowd, on a clock paused while queued (``_gate_exit_reset``).
@@ -1153,13 +1212,13 @@ class OrphanStallMonitor(ManagerComponent):
                         await self._manager._force_reap(
                             agent_id,
                             info,
-                            now - (info._exec_started or now),
+                            self._startup_elapsed(info, now, mono_now),
                             reason="startup_timeout",
                         )
                     except Exception:
                         logger.exception("Reaper: failed to reap %s", agent_id)
                     continue
-                if self._is_first_prompt_silent(info, now):
+                if self._is_first_prompt_silent(info, now, mono_now):
                     # Imported here: this ``_impl`` resolves globals in ``subagent``.
                     from kiro_crew.subagent_manager.monitoring import _FIRST_PROMPT_SILENT_SECS
 
@@ -1173,7 +1232,7 @@ class OrphanStallMonitor(ManagerComponent):
                         await self._manager._force_reap(
                             agent_id,
                             info,
-                            now - (info._exec_started or now),
+                            self._startup_elapsed(info, now, mono_now),
                             reason="startup_timeout",
                         )
                     except Exception:
@@ -1212,7 +1271,9 @@ class OrphanStallMonitor(ManagerComponent):
             except Exception:
                 logger.debug("Reaper: tombstone pruning failed", exc_info=True)
 
-    def _is_startup_stalled_impl(self, info: SubagentInfo, now: float) -> bool:
+    def _is_startup_stalled_impl(
+        self, info: SubagentInfo, now: float, mono_now: float | None = None
+    ) -> bool:
         """True if a subagent is wedged in startup and should be reaped early.
 
         A subagent qualifies only once it has actually entered execution
@@ -1250,9 +1311,15 @@ class OrphanStallMonitor(ManagerComponent):
         exec_started = info._exec_started
         if exec_started is None:
             return False
+        gate_mark, queued_ms = info._gate_wait_started, info._start_queue_wait_ms
+        if mono_now is not None and info._exec_started_mono is not None:
+            # The run carries its monotonic stamps: measure on that clock, so a
+            # wall-clock step cannot reap a start in progress.
+            now, exec_started = mono_now, info._exec_started_mono
+            gate_mark, queued_ms = info._gate_wait_started_mono, info._start_queue_wait_mono_ms
         # Queued for a permit: the clock reads as it stood when the wait began.
-        clock_now = info._gate_wait_started if info._gate_wait_started is not None else now
-        starting = clock_now - exec_started - info._start_queue_wait_ms / 1000.0
+        clock_now = gate_mark if gate_mark is not None else now
+        starting = clock_now - exec_started - queued_ms / 1000.0
         return (
             info.turns == 0
             and info._pid is None
@@ -1260,7 +1327,9 @@ class OrphanStallMonitor(ManagerComponent):
             and starting > self._stamped_startup_deadline(info)
         )
 
-    def _is_first_prompt_silent(self, info: SubagentInfo, now: float) -> bool:
+    def _is_first_prompt_silent(
+        self, info: SubagentInfo, now: float, mono_now: float | None = None
+    ) -> bool:
         """True if *info* launched its runtime but nothing answered its first prompt.
 
         The complement of :meth:`_is_startup_stalled_impl`, which needs ``_pid is
@@ -1281,10 +1350,25 @@ class OrphanStallMonitor(ManagerComponent):
             and not self._manager._in_startup(info)
             and info._gate_wait_started is None
             and not info._awaiting_approval
-            and now - info.last_activity > _FIRST_PROMPT_SILENT_SECS
+            and self._idle_since_activity(info, now, mono_now) > _FIRST_PROMPT_SILENT_SECS
         )
 
-    def _start_queue_saturated_secs(self, info: SubagentInfo, now: float) -> float:
+    def _idle_since_activity(self, info: SubagentInfo, now: float, mono_now: float | None) -> float:
+        """Seconds since *info*'s last activity: on the monotonic clock when the
+        run carries its monotonic start stamp and *mono_now* is given."""
+        if mono_now is not None and info._exec_started_mono is not None:
+            return mono_now - info._last_activity_mono
+        return now - info.last_activity
+
+    def _startup_elapsed(self, info: SubagentInfo, now: float, mono_now: float) -> float:
+        """Seconds since *info* began executing, on the clock its watchdogs read."""
+        if info._exec_started_mono is not None:
+            return mono_now - info._exec_started_mono
+        return now - (info._exec_started or now)
+
+    def _start_queue_saturated_secs(
+        self, info: SubagentInfo, now: float, mono_now: float | None = None
+    ) -> float:
         """Seconds *info* has spent queued for start permits, when that is past
         :data:`_START_QUEUE_MAX_SECS` and it has still not started; else 0.
 
@@ -1297,9 +1381,13 @@ class OrphanStallMonitor(ManagerComponent):
         """
         if not self._manager._in_startup(info):
             return 0.0
-        queued = info._start_queue_wait_ms / 1000.0
-        if info._gate_wait_started is not None:
-            queued += max(0.0, now - info._gate_wait_started)
+        queued_ms, gate_mark = info._start_queue_wait_ms, info._gate_wait_started
+        if mono_now is not None and info._exec_started_mono is not None:
+            now = mono_now
+            queued_ms, gate_mark = info._start_queue_wait_mono_ms, info._gate_wait_started_mono
+        queued = queued_ms / 1000.0
+        if gate_mark is not None:
+            queued += max(0.0, now - gate_mark)
         return queued if queued > _START_QUEUE_MAX_SECS else 0.0
 
     def _stamped_startup_deadline(self, info: SubagentInfo) -> int:

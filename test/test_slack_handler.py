@@ -3336,6 +3336,228 @@ class TestStopReasonCompactionFailed:
         ), f"no session reset after COMPACTION_FAILED: {sessions.removed}"
 
 
+class _BookingSessions(FakeSessionManager):
+    """Records the success and failure bookings the handler makes."""
+
+    def __init__(self, provider):
+        super().__init__(provider)
+        self.booked: list[str] = []
+
+    def record_success(self, key):
+        self.booked.append(f"success:{key}")
+
+    async def record_failure(self, key):
+        self.booked.append(f"failure:{key}")
+        return False
+
+
+def _thread_text(slack) -> str:
+    """The last text the thread shows for the reply message."""
+    texts = [a[1].get("text", "") for a in slack.actions if a[0] in ("post", "update")]
+    return texts[-1] if texts else ""
+
+
+class TestStopReasonUnfinishedTurn:
+    """The session handle ends a turn the backend never finished with
+    ``stop_reason="timeout"`` (its turn ceiling) or ``STOP_REASON_STALE_RECOVER``.
+    The runtime still reads alive, so the turn must not be posted and booked as
+    a finished reply: the thread is told it timed out, the turn is a failure,
+    and the session is reset so the next message starts a fresh runtime."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stop_reason", ["timeout", "stale_recover"])
+    async def test_an_unfinished_turn_is_failed_told_and_reset(self, stop_reason):
+        slack = MockSlackClient()
+        provider = FakeProvider(
+            [
+                LLMEvent(kind="text_chunk", text="Here is the first half of the pl"),
+                LLMEvent(kind="complete", stop_reason=stop_reason),
+            ]
+        )
+        sessions = _BookingSessions(provider)
+
+        await handle_message(slack, sessions, "C1", "hello", None, "msg1", "U1")
+
+        final = _thread_text(slack)
+        assert "Here is the first half of the pl" in final, final
+        assert "Request timed out" in final, final
+        assert any(r.startswith("reset:") for r in sessions.removed), sessions.removed
+        assert any(b.startswith("failure:") for b in sessions.booked), sessions.booked
+        assert not any(b.startswith("success:") for b in sessions.booked), sessions.booked
+
+    @pytest.mark.asyncio
+    async def test_an_unfinished_turn_with_no_text_says_it_timed_out(self):
+        slack = MockSlackClient()
+        provider = FakeProvider([LLMEvent(kind="complete", stop_reason="timeout")])
+        sessions = _BookingSessions(provider)
+
+        await handle_message(slack, sessions, "C1", "hello", None, "msg1", "U1")
+
+        assert "Request timed out" in _thread_text(slack)
+        assert any(r.startswith("reset:") for r in sessions.removed), sessions.removed
+
+    @pytest.mark.asyncio
+    async def test_a_finished_turn_posts_its_reply_and_keeps_the_session(self):
+        slack = MockSlackClient()
+        provider = FakeProvider(
+            [
+                LLMEvent(kind="text_chunk", text="done"),
+                LLMEvent(kind="complete", stop_reason="end_turn"),
+            ]
+        )
+        sessions = _BookingSessions(provider)
+
+        await handle_message(slack, sessions, "C1", "hello", None, "msg1", "U1")
+
+        final = _thread_text(slack)
+        assert "done" in final and "timed out" not in final, final
+        assert not any(r.startswith("reset:") for r in sessions.removed), sessions.removed
+        assert not any(b.startswith("failure:") for b in sessions.booked), sessions.booked
+
+    @pytest.mark.asyncio
+    async def test_a_users_stop_keeps_the_session(self):
+        from kiro_crew.acp.types import STOP_REASON_CANCELLED
+
+        slack = MockSlackClient()
+        provider = FakeProvider(
+            [
+                LLMEvent(kind="text_chunk", text="partial"),
+                LLMEvent(kind="complete", stop_reason=STOP_REASON_CANCELLED),
+            ]
+        )
+        sessions = _BookingSessions(provider)
+
+        await handle_message(slack, sessions, "C1", "hello", None, "msg1", "U1")
+
+        assert not any(r.startswith("reset:") for r in sessions.removed), sessions.removed
+        assert "timed out" not in _thread_text(slack)
+
+    # The per-process client ends a turn at its prompt deadline by RAISING
+    # AcpTimeoutError instead of yielding a terminal, and leaves its process
+    # running. The thread must read the same as for the stop-reason ending.
+
+    @pytest.mark.asyncio
+    async def test_a_raised_timeout_keeps_the_streamed_text_and_adds_the_notice(self):
+        from kiro_crew.acp.client import AcpTimeoutError
+
+        slack = MockSlackClient()
+        provider = _RaisingProvider(
+            [LLMEvent(kind="text_chunk", text="Here is the first half of the pl")],
+            AcpTimeoutError(),
+        )
+        sessions = _BookingSessions(provider)
+
+        await handle_message(slack, sessions, "C1", "hello", None, "msg1", "U1")
+
+        final = _thread_text(slack)
+        assert "Here is the first half of the pl" in final, final
+        assert "Request timed out" in final, final
+        assert final.index("Here is the first half") < final.index("Request timed out")
+
+    @pytest.mark.asyncio
+    async def test_a_raised_timeout_with_partial_output_adds_the_notice(self):
+        from kiro_crew.acp.client import AcpTimeoutError
+
+        slack = MockSlackClient()
+        provider = _RaisingProvider([], AcpTimeoutError(partial_output="half an answer"))
+        sessions = _BookingSessions(provider)
+
+        await handle_message(slack, sessions, "C1", "hello", None, "msg1", "U1")
+
+        final = _thread_text(slack)
+        assert "half an answer" in final and "Request timed out" in final, final
+
+    @pytest.mark.asyncio
+    async def test_a_raised_timeout_resets_the_session_it_held(self):
+        from kiro_crew.acp.client import AcpTimeoutError
+
+        slack = MockSlackClient()
+        provider = _RaisingProvider([], AcpTimeoutError())
+        sessions = _BookingSessions(provider)
+
+        await handle_message(slack, sessions, "C1", "hello", None, "msg1", "U1")
+
+        assert "Request timed out" in _thread_text(slack)
+        assert any(r.startswith("reset:") for r in sessions.removed), sessions.removed
+        assert any(b.startswith("failure:") for b in sessions.booked), sessions.booked
+        assert not any(b.startswith("success:") for b in sessions.booked), sessions.booked
+
+    # At its threshold the breaker resets the session inside ``record_failure`` and
+    # answers True (``SessionAllocation.record_failure``). A same-key message can claim
+    # a successor runtime while that reset is awaited, so the turn must not reset the
+    # session a second time: that would end the successor mid-turn.
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stop_reason", ["timeout", "stale_recover"])
+    async def test_at_the_breaker_threshold_an_unfinished_turn_resets_once(self, stop_reason):
+        slack = MockSlackClient()
+        provider = FakeProvider(
+            [
+                LLMEvent(kind="text_chunk", text="half an answer"),
+                LLMEvent(kind="complete", stop_reason=stop_reason),
+            ]
+        )
+        sessions = _BreakerAtThreshold(provider)
+
+        await handle_message(slack, sessions, "C1", "hello", None, "msg1", "U1")
+
+        assert "Request timed out" in _thread_text(slack)
+        assert sessions.booked == ["failure:" + sessions.keys_seen[0]], sessions.booked
+        ended = sessions.ended
+        assert ended == ["first"], f"the handler reset again after the breaker did: {ended}"
+
+    @pytest.mark.asyncio
+    async def test_at_the_breaker_threshold_a_raised_timeout_resets_once(self):
+        from kiro_crew.acp.client import AcpTimeoutError
+
+        slack = MockSlackClient()
+        provider = _RaisingProvider(
+            [LLMEvent(kind="text_chunk", text="half an answer")], AcpTimeoutError()
+        )
+        sessions = _BreakerAtThreshold(provider)
+
+        await handle_message(slack, sessions, "C1", "hello", None, "msg1", "U1")
+
+        assert "Request timed out" in _thread_text(slack)
+        assert sessions.booked == ["failure:" + sessions.keys_seen[0]], sessions.booked
+        ended = sessions.ended
+        assert ended == ["first"], f"the handler reset again after the breaker did: {ended}"
+
+
+class _BreakerAtThreshold(_BookingSessions):
+    """``record_failure`` as the breaker answers at its threshold: it books the failure,
+    resets the session itself and returns True. Each reset ends the runtime that is live,
+    and while it is awaited a same-key message claims a successor runtime."""
+
+    def __init__(self, provider):
+        super().__init__(provider)
+        self.runtimes = ["first"]
+        self.ended: list[str] = []
+
+    async def record_failure(self, key):
+        self.booked.append(f"failure:{key}")
+        await self.reset(key)
+        return True
+
+    async def reset(self, key):
+        await super().reset(key)
+        self.ended.append(self.runtimes[-1])
+        self.runtimes.append(f"successor {len(self.runtimes)}")
+
+
+class _RaisingProvider(FakeProvider):
+    """Streams *events*, then raises *error* instead of yielding a terminal."""
+
+    def __init__(self, events, error):
+        super().__init__(events)
+        self._error = error
+
+    async def stream(self, message, timeout=120.0):
+        for event in self._events:
+            yield event
+        raise self._error
+
+
 class _SequencedProvider(FakeProvider):
     """A provider whose successive ``stream`` calls play different scripts.
 

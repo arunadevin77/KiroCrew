@@ -180,6 +180,7 @@ from kiro_crew.dashboard.handlers.files import (  # noqa: E402, F401
     api_file_diff,
     api_file_download,
     api_file_grep,
+    api_file_kinds,
     api_file_office_preview,
     api_file_raw,
     api_file_read,
@@ -650,6 +651,7 @@ from kiro_crew.dashboard.handlers.usage import (  # noqa: E402, F401
     api_kiro_usage,
     api_usage,
 )
+from kiro_crew.dashboard.handlers.usage_series import api_usage_series  # noqa: E402, F401
 from kiro_crew.dashboard.handlers.wakatime import (  # noqa: E402, F401
     api_wakatime_export,
     api_wakatime_stats,

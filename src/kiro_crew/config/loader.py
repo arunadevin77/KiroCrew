@@ -2667,6 +2667,9 @@ _SIDECAR_BASE_SHADOW = "base_shadow"
 #: unparseable. A cache hit carries it forward so :meth:`KiroCrewConfig.save` can
 #: refuse to publish a snapshot built without the base file.
 _SIDECAR_BASE_UNREADABLE = "base_unreadable"
+#: Whether the load that filled this cache entry found ``config.local.json`` present
+#: but unparseable, carried forward the same way for ``_overlay_unreadable``.
+_SIDECAR_OVERLAY_UNREADABLE = "overlay_unreadable"
 
 
 def _shadowed_base_sections(base: dict, overlay: dict) -> dict:
@@ -3930,6 +3933,12 @@ class KiroCrewConfig:
     #: since, because publishing it would still replace the repaired settings.
     _base_unreadable: bool = field(default=False, repr=False, compare=False)
 
+    #: True when the load that built this instance found ``config.local.json``
+    #: present but unparseable, so nothing the overlay sets is here. Describes this
+    #: read, like ``_base_unreadable``; never serialized. ``degraded_sections`` cannot
+    #: answer this for one load: its whole-config marker lasts the process.
+    _overlay_unreadable: bool = field(default=False, repr=False, compare=False)
+
     @property
     def degraded_sections(self) -> frozenset[str]:
         """Sections this load discarded (see ``_degraded_sections``)."""
@@ -4924,6 +4933,8 @@ class ConfigDocument:
     content_digest: str | None
     #: ``config.json`` was present but unreadable or not a JSON object.
     base_unreadable: bool = False
+    #: ``config.local.json`` was present but unreadable or not a JSON object.
+    overlay_unreadable: bool = False
     #: The base document's copy of each top-level section the overlay touched.
     base_shadow: dict = field(default_factory=dict)
     #: ``config.local.json`` as this read parsed it; ``{}`` on a cache hit.
@@ -4932,6 +4943,10 @@ class ConfigDocument:
     adoptable: list[SupersededDefault] = field(default_factory=list)
     #: The 0.6.x-or-older writer stamp when the legacy ``skills.lazy_load`` rewrite is due.
     legacy_lazy_stamp: str | None = None
+    #: True when this read parsed the files, False on a cache hit or an in-memory
+    #: document. The build's advisory warnings fire only on a disk read, as
+    #: validation's do, so a cached load does not repeat them.
+    disk_read: bool = False
 
 
 def read_config_document() -> ConfigDocument:
@@ -4984,6 +4999,7 @@ def read_config_document() -> ConfigDocument:
             loaded=True,
             content_digest=content_digest,
             base_unreadable=bool(sidecar.get(_SIDECAR_BASE_UNREADABLE, False)),
+            overlay_unreadable=bool(sidecar.get(_SIDECAR_OVERLAY_UNREADABLE, False)),
             base_shadow=sidecar.get(_SIDECAR_BASE_SHADOW, {}),
         )
 
@@ -4994,6 +5010,7 @@ def read_config_document() -> ConfigDocument:
     # ``skills.lazy_load`` rewrite is due, or None.
     legacy_lazy_stamp: str | None = None
     base_unreadable = False
+    overlay_unreadable = False
     # Capture the invalidation generation BEFORE disk I/O. A successful
     # write advances it, so this read cannot repopulate pre-write data
     # after the writer clears the cache even if the filesystem's coarse
@@ -5086,10 +5103,12 @@ def read_config_document() -> ConfigDocument:
                 local_data = raw_local
             else:
                 config_source_unreadable = True
+                overlay_unreadable = True
                 logger.warning("config.local.json is not a JSON object, ignoring")
                 _mark_file_degraded(local_path)
         except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
             config_source_unreadable = True
+            overlay_unreadable = True
             # Same rule as the base file: bytes that read whole can be named
             # whether or not they parsed.
             if read_parts[1] is None:
@@ -5125,6 +5144,7 @@ def read_config_document() -> ConfigDocument:
             loaded=False,
             content_digest=_content_digest_of(read_parts) if digestible else None,
             base_unreadable=base_unreadable,
+            overlay_unreadable=overlay_unreadable,
         )
 
     # Preserve fail-closed security semantics before advisory schema
@@ -5215,7 +5235,11 @@ def read_config_document() -> ConfigDocument:
         _store_validated_data(
             data,
             pre_read_fp,
-            {_SIDECAR_BASE_SHADOW: base_shadow, _SIDECAR_BASE_UNREADABLE: base_unreadable},
+            {
+                _SIDECAR_BASE_SHADOW: base_shadow,
+                _SIDECAR_BASE_UNREADABLE: base_unreadable,
+                _SIDECAR_OVERLAY_UNREADABLE: overlay_unreadable,
+            },
             expected_generation=read_generation,
             content_digest=content_digest,
         )
@@ -5227,10 +5251,12 @@ def read_config_document() -> ConfigDocument:
         loaded=True,
         content_digest=content_digest,
         base_unreadable=base_unreadable,
+        overlay_unreadable=overlay_unreadable,
         base_shadow=base_shadow,
         overlay=local_data,
         adoptable=adoptable,
         legacy_lazy_stamp=legacy_lazy_stamp,
+        disk_read=True,
     )
 
 
@@ -5282,6 +5308,7 @@ def build_config(
         # through so the caller can tell them apart.
         cfg = config_cls(_degraded_sections=frozenset(_OBSERVED_DEGRADED_SECTIONS))
         cfg._base_unreadable = doc.base_unreadable
+        cfg._overlay_unreadable = doc.overlay_unreadable
         if (
             DEGRADED_WHOLE_CONFIG in _OBSERVED_DEGRADED_SECTIONS
             or "dashboard" in _OBSERVED_DEGRADED_SECTIONS
@@ -5679,8 +5706,13 @@ def build_config(
     # could drift from them. Same base-not-merged view as _extra_sections
     # above, for the same reason.
     cfg._extra_keys = _resolution.capture_extra_section_keys(capture_view, cfg)
+    if doc.disk_read:
+        # The MERGED view, unlike the capture: a misspelling in either file has
+        # no effect, so either one is worth naming.
+        _resolution.warn_misspelled_section_keys(data, cfg)
 
     cfg._base_unreadable = doc.base_unreadable
+    cfg._overlay_unreadable = doc.overlay_unreadable
     return cfg
 
 

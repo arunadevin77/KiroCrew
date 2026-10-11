@@ -25,6 +25,11 @@ from kiro_crew.acp.client import AcpError, AcpPromptBusy, advertised_model_ids
 from kiro_crew.acp.types import EVENT_STEER_CONSUMED, TurnUsage
 from kiro_crew.agent_sdk import CONTEXT_EVENT_COMPACTION
 from kiro_crew.agent_sdk.drivers.acp import resolve_pin_spelling_on
+from kiro_crew.agent_sdk.drivers.acp_vocab import (
+    STOP_REASON_STALE_RECOVER,
+    STOP_REASON_TIMEOUT,
+    AcpTimeoutError,
+)
 from kiro_crew.config.loader import KiroCrewConfig
 from kiro_crew.constants import (
     DENY_CAUSE_INVALID_NAME,
@@ -625,10 +630,11 @@ def provider_model_pin_refused(provider: LLMProvider) -> bool:
     """True when *provider*'s adapter refused its pinned model at startup.
 
     A config-option backend applies a pin non-strictly: a refusal leaves the
-    session on the backend default and raises nothing. The session records the
-    refused id as ``model_pin_refused``. Callers treat a True here exactly as a
-    caught model-unavailable error: annotate the downgrade and blank the
-    explicit pin on the usage row.
+    session on the backend default and raises nothing. A kiro session withholds
+    a startup pin the account does not serve, with the same result. The session
+    records the refused or withheld id as ``model_pin_refused``. Callers treat a
+    True here exactly as a caught model-unavailable error: annotate the
+    downgrade and blank the explicit pin on the usage row.
     """
     # Declared on LLMProvider. The str check keeps a test double's auto-made
     # attribute from reading as a refusal.
@@ -1718,6 +1724,34 @@ def _orphan_reject_done(task: asyncio.Task[Any]) -> None:
 # ── Stream and Collect ──
 
 
+def _raise_if_unfinished(event: object, text: str) -> None:
+    """Raise when the backend never finished the turn, so its text is cut off.
+
+    The session handle ends a turn its backend did not finish within the turn
+    ceiling with ``STOP_REASON_TIMEOUT``, and one its stale watchdog gave up on with
+    ``STOP_REASON_STALE_RECOVER``. Both arrive as an ordinary ``EVENT_COMPLETE``, so
+    a one-liner would return the partial text as its answer. Raising runs the
+    caller's failure path instead. The error is the prompt-timeout error, carrying
+    the partial text, and it is not transient: a retry would wait out the same
+    stalled backend again.
+    """
+    from kiro_crew.agent_sdk.drivers.acp_vocab import (
+        STOP_REASON_STALE_RECOVER,
+        STOP_REASON_TIMEOUT,
+        AcpTimeoutError,
+    )
+
+    stop_reason = str(getattr(event, "stop_reason", "") or "")
+    if stop_reason not in (STOP_REASON_TIMEOUT, STOP_REASON_STALE_RECOVER):
+        return
+    error = AcpTimeoutError(
+        text,
+        message=f"background one-liner: the backend did not finish the turn ({stop_reason})",
+    )
+    error.transient = False
+    raise error
+
+
 async def run_bg_oneliner(
     sessions: Any,
     prompt: str,
@@ -1897,6 +1931,7 @@ async def run_bg_oneliner(
                     source=sel_source or "bg_oneliner",
                 )
             elif event.kind == EVENT_COMPLETE:
+                _raise_if_unfinished(event, text)
                 break
         return text
 
@@ -2512,6 +2547,34 @@ async def background_turn(
                 logger.debug("background recycle failed task=%s", task, exc_info=True)
 
 
+#: Terminal stop reasons that mean the backend never finished the turn: the
+#: session handle ends a turn its backend did not answer within the turn ceiling
+#: as ``STOP_REASON_TIMEOUT``, and an unrecovered stale turn as
+#: ``STOP_REASON_STALE_RECOVER``. A user-requested stop (``"cancelled"``) is not
+#: one: its partial text is what the caller asked to keep.
+_UNFINISHED_TURN_STOP_REASONS = frozenset({STOP_REASON_TIMEOUT, STOP_REASON_STALE_RECOVER})
+
+
+def _unfinished_turn_error(event: LLMEvent, partial_output: str) -> AcpTimeoutError | None:
+    """The prompt-timeout error for a turn the backend never finished, else ``None``.
+
+    Raised, not returned as an answer, so the caller's failure path runs: the text
+    collected so far is not a result. It is the same error the per-process
+    client raises when a prompt times out, carrying the partial text, and it is
+    never transient: a retry would re-send the prompt to a backend that stopped
+    answering and wait out the ceiling again.
+    """
+    stop_reason = str(getattr(event, "stop_reason", "") or "")
+    if stop_reason not in _UNFINISHED_TURN_STOP_REASONS:
+        return None
+    error = AcpTimeoutError(
+        partial_output,
+        message=f"ACP prompt timed out: the backend did not finish the turn ({stop_reason})",
+    )
+    error.transient = False
+    return error
+
+
 async def stream_and_collect(
     provider: LLMProvider,
     message: str,
@@ -2746,6 +2809,9 @@ async def stream_and_collect(
                             on_complete(event)
                         except Exception:
                             logger.debug("on_complete callback failed", exc_info=True)
+                    unfinished = _unfinished_turn_error(event, result_text)
+                    if unfinished is not None:
+                        raise unfinished
                     break
             return result_text
         except AcpError as exc:

@@ -165,6 +165,18 @@ def test_agent_picker_is_unknown_without_gateway_state(world):
     assert _run(world)["agent_picker_stale"]["status"] == dp.UNKNOWN
 
 
+def test_package_spec_whose_file_name_differs_from_its_name_is_listed(world):
+    # A package-installed spec is "{package}-{name}.json" and the list offers it
+    # under its declared name, so it must not be reported as one the list rejected.
+    world["app"]["state"].start_time = time.time() - 600
+    (world["agents"] / "acme-helper.json").write_text(json.dumps({"name": "helper"}))
+    f = _run(world)["agent_picker_stale"]
+    assert f["status"] == dp.OK
+    assert f["evidence"]["specs"] == [
+        {"name": "helper", "changed": f["evidence"]["specs"][0]["changed"], "listed": True}
+    ]
+
+
 def test_pinned_model_the_account_does_not_offer(world):
     world["cfg"].agent.model = "model-x"
     f = _run(world)["model_pin_unavailable"]
@@ -326,6 +338,26 @@ def test_stored_vectors_of_a_different_dimension(world):
 def test_rows_without_embeddings_are_a_warning(world):
     _memory_db(world["home"], [None])
     assert _run(world)["embedding_coverage"]["status"] == dp.WARN
+
+
+def test_rows_still_in_the_write_ahead_log_are_counted(world):
+    # The gateway keeps memory.db in WAL mode: a committed row that has not been
+    # checkpointed lives only in memory.db-wal while the writer stays open.
+    world["cfg"].memory.embedding_dim = 1024
+    _memory_db(world["home"], [b"\0" * 4096])
+    writer = sqlite3.connect(world["home"] / "memory.db")
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("INSERT INTO episodic_memories VALUES ('late', 't', ?, 0)", (b"\0" * 1536,))
+        writer.commit()
+        assert (world["home"] / "memory.db-wal").stat().st_size > 0
+        f = _run(world)["embedding_coverage"]
+    finally:
+        writer.close()
+    table = f["evidence"]["tables"]["episodic_memories"]
+    assert (table["rows"], table["wrong_dimension"]) == (2, 1)
+    assert f["status"] == dp.PROBLEM
 
 
 def _closed_port() -> int:

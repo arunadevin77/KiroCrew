@@ -17,9 +17,11 @@ import signal
 import subprocess
 import sys
 import textwrap
+import threading
 from pathlib import Path
 
 import pytest
+from test_stall_enrichment import loop_thread, wait_until_inside_handle
 
 from kiro_crew import platform_compat
 from kiro_crew.dashboard import loop_watchdog
@@ -420,6 +422,33 @@ def test_enrichment_precedes_soft_dump_threshold() -> None:
     assert wd.check() is True  # soft dump fires; enrichment still once
     assert len(calls) == 1
     assert dump_file.written == []  # even a full episode writes nothing itself
+
+
+def test_enrichment_names_the_native_callback_the_loop_is_stuck_in() -> None:
+    # The loop thread blocks inside a native callable scheduled straight onto
+    # the loop: faulthandler would show Handle._run and nothing above it.
+    wd, clock, dump_file, calls, handler = _make_enrich()
+    gate = threading.Lock()
+    gate.acquire()
+    with loop_thread() as (loop, thread_id):
+        beaten = threading.Event()
+        loop.call_soon_threadsafe(lambda: (wd.beat(), beaten.set()))
+        assert beaten.wait(5.0)
+        loop.call_soon_threadsafe(gate.acquire)
+        try:
+            wait_until_inside_handle(thread_id)
+            clock.advance(16.0)
+            wd.check()
+        finally:
+            gate.release()
+
+    (message,) = [m for m in handler.messages if "stall enrichment captured" in m]
+    assert f"loop thread {thread_id:#x} is at (asyncio/events.py:" in message
+    assert (
+        "asyncio Handle._run is running _thread.lock.acquire "
+        "(a native callable with no Python frame of its own)"
+    ) in message
+    assert dump_file.written == []
 
 
 # ---------------------------------------------------------------------------

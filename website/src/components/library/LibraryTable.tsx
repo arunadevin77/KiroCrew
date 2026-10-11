@@ -27,6 +27,14 @@ export const KIND_BADGE: Record<Artifact['kind'], 'ok' | 'err' | 'warn' | 'aim'>
   text: 'ok',
   webapp: 'aim',
   image: 'warn',
+  // A crewmate's dashboard package. `aim` with `widget` and `webapp`, the other
+  // two kinds whose content is a thing that RUNS rather than a document someone
+  // reads: a package is what a dashboard page is composed from.
+  //
+  // Without an entry the lookup in the row below answers `undefined` and the badge
+  // falls back to its default tone, so a package reads as an ordinary document in
+  // the one place its versions and its revert live.
+  dashboard: 'aim',
 }
 
 export function isoToTs(iso: string): number {

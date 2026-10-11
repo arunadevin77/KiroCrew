@@ -7679,6 +7679,10 @@
         "allow": "अनुमति दो",
         "not_now": "अभी नहीं",
         "save_failed": "सहेजा नहीं जा सका। फिर से कोशिश करो।"
+      },
+      "crewmateNoteFace": {
+        "roster_load_failed": "साथी की जानकारी लोड नहीं हो सकी, इसलिए भेजने वाले का नाम और अवतार नहीं दिख रहा।",
+        "retry": "फिर से कोशिश करो"
       }
     },
     "onboardingChapterShell": {
@@ -8268,7 +8272,11 @@
       "unpin": "पिन हटाएँ",
       "mute_sessions_it_opens": "इसके द्वारा खोले गए सत्र म्यूट करो",
       "unmute_sessions_it_opens": "इसके द्वारा खोले गए सत्र अनम्यूट करो",
-      "mute_sessions_it_opens_failed": "म्यूट सेटिंग नहीं बदली जा सकी"
+      "mute_sessions_it_opens_failed": "म्यूट सेटिंग नहीं बदली जा सकी",
+      "mute": "यह सत्र म्यूट करो",
+      "unmute": "यह सत्र अनम्यूट करो",
+      "mute_failed": "यह सत्र म्यूट नहीं हो सका",
+      "unmute_failed": "यह सत्र अनम्यूट नहीं हो सका"
     },
     "sessionColorSwatches": {
       "custom_color": "कस्टम रंग",
@@ -10625,6 +10633,8 @@
       "prompts_label": "प्रॉम्प्ट",
       "skills_description": "विशिष्ट कार्यों के लिए तुम्हारा एजेंट माँग पर लोड करता है, ऐसी विशेष ज्ञान फ़ाइलें",
       "skills_label": "स्किल्स",
+      "skills_awaiting_review": "समीक्षा लंबित स्किल्स ({{count}})",
+      "skills_awaiting_review_failed": "समीक्षा लंबित स्किल्स की जाँच नहीं हो सकी",
       "steering_description": "~/.kiro/steering और तुम्हारी परियोजना के .kiro/steering से Markdown नियम, हर फ़ाइल के समावेशन मोड के अनुसार लागू",
       "steering_label": "स्टीयरिंग",
       "knowledge_label": "नॉलेज",
@@ -12197,7 +12207,8 @@
       "crew_enable": "चालू करो",
       "crew_enable_named": "{{name}} चालू करो",
       "crew_spaces_unavailable": "{{name}} से फ़ोल्डर लोड नहीं हो सके। इसकी चैट फ़ोल्डर के बिना दिखाई जा रही हैं।",
-      "crew_enable_failed": "{{name}} चालू नहीं हो सका"
+      "crew_enable_failed": "{{name}} चालू नहीं हो सका",
+      "muted": "म्यूट: कोई ध्वनि, सूचना या बैज नहीं"
     },
     "connectionsPage": {
       "action_failed": "कार्रवाई विफल: {{error}}",
@@ -14131,6 +14142,7 @@
         "on_demand_skills_loaded_when_the_agent_determine": "ऑन-डिमांड स्किल, जो एजेंट को प्रासंगिक लगने पर लोड होती हैं।",
         "package": "पैकेज",
         "pending_review_count": "समीक्षा लंबित ({{count}})",
+        "new_candidate": "नया",
         "pointer": "पॉइंटर",
         "proposed_change": "प्रस्तावित बदलाव",
         "refresh_skills": "स्किल रीफ़्रेश करें",
@@ -14274,7 +14286,9 @@
         "total_sessions_30d": "कुल सत्र (30d)",
         "total_tokens": "कुल टोकन",
         "total_turns": "कुल टर्न",
-        "usage_tracking_is_not_available_for": "{{provider}} के लिए उपयोग ट्रैकिंग उपलब्ध नहीं है।"
+        "usage_tracking_is_not_available_for": "{{provider}} के लिए उपयोग ट्रैकिंग उपलब्ध नहीं है।",
+        "spend_over_time": "समय के साथ खर्च (क्रेडिट)",
+        "harness_unread": "एजेंट बैकएंड सेटिंग नहीं पढ़ी जा सकी, इसलिए खर्च चार्ट यह नहीं बता सकता कि यह इंस्टॉल क्रेडिट में बिल करता है या नहीं।"
       },
       "vectorMemoryCard": {
         "legacy_vectors_warning": "ये वेक्टर मॉडल फ़ाइल का रिकॉर्ड बनने से पहले बनाए गए थे। यदि फ़ाइल बदली गई है, तो वेक्टर दोबारा बनाने के लिए एम्बेडिंग मॉडल सेटिंग में उसे फिर लागू करें।",
@@ -14539,6 +14553,31 @@
         "err_name_reserved": "“{{name}}” एक बिल्ट-इन एजेंट के लिए आरक्षित है। कोई और नाम चुनो।",
         "err_generic": "अनुरोध विफल रहा। फिर कोशिश करें।",
         "chat_with_caption": "चैट साझा डिफ़ॉल्ट मेमोरी पर चलती है — किसी क्रूमेट की अपनी मेमोरी पर नहीं।"
+      },
+      "usageSeriesChart": {
+        "layer_by": "इसके अनुसार परतें",
+        "by_channel": "चैनल",
+        "by_agent": "एजेंट",
+        "by_model": "मॉडल",
+        "by_cohort": "सेशन शुरू होने का सप्ताह",
+        "cumulative": "संचयी",
+        "other": "अन्य ({{n}} और)",
+        "unattributed": "अनिर्धारित",
+        "unattributed_hint": "अनिर्धारित: ऐसे टर्न जिनमें यह विवरण दर्ज नहीं हुआ।",
+        "channel_unrecognized": "अज्ञात सत्र",
+        "cohort_week": "{{date}} का सप्ताह",
+        "cohort_started_by": "{{date}} तक शुरू",
+        "cohort_caption": "परतें खर्च को उस सप्ताह के अनुसार समूहित करती हैं जिसमें हर सेशन इस विंडो में पहली बार दिखा; पहले शुरू हुआ सेशन यहाँ अपने पहले टर्न से गिना जाता है, इसलिए “… तक शुरू” वाली सबसे पुरानी परत में पुराने सेशन भी होते हैं।",
+        "total_to_date": "उस दिन तक कुल: {{value}}",
+        "total_that_day": "उस दिन: {{value}}",
+        "empty": "अभी तक कोई खर्च दर्ज नहीं हुआ।",
+        "truncated_notice": "कुल कम दिखाया गया है: सबसे पुराने {{n}} टर्न नहीं गिने गए।",
+        "truncated_from": "कुल कम दिखाया गया है: सबसे पुराने {{n}} टर्न नहीं गिने गए; {{date}} से हर दिन के सभी टर्न गिने गए हैं।",
+        "load_failed": "समय के साथ खर्च लोड नहीं हो सका",
+        "retry": "फिर कोशिश करो",
+        "loading": "लोड हो रहा है…",
+        "aria_label": "समय के साथ खर्च का स्टैक्ड एरिया चार्ट",
+        "keyboard_hint": "दिनों के बीच जाने के लिए बाएँ और दाएँ तीर कुंजियों का उपयोग करें।"
       }
     },
     "overviewPage": {
