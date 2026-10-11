@@ -295,7 +295,26 @@ export function createAgentsEndpoints({ post, put, del, j, jfetch: fetch, sessio
         rendered_html?: string
         manifest: DashboardManifest
         state: 'empty' | 'live' | 'stale' | 'error'
+        /** Every field this page can ever be sent, off the package's own model. */
+        fields?: string[]
+        /** The `kind="dashboard"` package this response rendered, when the crewmate's
+         *  binding resolved to one. The tab carries it back on a refetch and drops any
+         *  pushed frame belonging to a different package. */
+        dashboard?: string
       } | null>,
+    /** The whole read, after the page refused a patch it could not place in order.
+     *
+     *  The host's half of the frame's gap rule. A page applies patches in sequence
+     *  and asks for this when one skips a version -- applying it anyway would show
+     *  one field from after a change and the rest from before it, with nothing on the
+     *  page saying so. 409 `no_live_page` when nothing is armed; the remedy is to
+     *  re-read the dashboard, which arms one. */
+    memberDashboardRefetch: (slug: string, member: string, dashboard: string) =>
+      fetch(
+        '/api/members/' + encodeURIComponent(slug) + '/dashboard/refetch?member='
+          + encodeURIComponent(member) + '&dashboard=' + encodeURIComponent(dashboard),
+        { method: 'POST' },
+      ).then(j) as Promise<{ dashboard?: string; read: { [key: string]: unknown } } | null>,
     // The crewmate's self-maintained briefing markdown. Read-only from the UI
     // (no editor: the file is agent-written and edited where the crewmate keeps
     // it). `member` is the exact crew name (slugs are lossy).

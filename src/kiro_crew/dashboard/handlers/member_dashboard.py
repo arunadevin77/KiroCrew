@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Final, Mapping
 
 from aiohttp import web
 
 from kiro_crew import members as members_mod
 from kiro_crew.config.loader import KiroCrewConfig
+from kiro_crew.dashboard.handlers import member_dashboard_fields
 from kiro_crew.dashboard.handlers._shared import require_owner_dashboard_request
 from kiro_crew.dashboard.handlers.members import (
     _deny_app_caller,
@@ -52,6 +53,24 @@ def _bad(code: str, message: str, status: int = 400) -> web.Response:
     user ``instance_refused``.
     """
     return web.json_response({"error": message, "code": code}, status=status)
+
+
+def _name_unsafe(name: str) -> bool:
+    """``True`` when *name* is a string the egress redactor would rewrite.
+
+    Asked of an IDENTIFIER rather than of prose, which is why it answers a boolean and
+    not a safe copy. Every other string on this surface is scrubbed by replacing it --
+    ``_page_safe`` for a value, ``_template_text_safe`` for markup -- because nothing
+    downstream joins on its bytes. A slug is joined on: the body names the package the
+    tab mounts, the frame names the package a patch belongs to, and the refetch names
+    the package it wants. Rewriting it would make those three disagree, so the only
+    answers available are "serve it raw" and "do not serve it".
+
+    ``redact_via_context`` for the reason ``_page_safe`` uses it: it is the canonical
+    egress shim, so a host with a loaded companion applies that companion's patterns
+    too, and the question here is exactly "would this leave the machine rewritten".
+    """
+    return bool(name) and redact_via_context(name) != name
 
 
 async def _resolve(request: web.Request) -> tuple[str, str] | web.Response:
@@ -222,6 +241,57 @@ async def api_member_dashboard(request: web.Request) -> web.Response:
     # The reader's UI language, as the browser resolved it. Checked against the
     # shipped catalogs in `dashboard_frame.page_locale`; anything else is English.
     locale = request.query.get("locale", "")
+    package_slug = request.query.get("dashboard", "")
+    if not package_slug:
+        # RESOLVED HERE, which is what makes the package page reachable at all: no
+        # caller knows a package's slug, so without this the route, the push and the
+        # refetch were unreachable code. Named by the crewmate's own binding, off the
+        # event loop because it lists the artifact library.
+        #
+        # STOPGAP: the package line's own `resolve_bound_slug` answers this as part
+        # of its API; when that ships, this call becomes that one.
+        package_slug = await _run(lambda: member_dashboard_fields.bound_package_slug(_member))
+    if _name_unsafe(package_slug):
+        # A SLUG IS A NAME TOO, and it travels further than the others: the body carries
+        # it twice, every pushed frame carries it, and the refetch answers with it. An
+        # artifact slug is `[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?`, which forbids `_` and
+        # upper case and so cannot be a `ghp_` or an AWS key -- but it CAN be a Slack
+        # bot token (`xoxb-<digits>-<chars>`) or a GitLab PAT (`glpat-<chars>`), and
+        # both are shapes the redactor rewrites.
+        #
+        # HERE, where the slug ENTERS, rather than at each of the three places it
+        # leaves: this is the one point both sources pass through, and refusing before
+        # `_serve_package` means no package is read and no page is armed -- which also
+        # settles the refetch, since it answers from an armed page or 409s.
+        #
+        # The two sources get different answers because they are different requests.
+        if request.query.get("dashboard", ""):
+            # THE CALLER NAMED IT, so the caller is told. A code rather than a
+            # sentence about secrets, and the slug is not echoed back.
+            logger.warning("dashboard: %r named a package slug that would be redacted", slug)
+            return _bad(
+                "dashboard_slug_refused",
+                "that dashboard package cannot be served: its slug would be rewritten "
+                "on its way to a page, and the page and its pushes join on that slug",
+                status=409,
+            )
+        # NOBODY ASKED FOR IT: this slug came from the crewmate's own binding. Treated
+        # as an unresolved binding, which is the template page every crewmate has on
+        # this branch -- so a credential pasted into an artifact's NAME costs its owner
+        # the package page and never the tab. Logged, so the rename is findable.
+        logger.warning(
+            "dashboard: %r's bound package has a slug that would be redacted; serving "
+            "the template page instead",
+            slug,
+        )
+        package_slug = ""
+    if package_slug:
+        # A PAGE ITS OWNER WROTE, served from the same route and behind the same owner
+        # check as a template instance. The body keeps the shape the tab already reads
+        # -- `rendered_html` is what it mounts -- so a package page needs no second
+        # route and no second frame contract, which are the two places this surface
+        # cannot afford to get the gate wrong twice.
+        return await _serve_package(request, slug, _member, package_slug, locale)
     if request.query.get("preview") == "1":
         # The STAGED page, which no version records. Served from the same route and
         # behind the same owner check: a staged page carries this crewmate's fold
@@ -577,12 +647,253 @@ def _render(slug: str, member: str, record: Any, locale: str = "") -> str | None
 
 
 def register_member_dashboard_routes(app: web.Application) -> None:
-    """Register the dynamic dashboard's read route.
+    """Register the dynamic dashboard's read route and the gap refetch beside it.
 
-    One route, so there is no ordering question here yet. ``server.py`` duplicates the
+    The refetch path is a strict suffix of the read path, so aiohttp's own resolver
+    separates them by METHOD and there is no ordering question. ``server.py`` duplicates the
     path through its deferred binder rather than calling this function, because calling
     it would import this module at boot and the boot-path rule forbids that for an
     optional subsystem; ``test_member_dashboard_routes`` pins the two spellings against
     each other.
     """
     app.router.add_get("/api/members/{slug}/dashboard", api_member_dashboard)
+    app.router.add_post("/api/members/{slug}/dashboard/refetch", api_member_dashboard_refetch)
+
+
+#: One armed page per (crewmate, package), on the app so a reload replaces rather than
+#: stacks. Keyed by BOTH because one crewmate can be shown through two packages at once
+#: and each needs its own subscriptions and its own version counter.
+_LIVE_PAGES = "member_dashboard_live_pages"
+
+#: How many pages may be armed at once. Each one holds a bus subscription per fold its
+#: model reads, and nothing disarms a page when its tab closes -- the browser cannot
+#: say so -- so an operator who opens every crewmate's dashboard over a long-running
+#: gateway leaves every one of those subscriptions behind for its life.
+#:
+#: The least recently armed page is disarmed when the cap is passed. That costs its tab
+#: its pushes until its next read arms it again, and its next read is a refetch of the
+#: whole value set -- so the failure mode is a page that stops moving, never one that
+#: presents a stale value as the current one.
+_MAX_LIVE_PAGES: Final[int] = 32
+
+
+def _live_pages(request: web.Request) -> dict[tuple[str, str], Any]:
+    pages: dict[tuple[str, str], Any] | None = request.app.get(_LIVE_PAGES)
+    if pages is None:
+        pages = {}
+        request.app[_LIVE_PAGES] = pages
+    return pages
+
+
+def _push_frame(state: Any, slug: str, package_slug: str, frame: dict[str, Any]) -> None:
+    """Send one field frame to the owner's sockets. Called on the FOLD WORKER thread.
+
+    ``broadcast_ws_owners`` -- the same hub and the same owner-socket set every other
+    fold-driven frame goes out on, so the owner gate, the backpressure and the
+    reconnect are not re-implemented for a second channel.
+    """
+    try:
+        # THE PACKAGE IS NAMED on every frame. The socket is per connection, so a
+        # frame reaches every tab the owner has open -- and one crewmate can be shown
+        # through two different packages at once (two tabs, or a template page beside a
+        # package page). Without the id each tab applies the other's patches, and its
+        # refetch answers with the other package's read.
+        state.broadcast_ws_owners(
+            member_dashboard_fields.FIELD_FRAME,
+            {"slug": slug, "dashboard": package_slug, "read": frame},
+        )
+    except Exception:  # pragma: no cover - a failed send must not cost the folder
+        logger.debug("dashboard: a field frame for %s could not be broadcast", slug)
+
+
+async def _serve_package(
+    request: web.Request, slug: str, member: str, package_slug: str, locale: str
+) -> web.Response:
+    """Serve the ``kind="dashboard"`` artifact *package_slug* as this crewmate's page.
+
+    THE BINDING IS CHECKED, not looked up. The tab names the package it is opening and
+    this asks whether that package is THIS crewmate's -- which is the question that
+    matters, and the one a scan of the artifact library would answer less directly. A
+    package bound elsewhere is refused rather than rendered, because a page carries the
+    binding's own fold values and rendering it here would show one crewmate's work
+    under another's name.
+
+    Arming the live page is part of serving it: the first paint and every later patch
+    come from one :class:`~kiro_crew.dashboard.handlers.member_dashboard_fields.LivePage`,
+    so the version the body carries is the one the first patch is checked against.
+    """
+    from kiro_crew.artifact_store.dashboard_package import (
+        DASHBOARD_KIND,
+        binding_refusal,
+        parse_package,
+        subscribed_fields,
+    )
+    from kiro_crew.artifacts import ArtifactError, get_default_store
+
+    try:
+        loaded = await _run(lambda: get_default_store().get(package_slug))
+    except ArtifactError:
+        return _bad("dashboard_not_found", "no dashboard package at that slug", status=404)
+    except OSError:
+        logger.warning("dashboard: package %r could not be read", package_slug)
+        return _bad("dashboard_failed", "the dashboard package could not be read", status=500)
+    # THE RECORD'S OWN KIND, checked before anything is parsed. Content alone is not
+    # enough: a LINKED artifact's bytes come from a file on disk, so its content can be
+    # changed without passing the artifact write gate at all -- and parsing whatever is
+    # there would arm a page nobody authorized. Only a stored `kind="dashboard"`
+    # artifact that owns its own bytes reaches the parse below.
+    if str(getattr(loaded, "kind", "")) != DASHBOARD_KIND:
+        return _bad(
+            "dashboard_not_a_package",
+            "that artifact is not a dashboard package",
+            status=409,
+        )
+    if str(getattr(loaded, "source_path", "") or "") and not bool(
+        getattr(loaded, "source_copy_only", False)
+    ):
+        # A live pointer: the artifact serves a file's current bytes, which nothing in
+        # the artifact API gates. Refused rather than rendered, because the page RUNS.
+        return _bad(
+            "dashboard_live_source",
+            "a dashboard package cannot be served from a linked file: its bytes would "
+            "bypass the write gate that decides whose page this is",
+            status=409,
+        )
+    # THE RESIDUAL, named where it bites. These are the record's OWN bytes, and the
+    # store rotates a random `content_token` per write rather than hashing them, so a
+    # write made straight into the stored file -- around the artifact API and so around
+    # the owner gate -- is not detectable at this line. Nor can a check here close it: a
+    # writer reaching that file is the same OS user as this process, so any digest or key
+    # this handler compared against sits in a file that writer can rewrite too, and it
+    # could edit this module instead. What bounds the damage is the frame rather than the
+    # gate -- the page runs with no network on an opaque origin and is sent only the
+    # fields the model declares, so tampered markup can mislead the owner reading it and
+    # reach nothing beyond that tab. The gate's own job is the write that arrives over
+    # the API, which is the one every agent and app actually has.
+    try:
+        package = await _run(lambda: parse_package(loaded.content or ""))
+    except Exception as exc:
+        return _bad("dashboard_refused", f"the dashboard package does not load: {exc}", status=409)
+    # OFF THE LOOP: `binding_refusal` resolves the caller's slug through the roster,
+    # which loads the config from disk.
+    refused = await _run(lambda: binding_refusal(package.get("bound_to"), crew=member))
+    if refused:
+        return _bad("dashboard_not_bound", refused, status=403)
+    state = request.app["state"]
+    version = int(getattr(loaded, "version", 0) or 0)
+    pages = _live_pages(request)
+    # KEYED BY (crewmate, package), because one crewmate can have two packages open and
+    # each needs its own subscriptions and its own version counter.
+    key = (slug, package_slug)
+    previous = pages.pop(key, None)
+    if previous is not None:
+        # DISARMED FIRST. A reload or a layout change would otherwise leave the old
+        # page's subscriptions on the bus, pushing frames computed under a layout
+        # nothing is rendering.
+        await _run(previous.disarm)
+    # BOTH RESOLVERS ARE FILE IO and neither may run here: `_dashboard_slot` loads the
+    # config and `_write_session` walks the slot's unit succession, reading each unit's
+    # opening entry. On the event loop that blocks every other session's chat and the
+    # heartbeat for as long as the walk takes.
+    slot, session_unit = await _run(
+        lambda: (_dashboard_slot(member, slug), _write_session(slug, member))
+    )
+    page = member_dashboard_fields.LivePage(
+        slug,
+        slot,
+        package,
+        lambda frame: _push_frame(state, slug, package_slug, frame),
+        session_unit=session_unit,
+        layout_version=version,
+        # The reader's own UI language, so a patch describes the same read the first
+        # paint did. Without it every frame carries the default and a non-English
+        # reader is handed an English page on every push.
+        locale=locale,
+        # THE SAME masking and redaction pass the template path applies, handed in
+        # rather than re-implemented: this is the one place a package's values are
+        # produced, so a value that did not cross it cannot reach a browser.
+        redact=_page_safe,
+    )
+    read = await _run(page.arm)
+    # RE-CHECKED AFTER ARMING, because arming awaits: two GETs for one crewmate (two
+    # tabs, or both tabs refetching after a reconnect) each pop before either assigns,
+    # so without this the first armed page is replaced without ever being disarmed --
+    # and it stays subscribed to the bus for the life of the gateway, pushing frames
+    # from its own version counter that the open page can only read as gaps.
+    raced = pages.get(key)
+    if raced is not None and raced is not page:
+        await _run(raced.disarm)
+    pages[key] = page
+    # THE CAP, applied after the assignment so the page this request serves is never
+    # the one evicted. A dict iterates in insertion order and every serve pops its key
+    # before re-inserting it, so the first key is the least recently ARMED one -- the
+    # order the eviction wants, with no second structure to keep in step with it.
+    while len(pages) > _MAX_LIVE_PAGES:
+        oldest = next(iter(pages))
+        if oldest == key:
+            break
+        stale = pages.pop(oldest)
+        await _run(stale.disarm)
+    # SCRUBBED BEFORE COMPOSING, with the same pass the `html` field below gets. The
+    # composed document is the half that RUNS, so scrubbing only the raw field left a
+    # credential pasted into the page's own markup in the response one key away.
+    safe_page = dict(package)
+    safe_view = dict(package.get("view") or {})
+    safe_view["html"] = _template_text_safe(safe_view.get("html") or "")
+    safe_page["view"] = safe_view
+    try:
+        html = member_dashboard_fields.render_package_page(safe_page, read)
+    except Exception as exc:
+        await _run(page.disarm)
+        pages.pop(key, None)
+        return _bad("dashboard_refused", f"the page cannot be framed: {exc}", status=409)
+    return web.json_response(
+        {
+            "instance_version": version,
+            "template": {"id": package_slug, "version": version},
+            # NAMED for the tab: it carries this back on a refetch and drops any frame
+            # that belongs to a different package.
+            "dashboard": package_slug,
+            # The package's own page, kept beside the composed one exactly as the
+            # template path keeps its stored copy, and scrubbed by the same pass.
+            "html": safe_view["html"],
+            "manifest": _manifest_text_safe(package.get("model") or {}),
+            "state": instance.STATE_LIVE,
+            "rendered_html": html,
+            # THE ALLOWLIST, named in the body so a reader of one response can see
+            # exactly which fields this page can ever be sent.
+            "fields": sorted(subscribed_fields(package)),
+            "locale": read.get("locale", locale) if isinstance(read, dict) else locale,
+        }
+    )
+
+
+async def api_member_dashboard_refetch(request: web.Request) -> web.Response:
+    """POST /api/members/{slug}/dashboard/refetch -- the whole read, after a version gap.
+
+    The host's half of the frame's own gap rule: a page that cannot place a patch in
+    order asks for a full read rather than applying one out of order, and this answers
+    it. The tree-keyed folds are re-read here too, which is the other half of why a
+    refetch exists -- nothing can push a tree, so this is the only moment its value
+    moves.
+
+    Owner-gated like the read it belongs to. A page nothing has armed answers 409: the
+    remedy is to re-read the dashboard, which arms one.
+    """
+    resolved = await _resolve(request)
+    if isinstance(resolved, web.Response):
+        return resolved
+    owner_denied = await _owner_only(request, "members.dashboard")
+    if owner_denied is not None:
+        return owner_denied
+    slug, _member = resolved
+    # The PACKAGE is named, for the same reason a frame names it: a crewmate can have
+    # two open, and answering the wrong one's read would replace a page's values with
+    # another page's wholesale.
+    package_slug = request.query.get("dashboard", "")
+    if not package_slug:
+        return _bad("missing_dashboard", "name the dashboard package to refetch")
+    page = _live_pages(request).get((slug, package_slug))
+    if page is None:
+        return _bad("no_live_page", "no dashboard page is armed for this package", status=409)
+    return web.json_response({"dashboard": package_slug, "read": await _run(page.refetch)})

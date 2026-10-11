@@ -17910,7 +17910,8 @@
       "fresh_start_confirm_action": "Neu anfangen",
       "fresh_start_hint": "Startet ein neues Gespräch mit diesem Crewmate. Frühere Nachrichten bleiben sichtbar.",
       "fresh_start_failed_queued": "Es warten noch Nachrichten. Warte, bis sie fertig sind, und versuche Neu anfangen dann erneut.",
-      "fresh_start_failed_busy": "Der Crewmate arbeitet noch und hat nicht gestoppt. Stoppe ihn zuerst und versuche es dann erneut."
+      "fresh_start_failed_busy": "Der Crewmate arbeitet noch und hat nicht gestoppt. Stoppe ihn zuerst und versuche es dann erneut.",
+      "dashboard_values_stale": "Die Live-Werte werden nicht mehr aktualisiert; dies sind die letzten empfangenen Werte."
     },
     "tasksCapacityCard": {
       "title": "Aufgaben & Kapazität",

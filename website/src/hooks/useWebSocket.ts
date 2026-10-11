@@ -55,6 +55,7 @@ import {
   handleThreadReply,
   invalidateRefreshQueries,
 } from './websocket/serverState'
+import { DASHBOARD_FIELDS_FRAME, handleDashboardFields } from './websocket/dashboardFields'
 import { useChatStream } from './websocket/chatStream'
 import { useTurnCompletion } from './websocket/turnCompletion'
 import { attachFocusRelay } from './websocket/attention'
@@ -77,6 +78,7 @@ export { __resetRedactionHealForTests, healRedactionSwitchAfterReconnect } from 
 // invalidate the same key the handler invalidates: a second spelling of that
 // prefix would let a refresh reach a different cache entry from the frame.
 export { MEMBER_DASHBOARD_QUERY_PREFIX, handleDashboardMoved } from './websocket/serverState'
+export { DASHBOARD_FIELDS_FRAME, subscribeDashboardFields } from './websocket/dashboardFields'
 export { identityOf, askIdsOf, reconcileQuestions, staleAskIds } from './websocket/composerCards'
 export { resolvedSince } from './websocket/retiredIds'
 export { UPDATE_RESTART_LATCH_KEY, UPDATE_RESTART_LATCH_TTL_MS, consumeUpdateRestartLatch } from './websocket/bundleReload'
@@ -359,6 +361,13 @@ export function useWebSocket() {
             }
             break
           }
+          case DASHBOARD_FIELDS_FRAME:
+            // The fields that MOVED, pushed rather than refetched. Handed to the
+            // dashboard showing that crewmate, which posts it into its iframe; a
+            // query invalidation would re-read the whole page and throw away the
+            // page's own state on every value change.
+            handleDashboardFields(data)
+            break
           case 'dashboard_value_written':
             // A crewmate wrote one of its own dashboard fields mid-turn. The frame
             // carries only {slug}; the tab's refetch re-asks the server, which

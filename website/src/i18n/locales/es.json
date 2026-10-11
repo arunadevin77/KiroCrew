@@ -18169,7 +18169,8 @@
       "fresh_start_confirm_action": "Empezar de cero",
       "fresh_start_hint": "Empieza una conversación nueva con este compañero. Los mensajes anteriores siguen visibles.",
       "fresh_start_failed_queued": "Aún hay mensajes en cola. Espera a que terminen y vuelve a intentar Empezar de cero.",
-      "fresh_start_failed_busy": "El compañero sigue trabajando y no se detuvo. Detenlo primero y vuelve a intentarlo."
+      "fresh_start_failed_busy": "El compañero sigue trabajando y no se detuvo. Detenlo primero y vuelve a intentarlo.",
+      "dashboard_values_stale": "Los valores en vivo dejaron de actualizarse, asi que estos son los ultimos recibidos."
     },
     "tasksCapacityCard": {
       "title": "Tareas y capacidad",

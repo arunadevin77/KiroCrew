@@ -225,6 +225,14 @@ _STUB_DATA_TYPES: tuple[FieldType, ...] = (
         required={"choices": _a_choice_list},
     ),
     FieldType(name="bool", summary="a yes/no flag"),
+    # The two a PAGE needs and a host-drawn block never did. A fold's value is often a
+    # list of rows or a nested record -- `worktree.boards`, `work.items` -- and the
+    # catalog without them can express a count of a tree but not the tree, so the first
+    # page that draws one has no field to bind. Admitted with no shape keys: the write
+    # path does not check a fold's own structure, and a shape declared here would be a
+    # promise about bytes nothing validates.
+    FieldType(name="array", summary="a list of rows, walked by the page's own script"),
+    FieldType(name="object", summary="a nested record, walked by the page's own script"),
 )
 
 #: STUB -- the display line owns this table.
@@ -447,6 +455,59 @@ def validate_bound_to(raw: Any) -> str:
             f"{raw!r} is not a binding: write 'crewmate:<slug>' or 'session:<slot key>'",
         )
     return raw
+
+
+def binding_refusal(bound_to: Any, *, crew: str = "", slot: str = "") -> str:
+    """``""`` when this caller owns the dashboard *bound_to* names; else why it does not.
+
+    THE OWNER GATE, as a comparison with no request and no store read, so every write
+    path can ask it and a test can enumerate the answers. The caller's identity is
+    resolved by whoever holds the request -- the crew comes from the session's own
+    binding and never from a body -- and only the comparison is here. A crewmate
+    binding resolves the caller's slug through the roster, because the binding stores a
+    slug and a name is not one.
+
+    A refusal is RETURNED rather than raised, and it is a sentence rather than a code,
+    because the party that reads it is a worker agent that can act on it: the useful
+    thing to say is whose dashboard this is and what to do instead, and an exception
+    would be rendered as a 500 by every caller that answers a validation error with a
+    400.
+
+    Both binding scopes are answered, and a caller that can prove neither identity is
+    refused rather than allowed: a gate whose default is "no identity, no objection"
+    is not a gate.
+    """
+    try:
+        binding = validate_bound_to(bound_to)
+    except ArtifactValidationError as exc:
+        return str(exc)
+    scope, _, name = binding.partition(":")
+    if scope == "session":
+        if slot and slot == name:
+            return ""
+        return (
+            f"this dashboard belongs to the session {name!r} and you are writing from "
+            f"{slot or 'no session'}. Report your work with work_report; the fold "
+            "carries it to the page."
+        )
+    # A crewmate binding. The slug is compared, not the display name, because the
+    # binding stores a slug and slugification is lossy -- comparing names would let
+    # two configured names that differ only in case each pass for the other's page.
+    if crew:
+        from kiro_crew import members as members_mod
+
+        try:
+            if members_mod.member_slug(crew) == name:
+                return ""
+        except Exception:
+            # An unslugifiable caller cannot be shown to own anything, which is the
+            # same answer as a mismatch and is reported as one.
+            pass
+    return (
+        f"this dashboard belongs to {name!r} and you are {crew or 'not a crew member'}. "
+        "A dashboard is written by the crewmate it is bound to; report your work with "
+        "work_report instead, and the fold carries it to the page."
+    )
 
 
 def _validate_model(raw: Any) -> dict[str, Any]:

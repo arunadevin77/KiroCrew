@@ -8420,7 +8420,8 @@
       "fresh_start_confirm_action": "Start fresh",
       "fresh_start_hint": "Starts a new conversation with this crewmate. Earlier messages stay visible.",
       "fresh_start_failed_queued": "Messages are still queued. Wait for them to finish, then try Fresh start again.",
-      "fresh_start_failed_busy": "The crewmate is still working and didn't stop. Stop it first, then try Fresh start again."
+      "fresh_start_failed_busy": "The crewmate is still working and didn't stop. Stop it first, then try Fresh start again.",
+      "dashboard_values_stale": "Live values stopped updating, so these are the last ones received."
     }
   },
   "privacyDisclosure": {

@@ -716,13 +716,23 @@ class TestTheFoldScope:
         an event, which reads as an empty fold."""
         assert dashboard_feed.scope_for("nope") == ""
 
-    def test_every_manifest_fold_name_has_a_scope(self) -> None:
+    def test_every_manifest_fold_name_is_keyed_or_read_as_a_tree(self) -> None:
         """A template may declare any of them, so a name the manifest accepts and
-        this cannot key would be a dashboard that never fills."""
+        nothing can reach would be a dashboard that never fills.
+
+        There are TWO ways to reach one, and a tree fold has no scope by design: it
+        joins the logs of many slots, so its value is stale when any member's log grows
+        and there is no key an event could carry to say which. It is read instead
+        (``read_tree_projection``, on a page load and on a refetch), which
+        ``member_dashboard_fields.LivePage`` does. So the invariant is reachability, not
+        a scope -- a bare scope check calls the one fold with a reader unreachable, and
+        a fold in neither set still fails here.
+        """
+        from kiro_crew.crew_log.projection import TREE_PROJECTION_NAMES
         from kiro_crew.dashboard_templates.manifest import FOLD_NAMES
 
         for name in FOLD_NAMES:
-            assert dashboard_feed.scope_for(name), name
+            assert dashboard_feed.scope_for(name) or name in TREE_PROJECTION_NAMES, name
 
 
 class TestThePathWalk:

@@ -18169,7 +18169,8 @@
       "fresh_start_confirm_action": "Repartir à zéro",
       "fresh_start_hint": "Démarre une nouvelle conversation avec ce coéquipier. Les messages précédents restent visibles.",
       "fresh_start_failed_queued": "Des messages sont encore en file. Attends qu'ils finissent, puis réessaie Repartir à zéro.",
-      "fresh_start_failed_busy": "Le coéquipier travaille encore et ne s'est pas arrêté. Arrête-le d'abord, puis réessaie."
+      "fresh_start_failed_busy": "Le coéquipier travaille encore et ne s'est pas arrêté. Arrête-le d'abord, puis réessaie.",
+      "dashboard_values_stale": "Les valeurs en direct ne sont plus mises a jour : voici les dernieres recues."
     },
     "tasksCapacityCard": {
       "title": "Tâches et capacité",

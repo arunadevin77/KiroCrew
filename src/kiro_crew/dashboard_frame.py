@@ -331,6 +331,45 @@ _BOOTSTRAP_JS: Final[str] = f"""
     deliver(entry, read);
     return function () {{ entry.live = false; }};
   }}
+  // The push version the page HOLDS, taken from the ISLAND rather than started at
+  // zero: the document is composed from a full read that already carries one, so a
+  // page that began at zero would accept the first patch whatever its version and
+  // apply a frame computed against a read it never saw.
+  var held = typeof read.version === 'number' ? read.version : 0;
+  // WHOSE COUNTER `held` BELONGS TO. Versions are only comparable inside one armed
+  // page: a page the host re-arms starts its counter again, so a lower number can
+  // belong to a newer read. The generation says which counter a number came from, and
+  // the fence below compares numbers only when both carry the same one.
+  var generation = typeof read.generation === 'string' ? read.generation : '';
+  function mergePatch(base, patch) {{
+    // A PATCH CARRIES WHAT MOVED and says nothing about what did not, so the fields
+    // it omits are kept. Without this a push of one field would leave the global
+    // holding that field alone -- a chart reading a second one would find
+    // `undefined` and the host's own fill would mark every other cell missing, so
+    // the page would go blank one field at a time with no state saying why.
+    var fields = {{}};
+    var key;
+    var from = (base && base.fields) || {{}};
+    for (key of Object.keys(from)) fields[key] = from[key];
+    var moved = patch.fields || {{}};
+    for (key of Object.keys(moved)) fields[key] = moved[key];
+    return {{
+      fields: fields,
+      // The REST of the read is the patch's, not merged: `stale`, `missing` and the
+      // agentic marks are statements about the read as a whole, and a merge of two
+      // of them would describe neither. The host sends them on every patch for that
+      // reason.
+      agentic: patch.agentic || [],
+      seq: typeof patch.seq === 'number' ? patch.seq : 0,
+      stale: patch.stale === true,
+      missing: patch.missing || [],
+      written_at: patch.written_at || {{}},
+      locale: typeof patch.locale === 'string' ? patch.locale : (base || {{}}).locale,
+      version: typeof patch.version === 'number' ? patch.version : 0,
+      generation:
+        typeof patch.generation === 'string' ? patch.generation : (base || {{}}).generation,
+    }};
+  }}
   function publish(value) {{
     // `subscribe` travels ON the published object, because the object is replaced
     // wholesale by every refill: a page that read `window.kirocrew.subscribe` on
@@ -405,16 +444,63 @@ _BOOTSTRAP_JS: Final[str] = f"""
     var data = event.data;
     if (!data || data.type !== {'"kirocrew-dashboard:data"'}) return;
     if (!data.read || typeof data.read !== 'object') return;
+    var arrived = data.read;
+    var version = typeof arrived.version === 'number' ? arrived.version : 0;
+    var arrivedGeneration = typeof arrived.generation === 'string' ? arrived.generation : '';
+    // A SUPERSEDED FULL READ, dropped. Two gaps can be in flight at once, their
+    // answers can arrive in either order, and a full read REPLACES -- so the older
+    // answer puts back the values the newer one already moved past, and reports
+    // `stale: false` while doing it, which is the one case where nothing on the page
+    // says the number is behind. Only the full read is fenced: a patch out of order is
+    // the gap check's business one line below, and it asks for a fresh read.
+    //
+    // Same generation only. A re-armed page restarts the counter, so its first read is
+    // newer than this one despite a smaller number -- fencing across generations would
+    // leave that tab unable to ever accept its own recovery.
+    if (arrived.patch !== true && arrivedGeneration === generation && version < held) return;
+    if (arrived.patch === true) {{
+      // A GAP, and the one condition this frame cannot recover from on its own: the
+      // patch is not the next one, so a frame was dropped and nothing on the page
+      // would show it. NO EXEMPTION for a page holding zero: a gateway restart
+      // restarts the counter, and the refetch this asks for answers with a full read
+      // that replaces -- one extra round trip, where the exemption instead applied a
+      // patch computed against a read this page never held.
+      // A DIFFERENT GENERATION IS A GAP TOO, whatever the number says. The host can
+      // replace the live page under an open tab -- a second tab's load disarms the old
+      // one and arms a new one -- and the replacement's counter starts again, so its
+      // patch 2 can look like the next one to a tab holding 1. Merging it would mix
+      // fields computed from two different reads, which is the state the gap check
+      // exists to refuse, so the same refetch answers it.
+      if (version !== held + 1 || arrivedGeneration !== generation) {{
+        // The literal, like its two siblings in this script: the named constants are
+        // declared below it. `test_a_patch_that_skips_a_version_asks_for_a_full_read`
+        // reads the posted message and compares it to REFETCH_MESSAGE_TYPE, so a
+        // drift between the two fails rather than going quiet.
+        parent.postMessage(
+          {{ type: {'"kirocrew-dashboard:refetch"'}, held: held }}, '*'
+        );
+        // NOT APPLIED. Asking for the whole read and applying the patch anyway
+        // would reach the same wrong page one round trip later.
+        return;
+      }}
+      arrived = mergePatch(read, arrived);
+    }}
+    held = version;
+    generation = arrivedGeneration;
     // The FROZEN global is replaced wholesale rather than mutated, for the reason
     // it is frozen: a page holding a reference to the old object keeps reading
     // consistent numbers from it, and nothing half-updates.
-    read = data.read;
+    read = arrived;
     publish(read);
     fill();
     // AFTER the fill, so a callback that reads its own bound element finds the text
     // the host wrote for this push rather than the previous one's. Before the
     // generic event, so a page using both hears the specific signal first.
-    notify(read);
+    //
+    // Notified with WHAT ARRIVED, never with the merged read: `deliver` fires on the
+    // presence of a field, so handing it the merge would fire every subscriber on
+    // every push and make the callback another spelling of the generic event.
+    notify(data.read);
     window.dispatchEvent(new Event({'"kirocrew-dashboard"'}));
   }});
   if (document.readyState === 'loading') addEventListener('DOMContentLoaded', fill);
@@ -428,6 +514,16 @@ DATA_MESSAGE_TYPE: Final[str] = "kirocrew-dashboard:data"
 #: The event the page may listen for to know a refill landed. A page drawing a chart
 #: redraws on this rather than polling.
 PAGE_EVENT: Final[str] = "kirocrew-dashboard"
+
+#: What the page posts when it cannot place a patch in order: send the whole read.
+#:
+#: The ONLY thing that detects a dropped frame. A patch says what moved and nothing
+#: about what did not, so a page that applied one out of order shows one field from
+#: after a change and the rest from before it -- and no band, no marker and no seq says
+#: so, because every value on the page did arrive from the host. The message carries
+#: ``held``, the version the page has, so the host can answer with a full read rather
+#: than re-deriving which patches to resend.
+REFETCH_MESSAGE_TYPE: Final[str] = "kirocrew-dashboard:refetch"
 
 #: The readiness beacon, which runs AFTER the page.
 #:

@@ -1448,12 +1448,86 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
             is_mcp = request.headers.get("X-Internal-Secret") is not None
             actor = "agent" if is_mcp else "user"
 
+            submitted_content = (
+                promoted_content if promoted_content is not None else body.get("content")
+            )
+            # THE DEDUP TARGET'S OWN BYTES, read by slug. `find_by_source_path` scans
+            # meta.json, so the record it returns carries no content -- and handing that
+            # to the gate is the same hole as reading an empty snapshot: with no stored
+            # binding to check, the gate judges only the binding this caller submitted,
+            # which is a claim the caller wrote. So a member who copies another's source
+            # path and re-saves it through this route could rebind their page.
+            #
+            # Content AND token from ONE read, for the reason the update path does it:
+            # the gate judges a snapshot and the write lands later.
+            dedup_content, dedup_token, dedup_state = await _run_off_loop(
+                lambda: _stored_snapshot_for(existing.slug)
+            )
+            if dedup_state == _SNAPSHOT_UNREADABLE and await _run_off_loop(
+                lambda: _gate_must_classify(existing.slug, submitted_content)
+            ):
+                _audit(
+                    tool="artifact_save",
+                    request=request,
+                    outcome="denied",
+                    error="stored snapshot unreadable",
+                    extra={"slug": existing.slug, "source_path": source_path},
+                )
+                return _err(
+                    "that artifact could not be read, so this save cannot be authorized "
+                    "against what it holds; nothing was written -- retry",
+                    status=503,
+                )
+            # The same binding gate the update route asks, on the path a create
+            # that lands on an existing slug takes. One of the two is not enough:
+            # whichever went unasked is the spelling a worker would use.
+            refused = await _run_off_loop(
+                lambda: _package_write_refusal(request, submitted_content, dedup_content)
+            )
+            if refused:
+                _audit(
+                    tool="artifact_create",
+                    request=request,
+                    outcome="denied",
+                    error="dashboard package binding",
+                    extra={"slug": existing.slug},
+                )
+                return _err(refused, status=403)
+
             # Pass through ALL supported fields (not just content).
             update_kwargs: dict[str, Any] = {
-                "content": promoted_content if promoted_content is not None else body.get("content"),
+                "content": submitted_content,
                 "actor": actor,
                 "snapshot": True,
             }
+            # UNDER THE TOKEN OF THE SNAPSHOT JUST JUDGED, so a rebind landing between
+            # the read above and this write is refused by the store rather than
+            # committed over -- the same guard the update route carries, on the path
+            # that reaches the same records through a source path.
+            #
+            # NO TOKEN MEANS NO WRITE for a package, rather than a write without the
+            # guard. The snapshot can be gone by the time it is read -- the dedup
+            # target deleted after the lookup, its slug recreated as somebody else's
+            # dashboard -- and that absence is exactly the case the gate cannot judge:
+            # with nothing stored it has only the binding this caller submitted, which
+            # the caller wrote, and the store's default would commit it over whatever
+            # now holds the slug.
+            if await _run_off_loop(lambda: _is_dashboard_package(dedup_content, submitted_content)):
+                if not dedup_token:
+                    _audit(
+                        tool="artifact_save",
+                        request=request,
+                        outcome="denied",
+                        error="no authorized snapshot for a dashboard package write",
+                        extra={"slug": existing.slug, "source_path": source_path},
+                    )
+                    return _err(
+                        "that slug no longer holds the dashboard package this save was "
+                        "authorized against, so there is nothing to write over; "
+                        "nothing was written -- refetch and re-base",
+                        status=409,
+                    )
+                update_kwargs["expected_token"] = dedup_token
             if body.get("name"):
                 update_kwargs["name"] = body["name"]
             if body.get("tags") is not None:
@@ -1479,6 +1553,18 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
                     extra={"slug": existing.slug, "source_path": source_path},
                 )
                 return _err(str(exc))
+            except ArtifactConflictError as exc:
+                # The record moved between the snapshot the gate judged and this
+                # write, so nothing was written. Answered like the update route's
+                # conflict: what to refetch, not a 500.
+                _audit(
+                    tool="artifact_save",
+                    request=request,
+                    outcome="denied",
+                    error=str(exc),
+                    extra={"slug": existing.slug, "source_path": source_path},
+                )
+                return _err(str(exc), status=409)
             except ArtifactError as exc:
                 _audit(
                     tool="artifact_save",
@@ -1509,6 +1595,21 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     if merr:
         _audit(tool="artifact_save", request=request, outcome="denied", error=merr)
         return _err(merr)
+    # The third write path: a package created under a slug nothing holds yet. Gated
+    # like the other two, so "create it somewhere new" is not the way past the rule.
+    # No stored binding is passed because there is none: this path is reached only
+    # after the dedupe branch above found no artifact to land on.
+    # OFF THE LOOP like its two siblings: the gate resolves the caller's slug through
+    # the roster, which loads the config from disk.
+    refused = await _run_off_loop(lambda: _package_write_refusal(request, body.get("content"), None))
+    if refused:
+        _audit(
+            tool="artifact_save",
+            request=request,
+            outcome="denied",
+            error="dashboard package binding",
+        )
+        return _err(refused, status=403)
     folder_id, ferr = await _resolve_folder_ref_off_loop(body.get("folder"), create_missing=True)
     if ferr:
         _audit(tool="artifact_save", request=request, outcome="denied", error=ferr)
@@ -1718,6 +1819,96 @@ async def api_artifact_asset(request: web.Request) -> web.Response:
     )
 
 
+def _package_write_refusal(request: web.Request, content: Any, stored: Any = None) -> str:
+    """The dashboard binding gate, imported HERE rather than at module scope.
+
+    ``dashboard.server`` imports this module at boot, and the controller behind this
+    gate reaches the template manifest and the projection registry. Importing it up
+    there would execute that graph before the socket binds, for every gateway, whether
+    or not a package dashboard is ever opened -- which is what the boot-path rule
+    forbids and what every other optional dashboard subsystem defers.
+    """
+    from kiro_crew.dashboard.handlers.member_dashboard_fields import package_write_refusal
+
+    return package_write_refusal(request, content, stored)
+
+
+def _is_dashboard_package(*texts: Any) -> bool:
+    """True when any of *texts* decodes to a dashboard package.
+
+    The same classifier the gate uses, deferred for the same boot-path reason. Asked
+    here to decide whether a write needs the stale-write check below, so that a
+    judgement the gate made on a snapshot cannot be committed against a later one.
+    """
+    from kiro_crew.dashboard.handlers.member_dashboard_fields import dashboard_package_of
+
+    return any(dashboard_package_of(text) is not None for text in texts)
+
+
+#: A stored record was read: its content and token are the snapshot to authorize.
+_SNAPSHOT_FOUND = "found"
+#: The slug holds nothing. A FACT, not a failure -- there is no binding to authorize.
+_SNAPSHOT_ABSENT = "absent"
+#: The slug may hold anything; this read could not say. Never authorized against.
+_SNAPSHOT_UNREADABLE = "unreadable"
+
+
+def _gate_must_classify(slug: str, submitted: Any) -> bool:
+    """True when the dashboard binding gate is the rule that decides this write.
+
+    Asked only when the stored snapshot could not be READ, to decide whether that
+    failure costs the write. Two ways the gate owns it: the content being submitted is
+    a package, or the record already is one. The second is answered from the library
+    LISTING, which is metadata and so still readable when the record's own bytes are
+    not -- the kind is the one thing needed and it is not in those bytes.
+
+    Fails closed if even the listing cannot be read: a record that may be a crewmate's
+    dashboard is not written over on the strength of a failed lookup.
+    """
+    from kiro_crew.artifact_store.dashboard_package import DASHBOARD_KIND
+
+    if _is_dashboard_package(submitted):
+        return True
+    try:
+        return any(
+            str(getattr(record, "slug", "")) == slug
+            for record in get_default_store().list(kind=DASHBOARD_KIND)
+        )
+    except Exception:
+        logger.warning("artifacts: the dashboard listing could not be read for %r", slug)
+        return True
+
+
+def _stored_snapshot_for(slug: str) -> tuple[str | None, str | None, str]:
+    """What *slug* holds now, the token that says so, and whether the read could tell.
+
+    For the binding gate, which is why the three outcomes are kept apart instead of
+    collapsing into "no content". "Nothing stored" and "I could not read what is
+    stored" authorize very differently: the first has no binding to check, while the
+    second is a record that may be somebody's dashboard, and treating it as empty
+    checks only the binding the CALLER submitted and carries no token forward -- so a
+    transient read error becomes a worker's write over an owner's page.
+
+    The token travels with the content because the gate authorizes a SNAPSHOT: it reads
+    the stored binding here and the write lands later, so without carrying the token
+    forward an owner's rebind in between would be overwritten by a write authorized
+    against the binding it replaced. Blocking file IO, so callers run it off the event
+    loop.
+    """
+    try:
+        # ``assign_token=True`` because the token is the POINT of this read: a record
+        # that has never been written through the guarded path holds none, and without
+        # one minted here the compare-and-set below would have nothing to compare and
+        # the write would silently fall back to last-write-wins.
+        art = get_default_store().get(slug, assign_token=True)
+    except ArtifactNotFoundError:
+        return None, None, _SNAPSHOT_ABSENT
+    except Exception:
+        logger.warning("artifacts: %r could not be read for the dashboard binding gate", slug)
+        return None, None, _SNAPSHOT_UNREADABLE
+    return art.content, getattr(art, "content_token", None) or None, _SNAPSHOT_FOUND
+
+
 async def api_artifact_update(request: web.Request) -> web.Response:
     owner_denied = await _non_owner_refusal(request, "artifacts.artifact_update")
     if owner_denied is not None:
@@ -1809,6 +2000,92 @@ async def api_artifact_update(request: web.Request) -> web.Response:
                     extra={"slug": slug, "kind": str(raw_kind)[:32]},
                 )
                 return _err(msg)
+        # A DASHBOARD PACKAGE IS ITS OWNER'S. Asked before the write, because a
+        # worker that could write the package could write the page -- and the page
+        # runs script inside the frame that holds the owner's own fold values.
+        # Asked HERE rather than in the store because the rule needs the caller,
+        # and the store is handed content with no request behind it.
+        # WHAT THE SLUG HOLDS NOW is read first, because the stored binding is who the
+        # page belongs to: gating on the submitted one alone authorizes the caller
+        # against a claim the caller wrote, so a worker could rebind another
+        # crewmate's page to itself in a single update.
+        stored_content, stored_token, stored_state = await _run_off_loop(
+            lambda: _stored_snapshot_for(slug)
+        )
+        if stored_state == _SNAPSHOT_UNREADABLE and await _run_off_loop(
+            lambda: _gate_must_classify(slug, body.get("content"))
+        ):
+            # NOTHING IS AUTHORIZED AGAINST A READ THAT FAILED. Passing unknown content
+            # to the gate checks only the binding this caller submitted -- so a
+            # transient read error would be the one moment a worker's write lands on an
+            # owner's page. Refused only where the gate is the one that decides this
+            # write: every other kind keeps the behaviour it has without this gate,
+            # because an unreadable prose document is the store's own problem to report
+            # and turning it into a refusal here would be this feature charging every
+            # other kind for its rule.
+            _audit(
+                tool="artifact_update",
+                request=request,
+                outcome="denied",
+                error="stored snapshot unreadable",
+                extra={"slug": slug},
+            )
+            return _err(
+                "that artifact could not be read, so this write cannot be authorized "
+                "against what it holds; nothing was written -- retry",
+                status=503,
+            )
+        if stored_state == _SNAPSHOT_ABSENT and await _run_off_loop(
+            lambda: _is_dashboard_package(body.get("content"))
+        ):
+            # A PACKAGE WRITE NEEDS A RECORD TO AUTHORIZE AGAINST. The slug holds
+            # nothing, so the gate below would have only the binding this caller
+            # submitted -- a claim the caller wrote -- and no token to carry forward.
+            # The store answers an absent slug with its own 404, so the one case this
+            # refusal changes is the race it exists for: the owner creating this slug
+            # between the read and the write, where the authorization would be of
+            # nothing and the write would land on their new page.
+            _audit(
+                tool="artifact_update",
+                request=request,
+                outcome="denied",
+                error="dashboard package write to an empty slug",
+                extra={"slug": slug},
+            )
+            return _err(
+                "that slug holds no dashboard package, so there is no binding to "
+                "authorize this write against; create the package instead",
+                status=409,
+            )
+        refused = await _run_off_loop(
+            lambda: _package_write_refusal(request, body.get("content"), stored_content)
+        )
+        if refused:
+            _audit(
+                tool="artifact_update",
+                request=request,
+                outcome="denied",
+                error="dashboard package binding",
+                extra={"slug": slug},
+            )
+            return _err(refused, status=403)
+        # THE TOKEN TRAVELS WITH THE SNAPSHOT THE GATE JUDGED. The read above and the
+        # write below are two moments, and `expected_token` is the caller's option, so
+        # a rebind landing in between is otherwise committed over: the gate authorized
+        # the binding the record carried at the read, and last-write-wins puts this
+        # caller's page on the crewmate who just took the slug. Requiring the token read
+        # ourselves turns that into the store's own conflict refusal, which the handler
+        # already answers with what to refetch. A caller's own token is kept when it
+        # sent one -- a stale one fails this check anyway, so neither choice can widen
+        # the write. Asked only where there is a package to protect: every other kind
+        # keeps last-write-wins, which the editor's autosave depends on.
+        expected_token = body.get("expected_token")
+        if stored_token and not expected_token:
+            needs_guard = await _run_off_loop(
+                lambda: _is_dashboard_package(stored_content, body.get("content"))
+            )
+            if needs_guard:
+                expected_token = stored_token
         # OFF the event loop: update() writes current.html, a version snapshot
         # and -- for a linked artifact -- the source file itself, so running it
         # inline stalls the gateway for every other session on a large file or a
@@ -1829,7 +2106,7 @@ async def api_artifact_update(request: web.Request) -> web.Response:
                 event_type=event_type,
                 from_version=from_version,
                 snapshot=snapshot,
-                expected_token=body.get("expected_token"),
+                expected_token=expected_token,
             )
         )
         # store.update() only loads content into the returned Artifact when

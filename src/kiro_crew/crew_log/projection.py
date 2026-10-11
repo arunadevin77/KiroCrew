@@ -8005,10 +8005,16 @@ def read_tree_projection(root: str, name: str) -> Projection:
     is lazy, has no bus scope, and belongs on a page load and on a refetch -- which the
     controller contract already covers, since a gap triggers a full refetch anyway.
 
-    No production caller reaches it yet. BOTH routes that take a fold name -- the
-    owner's per-session read and the internal per-unit one -- REFUSE a tree-keyed name
-    rather than folding the one unit they address, and this read ships gated, with the
-    first dashboard consumer that can bound the walk and check each unit it reaches.
+    Its production caller is the dashboard controller:
+    :meth:`kiro_crew.dashboard.handlers.member_dashboard_fields.LivePage._read_trees`,
+    reached from ``GET /api/members/{slug}/dashboard`` when the page's model binds a
+    tree fold, and again from that route's refetch. The controller calls it on arm and
+    on refetch and never from the fold worker, which is what keeps this read off the
+    thread that folds.
+
+    BOTH routes that take a fold name -- the owner's per-session read and the internal
+    per-unit one -- REFUSE a tree-keyed name rather than folding the one unit they
+    address, so this is the only way in.
     """
     return projection_of(fold_tree_checkpoint(require_name(name), root))
 

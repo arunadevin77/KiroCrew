@@ -636,3 +636,32 @@ meet first: no workstream, nothing waiting, nothing spent, and a line saying
 what will appear here once it has a goal. The accounting line is hidden rather
 than printed as a row of zeroes.
 
+
+## Amendment, Mingwei, 2026-10-11, supersedes P2
+
+A page its owner wrote renders without a navigation-withholding wrapper. The P2
+precondition above -- "a wrapper document this gateway mints ... with the frame's own
+navigation withheld" -- is superseded for a `kind="dashboard"` package. The write flow
+is unchanged: preview, the person approves, apply.
+
+Four reasons:
+
+1. **Only the owner agent writes the page HTML.** A worker cannot. Writing a package is
+   refused unless the caller is the crewmate or session its `bound_to` names, on all
+   three artifact write paths, and the refusal says to `work_report` instead.
+2. **Values reach the page as text.** A `data-dashboard-field` binding sets an element's
+   `textContent`, never markup, so crew-log content cannot add code or a URL to the page
+   however it was recorded.
+3. **The frame holds only the allowlist.** A frame carries the fields the package's own
+   `model` declares and nothing else, so a fold's other members never reach the browser.
+4. **The owner agent already reaches the network.** It has its own tools for that. A page
+   it wrote navigating its own frame opens no path that agent did not already have.
+
+What the earlier reasoning got right and this does not dispute: a closed `connect-src`
+does not stop a page from navigating itself, and provenance rather than policy is what
+decides whether a page may run. The amendment turns on who the author is. A page from a
+sender, or from any agent that is not the dashboard's owner, stays unrenderable.
+
+The sandbox is unchanged: `allow-scripts` and nothing else, so the frame's origin stays
+opaque. Neither `allow-same-origin` nor `allow-top-navigation` is granted, and a test
+pins that exact value.

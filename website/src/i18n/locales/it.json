@@ -18169,7 +18169,8 @@
       "fresh_start_confirm_action": "Ricomincia da capo",
       "fresh_start_hint": "Avvia una nuova conversazione con questo compagno. I messaggi precedenti restano visibili.",
       "fresh_start_failed_queued": "Ci sono ancora messaggi in coda. Aspetta che finiscano, poi riprova Ricomincia da capo.",
-      "fresh_start_failed_busy": "Il compagno sta ancora lavorando e non si è fermato. Fermalo prima, poi riprova."
+      "fresh_start_failed_busy": "Il compagno sta ancora lavorando e non si è fermato. Fermalo prima, poi riprova.",
+      "dashboard_values_stale": "I valori in tempo reale non si aggiornano piu: questi sono gli ultimi ricevuti."
     },
     "tasksCapacityCard": {
       "title": "Attività e capacità",

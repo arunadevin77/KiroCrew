@@ -11,6 +11,7 @@ import { buildSrcdoc, readThemeVars } from '../../lib/widgetSrcdoc'
 import { i18nT } from '../../i18n/t'
 import { apiErrorCode } from '../../api/apiError'
 import { useLanguage } from '../../i18n/LanguageProvider'
+import { subscribeDashboardFields } from '../../hooks/websocket/dashboardFields'
 
 /**
  * The sandbox grants for a crewmate's dynamic dashboard, and the ONE line of
@@ -50,6 +51,9 @@ const READY_MESSAGE_TYPE = 'kirocrew-dashboard:ready'
  * fills the composer, and the person presses send. That is the whole safety
  * line -- a page that could send would be a page that could speak as the user. */
 const ACT_MESSAGE_TYPE = 'kirocrew-dashboard:act'
+/** What the page posts when it cannot place a patch in order. Mirrors
+ *  `dashboard_frame.REFETCH_MESSAGE_TYPE`. */
+const REFETCH_MESSAGE_TYPE = 'kirocrew-dashboard:refetch'
 /** Longest reply a page may put in the composer. Longer is refused, not cut. */
 const ACT_MAX_CHARS = 600
 
@@ -123,7 +127,7 @@ interface Loaded {
  *    can see that, so the held `Loaded` is re-mounted and the new html is dropped
  *    until the next read brings a different one.
  */
-export default function CrewDynamicDashboard({ slug, member, displayName, onAct, preview = false, onPreviewGone }: {
+export default function CrewDynamicDashboard({ slug, member, displayName, onAct, preview = false, onPreviewGone, dashboardSlug = '' }: {
   slug: string
   member: string
   displayName: string
@@ -135,22 +139,19 @@ export default function CrewDynamicDashboard({ slug, member, displayName, onAct,
   preview?: boolean
   /** Told whether the staged page is gone (applied or expired), so a host can drop its "not applied" label. */
   onPreviewGone?: (gone: boolean) => void
+  /** The `kind="dashboard"` package to show instead of the crewmate's template page.
+   *  Empty shows the template instance, which is every crewmate today: no caller
+   *  resolves a package slug yet (that lookup is #18707). Carried here so the frames
+   *  this tab accepts and the refetch it asks for both name one package. */
+  dashboardSlug?: string
 }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
+  /** A gap recovery that did not arrive. The page keeps its values; this says they
+   *  are older than the record, which nothing else on screen can say: the page's
+   *  own stale band is driven by a read that never came. */
+  const [refetchError, setRefetchError] = useState<string | null>(null)
   const onActRef = useRef(onAct)
   onActRef.current = onAct
-  // The page's options. Only a message from THIS frame's window counts: any other
-  // window posting the same shape is ignored.
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      const win = frameRef.current?.contentWindow
-      if (!win || event.source !== win) return
-      const text = actText(event.data)
-      if (text && onActRef.current) onActRef.current(text)
-    }
-    window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
-  }, [])
   // A pull request the page links to: this frame only, GitHub PR URLs only.
   useFrameOpenLink([frameRef])
   const { theme, colorTheme, themeVersion } = useTheme()
@@ -178,6 +179,97 @@ export default function CrewDynamicDashboard({ slug, member, displayName, onAct,
     refetchInterval: DASHBOARD_FALLBACK_REFETCH_MS,
     refetchIntervalInBackground: false,
   })
+  /** The package this tab is showing. The ROUTE resolves the crewmate's binding, so
+   *  the server's answer wins over the prop: a mount does not know a package slug and
+   *  should not have to. The prop stays for a host that opens one explicitly. */
+  const livePackage = data?.dashboard || dashboardSlug
+  /** The same value, readable from inside a pending promise. A refetch started under
+   *  one package must not deliver into the document that replaced it, and the closure
+   *  the request was made in holds the old value by definition. */
+  const livePackageRef = useRef(livePackage)
+  livePackageRef.current = livePackage
+
+  // The page's options, and its request for a whole read. Only a message from THIS
+  // frame's window counts: any other window posting the same shape is ignored.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const win = frameRef.current?.contentWindow
+      if (!win || event.source !== win) return
+      const text = actText(event.data)
+      if (text && onActRef.current) {
+        onActRef.current(text)
+        return
+      }
+      // THE GAP. The page applies patches in sequence and asks for the whole read
+      // when one skips a version; answering with another patch would reach the same
+      // half-updated page one round trip later.
+      const kind = (event.data ?? {}) as { type?: unknown }
+      if (kind.type !== REFETCH_MESSAGE_TYPE) return
+      // WHICH DOCUMENT ASKED. A refetch is a round trip, and the frame under it can be
+      // replaced while it is open -- the ordinary dashboard read remounts the document
+      // when the package or the page changes. Posting a late answer into the document
+      // that replaced the asker hands it values computed for a page it is not, and the
+      // reply looks current to its bootstrap: a different generation is all it sees,
+      // which it accepts. So the asking window and the package it asked for are
+      // captured here and compared on delivery; a reply that outlived either is
+      // dropped, and the page it was for is gone anyway.
+      const askedBy = frameRef.current?.contentWindow
+      const askedFor = livePackage
+      api.memberDashboardRefetch(slug, member, livePackage)
+        .then((answer) => {
+          const read = answer?.read
+          const current = frameRef.current?.contentWindow
+          if (!current || current !== askedBy || askedFor !== livePackageRef.current) return
+          if (read && typeof read === 'object') {
+            setRefetchError(null)
+            // '*' is REQUIRED, not a laxity: this frame is sandboxed with
+            // `allow-scripts` and WITHOUT `allow-same-origin`, so its origin is
+            // opaque and no non-wildcard targetOrigin can ever match it. The
+            // message is posted to THIS frame's own contentWindow and carries only
+            // the fields the page's own model declares, already redacted by the
+            // controller -- so the wildcard reaches exactly one window.
+            // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
+            frameRef.current?.contentWindow?.postMessage(
+              { type: DATA_MESSAGE_TYPE, read },
+              '*',
+            )
+          }
+        })
+        .catch((err) => {
+          // REPORTED, not swallowed. The page keeps the values it has, which is right,
+          // but those values are now known to be older than the record and the reader
+          // cannot tell: the page's own stale band is driven by the host's read, and a
+          // refetch that never arrived leaves it saying nothing. The notice sits beside
+          // the page rather than over it.
+          setRefetchError(apiErrorCode(err) || 'refetch_failed')
+        })
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [slug, member, livePackage])
+
+  // THE PUSH. The gateway sends the fields that MOVED; this posts them into the
+  // frame, whose bootstrap merges the patch, refills the bindings and calls back
+  // only the subscribers for the fields the patch carried.
+  //
+  // `postMessage` and not a re-render: the page owns its own DOM and the parent
+  // cannot reach into it, which is the whole point of the sandbox. A refetch of the
+  // route would work and is what the other two liveness frames do -- and it would
+  // throw away the page's own state (a chart's animation, a tree's scroll position,
+  // a 3D scene) on every value change, which is what the push exists to avoid.
+  useEffect(() => {
+    return subscribeDashboardFields(slug, (read, fromPackage) => {
+      // NOT MINE: one crewmate can be shown through two packages at once, and the
+      // socket delivers every frame to every tab. Applying another package's patch
+      // would replace this page's values with values computed for a different layout.
+      if (livePackage && fromPackage && fromPackage !== livePackage) return
+      // Same reason as the refetch answer above: an opaque origin cannot be named,
+      // and the post reaches this one frame's contentWindow with model-declared,
+      // already-redacted fields.
+      // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
+      frameRef.current?.contentWindow?.postMessage({ type: DATA_MESSAGE_TYPE, read }, '*')
+    })
+  }, [slug])
   const previewGone = preview && isError && apiErrorCode(error) === 'no_preview'
   useEffect(() => { onPreviewGone?.(previewGone) }, [onPreviewGone, previewGone])
 
@@ -521,6 +613,36 @@ export default function CrewDynamicDashboard({ slug, member, displayName, onAct,
           </Btn>
         </div>
       )}
+      {refetchError && (
+        <div
+          className="shrink-0 border-b border-border p-2 flex items-start gap-2"
+          data-testid="crew-dashboard-refetch-error-band"
+        >
+          {/* The page keeps its values, which is right. What a reader cannot otherwise
+              learn is that those values are older than the record: the page's own stale
+              band is raised by a read, and this is the case where the read never came.
+              Beside the page rather than over it, like the two bands above.
+
+              ITS OWN SENTENCE, not the kept-last-good one. That string says a newer
+              VERSION of the page did not load, which is a different situation with a
+              different remedy: here the page is the right one and only its numbers are
+              behind. Reusing it would tell the reader to expect a new page that is not
+              coming. */}
+          {/* No hand-off: the Members page's unsaved Profile and crew-editor
+              drafts, as at the two bands above. This notice only reports that the
+              values on screen are behind; nothing is discarded by showing it, and
+              the Retry beside it re-reads rather than navigating away. */}
+          <ErrorNotice
+            message={i18nT('pages.membersPage.dashboard_values_stale')}
+            className="flex-1 min-w-0"
+            testId="crew-dashboard-refetch-error"
+          />
+          <Btn onClick={() => { setRefetchError(null); refetch() }} className="shrink-0">
+            <RotateCw className="lucide-inline" aria-hidden />
+            {i18nT('pages.membersPage.webview_retry')}
+          </Btn>
+        </div>
+      )}
       {url ? (
         <iframe
           ref={frameRef}
@@ -558,4 +680,4 @@ export default function CrewDynamicDashboard({ slug, member, displayName, onAct,
   )
 }
 
-export { ACT_MESSAGE_TYPE, DATA_MESSAGE_TYPE, READY_MESSAGE_TYPE, READY_TIMEOUT_MS }
+export { ACT_MESSAGE_TYPE, DATA_MESSAGE_TYPE, REFETCH_MESSAGE_TYPE, READY_MESSAGE_TYPE, READY_TIMEOUT_MS }

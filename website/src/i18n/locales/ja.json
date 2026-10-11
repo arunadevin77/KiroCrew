@@ -17651,7 +17651,8 @@
       "fresh_start_confirm_action": "リセットして再開",
       "fresh_start_hint": "このクルーメイトと新しい会話を始めます。以前のメッセージは表示されたままです。",
       "fresh_start_failed_queued": "まだキューにメッセージがあります。終わるのを待ってから、もう一度リセットしてください。",
-      "fresh_start_failed_busy": "クルーメイトはまだ作業中で止まりませんでした。先に止めてから、もう一度お試しください。"
+      "fresh_start_failed_busy": "クルーメイトはまだ作業中で止まりませんでした。先に止めてから、もう一度お試しください。",
+      "dashboard_values_stale": "ライブ値の更新が停止したため、最後に受信した値を表示しています。"
     },
     "tasksCapacityCard": {
       "title": "タスクと処理能力",

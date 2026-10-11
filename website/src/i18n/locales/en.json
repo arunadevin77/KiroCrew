@@ -7734,7 +7734,8 @@
       "dashboard_unavailable": "This dashboard could not be loaded.",
       "dashboard_render_error": "This dashboard could not be drawn.",
       "dashboard_frame_title": "Dashboard for {{crew}}",
-      "dashboard_rendering": "Drawing the dashboard…"
+      "dashboard_rendering": "Drawing the dashboard…",
+      "dashboard_values_stale": "Live values stopped updating, so these are the last ones received."
     },
     "migrationPage": {
       "app_migration": "App Migration",

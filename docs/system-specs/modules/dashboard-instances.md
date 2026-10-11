@@ -147,8 +147,7 @@ nothing to a surface reading it to mean "this shipped in the product".
 script against the crewmate's values inside a frame that can navigate itself, so a
 registry that also scanned a writable directory would let whatever can write there
 choose what a crewmate's dashboard executes. `builtin` is the only provenance carrying a
-human review, which is why `RENDERABLE_SOURCES` holds one value. A template somebody
-writes themselves is P2 and needs a wrapper document this gateway mints; see the RFC.
+human review, which is why `RENDERABLE_SOURCES` holds one value.
 
 ## Snapshots: all five parts or nothing
 

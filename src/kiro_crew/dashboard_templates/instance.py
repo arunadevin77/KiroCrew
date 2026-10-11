@@ -585,13 +585,18 @@ def history(slug: str, *, session_id: str = "") -> tuple[dict[str, Any], ...]:
 #: says whether anyone here ever looked at the page, and ``builtin`` -- a directory in
 #: this repo, which went through review -- is the only provenance that carries one.
 #:
-#: A page written by an agent, or imported from a sender, is therefore not renderable at
-#: all: not at preview, not at adopt. Making one renderable needs a wrapper document
-#: minted by this gateway, which holds the authored markup while withholding the frame's
-#: own navigation, plus a surface where a person looks at the page before it runs. Both
-#: are P2 -- see ``docs/request-for-change/rfc-crewmate-dynamic-dashboard.md`` -- and
-#: until they exist the honest answer to "render this page I wrote" is a refusal that
-#: says so.
+#: A page imported from a sender is therefore not renderable at all: not at preview, not
+#: at adopt, and the honest answer to "render this one" is a refusal that says so.
+#:
+#: A TEMPLATE INSTANCE is what this set governs, and an agent-written template page is
+#: refused here on exactly that reasoning. A ``kind="dashboard"`` PACKAGE is a separate
+#: surface with a separate rule: the "supersedes P2" amendment in
+#: ``docs/request-for-change/rfc-crewmate-dynamic-dashboard.md`` admits a page its own
+#: owner wrote, because only that owner may write it, values reach it as text, the frame
+#: carries only its model's allowlist, and the owner agent reaches the network through
+#: its own tools anyway. That amendment turns on the author, so it leaves this set
+#: alone: a sender's page, and any page an agent other than the dashboard's owner wrote,
+#: is still unrenderable.
 RENDERABLE_SOURCES: Final[frozenset[str]] = frozenset({catalog.BUILTIN_SOURCE})
 
 
