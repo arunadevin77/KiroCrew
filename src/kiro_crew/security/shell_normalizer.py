@@ -701,9 +701,9 @@ def _pipes_into_evaluator(tokens: "list[str]") -> bool:
 # ``awk``'s ``system()`` and pipe-to-command, and GNU ``sed``'s ``e`` command.  The
 # terminal ``e`` is a word of the script wherever a boundary precedes it (``e``, ``p;e``,
 # ``--expression=e``, and a custom-delimiter address such as ``\-.-e`` or ``\- -e`` whose
-# closing delimiter is ``-``).  The ONE terminal-``e`` token that is not the command is the
-# bare option ``-e``/``-E``: its ``-`` is the first character of the token, which the
-# ``(?<!^-)`` guard excludes and nothing else does -- no consumer runs that option.
+# closing delimiter is ``-``).  The ``(?<!^-)`` guard excludes only the bare two-character
+# option token ``-e``/``-E``, whose ``-`` is the token's first character: no consumer runs
+# that option.
 _SCRIPT_EXECUTES_RE = re.compile(
     r"system\s*\(|\|\s*[\"']|\|&|print\s*\||\bclose\s*\(|/e\b|(?<!^-)\be\s*$"
 )

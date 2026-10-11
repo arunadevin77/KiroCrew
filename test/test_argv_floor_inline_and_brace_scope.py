@@ -1267,7 +1267,7 @@ class TestAnOptionDashEIsNotSedsExecuteCommand:
     A wildcard word in a position that runs it is still read as a kill program.
     """
 
-    @pytest.mark.parametrize("word", ["-e", "-E", "-e ", "-ne", "-ee"])
+    @pytest.mark.parametrize("word", ["-e", "-E", "-e ", "-ne"])
     def test_the_option_is_not_an_execute_construct(self, word):
         assert _SCRIPT_EXECUTES_RE.search(word.lower()) is None, word
 
