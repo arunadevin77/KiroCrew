@@ -21,7 +21,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from chat_test_helpers import _make_state
 
-from kiro_crew.acp_backends import ACP_BACKEND_KAS, ACP_BACKEND_KIRO
+from kiro_crew.acp_backends import (
+    ACP_BACKEND_CODEX,
+    ACP_BACKEND_DEEPSEEK,
+    ACP_BACKEND_GOOSE,
+    ACP_BACKEND_KAS,
+    ACP_BACKEND_KIRO,
+    ACP_BACKEND_OPENCODE,
+    ACP_BACKEND_PI,
+    ACP_BACKENDS_LOCAL_CLEAR,
+)
 from kiro_crew.agent_sdk.capabilities import capabilities_for
 from kiro_crew.dashboard.chat_runner import _run_chat, effective_session_key
 from kiro_crew.providers.acp import AcpProvider
@@ -170,6 +179,56 @@ class TestKasOtherCommands:
 
         assert dispatched.called
         assert not any("doesn't work with KAS" in t for t in _texts(slot))
+
+
+_NO_NATIVE_CLEAR = (ACP_BACKEND_CODEX, ACP_BACKEND_OPENCODE, ACP_BACKEND_PI, ACP_BACKEND_DEEPSEEK)
+
+
+class TestOtherHarnessesClear:
+    """codex, opencode, pi and deepseek have no ``/clear`` in their own prompt
+    handlers either, so the text reached the model and the context stayed."""
+
+    def test_membership_is_the_checked_set(self) -> None:
+        assert ACP_BACKENDS_LOCAL_CLEAR == {ACP_BACKEND_KAS, *_NO_NATIVE_CLEAR}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend", _NO_NATIVE_CLEAR)
+    async def test_clear_discards_instead_of_prompting(self, tmp_path, backend) -> None:
+        state, slot, dispatched = _live(tmp_path, backend)
+        slot.set_todo({"description": "plan", "tasks": [{"id": "1", "task_description": "a"}]})
+
+        await _run_chat(state, slot, "/clear")
+
+        dispatched.assert_not_called()
+        state.sessions.get_or_create.assert_not_called()
+        state.sessions.discard_conversation.assert_awaited_once_with(
+            effective_session_key(slot), replay=False, skip_if_busy=True
+        )
+        assert any("Conversation cleared" in t for t in _texts(slot)), _texts(slot)
+        assert slot.todo_payload() is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend", _NO_NATIVE_CLEAR)
+    async def test_other_commands_keep_the_prompt_path(self, tmp_path, backend) -> None:
+        """Only ``/clear`` is answered here: these harnesses serve commands of
+        their own (``/review``, ``/session``) out of the same prompt text."""
+        state, slot, dispatched = _live(tmp_path, backend)
+
+        await _run_chat(state, slot, "/help")
+
+        assert dispatched.called
+        state.sessions.discard_conversation.assert_not_awaited()
+        assert not any("doesn't work with" in t for t in _texts(slot)), _texts(slot)
+
+    @pytest.mark.asyncio
+    async def test_goose_runs_its_own_clear(self, tmp_path) -> None:
+        """goose's prompt handler runs ``/clear`` itself, so it is sent on."""
+        state, slot, dispatched = _live(tmp_path, ACP_BACKEND_GOOSE)
+
+        await _run_chat(state, slot, "/clear")
+
+        assert dispatched.called
+        state.sessions.discard_conversation.assert_not_awaited()
 
 
 class TestKiroUnchanged:

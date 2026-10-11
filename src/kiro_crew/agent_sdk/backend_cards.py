@@ -357,6 +357,13 @@ OFF_CARD_SETS: Mapping[str, str] = {
         "reader loses by choosing another harness. A wrong membership forwards a "
         "command the acquired provider cannot serve, which is a defect"
     ),
+    "ACP_BACKENDS_LOCAL_CLEAR": (
+        "whether the dashboard answers /clear itself or hands it to the harness. "
+        "/clear drops the conversation on every harness either way, so a reader "
+        "choosing a harness loses nothing. A wrong membership either sends /clear "
+        "to the model as text, or answers a harness that would have run it, which "
+        "is a defect"
+    ),
     "ACP_BACKENDS_HOOKS_LIST": (
         "which backend's agent may ask its client for the hooks matching a trigger, and "
         "have the client run one. Nothing a reader choosing a harness can act on: Crew "

@@ -156,6 +156,9 @@ with no row here.
        driver-internal everywhere else (whether ``_kiro.dev/commands/execute`` exists)
    * - ``ACP_BACKENDS_NATIVE_TODOS``
      - semantic question (``SessionCapabilities.supports_native_todos``)
+   * - ``ACP_BACKENDS_LOCAL_CLEAR``
+     - pre-session registry query (whether the dashboard answers ``/clear``
+       itself rather than handing it to the harness as prompt text)
    * - ``ACP_BACKENDS_TOOL_SEARCH_OVERLAY``
      - driver-internal (whether the workspace ``cli.json`` Tool Search keys are written)
    * - ``ACP_BACKENDS_CLIENT_META_SETTINGS``
@@ -2093,6 +2096,42 @@ ACP_BACKENDS_KIRO_SLASH_COMMANDS = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS}
 # same command, so an unknown harness is refused rather than receiving prompt text
 # it may interpret as an ordinary user request.
 ACP_BACKENDS_NATIVE_TODOS = frozenset({ACP_BACKEND_CLAUDE})
+
+# Backends where the dashboard answers ``/clear`` itself, by dropping the
+# conversation the way ``reset_conversation`` does, instead of sending it on.
+#
+# A non-kiro harness has no ``_kiro.dev/commands/execute``, so ``stream_command``
+# hands it ``/clear`` through ``session/prompt``. A member is a harness whose own
+# prompt handler has no ``clear`` command: the text reaches the model as a user
+# message, the model may answer "Context cleared", and the context stays.
+#
+# - kas: driven live, context usage read 8.42% -> 8.44% across ``/clear``.
+# - codex: codex-acp's ``tryHandleCommand`` knows plan, mcp, skills, status,
+#   review, review-branch, review-commit, compact, goal, rename, logout; any other
+#   name returns ``handled: false`` and the prompt goes to the model. The 1.11.0
+#   capture's ``available_commands_update`` lists no ``clear``.
+# - opencode: its ACP prompt step special-cases only ``compact``; any other slash
+#   name resolves against the configured command catalog (``init``, ``review``,
+#   ``customize-opencode`` on the 1.18.30 capture) or is sent as text.
+# - pi: pi-acp's built-ins are compact, autocompact, export, session, name,
+#   steering, follow-up, changelog; anything else goes to ``session.prompt``.
+# - deepseek: the ``dsh-acp`` bridge admits every prompt block as a user message
+#   with no slash parsing at all.
+#
+# goose is NOT a member: its prompt handler runs ``/clear`` itself
+# (``CompactionOperation.run_command`` returns an empty conversation), so it keeps
+# the prompt path. kiro is not a member: it runs ``/clear`` natively over
+# ``_kiro.dev/commands/execute``. claude is not a member: its harness owns its own
+# command set. A harness added later stays out until its ``/clear`` is checked.
+ACP_BACKENDS_LOCAL_CLEAR = frozenset(
+    {
+        ACP_BACKEND_KAS,
+        ACP_BACKEND_CODEX,
+        ACP_BACKEND_OPENCODE,
+        ACP_BACKEND_PI,
+        ACP_BACKEND_DEEPSEEK,
+    }
+)
 
 # Backends on which an agent spec's ``"tools": []`` is honoured as a total ban --
 # no MCP server AND no harness-native tool (Bash, file edit, ...) is callable --

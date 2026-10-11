@@ -68,7 +68,12 @@ from kiro_crew.acp.types import (
     TurnUsage,
     classify_stop_reason,
 )
-from kiro_crew.acp_backends import ACP_BACKEND_KAS, ACP_BACKEND_KIRO, ACP_BACKENDS_COMPACT
+from kiro_crew.acp_backends import (
+    ACP_BACKEND_KAS,
+    ACP_BACKEND_KIRO,
+    ACP_BACKENDS_COMPACT,
+    ACP_BACKENDS_LOCAL_CLEAR,
+)
 from kiro_crew.agent_capabilities import CapabilityError
 from kiro_crew.agent_discovery import (
     agent_welcome_message,
@@ -9966,13 +9971,19 @@ async def _run_chat(
     # than reaching the model. /compact passes through: on KAS the session handle
     # sends it as the engine's own compaction verb, not as prompt text. A /todos
     # that got past its own gate is on a harness that runs it natively.
+    # The other harnesses in ACP_BACKENDS_LOCAL_CLEAR have no /clear of their own
+    # either, so /clear alone is answered here for them too; their other commands
+    # keep the prompt path, where those harnesses serve the ones they know.
     if (
         is_slash
         and not _is_cc_provider
         and first_word != "/compact"
         and first_word not in _KIRO_ONLY_BLOCKED_SLASH_COMMANDS
     ):
-        if await _slash_command_backend(state, session_key) == ACP_BACKEND_KAS:
+        _command_backend = await _slash_command_backend(state, session_key)
+        if _command_backend == ACP_BACKEND_KAS or (
+            _this_turn_is_clear and _command_backend in ACP_BACKENDS_LOCAL_CLEAR
+        ):
             turn_exit.local_command = first_word
             await _answer_slash_without_channel(state, slot, session_key, first_word)
             return
