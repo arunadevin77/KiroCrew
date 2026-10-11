@@ -813,6 +813,27 @@ _NON_CONTAINMENT_REFUSALS = {
     "manager_unresolved",
     "manager_session_changed",
     "manager_grant_inadmissible",
+    # The three ways the manager LINE refuses, which are the same caller-relative
+    # relation read through more than one hop. Not per-slot constraints, for the reason
+    # the three above are not: the relation is between the target's line and one
+    # entry's sender, which is per-entry.
+    #
+    # And NOT covered by the argument above, which is the declared limit of the line.
+    # ``queue_not_drained`` reads the handoff TARGET's own queue, so it keeps the
+    # relation from moving under any entry on that session. With
+    # ``agent.session_manager_chain`` on, handing over a MIDDLE hop moves the line of
+    # every session below it -- and their queues are not read. An entry admitted
+    # through that hop can therefore still be waiting when the hop moves. The switch is
+    # off by default, so this ships off; the per-entry re-check that closes it belongs
+    # to the queued-send work, with the rest of this surface.
+    #
+    # Three codes rather than one because they are three different facts and a person
+    # debugging a denial needs them apart: the record was DROPPED by the cap, the key is
+    # held by a session the edges are not about, or a hop's own recorded manager may not
+    # hold it.
+    "manager_line_forgotten",
+    "manager_line_ambiguous",
+    "manager_line_inadmissible",
 }
 
 # Comparison detail rather than constraints: both are set by the mirror probe to
