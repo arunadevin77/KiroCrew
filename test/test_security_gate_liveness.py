@@ -238,7 +238,12 @@ def _url_payload_command(n: int) -> str:
 #: other branches' start search guards the Telegram branch so a long digit run is
 #: walked once, not once per digit, and the JWT start keeps its run's end so an
 #: overlapping match does not re-walk that run. No pattern moved and no pass changed.
-_PACKAGE_LINE_BUDGET = 28_827
+#:
+#: Raised again, from 28,827, for ``denied_rules._exception_applies``: the
+#: deny-exception check both passes of ``is_denied`` share, which reads a deny
+#: exception through kiro-cli's one ``Running: `` title prefix so a shell title
+#: earns exactly its command's carve-out. No glob, verb or eligibility test moved.
+_PACKAGE_LINE_BUDGET = 28_844
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

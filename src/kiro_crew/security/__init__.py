@@ -1469,11 +1469,8 @@ def is_denied(
     # full string before this point.
     for pattern, is_regex in all_patterns:
         if _rules._deny_pattern_matches(pattern, lower, is_regex):
-            exceptions = _rules._DENY_EXCEPTIONS.get(pattern, [])
-            whole_string_exception_match = (
-                exceptions
-                and _rules._exception_eligible(lower)
-                and any(fnmatch.fnmatch(lower, e.lower()) for e in exceptions)
+            whole_string_exception_match = _rules._exception_applies(
+                lower, _rules._DENY_EXCEPTIONS.get(pattern, [])
             )
             if not whole_string_exception_match and _perm_verb_mention_narrows(
                 pattern, lower, mention_cache
@@ -1543,11 +1540,8 @@ def is_denied(
         for view in segment_views:
             for pattern, is_regex in all_patterns:
                 if _rules._deny_pattern_matches(pattern, view, is_regex):
-                    exceptions = _rules._DENY_EXCEPTIONS.get(pattern, [])
-                    if (
-                        exceptions
-                        and _rules._exception_eligible(view)
-                        and any(fnmatch.fnmatch(view, e.lower()) for e in exceptions)
+                    if _rules._exception_applies(
+                        view, _rules._DENY_EXCEPTIONS.get(pattern, [])
                     ) or _perm_verb_mention_narrows(pattern, lower, mention_cache):
                         # ``lower``, not ``view``: the mention reading is a
                         # WHOLE-COMMAND judgement and a Pass 2 segment is not
