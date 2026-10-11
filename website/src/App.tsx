@@ -163,6 +163,10 @@ const UpdateFoundModal = lazy(() => import('./components/UpdateFoundModal'))
 // Same boundary, same reason: the pill renders nothing without an update,
 // so its code rides the on-demand chunk instead of the app core.
 const UpdatePill = lazy(() => import('./components/UpdatePill'))
+// Lazy for the same budget. Unlike the update pill it decides its own
+// visibility (KAS backend + a lapsed stored sign-in), so it is always mounted
+// and its chunk is fetched once at boot; it renders nothing in the common case.
+const KiroSignInPill = lazy(() => import('./components/KiroSignInPill'))
 
 // Route-level code splitting for the App Store split (PR1): Discover and
 // Library are independent surfaces, and neither belongs in the app-core
@@ -2231,6 +2235,16 @@ export default function App() {
               <w.component />
             </ErrorBoundary>
           ))}
+          {/* Kiro sign-in pill — present only while KAS runs the agents and its
+              stored sign-in has lapsed or the issuer refused to renew it;
+              deep-links to the sign-in card. Beside the update pill and, like
+              it, not gated on viewport: the card it points at lives on a page
+              nobody keeps open, so this is the only persistent signal. */}
+          <ErrorBoundary scope="topbar-kiro-sign-in" fallback={null}>
+            <Suspense fallback={null}>
+              <KiroSignInPill />
+            </Suspense>
+          </ErrorBoundary>
           {/* Update pill — present only while an update exists; deep-links to
               Settings › About. NOT gated on viewport: it is the download's
               only progress home, and hiding it on narrow windows would make

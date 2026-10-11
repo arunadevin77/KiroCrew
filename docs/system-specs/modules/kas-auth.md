@@ -415,3 +415,14 @@ access token.
   than Kiro CLI, so a user who set up with one of those can switch agents later
   without turning on Developer Mode. `KasLoginGate` itself is still not mounted at the app
   root; the full-screen form stays available for that.
+- The persistent signal for a lapsed sign-in is the top-bar **Kiro sign-in pill**
+  (`website/src/components/KiroSignInPill.tsx`, mounted in `App.tsx` beside the
+  update pill), because the card above lives on a page nobody keeps open. It
+  renders only while `agent.acp_backend` is `kas`, a sign-in is stored, and the
+  card's own verdict (`signInLapsed` in `pages/developer/kiroSignInState.ts`,
+  shared by both: `!usable || refresh_rejected`) calls it lapsed, and it
+  deep-links to `KIRO_SIGN_IN_PATH`. It reads the same token-free
+  `GET /api/kas-login` status under the same `['kas-login']` query key the card
+  and flow use, polling once a minute only on a KAS gateway (another backend
+  never reads it), so the refusal marker the renewal tick records shows on the
+  next read and a new sign-in or a successful renewal clears it.

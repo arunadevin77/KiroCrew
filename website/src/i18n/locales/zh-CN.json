@@ -9624,6 +9624,12 @@
       "turn_4_assistant": "已加到 **Unreleased** 下：\n\n```md\n- fix: retry the token refresh once before signing out\n```\n\n也放进 PR 里吗？",
       "turn_4_user": "放。然后总结一下改了什么。",
       "turn_5_assistant": "已推送。简单说：token 刷新加了一次重试，登出路径补了回归测试，还有那条 CHANGELOG。三项都在 PR #12 里，并已关联 #7。"
+    },
+    "kiroSignInPill": {
+      "sign_in_expired": "Kiro 登录已失效",
+      "open_sign_in": "{{status}}。打开 Kiro 登录，重新登录。",
+      "expired_detail": "Kiro 登录已失效，且无法续期。请重新登录，让 agent 继续以这个账号运行。",
+      "refused_detail": "Kiro 拒绝为此登录续期。请重新登录，让 agent 继续以这个账号运行。"
     }
   },
   "hooks": {

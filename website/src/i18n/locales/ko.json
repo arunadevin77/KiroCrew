@@ -9624,6 +9624,12 @@
       "turn_4_assistant": "**Unreleased** 아래에 추가했습니다:\n\n```md\n- fix: retry the token refresh once before signing out\n```\n\nPR에도 넣을까요?",
       "turn_4_user": "응. 그다음 바뀐 내용을 요약해 줘.",
       "turn_5_assistant": "푸시했습니다. 요약: 토큰 갱신에 재시도 1회, 로그아웃 경로 회귀 테스트, CHANGELOG 한 줄. 세 가지 모두 PR #12에 있고 #7에 연결되어 있습니다."
+    },
+    "kiroSignInPill": {
+      "sign_in_expired": "Kiro 로그인이 만료됨",
+      "open_sign_in": "{{status}}. Kiro 로그인을 열어 다시 로그인하세요.",
+      "expired_detail": "Kiro 로그인이 만료되어 갱신할 수 없습니다. 에이전트가 계속 이 계정으로 실행되도록 다시 로그인하세요.",
+      "refused_detail": "Kiro가 로그인 갱신을 거부했습니다. 에이전트가 계속 이 계정으로 실행되도록 다시 로그인하세요."
     }
   },
   "hooks": {

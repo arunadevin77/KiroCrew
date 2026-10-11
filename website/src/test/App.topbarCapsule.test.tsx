@@ -13,6 +13,7 @@ import { renderWithProviders } from './helpers'
 import { safeSetItem } from '../utils/safeStorage'
 import { setDesktopUpdateAvailable } from '../store/dashboardSlice'
 import { MAC_FULLSCREEN_TOP_RESERVE_PX } from '../lib/electron'
+import { api } from '../api/client'
 
 vi.mock('../pages/ChatPage', () => ({ default: () => <div data-testid="chat-page">ChatPage</div> }))
 vi.mock('../pages/SystemPage', () => ({ default: () => null }))
@@ -45,6 +46,10 @@ vi.mock('../api/client', () => ({
     chatSlotModel: vi.fn().mockResolvedValue({}),
     chatMode: vi.fn().mockResolvedValue({}),
     listInstances: vi.fn().mockResolvedValue({ instances: [], warm_set_cap: 5 }),
+    // Rejecting by default keeps every other test on its unloaded-config path;
+    // the sign-in pill test below answers them.
+    kirocrewConfig: vi.fn(() => Promise.reject(new Error('not stubbed'))),
+    kasLoginStatus: vi.fn(() => Promise.reject(new Error('not stubbed'))),
   },
   isAuthBannerShown: vi.fn(() => false),
   ApiError: class ApiError extends Error {
@@ -145,6 +150,29 @@ describe('App top bar — update pill shifts the collapse-ladder budget', () => 
     renderWithProviders(<App />, { route: '/chat' })
     const metrics = await screen.findByLabelText('System metrics')
     expect(metrics.className).toContain('whitespace-nowrap')
+  })
+})
+
+describe('App top bar — Kiro sign-in pill', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setWindowWidth(1400)
+  })
+
+  it('shows a lapsed KAS sign-in in the actions group, away from the sign-in card', async () => {
+    // The persistent surface #11596 asked for: the sign-in card that already
+    // says "Sign-in expired" sits on Settings > Agent Harness, so the top bar
+    // is the only place a user who never opens that page can learn it.
+    vi.mocked(api.kirocrewConfig).mockResolvedValue({ agent: { acp_backend: 'kas' } } as Awaited<ReturnType<typeof api.kirocrewConfig>>)
+    vi.mocked(api.kasLoginStatus).mockResolvedValue({
+      authenticated: true, provider: 'Google', identity: 'social', transport: 'device',
+      expires_at: '2000-01-01T00:00:00Z', expired: true, has_refresh_token: false,
+      refresh_rejected: false, usable: false,
+    })
+    const { container } = renderWithProviders(<App />, { route: '/chat' })
+    const el = await screen.findByTestId('kiro-sign-in-pill')
+    expect(container.querySelector('.tb-right')?.contains(el)).toBe(true)
+    expect(el).toHaveTextContent('Kiro sign-in expired')
   })
 })
 

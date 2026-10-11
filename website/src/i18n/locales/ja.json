@@ -9624,6 +9624,12 @@
       "turn_4_assistant": "**Unreleased** の下に追加しました：\n\n```md\n- fix: retry the token refresh once before signing out\n```\n\nPR にも含めますか？",
       "turn_4_user": "はい。それから変更点をまとめて。",
       "turn_5_assistant": "プッシュしました。要点：トークン更新のリトライを 1 回、サインアウト経路の回帰テスト、CHANGELOG の 1 行。3 つとも PR #12 に入り、#7 に紐づいています。"
+    },
+    "kiroSignInPill": {
+      "sign_in_expired": "Kiro サインインが失効しました",
+      "open_sign_in": "{{status}}。Kiro サインインを開いて、再度サインインしてください。",
+      "expired_detail": "Kiro サインインが失効し、更新できません。エージェントがこのアカウントとして動作し続けるよう、再度サインインしてください。",
+      "refused_detail": "Kiro がサインインの更新を拒否しました。エージェントがこのアカウントとして動作し続けるよう、再度サインインしてください。"
     }
   },
   "hooks": {
