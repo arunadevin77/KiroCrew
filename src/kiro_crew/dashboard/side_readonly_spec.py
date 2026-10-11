@@ -574,8 +574,11 @@ def reap_orphaned_readonly_specs(in_use: Collection[str] = ()) -> list[str]:
       (a name two specs declare still resolves). For a project variant: the
       checkout its ``description`` records is gone, or that checkout's
       ``.kiro/agents`` holds no entry named or declaring the agent. A variant
-      whose checkout cannot be read, is a protected tree, or is not recorded at
-      all is kept.
+      whose checkout cannot be read, is a protected tree, is not recorded at
+      all, or is recorded as a relative path is kept, as is one whose checkout
+      or agents directory ``hooks.validate_file_path`` refuses (an untrusted
+      UNC share, or a link into one, is never followed), and one whose agents
+      directory holds a spec-named link (never followed either).
 
     The base is judged again under :data:`_SPEC_FILE_LOCK`, with an ``lstat``
     identity check, immediately before the unlink: a publication racing the
@@ -699,36 +702,54 @@ def _project_orphan_reason(base: str, source: str) -> str | None:
 
     Mirrors where :func:`_read_base_spec` looks (the checkout's
     ``.kiro/agents``) and widens it: an entry whose stem is the agent counts
-    without being parsed, case-folded for a case-insensitive filesystem. Every
-    failure other than "not there" keeps the file.
+    without being parsed, case-folded for a case-insensitive filesystem, and a
+    spec-named entry that is not a regular file (a link, a junction) counts
+    without being followed. Every failure other than "not there" keeps the file.
     """
+    from kiro_crew import hooks
     from kiro_crew.agent_discovery import _project_scope_denied, project_agent_name
     from kiro_crew.agent_spec_format import is_agent_spec_name, spec_stem
     from kiro_crew.config.paths import project_agents_dir
 
-    if _project_scope_denied(source, operation="side_readonly_reap", source="unknown"):
+    # The recorded checkout is text read from a file in a shared directory.
+    # Publication records only an absolute resolved path, so a relative one is
+    # not ours. The checkout and then its agents directory each pass
+    # ``hooks.validate_file_path`` before anything follows them: it refuses an
+    # untrusted UNC spelling and reads a Windows link's own target before the
+    # link is traversed, because on Windows following either is an SMB
+    # connection to the host it names. Only the canonical paths it returns are
+    # probed; a refusal keeps the file.
+    if not os.path.isabs(source):
+        return None
+    checkout = hooks.validate_file_path(source)
+    if checkout is None:
+        return None
+    if _project_scope_denied(checkout, operation="side_readonly_reap", source="unknown"):
         return None
     try:
-        info = os.stat(source)
+        info = os.stat(checkout)
     except (FileNotFoundError, NotADirectoryError):
         return "project removed"
     except OSError:
         return None
     if not stat.S_ISDIR(info.st_mode):
         return "project removed"
-    agents = project_agents_dir(source)
+    screened = hooks.validate_file_path(str(project_agents_dir(checkout)))
+    if screened is None:
+        return None
+    agents = Path(screened)
     try:
         with os.scandir(agents) as it:
-            entry_names = [entry.name for entry in it]
+            entries = [(entry.name, entry.is_file(follow_symlinks=False)) for entry in it]
     except (FileNotFoundError, NotADirectoryError):
         return "project does not declare the agent"
     except OSError:
         return None
     folded = base.casefold()
-    for entry_name in entry_names:
+    for entry_name, regular in entries:
         if not is_agent_spec_name(entry_name):
             continue
-        if spec_stem(entry_name).casefold() == folded:
+        if spec_stem(entry_name).casefold() == folded or not regular:
             return None
         if project_agent_name(agents / entry_name) == base:
             return None

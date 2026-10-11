@@ -384,7 +384,11 @@ where publication looks. A user-scope base resolves while any
 declaring it (two declaring it still resolves). A project variant is reaped
 only when its recorded checkout is gone, or that checkout's `.kiro/agents`
 holds no entry named or declaring the agent; an unreadable or protected
-checkout, or a variant recording no checkout, is kept. The base is judged
+checkout, a variant recording no checkout or a relative path, one whose
+checkout or `.kiro/agents` `hooks.validate_file_path` refuses (an untrusted
+UNC share, or a Windows link into one, is screened before anything follows
+it), and one whose `.kiro/agents` holds a spec-named link (never followed) are
+kept. The base is judged
 again under the lock publication holds from its base read to its write, with
 an `lstat` identity check, just before the unlink, so a racing publication
 either keeps its file or writes it again. A removal calls

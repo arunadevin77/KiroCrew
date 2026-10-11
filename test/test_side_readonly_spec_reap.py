@@ -349,6 +349,144 @@ def test_an_unreadable_or_protected_checkout_keeps_its_variant(agents_dir, tmp_p
     assert srs.reap_orphaned_readonly_specs() == [name]
 
 
+def _plant_variant(agents_dir: Path, source: str, agent: str = "helper") -> Path:
+    """Write an owner-marked variant that records *source*, as if publication had."""
+    derived = srs.derive_readonly_spec(dict(_BASE, name=agent), base_name=agent, source_id=source)
+    target = agents_dir / f"{derived['name']}.json"
+    _write(target, derived)
+    return target
+
+
+def _spy_probes(monkeypatch, marker: str) -> list[str]:
+    """Record every stat/scandir/spec read whose path contains *marker*, never touching it."""
+    probed: list[str] = []
+    real_stat, real_scandir = os.stat, os.scandir
+    real_name = agent_discovery.project_agent_name
+
+    def spying_stat(path, *a, **k):
+        if isinstance(path, (str, os.PathLike)) and marker in str(path):
+            probed.append(f"stat {path}")
+            raise FileNotFoundError(path)
+        return real_stat(path, *a, **k)
+
+    def spying_scandir(path=".", *a, **k):
+        if isinstance(path, (str, os.PathLike)) and marker in str(path):
+            probed.append(f"scandir {path}")
+            raise FileNotFoundError(path)
+        return real_scandir(path, *a, **k)
+
+    def spying_name(spec):
+        if marker in str(spec):
+            probed.append(f"read {spec}")
+        return real_name(spec)
+
+    monkeypatch.setattr(os, "stat", spying_stat)
+    monkeypatch.setattr(os, "scandir", spying_scandir)
+    monkeypatch.setattr(agent_discovery, "project_agent_name", spying_name)
+    return probed
+
+
+def _screen_refusing(monkeypatch, marker: str) -> list[str]:
+    """Make ``hooks.validate_file_path`` refuse what resolves into *marker*, as the
+    Windows UNC gate and link screen do for a share; return the paths it was asked."""
+    from kiro_crew import hooks
+
+    asked: list[str] = []
+    real = hooks.validate_file_path
+
+    def screening(raw):
+        asked.append(raw)
+        if marker in raw:
+            return None
+        canonical = real(raw)
+        return None if canonical is None or marker in canonical else canonical
+
+    monkeypatch.setattr(hooks, "validate_file_path", screening)
+    return asked
+
+
+def test_a_relative_or_screen_refused_checkout_is_kept_and_never_probed(agents_dir, monkeypatch):
+    """The recorded checkout is text from a shared directory: a relative one is
+    not ours, and one the path screen refuses (an untrusted UNC share on Windows)
+    is kept before any stat, resolve or sensitive-path check could reach it."""
+    relative = _plant_variant(agents_dir, "relative/checkout")
+    unc = _plant_variant(agents_dir, "//attacker/share/checkout")
+    asked = _screen_refusing(monkeypatch, "attacker")
+    scoped: list[str] = []
+    monkeypatch.setattr(
+        agent_discovery,
+        "_project_scope_denied",
+        lambda project_dir, **k: scoped.append(project_dir) or False,
+    )
+    probed = _spy_probes(monkeypatch, "attacker")
+
+    assert srs.reap_orphaned_readonly_specs() == []
+    assert relative.exists() and unc.exists()
+    assert probed == [] and scoped == []
+    assert asked == ["//attacker/share/checkout"]
+
+
+def test_an_agents_dir_linked_into_a_refused_location_is_never_listed(
+    agents_dir, tmp_path, monkeypatch
+):
+    """A checkout whose ``.kiro/agents`` is a link the screen refuses (a share,
+    on Windows) keeps its variant without the link ever being followed."""
+    project = _project(tmp_path)
+    name = _publish_project(project)
+    share = tmp_path / "attacker-share"
+    share.mkdir()
+    agents = project / ".kiro" / "agents"
+    shutil.rmtree(agents)
+    try:
+        agents.symlink_to(share, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    asked = _screen_refusing(monkeypatch, "attacker-share")
+    probed = _spy_probes(monkeypatch, "attacker-share")
+
+    assert srs.reap_orphaned_readonly_specs() == []
+    assert (agents_dir / f"{name}.json").exists()
+    assert probed == []
+    assert str(project.resolve() / ".kiro" / "agents") in asked
+
+
+def test_a_spec_named_link_in_the_agents_dir_keeps_the_variant_unfollowed(
+    agents_dir, tmp_path, monkeypatch
+):
+    """Only regular files are parsed: a spec-named link could lead anywhere,
+    including a share, so it keeps the variant and is never read through."""
+    project = _project(tmp_path)
+    name = _publish_project(project)
+    agents = project / ".kiro" / "agents"
+    (agents / "helper.json").unlink()
+    elsewhere = tmp_path / "linked-elsewhere"
+    elsewhere.mkdir()
+    _write(elsewhere / "other.json", dict(_BASE, name="other"))
+    try:
+        (agents / "other.json").symlink_to(elsewhere / "other.json")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    probed = _spy_probes(monkeypatch, "other.json")
+
+    assert srs.reap_orphaned_readonly_specs() == []
+    assert (agents_dir / f"{name}.json").exists()
+    assert probed == []
+
+    # The same checkout with the link gone is reaped: the guard is the link.
+    (agents / "other.json").unlink()
+    assert srs.reap_orphaned_readonly_specs() == [name]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the UNC trusted-root gate exists only on Windows")
+def test_the_real_screen_refuses_an_untrusted_unc_checkout_on_windows(agents_dir, monkeypatch):
+    unc = _plant_variant(agents_dir, "\\\\attacker.invalid\\share\\checkout")
+    probed = _spy_probes(monkeypatch, "attacker.invalid")
+
+    assert srs.reap_orphaned_readonly_specs() == []
+    assert unc.exists()
+    assert probed == []
+
+
 # ── races and caches ────────────────────────────────────────────────────────
 
 
