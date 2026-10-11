@@ -30,6 +30,7 @@ Every test patches ``kiro_crew.agent``'s module globals with the
 from __future__ import annotations
 
 import json
+import re
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
@@ -1191,7 +1192,8 @@ class TestSpecEmissionGate:
         from kiro_crew.dashboard.handlers import computer_use as handler
 
         src = inspect.getsource(handler.api_computer_use_config_save)
-        rebuild_at = src.find("rebuild_agent_config")
+        rebuild_call = re.search(r"to_thread\(\s*rebuild_agent_spec\b", src)
+        rebuild_at = rebuild_call.start() if rebuild_call else -1
         reset_at = src.find("_reset_all_sessions")
         assert rebuild_at != -1, "the enable flip must rebuild the agent spec"
         assert reset_at != -1

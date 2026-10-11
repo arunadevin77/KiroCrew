@@ -3948,3 +3948,41 @@ async def vector_memory_for_store(state: DashboardState, store: str):
     from kiro_crew.context import ContextBuilder
 
     return await ContextBuilder.ensure_store(store)
+
+
+# The response text for a saved change whose agent-spec rebuild did not confirm a write.
+AGENT_SPEC_NOT_REWRITTEN = (
+    "saved, but the agent spec may not have been rewritten, so new sessions may keep "
+    "the previous servers; see the gateway log"
+)
+
+
+def rebuild_agent_spec(context: str) -> bool:
+    """Rebuild the agent spec after a dashboard config write; True only on a confirmed rewrite.
+
+    Blocking: call it through ``asyncio.to_thread``. A handler puts the answer in
+    its response as ``agent_spec_rewritten`` so the dashboard can say the change
+    was saved but may not have reached the agent spec. ``False`` covers both
+    unconfirmed outcomes: the rebuild declined to write (this instance may not own
+    the shared agent home), or it raised, possibly after part of the spec set was
+    already written. The config write itself already landed, so neither is an
+    error response.
+
+    The import stays function-local: ``kiro_crew.agent`` imports the dashboard
+    handlers, and resolving the name at call time is what lets a test that
+    substitutes ``kiro_crew.agent.rebuild_agent_config`` reach this call.
+    """
+    try:
+        from kiro_crew.agent import rebuild_agent_config_reporting
+
+        _spec_path, wrote = rebuild_agent_config_reporting()
+    except Exception:
+        logger.warning("agent spec rebuild failed after %s", context, exc_info=True)
+        return False
+    if not wrote:
+        logger.warning(
+            "agent spec was not rewritten after %s: this instance may not write the shared "
+            "agent home, so new sessions may keep the previous spec",
+            context,
+        )
+    return wrote

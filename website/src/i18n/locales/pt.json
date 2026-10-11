@@ -5897,6 +5897,9 @@
       "your_existing_kirocrew_setup_will_not_be_affecte": "A sua configuração existente do {{productName}} não será afetada.",
       "your_selected_setup_is_ready_in_kiro_crew": "A configuração selecionada está pronta no {{productName}}."
     },
+    "agentSpecNotRewrittenNotice": {
+      "saved_but_not_applied": "Salvo, mas esta cópia do {{productName}} não conseguiu atualizar a configuração do agente, então os novos chats mantêm a configuração anterior. Abra a página “Logs” para ver o motivo."
+    },
     "agentSelector": {
       "agent_list": "Lista de agentes",
       "default": "padrão",
@@ -12454,6 +12457,7 @@
       "disconnect_census_incomplete": "A autorização armazenada foi mantida porque não foi possível ler uma fonte de configuração para descartar que outro servidor a use. Verifique a configuração do seu servidor e desconecte novamente.",
       "disconnect_census_incomplete_source": "A autorização armazenada foi mantida porque não foi possível ler {{source}} para descartar que outro servidor a use. Corrija ou remova esse arquivo e desconecte novamente.",
       "disconnect_entry_left_alone": "A configuração do seu servidor não foi alterada. Você pode gerenciar esta entrada na aba Servidores MCP.",
+      "disconnect_spec_not_rewritten": "Esta cópia do {{productName}} não conseguiu atualizar a configuração do agente, então os novos chats ainda carregam esta conexão. Abra a página “Logs” para ver o motivo.",
       "disconnect_entry_not_ours": "A autorização armazenada foi removida. A configuração do seu servidor não foi alterada. Você pode gerenciar esta entrada na aba Servidores MCP.",
       "disconnect_grant_shared": "A autorização armazenada foi mantida porque o mesmo endpoint também está configurado por: {{names}}. Revogá-la no provedor também cortaria o acesso deles.",
       "disconnect_grant_survived": "Parte da autorização armazenada não pôde ser removida. Revogue o acesso no provedor.",
@@ -16095,7 +16099,8 @@
         "takes_focus_and_cursor": "Foco + cursor",
         "on_windows_keystrokes_take_your_keyboard_focus": "No Windows, as teclas assumem o foco do teclado e os cliques por coordenadas movem o cursor real — esta plataforma não tem uma rota de entrada por aplicativo.",
         "the_app_lists_in_computer_use_json_could_not_be": "As listas de apps em computer_use.json não puderam ser lidas, então aparecem vazias aqui. O agente continua recusando toda ação que depende delas até o arquivo ser um JSON válido.",
-        "your_chat_sessions_were_restarted_so_this_takes": "As suas sessões de conversa foram reiniciadas para que isso tenha efeito imediato — o Kiro lê a lista de ferramentas uma vez por sessão, então uma conversa aberta não teria percebido a mudança. As suas mensagens continuam lá; o agente relê o contexto na sua próxima mensagem."
+        "your_chat_sessions_were_restarted_so_this_takes": "As suas sessões de conversa foram reiniciadas para que isso tenha efeito imediato — o Kiro lê a lista de ferramentas uma vez por sessão, então uma conversa aberta não teria percebido a mudança. As suas mensagens continuam lá; o agente relê o contexto na sua próxima mensagem.",
+        "your_chat_sessions_were_restarted": "Suas sessões de chat foram reiniciadas. Suas mensagens continuam lá."
       },
       "crewmatesSection": {
         "title": "Membros da equipe",

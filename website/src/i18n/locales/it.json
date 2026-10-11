@@ -5897,6 +5897,9 @@
       "your_existing_kirocrew_setup_will_not_be_affecte": "La tua configurazione esistente di {{productName}} non verrà modificata.",
       "your_selected_setup_is_ready_in_kiro_crew": "La configurazione selezionata è pronta in {{productName}}."
     },
+    "agentSpecNotRewrittenNotice": {
+      "saved_but_not_applied": "Salvato, ma questa copia di {{productName}} non è riuscita ad aggiornare la configurazione dell’agente, quindi le nuove chat mantengono la configurazione precedente. Apri la pagina «Log» per vedere il motivo."
+    },
     "agentSelector": {
       "agent_list": "Elenco degli agenti",
       "default": "predefinito",
@@ -12454,6 +12457,7 @@
       "disconnect_census_incomplete": "L'autorizzazione memorizzata è stata conservata perché non è stato possibile leggere una fonte di configurazione per escludere che un altro server la utilizzi. Controlla la configurazione del server e disconnetti di nuovo.",
       "disconnect_census_incomplete_source": "L'autorizzazione memorizzata è stata conservata perché non è stato possibile leggere {{source}} per escludere che un altro server la utilizzi. Correggi o rimuovi quel file e disconnetti di nuovo.",
       "disconnect_entry_left_alone": "La configurazione del server non è stata modificata. Puoi gestire questa voce dalla scheda Server MCP.",
+      "disconnect_spec_not_rewritten": "Questa copia di {{productName}} non è riuscita ad aggiornare la configurazione dell’agente, quindi le nuove chat caricano ancora questa connessione. Apri la pagina «Log» per vedere il motivo.",
       "disconnect_entry_not_ours": "L'autorizzazione memorizzata è stata rimossa. La configurazione del server non è stata modificata. Puoi gestire questa voce dalla scheda Server MCP.",
       "disconnect_grant_shared": "L'autorizzazione memorizzata è stata mantenuta perché lo stesso endpoint è configurato anche da: {{names}}. Revocarla presso il provider taglierebbe anche il loro accesso.",
       "disconnect_grant_survived": "Parte dell'autorizzazione memorizzata non è stata rimossa. Revoca l'accesso presso il provider.",
@@ -16095,7 +16099,8 @@
         "takes_focus_and_cursor": "Focus + cursore",
         "on_windows_keystrokes_take_your_keyboard_focus": "Su Windows, i tasti premuti assumono il focus della tastiera e i clic per coordinate spostano il cursore reale: questa piattaforma non ha un percorso di input per singola app.",
         "the_app_lists_in_computer_use_json_could_not_be": "Non è stato possibile leggere gli elenchi di app in computer_use.json, quindi qui appaiono vuoti. L’agente continua a rifiutare ogni azione che dipende da essi fino a quando il file non è JSON valido.",
-        "your_chat_sessions_were_restarted_so_this_takes": "Le tue sessioni di chat sono state riavviate perché questa modifica abbia effetto subito — Kiro legge l’elenco dei suoi strumenti una volta per sessione, quindi una chat aperta non l’avrebbe recepita. I tuoi messaggi sono ancora lì; l’agente rilegge il proprio contesto al tuo prossimo messaggio."
+        "your_chat_sessions_were_restarted_so_this_takes": "Le tue sessioni di chat sono state riavviate perché questa modifica abbia effetto subito — Kiro legge l’elenco dei suoi strumenti una volta per sessione, quindi una chat aperta non l’avrebbe recepita. I tuoi messaggi sono ancora lì; l’agente rilegge il proprio contesto al tuo prossimo messaggio.",
+        "your_chat_sessions_were_restarted": "Le tue sessioni di chat sono state riavviate. I tuoi messaggi sono ancora lì."
       },
       "crewmatesSection": {
         "title": "Membri della crew",

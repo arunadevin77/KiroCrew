@@ -22,7 +22,7 @@ from kiro_crew.agent import (
     _atomic_json_write,
     _declined_foreign_spec_write,
     kiro_agents_dir_path,
-    rebuild_agent_config,
+    rebuild_agent_config_reporting,
 )
 from kiro_crew.agent_discovery import _read_agent_spec
 from kiro_crew.agent_spec_format import iter_agent_spec_files
@@ -36,7 +36,7 @@ from kiro_crew.config.loader import (
 )
 from kiro_crew.config.paths import data_home, kiro_agents_dir
 from kiro_crew.dashboard.chat_utils import run_to_completion
-from kiro_crew.dashboard.handlers._shared import read_bounded_json
+from kiro_crew.dashboard.handlers._shared import AGENT_SPEC_NOT_REWRITTEN, read_bounded_json
 from kiro_crew.dashboard.state import DashboardState
 from kiro_crew.env import emit_env
 from kiro_crew.loop_lock import LoopBoundLock
@@ -3656,8 +3656,12 @@ async def _do_mcp_apply(request: web.Request) -> web.Response:
     rebuild_ok = False
     rebuild_error: str | None = None
     try:
-        await asyncio.to_thread(rebuild_agent_config)
-        rebuild_ok = True
+        _spec_path, rebuild_ok = await asyncio.to_thread(rebuild_agent_config_reporting)
+        if not rebuild_ok:
+            # Declined, not failed: this instance may not write the shared agent
+            # home, so the saved change does not reach new sessions.
+            rebuild_error = AGENT_SPEC_NOT_REWRITTEN
+            logger.warning("agent spec was not rewritten after apply: %s", rebuild_error)
     except Exception as exc:
         # Rebuild failures can surface file paths, env var contents, or
         # credential fragments (e.g. JSON decode errors that echo file

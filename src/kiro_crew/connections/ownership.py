@@ -91,6 +91,10 @@ class DisconnectScope:
     # a surviving artifact. Restricting the re-stat to attempts is what makes a
     # survivor unambiguously a FAILED unlink.
     attempted_urls: tuple[str, ...]
+    # Whether the agent-spec rebuild after the purge confirmed a write. False when it
+    # declined (this instance may not write the shared agent home) or raised: new
+    # sessions may still load the entry this Disconnect removed from the config.
+    agent_spec_rewritten: bool
 
 
 def _json_spec_names(spec_dir: Path) -> list[str] | None:
@@ -719,11 +723,19 @@ async def remove_provider_entry(
         # ``~/.kiro/agents/kirocrew.lock`` (apps/bridges._mcp_lock), so they are
         # different flocks and reentrancy never arises.
         try:
-            from kiro_crew.agent import rebuild_agent_config
+            from kiro_crew.agent import rebuild_agent_config_reporting
 
-            await _offload_config_write(rebuild_agent_config)
+            _spec_path, spec_rewritten = await _offload_config_write(rebuild_agent_config_reporting)
         except Exception:  # noqa: BLE001 — the config write already landed
             logger.warning("agent config rebuild failed after disconnect", exc_info=True)
+            spec_rewritten = False
+        else:
+            if not spec_rewritten:
+                logger.warning(
+                    "agent spec was not rewritten after disconnect of %s: this instance may "
+                    "not write the shared agent home",
+                    slug,
+                )
 
     # OUTSIDE the lock and awaited by nobody. This provider is warmable again precisely
     # because its stored grant is gone, and the pool only premints ahead of need -- so
@@ -748,4 +760,5 @@ async def remove_provider_entry(
         census_incomplete=census_gap,
         census_unreadable=tuple(_census_source_name(label) for label in unreadable),
         attempted_urls=tuple(attempted),
+        agent_spec_rewritten=spec_rewritten,
     )

@@ -18,6 +18,7 @@ import re
 from aiohttp import web
 
 from kiro_crew.agent import SharedAgentHomeRefused
+from kiro_crew.dashboard.handlers._shared import rebuild_agent_spec
 from kiro_crew.dashboard.handlers.mcp import (
     _find_server_spec_anywhere,
     _get_mcp_lock,
@@ -379,15 +380,9 @@ async def _install_from_official(request: web.Request, server_id: str) -> web.Re
             enable_now = not mcp_entry_is_muted(existing)
 
     # Rebuild the rendered agent configs so the new server loads on the next
-    # session, mirroring api_mcp_apply. Best-effort: the config write above
-    # already succeeded and survives a failed rebuild.
-    try:
-        # circular import: kiro_crew.agent imports dashboard handlers.
-        from kiro_crew.agent import rebuild_agent_config
-
-        await asyncio.to_thread(rebuild_agent_config)
-    except Exception:
-        logger.warning("rebuild_agent_config failed after MCP install", exc_info=True)
+    # session, mirroring api_mcp_apply. The config write above already landed
+    # and survives a skipped rebuild; the response says whether the spec moved.
+    spec_rewritten = await asyncio.to_thread(rebuild_agent_spec, "MCP install")
 
     sel().log_api_access(
         caller="dashboard",
@@ -403,6 +398,7 @@ async def _install_from_official(request: web.Request, server_id: str) -> web.Re
             "required_env": required_env,
             "method": method,
             "enabled": enable_now,
+            "agent_spec_rewritten": spec_rewritten,
         }
     )
 

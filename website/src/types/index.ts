@@ -824,6 +824,8 @@ export interface McpDiscoverInstallResult {
   method: string
   /** False when the entry was written disabled (required env unset). Absent for capability installs. */
   enabled?: boolean
+  /** False when the install was saved but the agent spec was not rewritten. */
+  agent_spec_rewritten?: boolean
 }
 
 /** A raw mcp.json server spec (stdio command/args/env OR remote url). */

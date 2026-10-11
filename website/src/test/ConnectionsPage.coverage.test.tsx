@@ -911,6 +911,47 @@ describe('a connected provider', () => {
     expect(within(slot as HTMLElement).getByRole('link', { name: /Revoke at Notion/ })).toBeInTheDocument()
   })
 
+  it('alerts when the Disconnect did not reach the agent spec', async () => {
+    mcpServers.mockResolvedValue(connected)
+    connectionsDisconnect.mockResolvedValue({
+      ok: true,
+      grantRemoved: true,
+      grantSurviving: [],
+      entryRemoved: true,
+      grantSharedWith: [],
+      grantCensusIncomplete: false,
+      agentSpecRewritten: false,
+    })
+    mount()
+
+    fireEvent.click(await waitFor(() => within(card('notion')).getByRole('button', { name: /Disconnect/ })))
+
+    // The entry left the config, but new sessions may still load it: a failed
+    // step, so an alert rather than a green success.
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Disconnected locally.')
+    expect(alert).toHaveTextContent('new chats still load this connection')
+  })
+
+  it('does not blame the agent spec when the Disconnect removed no entry', async () => {
+    mcpServers.mockResolvedValue(connected)
+    connectionsDisconnect.mockResolvedValue({
+      ok: true,
+      grantRemoved: false,
+      grantSurviving: [],
+      entryRemoved: false,
+      grantSharedWith: [],
+      grantCensusIncomplete: false,
+      agentSpecRewritten: false,
+    })
+    mount()
+
+    fireEvent.click(await waitFor(() => within(card('notion')).getByRole('button', { name: /Disconnect/ })))
+
+    await screen.findByText(/server configuration was left unchanged/i)
+    expect(screen.queryByText(/new chats still load this connection/i)).not.toBeInTheDocument()
+  })
+
   it('says the grant was kept when another entry shares the endpoint', async () => {
     mcpServers.mockResolvedValue(connected)
     connectionsDisconnect.mockResolvedValue({

@@ -1604,7 +1604,7 @@ class TestProbe:
                 return None
 
         monkeypatch.setattr(mcp_mod, "_get_mcp_lock", lambda: _FlagLock())
-        monkeypatch.setattr(mcp_mod, "rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(mcp_mod, "rebuild_agent_config_reporting", lambda: (Path(), True))
         monkeypatch.setattr(mcp_mod, "_get_mcp_lock_sync", lambda: _NoSync())
 
         async def run() -> None:

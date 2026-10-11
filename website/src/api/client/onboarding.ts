@@ -248,6 +248,8 @@ export interface AgentImportApplyResponse {
   ok: true
   conflict_strategy: AgentImportConflictStrategy
   summary: AgentImportSummary
+  /** Present when MCP servers were imported; false when the agent spec was not rewritten. */
+  agent_spec_rewritten?: boolean
 }
 
 export function createOnboardingEndpoints({ get, post, put, j, jNullable }: ClientTransport) {

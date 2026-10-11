@@ -1680,18 +1680,24 @@ export default function ConnectionsPage({ servicesEnabled = false }: { servicesE
         entryKept && (survived || shared || !result.grantRemoved)
           ? t('pages.connectionsPage.disconnect_entry_left_alone')
           : ''
+      // The rebuild after the purge did not confirm a write, so new sessions may
+      // still load the entry. That is a failed step, reported like a survivor.
+      // Only when the entry actually left the config: a click that removed
+      // nothing changed nothing the spec should follow.
+      const specNotRewritten = result.agentSpecRewritten === false && result.entryRemoved
+      const specClause = specNotRewritten ? t('pages.connectionsPage.disconnect_spec_not_rewritten') : ''
       setFeedback(current => ({
         ...current,
         [provider.slug]: disconnectFeedback(
           provider,
-          [grantClause, entryClause].filter(Boolean).join(' '),
+          [grantClause, entryClause, specClause].filter(Boolean).join(' '),
           // A census gap tells the user their access was NOT withdrawn and hands
           // them a repair to make; a not-ours entry leaves the card showing
           // Connected with a live Disconnect button, so a green success would
           // misreport a click that changed nothing. Neither is an `error`,
           // because nothing failed — a safety rule declined to act, or there was
           // nothing here to act on.
-          survived ? 'error' : censusGap || entryNotOurs ? 'warning' : 'success',
+          survived || specNotRewritten ? 'error' : censusGap || entryNotOurs ? 'warning' : 'success',
         ),
       }))
     }

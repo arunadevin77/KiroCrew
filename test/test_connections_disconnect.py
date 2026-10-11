@@ -166,6 +166,14 @@ def _entry(name: str, url: str) -> types.SimpleNamespace:
     return types.SimpleNamespace(name=name, url=url)
 
 
+def _rebuild_that_writes(**kwargs) -> pathlib.Path:
+    """A rebuild that wrote the spec: it reports the write the way the real one does."""
+    wrote_out = kwargs.get("_wrote_out")
+    if wrote_out is not None:
+        wrote_out.append(True)
+    return pathlib.Path("/dev/null")
+
+
 def _wire(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -232,7 +240,7 @@ def _wire(
 
     _purge.seen = scopes if scopes is not None else []  # type: ignore[attr-defined]
     monkeypatch.setattr(mcp_handlers, "_purge_server_config", _purge)
-    monkeypatch.setattr(agent_mod, "rebuild_agent_config", lambda: None)
+    monkeypatch.setattr(agent_mod, "rebuild_agent_config", _rebuild_that_writes)
     monkeypatch.setattr(connections, "sel", lambda: types.SimpleNamespace(log_api_access=_audit))
     if not real_rearm:
         seen_rearms = rearms if rearms is not None else []
@@ -307,7 +315,41 @@ async def test_disconnect_revokes_the_grant_and_removes_the_entry(
         "grantSharedWith": [],
         "grantCensusIncomplete": False,
         "grantCensusUnreadable": [],
+        "agentSpecRewritten": True,
     }
+    assert purged == [_SLUG]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rebuild",
+    [
+        # The shared-home guard refused: the path comes back and nothing is written.
+        pytest.param(lambda **_: pathlib.Path("/dev/null"), id="declined"),
+        pytest.param(
+            lambda **_: (_ for _ in ()).throw(RuntimeError("boom")),
+            id="raised",
+        ),
+    ],
+)
+async def test_disconnect_reports_a_spec_rebuild_that_did_not_write(
+    monkeypatch: pytest.MonkeyPatch, rebuild
+) -> None:
+    """The entry is gone from the config, but new sessions may still load it."""
+    purged: list[str] = []
+    _wire(
+        monkeypatch,
+        removed=["token", "registration"],
+        surviving=[],
+        inventory=[_entry(_SLUG, _provider_url())],
+        purged=purged,
+    )
+    monkeypatch.setattr(agent_mod, "rebuild_agent_config", rebuild)
+
+    body = await _disconnect()
+
+    assert body["entryRemoved"] is True
+    assert body["agentSpecRewritten"] is False
     assert purged == [_SLUG]
 
 

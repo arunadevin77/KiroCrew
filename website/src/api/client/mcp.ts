@@ -106,13 +106,13 @@ export function createMcpEndpoints({ get, post, put, j, jfetch: fetch }: ClientT
       post('/api/mcp/discover/install', { provider, id }).then(j) as Promise<import('../../types').McpDiscoverInstallResult>,
 
     mcpCustomAdd: (servers: Record<string, import('../../types').McpCustomSpec>, enable: boolean) =>
-      post('/api/mcp/custom', { servers, enable }).then(j) as Promise<{ ok: boolean; added: string[]; enabled: boolean }>,
+      post('/api/mcp/custom', { servers, enable }).then(j) as Promise<{ ok: boolean; added: string[]; enabled: boolean; agent_spec_rewritten?: boolean }>,
 
     mcpCustomGet: (name: string) =>
       get(`/api/mcp/custom/${encodeURIComponent(name)}`).then(j) as Promise<import('../../types').McpCustomSpecResponse>,
 
     mcpCustomUpdate: (name: string, spec: import('../../types').McpCustomSpec) =>
-      put(`/api/mcp/custom/${encodeURIComponent(name)}`, { spec }).then(j) as Promise<{ ok: boolean; name: string }>,
+      put(`/api/mcp/custom/${encodeURIComponent(name)}`, { spec }).then(j) as Promise<{ ok: boolean; name: string; agent_spec_rewritten?: boolean }>,
     mcpActive: (agent?: string) => fetch('/api/mcp/active' + (agent ? `?agent=${encodeURIComponent(agent)}` : '')).then(j),
     mcpProbe: () => post('/api/mcp/probe').then(j),
     mcpResetProbeFailures: (name: string) =>

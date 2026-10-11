@@ -25,6 +25,19 @@ _STDIO = {"command": "npx", "args": ["-y", "@acme/weather-mcp"], "env": {"KEY": 
 _REMOTE = {"url": "https://mcp.example.com/sse"}
 
 
+def _rebuild_that_writes(**kwargs) -> Path:
+    """A rebuild that wrote the spec: it reports the write the way the real one does."""
+    wrote_out = kwargs.get("_wrote_out")
+    if wrote_out is not None:
+        wrote_out.append(True)
+    return Path("/dev/null")
+
+
+def _rebuild_that_declines(**_kwargs) -> Path:
+    """A rebuild the shared-home guard refused: it returns the path and writes nothing."""
+    return Path("/dev/null")
+
+
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch):
     """Pin $HOME to tmp_path so all config paths resolve into a sandbox."""
@@ -45,7 +58,7 @@ def sandbox(fake_home, monkeypatch):
 
     import kiro_crew.agent as agent_mod
 
-    rebuild = MagicMock()
+    rebuild = MagicMock(side_effect=_rebuild_that_writes)
     monkeypatch.setattr(agent_mod, "rebuild_agent_config", rebuild)
 
     return SimpleNamespace(
@@ -110,7 +123,12 @@ class TestCustomAdd:
             resp = await client.post("/api/mcp/custom", json={"servers": {"weather": _STDIO}})
             assert resp.status == 200
             body = await resp.json()
-            assert body == {"ok": True, "added": ["weather"], "enabled": False}
+            assert body == {
+                "ok": True,
+                "added": ["weather"],
+                "enabled": False,
+                "agent_spec_rewritten": True,
+            }
             entry = _written(sandbox)["weather"]
             assert entry["command"] == "npx"
             assert entry["args"] == ["-y", "@acme/weather-mcp"]
@@ -373,7 +391,11 @@ class TestCustomUpdate:
         try:
             resp = await client.put("/api/mcp/custom/weather", json={"spec": _REMOTE})
             assert resp.status == 200
-            assert await resp.json() == {"ok": True, "name": "weather"}
+            assert await resp.json() == {
+                "ok": True,
+                "name": "weather",
+                "agent_spec_rewritten": True,
+            }
             written = _written(sandbox)["weather"]
             assert written["url"] == _REMOTE["url"]
             assert "command" not in written  # old stdio keys fully replaced
@@ -1276,3 +1298,45 @@ class TestOwnerSignInRecord:
             encoding="utf-8",
         )
         assert _owner_record() == {}
+
+
+# ---------------------------------------------------------------------------
+# A rebuild that does not write the spec is reported, not hidden
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestSpecNotRewritten:
+    async def test_add_reports_a_declined_rebuild(self, sandbox, fake_sel):
+        sandbox.rebuild.side_effect = _rebuild_that_declines
+        client = await _client()
+        try:
+            resp = await client.post("/api/mcp/custom", json={"servers": {"weather": _STDIO}})
+            assert resp.status == 200
+            body = await resp.json()
+            assert body["added"] == ["weather"]
+            assert body["agent_spec_rewritten"] is False
+            assert "weather" in _written(sandbox), "the saved server must stay saved"
+        finally:
+            await client.close()
+
+    async def test_update_reports_a_declined_rebuild(self, sandbox, fake_sel):
+        client = await _client()
+        try:
+            await client.post("/api/mcp/custom", json={"servers": {"weather": _STDIO}})
+            sandbox.rebuild.side_effect = _rebuild_that_declines
+            resp = await client.put("/api/mcp/custom/weather", json={"spec": _STDIO})
+            assert resp.status == 200
+            assert (await resp.json())["agent_spec_rewritten"] is False
+        finally:
+            await client.close()
+
+    async def test_add_reports_a_failed_rebuild(self, sandbox, fake_sel):
+        sandbox.rebuild.side_effect = RuntimeError("boom")
+        client = await _client()
+        try:
+            resp = await client.post("/api/mcp/custom", json={"servers": {"weather": _STDIO}})
+            assert resp.status == 200
+            assert (await resp.json())["agent_spec_rewritten"] is False
+        finally:
+            await client.close()

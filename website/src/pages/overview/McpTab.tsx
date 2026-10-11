@@ -8,6 +8,7 @@ import { api } from '../../api/client'
 import { Card, Btn, Badge, SearchInput, ContentSkeleton } from '../../components/ui'
 import InfoTip from '../../components/InfoTip'
 import ErrorNotice from '../../components/ErrorNotice'
+import AgentSpecNotRewrittenNotice from '../../components/AgentSpecNotRewrittenNotice'
 import { useProvider } from '../../providers'
 import McpBrowserModal from '../../components/McpBrowserModal'
 import McpCustomServerModal from '../../components/McpCustomServerModal'
@@ -428,6 +429,8 @@ export default function McpTab({ onManagedProviderClick }: McpTabProps = {}) {
   // button as scope toggles so rapid clicks don't race.
   const [pendingTools, setPendingTools] = useState<Record<string, Record<string, boolean>>>({})
   const [applyMsg, setApplyMsg] = useState('')
+  // The last apply saved but its agent-spec rebuild did not write.
+  const [specNotRewritten, setSpecNotRewritten] = useState(false)
 
   // Auto-dismiss timers for the success banners. Held in refs and cleared on
   // unmount so a pending setTimeout never fires a state update after the
@@ -566,7 +569,11 @@ export default function McpTab({ onManagedProviderClick }: McpTabProps = {}) {
       return r
     },
     onSuccess: (r) => {
-      setApplyMsg(i18nT('pages.overview.mcpTab.applied_change', { count: r.applied ?? 0 }))
+      const notRewritten = r.rebuild?.ok === false
+      // The notice already says the change was saved; a green "Applied" above it
+      // would read as the opposite verdict.
+      setApplyMsg(notRewritten ? '' : i18nT('pages.overview.mcpTab.applied_change', { count: r.applied ?? 0 }))
+      setSpecNotRewritten(notRewritten)
       setPending({})
       setPendingTools({})
       queryClient.invalidateQueries({ queryKey: ['mcp-servers'] })
@@ -644,6 +651,9 @@ export default function McpTab({ onManagedProviderClick }: McpTabProps = {}) {
     <Card>
       {apply.error && <div className="mb-3 text-[13px] text-danger">{(apply.error as Error).message}</div>}
       {applyMsg && <div className="mb-3 text-[13px] text-ok animate-rise"><Check className="lucide-inline" /> {applyMsg}</div>}
+      {/* No hand-off while changes are staged: opening the chat unmounts this tab
+          and drops the pending MCP changes it holds. */}
+      {specNotRewritten && <AgentSpecNotRewrittenNotice className="mb-3" askAgent={pendingCount === 0} />}
 
       {/* Pending-changes banner */}
       {pendingCount > 0 && (
@@ -1065,8 +1075,14 @@ export default function McpTab({ onManagedProviderClick }: McpTabProps = {}) {
       )}
     </Card>
 
-    <McpBrowserModal open={browserOpen} onClose={() => setBrowserOpen(false)} />
-    <McpCustomServerModal open={customOpen} onClose={() => setCustomOpen(false)} />
-    <McpCustomServerModal open={editTarget !== null} onClose={() => setEditTarget(null)} editName={editTarget} />
+    {/* The modals' hand-off would unmount this tab and drop its staged changes. */}
+    <McpBrowserModal open={browserOpen} onClose={() => setBrowserOpen(false)} askAgent={pendingCount === 0} />
+    <McpCustomServerModal open={customOpen} onClose={() => setCustomOpen(false)} askAgent={pendingCount === 0} />
+    <McpCustomServerModal
+      open={editTarget !== null}
+      onClose={() => setEditTarget(null)}
+      editName={editTarget}
+      askAgent={pendingCount === 0}
+    />
   </>)
 }

@@ -848,6 +848,7 @@ async def api_connections_disconnect(request: web.Request) -> web.Response:
             "grantSharedWith": list(scope.grant_shared_with),
             "grantCensusIncomplete": scope.census_incomplete,
             "grantCensusUnreadable": list(scope.census_unreadable),
+            "agentSpecRewritten": scope.agent_spec_rewritten,
         }
     )
 
@@ -1005,7 +1006,7 @@ def _oauth_client_configured(provider: Provider) -> bool:
     return bool(oauth_client_view(provider, config=config, vault_names=names).get("configured"))
 
 
-async def _refresh_client_projections(slug: str) -> bool:
+async def _refresh_client_projections(slug: str) -> bool | None:
     """Bring every runtime projection of ``slug``'s client in line with the record.
 
     The vault and config.json are the source of truth; the emitted agent spec and
@@ -1017,7 +1018,12 @@ async def _refresh_client_projections(slug: str) -> bool:
     would otherwise merge straight back; (2) rebuild the agent spec so the next
     session reads the new client (or none).
 
-    Returns False when the scope scrub or the spec rebuild failed. The caller reports that as an
+    Returns True when every projection is refreshed, and None when the record and
+    scopes are clean but the rebuild declined to write the spec (this instance may
+    not write the shared agent home): the caller answers success, audits it, and
+    says ``agent_spec_rewritten: false``, because that decline repeats on every
+    call and a 500 would never clear. Returns False when the scope scrub or the
+    spec rebuild failed. The caller reports that as an
     error rather than success: the RECORD is committed (and stays committed --
     reverting the source to match a stale projection would keep the retired
     credential authoritative, the opposite of what the operator asked), but a
@@ -1052,12 +1058,19 @@ async def _refresh_client_projections(slug: str) -> bool:
         )
         return False
     try:
-        from kiro_crew.agent import rebuild_agent_config  # circular at module scope
+        from kiro_crew.agent import rebuild_agent_config_reporting  # circular at module scope
 
-        await asyncio.to_thread(rebuild_agent_config)
+        _spec_path, wrote = await asyncio.to_thread(rebuild_agent_config_reporting)
     except Exception:  # noqa: BLE001 -- reported to the caller, see docstring
         logger.warning("rebuild_agent_config failed after an OAuth client change", exc_info=True)
         return False
+    if not wrote:
+        logger.warning(
+            "agent spec was not rewritten after an OAuth client change for %s: this instance "
+            "may not write the shared agent home",
+            slug,
+        )
+        return None
     return True
 
 
@@ -1250,6 +1263,8 @@ async def api_connections_oauth_client_put(request: web.Request) -> web.Response
 
     slug = str(provider["slug"])
 
+    spec_rewritten = [True]
+
     async def _mutate() -> web.Response | None:
         async with _OAUTH_CLIENT_MUTATION:
             failure = await _write_oauth_client(
@@ -1257,7 +1272,9 @@ async def api_connections_oauth_client_put(request: web.Request) -> web.Response
             )
             if failure is not None:
                 return failure
-            if not await _refresh_client_projections(slug):
+            refreshed = await _refresh_client_projections(slug)
+            spec_rewritten[0] = refreshed is True
+            if refreshed is False:
                 views_now = await asyncio.to_thread(_oauth_client_views)
                 return _projection_stale_response(
                     slug, next((v for v in views_now if v.get("slug") == slug), None)
@@ -1290,7 +1307,9 @@ async def api_connections_oauth_client_put(request: web.Request) -> web.Response
     )
     views = await asyncio.to_thread(_oauth_client_views)
     current = next((v for v in views if v.get("slug") == slug), None)
-    return web.json_response({"ok": True, "client": current})
+    return web.json_response(
+        {"ok": True, "client": current, "agent_spec_rewritten": spec_rewritten[0]}
+    )
 
 
 async def api_connections_oauth_client_delete(request: web.Request) -> web.Response:
@@ -1328,6 +1347,8 @@ async def api_connections_oauth_client_delete(request: web.Request) -> web.Respo
         del clients[slug]
         return cfg
 
+    spec_rewritten = [True]
+
     async def _mutate() -> web.Response | None:
         async with _OAUTH_CLIENT_MUTATION:
             # Same order and the same rollback as the PUT: the vault half goes
@@ -1350,7 +1371,9 @@ async def api_connections_oauth_client_delete(request: web.Request) -> web.Respo
                     {"error": "could not write config.json", "code": "config_write_failed"},
                     status=500,
                 )
-            if not await _refresh_client_projections(slug):
+            refreshed = await _refresh_client_projections(slug)
+            spec_rewritten[0] = refreshed is True
+            if refreshed is False:
                 views_now = await asyncio.to_thread(_oauth_client_views)
                 return _projection_stale_response(
                     slug, next((v for v in views_now if v.get("slug") == slug), None)
@@ -1370,4 +1393,6 @@ async def api_connections_oauth_client_delete(request: web.Request) -> web.Respo
     )
     views = await asyncio.to_thread(_oauth_client_views)
     current = next((v for v in views if v.get("slug") == slug), None)
-    return web.json_response({"ok": True, "client": current})
+    return web.json_response(
+        {"ok": True, "client": current, "agent_spec_rewritten": spec_rewritten[0]}
+    )

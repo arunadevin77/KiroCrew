@@ -139,7 +139,7 @@ export function createConnectionsEndpoints({ post, put, del, j, jfetch: fetch }:
     // whose URL could not be compared) names no file, and a gateway predating the
     // field sends none.
     connectionsDisconnect: (slug: string) =>
-      post('/api/connections/disconnect', { slug }).then(j) as Promise<{ ok: boolean; grantRemoved: boolean; grantSurviving: string[]; entryRemoved: boolean; grantSharedWith: string[]; grantCensusIncomplete: boolean; grantCensusUnreadable?: string[] }>,
+      post('/api/connections/disconnect', { slug }).then(j) as Promise<{ ok: boolean; grantRemoved: boolean; grantSurviving: string[]; entryRemoved: boolean; grantSharedWith: string[]; grantCensusIncomplete: boolean; grantCensusUnreadable?: string[]; agentSpecRewritten?: boolean }>,
     // Operator-registered OAuth clients for providers that refuse dynamic client
     // registration (Settings → OAuth Apps). The list is readable by any dashboard
     // user (it is what the gallery's "needs configuration" card is built from and
@@ -149,9 +149,9 @@ export function createConnectionsEndpoints({ post, put, del, j, jfetch: fetch }:
     // Omitted fields are left as they are, so the id can be saved without re-entering
     // a secret the panel never displays; `client_secret_clear` removes the stored one.
     connectionsOAuthClientSave: (slug: string, body: ConnectionOAuthClientSave) =>
-      put(`/api/connections/oauth-clients/${encodeURIComponent(slug)}`, body).then(j) as Promise<{ ok: boolean; client: ConnectionOAuthClient | null }>,
+      put(`/api/connections/oauth-clients/${encodeURIComponent(slug)}`, body).then(j) as Promise<{ ok: boolean; client: ConnectionOAuthClient | null; agent_spec_rewritten?: boolean }>,
     connectionsOAuthClientDelete: (slug: string) =>
-      del(`/api/connections/oauth-clients/${encodeURIComponent(slug)}`).then(j) as Promise<{ ok: boolean; client: ConnectionOAuthClient | null }>,
+      del(`/api/connections/oauth-clients/${encodeURIComponent(slug)}`).then(j) as Promise<{ ok: boolean; client: ConnectionOAuthClient | null; agent_spec_rewritten?: boolean }>,
   }
 
   return { accounts }

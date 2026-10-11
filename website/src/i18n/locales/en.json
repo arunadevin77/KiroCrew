@@ -4099,6 +4099,9 @@
       "files_could_not_be_read": "Files could not be read",
       "your_existing_kirocrew_setup_will_not_be_affecte": "Your existing {{productName}} setup will not be affected."
     },
+    "agentSpecNotRewrittenNotice": {
+      "saved_but_not_applied": "Saved, but this copy of {{productName}} could not update the agent config, so new chats keep the old setup. Open the Logs page to see why."
+    },
     "agentSelector": {
       "agent_list": "Agent list",
       "default": "default",

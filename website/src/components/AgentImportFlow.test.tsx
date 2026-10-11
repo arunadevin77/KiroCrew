@@ -620,6 +620,31 @@ describe('AgentImportFlow', () => {
     expect(onComplete).not.toHaveBeenCalled()
   })
 
+  it('says the import is not live when the agent spec was not rewritten', async () => {
+    mockSuccessfulRequests()
+    vi.mocked(api.onboardingImportApply).mockResolvedValue({ ...APPLY_RESPONSE, agent_spec_rewritten: false })
+
+    renderWithProviders(<AgentImportFlow initialOpen onComplete={vi.fn()} />)
+    await startImport()
+    await screen.findByText('Import complete')
+
+    expect(await screen.findByTestId('agent-spec-not-rewritten')).toHaveTextContent(
+      'Saved, but this copy of Kiro Crew could not update the agent config',
+    )    // "Ready" would contradict the notice.
+    expect(screen.queryByText(/ready in Kiro Crew/i)).not.toBeInTheDocument()
+  })
+
+  it('shows no notice when the agent spec was rewritten', async () => {
+    mockSuccessfulRequests()
+    vi.mocked(api.onboardingImportApply).mockResolvedValue({ ...APPLY_RESPONSE, agent_spec_rewritten: true })
+
+    renderWithProviders(<AgentImportFlow initialOpen onComplete={vi.fn()} />)
+    await startImport()
+    await screen.findByText('Import complete')
+
+    expect(screen.queryByTestId('agent-spec-not-rewritten')).not.toBeInTheDocument()
+  })
+
   it('offers a resolution when items conflict, and does not by default', async () => {
     mockSuccessfulRequests()
     vi.mocked(api.onboardingImportApply).mockResolvedValue(CONFLICTED_APPLY_RESPONSE)

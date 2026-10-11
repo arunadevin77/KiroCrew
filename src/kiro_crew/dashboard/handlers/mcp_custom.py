@@ -24,6 +24,7 @@ import logging
 from aiohttp import web
 
 from kiro_crew.dashboard.handlers import mcp as _mcp
+from kiro_crew.dashboard.handlers._shared import rebuild_agent_spec
 from kiro_crew.dashboard.handlers.mcp import (
     _find_server_spec_anywhere,
     _get_kirocrew_entry,
@@ -358,15 +359,13 @@ async def _record_owner_servers(entries: dict[str, dict]) -> None:
         logger.warning("could not record owner MCP servers %s", sorted(entries), exc_info=True)
 
 
-async def _rebuild_agent_config() -> None:
-    """Best-effort agent-config rebuild so changes load on the next session."""
-    try:
-        # circular import: kiro_crew.agent imports dashboard handlers.
-        from kiro_crew.agent import rebuild_agent_config
+async def _rebuild_agent_config() -> bool:
+    """Rebuild the agent spec so the change loads on the next session.
 
-        await asyncio.to_thread(rebuild_agent_config)
-    except Exception:
-        logger.warning("rebuild_agent_config failed after MCP custom write", exc_info=True)
+    True only when the spec was rewritten; the caller reports a False to the
+    dashboard instead of claiming the change is live.
+    """
+    return await asyncio.to_thread(rebuild_agent_spec, "MCP custom write")
 
 
 async def api_mcp_custom_add(request: web.Request) -> web.Response:
@@ -459,7 +458,7 @@ async def api_mcp_custom_add(request: web.Request) -> web.Response:
         await _mcp._offload_config_write(_mcp._atomic_write, _mcp._kirocrew_mcp_json(), data)
 
     await _record_owner_servers(cleaned)
-    await _rebuild_agent_config()
+    spec_rewritten = await _rebuild_agent_config()
 
     added = sorted(cleaned)
     sel().log_api_access(
@@ -469,7 +468,9 @@ async def api_mcp_custom_add(request: web.Request) -> web.Response:
         source="dashboard",
         resources=f"custom:{','.join(added)} enabled={enable}",
     )
-    return web.json_response({"ok": True, "added": added, "enabled": enable})
+    return web.json_response(
+        {"ok": True, "added": added, "enabled": enable, "agent_spec_rewritten": spec_rewritten}
+    )
 
 
 async def api_mcp_custom_get(request: web.Request) -> web.Response:
@@ -628,7 +629,7 @@ async def api_mcp_custom_update(request: web.Request) -> web.Response:
         return web.json_response({"error": f"server '{name}' not found"}, status=404)
 
     await _record_owner_servers({name: spec})
-    await _rebuild_agent_config()
+    spec_rewritten = await _rebuild_agent_config()
 
     sel().log_api_access(
         caller="dashboard",
@@ -637,4 +638,4 @@ async def api_mcp_custom_update(request: web.Request) -> web.Response:
         source="dashboard",
         resources=f"custom:{name}",
     )
-    return web.json_response({"ok": True, "name": name})
+    return web.json_response({"ok": True, "name": name, "agent_spec_rewritten": spec_rewritten})

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -175,8 +176,11 @@ class TestApplyEndpoint:
             "_find_server_spec_anywhere",
             lambda name: ({"command": "slack", "args": []} if name == "slack-mcp" else None),
         )
-        # Stub rebuild_agent_config — we only care about file writes here.
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        # Stub the spec rebuild — we only care about file writes here.
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
 
         # No-op the lock to simplify testing.
         class _NoLock:
@@ -236,7 +240,10 @@ class TestApplyEndpoint:
             lambda: MagicMock(**{"available.return_value": False}),
         )
 
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
 
         class _NoLock:
             async def __aenter__(self):
@@ -292,8 +299,10 @@ class TestApplyEndpoint:
         monkeypatch.setattr(
             "kiro_crew.dashboard.handlers._shared._capability_manager", lambda: manager
         )
-        rebuild = MagicMock()
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", rebuild)
+        rebuild = MagicMock(return_value=(Path(), True))
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting", rebuild
+        )
         sel = MagicMock()
         monkeypatch.setattr(mcp_mod, "sel", lambda: sel)
 
@@ -361,8 +370,10 @@ class TestApplyEndpoint:
             "kiro_crew.dashboard.handlers._shared._capability_manager",
             lambda: MagicMock(**{"available.return_value": False}),
         )
-        rebuild = MagicMock()
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", rebuild)
+        rebuild = MagicMock(return_value=(Path(), True))
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting", rebuild
+        )
         sel = MagicMock()
         monkeypatch.setattr(mcp_mod, "sel", lambda: sel)
 
@@ -404,8 +415,10 @@ class TestApplyEndpoint:
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", kiro_path)
         monkeypatch.setattr(mcp_mod, "_extra_mcp_scopes", list)
         monkeypatch.setattr(mcp_mod, "kiro_agents_dir", lambda: tmp_path / "agents")
-        rebuild = MagicMock()
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", rebuild)
+        rebuild = MagicMock(return_value=(Path(), True))
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting", rebuild
+        )
         monkeypatch.setattr(mcp_mod, "sel", lambda: MagicMock())
 
         request = _make_request(
@@ -467,7 +480,10 @@ class TestApplyEndpoint:
         monkeypatch.setattr(
             "kiro_crew.dashboard.handlers._shared._capability_manager", lambda: manager
         )
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
         sel = MagicMock()
         monkeypatch.setattr(mcp_mod, "sel", lambda: sel)
 
@@ -512,8 +528,10 @@ class TestApplyEndpoint:
             lambda: MagicMock(**{"available.return_value": False}),
         )
 
-        rebuild = MagicMock()
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", rebuild)
+        rebuild = MagicMock(return_value=(Path(), True))
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting", rebuild
+        )
 
         class _NoLock:
             async def __aenter__(self):
@@ -540,6 +558,35 @@ class TestApplyEndpoint:
         assert body["applied"] == 3
         assert rebuild.call_count == 1  # rebuild called ONCE after all edits
         assert body["rebuild"]["ok"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_declined_rebuild_reports_rebuild_not_ok(self, tmp_path, monkeypatch):
+        """The guard refused the write: the change is saved but not live, so say so."""
+        from kiro_crew.dashboard.handlers import mcp as mcp_mod
+        from kiro_crew.dashboard.handlers._shared import AGENT_SPEC_NOT_REWRITTEN
+
+        monkeypatch.setattr(mcp_mod, "_KIROCREW_MCP_JSON", tmp_path / "mc.json")
+        monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", tmp_path / "kiro.json")
+        monkeypatch.setattr(mcp_mod, "_extra_mcp_scopes", lambda: [])
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), False),
+        )
+
+        class _NoLock:
+            async def __aenter__(self):
+                pass
+
+            async def __aexit__(self, *a):
+                pass
+
+        monkeypatch.setattr(mcp_mod, "_get_mcp_lock", lambda: _NoLock())
+        monkeypatch.setattr(mcp_mod, "_find_server_spec_anywhere", lambda n: {"command": "x"})
+
+        request = _make_request({"changes": [{"name": "a", "kirocrew": True}]})
+        body = json.loads((await mcp_mod.api_mcp_apply(request)).body)
+        assert body["applied"] == 1
+        assert body["rebuild"] == {"ok": False, "error": AGENT_SPEC_NOT_REWRITTEN}
 
 
 # ---------------------------------------------------------------------------
@@ -591,8 +638,10 @@ class TestHostileNameRejection:
             lambda: pytest.fail("_capability_manager must not be reached for invalid name"),
         )
 
-        rebuild = MagicMock()
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", rebuild)
+        rebuild = MagicMock(return_value=(Path(), True))
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting", rebuild
+        )
 
         class _NoLock:
             async def __aenter__(self):
@@ -639,7 +688,10 @@ class TestHostileNameRejection:
             lambda: MagicMock(**{"available.return_value": False}),
         )
 
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
 
         class _NoLock:
             async def __aenter__(self):
@@ -734,7 +786,10 @@ class TestApplyAcceptsAppProvidedName:
             "kiro_crew.dashboard.handlers._shared._capability_manager",
             lambda: MagicMock(**{"available.return_value": False}),
         )
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
 
         class _NoLock:
             async def __aenter__(self):
@@ -920,7 +975,10 @@ class TestApplyBatchCap:
         monkeypatch.setattr(mcp_mod, "_KIROCREW_MCP_JSON", tmp_path / "kc.json")
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", tmp_path / "kiro.json")
         monkeypatch.setattr(mcp_mod, "_extra_mcp_scopes", lambda: [])
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
 
         class _NoLock:
             async def __aenter__(self):
@@ -1008,7 +1066,10 @@ class TestBoundedCapabilityManager:
         monkeypatch.setattr(mcp_mod, "_KIROCREW_MCP_JSON", tmp_path / "kc.json")
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", tmp_path / "kiro.json")
         monkeypatch.setattr(mcp_mod, "_extra_mcp_scopes", lambda: [])
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
 
         class _NoLock:
             async def __aenter__(self):
@@ -1048,7 +1109,10 @@ class TestBoundedCapabilityManager:
         monkeypatch.setattr(mcp_mod, "_KIROCREW_MCP_JSON", tmp_path / "kc.json")
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", tmp_path / "kiro.json")
         monkeypatch.setattr(mcp_mod, "_extra_mcp_scopes", lambda: [])
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
         # Tiny budget so the hanging op blows the phase deadline immediately.
         from kiro_crew.platform import capability_bound
 
@@ -1104,7 +1168,10 @@ class TestUninstallCrashWindowCleanup:
         monkeypatch.setattr(mcp_mod, "_KIROCREW_MCP_JSON", tmp_path / "kc.json")
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", kiro_path)
         monkeypatch.setattr(mcp_mod, "_extra_mcp_scopes", lambda: [])
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
 
         class _NoLock:
             async def __aenter__(self):
@@ -1169,7 +1236,10 @@ class TestUninstallCrashWindowCleanup:
         monkeypatch.setattr(mcp_mod, "_KIROCREW_MCP_JSON", tmp_path / "kc.json")
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", kiro_path)
         monkeypatch.setattr(mcp_mod, "_extra_mcp_scopes", lambda: [])
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
         monkeypatch.setattr(capability_bound, "CAPABILITY_UNINSTALL_TIMEOUT", 0.01)
 
         class _NoLock:
@@ -1233,7 +1303,10 @@ class TestUninstallCrashWindowCleanup:
         monkeypatch.setattr(mcp_mod, "_KIROCREW_MCP_JSON", tmp_path / "kc.json")
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", kiro_path)
         monkeypatch.setattr(mcp_mod, "_extra_mcp_scopes", lambda: [])
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
 
         class _NoLock:
             async def __aenter__(self):
@@ -1314,7 +1387,10 @@ class TestUninstallCrashWindowCleanup:
         monkeypatch.setattr(mcp_mod, "_KIROCREW_MCP_JSON", tmp_path / "kc.json")
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", kiro_path)
         monkeypatch.setattr(mcp_mod, "_extra_mcp_scopes", lambda: [])
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
 
         class _NoLock:
             async def __aenter__(self):
@@ -1374,7 +1450,10 @@ class TestApplyMutex:
         monkeypatch.setattr(mcp_mod, "_KIROCREW_MCP_JSON", tmp_path / "kc.json")
         monkeypatch.setattr(mcp_mod, "_GLOBAL_MCP_JSON", tmp_path / "kiro.json")
         monkeypatch.setattr(mcp_mod, "_extra_mcp_scopes", lambda: [])
-        monkeypatch.setattr("kiro_crew.dashboard.handlers.mcp.rebuild_agent_config", lambda: None)
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.handlers.mcp.rebuild_agent_config_reporting",
+            lambda: (Path(), True),
+        )
         # Reset the module-global apply lock so a permit a crashed earlier test
         # left held can't leak in (LoopBoundLock rebinds per loop on its own).
         monkeypatch.setattr(mcp_mod, "_apply_lock", mcp_mod.LoopBoundLock())
