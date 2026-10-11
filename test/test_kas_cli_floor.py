@@ -8,8 +8,9 @@ the update must bring.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import os
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -36,7 +37,6 @@ def _restore_registry():
     baseline = set(registry._baseline)
     selectable = set(registry._selectable)
     unservable = dict(registry._host_unservable)
-    acp_driver._kas_help_cache.clear()
     backend_install.clear_probe_cache()
     yield
     registry._baseline.clear()
@@ -45,7 +45,6 @@ def _restore_registry():
     registry._selectable.update(selectable)
     registry._host_unservable.clear()
     registry._host_unservable.update(unservable)
-    acp_driver._kas_help_cache.clear()
     backend_install.clear_probe_cache()
 
 
@@ -106,15 +105,8 @@ class TestUnsupportedReason:
         assert acp_driver.kas_engine_unsupported_reason() is None
         assert calls == []
 
-    def test_probe_is_cached_until_the_binary_changes(self, monkeypatch, pinned_cli):
-        calls = _help(monkeypatch, _OLD_HELP)
-        acp_driver.kas_engine_unsupported_reason()
-        acp_driver.kas_engine_unsupported_reason()
-        assert len(calls) == 1
-        stat = os.stat(pinned_cli)
-        os.utime(pinned_cli, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
-        acp_driver.kas_engine_unsupported_reason()
-        assert len(calls) == 2
+    def test_the_driver_keeps_no_help_cache(self):
+        assert not hasattr(acp_driver, "_kas_help_cache")
 
 
 class TestRegistryMark:
@@ -198,3 +190,48 @@ class TestBackendPanelRow:
     def test_unmarked_kas_row_follows_kiro(self, monkeypatch, kas_selectable):
         monkeypatch.setattr(backend_install.acp_driver, "kiro_cli_resolves", lambda: True)
         assert backend_install.probe_backend(KAS).installed == backend_install.INSTALLED
+
+
+class TestGatewayBootDoesNotWaitForTheFloor:
+    """The floor spawns ``acp --help``; the gateway must bind without waiting for it."""
+
+    def test_the_floor_is_scheduled_not_awaited(self, monkeypatch):
+        from kiro_crew.slack import gateway
+
+        release = threading.Event()
+        seen = []
+
+        def _slow(cfg):
+            seen.append(cfg)
+            release.wait(5)
+
+        monkeypatch.setattr(gateway, "apply_kas_cli_floor", _slow)
+        monkeypatch.setattr(gateway, "_KAS_CLI_FLOOR_TASK", None)
+        cfg = object()
+
+        async def _boot():
+            task = gateway._start_kas_cli_floor(cfg)
+            # Returned while the probe is still blocked: nothing on the boot path waited.
+            assert not task.done()
+            assert gateway._KAS_CLI_FLOOR_TASK is task
+            release.set()
+            await task
+
+        asyncio.run(_boot())
+        assert seen == [cfg]
+
+    def test_a_failing_floor_is_logged_and_contained(self, monkeypatch, caplog):
+        from kiro_crew.slack import gateway
+
+        def _boom(_cfg):
+            raise RuntimeError("probe exploded")
+
+        monkeypatch.setattr(gateway, "apply_kas_cli_floor", _boom)
+        monkeypatch.setattr(gateway, "_KAS_CLI_FLOOR_TASK", None)
+
+        async def _boot():
+            await gateway._start_kas_cli_floor(object())
+
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(_boot())
+        assert "KAS kiro-cli floor check failed" in caplog.text

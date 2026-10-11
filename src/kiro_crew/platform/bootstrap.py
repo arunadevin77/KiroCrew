@@ -286,7 +286,7 @@ def bootstrap_context(cfg: "KiroCrewConfig") -> PlatformContext:
 
 #: The notice a host on a too-old kiro-cli gets when KAS is configured. Logged at
 #: WARNING, and the same reason rides on the KAS row of the dashboard's backend
-#: panel through ``acp_backends.host_unservable_reason``.
+#: panel through ``agent_sdk.backends.host_unservable_reason``.
 KAS_CLI_FLOOR_NOTICE = (
     "KAS is selected, but {reason}. Kiro Crew is using kiro-cli instead. "
     "Update kiro-cli and restart Kiro Crew to use KAS."
@@ -313,7 +313,8 @@ def apply_kas_cli_floor(cfg: "KiroCrewConfig") -> str | None:
     every ``kirocrew`` process (each MCP server, app server and script cron), and
     the KAS sessions this floor protects are spawned only by the gateway. Keeping
     it out also leaves ``kirocrew doctor`` reading the configured backend, so its
-    KAS block still prints the engine diagnosis. Blocking: run it off the loop.
+    KAS block still prints the engine diagnosis. Blocking: the gateway runs it in a
+    background thread, off the boot path.
     """
     from kiro_crew.acp_backends import (
         ACP_BACKEND_KAS,

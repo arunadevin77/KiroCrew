@@ -102,6 +102,7 @@ from kiro_crew.agent_sdk.context import (
 from kiro_crew.agent_sdk.drivers.acp import (
     context_provider_of,
     finish_suspended_spawn,
+    kas_engine_gap,
     kas_engine_unsupported_reason,
 )
 from kiro_crew.agent_sdk.host_auth import (
@@ -179,6 +180,7 @@ __all__ = [
     "finish_suspended_spawn",
     "fits_tool_result",
     "forget_for_recheck",
+    "kas_engine_gap",
     "kas_engine_unsupported_reason",
     "probe_backend",
     "probe_backends",

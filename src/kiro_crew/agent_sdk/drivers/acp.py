@@ -308,16 +308,12 @@ def kiro_cli_resolves() -> bool:
     return bool(_resolve_kiro_bin())
 
 
-#: ``acp --help`` text per ``(path, mtime_ns)``; ``None`` records a probe that could
-#: not run. An upgrade rewrites the binary, so a new mtime re-probes.
-_kas_help_cache: dict[tuple[str, int], str | None] = {}
-
-
 def kas_engine_gap(help_text: str) -> str | None:
-    """What *help_text* lacks for KAS, as one short clause, or ``None`` when it has it.
+    """What ``acp --help`` *help_text* lacks for KAS, as one short clause, or ``None``.
 
-    Two distinct gaps: the engine flag is absent entirely (a kiro-cli predating
-    engine selection), or it is present without the KAS engine.
+    The one reading of that text: ``kirocrew doctor`` and the gateway's boot floor
+    both call it. Two distinct gaps: the engine flag is absent entirely (a kiro-cli
+    predating engine selection), or it is present without the KAS engine.
     """
     from kiro_crew.acp.kas_transport import KAS_RELAY_ENGINE, KAS_RELAY_ENGINE_FLAG
 
@@ -336,23 +332,17 @@ def kas_engine_unsupported_reason() -> str | None:
     binary, a failed spawn — is ``None``, so a runtime gate built on this never moves
     a host off KAS on a verdict it could not establish.
 
-    Blocking: one bounded spawn per binary identity, cached by path and mtime.
-    Never raises.
+    Blocking: one bounded spawn. Never raises.
     """
-    import os
-
     from kiro_crew import kiro_cli
 
     try:
         binary, _unpinned = kiro_cli.pin_kiro_cli()
-        if binary is None:
-            return None
-        key = (binary, os.stat(binary).st_mtime_ns)
     except Exception:  # noqa: BLE001 - an unanswerable probe is unknown, not an error
         return None
-    if key not in _kas_help_cache:
-        _kas_help_cache[key] = kiro_cli.kas_relay_help(binary)
-    help_text = _kas_help_cache[key]
+    if binary is None:
+        return None
+    help_text = kiro_cli.kas_relay_help(binary)
     if help_text is None:
         return None
     return kas_engine_gap(help_text)

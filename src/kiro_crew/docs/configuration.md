@@ -148,7 +148,8 @@ otherwise `--auth-method cli` uses kiro-cli's existing login. A sign-in or
 sign-out takes effect on the next KAS process.
 
 When the gateway starts with KAS as the selected main or member backend, it runs the
-same `kiro-cli acp --help` check `kirocrew doctor` reports. If that kiro-cli has no
+same `kiro-cli acp --help` check `kirocrew doctor` reports, in the background, so
+startup does not wait for it. If that kiro-cli has no
 `--agent-engine` flag, or does not offer engine `v3`, Kiro Crew logs a warning and
 runs kiro-cli instead; the dashboard's KAS row lists `kiro-cli acp --agent-engine
 v3` as missing. `config.json` keeps `kas`, so updating kiro-cli and restarting

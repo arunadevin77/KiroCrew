@@ -14740,6 +14740,32 @@ _runtime.compose(
 # be garbage-collected mid-flight.
 _SLICE_LIMITS_TASK: "asyncio.Task[None] | None" = None
 
+# Strong reference to the background KAS kiro-cli floor check, for the same reason.
+_KAS_CLI_FLOOR_TASK: "asyncio.Task[None] | None" = None
+
+
+def _start_kas_cli_floor(cfg: KiroCrewConfig) -> "asyncio.Task[None]":
+    """Schedule :func:`apply_kas_cli_floor` off the boot path and return its task.
+
+    The check pins kiro-cli and spawns ``acp --help``, so it runs in a thread and
+    the gateway binds without waiting for it. Until it lands, a configured KAS
+    stays selected, which is also what a check that cannot run leaves. Failure is
+    logged and contained: the backend stays as configured.
+    """
+    global _KAS_CLI_FLOOR_TASK
+
+    async def _run() -> None:
+        try:
+            await asyncio.to_thread(apply_kas_cli_floor, cfg)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "KAS kiro-cli floor check failed; continuing", exc_info=True
+            )
+
+    _KAS_CLI_FLOOR_TASK = asyncio.create_task(_run(), name="kas-cli-floor")
+    return _KAS_CLI_FLOOR_TASK
+
+
 # Strong ref to the fire-and-forget agents-dir janitor sweep launched at boot
 # (the loop holds tasks weakly, so without this it could be GC'd mid-flight).
 _AGENTS_JANITOR_TASK: "asyncio.Task[None] | None" = None
@@ -14791,18 +14817,12 @@ async def run_gateway(
     boot_platform(cfg)
 
     # ── KAS kiro-cli floor ──
-    # Awaited before any service can start a session: a configured KAS on a
-    # kiro-cli that cannot select the KAS engine falls back to kiro-cli here,
-    # with the notice in the log. Off the loop, since it spawns ``acp --help``.
-    # Skipped in test_mode so the offline E2E gate never spawns the developer's
-    # real kiro-cli. Best-effort: a failed check leaves the backend as configured.
+    # A configured KAS on a kiro-cli that cannot select the KAS engine falls back
+    # to kiro-cli, with the notice in the log. Scheduled in the background, never
+    # awaited here: it spawns ``acp --help``. Skipped in test_mode so the offline
+    # E2E gate never spawns the developer's real kiro-cli.
     if not test_mode:
-        try:
-            await asyncio.to_thread(apply_kas_cli_floor, cfg)
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "KAS kiro-cli floor check failed; continuing", exc_info=True
-            )
+        _start_kas_cli_floor(cfg)
 
     # ── Aggregate cgroup ceiling for all agent scopes ──
     # The per-spawn scope wrapper (sandbox.cgroup_scope_argv) bounds ONE spawn

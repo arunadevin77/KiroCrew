@@ -1829,7 +1829,7 @@ class TestDoctorKas:
         cli_doctor._doctor_kas(issues)
         out = capsys.readouterr().out
         assert "does not offer engine v3" in out
-        assert any("does not support the KAS engine" in i for i in issues)
+        assert any("does not offer engine v3" in i for i in issues)
 
     def test_help_without_the_flag_is_a_failure_not_unknown(self, monkeypatch, capsys) -> None:
         """A kiro-cli predating engine selection must FAIL the check.
@@ -1850,7 +1850,20 @@ class TestDoctorKas:
         out = capsys.readouterr().out
         assert "no --agent-engine flag" in out
         assert "engine support unknown" not in out
-        assert any("too old to select the KAS engine" in i for i in issues)
+        assert any("no --agent-engine flag" in i for i in issues)
+
+    def test_engine_verdict_comes_from_the_shared_classifier(self, monkeypatch, capsys) -> None:
+        """The doctor and the boot floor read ``acp --help`` through ONE function."""
+        self._patch_cfg(monkeypatch, "kas")
+        monkeypatch.setattr(cli_doctor, "resolve_kiro_cli", lambda: "/x/kiro-cli")
+        self._patch_vault(monkeypatch)
+        monkeypatch.setattr(cli_doctor, "_kas_relay_help", lambda _binary: "any help")
+        monkeypatch.setattr(cli_doctor, "kas_engine_gap", lambda _text: "a stubbed gap")
+        issues: list[str] = []
+        cli_doctor._doctor_kas(issues)
+        out = capsys.readouterr().out
+        assert "engine:      ❌ a stubbed gap" in out
+        assert any("a stubbed gap" in i for i in issues)
 
     def test_unreadable_help_is_reported_unknown_not_failed(self, monkeypatch, capsys) -> None:
         """Only a FAILED probe is unknown; a diagnostic must not invent a verdict.
