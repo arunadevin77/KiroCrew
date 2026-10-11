@@ -180,11 +180,10 @@ class Sample:
     loop_lag_ms: float = 0.0
     rss_mb: float = -1.0
     free_mem_mb: float = -1.0
-    #: GPU memory on the most constrained device and its utilization; ``-1``
-    #: when NVML is absent (every host without the ``gpu`` extra or a driver).
+    #: GPU memory on the most constrained device; ``-1`` when NVML is absent
+    #: (every host without the ``gpu`` extra or a driver).
     vram_free_mb: float = -1.0
     vram_total_mb: float = -1.0
-    gpu_util_pct: float = -1.0
     fd_count: int = -1
     fd_limit: int = 0
     proc_count: int = -1

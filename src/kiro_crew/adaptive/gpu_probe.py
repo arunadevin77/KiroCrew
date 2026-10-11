@@ -3,17 +3,17 @@
 A host that serves a local model next to the gateway can run out of GPU memory
 long before it runs out of host memory: every concurrently decoding sub-agent
 holds a KV-cache slot on the card. ``HostSample`` already carries host memory,
-RSS and file descriptors; this leaf adds the card's free and total memory and
-its utilization so :func:`kiro_crew.adaptive.signals.classify` can treat a
-nearly full card the way it treats nearly exhausted host memory: as a spawn
-gate signal.
+RSS and file descriptors; this leaf adds the card's free and total memory so
+:func:`kiro_crew.adaptive.signals.classify` can treat a nearly full card the way
+it treats nearly exhausted host memory: as a spawn gate signal.
 
 Design rules, all pinned by ``test_adaptive_gpu_probe.py``:
 
 * **Optional.** NVML is reached through ``pynvml`` (the ``nvidia-ml-py``
   package, the ``gpu`` extra in ``setup.cfg``). When the import or
   ``nvmlInit`` fails, the reader marks itself unavailable once and says so in
-  one log line (INFO without the binding, WARNING when NVML does not start), and
+  one log line (INFO without the binding, naming the command that installs it;
+  WARNING when NVML does not start), and
   every later read returns :data:`NOT_MEASURED` without touching NVML again, so
   a GPU line stays inert until a restart. A host with no NVIDIA driver pays one
   failed import per process.
@@ -27,9 +27,10 @@ Design rules, all pinned by ``test_adaptive_gpu_probe.py``:
   most ``GPU_READ_TIMEOUT_SECS``, one read at a time; it is never called on
   the event loop.
 * **The most constrained device decides.** On a multi-GPU host the sample
-  reports the device with the least free memory (its free and its total), and
-  the highest utilization across devices. A single model lives on one card, so
-  summing free memory across cards would overstate the headroom that matters.
+  reports the device with the least free memory (its free and its total). A
+  single model lives on one card, so summing free memory across cards would
+  overstate the headroom that matters. For the same reason a device that cannot
+  be read makes the whole read :data:`NOT_MEASURED`: it may be the fullest card.
 * **-1 means not measured**, matching every other ``HostSample`` field, so the
   consumers' ``>= 0`` guards keep today's behaviour byte for byte on a host
   without a GPU.
@@ -57,7 +58,6 @@ class GpuSample:
 
     vram_free_mb: float = -1.0
     vram_total_mb: float = -1.0
-    gpu_util_pct: float = -1.0
 
     @property
     def measured(self) -> bool:
@@ -107,16 +107,24 @@ class NvmlReader:
                 nvml.nvmlInit()
             except Exception as exc:
                 self._unavailable = True
+                missing = isinstance(exc, ImportError)
+                hint = ""
+                if missing:
+                    from kiro_crew import extras  # the binding is the optional ``gpu`` extra
+
+                    hint = "; install the binding with: " + extras.install_hint("gpu")
                 # Once per reader, so once per process: the latch keeps every later
                 # read off NVML, and a GPU line set in config stays inert until a
-                # restart. No binding is the default install (INFO); a binding
-                # whose NVML does not start is a driver problem (WARNING).
+                # restart. No binding is the default install (INFO, with the command
+                # that adds it); a binding whose NVML does not start is a driver
+                # problem (WARNING).
                 logger.log(
-                    logging.INFO if isinstance(exc, ImportError) else logging.WARNING,
+                    logging.INFO if missing else logging.WARNING,
                     "adaptive: GPU memory probe off for this process (%s); "
                     "agent.vram_pressure_gb and agent.vram_critical_gb have no effect "
-                    "until a restart",
+                    "until a restart%s",
                     type(exc).__name__,
+                    hint,
                 )
                 logger.debug("adaptive: gpu probe unavailable (no NVML)", exc_info=True)
                 return NOT_MEASURED
@@ -131,7 +139,6 @@ class NvmlReader:
             return NOT_MEASURED
         best_free: float | None = None
         best_total = -1.0
-        util_max = -1.0
         for index in range(count):
             try:
                 handle = nvml.nvmlDeviceGetHandleByIndex(index)
@@ -139,29 +146,18 @@ class NvmlReader:
                 free_mb = float(mem.free) / _MIB
                 total_mb = float(mem.total) / _MIB
             except Exception:
+                # The unreadable card may be the one a model fills, so no other card's
+                # headroom stands in for it: the read is not measured, as for any failure
+                # after init, and the next read looks again.
                 logger.debug(
                     "adaptive: gpu probe memory read failed for device %d", index, exc_info=True
                 )
-                continue
+                return NOT_MEASURED
             if best_free is None or free_mb < best_free:
                 best_free, best_total = free_mb, total_mb
-            try:
-                util_max = max(util_max, float(nvml.nvmlDeviceGetUtilizationRates(handle).gpu))
-            except Exception:
-                # Utilization is advisory; a card that reports memory but not
-                # utilization still yields a usable memory sample.
-                logger.debug(
-                    "adaptive: gpu probe utilization read failed for device %d",
-                    index,
-                    exc_info=True,
-                )
         if best_free is None:
             return NOT_MEASURED
-        return GpuSample(
-            vram_free_mb=best_free,
-            vram_total_mb=best_total,
-            gpu_util_pct=util_max,
-        )
+        return GpuSample(vram_free_mb=best_free, vram_total_mb=best_total)
 
 
 def _import_pynvml() -> Any:

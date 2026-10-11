@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from kiro_crew import resource_status
+from kiro_crew import extras, resource_status
 from kiro_crew.adaptive import controller as ctl_mod
 from kiro_crew.adaptive import gpu_probe
 from kiro_crew.adaptive.controller import AdaptiveController, HostSample
@@ -41,24 +41,18 @@ class _Mem:
     used: int = 0
 
 
-@dataclass
-class _Util:
-    gpu: int
-    memory: int = 0
-
-
 class _Nvml:
-    """A fake ``pynvml`` module: per-device memory and utilization, call counters."""
+    """A fake ``pynvml`` module: per-device memory, call counters."""
 
     def __init__(
-        self, devices: list[tuple[int, int, int]], *, init_error: Exception | None = None
+        self, devices: list[tuple[int, int]], *, init_error: Exception | None = None
     ) -> None:
-        self.devices = devices  # (free_bytes, total_bytes, util_pct)
+        self.devices = devices  # (free_bytes, total_bytes)
         self.init_error = init_error
         self.init_calls = 0
         self.mem_calls = 0
-        self.util_error: Exception | None = None
         self.count_error: Exception | None = None
+        self.mem_errors: dict[int, Exception] = {}  # device index -> error its memory read raises
 
     def nvmlInit(self) -> None:
         self.init_calls += 1
@@ -75,13 +69,10 @@ class _Nvml:
 
     def nvmlDeviceGetMemoryInfo(self, handle: int) -> _Mem:
         self.mem_calls += 1
-        free, total, _ = self.devices[handle]
+        if handle in self.mem_errors:
+            raise self.mem_errors[handle]
+        free, total = self.devices[handle]
         return _Mem(free=free, total=total, used=total - free)
-
-    def nvmlDeviceGetUtilizationRates(self, handle: int) -> _Util:
-        if self.util_error is not None:
-            raise self.util_error
-        return _Util(gpu=self.devices[handle][2])
 
 
 class _Clock:
@@ -97,10 +88,10 @@ def _reader(nvml: object, *, ttl: float = 2.0, clock: _Clock | None = None) -> N
 
 
 class TestReader:
-    def test_happy_path_reports_free_total_and_utilization_in_mib(self) -> None:
-        nvml = _Nvml([(8 * 1024 * MIB, 32 * 1024 * MIB, 37)])
+    def test_happy_path_reports_free_and_total_memory_in_mib(self) -> None:
+        nvml = _Nvml([(8 * 1024 * MIB, 32 * 1024 * MIB)])
         s = _reader(nvml).read()
-        assert s == GpuSample(vram_free_mb=8192.0, vram_total_mb=32768.0, gpu_util_pct=37.0)
+        assert s == GpuSample(vram_free_mb=8192.0, vram_total_mb=32768.0)
         assert s.measured
 
     def test_import_failure_is_remembered_and_never_retried(self) -> None:
@@ -117,7 +108,7 @@ class TestReader:
         assert attempts == 1, "a host without NVML pays one failed import per process"
 
     def test_init_failure_is_remembered(self) -> None:
-        nvml = _Nvml([(1, 1, 1)], init_error=RuntimeError("NVML Shared Library Not Found"))
+        nvml = _Nvml([(1, 1)], init_error=RuntimeError("NVML Shared Library Not Found"))
         r = _reader(nvml, ttl=0.0)
         assert r.read() == NOT_MEASURED
         assert r.read() == NOT_MEASURED
@@ -131,8 +122,9 @@ class TestReader:
     ) -> None:
         """The latch keeps every later read off NVML for the life of the process, so a
         GPU line set in config stays inert until a restart. The reader says so once: at
-        INFO when the binding is not installed (the default host), at WARNING when it is
-        installed and NVML does not start (a driver problem)."""
+        INFO when the binding is not installed (the default host), with the command that
+        installs it, at WARNING when it is installed and NVML does not start (a driver
+        problem)."""
         if failure == "import":
 
             def importer() -> object:
@@ -140,7 +132,7 @@ class TestReader:
 
             r = NvmlReader(ttl_secs=0.0, importer=importer)
         else:
-            nvml = _Nvml([(1, 1, 1)], init_error=RuntimeError("NVML Shared Library Not Found"))
+            nvml = _Nvml([(1, 1)], init_error=RuntimeError("NVML Shared Library Not Found"))
             r = _reader(nvml, ttl=0.0)
         with caplog.at_level(logging.DEBUG, logger=gpu_probe.__name__):
             for _ in range(3):
@@ -153,9 +145,14 @@ class TestReader:
         assert [rec.levelno for rec in shown] == [level], [rec.getMessage() for rec in shown]
         text = shown[0].getMessage()
         assert "agent.vram_pressure_gb" in text and "agent.vram_critical_gb" in text, text
+        if failure == "import":
+            hint = extras.install_hint("gpu")
+            assert hint and hint in text, f"the INFO line names no install command: {text}"
+        else:
+            assert "pip install" not in text, f"the binding is installed: {text}"
 
     def test_failure_after_init_is_not_measured_this_read_and_retried_next(self) -> None:
-        nvml = _Nvml([(4 * 1024 * MIB, 8 * 1024 * MIB, 5)])
+        nvml = _Nvml([(4 * 1024 * MIB, 8 * 1024 * MIB)])
         r = _reader(nvml, ttl=0.0)
         assert r.read().measured
         nvml.count_error = RuntimeError("GPU fell off the bus")
@@ -163,36 +160,43 @@ class TestReader:
         nvml.count_error = None
         assert r.read().measured, "a transient NVML error after init is not a missing driver"
 
-    def test_utilization_failure_still_yields_a_memory_sample(self) -> None:
-        nvml = _Nvml([(4 * 1024 * MIB, 8 * 1024 * MIB, 5)])
-        nvml.util_error = RuntimeError("not supported")
-        s = _reader(nvml, ttl=0.0).read()
-        assert (s.vram_free_mb, s.vram_total_mb) == (4096.0, 8192.0)
-        assert s.gpu_util_pct == -1.0
-        assert s.measured
-
     def test_a_driver_with_no_device_is_not_measured_and_read_again_later(self) -> None:
         nvml = _Nvml([])
         r = _reader(nvml, ttl=0.0)
         assert r.read() == NOT_MEASURED
-        nvml.devices.append((4 * 1024 * MIB, 8 * 1024 * MIB, 5))
+        nvml.devices.append((4 * 1024 * MIB, 8 * 1024 * MIB))
         assert r.read().measured, "no device is not a missing driver: the next read looks again"
 
     def test_most_constrained_device_decides(self) -> None:
         nvml = _Nvml(
             [
-                (20 * 1024 * MIB, 24 * 1024 * MIB, 10),  # roomy card
-                (1 * 1024 * MIB, 32 * 1024 * MIB, 95),  # the card a model fills
+                (20 * 1024 * MIB, 24 * 1024 * MIB),  # roomy card
+                (1 * 1024 * MIB, 32 * 1024 * MIB),  # the card a model fills
             ]
         )
         s = _reader(nvml, ttl=0.0).read()
         assert s.vram_free_mb == 1024.0, "free memory is the least free card's, not a sum"
         assert s.vram_total_mb == 32768.0, "total travels with the chosen card"
-        assert s.gpu_util_pct == 95.0, "utilization is the busiest card's"
+
+    def test_a_device_that_fails_its_read_makes_the_read_not_measured(self) -> None:
+        """The card that cannot be read may be the one a model fills, so another card's
+        headroom is never reported in its place; the next read looks again."""
+        nvml = _Nvml(
+            [
+                (20 * 1024 * MIB, 24 * 1024 * MIB),  # roomy card
+                (1 * 1024 * MIB, 32 * 1024 * MIB),  # the card a model fills
+            ]
+        )
+        r = _reader(nvml, ttl=0.0)
+        nvml.mem_errors[1] = RuntimeError("GPU fell off the bus")
+        s = r.read()
+        assert s == NOT_MEASURED, f"an unreadable card's place was taken by another card: {s}"
+        del nvml.mem_errors[1]
+        assert r.read().vram_free_mb == 1024.0, "a failed device read is retried on the next read"
 
     def test_reads_are_cached_for_the_ttl(self) -> None:
         clock = _Clock(100.0)
-        nvml = _Nvml([(4 * 1024 * MIB, 8 * 1024 * MIB, 5)])
+        nvml = _Nvml([(4 * 1024 * MIB, 8 * 1024 * MIB)])
         r = _reader(nvml, ttl=2.0, clock=clock)
         r.read()
         clock.t = 101.0
@@ -235,9 +239,9 @@ def _controller(**agent: float) -> AdaptiveController:
     return AdaptiveController(_Manager(), cfg=cfg, sleep=AsyncMock())  # type: ignore[arg-type]
 
 
-def _gpu_fields(ctl: AdaptiveController) -> tuple[float, float, float]:
+def _gpu_fields(ctl: AdaptiveController) -> tuple[float, float]:
     last = ctl.state()["last_sample"]
-    return (last["vram_free_mb"], last["vram_total_mb"], last["gpu_util_pct"])
+    return (last["vram_free_mb"], last["vram_total_mb"])
 
 
 def _fake_pynvml(nvml: _Nvml) -> types.ModuleType:
@@ -247,7 +251,6 @@ def _fake_pynvml(nvml: _Nvml) -> types.ModuleType:
         "nvmlDeviceGetCount",
         "nvmlDeviceGetHandleByIndex",
         "nvmlDeviceGetMemoryInfo",
-        "nvmlDeviceGetUtilizationRates",
     ):
         setattr(fake, name, getattr(nvml, name))
     return fake
@@ -257,33 +260,37 @@ class TestTheTickReadsTheGpu:
     """The controller's tick reads the GPU, not ``probe_host``: only while a GPU line is
     set, on its own worker thread, one read at a time, waited for at most
     ``GPU_READ_TIMEOUT_SECS``. The controllers here take the production path (no
-    injected ``host_probe``), so the real ``probe_host`` runs beside the read."""
+    injected ``host_probe``), so the real ``probe_host`` runs beside the read. A test
+    that needs the read's result sets that wait to ``_LOST_RUN_SECS``, so how soon the
+    executor runs the read cannot decide it."""
 
     def test_host_sample_defaults_say_not_measured(self) -> None:
         out = HostSample()
-        assert (out.vram_free_mb, out.vram_total_mb, out.gpu_util_pct) == (-1.0, -1.0, -1.0)
+        assert (out.vram_free_mb, out.vram_total_mb) == (-1.0, -1.0)
 
     @pytest.mark.asyncio
     async def test_with_a_line_set_the_tick_fills_the_gpu_fields_from_the_reader(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(gpu_probe, "_reader", None)  # a fresh process-wide reader
-        nvml = _Nvml([(6 * 1024 * MIB, 32 * 1024 * MIB, 42)])
+        monkeypatch.setattr(ctl_mod, "GPU_READ_TIMEOUT_SECS", _LOST_RUN_SECS)
+        nvml = _Nvml([(6 * 1024 * MIB, 32 * 1024 * MIB)])
         monkeypatch.setitem(sys.modules, "pynvml", _fake_pynvml(nvml))
         ctl = _controller(vram_critical_gb=1.5)
-        await asyncio.wait_for(ctl.tick(), timeout=10)
-        assert _gpu_fields(ctl) == (6144.0, 32768.0, 42.0)
+        await asyncio.wait_for(ctl.tick(), timeout=2 * _LOST_RUN_SECS)
+        assert _gpu_fields(ctl) == (6144.0, 32768.0)
 
     @pytest.mark.asyncio
     async def test_with_a_line_set_and_no_nvml_the_gpu_fields_stay_minus_one(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(gpu_probe, "_reader", None)  # a fresh process-wide reader
+        monkeypatch.setattr(ctl_mod, "GPU_READ_TIMEOUT_SECS", _LOST_RUN_SECS)
         monkeypatch.setitem(sys.modules, "pynvml", None)  # import raises
         monkeypatch.setattr(resource_status, "_read_available_gb", lambda: 12.0)
         ctl = _controller(vram_critical_gb=1.5)
-        await asyncio.wait_for(ctl.tick(), timeout=10)
-        assert _gpu_fields(ctl) == (-1.0, -1.0, -1.0)
+        await asyncio.wait_for(ctl.tick(), timeout=2 * _LOST_RUN_SECS)
+        assert _gpu_fields(ctl) == (-1.0, -1.0)
         free = ctl.state()["last_sample"]["free_mem_mb"]
         assert free == 12288.0, "the host probe still ran"
 
@@ -305,7 +312,7 @@ class TestTheTickReadsTheGpu:
         for _ in range(3):
             await asyncio.wait_for(ctl.tick(), timeout=2 * _LOST_RUN_SECS)
         assert touched == [], "the tick read the GPU with both lines off"
-        assert _gpu_fields(ctl) == (-1.0, -1.0, -1.0)
+        assert _gpu_fields(ctl) == (-1.0, -1.0)
 
     @pytest.mark.asyncio
     async def test_a_gpu_read_that_blocks_does_not_stall_the_tick(
@@ -315,14 +322,16 @@ class TestTheTickReadsTheGpu:
         read and decided on. A tick that finds the read still running starts no second
         one, which would queue on the reader's lock and hold another worker thread."""
         release = threading.Event()
+        started = threading.Event()
         entered: list[int] = []
 
         def stuck_read() -> GpuSample:
             entered.append(1)
+            started.set()
             # Held past the tick's bound, so a tick that waits on this read fails at that
             # bound instead of being freed by the read's own.
             release.wait(timeout=3 * _LOST_RUN_SECS)
-            return GpuSample(vram_free_mb=100.0, vram_total_mb=1000.0, gpu_util_pct=1.0)
+            return GpuSample(vram_free_mb=100.0, vram_total_mb=1000.0)
 
         monkeypatch.setattr(gpu_probe, "read_gpu", stuck_read)
         monkeypatch.setattr(resource_status, "_read_available_gb", lambda: 12.0)
@@ -335,7 +344,12 @@ class TestTheTickReadsTheGpu:
                 except asyncio.TimeoutError:
                     pytest.fail("the tick waited on a GPU read that blocks")
                 assert ctl.state()["last_sample"]["free_mem_mb"] == 12288.0
-                assert _gpu_fields(ctl) == (-1.0, -1.0, -1.0)
+                assert _gpu_fields(ctl) == (-1.0, -1.0)
+            # The first tick started the read, but its worker thread may not have run
+            # yet. Wait for it, bounded, so the count checks the read that started
+            # rather than how fast the executor scheduled its thread.
+            ran = await asyncio.to_thread(started.wait, _LOST_RUN_SECS)
+            assert ran, "the stuck GPU read never ran"
             assert entered == [1], f"{len(entered)} reads started while one was stuck"
         finally:
             release.set()

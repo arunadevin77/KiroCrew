@@ -412,11 +412,10 @@ class TestTick:
             "fd_limit",
             "cpu_seconds",
             "cpu_clock",
-            # GPU memory and utilization are live NVML reads (optional extra),
-            # not config: see adaptive/gpu_probe.py.
+            # GPU memory is a live NVML read (optional extra), not config: see
+            # adaptive/gpu_probe.py.
             "vram_free_mb",
             "vram_total_mb",
-            "gpu_util_pct",
         }
 
     @pytest.mark.asyncio

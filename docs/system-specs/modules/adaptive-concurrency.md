@@ -85,8 +85,8 @@ alone for the execution cap. The spawn gate reads `gate_signals` (the set minus
 `GATE_SUFFICIENT_ALONE` (`memory`, `vram`, `gate_failures`, `gate_slow_inits`) or two
 distinct gate signals, `gate_severe` is host or GPU memory at the critical line, and
 `gate_clear_for_increase` is no gate signal with memory at or above the pressure
-line. `corroborated` (which `SUFFICIENT_ALONE` still feeds) only retires slow
-start.
+line and GPU memory at or above `vram_pressure_gb` when set. `corroborated` (which
+`SUFFICIENT_ALONE` still feeds) only retires slow start.
 
 Attributable means a congestion failure: a start or turn that timed out, a
 stall, a backend that never initialised (`controller.ATTRIBUTABLE_MARKERS`).
@@ -251,7 +251,7 @@ test_no_static_host_prediction_sits_under_the_user_ceiling`,
 test_the_climb_is_bounded_by_the_user_ceiling_alone` and
 `test_subagent_sizing.py::TestMemoryIsTheOnlyHostTerm` pin it.
 
-GPU memory and utilization are read by the tick itself, and only while
+GPU memory is read by the tick itself, and only while
 `vram_pressure_gb` or `vram_critical_gb` is set; with both at 0 NVML is never
 imported. The read goes through `adaptive.gpu_probe` (NVML through the optional
 `gpu` extra, cached for 2 s, the most constrained device, never raising; every

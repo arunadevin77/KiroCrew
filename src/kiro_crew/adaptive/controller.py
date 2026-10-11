@@ -160,13 +160,12 @@ class HostSample:
     #: ``controller_sample_secs`` a few hundred milliseconds of it is a
     #: double-digit-percent error published as a measured value.
     cpu_clock: float = -1.0
-    #: GPU memory on the most constrained NVIDIA device and its utilization,
-    #: read through NVML when the optional ``gpu`` extra is installed. ``-1``
-    #: on every host without a driver, so the consumers' ``>= 0`` guards keep
-    #: today's decisions there. See :mod:`kiro_crew.adaptive.gpu_probe`.
+    #: GPU memory on the most constrained NVIDIA device, read through NVML
+    #: when the optional ``gpu`` extra is installed. ``-1`` on every host
+    #: without a driver, so the consumers' ``>= 0`` guards keep today's
+    #: decisions there. See :mod:`kiro_crew.adaptive.gpu_probe`.
     vram_free_mb: float = -1.0
     vram_total_mb: float = -1.0
-    gpu_util_pct: float = -1.0
 
 
 def probe_host() -> HostSample:
@@ -590,7 +589,6 @@ class AdaptiveController:
         if gpu.measured:
             host.vram_free_mb = gpu.vram_free_mb
             host.vram_total_mb = gpu.vram_total_mb
-            host.gpu_util_pct = gpu.gpu_util_pct
 
     def build_sample(
         self,
@@ -676,7 +674,6 @@ class AdaptiveController:
             free_mem_mb=host.free_mem_mb,
             vram_free_mb=host.vram_free_mb,
             vram_total_mb=host.vram_total_mb,
-            gpu_util_pct=host.gpu_util_pct,
             fd_count=host.fd_count,
             fd_limit=host.fd_limit,
             proc_count=_as_int(budget_snap.get("procs"), -1),
@@ -932,7 +929,6 @@ class AdaptiveController:
                     "rss_mb": round(last.rss_mb, 1),
                     "vram_free_mb": round(last.vram_free_mb, 1),
                     "vram_total_mb": round(last.vram_total_mb, 1),
-                    "gpu_util_pct": round(last.gpu_util_pct, 1),
                     "fd_count": last.fd_count,
                     "running": last.running,
                     "queued": last.queued,
