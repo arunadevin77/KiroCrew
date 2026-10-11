@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import shutil
 import subprocess
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -814,7 +813,10 @@ class TestCreateWorktreeSync:
         monkeypatch.setattr(wt, "_run_git", recording)
         payload, status = wt._create_worktree_sync(sync_env.root, "feat/x")
         assert status == 200 and payload["reused"] is True
-        assert (["--no-optional-locks", "status", "--porcelain"], sync_env.dest) in calls
+        assert (
+            ["--no-optional-locks", "status", "--porcelain", "--ignore-submodules=all"],
+            sync_env.dest,
+        ) in calls
         assert (["rev-list", "--count", "c0ffee..refs/heads/feat/x"], sync_env.root) in calls
 
     def test_a_reused_worktree_with_uncommitted_changes_is_a_409(self, sync_env):
@@ -955,7 +957,6 @@ class TestCreateWorktreeSync:
 # ── _allowed_repo_roots ──────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 class TestCreateWorktreeSyncRealGit:
     """The reuse rule against real git output, on a synthetic repository.
 
@@ -1039,6 +1040,92 @@ class TestCreateWorktreeSyncRealGit:
         payload, status = wt._create_worktree_sync(root, self.BRANCH)
         assert status == 409, payload
         assert payload["code"] == "worktree_in_use"
+
+
+class TestWorktreeInUseIgnoresSubmodules:
+    """The reuse probe's ``status`` must not run a submodule's content filter.
+
+    ``_checkout_filter`` screens only the superproject's config, so before this
+    change the recursive ``status`` ran a filter driver a submodule carried in its
+    own config -- repository-controlled code. The witness is a marker file the
+    filter touches: a recursive ``status`` creates it, the fixed probe does not.
+    """
+
+    def _git(self, env, cwd, *args):
+        proc = subprocess.run(
+            ["git", "-c", "protocol.file.allow=always", *args],
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+        assert proc.returncode == 0, proc.stderr
+        return proc
+
+    @pytest.fixture
+    def superproject_with_a_filtered_submodule(self, tmp_path, monkeypatch):
+        empty_cfg = tmp_path / "gitconfig"
+        empty_cfg.write_text("", encoding="utf-8")
+        env = dict(os.environ)
+        env.update(
+            {
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": str(empty_cfg),
+                "GIT_AUTHOR_NAME": "Synthetic",
+                "GIT_AUTHOR_EMAIL": "synthetic@example.invalid",
+                "GIT_COMMITTER_NAME": "Synthetic",
+                "GIT_COMMITTER_EMAIL": "synthetic@example.invalid",
+            }
+        )
+
+        def plain_git(args, cwd, *, stdout_decoder=None):
+            return subprocess.run(
+                ["git", *args],
+                cwd=cwd,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=60,
+            )
+
+        monkeypatch.setattr(wt, "_run_git", plain_git)
+        marker = tmp_path / "FILTER_RAN"
+        subsrc = tmp_path / "subsrc"
+        subsrc.mkdir()
+        (subsrc / "tracked.txt").write_text("aaaa\n", encoding="utf-8")
+        (subsrc / ".gitattributes").write_text("* filter=evil\n", encoding="utf-8")
+        self._git(env, str(subsrc), "init", "-q", "-b", "main")
+        self._git(env, str(subsrc), "add", "-A")
+        self._git(env, str(subsrc), "commit", "-q", "-m", "sub")
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / "app.py").write_text("print('v1')\n", encoding="utf-8")
+        self._git(env, str(root), "init", "-q", "-b", "main")
+        self._git(env, str(root), "add", "app.py")
+        self._git(env, str(root), "commit", "-q", "-m", "base")
+        self._git(env, str(root), "submodule", "add", "-q", str(subsrc), "sub")
+        self._git(env, str(root), "commit", "-q", "-m", "add sub")
+        # A session initialized the submodule and it carries a clean filter whose
+        # driver touches the marker; a same-size edit makes status run it.
+        self._git(env, str(root / "sub"), "config", "filter.evil.clean", f"touch '{marker}'; cat")
+        (root / "sub" / "tracked.txt").write_text("bbbb\n", encoding="utf-8")
+        return os.path.realpath(str(root)), marker
+
+    def test_the_reuse_probe_does_not_run_a_submodule_filter(
+        self, superproject_with_a_filtered_submodule
+    ):
+        root, marker = superproject_with_a_filtered_submodule
+        assert not marker.exists()
+        reason = wt._worktree_in_use(root, root, "main")
+        assert not marker.exists(), (
+            "the reuse probe recursed into the submodule and ran its clean filter "
+            f"(marker {marker} was created); reason={reason!r}"
+        )
+        # The superproject tree itself is untouched, so it reads as reusable.
+        assert reason == "", reason
 
 
 class TestAllowedRepoRoots:

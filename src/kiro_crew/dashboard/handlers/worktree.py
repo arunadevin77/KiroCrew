@@ -645,10 +645,22 @@ def _worktree_in_use(root: str, dest: str, branch: str) -> str:
     for a filter driver first (:func:`_checkout_filter`), and
     ``--no-optional-locks`` keeps it from taking the index lock of a tree an
     agent may be using.
+
+    ``--ignore-submodules=all`` keeps the probe out of every submodule.
+    :func:`_checkout_filter` screens only the superproject's config, so a
+    submodule carrying its own ``filter.<name>.clean``/``.smudge`` in
+    ``.git/modules/<name>/config`` would otherwise run during a recursive
+    ``status`` -- repository-controlled code the superproject screen never saw.
+    A fresh ``worktree add`` does not check submodules out, and a session that
+    advanced a submodule POINTER did so in a commit, which the branch-ahead
+    count below still catches; so ignoring submodule working state loses no
+    signal this check needs.
     """
     if _checkout_filter(dest):
         return _IN_USE_UNVERIFIED
-    status = _run_git(["--no-optional-locks", "status", "--porcelain"], dest)
+    status = _run_git(
+        ["--no-optional-locks", "status", "--porcelain", "--ignore-submodules=all"], dest
+    )
     if status.returncode != 0:
         return _IN_USE_UNVERIFIED
     if status.stdout.strip():
