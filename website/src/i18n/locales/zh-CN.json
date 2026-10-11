@@ -17402,6 +17402,7 @@
       "title": "队友",
       "unread_message": "未读消息",
       "switcher_unread": "未读",
+      "switcher_more_unread": "还有 {{n}} 个",
       "stopped_indicator": "已停止",
       "drawer_working": "工作中",
       "pill_writing": "输出中…",

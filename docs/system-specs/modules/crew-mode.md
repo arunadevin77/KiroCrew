@@ -1240,20 +1240,21 @@ and a junk watchdog override collapses to `0`.
 
 When a crewmate conversation is open, the standing roster is hidden at every
 desktop width and the thread receives that space. `CrewmateSwitcher` replaces it
-in the thread header: the closed Glass chip stacks up to three faces, then the
-page's name as visible text (`pages.membersPage.title`, "Crewmates") and the
-roster count. Faces and a number alone did not read as the crew list to a
-first-time visitor whom a bare `/members` had dropped into a thread, so the
-word names the chip as the roster. The chip's accessible name starts with that
-visible word (label in name) and the action ("Switch crewmate") is its tooltip.
+in the thread header: the closed Glass chip stacks up to three faces and ends in
+a chevron. The page's name (`pages.membersPage.title`, "Crewmates") is the
+chip's accessible name and slides into view on hover, keyboard focus or while
+the list is open (a `grid-cols-[0fr]` to `[1fr]` column, cut under reduced
+motion); it is not drawn at rest, and neither is the roster count (#19045):
+what the page is and how big the crew is are not what a reader comes to this
+corner for. The action ("Switch crewmate") is the tooltip.
 Its popover lists the roster's own population, not every crewmate: the rows
 `listedByDefault` keeps (chatted-with, starred, Mate, the default crew) plus the
-open crewmate (`rosterPopulation`), the same rule and count the roster column
-reads, so the chip can never disagree with the column. A typed search decides
-alone and falls back to the full roster, so a hidden row -- a background or
-app-driven crew, a sync-generated template nobody has chatted with -- is reached
-by typing exactly as from the column's search (`rosterShows`). It marks the
-current one, switches
+open crewmate (`rosterPopulation`), the same rule the roster column reads, so
+the chip can never disagree with the column. A typed search decides alone and
+falls back to the full roster, so a hidden row -- a background or app-driven
+crew, a sync-generated template nobody has chatted with -- is reached by typing
+exactly as from the column's search (`rosterShows`). It marks the current one,
+switches
 the thread through the existing verified `openMember` path, and opens the same
 `NewCrewmateDialog` as the roster's create entry. The stacked faces are the OTHER
 crewmates' in roster order — the open crewmate's face is already the identity
@@ -1335,6 +1336,32 @@ the same `aria-hidden` word, read through the same `signalsOf` resolver
 (`isNeedsYou`) — so the full roster, the folded switcher and the status filter
 never disagree about who is parked on a question.
 
+Unread is also the one signal drawn OUTSIDE the closed chip (#19045). Under it,
+in the header's floating band, hangs one small Glass pill per crewmate with an
+unread message who is not the open one (`crewmate-switcher-unread-pill`, roster
+order): the face with the accent unread dot on its corner, then the display
+name; the button's name is the crewmate and the state (`fmtList`, "oncall,
+Unread message") and the tooltip is `unread_message`. A pill opens that thread
+through the same `onPick` as a list row, the page clears the unread, and the
+pill goes. Past `UNREAD_PILLS` (4) the rest fold into one "+N" pill
+(`switcher_more_unread`, `crewmate-switcher-unread-more`) that opens the list,
+whose rows carry the same dot, so nothing is lost to the cap (the "+N" pill
+bumps the page's `openRequest` counter, which the chip reads to open its list).
+No unread, no column. The column (`CrewmateUnreadColumn`, exported beside the
+chip) hangs from the thread header's bottom edge, absolutely (`absolute left-3
+top-full -mt-2`, the header's own `py-2` pulled back so the first pill sits a
+gap under the chip): it adds NOTHING to the header's measured height, so the
+thread's top inset stays the chip row's and the conversation keeps scrolling up
+under the band — and under these Glass pills — the way it scrolls under the
+identity pill. Pills float over the text; they never push it. Each pill sits in
+its own `motion.div` row inside an `AnimatePresence`: it grows in from the row
+above (height and opacity, 220 ms) and shrinks out the same way when its thread
+is read; the gap above a pill rides inside the animated row. Reduced motion
+cuts to the end state. The column shares the chip's slot rule: desktop only (a phone's
+Back returns to the full roster with its unread dots) and faded out with the
+chip while the roster column is pinned. The chip's own corner dot stays
+reserved for needs-you.
+
 The thread header (`member-thread-header`: the switcher, the identity pill, the
 panel opener) floats OVER the top of the thread: an absolute row with no
 solid background, so the conversation scrolls under the Glass pill the way it
@@ -1359,12 +1386,10 @@ when it is the thing directly below it. The row and its cells pass input through
 reaches the transcript. It sits at z-20 — above the pane's own chrome (its
 dock), below the floating Profile card (z-30), whose scrim covers it. No hairline under it.
 
-The identity pill is compact at rest: the crewmate's face (with its loop mark)
-and the chevron. Its name and activity line fold to a zero-width grid column
-and slide open on hover or keyboard focus (`grid-cols-[0fr]` to `[1fr]`, cut
-under reduced motion); folded they stay in the DOM, so they are still the
-button's accessible name. A screen with no hover (`@media (hover: none)`, touch)
-keeps them open, since a tap opens Profile and never sets `:focus-visible`. The loop mark (`CrewLoopIndicator`, "On
+The identity pill shows the crewmate's face (with its loop mark), its name and
+its activity line at rest, and ends in the chevron. The words never fold away
+(#19045): this pill is how the reader knows which crewmate the page is talking
+to, and a face alone does not say that. The loop mark (`CrewLoopIndicator`, "On
 watch") is a solid accent ring with one dot orbiting it; under reduced motion
 the ring stays and a still dot replaces the orbit. It never uses the green of
 the working presence dot.

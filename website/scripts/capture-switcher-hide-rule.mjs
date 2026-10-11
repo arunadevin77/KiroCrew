@@ -143,12 +143,13 @@ await page.goto(`${base}/members?member=${encodeURIComponent(OPEN_MEMBER)}`, { w
 await page.getByTestId('member-identity-pill').waitFor({ state: 'visible', timeout: 30000 })
 await page.waitForTimeout(700)
 
-const chipCount = async () => (await page.getByTestId('crewmate-switcher-count').innerText()).trim()
+// The chip carries no count any more (issue #19045); the claim is the open
+// list's row count, read once the list is open.
+const chipCount = async () => String(await page.getByTestId('crewmate-switcher-list').getByRole('option').count())
 const rows = async (list) => await list.getByRole('option').evaluateAll((els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()))
 
-// 01: the chip, closed. The number beside the faces is the whole claim.
+// 01: the chip, closed: the faces and the chevron.
 await page.mouse.move(5, 5)
-console.log(`closed chip reads: ${await chipCount()}`)
 await page.getByTestId('crewmate-switcher').screenshot({ path: join(OUT, '01-chip-closed.png') })
 await page.screenshot({ path: join(OUT, '02-page-chip-closed.png') })
 

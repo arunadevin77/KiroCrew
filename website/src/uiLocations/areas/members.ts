@@ -115,6 +115,33 @@ export const LOCATIONS = {
     },
     placements: [{ surface: 'members', parent: 'members.switcher', entry: 'menu' }],
   },
+  // Under the switcher chip: one pill per crewmate with an unread message (not
+  // the open one), named by the crewmate; the tooltip says why it is there.
+  // Opens that crewmate's chat. Past four, a "+N" pill opens the list instead.
+  'members.switcher.unread': {
+    kind: 'button',
+    label: { from: 'attr', attr: 'title', key: 'pages.membersPage.unread_message' },
+    terms: {
+      en: ['unread crewmate', 'who has unread messages', 'crewmate with a new message', 'unread pill'],
+      'zh-CN': ['未读队友', '谁有未读消息', '有新消息的队友'],
+    },
+    placements: [{
+      ...ON_PAGE, entry: 'header',
+      requires: [{ kind: 'viewport', value: 'desktop' }, { kind: 'condition', id: 'crewmate_selected' }],
+    }],
+  },
+  'members.switcher.unread-more': {
+    kind: 'button',
+    label: { from: 'attr', attr: 'title', key: 'pages.membersPage.switch_crewmate' },
+    terms: {
+      en: ['more unread crewmates', 'other unread crewmates'],
+      'zh-CN': ['更多未读队友'],
+    },
+    placements: [{
+      ...ON_PAGE, entry: 'header',
+      requires: [{ kind: 'viewport', value: 'desktop' }, { kind: 'condition', id: 'crewmate_selected' }],
+    }],
+  },
   // The header "+" menu's first item: creating a crewmate once the roster has
   // one (the empty roster's hero, `members.new`, is gone by then).
   'members.add-menu.new': {

@@ -17904,6 +17904,7 @@
       "title": "Compañeros",
       "unread_message": "Mensaje sin leer",
       "switcher_unread": "Sin leer",
+      "switcher_more_unread": "+{{n}} más",
       "stopped_indicator": "Detenido",
       "drawer_working": "Trabajando",
       "pill_writing": "Escribiendo…",

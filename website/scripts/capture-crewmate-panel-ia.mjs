@@ -153,7 +153,7 @@ const visibleWords = (page) => rail(page).evaluate(el => [...el.querySelectorAll
   const panel = page.getByTestId('side-panel-root')
   check('roster column is gone while a thread is open', !(await page.getByTestId('member-roster').isVisible()))
   check('the page opens on the chat alone (side panel closed)', (await panel.count()) === 0 || !(await panel.isVisible()))
-  check('switcher chip shows the count', (await page.getByTestId('crewmate-switcher-count').innerText()).trim() === '6')
+  check('switcher chip carries no count (issue #19045)', (await page.getByTestId('crewmate-switcher-count').count()) === 0)
   const threadBefore = (await page.getByTestId('member-thread-header').boundingBox()).width
   await page.mouse.move(5, 5)
   await page.screenshot({ path: join(OUT, '01-chat-only-light.png') })

@@ -17402,6 +17402,7 @@
       "title": "크루메이트",
       "unread_message": "읽지 않은 메시지",
       "switcher_unread": "읽지 않음",
+      "switcher_more_unread": "{{n}}개 더",
       "stopped_indicator": "중지됨",
       "drawer_working": "작업 중",
       "pill_writing": "출력 중…",

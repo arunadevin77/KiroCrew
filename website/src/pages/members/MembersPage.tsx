@@ -130,7 +130,7 @@ import { useMateGreeting } from './mateGreeting'
 import type { ThreadHooks } from '../../app-sdk/messageRenderers'
 import { threadsApi, threadsQueryKey } from '../../api/threads'
 import ThreadPanel from './ThreadPanel'
-import CrewmateSwitcher from './CrewmateSwitcher'
+import CrewmateSwitcher, { CrewmateUnreadColumn } from './CrewmateSwitcher'
 import CrewProfilePanel, { PROFILE_FACE_PX, type ProfileTab } from './CrewProfilePanel'
 import CrewComposer from './CrewComposer'
 import { createPortal } from 'react-dom'
@@ -2870,6 +2870,9 @@ export default function MembersPage() {
   // pane's rows pad below the header) or something else is (a card between:
   // the card pads, the pane starts below the card).
   const [threadHeaderRef, threadHeaderH] = useMeasuredHeight<HTMLElement>()
+  // Bumped by the unread column's "+N" pill; the switcher opens its list on
+  // each change (a counter, so two presses in a row both open).
+  const [switcherOpenRequest, setSwitcherOpenRequest] = useState(0)
   const [betweenHeaderRef, betweenHeaderH] = useMeasuredHeight<HTMLDivElement>()
   const pillStreamState = useAppSelector((s) => (pillSlotKey ? selectSlotStreamState(s, pillSlotKey) : 'idle'))
   const pillLiveSlot = useAppSelector((s) => (pillSlotKey ? s.dashboard.slots.find((sl) => sl.key === pillSlotKey) : undefined))
@@ -4312,6 +4315,7 @@ export default function MembersPage() {
                   }}
                   onCreate={createHeld ? undefined : () => openGuided()}
                   onShowRoster={() => setRosterPin(true)}
+                  openRequest={switcherOpenRequest}
                 />
                 </div>
                 <Glass
@@ -4368,7 +4372,7 @@ export default function MembersPage() {
                 // press closes it (through the draft guard — see requestCloseProfile)
                 // instead of re-opening on the default tab, which remounted the card.
                 onClick={() => { if (profile) requestCloseProfile(); else openProfile() }}
-                className="glass-shadow group flex items-center gap-1 p-1.5 pr-2 min-w-0 max-w-full justify-self-center cursor-pointer text-left focus-ring pointer-events-auto"
+                className="glass-shadow flex items-center gap-2.5 pl-3.5 pr-3.5 py-1.5 min-w-0 max-w-full justify-self-center cursor-pointer text-left focus-ring pointer-events-auto"
                 title={t('pages.membersPage.profile_card')}
                 aria-expanded={!!profile}
                 data-testid="member-identity-pill"
@@ -4395,19 +4399,10 @@ export default function MembersPage() {
                   />
                   <CrewLoopIndicator on={isLoopOn(active)} testId="member-pill-loop-indicator" />
                 </span>
-                {/* Compact at rest: the face (with its loop mark) and the
-                    chevron. The words fold to zero width and slide open on
-                    hover or keyboard focus (a 0fr -> 1fr column, so the width
-                    animates; cut under reduced motion). Folded, they stay in
-                    the DOM, so the name is still the button's accessible name.
-                    A screen with no hover (touch) keeps them open: a tap opens
-                    Profile and never sets `:focus-visible`. */}
-                <div
-                  className="grid grid-cols-[0fr] group-hover:grid-cols-[1fr] group-focus-visible:grid-cols-[1fr] [@media(hover:none)]:grid-cols-[1fr] transition-[grid-template-columns] duration-200 ease-out motion-reduce:transition-none min-w-0"
-                  data-testid="member-pill-text"
-                >
-                <div className="overflow-hidden min-w-0">
-                <div className="min-w-0 leading-tight pl-1.5">
+                {/* The name and activity line stay open at rest: this pill is
+                    how the reader knows which crewmate the page is talking to,
+                    and a face alone does not say that (issue #19045). */}
+                <div className="min-w-0 leading-tight">
                   {/* Title row = the crewmate's display name; the ID is not shown. */}
                   <div className="min-w-0 flex items-center gap-1.5" data-testid="member-title-row">
                     <div
@@ -4431,8 +4426,6 @@ export default function MembersPage() {
                     data-activity={pillActivity.kind}
                     aria-hidden="true"
                   >{pillActivity.label}{isLoopOn(active) ? ` · ${t('pages.membersPage.loop_on')}` : ''}</div>
-                </div>
-                </div>
                 </div>
                 {/* The one visible sign that this chip OPENS something. Without
                     it the pill and the switcher beside it are two controls
@@ -4480,6 +4473,32 @@ export default function MembersPage() {
                     <PanelRightSolid size={15} />
                   </Glass>
                 )}
+              </div>
+              {/* The unread column (issue #19045), hanging under the switcher
+                  chip. Absolutely placed at the header's bottom edge (pulled
+                  back by the header's own py-2, so the first pill sits a gap
+                  under the chip), so it adds NOTHING to the header's measured
+                  height: the thread's top inset stays the chip row's, and the
+                  conversation keeps scrolling up under the band -- and under
+                  these Glass pills -- the way it scrolls under the pill. Pills
+                  float over the text; they never push it. Same slot rule as the
+                  chip: desktop only, and gone (with the chip) while the roster
+                  column is pinned, which carries the same dots. */}
+              <div
+                className={`absolute left-3 top-full -mt-2 hidden md:flex [&>*]:pointer-events-auto duration-200 motion-reduce:transition-none ${rosterPinned ? 'opacity-0 invisible transition-[opacity,visibility]' : 'opacity-100 visible transition-opacity'}`}
+                data-testid="crewmate-unread-column-slot"
+              >
+                <CrewmateUnreadColumn
+                  members={orderedMembers}
+                  defaultAgent={defaultAgent}
+                  activeName={active.name}
+                  signals={signalsOf}
+                  onPick={(name) => {
+                    const m = orderedMembers.find((row) => row.name === name)
+                    if (m) void openMember(m)
+                  }}
+                  onMore={() => setSwitcherOpenRequest((n) => n + 1)}
+                />
               </div>
             </header>
             {/* Everything that can sit between the header and the pane —

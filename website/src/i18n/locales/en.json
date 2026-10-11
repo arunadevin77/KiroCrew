@@ -7447,6 +7447,7 @@
       "title": "Crewmates",
       "unread_message": "Unread message",
       "switcher_unread": "Unread",
+      "switcher_more_unread": "+{{n}} more",
       "stopped_indicator": "Stopped",
       "drawer_working": "Working",
       "pill_writing": "Writing…",

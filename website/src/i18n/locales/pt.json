@@ -17904,6 +17904,7 @@
       "title": "Colegas",
       "unread_message": "Mensagem não lida",
       "switcher_unread": "Não lida",
+      "switcher_more_unread": "+{{n}} mais",
       "stopped_indicator": "Interrompido",
       "drawer_working": "Trabalhando",
       "pill_writing": "Escrevendo…",

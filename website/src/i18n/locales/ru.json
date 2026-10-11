@@ -18155,6 +18155,7 @@
       "title": "Напарники",
       "unread_message": "Непрочитанное сообщение",
       "switcher_unread": "Непрочитано",
+      "switcher_more_unread": "ещё +{{n}}",
       "stopped_indicator": "Остановлено",
       "drawer_working": "Работает",
       "pill_writing": "Пишет…",

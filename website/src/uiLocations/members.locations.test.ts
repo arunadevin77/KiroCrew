@@ -42,6 +42,9 @@ const EXPECTED: Record<string, [string, string, string, string, string[], string
   'members.back': ['button', 'pages.membersPage.back_to_roster', 'Back to crewmates', '返回队友列表', ['page.members'], 'header', '/members', [CREW_PREVIEW, vp('mobile'), cond('crewmate_selected')]],
   'members.switcher': ['button', 'pages.membersPage.switch_crewmate', 'Switch crewmate', '切换队友', ['page.members'], 'header', '/members', [CREW_PREVIEW, vp('desktop'), cond('crewmate_selected')]],
   'members.switcher.show-roster': ['menu-item', 'pages.membersPage.roster_show', 'Show the full roster', '显示完整队友列表', ['page.members', 'members.switcher'], 'menu', '/members', [CREW_PREVIEW, vp('desktop'), cond('crewmate_selected')]],
+  // Under the switcher chip: one pill per crewmate with an unread message, then a "+N" pill opening the list (#19045).
+  'members.switcher.unread': ['button', 'pages.membersPage.unread_message', 'Unread message', '未读消息', ['page.members'], 'header', '/members', [CREW_PREVIEW, vp('desktop'), cond('crewmate_selected')]],
+  'members.switcher.unread-more': ['button', 'pages.membersPage.switch_crewmate', 'Switch crewmate', '切换队友', ['page.members'], 'header', '/members', [CREW_PREVIEW, vp('desktop'), cond('crewmate_selected')]],
   'members.edit': ['button', 'pages.membersPage.profile_card', 'Profile', '资料卡', ['page.members'], 'content', '/members', [CREW_PREVIEW, cond('crewmate_selected')]],
   // The profile card's Permissions row: a crewmate's tools, behind its card.
   'members.permissions': ['button', 'pages.membersPage.profile_permissions', 'Permissions', '权限', ['page.members'], 'content', '/members', [CREW_PREVIEW, cond('crewmate_selected'), { kind: 'shown_by', location: 'members.edit', when: 'crewmate_profile_closed' }]],

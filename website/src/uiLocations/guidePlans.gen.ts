@@ -3,7 +3,7 @@
 import type { UiGuidePlan } from './types'
 
 /** The `build_digest` of the packaged index this bundle was built with (see `guideBuildDigest`). */
-export const GUIDE_BUILD_DIGEST = "sha256:624e26094142051c53df4852eaf8a3c8add24cc8d6095f85b75f54d6ca0f2c13"
+export const GUIDE_BUILD_DIGEST = "sha256:515ce57654d554c6a834d0265b68ac48329e0a09c23bf5ab3246cb9ad54d5daa"
 
 /** Curated location ids: the only ids a live observation may name. */
 export const GUIDE_OBSERVABLE_IDS: readonly string[] = [
@@ -87,6 +87,8 @@ export const GUIDE_OBSERVABLE_IDS: readonly string[] = [
   "members.switcher",
   "members.switcher.new",
   "members.switcher.show-roster",
+  "members.switcher.unread",
+  "members.switcher.unread-more",
   "notifications.clear-all",
   "notifications.detail.mark-unread",
   "notifications.mark-all-read",
@@ -2147,6 +2149,70 @@ export const GUIDE_PLANS: Readonly<Record<string, UiGuidePlan>> = {
             "id": "desktop:members.switcher.show-roster",
             "location": "members.switcher.show-roster",
             "label_key": "pages.membersPage.roster_show"
+          }
+        ]
+      }
+    ]
+  },
+  "members.switcher.unread": {
+    "version": 2,
+    "label_key": "pages.membersPage.unread_message",
+    "placements": [
+      {
+        "id": "desktop",
+        "route": "/members",
+        "viewport": "desktop",
+        "steps": [
+          {
+            "id": "desktop:gate:preview_flag:mc-preview-crew",
+            "kind": "gate",
+            "gate": "preview_flag:mc-preview-crew",
+            "setting_id": "developer.crewmates"
+          },
+          {
+            "id": "desktop:select:crewmate_selected",
+            "kind": "select",
+            "location": "members.roster-list",
+            "label_key": "pages.membersPage.title",
+            "selection": "crewmate_selected",
+            "entity": "crewmate"
+          },
+          {
+            "id": "desktop:members.switcher.unread",
+            "location": "members.switcher.unread",
+            "label_key": "pages.membersPage.unread_message"
+          }
+        ]
+      }
+    ]
+  },
+  "members.switcher.unread-more": {
+    "version": 2,
+    "label_key": "pages.membersPage.switch_crewmate",
+    "placements": [
+      {
+        "id": "desktop",
+        "route": "/members",
+        "viewport": "desktop",
+        "steps": [
+          {
+            "id": "desktop:gate:preview_flag:mc-preview-crew",
+            "kind": "gate",
+            "gate": "preview_flag:mc-preview-crew",
+            "setting_id": "developer.crewmates"
+          },
+          {
+            "id": "desktop:select:crewmate_selected",
+            "kind": "select",
+            "location": "members.roster-list",
+            "label_key": "pages.membersPage.title",
+            "selection": "crewmate_selected",
+            "entity": "crewmate"
+          },
+          {
+            "id": "desktop:members.switcher.unread-more",
+            "location": "members.switcher.unread-more",
+            "label_key": "pages.membersPage.switch_crewmate"
           }
         ]
       }

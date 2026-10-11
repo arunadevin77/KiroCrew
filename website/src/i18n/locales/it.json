@@ -17904,6 +17904,7 @@
       "title": "Compagni",
       "unread_message": "Messaggio non letto",
       "switcher_unread": "Non letto",
+      "switcher_more_unread": "+{{n}} altri",
       "stopped_indicator": "Interrotto",
       "drawer_working": "Al lavoro",
       "pill_writing": "Scrittura…",

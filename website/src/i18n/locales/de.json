@@ -17653,6 +17653,7 @@
       "title": "Crewmates",
       "unread_message": "Ungelesene Nachricht",
       "switcher_unread": "Ungelesen",
+      "switcher_more_unread": "+{{n}} weitere",
       "stopped_indicator": "Gestoppt",
       "drawer_working": "Arbeitet",
       "pill_writing": "Schreibt…",
