@@ -2715,13 +2715,30 @@ and composed onto it.
   class rather than any attribute: a `MagicMock` stand-in returns a **truthy mock**
   for every flag, which would mark every session both temporary and incognito —
   failing closed, but wrongly and silently.
+- **`hydrate_inbound(sessions, session_key)`** (async) is the restore the async
+  inbound gates run -- the Slack and Telegram inbound paths and the upload gate.
+  It runs `hydrate` and also reads the transcript header's `memory_mode` on a
+  worker thread, then marks that mode too, so the stricter of the two records
+  stands; a mark only adds a restriction. A thread whose row the map does not
+  hold (the map file could not be read at load, so the map started empty) stays
+  restricted when its header records the mode. The read and its mark run under
+  the session's durable-write lock (`_serialized`), so a release cannot restore
+  the header between them; a header mode whose commit is still landing is
+  skipped, like a landing row; a header that cannot be read adds nothing; no
+  `sessions` reads no header. Only a CHANNEL session key's header is read
+  (`messaging.link.is_channel_session_key`): a channel mark makes the channel
+  skip the transcript, and a private dashboard chat a channel thread is routed
+  into keeps its transcript and gates its derived reads on the header itself,
+  so its key restores from its row alone. The sync gates (the dashboard's restricted-session
+  predicates) keep `hydrate`, because they cannot read a transcript without
+  blocking the loop.
 - **Two durable records, two readers.** The `SessionMap` flag is what `hydrate`
-  restores the channel's own gate from on every inbound message, and it keeps
+  restores the channel's gates from on every inbound message, and it keeps
   the map entry alive through `SessionMap.prune` and the per-read repair (both
   loop-side and lock-held, so neither reads a transcript) -- and through every
-  other path: because this gate hydrates from the map alone, a flagged row is
-  never removed, however complete the transcript header, until the gate can
-  read the header (a separate change). `SessionMap.stamp_privacy_headers` --
+  other path: a flagged row is never removed, however complete the transcript
+  header, because the sync gates hydrate from the map alone and a transcript can
+  be deleted or recreated apart from its row. `SessionMap.stamp_privacy_headers` --
   awaited by `start_pool` right after `prune`, the header probes on a worker
   thread, the map-lock-held half touching no file, each row re-read and stamped
   under the session's durable-write lock (`_serialized`, below) so a release
@@ -2815,8 +2832,8 @@ and composed onto it.
   already-marked key. The shape is pinned structurally by
   `test_messaging_privacy_mode`: `set_flag` and `aflush` are called nowhere but
   `_land`; `_persist_transcript_mode` nowhere but `_commit_mode`, after `_land`
-  and before `mark`; `mark` nowhere but `_commit_mode`, `hydrate` and the
-  two in-memory wrappers; `_tracker(...).pop` nowhere but `_release_mode`; and no
+  and before `mark`; `mark` nowhere but `_commit_mode`, `hydrate`,
+  `hydrate_inbound` and the two in-memory wrappers; `_tracker(...).pop` nowhere but `_release_mode`; and no
   module outside `privacy_mode` calls a publication function or writes a privacy
   flag.
 - **`reserve(mode, session_key, …) -> Reservation`**, **`commit(reservation)`**,
@@ -2837,7 +2854,8 @@ and composed onto it.
   write AWAITED (`_land`), and only then is the tracker mark dropped and the
   reversal reported, one SEL `released` record beside the `allowed` one. The
   row goes LAST because it is the record a restart trusts -- `hydrate` restores
-  the mark from the map row alone, and the startup sweep re-stamps headers FROM
+  the mark from the map row alone, `hydrate_inbound` from the row and the header
+  together, and the startup sweep re-stamps headers FROM
   rows, never rows from headers -- so a sequence that stops anywhere leaves the
   next boot reading the mode. The
   header is restored to the STRICTEST claim still standing (`_restore_target`):

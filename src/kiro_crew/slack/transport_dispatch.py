@@ -56,6 +56,7 @@ from kiro_crew.session_allocation import SessionClosingError
 from kiro_crew.slack.handler import (
     _get_default_agent,
     _hydrate_conv_flags,
+    _hydrate_conv_header,
     _hydrate_thread_overrides,
     _is_slack_restricted,
     _maybe_auto_title_slack,
@@ -300,9 +301,9 @@ async def handle_message_transport(
             candidate_key = owner or canonical_key(reply_ts)
             if candidate_key != session_key:
                 await _hydrate_thread_overrides(candidate_key, conversation_log)
-                # The worker read may yield to a new thread owner. Resolve that
-                # owner before publishing either routing key; cached hydration
-                # returns without yielding when an owner is already known.
+                await _hydrate_conv_header(sessions, candidate_key)
+                # The worker reads may yield to a new thread owner. Resolve that
+                # owner before publishing either routing key.
                 if sessions.get_session_for_thread(reply_ts) != owner:
                     continue
                 _hydrate_conv_flags(sessions, candidate_key)
@@ -337,6 +338,7 @@ async def handle_message_transport(
     # after session_key, so we match it. Idempotent:
     # _hydrate_thread_overrides guards repeated I/O per session.
     await _hydrate_thread_overrides(session_key, conversation_log)
+    await _hydrate_conv_header(sessions, session_key)
     await _resolve_thread_owner("post-hydration")
     _hydrate_conv_flags(sessions, session_key)
 

@@ -3969,8 +3969,11 @@ class TestPrivacyModeEnforcement:
         assert d.ctx_builder.build_calls[-1]["blocks_reads"] is True
 
         privacy_mode.reset()
-        d2, _, _ = _dispatcher({7})
-        await d2.handle_message(_dm("/incognito summarise this"))
+        # A second conversation: the first one's transcript header records
+        # temporary, and the inbound restore reads it, so an incognito there
+        # still blocks reads.
+        d2, _, _ = _dispatcher({8})
+        await d2.handle_message(_dm("/incognito summarise this", uid="8"))
         assert d2.ctx_builder.build_calls[-1]["blocks_reads"] is False
 
     @pytest.mark.asyncio

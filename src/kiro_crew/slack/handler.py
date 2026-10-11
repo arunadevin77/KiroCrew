@@ -290,6 +290,7 @@ from kiro_crew.slack.handler_runtime.inbound import (  # noqa: F401
     _get_agent_for_session,
     _get_default_agent,
     _hydrate_conv_flags,
+    _hydrate_conv_header,
     _hydrate_thread_overrides,
     _is_slack_restricted,
     _persist_channel_config,
@@ -1214,6 +1215,7 @@ async def handle_message(
         return
 
     await _hydrate_thread_overrides(session_key, conversation_log)
+    await _hydrate_conv_header(sessions, session_key)
     _hydrate_conv_flags(sessions, session_key)
 
     if not await admit_inbound_callback(
@@ -1610,6 +1612,7 @@ async def handle_message(
                 candidate_key = thread_owner_key or canonical_key(reply_ts)
                 if candidate_key != session_key:
                     await _hydrate_thread_overrides(candidate_key, conversation_log)
+                    await _hydrate_conv_header(sessions, candidate_key)
                     if sessions.get_session_for_thread(reply_ts) != thread_owner_key:
                         continue
             # Both private identity hydration and store resolution can yield to

@@ -470,8 +470,11 @@ canonical execution context before its first await and refuses incognito or
 temporary sessions before reading their transcripts. A channel thread's
 `!temporary` / `!incognito` mode lives in two durable records for two readers:
 the session map's flag (`SessionMap.set_flag`, keyed by the live `slack:<ts>`
-key) is what the channel's inbound gate hydrates from per message, and the
-transcript header's `memory_mode` is what every memory reader refuses on -- this
+key) is what the channel gates hydrate from per message -- the sync gates from
+the map alone (`privacy_mode.hydrate`), the async inbound gates from the map and
+the transcript header together (`privacy_mode.hydrate_inbound`, the header read
+on a worker thread under the session's durable-write lock, the stricter record
+standing) -- and the transcript header's `memory_mode` is what every memory reader refuses on -- this
 pass's pre-snapshot check, the derivation seam (`TranscriptWithheld`) and the
 publication hold around each durable write, above. `privacy_mode._commit_mode`
 writes both, the row first and then the header, tighten-only against the
@@ -484,7 +487,8 @@ transcript read never depends on the session map. A privacy flag keeps its map
 entry alive through `SessionMap.prune` and the per-read repair, both of which
 run under the map lock on the event loop and read no transcript, and through
 every other path: no step removes a privacy-flagged row, whatever the header
-says, because the gate hydrates from the map alone and a removed row leaves it
+says, because the sync gates hydrate from the map alone and a transcript can be
+deleted or recreated apart from its row, so a removed row can leave a gate
 reading the thread as persistent after the next restart. The header of a row
 flagged before the stamp existed is ensured by `SessionMap.stamp_privacy_headers`,
 which the session pool's `start_pool` runs right after `prune` (awaited in place
@@ -508,8 +512,8 @@ already records the mode costs no write (`needs_tightening`). The rows are
 capped at the module constant `session_map.PRIVACY_ROW_CAP` (the trackers' `PRIVACY_LRU_MAX`), held
 by refusing a NEW flag fail-closed -- the modifier tells the user the message
 was not processed and does not run it -- never by evicting a retained row.
-Retiring those rows needs the inbound gate to read the header, a separate
-change. This pre-snapshot refusal is the memory-mode choke point every entry
+The inbound gates' header read does not retire rows; it covers a map that
+loaded empty because its file could not be read. This pre-snapshot refusal is the memory-mode choke point every entry
 point inherits (idle sweep, `maybe_consolidate`, expiry sweep, dashboard
 trigger, CLI); the dashboard trigger adds its own target-side 403 in front of it
 (see the route table below). V2 uses that context's exact

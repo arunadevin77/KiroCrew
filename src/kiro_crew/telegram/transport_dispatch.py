@@ -903,7 +903,7 @@ class TelegramDispatcher:
         if origin_tag and session_provenance_tag(session_key) != origin_tag:
             await self._reply(chat_id, _STALE_OPTIONS_REFUSAL, thread=reply_thread)
             return
-        privacy_mode.hydrate(self.sessions, session_key)
+        await privacy_mode.hydrate_inbound(self.sessions, session_key)
         if privacy_request:
             try:
                 await privacy_mode.apply_mode(

@@ -66,6 +66,18 @@ def _hydrate_conv_flags(sessions: object, session_key: str) -> None:
     privacy_mode.hydrate(sessions, session_key)
 
 
+async def _hydrate_conv_header(sessions: object, session_key: str) -> None:
+    """Restore the mode the transcript header records, read off the loop.
+
+    The header half of the inbound restore (``privacy_mode.hydrate_inbound``,
+    which reads the map row as well): a thread whose map row is missing stays
+    private when its header records the mode. It yields, so each caller awaits
+    it beside ``_hydrate_thread_overrides`` -- before the owner re-check that
+    commits the route -- and still runs ``_hydrate_conv_flags`` where it did.
+    """
+    await privacy_mode.hydrate_inbound(sessions, session_key)
+
+
 async def _apply_privacy_mode(
     mode: str,
     session_key: str,
