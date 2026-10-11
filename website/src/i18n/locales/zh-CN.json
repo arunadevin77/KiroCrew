@@ -8625,7 +8625,11 @@
       "discard_dictation_consequence": "放弃之后找不回来，但你自己打的字会留下，也可以重新口述一遍。",
       "recording": "正在录音",
       "waiting_for_speech_model": "正在准备转写你的录音。",
-      "discard_dictation": "放弃这段口述"
+      "discard_dictation": "放弃这段口述",
+      "retry_transcription": "重试",
+      "save_recording": "保存录音",
+      "discard_recording": "放弃这段录音",
+      "recording_actions": "这段录音的更多操作"
     },
     "webAppArtifactCard": {
       "acct": "账户",

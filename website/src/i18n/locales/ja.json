@@ -8625,7 +8625,11 @@
       "discard_dictation_consequence": "破棄は取り消せませんが、自分で入力した文字は残り、もう一度口述できます。",
       "recording": "録音中",
       "waiting_for_speech_model": "録音した音声を文字起こしする準備をしています。",
-      "discard_dictation": "口述を破棄"
+      "discard_dictation": "口述を破棄",
+      "retry_transcription": "再試行",
+      "save_recording": "録音を保存",
+      "discard_recording": "録音を破棄",
+      "recording_actions": "この録音のその他の操作"
     },
     "webAppArtifactCard": {
       "acct": "アカウント",

@@ -8873,7 +8873,11 @@
       "discard_dictation_consequence": "Abandonner est définitif, mais ce que tu as tapé toi-même est conservé et tu peux dicter à nouveau.",
       "recording": "Enregistrement",
       "waiting_for_speech_model": "Préparation de la transcription de ta dictée.",
-      "discard_dictation": "Abandonner la dictée"
+      "discard_dictation": "Abandonner la dictée",
+      "retry_transcription": "Réessayer",
+      "save_recording": "Sauvegarder l’enregistrement",
+      "discard_recording": "Abandonner l’enregistrement",
+      "recording_actions": "Autres actions pour cet enregistrement"
     },
     "webAppArtifactCard": {
       "acct": "compte",

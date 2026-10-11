@@ -8749,7 +8749,11 @@
       "discard_dictation_consequence": "Verwerfen lässt sich nicht rückgängig machen, aber was du selbst getippt hast, bleibt, und du kannst neu diktieren.",
       "recording": "Aufnahme",
       "waiting_for_speech_model": "Die Transkription deiner Aufnahme wird vorbereitet.",
-      "discard_dictation": "Diktat verwerfen"
+      "discard_dictation": "Diktat verwerfen",
+      "retry_transcription": "Erneut versuchen",
+      "save_recording": "Aufnahme speichern",
+      "discard_recording": "Aufnahme verwerfen",
+      "recording_actions": "Weitere Aktionen für diese Aufnahme"
     },
     "webAppArtifactCard": {
       "acct": "Konto",

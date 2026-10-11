@@ -18,7 +18,7 @@ const noopSelectDevice = () => {}
 
 /** Above the editor: the hold gesture's cancel cue while a press is live, then
  *  the dictation panel while recording, else the thin status bar. */
-export function VoiceCaptureStatus({ voiceHoldMode, touchPtt, showDictation, value, voicePartial, voiceDeviceLabel, voiceDeviceId, onSelectVoiceDevice, voiceDeviceSwitchIsLive, voiceStreaming, voiceDownload, voiceRecording, voiceLevel, voiceError, onClearVoiceError, voiceDrainCancellable, cancelVoiceDrain, onVoiceToggle, micHeldElsewhere, micHeldElsewhereLabel, micHeldElsewhereAction, voiceHeldLanded }: {
+export function VoiceCaptureStatus({ voiceHoldMode, touchPtt, showDictation, value, voicePartial, voiceDeviceLabel, voiceDeviceId, onSelectVoiceDevice, voiceDeviceSwitchIsLive, voiceStreaming, voiceDownload, voiceRecording, voiceLevel, voiceError, voiceKeptRecording, onClearVoiceError, voiceDrainCancellable, cancelVoiceDrain, onVoiceToggle, micHeldElsewhere, micHeldElsewhereLabel, micHeldElsewhereAction, voiceHeldLanded }: {
   voiceHoldMode: boolean
   touchPtt: TouchPtt
   showDictation: NonNullable<VoiceInput['voiceSampleRef']> | null
@@ -33,6 +33,7 @@ export function VoiceCaptureStatus({ voiceHoldMode, touchPtt, showDictation, val
   voiceRecording: boolean
   voiceLevel: number
   voiceError: VoiceInput['voiceError']
+  voiceKeptRecording: VoiceInput['voiceKeptRecording']
   onClearVoiceError: VoiceInput['onClearVoiceError']
   voiceDrainCancellable: boolean
   cancelVoiceDrain?: () => void
@@ -78,7 +79,7 @@ export function VoiceCaptureStatus({ voiceHoldMode, touchPtt, showDictation, val
         <VoiceDictationPanel sampleRef={showDictation} value={value} partial={voicePartial} deviceLabel={voiceDeviceLabel} deviceId={voiceDeviceId} onSelectDevice={onSelectVoiceDevice || noopSelectDevice} deviceSwitchIsLive={voiceDeviceSwitchIsLive} streaming={voiceStreaming} gestureDriven={voiceHoldMode || touchPtt.bar === 'settling'} download={voiceDownload} />
       ) : (
         <VoiceStatusBar
-          recording={voiceRecording} level={voiceLevel} deviceLabel={voiceDeviceLabel} deviceId={voiceDeviceId} error={voiceError} onDismissError={onClearVoiceError} onSelectDevice={onSelectVoiceDevice || noopSelectDevice} deviceSwitchIsLive={voiceDeviceSwitchIsLive} download={voiceDownload}
+          recording={voiceRecording} level={voiceLevel} deviceLabel={voiceDeviceLabel} deviceId={voiceDeviceId} error={voiceError} keptRecording={voiceKeptRecording} onDismissError={onClearVoiceError} onSelectDevice={onSelectVoiceDevice || noopSelectDevice} deviceSwitchIsLive={voiceDeviceSwitchIsLive} download={voiceDownload}
           /* The released utterance's own window. Gated on the transport of the
              request IN FLIGHT, which is what `voiceDrainCancellable` reads: a
              streaming drain is held against an open socket and the discard

@@ -255,6 +255,7 @@ function ChatInput({
     onVoiceStop,
     voiceCaptureActive,
     voiceError = null,
+    voiceKeptRecording = null,
     voiceLevel = 0,
     voiceDeviceLabel = '',
     voiceDeviceId = '',
@@ -1000,7 +1001,7 @@ function ChatInput({
         <VoiceCaptureStatus
           voiceHoldMode={voiceHoldMode} touchPtt={touchPtt} showDictation={showDictation} value={value} voicePartial={voicePartial}
           voiceDeviceLabel={voiceDeviceLabel} voiceDeviceId={voiceDeviceId} onSelectVoiceDevice={onSelectVoiceDevice} voiceDeviceSwitchIsLive={voiceDeviceSwitchIsLive}
-          voiceStreaming={voiceStreaming} voiceDownload={voiceDownload} voiceRecording={voiceRecording} voiceLevel={voiceLevel} voiceError={voiceError}
+          voiceStreaming={voiceStreaming} voiceDownload={voiceDownload} voiceRecording={voiceRecording} voiceLevel={voiceLevel} voiceError={voiceError} voiceKeptRecording={voiceKeptRecording}
           onClearVoiceError={onClearVoiceError} voiceDrainCancellable={voiceDrainCancellable} cancelVoiceDrain={cancelVoiceDrain} onVoiceToggle={onVoiceToggle}
           micHeldElsewhere={micHeldElsewhere} micHeldElsewhereLabel={micHeldElsewhereLabel} micHeldElsewhereAction={micHeldElsewhereAction} voiceHeldLanded={voiceHeldLanded}
         />

@@ -8873,7 +8873,11 @@
       "discard_dictation_consequence": "Descartar não pode ser desfeito, mas o que você digitou fica, e você pode ditar de novo.",
       "recording": "Gravando",
       "waiting_for_speech_model": "Preparando a transcrição do seu ditado.",
-      "discard_dictation": "Descartar o ditado"
+      "discard_dictation": "Descartar o ditado",
+      "retry_transcription": "Tentar novamente",
+      "save_recording": "Salvar a gravação",
+      "discard_recording": "Descartar a gravação",
+      "recording_actions": "Mais ações para esta gravação"
     },
     "webAppArtifactCard": {
       "acct": "conta",

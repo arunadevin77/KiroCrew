@@ -8625,7 +8625,11 @@
       "discard_dictation_consequence": "버리면 되돌릴 수 없지만 직접 입력한 글자는 남고, 다시 받아쓰기를 할 수 있습니다.",
       "recording": "녹음 중",
       "waiting_for_speech_model": "녹음한 음성을 텍스트로 변환할 준비를 하고 있습니다.",
-      "discard_dictation": "받아쓰기 버리기"
+      "discard_dictation": "받아쓰기 버리기",
+      "retry_transcription": "다시 시도",
+      "save_recording": "녹음 저장",
+      "discard_recording": "녹음 버리기",
+      "recording_actions": "이 녹음에 대한 추가 작업"
     },
     "webAppArtifactCard": {
       "acct": "계정",

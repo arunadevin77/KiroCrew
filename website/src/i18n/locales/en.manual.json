@@ -3286,7 +3286,11 @@
       "download_continues_after_discard": "The download continues even if you discard, so nothing is fetched twice.",
       "discard_dictation_consequence": "Discarding cannot be undone, but anything you typed yourself stays, and you can dictate again.",
       "waiting_for_speech_model": "Getting ready to transcribe your dictation.",
-      "discard_dictation": "Discard dictation"
+      "discard_dictation": "Discard dictation",
+      "retry_transcription": "Retry",
+      "save_recording": "Save recording",
+      "discard_recording": "Discard recording",
+      "recording_actions": "More actions for this recording"
     },
     "webAppArtifactCard": {
       "api_app": "API app",

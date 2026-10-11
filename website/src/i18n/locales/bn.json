@@ -8749,7 +8749,11 @@
       "discard_dictation_consequence": "বাতিল করলে তা আর ফেরানো যাবে না, তবে তুমি নিজে যা লিখেছ তা থেকে যাবে, আর আবার ডিক্টেশন করা যাবে।",
       "recording": "রেকর্ডিং হচ্ছে",
       "waiting_for_speech_model": "তোমার ডিক্টেশন ট্রান্সক্রাইব করার প্রস্তুতি চলছে।",
-      "discard_dictation": "ডিক্টেশন বাতিল করো"
+      "discard_dictation": "ডিক্টেশন বাতিল করো",
+      "retry_transcription": "আবার চেষ্টা করো",
+      "save_recording": "রেকর্ডিং সংরক্ষণ করো",
+      "discard_recording": "রেকর্ডিং বাতিল করো",
+      "recording_actions": "এই রেকর্ডিংয়ের আরও বিকল্প"
     },
     "webAppArtifactCard": {
       "acct": "অ্যাকাউন্ট",

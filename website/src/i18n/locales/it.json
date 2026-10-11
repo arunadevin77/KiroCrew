@@ -8873,7 +8873,11 @@
       "discard_dictation_consequence": "Scartare non si può annullare, ma quello che hai scritto tu resta e puoi dettare di nuovo.",
       "recording": "Registrazione",
       "waiting_for_speech_model": "Preparazione della trascrizione della tua dettatura.",
-      "discard_dictation": "Scarta la dettatura"
+      "discard_dictation": "Scarta la dettatura",
+      "retry_transcription": "Riprova",
+      "save_recording": "Salva la registrazione",
+      "discard_recording": "Scarta la registrazione",
+      "recording_actions": "Altre azioni per questa registrazione"
     },
     "webAppArtifactCard": {
       "acct": "account",

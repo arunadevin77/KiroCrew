@@ -8997,7 +8997,11 @@
       "discard_dictation_consequence": "Отмену уже не вернуть, но то, что ты набрал сам, останется, и можно продиктовать заново.",
       "recording": "Запись",
       "waiting_for_speech_model": "Идёт подготовка к расшифровке записанной речи.",
-      "discard_dictation": "Отменить диктовку"
+      "discard_dictation": "Отменить диктовку",
+      "retry_transcription": "Повторить",
+      "save_recording": "Сохранить запись",
+      "discard_recording": "Удалить запись",
+      "recording_actions": "Другие действия с записью"
     },
     "webAppArtifactCard": {
       "acct": "аккаунт",
