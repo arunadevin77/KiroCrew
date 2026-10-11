@@ -51,6 +51,7 @@ import {
   fmtTimeNumeric,
   fmtDuration,
   fmtElapsed,
+  fmtLanguageName,
   fmtList,
   fmtNumber,
   fmtPercent,
@@ -559,5 +560,23 @@ describe('collator / compareText', () => {
 
   it('exposes the raw collator for callers needing other options', () => {
     expect(collator({ sensitivity: 'variant' }).compare('apple', 'Apple')).not.toBe(0)
+  })
+})
+
+describe('fmtLanguageName', () => {
+  it('names a language in the active language', async () => {
+    expect(fmtLanguageName('vi')).toBe(
+      new Intl.DisplayNames('en', { type: 'language' }).of('vi'),
+    )
+    await withLanguage('de', () => {
+      // Derived from the language's own Intl data, so ICU updates cannot break it.
+      expect(fmtLanguageName('vi')).toBe(new Intl.DisplayNames('de', { type: 'language' }).of('vi'))
+      expect(fmtLanguageName('vi')).not.toBe(new Intl.DisplayNames('en', { type: 'language' }).of('vi'))
+    })
+  })
+
+  it('shows the code itself when Intl cannot name it', () => {
+    expect(fmtLanguageName('not a code')).toBe('not a code')
+    expect(fmtLanguageName('')).toBe('')
   })
 })

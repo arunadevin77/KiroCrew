@@ -2605,6 +2605,16 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "occurrence": 1
   },
   {
+    "id": "voice.mixed-languages",
+    "label": "Mixed languages",
+    "labelKey": "pages.settings.sttSettings.transcribe_languages",
+    "description": "Languages people switch between in one recording, such as Vietnamese and English. With two or more picked, Amazon Transcribe detects the language of each part and transcribes it in that language. Streaming dictation only, one dialect per language.",
+    "tab": "voice",
+    "type": "select",
+    "occurrence": 1,
+    "configKey": "stt.transcribe_languages"
+  },
+  {
     "id": "voice.model",
     "label": "Model",
     "labelKey": "pages.settings.sttSettings.model",

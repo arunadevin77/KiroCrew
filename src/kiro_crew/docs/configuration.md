@@ -358,6 +358,7 @@ transcribed the same way.
 | `stt.transcribe_region` | AWS region for the Transcribe API (`transcribe` provider only) | `"us-east-1"` |
 | `stt.transcribe_profile` | AWS profile for the Transcribe API. Empty uses the default credential chain (`transcribe` provider only) | `""` |
 | `stt.transcribe_vocabulary` | Name of an Amazon Transcribe custom vocabulary to recognise your names and terms, from the same region. Its language must match `stt.language_code`, or Amazon Transcribe refuses it and dictation fails. Empty uses none (`transcribe` provider only) | `""` |
+| `stt.transcribe_languages` | Languages speakers switch between in one recording, for example `["vi-VN", "en-US"]`. With two or more, a live Transcribe stream identifies the language of each part and transcribes it in that language instead of using `stt.language_code`; with fewer, `stt.language_code` is used. At most five, one dialect per language (`en-US` and `en-GB` cannot be listed together), and a list that breaks either rule is ignored with a log warning. Applies to streaming dictation and meetings; a voice message, or dictation with `stt.streaming` off, still uses `stt.language_code`, because Amazon Transcribe identifies several languages only in a raw PCM stream. A custom vocabulary is then sent in the form identification accepts, and its language should be one of the candidates. Needs `amazon-transcribe` 0.6.3 or newer (`transcribe` provider only) | `[]` |
 
 #### The local provider downloads one model, once
 
@@ -377,7 +378,7 @@ again.
 Desktop users install nothing else by hand: the app already carries the
 recognizer, decoder, and AWS client. In a source environment the recognizer and
 AWS client are the optional `voice` extra, installed as its own dependencies
-(`pip install 'boto3>=1.34,<2' 'amazon-transcribe>=0.6,<1' 'pywhispercpp>=1.5,<2'`):
+(`pip install 'boto3>=1.34,<2' 'amazon-transcribe>=0.6.3,<1' 'pywhispercpp>=1.5,<2'`):
 
 - **Intel Macs have no prebuilt recognizer.** Every other platform Kiro Crew
   supports (Apple silicon macOS, glibc and musl Linux on x86_64 and arm64, and
@@ -387,7 +388,7 @@ AWS client are the optional `voice` extra, installed as its own dependencies
   different fixes.
 
   If you would rather not build it, installing only the cloud half
-  (`pip install 'boto3>=1.34,<2' 'amazon-transcribe>=0.6,<1'`) gets you the AWS
+  (`pip install 'boto3>=1.34,<2' 'amazon-transcribe>=0.6.3,<1'`) gets you the AWS
   Transcribe client on its own. `pip` resolves an extra all-or-nothing, so on a
   platform without the recognizer wheel the full `voice` extra installs *nothing* —
   including the Transcribe client, which has no such limitation. This is the way to

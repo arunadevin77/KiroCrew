@@ -10190,7 +10190,8 @@
       "stream_error_max_duration": "El dictado alcanzó su límite de duración. Empieza una grabación nueva para continuar.",
       "stream_error_model_missing": "El modelo de voz aún no está listo. Descárgalo en los ajustes de voz a texto y vuelve a intentarlo.",
       "stream_error_session_failed": "La sesión de dictado falló. Vuelve a grabar.",
-      "stream_error_vocabulary_rejected": "Amazon Transcribe no pudo usar tu vocabulario personalizado. Elige otro, o Ninguno, en los ajustes de voz a texto y vuelve a intentarlo."
+      "stream_error_vocabulary_rejected": "Amazon Transcribe no pudo usar tu vocabulario personalizado. Elige otro, o Ninguno, en los ajustes de voz a texto y vuelve a intentarlo.",
+      "stream_error_sdk_outdated": "Los idiomas mezclados necesitan amazon-transcribe 0.6.3 o posterior en el gateway. Actualízalo con el comando del registro del gateway, o vacía Idiomas mezclados en los ajustes de voz a texto, y vuelve a intentarlo."
     },
     "templateSource": {
       "built_in": "Integrada",
@@ -17112,6 +17113,15 @@
         "transcribe_vocabulary_unavailable": "Amazon Transcribe no tiene ningún vocabulario listo llamado {{name}} en {{region}}. El dictado fallará hasta que elijas otro o Ninguno.",
         "transcribe_vocabulary_access_denied": "Estas credenciales de AWS no tienen permiso para listar vocabularios personalizados. Concede {{permission}} para verlos aquí.",
         "transcribe_vocabulary_list_failed": "No se pudieron cargar tus vocabularios personalizados desde AWS.",
+        "transcribe_languages": "Idiomas mezclados",
+        "transcribe_languages_hint": "Idiomas entre los que se alterna en una misma grabación, como el vietnamita y el inglés. Con dos o más elegidos, Amazon Transcribe detecta el idioma de cada parte y la transcribe en ese idioma. Solo para dictado en streaming, un dialecto por idioma.",
+        "transcribe_languages_off": "Desactivado (usa el idioma de arriba)",
+        "transcribe_languages_one": "{{name}}: elige otro para activarlo",
+        "transcribe_languages_pending": "Elige un segundo idioma para detectar ambos. Hasta entonces, el dictado usa el idioma de arriba.",
+        "transcribe_languages_limit": "Límite de {{max}} alcanzado. Desmarca uno para elegir otro.",
+        "transcribe_languages_search": "Buscar idiomas…",
+        "language_option": "{{name}} ({{code}})",
+        "language_overridden_by_mixed": "Mientras Idiomas mezclados está activado, este idioma solo se usa para los mensajes de voz y para el dictado cuando Streaming está desactivado.",
         "aws_region_transcribe": "Región de AWS (Transcribe)",
         "bcp_47_language_code_for_speech_recognition": "Código de idioma BCP-47 para el reconocimiento de voz",
         "default": "default",

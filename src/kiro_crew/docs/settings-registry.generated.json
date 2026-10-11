@@ -1572,6 +1572,14 @@
       "description": "Input device used to capture your voice"
     },
     {
+      "id": "voice.mixed-languages",
+      "label": "Mixed languages",
+      "tab": "voice",
+      "route": "/settings/voice?highlight=key%3Astt.transcribe_languages",
+      "description": "Languages people switch between in one recording, such as Vietnamese and English. With two or more picked, Amazon Transcribe detects the language of each part and transcribes it in that language. Streaming dictation only, one dialect per language.",
+      "configKey": "stt.transcribe_languages"
+    },
+    {
       "id": "voice.model",
       "label": "Model",
       "tab": "voice",

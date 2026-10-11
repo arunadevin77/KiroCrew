@@ -2884,6 +2884,7 @@ class SttConfig:
     transcribe_region: str = "us-east-1"   # transcribe provider only
     transcribe_profile: str = ""           # transcribe provider only; empty = default credential chain
     transcribe_vocabulary: str = ""        # transcribe provider only; custom vocabulary name, empty = none; an unusable stored name degrades to none
+    transcribe_languages: list[str] = []   # transcribe provider, live stream only; 2-5 candidates (one dialect each) turn on mixed-language detection; an unusable stored list degrades to empty
 
 @dataclass
 class ComputerUseConfig:

@@ -10190,7 +10190,8 @@
       "stream_error_max_duration": "La dettatura ha raggiunto il limite di durata. Avvia una nuova registrazione per continuare.",
       "stream_error_model_missing": "Il modello vocale non è ancora pronto. Scaricalo nelle impostazioni di riconoscimento vocale, poi riprova.",
       "stream_error_session_failed": "La sessione di dettatura non è riuscita. Prova a registrare di nuovo.",
-      "stream_error_vocabulary_rejected": "Amazon Transcribe non è riuscito a usare il tuo vocabolario personalizzato. Scegline un altro, o Nessuno, nelle impostazioni di riconoscimento vocale, poi riprova."
+      "stream_error_vocabulary_rejected": "Amazon Transcribe non è riuscito a usare il tuo vocabolario personalizzato. Scegline un altro, o Nessuno, nelle impostazioni di riconoscimento vocale, poi riprova.",
+      "stream_error_sdk_outdated": "Le lingue miste richiedono amazon-transcribe 0.6.3 o successivo nel gateway. Aggiornalo con il comando nel log del gateway, oppure svuota Lingue miste nelle impostazioni di riconoscimento vocale, poi riprova."
     },
     "templateSource": {
       "built_in": "Integrato",
@@ -17112,6 +17113,15 @@
         "transcribe_vocabulary_unavailable": "Amazon Transcribe non ha nessun vocabolario pronto chiamato {{name}} in {{region}}. La dettatura non funzionerà finché non ne scegli un altro o Nessuno.",
         "transcribe_vocabulary_access_denied": "Queste credenziali AWS non sono autorizzate a elencare i vocabolari personalizzati. Concedi {{permission}} per vederli qui.",
         "transcribe_vocabulary_list_failed": "Impossibile caricare i tuoi vocabolari personalizzati da AWS.",
+        "transcribe_languages": "Lingue miste",
+        "transcribe_languages_hint": "Lingue tra cui si alterna in una stessa registrazione, come vietnamita e inglese. Con due o più selezionate, Amazon Transcribe rileva la lingua di ogni parte e la trascrive in quella lingua. Solo per la dettatura in streaming, un dialetto per lingua.",
+        "transcribe_languages_off": "Disattivato (usa la lingua sopra)",
+        "transcribe_languages_one": "{{name}}: scegline un’altra per attivare",
+        "transcribe_languages_pending": "Scegli una seconda lingua per rilevarle entrambe. Fino ad allora, la dettatura usa la lingua sopra.",
+        "transcribe_languages_limit": "Limite di {{max}} raggiunto. Deselezionane una per sceglierne un’altra.",
+        "transcribe_languages_search": "Cerca lingue…",
+        "language_option": "{{name}} ({{code}})",
+        "language_overridden_by_mixed": "Finché Lingue miste è attivo, questa lingua si usa solo per i messaggi vocali e per la dettatura quando Streaming è disattivato.",
         "aws_region_transcribe": "Regione AWS (Transcribe)",
         "bcp_47_language_code_for_speech_recognition": "Codice lingua BCP-47 per il riconoscimento vocale",
         "default": "predefinito",

@@ -10057,7 +10057,8 @@
       "stream_error_max_duration": "Das Diktat hat seine Längenbegrenzung erreicht. Starte eine neue Aufnahme, um weiterzumachen.",
       "stream_error_model_missing": "Das Sprachmodell ist noch nicht bereit. Lade es in den Spracherkennungseinstellungen herunter und versuche es dann noch einmal.",
       "stream_error_session_failed": "Die Diktiersitzung ist fehlgeschlagen. Nimm es noch einmal auf.",
-      "stream_error_vocabulary_rejected": "Amazon Transcribe konnte dein benutzerdefiniertes Vokabular nicht verwenden. Wähle in den Spracherkennungseinstellungen ein anderes oder „Keines“ und versuche es dann noch einmal."
+      "stream_error_vocabulary_rejected": "Amazon Transcribe konnte dein benutzerdefiniertes Vokabular nicht verwenden. Wähle in den Spracherkennungseinstellungen ein anderes oder „Keines“ und versuche es dann noch einmal.",
+      "stream_error_sdk_outdated": "Gemischte Sprachen brauchen amazon-transcribe 0.6.3 oder neuer im Gateway. Aktualisiere es mit dem Befehl im Gateway-Log oder leere „Gemischte Sprachen“ in den Spracherkennungseinstellungen und versuche es dann noch einmal."
     },
     "templateSource": {
       "built_in": "Integriert",
@@ -16868,6 +16869,15 @@
         "transcribe_vocabulary_unavailable": "Amazon Transcribe hat in {{region}} kein bereites Vokabular namens {{name}}. Das Diktat schlägt fehl, bis du ein anderes oder „Keines“ auswählst.",
         "transcribe_vocabulary_access_denied": "Diese AWS-Anmeldedaten dürfen keine benutzerdefinierten Vokabulare auflisten. Erteile {{permission}}, um sie hier zu sehen.",
         "transcribe_vocabulary_list_failed": "Deine benutzerdefinierten Vokabulare konnten nicht aus AWS geladen werden.",
+        "transcribe_languages": "Gemischte Sprachen",
+        "transcribe_languages_hint": "Sprachen, zwischen denen in einer Aufnahme gewechselt wird, etwa Vietnamesisch und Englisch. Sobald zwei oder mehr ausgewählt sind, erkennt Amazon Transcribe die Sprache jedes Abschnitts und transkribiert ihn in dieser Sprache. Nur beim Streaming-Diktat, ein Dialekt pro Sprache.",
+        "transcribe_languages_off": "Aus (verwendet die Sprache oben)",
+        "transcribe_languages_one": "{{name}}: wähle eine weitere, um es einzuschalten",
+        "transcribe_languages_pending": "Wähle eine zweite Sprache, damit beide erkannt werden. Bis dahin verwendet das Diktat die Sprache oben.",
+        "transcribe_languages_limit": "Grenze von {{max}} erreicht. Wähle eine ab, um eine andere auszuwählen.",
+        "transcribe_languages_search": "Sprachen suchen…",
+        "language_option": "{{name}} ({{code}})",
+        "language_overridden_by_mixed": "Solange „Gemischte Sprachen“ an ist, gilt diese Sprache nur für Sprachnachrichten und für Diktat, wenn „Streaming“ aus ist.",
         "aws_region_transcribe": "AWS-Region (Transcribe)",
         "bcp_47_language_code_for_speech_recognition": "BCP-47-Sprachcode für die Spracherkennung",
         "default": "Standard",

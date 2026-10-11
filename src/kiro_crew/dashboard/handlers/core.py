@@ -74,6 +74,10 @@ from kiro_crew.config.sections import (
     JUDGE_PROVIDERS,
     STT_LANGUAGE_AUTO,
     TITLE_REFRESH_EVERY_TURNS_MAX,
+    TRANSCRIBE_LANGUAGES_MAX,
+    TRANSCRIBE_LANGUAGES_MIN,
+    SttConfig,
+    transcribe_language_options,
     transcribe_vocabulary_name,
 )
 from kiro_crew.config.superseded_defaults import ack_explicit_write
@@ -793,10 +797,11 @@ def _stt_providers() -> list[str]:
     return providers
 
 
-# Common BCP-47 language codes surfaced in the Chat Settings STT picker.
-# The handler accepts any string value on PUT — this list only drives the UI
-# dropdown. AWS Transcribe supports many more; advanced users can edit
-# config.json directly.
+# Common BCP-47 language codes surfaced in the Chat Settings STT picker, and the
+# candidates the Transcribe mixed-language picker offers. The handler accepts any
+# string value on PUT; this list only drives the UI dropdowns, and GET adds the
+# stored values to it so a code set in config.json stays selectable. AWS
+# Transcribe supports many more.
 _STT_LANGUAGE_CODES: tuple[str, ...] = (
     "en-US",
     "en-GB",
@@ -809,7 +814,24 @@ _STT_LANGUAGE_CODES: tuple[str, ...] = (
     "ja-JP",
     "ko-KR",
     "zh-CN",
+    "vi-VN",
 )
+
+
+def _stt_language_codes(stt_cfg: SttConfig) -> list[str]:
+    """The picker's codes for *stt_cfg*: ``auto`` first for the local provider, the
+    common codes, then any stored code they do not already hold.
+
+    A stored code outside the common list comes from config.json or an older
+    build. Offering it keeps it on screen as a choice, so changing the language and
+    changing back cannot lose it.
+    """
+    codes = [STT_LANGUAGE_AUTO] if stt_cfg.provider == PROVIDER_LOCAL else []
+    codes += list(_STT_LANGUAGE_CODES)
+    for stored in (stt_cfg.effective_language_code, *stt_cfg.transcribe_languages):
+        if stored not in codes:
+            codes.append(stored)
+    return codes
 
 
 #: Machine-readable reasons on the STT endpoints' non-2xx bodies. The dashboard
@@ -951,6 +973,13 @@ async def api_stt_config(request: web.Request) -> web.Response:
                 vocabulary = transcribe_vocabulary_name(body["transcribe_vocabulary"])
                 if vocabulary is not None:
                     stt_section["transcribe_vocabulary"] = vocabulary
+            # Same rule as the loader: a list it would drop (too long, a malformed
+            # code, two dialects of one language) is skipped here, leaving the
+            # stored candidates in force.
+            if "transcribe_languages" in body:
+                languages = transcribe_language_options(body["transcribe_languages"])
+                if languages is not None:
+                    stt_section["transcribe_languages"] = languages
             if "language_code" in body and isinstance(body["language_code"], str):
                 stt_section["language_code"] = body["language_code"]
             if "streaming" in body and isinstance(body["streaming"], bool):
@@ -1065,6 +1094,11 @@ async def api_stt_config(request: web.Request) -> web.Response:
             "transcribe_region": cfg.stt.transcribe_region,
             "transcribe_profile": cfg.stt.transcribe_profile,
             "transcribe_vocabulary": cfg.stt.transcribe_vocabulary,
+            "transcribe_languages": cfg.stt.transcribe_languages,
+            # The bounds the mixed-language picker enforces, served from the same
+            # constants the PUT and the loader validate against.
+            "transcribe_languages_min": TRANSCRIBE_LANGUAGES_MIN,
+            "transcribe_languages_max": TRANSCRIBE_LANGUAGES_MAX,
             "language_code": cfg.stt.effective_language_code,
             "silence_ms": cfg.stt.silence_ms,
             "partial_interval_ms": cfg.stt.partial_interval_ms,
@@ -1081,10 +1115,7 @@ async def api_stt_config(request: web.Request) -> web.Response:
             # streaming controls on a CAPABILITY rather than on a hardcoded provider
             # name — the latter silently hid the toggle when `apple` was added.
             "streaming_providers": list(_STREAMING_PROVIDERS),
-            "language_codes": (
-                ([STT_LANGUAGE_AUTO] if cfg.stt.provider == PROVIDER_LOCAL else [])
-                + list(_STT_LANGUAGE_CODES)
-            ),
+            "language_codes": _stt_language_codes(cfg.stt),
             "prereqs": prereqs,
             # True when no install channel can make Transcribe's import
             # requirement (`boto3` + `amazon-transcribe`) satisfiable in this

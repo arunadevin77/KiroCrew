@@ -9924,7 +9924,8 @@
       "stream_error_max_duration": "口述已达到时长上限。重新开始录制即可继续。",
       "stream_error_model_missing": "语音模型还没准备好。请在语音转文字设置中下载它，然后重试。",
       "stream_error_session_failed": "口述会话失败。请重新录制。",
-      "stream_error_vocabulary_rejected": "Amazon Transcribe 无法使用你的自定义词汇表。在语音转文字设置中选择其他词汇表或“无”，然后重试。"
+      "stream_error_vocabulary_rejected": "Amazon Transcribe 无法使用你的自定义词汇表。在语音转文字设置中选择其他词汇表或“无”，然后重试。",
+      "stream_error_sdk_outdated": "混合语言需要 gateway 中的 amazon-transcribe 为 0.6.3 或更高版本。请用 gateway 日志中的命令升级，或在语音转文字设置中清空混合语言，然后重试。"
     },
     "templateSource": {
       "built_in": "内置",
@@ -16624,6 +16625,15 @@
         "transcribe_vocabulary_unavailable": "Amazon Transcribe 在 {{region}} 中没有名为 {{name}} 的可用词汇表。在你选择其他词汇表或“无”之前，口述会一直失败。",
         "transcribe_vocabulary_access_denied": "这些 AWS 凭证无权列出自定义词汇表。授予 {{permission}} 权限即可在此处查看。",
         "transcribe_vocabulary_list_failed": "无法从 AWS 加载你的自定义词汇表。",
+        "transcribe_languages": "混合语言",
+        "transcribe_languages_hint": "在同一段录音中来回切换的语言，例如越南语和英语。选择两种或更多后，Amazon Transcribe 会识别每一部分的语言，并用该语言转写。仅适用于流式口述，每种语言只能选一种方言。",
+        "transcribe_languages_off": "关闭（使用上方的语言）",
+        "transcribe_languages_one": "{{name}}：再选一种即可开启",
+        "transcribe_languages_pending": "再选择一种语言才能同时识别两者。在此之前，口述使用上方的语言。",
+        "transcribe_languages_limit": "已达到 {{max}} 种的上限。取消选择一种后才能选择其他语言。",
+        "transcribe_languages_search": "搜索语言…",
+        "language_option": "{{name}} ({{code}})",
+        "language_overridden_by_mixed": "开启混合语言后，此语言只用于语音消息以及关闭“流式”时的口述。",
         "aws_region_transcribe": "AWS 区域（Transcribe）",
         "bcp_47_language_code_for_speech_recognition": "语音识别的 BCP-47 语言代码",
         "default": "默认",

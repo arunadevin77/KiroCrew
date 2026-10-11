@@ -179,6 +179,37 @@ export const STREAM_ERROR_CODE_KEY: Record<string, string> = {
   // Amazon Transcribe refused the chosen custom vocabulary. Retrying cannot help,
   // so the sentence names the setting that can.
   stt_transcribe_vocabulary_rejected: 'lib.sttProviders.stream_error_vocabulary_rejected',
+  // Mixed languages are picked but the gateway's amazon-transcribe package predates
+  // the parameters they need. Upgrading it, or picking one language, is the fix.
+  stt_transcribe_sdk_outdated: 'lib.sttProviders.stream_error_sdk_outdated',
+}
+
+/**
+ * The language part of a locale code: `vi` for `vi-VN`, `ckb` for `ckb-IQ`.
+ *
+ * Amazon Transcribe identifies at most one dialect per language in a stream, so
+ * this is the identity the mixed-language picker keeps unique.
+ */
+export function localeLanguage(code: string): string {
+  return code.split('-', 1)[0]
+}
+
+/**
+ * The mixed-language candidates after one option is ticked or unticked.
+ *
+ * Ticking a second dialect of a language replaces the first rather than joining
+ * it, because a stream may carry only one dialect per language (`en-US` beside
+ * `en-GB` fails it). The order is the order of ticking, which is also the order
+ * the backend stores and sends.
+ */
+export function nextTranscribeLanguages(
+  current: readonly string[],
+  code: string,
+  selected: boolean,
+): string[] {
+  const others = current.filter(c => c !== code)
+  if (!selected) return others
+  return [...others.filter(c => localeLanguage(c) !== localeLanguage(code)), code]
 }
 
 /**

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Trans } from 'react-i18next'
 import { Download, Sparkles } from 'lucide-react'
-import { SettingsCard, SettingsToggle, SettingsSelect, SettingsInput, SettingsButtonGroup, SettingsSection, SettingsStepper } from '../../components/settings'
+import { SettingsCard, SettingsToggle, SettingsSelect, SettingsInput, SettingsButtonGroup, SettingsSection, SettingsStepper, SettingsMultiSelect } from '../../components/settings'
 import { Badge, Btn, FormSkeleton } from '../../components/ui'
 import InfoTip from '../../components/InfoTip'
 import { CopyCommand } from '../../components/agentHarness/CopyCommand'
@@ -10,7 +10,7 @@ import { api, ApiError, type AwsConsentStatus } from '../../api/client'
 import { RestartGatewayButton } from './AboutPanel'
 import { listMicrophones, selectableMicrophones, getPreferredMicId, setPreferredMicId, acquireMicStream, reportIfMicDenied, defaultMicName, DEFAULT_PSEUDO_DEVICE_ID } from '../../hooks/mic'
 import { MicTestStrip } from '../../components/MicTestStrip'
-import { fmtBytes, fmtNumber, fmtUnit } from '../../i18n/format'
+import { fmtBytes, fmtLanguageName, fmtList, fmtNumber, fmtUnit } from '../../i18n/format'
 import {
   CATALOG_MODEL_PROVIDERS,
   decoderDownloadLabel,
@@ -19,6 +19,8 @@ import {
   downloadRatio,
   FALLBACK_PROVIDERS,
   FALLBACK_STREAMING_PROVIDERS,
+  localeLanguage,
+  nextTranscribeLanguages,
   PROVIDER_LOCAL,
   PROVIDER_TRANSCRIBE,
   providerLabel,
@@ -62,6 +64,11 @@ interface SttConfig {
   transcribe_profile?: string
   /** Amazon Transcribe custom vocabulary name; '' for none. */
   transcribe_vocabulary?: string
+  /** Languages a live Transcribe stream identifies between. Fewer than
+   *  `transcribe_languages_min` leaves `language_code` in force. */
+  transcribe_languages?: string[]
+  transcribe_languages_min: number
+  transcribe_languages_max: number
   language_code?: string
   /** Whether a fast model tidies the finished transcript. Off unless turned on. */
   polish?: boolean
@@ -290,7 +297,7 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
  */
 function TranscribeVocabularyPicker({
   value,
-  dictationLanguage,
+  dictationLanguages,
   profile,
   region,
   listing,
@@ -301,7 +308,8 @@ function TranscribeVocabularyPicker({
   onChange,
 }: {
   value: string
-  dictationLanguage: string
+  /** The languages of each Transcribe path: the vocabulary must be in every set. */
+  dictationLanguages: string[][]
   profile: string
   region: string
   /** The last list read, or undefined before one has arrived. */
@@ -338,10 +346,13 @@ function TranscribeVocabularyPicker({
   const selected = ready.find(v => v.name === value)
   const unavailable = !!value && !!current && !selected
     && (!current.truncated || current.vocabularies.some(v => v.name === value))
-  const languageMismatch = !!selected
-    && !!selected.language_code
-    && !!dictationLanguage
-    && selected.language_code !== dictationLanguage
+  // Judged per path: with mixed languages the live stream needs the vocabulary's
+  // language among the candidates, while a voice message still runs in the one
+  // language and needs that. The first path the vocabulary fails is the one named.
+  const mismatchedWith = selected?.language_code
+    ? dictationLanguages.find(set => set.length > 0 && !set.includes(selected.language_code))
+    : undefined
+  const languageMismatch = !!mismatchedWith
   // Read off the error's body rather than through `instanceof ApiError`: only a
   // structured refusal carries a body, and a transport failure falls through to the
   // generic sentence either way. The IAM action comes from the backend, which knows
@@ -375,11 +386,11 @@ function TranscribeVocabularyPicker({
           {i18nT('pages.settings.sttSettings.transcribe_vocabulary_unavailable', { name: value, region: regionLabel })}
         </p>
       )}
-      {languageMismatch && selected && (
+      {languageMismatch && selected && mismatchedWith && (
         <p role="alert" className="text-[12px] text-warn -mt-1 mb-1" data-testid="stt-vocabulary-language-mismatch">
           {i18nT('pages.settings.sttSettings.transcribe_vocabulary_language_mismatch', {
             vocabularyLanguage: selected.language_code,
-            dictationLanguage,
+            dictationLanguage: fmtList(mismatchedWith, { type: 'disjunction' }),
           })}
         </p>
       )}
@@ -394,6 +405,99 @@ function TranscribeVocabularyPicker({
             : i18nT('pages.settings.sttSettings.transcribe_vocabulary_list_failed')}
           askAgent={askAgent}
         />
+      )}
+    </>
+  )
+}
+
+/**
+ * A locale code as a picker option: the language's name in the app language for
+ * the reader, then the code, which is what tells two dialects apart.
+ */
+function languageOptionLabel(code: string): string {
+  return i18nT('pages.settings.sttSettings.language_option', {
+    name: fmtLanguageName(localeLanguage(code)),
+    code,
+  })
+}
+
+/**
+ * The mixed-language picker for the `transcribe` provider.
+ *
+ * Every tick saves, like the rest of this panel. The backend identifies languages
+ * only from `min` candidates up, so a single tick is a selection in progress and
+ * the row says the language above is still the one in force. Ticking a second
+ * dialect of a picked language swaps it in (`nextTranscribeLanguages`), because a
+ * stream may carry one dialect per language. At `max` the remaining languages are
+ * locked rather than refused on save, and one line at the top of the list says
+ * why; a dialect swap stays open, since it does not grow the list. Ticked
+ * languages are listed first, sorted when the list opens and then left in place,
+ * so a row never moves under the pointer while it is being ticked. Every row is
+ * locked while a save is in flight, so each tick builds on the saved list.
+ */
+function TranscribeLanguagesPicker({
+  value,
+  candidates,
+  min,
+  max,
+  disabled,
+  onChange,
+}: {
+  value: string[]
+  candidates: string[]
+  min: number
+  max: number
+  disabled: boolean
+  onChange: (languages: string[]) => void
+}) {
+  const selected = new Set(value)
+  const tickedFirst = () => [...value, ...candidates.filter(code => !selected.has(code))]
+  const [order, setOrder] = useState<string[]>(tickedFirst)
+  // A code that joined since the list was sorted (a stored one the server now
+  // offers) goes to the end rather than reshuffling what is on screen.
+  const present = [...value, ...candidates]
+  const codes = [...new Set([...order.filter(code => present.includes(code)), ...present])]
+  const atLimit = value.length >= max
+  const options = codes.map(code => {
+    const swapsDialect = !selected.has(code)
+      && value.some(picked => localeLanguage(picked) === localeLanguage(code))
+    return {
+      value: code,
+      label: languageOptionLabel(code),
+      // Locked while a save is in flight too: `disabled` only reaches the trigger,
+      // and a second tick built from the pre-save list would overwrite the first.
+      locked: disabled || (atLimit && !selected.has(code) && !swapsDialect),
+    }
+  })
+  return (
+    <>
+      <SettingsMultiSelect
+        label={i18nT('pages.settings.sttSettings.transcribe_languages')}
+        hint={i18nT('pages.settings.sttSettings.transcribe_languages_hint')}
+        options={options}
+        selected={selected}
+        onToggle={(code, on) => onChange(nextTranscribeLanguages(value, code, on))}
+        // Names alone are unambiguous here: a stream carries one dialect per language.
+        // A single pick says it is not on yet, in the box itself.
+        summary={value.length >= min
+          ? fmtList(value.map(code => fmtLanguageName(localeLanguage(code))))
+          : value.length
+            ? i18nT('pages.settings.sttSettings.transcribe_languages_one', {
+              name: fmtList(value.map(code => fmtLanguageName(localeLanguage(code)))),
+            })
+            : i18nT('pages.settings.sttSettings.transcribe_languages_off')}
+        searchPlaceholder={i18nT('pages.settings.sttSettings.transcribe_languages_search')}
+        onOpenChange={open => { if (open) setOrder(tickedFirst()) }}
+        notice={atLimit
+          ? i18nT('pages.settings.sttSettings.transcribe_languages_limit', { max: fmtNumber(max) })
+          : undefined}
+        disabled={disabled}
+        configKey="stt.transcribe_languages"
+      />
+      {value.length > 0 && value.length < min && (
+        <p className="text-[12px] text-muted -mt-1 mb-1" aria-live="polite" data-testid="stt-transcribe-languages-pending">
+          {i18nT('pages.settings.sttSettings.transcribe_languages_pending')}
+        </p>
       )}
     </>
   )
@@ -794,6 +898,13 @@ export default function SttSettings({ cardIndex }: {
   const canStream = streamingProviders.includes(provider)
   const defaultLanguage = provider === PROVIDER_LOCAL ? 'auto' : 'en-US'
   const languageOptions = stt.language_codes?.length ? stt.language_codes : [defaultLanguage]
+  const transcribeLanguages = stt.transcribe_languages ?? []
+  const mixedLanguagesOn = isTranscribe && transcribeLanguages.length >= stt.transcribe_languages_min
+  // The languages each Transcribe path runs in. A live stream identifies between
+  // the candidates once mixed languages are on; a voice message, and dictation
+  // with streaming off, always run in the one language above.
+  const singleLanguage = [stt.language_code || ''].filter(Boolean)
+  const dictationLanguages = mixedLanguagesOn ? [transcribeLanguages, singleLanguage] : [singleLanguage]
 
   // The catalog and the availability verdict. Treated as absent rather than as
   // "nothing to download" while the status query is in flight, so a slow probe
@@ -1072,7 +1183,27 @@ export default function SttSettings({ cardIndex }: {
           </>
         )}
 
-        <SettingsSelect configKey="stt.language_code" label={i18nT('pages.settings.sttSettings.language')} hint={i18nT('pages.settings.sttSettings.bcp_47_language_code_for_speech_recognition')} value={stt.language_code || defaultLanguage} options={languageOptions} optionLabels={languageOptions.map(code => code === 'auto' ? i18nT('pages.settings.sttSettings.language_auto') : code)} onChange={v => set({ language_code: v })} disabled={saving} />
+        <SettingsSelect configKey="stt.language_code" label={i18nT('pages.settings.sttSettings.language')} hint={i18nT('pages.settings.sttSettings.bcp_47_language_code_for_speech_recognition')} value={stt.language_code || defaultLanguage} options={languageOptions} optionLabels={languageOptions.map(code => code === 'auto' ? i18nT('pages.settings.sttSettings.language_auto') : languageOptionLabel(code))} onChange={v => set({ language_code: v })} disabled={saving} />
+        {/* Still editable: voice messages and dictation with streaming off keep
+            using it, so the line says where it applies rather than greying it out. */}
+        {mixedLanguagesOn && (
+          <p className="text-[12px] text-muted -mt-1 mb-1" data-testid="stt-language-overridden">
+            {i18nT('pages.settings.sttSettings.language_overridden_by_mixed')}
+          </p>
+        )}
+
+        {/* Beside the language it overrides, because the two answer one question:
+            which language dictation is heard in. */}
+        {isTranscribe && (
+          <TranscribeLanguagesPicker
+            value={transcribeLanguages}
+            candidates={languageOptions.filter(code => code !== 'auto')}
+            min={stt.transcribe_languages_min}
+            max={stt.transcribe_languages_max}
+            disabled={saving}
+            onChange={v => set({ transcribe_languages: v })}
+          />
+        )}
 
         {/* Kept on the surface, not in Advanced, because it is the one setting here
             that changes where the words GO: the transcript (never the audio) leaves
@@ -1151,7 +1282,7 @@ export default function SttSettings({ cardIndex }: {
             {(transcribeConfirmed || !!stt.transcribe_vocabulary) && (
               <TranscribeVocabularyPicker
                 value={stt.transcribe_vocabulary || ''}
-                dictationLanguage={stt.language_code || ''}
+                dictationLanguages={dictationLanguages}
                 profile={stt.transcribe_profile || ''}
                 region={stt.transcribe_region || ''}
                 listing={vocabulariesQ.data}

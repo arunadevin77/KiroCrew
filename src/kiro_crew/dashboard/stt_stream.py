@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterator
@@ -32,7 +33,9 @@ except ImportError:  # pragma: no cover — exercised by test_import_error_*
 
 from kiro_crew import aws_consent, stt
 from kiro_crew.config.loader import KiroCrewConfig
+from kiro_crew.config.sections import SttConfig
 from kiro_crew.dashboard.origin import check_origin, mark_audit_claimed
+from kiro_crew.extras import install_hint
 from kiro_crew.llm_helpers import run_bg_oneliner
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 from kiro_crew.sel import sel
@@ -214,6 +217,10 @@ _CODE_VOCABULARY_REJECTED = "stt_transcribe_vocabulary_rejected"
 _CODE_AWS_ACCESS_DENIED = "stt_aws_access_denied"
 # The error type AWS returns for an authorization refusal.
 _AWS_ACCESS_DENIED_ERROR = "AccessDeniedException"
+# Mixed-language detection is configured, but the installed amazon-transcribe SDK
+# predates the parameters it needs. Distinct from `_CODE_SESSION_FAILED` because no
+# retry can help: the fix is upgrading the voice packages, or picking one language.
+_CODE_SDK_OUTDATED = "stt_transcribe_sdk_outdated"
 
 # ── Semantic endpointing (stt.endpointing, default off) ──
 # On each stable Transcribe `final`, a fast background model judges whether the
@@ -257,13 +264,15 @@ def _vocabulary_rejected(exc: BaseException, vocabulary: str) -> bool:
     service's ``BadRequestException`` (raised by ``start_stream_transcription``
     itself, before any audio is sent), and its message must name the vocabulary. A
     bad request for any other reason keeps the generic code, so an operator is
-    never sent to change a vocabulary that is not the problem.
+    never sent to change a vocabulary that is not the problem. The stem, not the
+    word: with mixed languages the vocabulary rides as ``VocabularyNames``, whose
+    refusals speak of "vocabularies".
     """
     if not vocabulary or _TranscribeBadRequest is None:
         return False
     if not isinstance(exc, _TranscribeBadRequest):
         return False
-    return "vocabulary" in str(getattr(exc, "message", "")).lower()
+    return "vocabular" in str(getattr(exc, "message", "")).lower()
 
 
 def _drop_task_result(task: "asyncio.Task[Any]") -> None:
@@ -1152,6 +1161,50 @@ def _transcribe_start_failure(exc: Exception) -> tuple[str, str]:
     return "failed to start transcription", _CODE_SESSION_FAILED
 
 
+#: The ``start_stream_transcription`` keyword mixed-language detection needs. SDK
+#: 0.6.3 and later accept it; an older install raises ``TypeError`` on it.
+_IDENTIFY_MULTIPLE_LANGUAGES_KWARG = "identify_multiple_languages"
+
+
+def _client_identifies_languages(client: Any) -> bool:
+    """Whether *client*'s ``start_stream_transcription`` accepts mixed-language options.
+
+    Read from the method's own signature, so an outdated SDK is reported as the
+    package to upgrade instead of failing the stream with a ``TypeError`` that reads
+    as a service fault. A method taking ``**kwargs`` accepts it too.
+    """
+    try:
+        parameters = inspect.signature(client.start_stream_transcription).parameters
+    except (TypeError, ValueError):
+        return False
+    return _IDENTIFY_MULTIPLE_LANGUAGES_KWARG in parameters or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()
+    )
+
+
+def _transcribe_language_kwargs(stt_cfg: SttConfig) -> dict[str, Any]:
+    """The language and vocabulary arguments of a live Transcribe stream.
+
+    One language: ``language_code`` plus ``vocabulary_name``. Two or more
+    candidates (:attr:`SttConfig.transcribe_language_identification`): Amazon Transcribe
+    refuses a stream that names a ``LanguageCode`` beside
+    ``IdentifyMultipleLanguages``, so the code is None (the SDK then sends no header)
+    and a custom vocabulary travels as ``VocabularyNames``, the only vocabulary
+    parameter identification accepts. None, not ``""``, for an unset vocabulary: the
+    SDK omits the header only for None.
+    """
+    vocabulary = stt_cfg.transcribe_vocabulary or None
+    candidates = stt_cfg.transcribe_language_identification
+    if not candidates:
+        return {"language_code": stt_cfg.effective_language_code, "vocabulary_name": vocabulary}
+    return {
+        "language_code": None,
+        _IDENTIFY_MULTIPLE_LANGUAGES_KWARG: True,
+        "language_options": candidates,
+        "vocabulary_names": [vocabulary] if vocabulary else None,
+    }
+
+
 async def _run_apple_session(
     ws: web.WebSocketResponse,
     cfg: "KiroCrewConfig",
@@ -1598,15 +1651,27 @@ async def api_ws_stt(request: web.Request) -> web.WebSocketResponse:
             return ws
 
         vocabulary = cfg.stt.transcribe_vocabulary
+        if cfg.stt.transcribe_language_identification and not _client_identifies_languages(client):
+            # Mixed-language detection is configured but the installed SDK predates
+            # it. Refused before any audio is read, with the command that upgrades
+            # it in the log: the extra's pin installs a version that has it.
+            logger.warning(
+                "Mixed-language detection needs amazon-transcribe 0.6.3 or newer; %s",
+                install_hint("voice-aws"),
+            )
+            await _send_error(
+                ws, "amazon-transcribe is too old for mixed-language detection", _CODE_SDK_OUTDATED
+            )
+            await _close_and_end_audit(ws, caller, outcome="error")
+            return ws
         stream = None
         try:
             stream = await client.start_stream_transcription(
-                language_code=cfg.stt.effective_language_code,
+                # One language, or the candidates Amazon Transcribe identifies
+                # between, with the custom vocabulary in the matching parameter.
+                **_transcribe_language_kwargs(cfg.stt),
                 media_sample_rate_hz=STREAM_SAMPLE_RATE_HZ,
                 media_encoding="pcm",
-                # The operator's custom vocabulary, if one is chosen. None sends no
-                # vocabulary header at all.
-                vocabulary_name=vocabulary or None,
                 # Stabilization=high tells Transcribe to commit each word
                 # sooner, at the cost of slightly more downstream corrections.
                 # For interactive dictation this trades accuracy on the last

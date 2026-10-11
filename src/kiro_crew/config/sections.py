@@ -4570,6 +4570,77 @@ def _validated_transcribe_vocabulary(value: object) -> str:
     return ""
 
 
+#: Amazon Transcribe streaming language identification needs at least two candidate
+#: languages; AWS recommends no more than five, and that is the most a user can pick.
+TRANSCRIBE_LANGUAGES_MIN = 2
+TRANSCRIBE_LANGUAGES_MAX = 5
+#: The shape of every Transcribe streaming locale (``en-US``, ``vi-VN``, ``ckb-IQ``).
+#: Each candidate rides in one comma-joined request header, so a value outside this
+#: shape could only ever fail the stream.
+_TRANSCRIBE_LANGUAGE_RE = _re.compile(r"[a-z]{2,3}-[A-Z]{2}")
+_LAST_WARNED_TRANSCRIBE_LANGUAGES: str | None = None
+
+
+def transcribe_language_options(value: object) -> list[str] | None:
+    """The candidate languages *value* names: ``[]`` for none, None when unusable.
+
+    Usable is a list of at most :data:`TRANSCRIBE_LANGUAGES_MAX` locale codes with
+    no language twice: Amazon Transcribe allows one dialect per language in a
+    stream, so ``en-US`` beside ``en-GB`` fails it. Surrounding whitespace is
+    dropped and the order is kept. A list holding a single language is usable: it
+    is a selection in progress, and :attr:`SttConfig.transcribe_language_identification`
+    keeps the one-language path in force until a second language joins it.
+
+    The one rule both writers apply, like :func:`transcribe_vocabulary_name`:
+    ``PUT /api/config/stt`` stores only a value this accepts, and the loader keeps
+    only what this accepts.
+    """
+    if not isinstance(value, list) or len(value) > TRANSCRIBE_LANGUAGES_MAX:
+        return None
+    codes: list[str] = []
+    languages: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            return None
+        code = item.strip()
+        if not _TRANSCRIBE_LANGUAGE_RE.fullmatch(code):
+            return None
+        language = code.split("-", 1)[0]
+        if language in languages:
+            return None
+        languages.add(language)
+        codes.append(code)
+    return codes
+
+
+def _validated_transcribe_languages(value: object) -> list[str]:
+    """:func:`transcribe_language_options` for a stored value: degrades to none, logs once.
+
+    Degrades rather than failing the load, like the vocabulary above. A ``null`` is
+    the absent key and says nothing. An unusable list is dropped as a whole rather
+    than trimmed, because which language to drop is the user's choice: dictation
+    keeps the single language in ``language_code``, and the notice says why.
+    """
+    global _LAST_WARNED_TRANSCRIBE_LANGUAGES
+
+    if value is None:
+        return []
+    codes = transcribe_language_options(value)
+    if codes is not None:
+        return codes
+    seen = repr(value)[:_TRANSCRIBE_VOCABULARY_NOTICE_VALUE_MAX]
+    if seen != _LAST_WARNED_TRANSCRIBE_LANGUAGES:
+        _LAST_WARNED_TRANSCRIBE_LANGUAGES = seen
+        logger.warning(
+            "Unusable stt.transcribe_languages %s; dictation uses stt.language_code "
+            "alone. Give at most %d locale codes such as vi-VN, one dialect per "
+            "language. Choose them in Settings -> Voice, or fix the value in config.json.",
+            seen,
+            TRANSCRIBE_LANGUAGES_MAX,
+        )
+    return []
+
+
 _VALID_COMPLETION_KEEP = ("head", "tail", "both")
 
 
@@ -4998,6 +5069,18 @@ class SttConfig:
             "Amazon Transcribe refuses it and dictation fails. Empty uses none.",
         ),
     )
+    transcribe_languages: list[str] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Transcribe Languages",
+            "Languages to detect when speakers switch between them in one recording, "
+            "such as vi-VN and en-US (`transcribe` provider, streaming only). With two "
+            "or more, Amazon Transcribe identifies the language of each part and "
+            "transcribes it in that language; with fewer, Language Code is used. At "
+            "most five, and one dialect per language: en-US and en-GB cannot be "
+            "picked together.",
+        ),
+    )
 
     def __post_init__(self) -> None:
         language = self.language_code
@@ -5015,6 +5098,18 @@ class SttConfig:
         if self.language_code == STT_LANGUAGE_AUTO and self.provider != STT_PROVIDER_LOCAL:
             return STT_LANGUAGE_FALLBACK
         return self.language_code
+
+    @property
+    def transcribe_language_identification(self) -> list[str]:
+        """The candidate languages a live Transcribe stream identifies, or ``[]``.
+
+        Non-empty only from :data:`TRANSCRIBE_LANGUAGES_MIN` candidates up, because
+        Amazon Transcribe refuses identification with fewer. Empty means the stream
+        is transcribed in :attr:`effective_language_code`.
+        """
+        if len(self.transcribe_languages) < TRANSCRIBE_LANGUAGES_MIN:
+            return []
+        return list(self.transcribe_languages)
 
 
 # Sampling bucket bounds, as a percentage of sessions. 0 admits nothing, 100

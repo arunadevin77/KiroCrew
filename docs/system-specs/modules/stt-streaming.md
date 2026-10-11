@@ -297,13 +297,15 @@ After the three gates, each provider has its own precondition and failure frame:
   credentials that may not stream. Their `AccessDeniedException` arrives as
   `_CODE_AWS_ACCESS_DENIED`, because every retry is refused the same way. A
   refused custom vocabulary has its own code too
-  ([Custom vocabulary](#custom-vocabulary-transcribe-only)); any other start
-  failure is `_CODE_SESSION_FAILED`. A stream on a named `stt.transcribe_profile`
-  keeps the credentials it opened with: `_ProfileCredentialResolver` resolves once,
-  because the SDK asks again for every audio event and each event's signature
-  chains from the opening request's, so a key the profile refreshed mid-stream
-  would be refused. With no profile set, the SDK's own default-chain resolver
-  signs the stream.
+  ([Custom vocabulary](#custom-vocabulary-transcribe-only)), and so does
+  mixed-language detection on an SDK too old for it
+  ([Mixed-language detection](#mixed-language-detection-transcribe-only)); any
+  other start failure is `_CODE_SESSION_FAILED`. A stream on a named
+  `stt.transcribe_profile` keeps the credentials it opened with:
+  `_ProfileCredentialResolver` resolves once, because the SDK asks again for every
+  audio event and each event's signature chains from the opening request's, so a
+  key the profile refreshed mid-stream would be refused. With no profile set, the
+  SDK's own default-chain resolver signs the stream.
 
 ### The AWS consent gate is an authorization, not a preference
 
@@ -345,8 +347,9 @@ vocabulary.
 - **The panel warns before the first dictation.** The Voice panel compares the
   chosen vocabulary against the list read from AWS and its language against
   `effective_language_code`, and says that dictation will fail when the vocabulary
-  is not ready or is for another language. `VocabularyName` is also not valid with
-  language identification, which would need `VocabularyNames` instead.
+  is not ready or is for another language. With mixed-language detection on it
+  judges each path: the vocabulary's language must be among the candidates (the
+  live stream) and must be `effective_language_code` (a voice message).
 - **`GET /api/stt/vocabularies` lists what the picker offers.** Read from live
   config, refused to an app token, and gated twice before any AWS call: `transcribe`
   must be the provider and `aws_consent.refuse_and_log` must grant, otherwise it
@@ -364,6 +367,55 @@ vocabulary.
   vocabularies plus the stored name when the list lacks it, is disabled and says it
   is loading while the list is still being read with the stored value still shown,
   and warns when the stored name is not ready in the configured region.
+
+### Mixed-language detection (`transcribe` only)
+
+`stt.transcribe_languages` lists the languages speakers switch between in one
+recording (empty: off). With `TRANSCRIBE_LANGUAGES_MIN` (two) or more,
+`SttConfig.transcribe_language_identification` returns them and the live socket
+opens the stream with `IdentifyMultipleLanguages` and `LanguageOptions`, so
+Amazon Transcribe transcribes each part in the language it identifies. With
+fewer, the stream is opened exactly like the single-language one, on
+`effective_language_code`.
+
+- **No `LanguageCode` beside identification.** Amazon Transcribe fails a stream
+  that names both, so `stt_stream._transcribe_language_kwargs` passes
+  `language_code=None` (the SDK then sends no header). A configured vocabulary
+  travels as `VocabularyNames`, the parameter identification accepts, instead of
+  `VocabularyName`. Its refusals speak of "vocabularies", so
+  `_vocabulary_rejected` matches the stem and the vocabulary-refusal code still
+  applies.
+- **One rule for both writers.** `config.sections.transcribe_language_options`
+  accepts a list of at most `TRANSCRIBE_LANGUAGES_MAX` (five, the most AWS
+  recommends) locale codes with no language twice, because a stream carries one
+  dialect per language. `PUT /api/config/stt` stores only a list it accepts, and
+  the loader degrades anything else to empty with a one-time warning. A
+  one-language list is valid: it is a selection in progress, and the stream keeps
+  the single-language path until a second language joins it.
+- **The live socket only.** Amazon Transcribe identifies several languages only in
+  a PCM stream, so `transcribe._transcribe_aws` (an Ogg/Opus voice memo, and
+  dictation with streaming off) keeps `effective_language_code`.
+- **An outdated SDK is named, not guessed at.** The parameters exist from
+  `amazon-transcribe` 0.6.3, which the `voice-aws` extra pins as its floor. An
+  older install would raise `TypeError` at stream start, so the socket reads the
+  client method's signature first (`_client_identifies_languages`) and, when it
+  lacks them, refuses before any audio is read with
+  `stt_transcribe_sdk_outdated` and logs the install command.
+- **The panel offers the picker beside Language.** Its candidates are the
+  served `language_codes` (which include `vi-VN`, and any stored code the
+  common list lacks, so a value set in config.json stays selectable), each named
+  in the app language beside its code, as the Language picker's options are; the
+  closed box lists the names, and with one picked it says one more is needed.
+  Ticked ones are sorted first when the
+  list opens and then stay in place, so no row moves while it is being ticked;
+  every row is locked while a save is in flight, so a second tick cannot be
+  built from the list before the first one landed.
+  Ticking a second dialect of a picked language swaps it in; at the maximum the
+  other languages are locked and one line at the top of the list says why; with
+  one picked the row says the language above is still in force, and with two or
+  more a line under Language says it now applies only to voice messages and to
+  dictation with Streaming off. `GET /api/config/stt` serves `transcribe_languages_min` and
+  `transcribe_languages_max` from the constants the validator uses.
 
 ## The local provider's pipeline
 

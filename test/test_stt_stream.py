@@ -783,14 +783,25 @@ class TestStreamLifecycle:
         pytest.importorskip("amazon_transcribe")
 
     def _install_stubs(
-        self, monkeypatch, *, fail_start=False, language_code="auto", vocabulary="", start_exc=None
+        self,
+        monkeypatch,
+        *,
+        fail_start=False,
+        language_code="auto",
+        vocabulary="",
+        start_exc=None,
+        languages=(),
     ):
         from amazon_transcribe.handlers import TranscriptResultStreamHandler
 
         monkeypatch.setattr(
             "kiro_crew.dashboard.stt_stream.KiroCrewConfig.load",
             classmethod(
-                lambda cls: _cfg(language_code=language_code, transcribe_vocabulary=vocabulary)
+                lambda cls: _cfg(
+                    language_code=language_code,
+                    transcribe_vocabulary=vocabulary,
+                    transcribe_languages=list(languages),
+                )
             ),
         )
         monkeypatch.setattr("kiro_crew.dashboard.stt_stream.check_origin", lambda r, require: True)
@@ -894,6 +905,106 @@ class TestStreamLifecycle:
             transcribe_client.start_stream_transcription.call_args.kwargs["language_code"]
             == expected_locale
         )
+
+    @pytest.mark.asyncio
+    async def test_mixed_languages_open_an_identifying_stream(self, monkeypatch):
+        """Two candidates: identification on, no ``LanguageCode`` (Amazon Transcribe
+        fails a request carrying both), and the vocabulary as ``VocabularyNames``.
+        Everything else on the request is the single-language stream's."""
+        transcribe_client, input_stream = self._install_stubs(
+            monkeypatch,
+            language_code="en-US",
+            vocabulary="team-terms",
+            languages=["vi-VN", "en-US"],
+        )
+        async with TestClient(TestServer(_make_app())) as client:
+            ws = await client.ws_connect("/api/ws/stt")
+            assert (await _recv_json(ws))["type"] == "ready"
+            await ws.send_bytes(b"\x00\x01" * 16)
+            await ws.send_str('{"type":"stop"}')
+            await ws.close()
+        input_stream.send_audio_event.assert_awaited()
+        kwargs = transcribe_client.start_stream_transcription.call_args.kwargs
+        assert kwargs["language_code"] is None
+        assert kwargs["identify_multiple_languages"] is True
+        assert kwargs["language_options"] == ["vi-VN", "en-US"]
+        assert kwargs["vocabulary_names"] == ["team-terms"]
+        assert "vocabulary_name" not in kwargs
+        assert kwargs["media_encoding"] == "pcm"
+        assert kwargs["partial_results_stability"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_a_vocabulary_refusal_keeps_its_code_with_mixed_languages(self, monkeypatch):
+        """Under identification the vocabulary rides as ``VocabularyNames``; a refusal
+        naming it (for example its language among none of the candidates) still points
+        at the vocabulary setting rather than reading as a service fault."""
+        from amazon_transcribe.exceptions import BadRequestException
+
+        self._install_stubs(
+            monkeypatch,
+            vocabulary="team-terms",
+            languages=["vi-VN", "fr-FR"],
+            start_exc=BadRequestException(
+                "None of the languages of the specified custom vocabularies match the "
+                "identified language."
+            ),
+        )
+        async with TestClient(TestServer(_make_app())) as client:
+            ws = await client.ws_connect("/api/ws/stt")
+            msg = await _recv_json(ws)
+            assert msg["type"] == "error"
+            assert msg["code"] == "stt_transcribe_vocabulary_rejected"
+            await ws.close()
+
+    @pytest.mark.asyncio
+    async def test_one_candidate_keeps_the_single_language_stream(self, monkeypatch):
+        transcribe_client, _ = self._install_stubs(
+            monkeypatch, language_code="vi-VN", languages=["vi-VN"]
+        )
+        async with TestClient(TestServer(_make_app())) as client:
+            ws = await client.ws_connect("/api/ws/stt")
+            assert (await _recv_json(ws))["type"] == "ready"
+            await ws.send_str('{"type":"stop"}')
+            await ws.close()
+        kwargs = transcribe_client.start_stream_transcription.call_args.kwargs
+        assert kwargs["language_code"] == "vi-VN"
+        assert kwargs["vocabulary_name"] is None
+        assert "identify_multiple_languages" not in kwargs
+        assert "language_options" not in kwargs
+
+    @pytest.mark.asyncio
+    async def test_an_sdk_too_old_for_mixed_languages_is_refused_before_streaming(
+        self, monkeypatch
+    ):
+        """An SDK without the parameters would raise ``TypeError`` mid-start; the
+        socket names the fix instead, before any audio is read, and the audit pair
+        stays balanced."""
+        transcribe_client, input_stream = self._install_stubs(
+            monkeypatch, languages=["vi-VN", "en-US"]
+        )
+        started: list[dict] = []
+
+        async def start_stream_transcription(
+            *, language_code, media_sample_rate_hz, media_encoding, vocabulary_name=None
+        ):
+            started.append({"language_code": language_code})
+
+        transcribe_client.start_stream_transcription = start_stream_transcription
+        calls: list[dict] = []
+        monkeypatch.setattr(
+            "kiro_crew.dashboard.stt_stream.sel",
+            lambda: MagicMock(log_api_access=lambda **kw: calls.append(kw)),
+        )
+        async with TestClient(TestServer(_make_app())) as client:
+            ws = await client.ws_connect("/api/ws/stt")
+            msg = await _recv_json(ws)
+            assert msg["type"] == "error"
+            assert msg["code"] == "stt_transcribe_sdk_outdated"
+            await _wait_for_operation(calls, "stt_stream_end")
+            await ws.close()
+        assert started == []
+        input_stream.send_audio_event.assert_not_awaited()
+        assert [c["outcome"] for c in calls if c["operation"] == "stt_stream_end"] == ["error"]
 
     @pytest.mark.asyncio
     async def test_start_failure_emits_error(self, monkeypatch):

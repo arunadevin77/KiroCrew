@@ -9924,7 +9924,8 @@
       "stream_error_max_duration": "구술이 길이 제한에 도달했습니다. 계속하려면 새로 녹음하세요.",
       "stream_error_model_missing": "음성 모델이 아직 준비되지 않았습니다. 음성 텍스트 변환 설정에서 내려받은 후 다시 시도하세요.",
       "stream_error_session_failed": "구술 세션이 실패했습니다. 다시 녹음하세요.",
-      "stream_error_vocabulary_rejected": "Amazon Transcribe가 사용자 지정 어휘를 사용하지 못했습니다. 음성 텍스트 변환 설정에서 다른 어휘나 ‘없음’을 선택한 후 다시 시도하세요."
+      "stream_error_vocabulary_rejected": "Amazon Transcribe가 사용자 지정 어휘를 사용하지 못했습니다. 음성 텍스트 변환 설정에서 다른 어휘나 ‘없음’을 선택한 후 다시 시도하세요.",
+      "stream_error_sdk_outdated": "여러 언어를 사용하려면 게이트웨이에 amazon-transcribe 0.6.3 이상이 필요합니다. 게이트웨이 로그에 있는 명령으로 업데이트하거나, 음성 텍스트 변환 설정에서 여러 언어를 비운 후 다시 시도하세요."
     },
     "templateSource": {
       "built_in": "기본 제공",
@@ -16624,6 +16625,15 @@
         "transcribe_vocabulary_unavailable": "{{region}}의 Amazon Transcribe에는 이름이 {{name}}인 준비된 어휘가 없습니다. 다른 어휘나 ‘없음’을 선택할 때까지 구술이 실패합니다.",
         "transcribe_vocabulary_access_denied": "이 AWS 자격 증명에는 사용자 지정 어휘 목록을 조회할 권한이 없습니다. 여기에서 보려면 {{permission}} 권한을 부여하세요.",
         "transcribe_vocabulary_list_failed": "AWS에서 사용자 지정 어휘를 불러오지 못했습니다.",
+        "transcribe_languages": "여러 언어",
+        "transcribe_languages_hint": "한 녹음 안에서 바꿔 가며 말하는 언어입니다(예: 베트남어와 영어). 두 개 이상 선택하면 Amazon Transcribe가 각 부분의 언어를 감지해 그 언어로 받아씁니다. 스트리밍 구술에만 적용되며, 언어당 방언은 하나입니다.",
+        "transcribe_languages_off": "끔(위의 언어 사용)",
+        "transcribe_languages_one": "{{name}}: 켜려면 하나 더 선택하세요",
+        "transcribe_languages_pending": "두 언어를 모두 감지하려면 두 번째 언어를 선택하세요. 그 전까지는 위의 언어로 구술합니다.",
+        "transcribe_languages_limit": "최대 {{max}}개에 도달했습니다. 다른 언어를 선택하려면 하나를 선택 해제하세요.",
+        "transcribe_languages_search": "언어 검색…",
+        "language_option": "{{name}} ({{code}})",
+        "language_overridden_by_mixed": "여러 언어가 켜져 있는 동안 이 언어는 음성 메시지와, 스트리밍이 꺼져 있을 때의 구술에만 사용됩니다.",
         "aws_region_transcribe": "AWS 리전(Transcribe)",
         "bcp_47_language_code_for_speech_recognition": "음성 인식용 BCP-47 언어 코드",
         "default": "기본값",

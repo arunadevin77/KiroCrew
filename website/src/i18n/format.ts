@@ -565,6 +565,26 @@ export function fmtList(
 /* ----------------------------------------------------------------- collation */
 
 /**
+ * The name of a BCP-47 locale code in the app language: `vi-VN` reads
+ * "Vietnamese (Vietnam)" in English and "越南语（越南）" in Chinese.
+ *
+ * For a list of codes a person picks from. Returns the code itself when `Intl`
+ * has no name for it or rejects it, so an unusual code is still shown rather
+ * than dropped.
+ */
+export function fmtLanguageName(code: string): string {
+  const locale = activeLocale()
+  try {
+    const names = memo('languageName', locale, null, () =>
+      new Intl.DisplayNames(locale, { type: 'language', fallback: 'code' }),
+    )
+    return names.of(code) || code
+  } catch {
+    return code
+  }
+}
+
+/**
  * A collator for the active language.
  *
  * `numeric: true` is on by default because the strings this app sorts are

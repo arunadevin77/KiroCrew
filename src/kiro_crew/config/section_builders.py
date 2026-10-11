@@ -801,4 +801,7 @@ def _build_stt_config(stt_data: dict) -> SttConfig:
         transcribe_vocabulary=_sections._validated_transcribe_vocabulary(
             section.get("transcribe_vocabulary")
         ),
+        transcribe_languages=_sections._validated_transcribe_languages(
+            section.get("transcribe_languages")
+        ),
     )

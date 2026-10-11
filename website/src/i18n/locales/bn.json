@@ -10057,7 +10057,8 @@
       "stream_error_max_duration": "ডিকটেশন তার সময়সীমায় পৌঁছে গেছে। চালিয়ে যেতে নতুন রেকর্ডিং শুরু করো।",
       "stream_error_model_missing": "স্পিচ মডেল এখনও তৈরি নয়। স্পিচ-টু-টেক্সট সেটিংসে এটি ডাউনলোড করো, তারপর আবার চেষ্টা করো।",
       "stream_error_session_failed": "ডিকটেশন সেশন ব্যর্থ হয়েছে। আবার রেকর্ড করে দেখো।",
-      "stream_error_vocabulary_rejected": "Amazon Transcribe তোমার কাস্টম শব্দভান্ডার ব্যবহার করতে পারেনি। স্পিচ-টু-টেক্সট সেটিংসে অন্য একটি বা \"কোনোটি নয়\" বেছে নাও, তারপর আবার চেষ্টা করো।"
+      "stream_error_vocabulary_rejected": "Amazon Transcribe তোমার কাস্টম শব্দভান্ডার ব্যবহার করতে পারেনি। স্পিচ-টু-টেক্সট সেটিংসে অন্য একটি বা \"কোনোটি নয়\" বেছে নাও, তারপর আবার চেষ্টা করো।",
+      "stream_error_sdk_outdated": "মিশ্র ভাষার জন্য gateway-এ amazon-transcribe 0.6.3 বা নতুন সংস্করণ দরকার। gateway লগে দেওয়া কমান্ড দিয়ে এটি আপডেট করো, অথবা স্পিচ-টু-টেক্সট সেটিংসে মিশ্র ভাষা খালি করো, তারপর আবার চেষ্টা করো।"
     },
     "templateSource": {
       "built_in": "বিল্ট-ইন",
@@ -16868,6 +16869,15 @@
         "transcribe_vocabulary_unavailable": "{{region}}-এ Amazon Transcribe-এর {{name}} নামে কোনো প্রস্তুত শব্দভান্ডার নেই। তুমি অন্য একটি বা \"কোনোটি নয়\" বেছে না নেওয়া পর্যন্ত ডিকটেশন ব্যর্থ হবে।",
         "transcribe_vocabulary_access_denied": "এই AWS ক্রেডেনশিয়ালগুলোর কাস্টম শব্দভান্ডারের তালিকা দেখার অনুমতি নেই। সেগুলো এখানে দেখতে {{permission}} অনুমতি দাও।",
         "transcribe_vocabulary_list_failed": "AWS থেকে তোমার কাস্টম শব্দভান্ডারগুলো লোড করা যায়নি।",
+        "transcribe_languages": "মিশ্র ভাষা",
+        "transcribe_languages_hint": "যে ভাষাগুলোর মধ্যে একটি রেকর্ডিংয়েই বদল হয়, যেমন ভিয়েতনামি ও ইংরেজি। দুটি বা তার বেশি বেছে নিলে Amazon Transcribe প্রতিটি অংশের ভাষা শনাক্ত করে সেই ভাষাতেই লেখে। শুধু স্ট্রিমিং ডিকটেশনের জন্য, প্রতি ভাষায় একটি উপভাষা।",
+        "transcribe_languages_off": "বন্ধ (ওপরের ভাষা ব্যবহার হয়)",
+        "transcribe_languages_one": "{{name}}: চালু করতে আরও একটি বেছে নাও",
+        "transcribe_languages_pending": "দুটোই শনাক্ত করতে দ্বিতীয় একটি ভাষা বেছে নাও। ততক্ষণ ডিকটেশন ওপরের ভাষা ব্যবহার করে।",
+        "transcribe_languages_limit": "{{max}}-এর সীমা পূর্ণ হয়েছে। অন্য একটি বেছে নিতে একটির নির্বাচন সরাও।",
+        "transcribe_languages_search": "ভাষা খুঁজুন…",
+        "language_option": "{{name}} ({{code}})",
+        "language_overridden_by_mixed": "মিশ্র ভাষা চালু থাকা অবস্থায় এই ভাষাটি শুধু ভয়েস বার্তা এবং স্ট্রিমিং বন্ধ থাকলে ডিকটেশনের জন্য ব্যবহার হয়।",
         "aws_region_transcribe": "AWS রিজিয়ন (Transcribe)",
         "bcp_47_language_code_for_speech_recognition": "স্পিচ রিকগনিশনের জন্য BCP-47 ভাষা কোড",
         "default": "ডিফল্ট",

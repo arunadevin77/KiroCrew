@@ -220,9 +220,11 @@ interface SettingsMultiSelectProps {
   disabled?: boolean
   configKey?: string
   settingId?: string
+  onOpenChange?: (open: boolean) => void
+  notice?: string
 }
 
-export function SettingsMultiSelect({ label, description, hint, options, selected, onToggle, bulkActions, summary, searchPlaceholder, disabled, configKey, settingId }: SettingsMultiSelectProps) {
+export function SettingsMultiSelect({ label, description, hint, options, selected, onToggle, bulkActions, summary, searchPlaceholder, disabled, configKey, settingId, onOpenChange, notice }: SettingsMultiSelectProps) {
   const controlId = React.useId()
   return (
     <SettingsField label={label} description={description} hint={hint} configKey={configKey} settingId={settingId} controlId={controlId}>
@@ -236,6 +238,8 @@ export function SettingsMultiSelect({ label, description, hint, options, selecte
         summary={summary}
         searchPlaceholder={searchPlaceholder}
         disabled={disabled}
+        onOpenChange={onOpenChange}
+        notice={notice}
       />
     </SettingsField>
   )

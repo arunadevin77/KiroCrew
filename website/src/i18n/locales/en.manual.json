@@ -7954,6 +7954,15 @@
         "transcribe_vocabulary_unavailable": "Amazon Transcribe has no ready vocabulary named {{name}} in {{region}}. Dictation will fail until you choose another one or None.",
         "transcribe_vocabulary_access_denied": "These AWS credentials are not allowed to list custom vocabularies. Grant {{permission}} to see them here.",
         "transcribe_vocabulary_list_failed": "Your custom vocabularies could not be loaded from AWS.",
+        "transcribe_languages": "Mixed languages",
+        "transcribe_languages_hint": "Languages people switch between in one recording, such as Vietnamese and English. With two or more picked, Amazon Transcribe detects the language of each part and transcribes it in that language. Streaming dictation only, one dialect per language.",
+        "transcribe_languages_off": "Off (uses the language above)",
+        "transcribe_languages_one": "{{name}}: pick one more to turn on",
+        "transcribe_languages_pending": "Pick a second language to detect both. Until then, dictation uses the language above.",
+        "transcribe_languages_limit": "Limit of {{max}} reached. Deselect one to pick another.",
+        "transcribe_languages_search": "Search languages…",
+        "language_option": "{{name}} ({{code}})",
+        "language_overridden_by_mixed": "While Mixed languages is on, this language is used only for voice messages and for dictation when Streaming is off.",
         "language_auto": "Detect language automatically",
         "failed_to_save_stt_config": "Failed to save STT config",
         "microphone_2": "Microphone {{n}}",
@@ -8910,7 +8919,8 @@
       "stream_error_max_duration": "Dictation reached its length limit. Start a new recording to continue.",
       "stream_error_model_missing": "The speech model is not ready yet. Download it in the speech-to-text settings, then try again.",
       "stream_error_session_failed": "The dictation session failed. Try recording again.",
-      "stream_error_vocabulary_rejected": "Amazon Transcribe could not use your custom vocabulary. Choose another one, or None, in the speech-to-text settings, then try again."
+      "stream_error_vocabulary_rejected": "Amazon Transcribe could not use your custom vocabulary. Choose another one, or None, in the speech-to-text settings, then try again.",
+      "stream_error_sdk_outdated": "Mixed languages need amazon-transcribe 0.6.3 or newer in the gateway. Upgrade it with the command in the gateway log, or clear Mixed languages in the speech-to-text settings, then try again."
     },
     "templateSource": {
       "built_in": "Built-in",

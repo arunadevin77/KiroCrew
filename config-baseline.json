@@ -3385,7 +3385,8 @@
         "timeout_secs": 300,
         "transcribe_region": "us-east-1",
         "transcribe_profile": "",
-        "transcribe_vocabulary": ""
+        "transcribe_vocabulary": "",
+        "transcribe_languages": []
       }
     },
     {
@@ -3607,6 +3608,34 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": ""
+    },
+    {
+      "path": "stt.transcribe_languages",
+      "kind": "core",
+      "type": "array",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Transcribe Languages",
+      "help": "Languages to detect when speakers switch between them in one recording, such as vi-VN and en-US (`transcribe` provider, streaming only). With two or more, Amazon Transcribe identifies the language of each part and transcribes it in that language; with fewer, Language Code is used. At most five, and one dialect per language: en-US and en-GB cannot be picked together.",
+      "hasChildren": true,
+      "enumValues": null,
+      "defaultValue": []
+    },
+    {
+      "path": "stt.transcribe_languages.*",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "*",
+      "help": "",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": null
     },
     {
       "path": "computer_use",
