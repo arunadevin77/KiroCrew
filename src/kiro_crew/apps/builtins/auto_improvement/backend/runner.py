@@ -943,11 +943,20 @@ class RunSupervisor:
             # A spawn failure must not wedge the supervisor as permanently busy, and must not
             # leave the in-flight record behind: the next process would report a run that never
             # started as cut off by a restart. Record the failure as the run's terminal state.
+            # The reservation is released only once that record is written. A `calibrate()` or
+            # `start()` admitted earlier would own `_state`: `_fail` would mark the newcomer
+            # failed, and the write would file the newcomer's snapshot as this run's record.
+            # The thread is dropped first because it never ran: a `stop()` meanwhile finds no
+            # run, rather than writing `stopping` over the failure before it is saved.
             with self._lock:
-                self._reserved = False
-            self._fail(exc)
-            self._persist_terminal_state()
-            _LIVE_RUNS.discard(run_id)
+                self._thread = None
+            try:
+                self._fail(exc)
+                self._persist_terminal_state()
+            finally:
+                _LIVE_RUNS.discard(run_id)
+                with self._lock:
+                    self._reserved = False
             raise
         return {"run_id": run_id, "status": STATUS_RUNNING}
 

@@ -981,6 +981,126 @@ class TestRunCutOffByARestart:
         assert after["run_id"] not in R._LIVE_RUNS
 
 
+class TestASpawnFailureKeepsTheSupervisorUntilItIsRecorded:
+    """``start()`` records a spawn failure before it releases the supervisor.
+
+    A calibration admitted while the failure is still being recorded would own ``_state``:
+    ``_fail`` would mark it failed and the terminal write would file its snapshot as the failed
+    run's record. A stop in the same window would write ``stopping`` over the failure, a status
+    the next boot ignores. Each call is made from inside the recording on the same thread, so
+    the order is fixed and nothing depends on timing."""
+
+    @staticmethod
+    def _run_thread_cannot_start(
+        supervisor: R.RunSupervisor, monkeypatch: pytest.MonkeyPatch
+    ) -> list[threading.Thread]:
+        """Make the run's thread fail to start; return the threads that did start."""
+
+        class _InstantDriver:
+            def run(self, **_kw: Any) -> Any:
+                return _FakeStats()
+
+            def request_stop(self) -> None:
+                pass
+
+        started: list[threading.Thread] = []
+
+        class _RunThreadCannotStart(threading.Thread):
+            """The run's thread cannot start; a calibration's starts as usual."""
+
+            def start(self) -> None:
+                if self.name.startswith("auto-improvement-run-"):
+                    raise RuntimeError("can't start new thread")
+                started.append(self)
+                super().start()
+
+        class _Threading:
+            """The runner's own ``threading`` with that Thread; the rest is real."""
+
+            Thread = _RunThreadCannotStart
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(threading, name)
+
+        def _calibrate_loop(_config: dict[str, Any]) -> None:
+            # The real loop's first step, releasing the reservation once its thread runs. The
+            # calibration's own work is not what these tests are about.
+            with supervisor._lock:
+                supervisor._reserved = False
+
+        monkeypatch.setattr(supervisor, "_build_driver", lambda _cfg: _InstantDriver())
+        monkeypatch.setattr(supervisor, "_calibrate_loop", _calibrate_loop)
+        monkeypatch.setattr(R, "threading", _Threading())
+        return started
+
+    def test_a_calibration_asked_for_while_a_spawn_failure_is_recorded_is_refused(
+        self, supervisor: R.RunSupervisor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        started = self._run_thread_cannot_start(supervisor, monkeypatch)
+        real_fail = supervisor._fail
+        attempts: list[str] = []
+
+        def _fail_with_a_calibration_in_the_gap(exc: BaseException) -> None:
+            try:
+                supervisor.calibrate({})
+            except RuntimeError as refused:
+                attempts.append(f"refused: {refused}")
+            else:
+                attempts.append("admitted")
+            real_fail(exc)
+
+        written: list[dict] = []
+        real_write = store.write_json_atomic
+
+        def _record_write(path: Path, data: Any) -> None:
+            written.append(dict(data))
+            real_write(path, data)
+
+        monkeypatch.setattr(supervisor, "_fail", _fail_with_a_calibration_in_the_gap)
+        monkeypatch.setattr(store, "write_json_atomic", _record_write)
+        try:
+            with pytest.raises(RuntimeError, match="can't start new thread"):
+                supervisor.start({})
+            assert written and written[0].get("in_flight") is True, written
+            run_id = written[0]["run_id"]
+            on_disk = json.loads(R._terminal_record_path().read_text(encoding="utf-8"))
+            assert attempts and attempts[0].startswith("refused"), (
+                f"a calibration was admitted while the failed run {run_id} was still being "
+                f"recorded ({attempts}); the record on disk is {on_disk['run_id']} with status "
+                f"{on_disk['status']!r}"
+            )
+            assert on_disk["run_id"] == run_id and "in_flight" not in on_disk, on_disk
+            assert on_disk["status"] == R.STATUS_ERROR, on_disk
+            assert "can't start new thread" in on_disk["error"], on_disk
+            # After start() returns, the failed run does not hold the supervisor.
+            assert supervisor.calibrate({})["status"] == R.STATUS_CALIBRATING
+        finally:
+            for thread in started:
+                thread.join(timeout=10.0)
+
+    def test_a_stop_while_a_spawn_failure_is_recorded_leaves_the_failure_on_disk(
+        self, supervisor: R.RunSupervisor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._run_thread_cannot_start(supervisor, monkeypatch)
+        real_persist = supervisor._persist_terminal_state
+        stops: list[dict[str, Any]] = []
+
+        def _persist_after_a_stop(*, in_flight: bool = False) -> None:
+            if not in_flight:
+                stops.append(supervisor.stop())
+            real_persist(in_flight=in_flight)
+
+        monkeypatch.setattr(supervisor, "_persist_terminal_state", _persist_after_a_stop)
+        with pytest.raises(RuntimeError, match="can't start new thread"):
+            supervisor.start({})
+
+        on_disk = json.loads(R._terminal_record_path().read_text(encoding="utf-8"))
+        assert on_disk["status"] == R.STATUS_ERROR, (on_disk, stops)
+        assert stops and stops[0]["stopped"] is False, stops
+        after = R.RunSupervisor().status()
+        assert after["status"] == R.STATUS_ERROR and after["run_id"] == on_disk["run_id"], after
+
+
 class TestStop:
     def test_stop_on_an_idle_supervisor_is_a_noop(self, supervisor: R.RunSupervisor) -> None:
         result = supervisor.stop()
