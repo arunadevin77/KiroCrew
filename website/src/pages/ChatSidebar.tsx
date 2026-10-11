@@ -2162,7 +2162,7 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
                       on its own (the status line below may be truncated or
                       read separately), so it keeps a real accessible name. */}
                   {showLiveDot && (
-                    <span className="session-live-dot" role="img" aria-label={i18nT('pages.chatSidebar.running_marker')} title={i18nT('pages.chatSidebar.running_marker')} data-testid="session-live-dot" />
+                    <span className="session-live-dot animate-pulse" role="img" aria-label={i18nT('pages.chatSidebar.running_marker')} title={i18nT('pages.chatSidebar.running_marker')} data-testid="session-live-dot" />
                   )}
                   {/* A menu-started Regenerate title closes its menu at once, so
                       the row itself says the model call is running. */}

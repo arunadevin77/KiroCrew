@@ -12,7 +12,8 @@
  *   3. it sits INSIDE the title line, ahead of the name, and leaves the row's
  *      own chrome alone: selection keeps its tint and the dot shows on top of it,
  *   4. it carries its state on its own, so it has a real accessible name,
- *   5. its pulse rests on the visible frame and stops under reduced motion.
+ *   5. it pulses with the shared `animate-pulse` utility, which the global
+ *      reduced-motion reset leaves on its solid frame.
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -241,14 +242,19 @@ describe('chat sidebar — live dot styling', () => {
     expect(body).not.toMatch(/position:/)
   })
 
-  it('pulses from and back to the solid frame', () => {
-    const name = /\.session-live-dot\{[^}]*animation:([\w-]+)\s/.exec(css)?.[1]
-    expect(name).toBeTruthy()
-    const frames = new RegExp(`@keyframes ${name}\\{0%,100%\\{opacity:1\\}`).exec(css)
-    expect(frames, 'the keyframe must rest on full opacity').toBeTruthy()
+  it('pulses with the shared animate-pulse utility, not a keyframe of its own', () => {
+    const { container } = renderSidebar([slot({ running: true })])
+    expect(dotOf(container)!.className).toMatch(/\banimate-pulse\b/)
+    const rule = /\.session-live-dot\{([^}]*)\}/.exec(css)![1]
+    expect(rule).not.toMatch(/animation/)
   })
 
-  it('stops pulsing under reduced motion', () => {
-    expect(css).toMatch(/@media \(prefers-reduced-motion:reduce\)\{\.session-live-dot\{animation:none\}\}/)
+  it('stays solid under reduced motion through the global motion reset', () => {
+    // The global rule cuts every animation to one near-instant run that ends on
+    // the pulse's full-opacity frame. It skips the transcript's virtualised
+    // scroller, so the dot must not sit inside one.
+    expect(css).toMatch(/@media\(prefers-reduced-motion:reduce\)\{\*:not\(\[data-virtuoso-scroller\] \*\),\*::before,\*::after\{animation-duration:0\.01ms !important;animation-iteration-count:1 !important\}\}/)
+    const { container } = renderSidebar([slot({ running: true })])
+    expect(dotOf(container)!.closest('[data-virtuoso-scroller]')).toBeNull()
   })
 })
