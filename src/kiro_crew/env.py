@@ -253,8 +253,11 @@ _NODE_MANAGER_GLOBS = (
     "{mise_data}/installs/node/*/bin",
     # asdf's nodejs plugin.
     "{home}/.asdf/installs/nodejs/*/bin",
-    # nvm.
+    # nvm, both layouts: ``~/.nvm``, then the XDG root its installer picks when
+    # ``XDG_CONFIG_HOME`` is set (:func:`_xdg_config_dir`). ``~/.nvm`` comes
+    # first, so a host holding both roots searches it first.
     "{home}/.nvm/versions/node/*/bin",
+    "{xdg_config}/nvm/versions/node/*/bin",
     # fnm, both layouts: XDG default and legacy ``~/.fnm``.
     "{home}/.local/share/fnm/node-versions/*/installation/bin",
     "{home}/.fnm/node-versions/*/installation/bin",
@@ -321,6 +324,17 @@ def mise_data_dir(home: str) -> str:
     return os.path.join(base, "mise")
 
 
+def _xdg_config_dir(home: str) -> str:
+    """The XDG config dir: ``XDG_CONFIG_HOME`` when absolute, else ``~/.config``.
+
+    A relative value is ignored, as the XDG Base Directory spec requires: taken
+    as given it would glob against the gateway's cwd and could put a
+    cwd-relative entry on a spawned subprocess's PATH.
+    """
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    return xdg if os.path.isabs(xdg) else os.path.join(home, ".config")
+
+
 def _has_node(d: Path) -> bool:
     """True when *d* holds an executable ``node``.
 
@@ -348,7 +362,9 @@ def _node_version_key(name: str) -> tuple[int, tuple[int, ...], str]:
     return (0, (), name)
 
 
-def _manager_version_bin_dirs(home: str, mise_data: str, *, all_versions: bool) -> list[str]:
+def _manager_version_bin_dirs(
+    home: str, mise_data: str, xdg_config: str, *, all_versions: bool
+) -> list[str]:
     """Scan the per-version manager roots (:data:`_NODE_MANAGER_GLOBS`).
 
     The two callers need DIFFERENT policies, chosen deliberately:
@@ -369,7 +385,9 @@ def _manager_version_bin_dirs(home: str, mise_data: str, *, all_versions: bool) 
     """
     out: list[str] = []
     for pattern in _NODE_MANAGER_GLOBS:
-        root, _, leaf = pattern.format(home=home, mise_data=mise_data).partition("/*")
+        root, _, leaf = pattern.format(
+            home=home, mise_data=mise_data, xdg_config=xdg_config
+        ).partition("/*")
         keep = Path.is_dir if all_versions else _has_node
         try:
             matches = sorted(
@@ -422,7 +440,8 @@ def node_bin_dirs() -> tuple[str, ...]:
        after installing/locating node. Preferred over a bare filesystem scan
        because it names the version that script decided on.
     3. The highest version found under each per-version manager root
-       (mise / asdf / nvm / fnm).
+       (mise / asdf / nvm / fnm; nvm under both ``~/.nvm`` and the XDG config
+       dir).
     4. Shim dirs (mise shims, volta, n).
     5. Standalone Node trees -- the glibc-2.17 build ``ensure-node.sh`` unpacks
        into the data home (:data:`_NODE_TREE_DATA_HOME_DIRS`), then a
@@ -461,7 +480,9 @@ def node_bin_dirs() -> tuple[str, ...]:
     if marker:
         ordered.append(marker)
 
-    ordered.extend(_manager_version_bin_dirs(home, mise_data, all_versions=False))
+    ordered.extend(
+        _manager_version_bin_dirs(home, mise_data, _xdg_config_dir(home), all_versions=False)
+    )
 
     ordered.extend(d.format(home=home, mise_data=mise_data) for d in _NODE_MANAGER_DIRS)
     # Under a KIROCREW_HOME override data_home() mkdirs, so it can raise on an
@@ -522,18 +543,19 @@ def _homebrew_keg_node_bin_dirs() -> list[str]:
 
 
 @functools.lru_cache(maxsize=1)
-def _node_all_bin_dirs(home: str, mise_data: str) -> tuple[str, ...]:
+def _node_all_bin_dirs(home: str, mise_data: str, xdg_config: str) -> tuple[str, ...]:
     """Cached body of :func:`node_all_bin_dirs`, keyed on its inputs.
 
-    Keyed on ``(home, mise_data)`` — matching the retired helper's ``home``
-    keying — so a caller under a different HOME (tests patching
-    ``expanduser``) gets a fresh scan instead of the previous key's dirs,
-    while the steady-state gateway still globs exactly once.
+    Keyed on every root the globs format (``home``, ``mise_data``,
+    ``xdg_config``) — matching the retired helper's ``home`` keying — so a
+    caller under a different HOME or config dir (tests patching ``expanduser``
+    or ``XDG_CONFIG_HOME``) gets a fresh scan instead of the previous key's
+    dirs, while the steady-state gateway still globs exactly once.
     """
     out: list[str] = []
     seen: set[str] = set()
     for d in (
-        *_manager_version_bin_dirs(home, mise_data, all_versions=True),
+        *_manager_version_bin_dirs(home, mise_data, xdg_config, all_versions=True),
         *_homebrew_keg_node_bin_dirs(),
     ):
         d = os.path.normpath(d)
@@ -575,7 +597,7 @@ def node_all_bin_dirs() -> tuple[str, ...]:
     ever needs re-discovery without one.
     """
     home = os.path.expanduser("~")
-    return _node_all_bin_dirs(home, mise_data_dir(home))
+    return _node_all_bin_dirs(home, mise_data_dir(home), _xdg_config_dir(home))
 
 
 def node_augmented_path(base_path: str = "") -> str:
@@ -822,7 +844,7 @@ def augmented_path(base_path: str = "", *, home: str | None = None) -> str:
         for d in _EXTRA_PATH_DIRS
         if (e := _validated_bin_dir(d.format(home=resolved_home, mise_data=mise_data)))
     ]
-    extra += _node_all_bin_dirs(resolved_home, mise_data)
+    extra += _node_all_bin_dirs(resolved_home, mise_data, _xdg_config_dir(resolved_home))
     parts = extra + ([base_path] if base_path else [])
     parts.append(str(Path(sys.executable).parent))
     return os.pathsep.join(parts)
