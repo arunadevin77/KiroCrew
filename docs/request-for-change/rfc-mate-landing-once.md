@@ -1,10 +1,10 @@
 ---
 title: Mate gets one landing, then the ordinary landing applies
-status: draft
+status: accepted
 author: iamwhatever
 created: 2026-10-10
 last-audited: 2026-10-11
-audited-at: 73d44b420b
+audited-at: a84f616557
 doc-pr: 18903
 implementation-prs: [18904]
 tracking-issues: []
@@ -14,7 +14,11 @@ superseded-by: []
 
 # RFC: Mate gets one landing, then the ordinary landing applies
 
-- Status: draft. Proposed on a user report of 2026-10-10: a user was moved onto
+- Status: accepted. buluoray, the author of rfc-crewmate-guides-and-mate,
+  approved it on #18903 on 2026-10-11 and asked for the status to be flipped.
+  The "owed" condition in § 2 is the one gap that review raised (Design lane
+  finding, checked at main); it is folded in here. Proposed on a user report
+  of 2026-10-10: a user was moved onto
   Mate on every bare Crewmates visit. The rule below is the one buluoray, the
   author of [rfc-crewmate-guides-and-mate.md](rfc-crewmate-guides-and-mate.md),
   asked for in the review of #18903. It amends that document's "When it opens"
@@ -22,7 +26,7 @@ superseded-by: []
   [rfc-crewmates-chatted-list.md](rfc-crewmates-chatted-list.md) § 3, in its own
   document so the accepted one is not edited. Claims about today's code were
   checked at `73d44b420b` (main).
-- Author: iamwhatever. Acceptance asked of buluoray.
+- Author: iamwhatever. Accepted by buluoray.
 
 ## 1. Problem
 
@@ -54,28 +58,34 @@ landing applies.
 
 | Mate's welcome | Lands on (bare visit, preview on) |
 |---|---|
-| not sent yet | Mate (one introduction, fresh and existing users) |
+| still coming | Mate (one introduction, fresh and existing users) |
 | sent | the ordinary landing (last-chatted, then the remembered crewmate) |
 | attempted and failed | the ordinary landing (counts as seen) |
 
-- **Seen** = the welcome marker has been claimed (`claim_greeting_marker`), or
-  Mate's thread has any row (`has_dm_message`, which counts live unflushed
-  rows). Both are server-side, so the answer holds across browsers and gateway
-  restarts. No new client marker.
+- **Still coming** = the welcome is owed (`welcome_owed`), its marker is not
+  claimed (`claim_greeting_marker`), and Mate's thread has no row
+  (`has_dm_message`, which counts live unflushed rows). Anything else counts
+  as **seen**: claimed, a row exists, or never owed. A Mate whose owed record
+  was never written (it predates the record, or the write failed:
+  `first_crewmate._owe_first_welcome` "only costs the welcome") is refused
+  `NOT_OWED` before the claim, so it would otherwise read as "not sent yet"
+  forever. All three are server-side, so the answer holds across browsers and
+  gateway restarts. No new client marker.
 - **Unreadable**: if the roster cannot say whether Mate was seen, the page
   uses the ordinary landing. A read failure never pins the user on Mate.
 - An explicit `?member=` link still wins.
 - `default` still does not count as a crewmate for any of this.
 - Mate stays on the roster: the user can always open it.
 
-The marker and the row are read on the roster read the page already makes; the
-roster row carries the claimed state beside `has_dm_message`.
+The owed record, the marker and the row are read on the roster read the page
+already makes; Mate's roster row carries the owed and claimed states beside
+`has_dm_message`.
 
 ## 3. What this amends
 
 - [rfc-crewmate-guides-and-mate.md](rfc-crewmate-guides-and-mate.md) "When it
   opens": "while the user has never exchanged a message with it" becomes
-  "until its welcome has been sent or attempted".
+  "while its welcome is still coming (owed, unclaimed, no row)".
 - The same document's amendment of rfc-crewmates-chatted-list § 3 ("a
   never-chatted Mate is opened first") takes the same condition.
 
@@ -89,6 +99,10 @@ roster row carries the claimed state beside `has_dm_message`.
   welcome and leaves would land on Mate again and again, ahead of the crewmate
   they actually talk to. A failed welcome would still pin them, since nothing
   was sent to reply to.
+- **Release the marker when the welcome turn fails, so it is retried.**
+  Rejected. A failing backend (signed-out CLI) fails every retry too, so the
+  user would land on an empty Mate on each visit until it is fixed: the same
+  pin. It also reopens the double-greet race the once-only claim closes.
 - **Never land on Mate for a returning user** (yield whenever another crewmate
   was chatted with or is remembered; the first draft of this document).
   Rejected. It drops the original decision's point: existing users would never
@@ -98,22 +112,25 @@ roster row carries the claimed state beside `has_dm_message`.
 
 The implementation (#18904) pins:
 
-1. An existing user (another crewmate chatted with, Mate's marker unclaimed,
+1. An existing user (another crewmate chatted with, Mate's welcome owed, its marker unclaimed,
    Mate's thread empty) lands on Mate once.
 2. After the welcome row exists, the next bare visit lands on the last-chatted
    crewmate.
 3. With a claimed marker and an empty thread (a failed welcome), the next bare
    visit lands on the last-chatted crewmate.
-4. A roster row that does not say whether the marker is claimed lands on the
-   ordinary landing.
-5. A fresh user (no other crewmate) still lands on Mate and gets its welcome.
-6. `?member=` still wins; `default`'s chats do not count; Mate is still
+4. A roster row that does not say whether the marker is claimed, or whether
+   the welcome is owed, lands on the ordinary landing.
+5. An empty Mate with no owed record and no marker lands on the ordinary
+   landing.
+6. A fresh user (no other crewmate) still lands on Mate and gets its welcome.
+7. `?member=` still wins; `default`'s chats do not count; Mate is still
    openable from the roster.
-7. Backend: the roster row reports the marker as claimed after
-   `claim_greeting_marker`, and as unclaimed before it.
+8. Backend: the roster row reports the marker as claimed after
+   `claim_greeting_marker` and as unclaimed before it, and reports the owed
+   state.
 
 ## 6. Rollout
 
-One pull request, #18904: the roster row reports whether Mate's welcome marker
-is claimed, and `pendingMate` answers Mate only while the marker is unclaimed
-and the thread has no row.
+One pull request, #18904: Mate's roster row reports whether its welcome is
+owed and whether its marker is claimed, and the page lands on Mate only while
+the welcome is owed, the marker is unclaimed and the thread has no row.
