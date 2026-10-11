@@ -2017,6 +2017,102 @@ class TestSshTunnelArgvCompression:
         assert captured["compression"] is True
 
 
+class TestSshTunnelWindowsRefusal:
+    """The SSH tunnel transport refuses on native Windows with a stated reason.
+
+    The surface is documented "not yet" supported on Windows, but without a
+    refusal at the point of use the ``ssh -N -L`` child is spawned anyway: on a
+    Windows host without ``ssh`` on PATH that fails with a generic spawn error
+    indistinguishable from "ssh is missing". ``start()`` must instead refuse
+    before any spawn and report "SSH tunnel is not yet supported on Windows",
+    mirroring the native-Windows refusal in ``apps/lifecycle_scripts.py``. The
+    SSM transport is unaffected.
+    """
+
+    @pytest.mark.asyncio
+    async def test_ssh_tunnel_refuses_on_windows_before_spawn(self, monkeypatch):
+        from kiro_crew import platform_compat
+        from kiro_crew.instances.ssh_tunnel_manager import (
+            _WINDOWS_SSH_TUNNEL_UNSUPPORTED,
+            TunnelState,
+            _SshTunnel,
+        )
+
+        monkeypatch.setattr(platform_compat, "IS_WINDOWS", True)
+
+        spawned = False
+
+        async def _no_spawn(*a, **k):
+            nonlocal spawned
+            spawned = True
+            raise AssertionError("spawn must not be reached on native Windows")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _no_spawn)
+
+        tun = _SshTunnel("cd-1", "cd-1-alias", 53400, 7879, transport="ssh")
+        ok = await tun.start()
+
+        assert ok is False
+        assert spawned is False
+        assert tun.status.state == TunnelState.ERROR
+        assert tun.status.error == _WINDOWS_SSH_TUNNEL_UNSUPPORTED
+        # The message states the platform constraint, not a generic spawn error.
+        assert "not yet supported on Windows" in tun.status.error
+        assert "spawn" not in tun.status.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_ssm_transport_is_not_refused_on_windows(self, monkeypatch):
+        # The native-Windows refusal is scoped to the ssh transport: the SSM
+        # tunnel must still proceed to spawn (the supported path on Windows).
+        from kiro_crew import platform_compat
+        from kiro_crew.instances.ssh_tunnel_manager import _SshTunnel
+
+        monkeypatch.setattr(platform_compat, "IS_WINDOWS", True)
+
+        reached_spawn = False
+
+        async def _fake_spawn(*a, **k):
+            nonlocal reached_spawn
+            reached_spawn = True
+            raise OSError("stop here before real spawn")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_spawn)
+
+        tun = _SshTunnel(
+            "ssm-1", "", 53410, 7879, transport="ssm", ssm_target="i-0123456789abcdef0"
+        )
+        ok = await tun.start()
+
+        # It fails on the forced OSError, not on the Windows refusal — proving
+        # the SSM path was NOT short-circuited and did reach the spawn.
+        assert ok is False
+        assert reached_spawn is True
+
+    @pytest.mark.asyncio
+    async def test_ssh_tunnel_connects_on_posix(self, monkeypatch):
+        # Control: with IS_WINDOWS false the ssh transport is not refused and the
+        # spawn is reached (POSIX behaviour unchanged).
+        from kiro_crew import platform_compat
+        from kiro_crew.instances.ssh_tunnel_manager import _SshTunnel
+
+        monkeypatch.setattr(platform_compat, "IS_WINDOWS", False)
+
+        reached_spawn = False
+
+        async def _fake_spawn(*a, **k):
+            nonlocal reached_spawn
+            reached_spawn = True
+            raise OSError("stop here before real spawn")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_spawn)
+
+        tun = _SshTunnel("cd-2", "cd-2-alias", 53420, 7879, transport="ssh")
+        ok = await tun.start()
+
+        assert ok is False
+        assert reached_spawn is True
+
+
 requires_ssh = pytest.mark.skipif(shutil.which("ssh") is None, reason="ssh not available")
 
 #: Hang guard for a ``ssh -G`` config resolution, NOT a performance budget. The call does

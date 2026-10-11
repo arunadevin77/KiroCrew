@@ -238,6 +238,16 @@ async def _upload_chunks(fh: Any, stall: asyncio.Timeout) -> Any:
 
 _LOOPBACK = "127.0.0.1"
 
+#: Stated-unsupported reason for the SSH tunnel transport on native Windows.
+#: The surface is documented "not yet" supported there (``docs/guides/
+#: windows-install.md``) and the argv builder notes it in a comment, but without
+#: a refusal at the point of use the ``ssh -N -L`` child is spawned anyway and a
+#: Windows host without ``ssh`` on PATH fails with a generic spawn error that
+#: reads as "ssh is missing" rather than "unsupported here". Refusing before the
+#: spawn with this reason mirrors the native-Windows refusal in
+#: ``apps/lifecycle_scripts.py``. The SSM/cloud transport is unaffected.
+_WINDOWS_SSH_TUNNEL_UNSUPPORTED = "SSH tunnel is not yet supported on Windows"
+
 #: The closed set of peer endpoints :meth:`SshTunnelManager.peer_capability` may
 #: read. Every one is a GET that reports what the peer gateway CAN do — its
 #: version, its agent roster, its model list, its effort levels, its workspaces —
@@ -902,6 +912,26 @@ class _SshTunnel:
         self._stopping = False
         self.status.state = TunnelState.CONNECTING
         self.status.error = ""
+        # Native-Windows policy: the SSH tunnel transport is a POSIX-only
+        # capability. The ``ssh -N -L`` child requires the OpenSSH client on
+        # PATH (not guaranteed on Windows) and its kill handling has not had a
+        # Windows audit — the surface is documented "not yet" supported in
+        # ``docs/guides/windows-install.md`` and noted in ``_build_ssh_tunnel_argv``.
+        # Refuse before any spawn with a stated reason — the same shape as
+        # ``apps/lifecycle_scripts.py`` refusing a POSIX-only hook on native
+        # Windows — so the user is told the surface is unsupported rather than
+        # getting a generic spawn error (indistinguishable from "ssh is missing")
+        # when the unconditional build is spawned. The supported SSM/cloud
+        # transport (``transport == "ssm"``) is unaffected; POSIX SSH is unchanged.
+        if self._transport == "ssh" and platform_compat.IS_WINDOWS:
+            self.status.state = TunnelState.ERROR
+            self.status.error = _WINDOWS_SSH_TUNNEL_UNSUPPORTED
+            logger.warning(
+                "SSH tunnel refused for %s: %s",
+                self._id,
+                _WINDOWS_SSH_TUNNEL_UNSUPPORTED,
+            )
+            return False
         # Built in a worker thread: both branches resolve their argv head
         # absolutely (aws: PATH scan + well-known install dirs; ssh: PATH scan),
         # which probes the filesystem — synchronous work that must not run on the
