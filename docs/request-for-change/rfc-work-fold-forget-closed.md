@@ -5,7 +5,7 @@ author: kirocrew agent session
 created: 2026-10-10
 last-audited: 2026-10-10
 audited-at: bf1723d3f
-doc-pr: null
+doc-pr: 18982
 implementation-prs: []
 tracking-issues: [18583]
 supersedes: []
