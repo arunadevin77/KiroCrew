@@ -3685,11 +3685,10 @@ class RunEventCoordinator(ManagerComponent):
         is re-granted FIFO like every other start. A typed provider throttle is
         also reported to the adaptive controller. True once the slot is held
         again; False when the coordinator failed the scope (deadline or
-        attempts cap -- the row is already ``failed``), when the row is another
-        owner's or has ended (``fenced``: the work is not this run's any more),
-        when the store could not record the wait (``unpersisted``: whether
-        another owner holds the row cannot be read, so the run stops rather
-        than retry work it may not own), or when the wait timed out. None when
+        attempts cap -- the row is already ``failed``), when the wait did not
+        persist (``unpersisted``: the row is another owner's or has ended, or the
+        store could not say, so the run stops rather than retry work it may not
+        own), or when the wait timed out. None when
         NO row exists for the run (``no_row``: a memory mode that keeps none).
         Nothing was decided then and nothing else owns the work, so the caller
         handles the error as it would with no coordinator at all.

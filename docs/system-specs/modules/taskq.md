@@ -1287,19 +1287,17 @@ staged wake (that eligibility is the safety net for a process that dies before
 `rebuild()` runs).
 
 **The verdict says where the wait landed, and whether it landed at all.** The
-wait write has five outcomes and the caller acts on a different one in each:
+wait write has four outcomes and the caller acts on a different one in each:
 `Verdict(wait, state=waiting_dependency)` (a live run entered the wait),
 `Verdict(wait, state=retry_wait)` (the row was not live and is re-dispatched
-later), and three that are not a wait, told apart by re-reading the row's state
+later), and two that are not a wait, told apart by re-reading the row's state
 after both writes were refused (`_row_after_refusal`), never by the boolean alone:
-`Verdict(unpersisted)` — the store took NEITHER write or could not say what the
-row is, so NO row is known to record the wait; `Verdict(no_row)` — the store holds
-no row for the task at all (a run whose memory mode keeps none), so nothing
-records the wait and nothing else owns the work; and `Verdict(fenced)` — the row IS
-there, in a state other than `retry_wait`, so the generation-checked writes were
-refused because a newer owner holds it or a terminal write already landed, and the
-caller must stop rather than retry work that is not its own. A caller must not
-park on any of the three: `rebuild()` cannot restore a wait no row is in, no boot
+`Verdict(unpersisted)` — the store took NEITHER write, so NO row records the wait
+(the row is another owner's or has ended, or the store could not say what it is);
+and `Verdict(no_row)` — the store holds no row for the task at all (a run whose
+memory mode keeps none), so nothing records the wait and nothing else owns the
+work. A caller must not
+park on either: `rebuild()` cannot restore a wait no row is in, no boot
 sweep sees it, and the row is left in the state it was reported from (`running`),
 so nothing outside that caller's own process knows a wait is in progress at all.
 `unpersisted` and `no_row` still carry the scope's `retry_at`, so a caller can
