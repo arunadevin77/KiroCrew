@@ -241,7 +241,19 @@ export const CHUNK_BUDGETS = {
   // set from a stale-low pre-merge build and never had headroom. Back to the ~5%
   // convention over the true merged measurement (2,041,857 B * 1.05 = 2,143,950 B),
   // so ordinary first-party growth does not re-trip this on the next PR.
-  App: 2094 * KB, // measured 2,041,857 B on main @ 2d4278a18 with route-only pages lazy (~5% headroom)
+  // Spent again by 2026-10-11. Main's own first-party growth since that
+  // measurement (881 non-test files under website/src changed between 2d4278a18
+  // and f07162523a) took the chunk from 2,041,857 B to 2,144,668 B, which is 412 B
+  // over the 2094 KB (2,144,256 B) ceiling. Attribution is measured, not assumed:
+  // main @ efb49507fb, the last push where this gate ran on main and passed,
+  // builds the chunk at 2,144,170 B (503 modules), 86 B under the ceiling, and
+  // the two website commits after it (#18651, #18932) add 498 B. The gate did
+  // not run on main's push at f07162523a, so the breach surfaced on the merge
+  // refs of open PRs (#9052, #18648) whose website diffs are test files that do
+  // not ship in this chunk. No lazy boundary applies to a few hundred bytes of
+  // always-loaded shell code. Back to the ~5% convention over the measured size
+  // (2,144,668 B * 1.05 = 2,251,901 B).
+  App: 2199 * KB, // measured 2,144,668 B on main @ f07162523a (~5% headroom)
 
   // Markdown/math/syntax rendering stack (katex, highlight.js, remark/rehype)
   // -- one deliberate `codeSplitting` group, see vite.config.ts.
