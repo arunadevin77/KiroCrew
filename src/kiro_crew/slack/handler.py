@@ -2176,17 +2176,22 @@ async def handle_message(
                 else _TIMEOUT_REPLY
             )
             task.fail("timeout")
-            await sessions.record_failure(session_key)
+            # At its threshold the breaker resets the session inside
+            # record_failure and answers True. A same-key message can claim a
+            # successor while that reset is awaited, so a second reset here would
+            # end the successor mid-turn: reset only when it did not.
+            _breaker_reset = await sessions.record_failure(session_key)
             Stats().inc_timeout()
             Stats().inc_message_failed()
-            try:
-                await sessions.reset(session_key)
-            except Exception:
-                logger.debug(
-                    "Failed to reset session %s after an unfinished turn",
-                    session_key,
-                    exc_info=True,
-                )
+            if _breaker_reset is not True:
+                try:
+                    await sessions.reset(session_key)
+                except Exception:
+                    logger.debug(
+                        "Failed to reset session %s after an unfinished turn",
+                        session_key,
+                        exc_info=True,
+                    )
         else:
             task.complete()
             # Success accounting is deferred to after the answer-carrying delivery
@@ -2302,10 +2307,12 @@ async def handle_message(
         _partial = e.partial_output or answer.accumulated
         answer.accumulated = f"{_partial}\n\n{_TIMEOUT_REPLY}" if _partial else _TIMEOUT_REPLY
         task.fail("timeout")
-        await sessions.record_failure(session_key)
+        # As in the unfinished-turn branch: the breaker that trips here has reset
+        # the session already, and a second reset could end a successor.
+        _breaker_reset = await sessions.record_failure(session_key)
         Stats().inc_timeout()
         Stats().inc_message_failed()
-        if _acquired:
+        if _acquired and _breaker_reset is not True:
             try:
                 await sessions.reset(session_key)
             except Exception:

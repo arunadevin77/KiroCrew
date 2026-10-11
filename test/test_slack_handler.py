@@ -3482,6 +3482,68 @@ class TestStopReasonUnfinishedTurn:
         assert any(b.startswith("failure:") for b in sessions.booked), sessions.booked
         assert not any(b.startswith("success:") for b in sessions.booked), sessions.booked
 
+    # At its threshold the breaker resets the session inside ``record_failure`` and
+    # answers True (``SessionAllocation.record_failure``). A same-key message can claim
+    # a successor runtime while that reset is awaited, so the turn must not reset the
+    # session a second time: that would end the successor mid-turn.
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stop_reason", ["timeout", "stale_recover"])
+    async def test_at_the_breaker_threshold_an_unfinished_turn_resets_once(self, stop_reason):
+        slack = MockSlackClient()
+        provider = FakeProvider(
+            [
+                LLMEvent(kind="text_chunk", text="half an answer"),
+                LLMEvent(kind="complete", stop_reason=stop_reason),
+            ]
+        )
+        sessions = _BreakerAtThreshold(provider)
+
+        await handle_message(slack, sessions, "C1", "hello", None, "msg1", "U1")
+
+        assert "Request timed out" in _thread_text(slack)
+        assert sessions.booked == ["failure:" + sessions.keys_seen[0]], sessions.booked
+        ended = sessions.ended
+        assert ended == ["first"], f"the handler reset again after the breaker did: {ended}"
+
+    @pytest.mark.asyncio
+    async def test_at_the_breaker_threshold_a_raised_timeout_resets_once(self):
+        from kiro_crew.acp.client import AcpTimeoutError
+
+        slack = MockSlackClient()
+        provider = _RaisingProvider(
+            [LLMEvent(kind="text_chunk", text="half an answer")], AcpTimeoutError()
+        )
+        sessions = _BreakerAtThreshold(provider)
+
+        await handle_message(slack, sessions, "C1", "hello", None, "msg1", "U1")
+
+        assert "Request timed out" in _thread_text(slack)
+        assert sessions.booked == ["failure:" + sessions.keys_seen[0]], sessions.booked
+        ended = sessions.ended
+        assert ended == ["first"], f"the handler reset again after the breaker did: {ended}"
+
+
+class _BreakerAtThreshold(_BookingSessions):
+    """``record_failure`` as the breaker answers at its threshold: it books the failure,
+    resets the session itself and returns True. Each reset ends the runtime that is live,
+    and while it is awaited a same-key message claims a successor runtime."""
+
+    def __init__(self, provider):
+        super().__init__(provider)
+        self.runtimes = ["first"]
+        self.ended: list[str] = []
+
+    async def record_failure(self, key):
+        self.booked.append(f"failure:{key}")
+        await self.reset(key)
+        return True
+
+    async def reset(self, key):
+        await super().reset(key)
+        self.ended.append(self.runtimes[-1])
+        self.runtimes.append(f"successor {len(self.runtimes)}")
+
 
 class _RaisingProvider(FakeProvider):
     """Streams *events*, then raises *error* instead of yielding a terminal."""
