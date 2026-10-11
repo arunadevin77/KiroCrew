@@ -629,6 +629,7 @@ async def api_members(request: web.Request) -> web.Response:
 
     observed_rosters = await asyncio.to_thread(_observe_rosters)
     tails = await asyncio.to_thread(_read_transcript_tails)
+    await asyncio.to_thread(_stamp_welcome_claimed, rows)
     # Slot keys whose speech-only read is trustworthy enough to correct the
     # member log with: a non-empty quote, or an empty one from a walk that
     # reached the start of the log -- and, either way, only for a slot whose
@@ -946,6 +947,32 @@ def _seed_from_dm_threads(
                 found[row["name"]] = max(found.get(row["name"], 0.0), ts)
             break
     return found
+
+
+def _stamp_welcome_claimed(rows: list[dict]) -> None:
+    """Mark Mate's row with whether its welcome is owed and its marker claimed.
+
+    The Crewmates page lands on Mate only while its welcome is still coming:
+    owed, the marker unclaimed, and the thread holding no row
+    (rfc-mate-landing-once). A welcome that was claimed and then failed leaves
+    the thread empty for good, and one that was never owed is refused before
+    the claim, so the row count alone would land the user on Mate on every
+    visit. Only Mate's row carries the fields; a marker that cannot be checked
+    leaves ``welcome_claimed`` off and an unreadable owed record reads as not
+    owed, both of which the page treats as "seen" (the ordinary landing).
+    Blocking IO.
+    """
+    from kiro_crew.agent_files import ASSISTANT_MEMBER_NAME
+    from kiro_crew.dashboard.mate_welcome import greeting_marker_path
+
+    for row in rows:
+        if row.get("name") != ASSISTANT_MEMBER_NAME:
+            continue
+        row["welcome_owed"] = members_mod.welcome_owed(row["slug"], row["name"])
+        try:
+            row["welcome_claimed"] = greeting_marker_path(row["slug"]).exists()
+        except (OSError, ValueError):
+            row.pop("welcome_claimed", None)
 
 
 def _is_human_row(msg: dict, marker: str) -> bool:

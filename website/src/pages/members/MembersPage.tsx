@@ -42,7 +42,7 @@
  * default follows use, never the sort. Only a roster with no crewmate beyond
  * `default` opens nothing;
  * it shows the New crewmate hero instead. Below md nothing auto-opens (the
- * phone's two-level list rule) -- except Mate's first-visit landing (see
+ * phone's two-level list rule) -- except Mate's one landing (see
  * `resolveMateLanding`), which applies at every width.
  *
  * Creating a crewmate happens in place of the chat: the guided flow (the
@@ -315,14 +315,22 @@ export function rememberedDefaultPick(
   return chatMarkOf(rows) > chatMark ? undefined : hit
 }
 
-/** Mate (`isAssistantMember`) while no message has been exchanged with it:
- *  the Crewmates page lands there first, ahead of a remembered or more recently
- *  used crewmate, so its welcome is the user's first look at the page. Once
- *  its thread holds anything this answers `undefined` and the page's usual
- *  landing rules apply unchanged. A separate, early rule on purpose, so the
- *  usual rules ({@link resolveDefaultMember}) carry no Mate special case. */
+/** Mate (`isAssistantMember`) while its welcome is still coming: the Crewmates
+ *  page lands there first, ahead of a remembered or more recently used
+ *  crewmate, so every user, fresh or existing, is introduced to it once
+ *  (rfc-mate-landing-once). Still coming = the welcome is owed
+ *  (`welcome_owed`), its once-only marker is not claimed (`welcome_claimed`),
+ *  and its thread holds nothing (`pendingMate`). Anything else counts as seen:
+ *  a welcome that was claimed and then failed leaves the thread empty for
+ *  good, and one never owed is never sent, so neither may pin the user on
+ *  Mate. A row that does not say (an unreadable marker, an older gateway)
+ *  counts as seen too. Then this answers `undefined` and the
+ *  page's usual landing rules apply unchanged. A separate, early rule on
+ *  purpose, so the usual rules ({@link resolveDefaultMember}) carry no Mate
+ *  special case. */
 export function resolveMateLanding(rows: readonly MemberRosterRow[]): MemberRosterRow | undefined {
-  return pendingMate(rows)
+  const mate = pendingMate(rows)
+  return mate && mate.welcome_owed === true && mate.welcome_claimed === false ? mate : undefined
 }
 
 type MemberMemoryDisplay = 'global' | 'legacy' | 'private' | 'ownership_mismatch' | 'unavailable'

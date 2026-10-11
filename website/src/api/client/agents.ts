@@ -57,6 +57,15 @@ export interface MemberRosterRow {
    *  unflushed rows included). Listed on the roster unasked. Absent on an
    *  older gateway. */
   has_dm_message?: boolean
+  /** Mate's row only: its once-only welcome marker is claimed (the welcome was
+   *  sent or attempted). Absent on every other row, when the marker cannot be
+   *  checked, and on an older gateway; the Crewmates page then treats Mate as
+   *  already seen. */
+  welcome_claimed?: boolean
+  /** Mate's row only: a first welcome is owed (the gateway recorded one when
+   *  it created Mate). Absent or false = never owed; the Crewmates page then
+   *  treats Mate as already seen. */
+  welcome_owed?: boolean
   /** Epoch seconds the USER last sent this crew a message, in its DM or in a
    *  normal chat; 0 = never. Background work (crons, wakes, sub-agents,
    *  dispatched workers, apps) never moves it. The Crewmates list shows and

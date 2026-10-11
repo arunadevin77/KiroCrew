@@ -327,9 +327,10 @@ function row(overrides: Record<string, unknown> = {}) {
 }
 
 /** The built-in Assistant crewmate: its own member (`mate`, template
- *  `mate`), separate from the reserved `default` member. */
+ *  `mate`), separate from the reserved `default` member. The gateway reports
+ *  its welcome as owed and its marker as unclaimed unless a case says otherwise. */
 function assistantRow(overrides: Record<string, unknown> = {}) {
-  return row({ name: 'mate', slug: 'mate', kiro_agent: 'kirocrew', source: 'builtin', memory_store: 'default', ...overrides })
+  return row({ name: 'mate', slug: 'mate', kiro_agent: 'kirocrew', source: 'builtin', memory_store: 'default', welcome_owed: true, welcome_claimed: false, ...overrides })
 }
 /** The reserved `default` member, as the backend lists it. */
 function defaultRow(overrides: Record<string, unknown> = {}) {
@@ -5011,6 +5012,13 @@ describe('resolveDefaultMember', () => {
     expect(resolveMateLanding([assistantRow({ has_dm_message: true })])).toBeUndefined()
     expect(resolveMateLanding([assistantRow({ last_message: 'Hi, I am Mate' })])).toBeUndefined()
     expect(resolveMateLanding([row({ name: 'alpha', slug: 'alpha' })])).toBeUndefined()
+    // A claimed welcome marker counts as seen even with an empty thread (a
+    // welcome that failed), and so does a row that does not say.
+    expect(resolveMateLanding([assistantRow({ welcome_claimed: true })])).toBeUndefined()
+    expect(resolveMateLanding([assistantRow({ welcome_claimed: undefined })])).toBeUndefined()
+    // A welcome never owed is never sent: Mate is not waiting for it.
+    expect(resolveMateLanding([assistantRow({ welcome_owed: false })])).toBeUndefined()
+    expect(resolveMateLanding([assistantRow({ welcome_owed: undefined })])).toBeUndefined()
     // The usual rule carries no Mate special case: recency, never the key.
     expect(resolveDefaultMember(null, withMate)?.name).toBe('alpha')
     expect(resolveDefaultMember('default', [defaultRow(), assistantRow()])?.name).toBe('mate')
@@ -5213,6 +5221,61 @@ describe('MembersPage default member, memory and URL', () => {
     await renderPage([defaultRow(), assistantRow({ has_dm_message: false }), row({ name: 'alpha', slug: 'alpha', last_active_ts: 99 })])
     expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-mate')
     expect(currentUrl()).toBe('/members?member=mate')
+  })
+
+  it('an existing user who chatted with a crewmate lands on an unseen Mate once', async () => {
+    await renderPage([
+      defaultRow(),
+      assistantRow(),
+      row({ name: 'oncall', slug: 'oncall', has_dm_message: true, last_chat_ts: 300 }),
+    ])
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-mate')
+    expect(currentUrl()).toBe('/members?member=mate')
+  })
+
+  it('after Mate\'s welcome row exists, the next bare visit lands on the last-chatted crewmate', async () => {
+    await renderPage([
+      defaultRow(),
+      assistantRow({ has_dm_message: true, welcome_claimed: true }),
+      row({ name: 'oncall', slug: 'oncall', has_dm_message: true, last_chat_ts: 300 }),
+    ])
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-oncall')
+    expect(api.memberThread).not.toHaveBeenCalledWith('mate')
+  })
+
+  it('a claimed welcome marker on an empty Mate thread (a failed welcome) lands on the last-chatted crewmate', async () => {
+    await renderPage([
+      defaultRow(),
+      assistantRow({ welcome_claimed: true }),
+      row({ name: 'oncall', slug: 'oncall', has_dm_message: true, last_chat_ts: 300 }),
+    ])
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-oncall')
+    expect(currentUrl()).toBe('/members?member=oncall')
+    expect(api.memberThread).not.toHaveBeenCalledWith('mate')
+    expect(api.memberGreet).not.toHaveBeenCalled()
+    // Mate stays on the roster: the user can still open it.
+    fireEvent.click(await rosterRow('Mate'))
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-mate')
+  })
+
+  it('an empty Mate with no owed welcome and no marker lands on the ordinary landing', async () => {
+    await renderPage([
+      defaultRow(),
+      assistantRow({ welcome_owed: false }),
+      row({ name: 'oncall', slug: 'oncall', has_dm_message: true, last_chat_ts: 300 }),
+    ])
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-oncall')
+    expect(api.memberThread).not.toHaveBeenCalledWith('mate')
+  })
+
+  it('a roster that cannot say whether Mate was seen uses the ordinary landing', async () => {
+    await renderPage([
+      defaultRow(),
+      assistantRow({ welcome_claimed: undefined }),
+      row({ name: 'oncall', slug: 'oncall', has_dm_message: true, last_chat_ts: 300 }),
+    ])
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-oncall')
+    expect(api.memberThread).not.toHaveBeenCalledWith('mate')
   })
 
   it('once Mate has a conversation, a returning user keeps the last chat', async () => {
