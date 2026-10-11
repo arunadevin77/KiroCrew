@@ -186,9 +186,9 @@ def _race(fn, args_list):
 
 def test_same_branch_race_still_leaves_one_worktree(repo):
     results = _race(wt._create_worktree_sync, [(str(repo), "feat/same")] * 8)
-    statuses = sorted(s for _b, s in results)
-    assert statuses.count(200) == 1, statuses
-    winner = next(b for b, s in results if s == 200)
+    created = [b for b, s in results if s == 200 and not b.get("reused")]
+    assert len(created) == 1, results
+    winner = created[0]
     assert _files_in(Path(winner["path"])) == _FILES
     assert _git(repo, "worktree", "list", "--porcelain").stdout.count("worktree ") == 2
 
