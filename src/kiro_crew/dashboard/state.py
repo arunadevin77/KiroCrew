@@ -3078,6 +3078,7 @@ class _ChatSlot:
         "_lock",
         "forked_from",
         "_fork_lock",
+        "_handoff_record_lock",
         "_model_pick_lock",
         "_tab_id",
         "_channel_window_mtime",
@@ -4146,6 +4147,12 @@ class _ChatSlot:
         self._lock = asyncio.Lock()
         self.forked_from: str | None = None  # parent slot key if this is a fork
         self._fork_lock: asyncio.Lock = asyncio.Lock()  # serialises concurrent forks on this slot
+        # Serialises the handoff transcript rows for this session. Each row is written by
+        # its own detached task, so two handoffs in flight would otherwise append in
+        # whatever order the loop ran them -- and the reversal is the likely one, because
+        # a lazy window is loaded by the first row's task while the second finds it in
+        # memory. A reader takes the rows in file order, so their order is the record.
+        self._handoff_record_lock: asyncio.Lock = asyncio.Lock()
         # Serialises explicit model-pick transactions (check → mutate → live
         # switch → rollback) on this slot: picks interleaving at the set_model
         # await could otherwise roll back each other's state. Deliberately NOT

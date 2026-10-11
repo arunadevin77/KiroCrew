@@ -121,6 +121,7 @@ from kiro_crew.dashboard.state import (
     SlotOrigin,
     _normalize_slot_key,
     _safe_folder_tree,
+    append_and_surface,
     load_window_off_loop,
 )
 from kiro_crew.dashboard.stop_retry import allow_escalation
@@ -6419,6 +6420,220 @@ def _queued_work_refusal(
     )
 
 
+def _named_in_a_row(state: "DashboardState", slot_key: str) -> str:
+    """*slot_key* named for the row: ``name (key)``, or the bare key when the two agree.
+
+    :func:`name_for_person` is this module's one definition of how a person recognises a
+    session, so the name comes from it and nothing here restates it. The key rides
+    beside the name because the row is a record a reader may act on, and two sessions can
+    carry one title: the name is what is recognised, the key is what is exact. A session
+    with no title of its own, or one this gateway does not hold, is answered by its key
+    alone, which is what :func:`name_for_person` gives for it.
+
+    Read when the row is written. The key is in the row either way, so a title that
+    changes later cannot make the row point at a different session.
+    """
+    name = name_for_person(state, slot_key)
+    return slot_key if name == slot_key else f"{name} ({slot_key})"
+
+
+async def record_handoff_in_transcript(
+    state: "DashboardState",
+    *,
+    target: "_ChatSlot",
+    manager_key: str,
+    previous_manager: str,
+) -> bool:
+    """Put the handoff in the handed-over session's own transcript, FOR A READER.
+
+    A handoff is visible in the sidebar, in the crew log, on the slot and in the
+    giver's tool reply -- and in none of those places is it visible to someone reading
+    the handed-over session's conversation. That reader sees it change hands with
+    nothing in the transcript accounting for it, which is the gap this closes.
+
+    Written for the person, and deliberately NOT addressed to the agent: a ``notice``
+    row is in :data:`history_projection.DISPLAY_ONLY_ROLES`, and
+    ``history_consolidation._prompt_rows`` drops those rows from every prompt it
+    builds, so the model in this session never sees this text. Phrasing it as an
+    instruction would be an instruction nobody receives. It states what happened, in
+    the third person, which is what a display-only row can honestly be.
+
+    Nothing the agent must act on rides here, which is what makes a display-only row
+    sufficient. A worker reaches its item through its binding, and a handoff does not
+    move the binding -- the receiving conductor opens its own item for the work it
+    takes on -- so no instruction in this row would change what the worker's next
+    ``work_brief`` or ``work_report`` resolves.
+
+    Appended through :func:`append_and_surface`, the one door that both files the row
+    and renders it in an open chat window without double-delivering it. Not a new
+    mechanism: this is the same door the dropped-delivery notices use, and a
+    ``notice`` row is the role the transcript already carries for "the gateway did
+    something to this session".
+
+    Started as the LAST statement of the handoff's commit, after the publish, so a row
+    exists only for a handoff this process published: every check that can still refuse
+    runs before it. A handoff whose caller is cancelled stops while it waits for the
+    manager entry to settle, which is before the publish, so it writes no row. That entry
+    can still land, and a later start then applies it from the crew log -- a grant
+    published by the boot rebuild rather than by this verb, and one this row does not
+    cover.
+
+    *target* is the slot OBJECT the commit published the new manager on, and this
+    function never looks a slot up by key -- that is the point of taking an object. The
+    commit suspends twice before this, on the handoff index write and on the manager
+    entry, and the only check that the target is still the session it admitted runs
+    before both. So a key that resolved to the handed-over session at the gate can
+    resolve to a DIFFERENT session by the time this runs: close the target and open a
+    new one under the same key inside those awaits, and a by-key lookup here would
+    append a handoff row to a conversation whose manager never changed. Nothing removes
+    that row afterwards, and a person reading that transcript would see a handoff that
+    never happened. The object the commit published on is this process's identity for
+    the session that was actually handed over, which is why it is what gets passed and
+    what gets written to.
+
+    :func:`_target_replaced` is then the same read-back the session verbs run: it answers
+    whether the slot registered under this key is still this object. It is reused rather
+    than restated so the identity rule has one definition -- and it already covers the
+    plain close, because a key with nothing under it holds this object just as little
+    as a key holding a replacement does. It is read TWICE, once before the window load
+    below and once after it, because that load suspends: a check made only before it
+    would be a verdict formed before the window the append writes into was even read.
+
+    ORDERED against this session's other rows by the slot's own
+    ``_handoff_record_lock``, the same shape as ``_fork_lock``. Each row is written by its
+    own detached task, so two handoffs of one session have two tasks in flight and the
+    loop decides which appends first -- and the reversal is the likely one, because a lazy
+    window is loaded by the FIRST row's task while the second finds it already in memory.
+    A reader takes rows in file order, so a reversed pair states that the session is under
+    a manager it has already left, before the move that put it there.
+
+    ASYNC for the window. A tab the user has not opened since the last start carries a
+    lazy transcript window, and the first read of ``messages`` pulls it off disk --
+    synchronously, inside :func:`append_and_surface`. On the gateway loop that is a
+    large file read with no yield, which stalls every other chat and the heartbeat with
+    it, and nothing earlier in the handoff loads that window -- its durable writes all go
+    to the crew log. :func:`load_window_off_loop` is the existing door for
+    exactly this, so the load is awaited through it first and the append then finds the
+    window already in memory. Awaited INSIDE the best-effort handler, because a window
+    that cannot be read is the same kind of failure as an append that raised: it costs
+    the row, and it must not cost the handoff.
+
+    Returns whether a row was appended. ``False`` is not a failure and does not undo
+    anything: the transfer is already committed, the reach has already moved, and this
+    is the record of it. Two cases answer ``False`` -- some other object, or none, is
+    registered under this one's key (it closed between the commit and here, or a new
+    session took the key, and in neither case is there a transcript this row belongs
+    in), and an append that raised, which is logged. Best-effort for the reason the
+    delivery notices are: withholding the row must never be able to withhold the
+    handoff.
+
+    Run through :func:`_start_handoff_record`, which is what keeps the load outside the
+    manager-mutation lock and off the caller's answer.
+    """
+    target_key = str(getattr(target, "key", "") or "")
+    if _target_replaced(state, target_key, target):
+        # Logged at debug, and distinctly from the failure below, because the two
+        # answers this function gives ``False`` for are different facts: there is no
+        # transcript to write to, or the write broke. Neither withholds anything -- the
+        # handoff is already durable -- but a reader of the log must be able to tell
+        # "the session left" from "the row failed".
+        logger.debug(
+            "session_handoff: %s is no longer the session under its key, so its handoff "
+            "to %s is not recorded in a transcript",
+            target_key,
+            manager_key,
+        )
+        return False
+    try:
+        # SERIALISED per session, over the load and the append together, so two rows for
+        # one transcript land in the order their handoffs committed. Taken before the
+        # load because the load is where they would otherwise overtake each other: the
+        # first row's task pulls the lazy window off disk while the second finds it in
+        # memory. Held against nothing but other rows for this same session.
+        async with target._handoff_record_lock:
+            # Off the loop BEFORE the append, so the append's own read of ``messages``
+            # finds the window in memory instead of pulling a lazy one off disk inline.
+            await load_window_off_loop(target)
+            if _target_replaced(state, target_key, target):
+                # Re-read AFTER the load's suspension: a key that still held this object
+                # when this function started can hold a replacement by now, and the row
+                # must not be written on the strength of the earlier read.
+                logger.debug(
+                    "session_handoff: %s left its key while its transcript window was "
+                    "being read, so its handoff to %s is not recorded",
+                    target_key,
+                    manager_key,
+                )
+                return False
+            # The clause naming the previous manager is dropped when there is no previous
+            # manager to name. The commit reads it through :func:`require_manager_of`,
+            # which answers ``""`` for a slot with neither ``_manager`` nor ``_created_by``
+            # -- a tab the owner opened -- and the owner's own tab may hand exactly such a
+            # tab over, so the empty value reaches here and "in place of ." is not a
+            # sentence a reader can use.
+            manager_named = _named_in_a_row(state, manager_key)
+            previous_named = _named_in_a_row(state, previous_manager) if previous_manager else ""
+            handed = f"This session was handed over: {manager_named} manages it now"
+            append_and_surface(
+                state,
+                target,
+                "notice",
+                f"{handed}, in place of {previous_named}." if previous_named else f"{handed}.",
+                "msg msg-info",
+            )
+    except Exception:  # pragma: no cover - the record must not undo a committed handoff
+        logger.exception(
+            "Failed to record %s's handoff to %s in its transcript", target_key, manager_key
+        )
+        return False
+    return True
+
+
+def _start_handoff_record(
+    state: "DashboardState",
+    *,
+    target: "_ChatSlot",
+    manager_key: str,
+    previous_manager: str,
+) -> None:
+    """Start :func:`record_handoff_in_transcript` as its own task.
+
+    The row is display-only and best-effort, and it is written from a commit that runs
+    inside the manager-mutation lock, which every handoff on this gateway takes. Awaiting
+    it there would put its window load -- which can be a large file read for a tab nobody
+    has opened since the last start -- inside that lock: every other handoff would wait
+    out a display-only row, and this one's caller would wait for it too. So the commit
+    starts this and goes on.
+
+    Held in ``state._background_tasks`` and not merely spawned, which is the dashboard's
+    existing door for work that outlives the frame that started it -- the fork title
+    push, the card workers and the chat handlers' own tasks all live there. The starting
+    frame returns at once, so without that reference the loop could collect the task with
+    the row half-written. The done callback discards it; the recorder reports its own
+    failures and answers ``False``, so there is no outcome left for a reader of the task
+    to take.
+
+    The ORDER of two rows for one session is the slot's own
+    ``_handoff_record_lock``, taken by the recorder rather than here, for the reason
+    ``_fork_lock`` serialises concurrent forks on a slot: two detached tasks writing one
+    transcript would otherwise append in whatever order the loop ran them, and the
+    reversal is the likely one -- a lazy window is loaded by the FIRST row's task while
+    the second finds it in memory, so the slow load belongs to the row that has to come
+    first. A reader takes rows in file order, so a reversed pair states that the session
+    is under a manager it has already left.
+    """
+    task = asyncio.ensure_future(
+        record_handoff_in_transcript(
+            state,
+            target=target,
+            manager_key=manager_key,
+            previous_manager=previous_manager,
+        )
+    )
+    state._background_tasks.add(task)
+    task.add_done_callback(state._background_tasks.discard)
+
+
 async def handoff_target(
     state: "DashboardState",
     *,
@@ -6997,6 +7212,23 @@ async def handoff_target(
         # reading for this slot) and then the ENTRY (who holds it). Both land in the
         # fenced crew log; nothing about who manages a session is written to the slot's
         # own line, where the party a handoff revokes could rewrite it.
+        #
+        # The transcript row is STARTED here, as the commit's last statement, and not
+        # awaited. Last, so a row exists only for a handoff that published: every check
+        # that can still refuse runs above this line. Not awaited, because this commit
+        # runs inside the manager-mutation lock, and the row's window load can be a large
+        # file read -- an await here would hold every other handoff on this gateway
+        # behind a display-only row. It takes *slot*, the object the publish happened
+        # on, and it raises nothing.
+        _start_handoff_record(
+            state,
+            target=slot,
+            manager_key=receiver_key,
+            # The TARGET's own previous manager, the same value the reply carries and
+            # for the same reason: naming the caller would put a session that never
+            # managed this one into its transcript.
+            previous_manager=previous_manager,
+        )
 
     # Warmed off-loop with NOTHING suspending before the gate: ``authorize_target`` is
     # synchronous and its ``session_control_enabled()`` re-reads and validates the config
