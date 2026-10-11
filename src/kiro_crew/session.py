@@ -1268,6 +1268,12 @@ def _unlink_session_queue(session: "_Session") -> None:
         unlink_queued_temp_paths(kwargs)
 
 
+def process_shutdown_requested(sessions: SessionManager | None) -> bool:
+    if shutdown_event.is_set():
+        return True
+    return sessions is not None and sessions.final_drain_started is True
+
+
 class SessionManager:
     """Thread-keyed LLM provider pool with warm session pre-spawning."""
 

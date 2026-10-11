@@ -602,6 +602,7 @@ from kiro_crew.security.exfil import MAX_BLOCKED_LINKS_PER_MESSAGE
 from kiro_crew.security.readonly_bash import is_read_only_bash, unsafe_bash_reason
 from kiro_crew.security.redaction import redact_credentials_with_records
 from kiro_crew.sel import SecurityEvent, sel, sel_is_warm
+from kiro_crew.session import process_shutdown_requested  # noqa: F401
 from kiro_crew.session import (
     SessionBusyError,
     SessionClosingError,

@@ -2214,7 +2214,7 @@ async def start_dashboard(
     # handshake subprocess per configured MCP server, so under cautious boot it
     # gets its own launch window instead of landing on top of the app backends.
     await cautious_boot.pause_before("MCP server probe")
-    asyncio.create_task(handlers._bg_mcp_probe())
+    asyncio.create_task(handlers._bg_mcp_probe(state.sessions))
 
     # Refresh config.json's meta stamp when an upgrade left it naming the
     # previous build. Post-bind and fire-and-forget (never awaited on

@@ -95,6 +95,7 @@ class _State:
 
     def __init__(self) -> None:
         self._background_tasks: set[asyncio.Task] = set()
+        self.sessions = SimpleNamespace(final_drain_started=False)
 
 
 def _effective_stubs(section: dict[str, Any]) -> list[str]:

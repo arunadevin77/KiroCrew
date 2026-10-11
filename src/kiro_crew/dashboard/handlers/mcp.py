@@ -11,7 +11,7 @@ from collections.abc import Collection, Mapping
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
@@ -78,12 +78,16 @@ from kiro_crew.mcp_utils import (
 from kiro_crew.platform.governance import may_skip_gate_now
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 from kiro_crew.sel import sel
+from kiro_crew.session import process_shutdown_requested
 from kiro_crew.user_json import (
     has_json_comments,
     loads_mcp_config,
     loads_user_json,
     loads_user_jsonc,
 )
+
+if TYPE_CHECKING:
+    from kiro_crew.session import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -760,7 +764,7 @@ def _arm_reprobe(request: web.Request) -> None:
     actually prevents a second concurrent probe.
     """
     state: DashboardState = request.app["state"]
-    task = asyncio.create_task(_bg_mcp_probe())
+    task = asyncio.create_task(_bg_mcp_probe(state.sessions))
     state._background_tasks.add(task)
     task.add_done_callback(state._background_tasks.discard)
 
@@ -1070,7 +1074,7 @@ def _invalid_flag_reason(entry: Any) -> str | None:
     return None if isinstance(flag, bool) else "invalid"
 
 
-async def _bg_mcp_probe() -> None:
+async def _bg_mcp_probe(sessions: SessionManager | None) -> None:
     """Populate the MCP probe cache — SINGLE-FLIGHT.
 
     Two independent boot paths reach this: ``dashboard/server.py`` fires it as a
@@ -1099,12 +1103,12 @@ async def _bg_mcp_probe() -> None:
         await asyncio.shield(inflight)
         return
 
-    task = asyncio.ensure_future(_run_mcp_probe())
+    task = asyncio.ensure_future(_run_mcp_probe(sessions))
     _mcp_probe_task = task
     await asyncio.shield(task)
 
 
-async def _run_mcp_probe() -> None:
+async def _run_mcp_probe(sessions: SessionManager | None) -> None:
     """The probe fan-out itself. Reached only through `_bg_mcp_probe`."""
     global _mcp_probe_ts, _mcp_probe_in_progress
     _mcp_probe_in_progress = True
@@ -1128,6 +1132,7 @@ async def _run_mcp_probe() -> None:
         # unbounded gather here floods the loop's default executor during a
         # network blip and can starve the heartbeat into a watchdog _exit.
         probed = await probe_all()
+        overlapped_shutdown = process_shutdown_requested(sessions)
         result: list[dict[str, Any]] = []
         for s in probed:
             d = s.to_dict()
@@ -1137,7 +1142,8 @@ async def _run_mcp_probe() -> None:
                 d["disabledTools"] = spec["disabledTools"]
             result.append(d)
         if result:
-            await asyncio.to_thread(_record_probe_verdicts, result)
+            if not overlapped_shutdown:
+                await asyncio.to_thread(_record_probe_verdicts, result)
             await asyncio.to_thread(_annotate_quarantine, result)
         _mcp_probe_cache[:] = result
         _mcp_probe_ts = time.time()
@@ -1390,6 +1396,7 @@ async def api_mcp_probe(request: web.Request) -> web.Response:
     from kiro_crew.mcp_discovery import probe_all  # noqa: F811
 
     servers = await probe_all()
+    overlapped_shutdown = process_shutdown_requested(request.app["state"].sessions)
     # The operator just asked us to spawn every configured server, which is the
     # only moment the shareability pre-flight is affordable. Evaluate the ones
     # whose execution identity has no cached measurement; failures here must not
@@ -1415,7 +1422,8 @@ async def api_mcp_probe(request: web.Request) -> web.Response:
             d["disabledTools"] = spec["disabledTools"]
         result.append(d)
     if result:
-        await asyncio.to_thread(_record_probe_verdicts, result)
+        if not overlapped_shutdown:
+            await asyncio.to_thread(_record_probe_verdicts, result)
         await asyncio.to_thread(_annotate_quarantine, result)
         await asyncio.to_thread(_annotate_owner_sign_in, result)
     _mcp_probe_cache[:] = result
