@@ -11833,6 +11833,7 @@
       "more_pull_request_or_issue_in_this_session_other": "此会话中还有 {{count}} 个拉取请求或 issue",
       "move_folder_to": "将文件夹移到",
       "needs_approval": "需要审批",
+      "running_marker": "运行中",
       "switch_to_conductor_view_nested_by_creator": "切换到指挥视图（会话嵌套在开启它们的会话下）",
       "collapse_sessions_this_one_opened": "收起此会话开启的会话",
       "expand_sessions_this_one_opened": "展开此会话开启的会话",

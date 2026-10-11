@@ -11833,6 +11833,7 @@
       "more_pull_request_or_issue_in_this_session_other": "이 세션에 풀 리퀘스트 또는 이슈 {{count}}개가 더 있습니다",
       "move_folder_to": "폴더 이동 위치",
       "needs_approval": "승인 필요",
+      "running_marker": "실행 중",
       "switch_to_conductor_view_nested_by_creator": "컨덕터 보기로 전환 (세션을 연 세션 아래에 중첩)",
       "collapse_sessions_this_one_opened": "이 세션이 연 세션 접기",
       "expand_sessions_this_one_opened": "이 세션이 연 세션 펼치기",

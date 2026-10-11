@@ -12175,6 +12175,7 @@
       "more_pull_request_or_issue_in_this_session_other": "{{count}} pull requests ou issues supplémentaires dans cette session",
       "move_folder_to": "Déplacer le dossier vers",
       "needs_approval": "Approbation requise",
+      "running_marker": "En cours",
       "switch_to_conductor_view_nested_by_creator": "Passer à la vue chef d'orchestre (sessions imbriquées sous celle qui les a ouvertes)",
       "collapse_sessions_this_one_opened": "Replier les sessions ouvertes par celle-ci",
       "expand_sessions_this_one_opened": "Déplier les sessions ouvertes par celle-ci",

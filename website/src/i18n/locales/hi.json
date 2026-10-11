@@ -12004,6 +12004,7 @@
       "more_pull_request_or_issue_in_this_session_other": "इस सत्र में {{count}} और पुल रिक्वेस्ट या इश्यू",
       "move_folder_to": "फ़ोल्डर यहाँ ले जाएँ",
       "needs_approval": "स्वीकृति आवश्यक",
+      "running_marker": "चल रहा है",
       "switch_to_conductor_view_nested_by_creator": "कंडक्टर व्यू पर जाएँ (सत्र उन्हें खोलने वाले सत्र के अंदर नेस्टेड)",
       "collapse_sessions_this_one_opened": "इस सत्र द्वारा खोले गए सत्र संक्षिप्त करें",
       "expand_sessions_this_one_opened": "इस सत्र द्वारा खोले गए सत्र विस्तृत करें",

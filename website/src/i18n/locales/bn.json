@@ -12004,6 +12004,7 @@
       "more_pull_request_or_issue_in_this_session_other": "এই সেশনে আরও {{count}}টি পুল রিকোয়েস্ট বা ইস্যু",
       "move_folder_to": "ফোল্ডার সরান",
       "needs_approval": "অনুমোদন প্রয়োজন",
+      "running_marker": "চলছে",
       "switch_to_conductor_view_nested_by_creator": "কন্ডাক্টর ভিউতে যাও (যে সেশন খুলেছে তার নিচে সেশনগুলি নেস্ট করা)",
       "collapse_sessions_this_one_opened": "এই সেশন যে সেশনগুলি খুলেছে সেগুলি সংকুচিত করো",
       "expand_sessions_this_one_opened": "এই সেশন যে সেশনগুলি খুলেছে সেগুলি প্রসারিত করো",

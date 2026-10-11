@@ -11833,6 +11833,7 @@
       "open_source_link_in_side_panel": "{{url}} をサイドパネルで開く ({{modifier}} するとブラウザーで開く)",
       "move_folder_to": "フォルダーの移動先",
       "needs_approval": "承認が必要です",
+      "running_marker": "実行中",
       "switch_to_conductor_view_nested_by_creator": "コンダクター表示に切り替える（開いた元のセッションの下に入れ子表示）",
       "collapse_sessions_this_one_opened": "このセッションが開いたセッションを折りたたむ",
       "expand_sessions_this_one_opened": "このセッションが開いたセッションを展開する",

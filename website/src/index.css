@@ -3030,6 +3030,16 @@ body.mc-focus-mode.mc-focus-rail .focus-chrome-rail{
    would silence the alarm exactly for the users who asked for less motion. */
 .session-row.session-loop-stalled{background-color:var(--danger-subtle);animation:kc-loop-stalled-flash 1.6s ease-in-out infinite}
 @keyframes kc-loop-stalled-flash{0%,100%{background-color:var(--danger-subtle)}50%{background-color:transparent}}
+/* Live session dot (ChatSidebar `showLiveDot`): leads the session name while the
+   row's state resolver says the session is working. A filled accent disc, so it
+   claims none of the row chrome other states own: the background (selection,
+   stalled alarm) and the left edge (session colour bar, recency tint) stay
+   untouched. The pulse RESTS on the solid frame (0% and 100%), and reduced
+   motion turns the animation off, so the dot never freezes at its faded
+   midpoint. */
+.session-live-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:6px;vertical-align:middle;flex-shrink:0;animation:kc-session-live-pulse 1.6s ease-in-out infinite}
+@keyframes kc-session-live-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.session-live-dot{animation:none}}
 .session-row.session-colored{position:relative}
 /* Flush against the row's left edge, and inset vertically by exactly the row's
    corner radius — so the bar spans (row height - 2 * radius) and its ends stop

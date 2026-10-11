@@ -12175,6 +12175,7 @@
       "more_pull_request_or_issue_in_this_session_other": "{{count}} pull requests ou issues adicionais nesta sessão",
       "move_folder_to": "Mover pasta para",
       "needs_approval": "Precisa de aprovação",
+      "running_marker": "Em execução",
       "switch_to_conductor_view_nested_by_creator": "Mudar para a visualização de maestro (sessões aninhadas sob a que as abriu)",
       "collapse_sessions_this_one_opened": "Recolher as sessões que esta abriu",
       "expand_sessions_this_one_opened": "Expandir as sessões que esta abriu",

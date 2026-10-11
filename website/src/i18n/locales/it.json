@@ -12175,6 +12175,7 @@
       "more_pull_request_or_issue_in_this_session_other": "{{count}} altre pull request o issue in questa sessione",
       "move_folder_to": "Sposta la cartella in",
       "needs_approval": "Richiede approvazione",
+      "running_marker": "In esecuzione",
       "switch_to_conductor_view_nested_by_creator": "Passa alla vista direttore (sessioni annidate sotto quella che le ha aperte)",
       "collapse_sessions_this_one_opened": "Comprimi le sessioni aperte da questa",
       "expand_sessions_this_one_opened": "Espandi le sessioni aperte da questa",

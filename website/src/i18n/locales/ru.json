@@ -12346,6 +12346,7 @@
       "more_pull_request_or_issue_in_this_session_other": "ещё {{count}} пул-реквеста или задачи в этой сессии",
       "move_folder_to": "Переместить папку в",
       "needs_approval": "Требует подтверждения",
+      "running_marker": "Выполняется",
       "switch_to_conductor_view_nested_by_creator": "Переключиться на вид дирижёра (сеансы вложены в тот, который их открыл)",
       "collapse_sessions_this_one_opened": "Свернуть сеансы, открытые этим сеансом",
       "expand_sessions_this_one_opened": "Развернуть сеансы, открытые этим сеансом",

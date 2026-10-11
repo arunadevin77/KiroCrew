@@ -206,6 +206,11 @@ const ROW_STATUS_LINE_MUTED_CLS = `${ROW_STATUS_CLS} text-muted flex items-cente
  *  glyphs outranks another. */
 const ROW_ICON_PX = 10
 
+/** The row-state branches that mean "this session is working right now". The
+ *  title line's live dot lights only when one of these wins the row's state
+ *  resolver, so the dot and the secondary line always name the same state. */
+const LIVE_ROW_STATE_KEYS: ReadonlySet<string> = new Set(['running', 'subagents', 'snapshot_live_work'])
+
 /** Is this click the "open as a tab" modifier gesture? One predicate for every
  *  surface that offers it (session rows, the New button, the folder create
  *  entries), so the platform split cannot drift between them. The split is deliberate: Ctrl+click IS a
@@ -1267,7 +1272,7 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
     // being a ternary; here it has to be explicit.
     //
     // The tail is `last_message`, and the `unread` dot rides on it (below).
-    const rowState = ([
+    const rowStateEntry = ([
       {
         // Pending approval outranks running (mirrors the Board's inferLane,
         // which returns its approval lane before the running check), so an owed
@@ -1546,7 +1551,16 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
           </div>
         ),
       },
-    ] as const).find(entry => entry.when)?.build() ?? null
+    ] as const).find(entry => entry.when)
+    const rowState = rowStateEntry?.build() ?? null
+    // The title-line live dot reads the WINNING branch of the resolver above, so
+    // it can never disagree with the secondary line: it lights exactly when that
+    // line says the session is working (a turn, started sub-agents, or reconnect
+    // live work). A branch that outranks those wins the line and leaves the title
+    // bare: an owed approval or answer, a loop, a monitor wake, a workflow run or
+    // an interrupted turn each carry their own stronger cue. A queued-only row
+    // has no dot either, because its own branch says nothing has started.
+    const showLiveDot = !!rowStateEntry && LIVE_ROW_STATE_KEYS.has(rowStateEntry.key)
 
     // `unread` sits LAST, so it lights only when nothing else claims the slot.
     // That is stricter than the dot it replaces, which coexisted with the
@@ -2143,6 +2157,13 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
                 <textarea ref={renameInputRef} rows={1} className={`w-full bg-bg-elevated border border-accent rounded px-1 py-0 ${ROW_TITLE_CLS} text-text-strong outline-hidden select-text resize-none block overflow-hidden focus-ring`} value={renameValue} onChange={e => onRenameChange(e.target.value)} {...ime.bindEnter<HTMLTextAreaElement>({ onEnter: () => { (document.activeElement as HTMLTextAreaElement)?.blur() }, onEscape: onRenameCancel, onBlur: () => onRenameCommit(s.key, renameValue) })} onMouseDown={e => e.stopPropagation()} />
               ) : (
                 <>
+                  {/* The live dot leads the name, where the eye lands when
+                      scanning a long list. It carries the row's working state
+                      on its own (the status line below may be truncated or
+                      read separately), so it keeps a real accessible name. */}
+                  {showLiveDot && (
+                    <span className="session-live-dot" role="img" aria-label={i18nT('pages.chatSidebar.running_marker')} title={i18nT('pages.chatSidebar.running_marker')} data-testid="session-live-dot" />
+                  )}
                   {/* A menu-started Regenerate title closes its menu at once, so
                       the row itself says the model call is running. */}
                   {titleGenerating && (

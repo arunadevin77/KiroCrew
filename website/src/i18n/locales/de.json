@@ -12004,6 +12004,7 @@
       "more_pull_request_or_issue_in_this_session_other": "{{count}} weitere Pull Requests oder Issues in dieser Sitzung",
       "move_folder_to": "Ordner verschieben nach",
       "needs_approval": "Benötigt Genehmigung",
+      "running_marker": "Läuft",
       "switch_to_conductor_view_nested_by_creator": "Zur Dirigentenansicht wechseln (Sitzungen unter der Sitzung verschachtelt, die sie geöffnet hat)",
       "collapse_sessions_this_one_opened": "Von dieser Sitzung geöffnete Sitzungen einklappen",
       "expand_sessions_this_one_opened": "Von dieser Sitzung geöffnete Sitzungen ausklappen",
