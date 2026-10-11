@@ -22,6 +22,7 @@ import subprocess
 from typing import Any, Optional
 
 from kiro_crew.deploy.engine import aws_spawn_env, resolve_aws_bin
+from kiro_crew.platform_compat import IS_POSIX
 from kiro_crew.sandbox import cgroup_scope_argv, popen_limited, wrap_argv
 
 logger = logging.getLogger(__name__)
@@ -193,6 +194,41 @@ def _build_argv(args: list[str], profile: str, region: str) -> list[str]:
     return cmd
 
 
+# Bound on the drain after a timed-out CLI is killed. ``proc.kill()`` stops only the
+# CLI, and a process it started that inherited the piped stdout/stderr keeps their
+# write ends open, so a drain with no bound lasts until that process exits.
+_POST_KILL_DRAIN_SECS = 5
+
+
+def _drain_killed_call(proc: "subprocess.Popen[str]") -> str:
+    """Collect a killed CLI's stdout, waiting at most :data:`_POST_KILL_DRAIN_SECS`.
+
+    Returns "" when the bound expires. A process the CLI started still holds the
+    pipes then, and it is not signalled: it runs until it exits. Reaching it would
+    need the CLI in a group of its own, and neither form is safe here. A new session
+    has no controlling terminal, so a prompt on ``/dev/tty`` cannot open it. A new
+    group in the terminal's session is a background group, which the terminal stops
+    when it reads (``SIGTTIN``), so the prompt would wait out the timeout instead.
+
+    On POSIX our read ends are closed when the bound expires, so the descriptors do
+    not stay open for that process. On Windows ``communicate`` leaves a reader thread
+    on each pipe after a timeout, and each closes its pipe when its read ends; a pipe
+    another thread is reading is not closed from here.
+    """
+    try:
+        out, _ = proc.communicate(timeout=_POST_KILL_DRAIN_SECS)
+    except subprocess.TimeoutExpired:
+        if IS_POSIX:
+            for pipe in (proc.stdout, proc.stderr):
+                if pipe is not None:
+                    try:
+                        pipe.close()
+                    except OSError:
+                        pass
+        return ""
+    return out or ""
+
+
 def run_aws(
     args: list[str],
     profile: str = "",
@@ -263,8 +299,8 @@ def run_aws(
             out, err = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             proc.kill()
-            out, err = proc.communicate()
-            return 124, out or "", f"aws call timed out after {timeout}s: {' '.join(args[:2])}"
+            out = _drain_killed_call(proc)
+            return 124, out, f"aws call timed out after {timeout}s: {' '.join(args[:2])}"
         return proc.returncode or 0, out or "", err or ""
     except KeyboardInterrupt:
         if proc is not None and proc.poll() is None:
