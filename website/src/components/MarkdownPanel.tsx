@@ -20,7 +20,7 @@ import { useInstalledApps } from '../hooks/panelTabRegistry'
 import { appNavTarget } from '../appNav'
 import SelectionToolbar, { type SelectionAction, type SelectionComposer } from './SelectionToolbar'
 import MarkdownOutlineRail from './MarkdownToc'
-import { useFileWatch } from '../hooks/useFileWatch'
+import { useVisibleTabCatchUp, settleCatchUp, type CatchUpLatch } from '../hooks/useVisibleTabCatchUp'
 import { useBranding } from '../hooks/useBranding'
 import { usePersistedBool } from '../hooks/usePersistedBool'
 import { useDiffSplit } from '../hooks/useDiffSplit'
@@ -1759,7 +1759,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
    *  (`api_file_watch` emits only when content differs from its initial empty
    *  string). One GET per mount of the visible tab buys a buffer the disk
    *  vouches for. */
-  const catchUpRef = useRef<'due' | 'reading' | 'done'>('due')
+  const catchUpRef = useRef<CatchUpLatch>('due')
 
   /** Adopt the disk truth: THE catch-up procedure, shared by the activation
    *  effect, the watch and every clean moment that owes a read.
@@ -1823,7 +1823,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
     else if (disk.kind === 'ok') setMissingOnDisk(false)
     if (dirtyRef.current) { catchUpRef.current = 'due'; return disk.kind }
     if (disk.kind === 'failed') {
-      if (catchUpRef.current === 'reading') catchUpRef.current = 'done'
+      settleCatchUp(catchUpRef)
       // The retry reports its first failure and is quiet after: the banner
       // already stands, and a notice per tick would only repeat it.
       if (!opts?.quietFailure) reportActionError(i18nT('components.markdownPanel.cannot_read_file'))
@@ -1832,9 +1832,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
     // The disk says what the tab already shows -- the common outcome of a
     // mount or a return to an unchanged file: current, nothing to restamp.
     if (disk.kind === 'ok' && (disk.text !== contentRef.current || disk.binary !== binaryRef.current || disk.partial !== partialCopyRef.current)) applyDiskRead(disk)
-    // Not unconditionally `done`: a landing after the tab was hidden again
-    // finds the latch back at `due`, and the next return must read afresh.
-    if (catchUpRef.current === 'reading') catchUpRef.current = 'done'
+    settleCatchUp(catchUpRef)
     return disk.kind
   }, [applyDiskRead, evictFileRead, readFromDisk, reportActionError])
   const adoptDiskRef = useRef(adoptDisk)
@@ -1852,8 +1850,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
   // file was gone would never see it recreated. The retry below covers that
   // stretch, and the read that finds the file again arms the stream afresh.
   const watchArmable = !!liveWatch && !editing && !dirty && !missingOnDisk
-  useFileWatch(
-    watchArmable && active ? filePath : null,
+  const onWatchFrame = useCallback(
     // The event's own `content` is never APPLIED. `/api/file-watch` decodes
     // with `errors="replace"` and carries no binary verdict, so a file replaced
     // on disk by binary bytes would push U+FFFD into the buffer AND leave the
@@ -1879,10 +1876,11 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
     // text is nothing to adopt. One GET per activation of the one file on
     // screen, on a subscription only armed while the panel is visible, clean
     // and not editing.
-    useCallback((frameText: string) => {
+    (frameText: string) => {
       if (diskReadsInFlightRef.current === 0 && !binaryRef.current && frameText === contentRef.current) return
       void adoptDisk()
-    }, [adoptDisk]),
+    },
+    [adoptDisk],
   )
 
   // The catch-up for a parked watch: a tab that was hidden re-reads its file
@@ -1910,15 +1908,16 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
   // anything: a saturated connection budget is exactly what delays that
   // stream, and the tab must be current whether or not its stream connects.
   const catchUpArmable = !!liveWatch && !dirty
-  const wasEditingRef = useRef(editing)
-  useEffect(() => {
-    if (wasEditingRef.current && !editing) catchUpRef.current = 'due'
-    wasEditingRef.current = editing
-    if (!active) { catchUpRef.current = 'due'; return }
-    if (catchUpRef.current !== 'due' || !catchUpArmable) return
-    catchUpRef.current = 'reading'
-    void adoptDisk()
-  }, [active, editing, catchUpArmable, adoptDisk])
+  useVisibleTabCatchUp({
+    path: filePath,
+    active,
+    watchArmable,
+    catchUpArmable,
+    editing,
+    latch: catchUpRef,
+    catchUp: adoptDisk,
+    onFrame: onWatchFrame,
+  })
 
   // While the file is gone, the stream cannot stand in for the disk (see the
   // watch above), so the visible tab asks the disk itself, on the cadence the

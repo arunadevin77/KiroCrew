@@ -168,8 +168,10 @@ export default memo(function ArtifactPanel({ slug, kind, content, onClose, activ
   const artifact = detailQuery.data
   // File-backed artifacts: an agent rewriting the backing file never passes
   // through a handler, so the artifact_update WS event does not fire for it.
-  // Watch the live pointer and refetch through the shared cache instead.
-  useArtifactLiveReload(slug, artifact?.source_path)
+  // Watch the live pointer while this tab is the visible one and refetch
+  // through the shared cache; a hidden tab holds no stream and catches up
+  // when it is shown again.
+  useArtifactLiveReload(slug, artifact?.source_path, visible)
   const effectiveKind = artifact?.kind ?? kind
   const effectiveContent = artifact?.content ?? content
   const name = artifact?.name ?? slug

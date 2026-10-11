@@ -1643,12 +1643,19 @@ surface kept rendering pre-edit content. The frontend closes that gap with
 - Inert for artifacts with no `source_path`, and inert after an SSE failure
   (`useFileWatch` closes the stream rather than reconnecting), which degrades to
   the previous manual-reload behavior.
+- **Side-panel tabs watch only while visible.** `SidePanel` keeps every tab
+  mounted, so `ArtifactPanel` passes its `active` flag: a hidden artifact tab
+  holds no stream, and becoming the visible tab refetches it once, under the
+  same edit-buffer guard, without waiting for the re-armed stream. The
+  visibility gating and the catch-up latch are the shared
+  `useVisibleTabCatchUp` hook that side-panel file tabs use too; the detail
+  page is always on screen and leaves `active` at `true`.
 
 Known limits, both inherited from the endpoint: `api_file_watch` only emits when
 the redacted **first 512,000 bytes** change, so a rewrite touching only bytes
-past that cap produces no signal and no reload; and each mounted surface (every
+past that cap produces no signal and no reload; and each visible surface (every
 popout is its own window) opens its own EventSource against an HTTP/1.1 gateway,
-so nothing is watched unless the artifact is actually file-backed.
+so nothing is watched unless the artifact is actually file-backed and on screen.
 
 **Panel (frontend)** — the comments sidebar and the chat panel are mutually
 exclusive flex siblings of the artifact body, icon-toggled from the toolbar
