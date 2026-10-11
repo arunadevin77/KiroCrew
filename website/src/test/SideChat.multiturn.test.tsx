@@ -107,7 +107,7 @@ describe('Side multi-turn conversation', () => {
 
     it('says so instead of claiming lookups work when the answer fails to load', async () => {
       const { api } = await import('../api/client')
-      ;(api.sideTools as unknown as Mock).mockRejectedValue(new Error('config unavailable'))
+      ;(api.sideTools as unknown as Mock).mockRejectedValue(new Error('gateway unavailable'))
       const store = createTestStore({
         chat: {
           activeSlot: SLOT,
@@ -140,8 +140,8 @@ describe('Side multi-turn conversation', () => {
         } as unknown as RootState['chat'],
       })
       renderWithProviders(<SideChat slot={SLOT} />, { store })
-      expect(await screen.findByTestId('side-chat-config-error')).toHaveTextContent(
-        "Couldn't load the agent configuration, so Side Chat runs without tools. Use the main chat to take action.",
+      expect(await screen.findByTestId('side-chat-tools-unknown')).toHaveTextContent(
+        "Couldn't check which tools this agent backend allows here. Use the main chat to take action.",
       )
       expect(screen.queryByRole('note')).toBeNull()
     })

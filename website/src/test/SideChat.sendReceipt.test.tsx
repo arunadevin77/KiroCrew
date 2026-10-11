@@ -40,13 +40,11 @@ vi.mock('../api/client', () => ({
     sideClose: vi.fn().mockResolvedValue({ ok: true, was_open: true }),
     sideQueueCancel: vi.fn().mockResolvedValue({ ok: true, content: '', depth: 0 }),
     sideQueueEdit: vi.fn().mockResolvedValue({ ok: true, depth: 1 }),
-    // The footer's read-only-tools note (#9609) reads the loaded config; a
-    // rejected load renders an ErrorNotice (role=alert) that would collide
-    // with the send-receipt alerts these tests assert on.
-    kirocrewConfig: vi.fn().mockResolvedValue({ agent: { acp_backend: '' } }),
-    // Same reason for the backend capability card: a missing mock renders
-    // the side-chat-tools-unknown alert beside the receipt alert.
-    acpBackends: vi.fn().mockResolvedValue({ backends: [] }),
+    // The footer's read-only-tools note (#9609) reads the gateway's side-tools
+    // answer; a missing mock renders the side-chat-tools-unknown ErrorNotice
+    // (role=alert) that would collide with the send-receipt alerts these tests
+    // assert on.
+    sideTools: vi.fn().mockResolvedValue({ read_only_tools: true, claude_adapter_outdated: false, config_unavailable: false }),
   },
   SEARCH_MIN_CHARS: 2,
 }))
