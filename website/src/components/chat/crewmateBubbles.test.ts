@@ -44,10 +44,9 @@ describe('filterCrewmateChat', () => {
     ])
   })
 
-  it('keeps rows that need or inform the user: errors, notices, files, approvals, the live stream', () => {
+  it('keeps rows that need or inform the user: errors, files, approvals, the live stream', () => {
     const rows: ChatMessage[] = [
       { role: 'error', content: 'boom', cls: '', ts: at('2026-09-22T06:00:00Z') },
-      { role: 'notice', content: 'note', cls: '', ts: at('2026-09-22T06:00:01Z') },
       { role: 'file', content: '{"path":"/a.txt"}', cls: '', ts: at('2026-09-22T06:00:02Z') },
       { role: 'permission', content: 'approve?', cls: '', ts: at('2026-09-22T06:00:03Z'), meta: { approval_id: 'a1' } },
       { role: 'mcp_oauth', content: 'auth', cls: '', ts: at('2026-09-22T06:00:04Z') },
@@ -57,24 +56,27 @@ describe('filterCrewmateChat', () => {
     for (const m of rows) expect(isCrewmateChatRow(m)).toBe(true)
   })
 
-  it("drops the runner's empty-response recovery cards by their tag, not their words", () => {
-    // `chat_runner` tags its continue / give-up / post-compaction cards with
-    // `meta.kind = "empty_turn"` (chat_utils.EMPTY_TURN_NOTICE_KIND). They are
-    // machinery talking about itself; an untagged notice still draws.
-    const tagged: ChatMessage = {
+  it('drops every notice row, whatever its tag — the chat shows messages only', () => {
+    // A crewmate's chat draws the person's rows and the crewmate's speech
+    // only; a `notice` is the runtime talking about its own machinery. Both
+    // the empty-turn recovery card (tagged `meta.kind = "empty_turn"` by
+    // chat_runner) and the automation arm refusal (no `empty_turn` tag) are
+    // dropped, so this fails if the old tag-only filter returns.
+    const emptyTurn: ChatMessage = {
       role: 'notice', cls: 'msg msg-info', ts: at('2026-09-22T06:00:05Z'),
       content: 'ℹ️ The turn ended without a closing reply — continuing once from what already ran.',
       meta: { kind: 'empty_turn' },
     }
-    const untaggedSameWords: ChatMessage = { ...tagged, meta: undefined }
-    const otherNotice: ChatMessage = {
+    const armRefusal: ChatMessage = {
       role: 'notice', cls: 'msg msg-info', ts: at('2026-09-22T06:00:06Z'),
-      content: '⚠️ Automation loop NOT armed: not allowed here.', meta: { kind: 'arm_refusal' },
+      content: 'Automation update refused: a stopped loop cannot be restarted by updating it.',
+      meta: { kind: 'arm_refusal' },
     }
-    expect(isCrewmateChatRow(tagged)).toBe(false)
-    expect(isCrewmateChatRow(untaggedSameWords)).toBe(true)
-    expect(isCrewmateChatRow(otherNotice)).toBe(true)
-    expect(filterCrewmateChat([tagged, otherNotice])).toEqual([otherNotice])
+    const untaggedNotice: ChatMessage = { role: 'notice', content: 'note', cls: '', ts: at('2026-09-22T06:00:07Z') }
+    for (const m of [emptyTurn, armRefusal, untaggedNotice]) {
+      expect(isCrewmateChatRow(m)).toBe(false)
+    }
+    expect(filterCrewmateChat([emptyTurn, armRefusal, untaggedNotice])).toEqual([])
   })
 
   it('an all-machinery transcript filters to nothing (so the empty hint can show)', () => {

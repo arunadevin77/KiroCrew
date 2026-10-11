@@ -150,6 +150,7 @@ def _surface_arm_refusal(
     reason: str,
     *,
     prefix: str = ARM_REFUSAL_NOTICE_PREFIX,
+    session_key: str = "",
 ) -> None:
     """Append a ``notice`` row so a refused arm is VISIBLE where the session lives.
 
@@ -161,6 +162,17 @@ def _surface_arm_refusal(
     thread's reader, the next turn's transcript replay) is a row of its own, so
     a refusal gets one. Slot-less callers (a channel transport's TurnDriver)
     have no transcript window; the returned string is their only surface.
+
+    A crewmate's DM is the one surface where the ``notice`` row does not reach
+    its reader: that chat draws messages only (``crewmateBubbles.isCrewmateChatRow``
+    drops every ``notice``), and a ``notice`` row is not one of the roles the
+    history replay feeds back to the model either, so there a refused arm would
+    reach NEITHER the person nor the crewmate. For a member session the refusal
+    is therefore ALSO queued for the crewmate's next turn as an injected
+    message -- the same path a ``[Cron notification]`` takes -- so the crewmate
+    can stop and re-arm the loop itself. The person-facing ``notice`` row is
+    still written (it stays the surface for every non-crewmate session, and the
+    Sessions page keeps drawing it).
 
     ``prefix`` selects the wording for the class of directive that was refused
     (an arm by default, a revision for ``monitor_update``, a stop for
@@ -185,8 +197,35 @@ def _surface_arm_refusal(
         text, _ = redact_exfiltration_urls(f"{prefix}{reason}")
         text, _ = redact_credentials(text)
         append_and_surface(state, slot, "notice", text, "msg msg-info")
+        _deliver_refusal_to_crewmate(slot, session_key, text)
     except Exception:
         logger.debug("arm-refusal notice for %s could not be surfaced", kind, exc_info=True)
+
+
+def _deliver_refusal_to_crewmate(slot: Any, session_key: str, text: str) -> None:
+    """Queue the refusal for a crewmate's next turn, so the agent still sees it.
+
+    A crewmate's DM draws messages only and never replays a ``notice`` row to
+    the model, so the ``notice`` written above reaches neither its reader nor
+    the crewmate. Only there is a second surface needed: the refusal is queued
+    as an injected message (``[Automation notice] …``) so the crewmate's next
+    turn carries it and the crewmate can call ``monitor_stop`` + ``monitor_start``
+    itself. Every other session keeps the ``notice`` row as its only surface.
+
+    Best-effort, like its caller: a delivery failure is telemetry about a
+    refusal already audited and must never fail the denial. The queue append is
+    the same primitive a queued user prompt uses, so an idle crewmate picks it
+    up on its next drain rather than starting a turn from here.
+    """
+    from kiro_crew.members import is_member_session_key
+
+    key = session_key or getattr(slot, "key", "") or ""
+    if not is_member_session_key(key):
+        return
+    append = getattr(slot, "queue_append", None)
+    if not callable(append):
+        return
+    append(f"[Automation notice] {text}")
 
 
 def _surface_arm_success(state: Any, slot: Any, summary: str) -> None:
@@ -516,7 +555,7 @@ async def apply_session_directive_outcome(
             exc,
         )
         if kind in _ARMING_DIRECTIVES:
-            _surface_arm_refusal(state, slot, kind, str(exc))
+            _surface_arm_refusal(state, slot, kind, str(exc), session_key=session_key)
         elif kind in _REVISION_DIRECTIVES:
             _surface_arm_refusal(
                 state,
@@ -524,6 +563,7 @@ async def apply_session_directive_outcome(
                 kind,
                 str(exc),
                 prefix=REVISION_REFUSAL_NOTICE_PREFIX,
+                session_key=session_key,
             )
         elif kind in _STOP_DIRECTIVES:
             _surface_arm_refusal(
@@ -532,6 +572,7 @@ async def apply_session_directive_outcome(
                 kind,
                 str(exc),
                 prefix=STOP_REFUSAL_NOTICE_PREFIX,
+                session_key=session_key,
             )
         return DirectiveOutcome(str(exc))
     except Exception as exc:  # never propagate into the turn loop
