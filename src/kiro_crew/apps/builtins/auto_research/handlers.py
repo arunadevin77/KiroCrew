@@ -752,7 +752,11 @@ async def _handle_report_status(request: web.Request) -> web.Response:
     slug = row["report_artifact_slug"]
     if not slug:
         return web.json_response({"slug": None})
-    return web.json_response({"slug": publication._live_report_slug(slug, cid)})
+    # In a thread like the row read above it: the existence probe opens the
+    # artifact store, and for an artifact saved before event logs existed that
+    # read writes back a backfilled history, syncing it to the device.
+    live = await asyncio.to_thread(publication._live_report_slug, slug, cid)
+    return web.json_response({"slug": live})
 
 
 async def _handle_to_artifact(request: web.Request) -> web.Response:

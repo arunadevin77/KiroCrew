@@ -104,10 +104,13 @@ class TestDiskFullFailsClosed:
         self, store: ArtifactStore, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         art = store.create(name="Report", kind="widget", content="<p>good</p>")
-        self._fill_disk_on_write(monkeypatch)
-        with pytest.raises((ArtifactError, OSError)):
-            store.update(art.slug, content="<p>doomed</p>")
-        monkeypatch.undo()
+        # Scoped to the failing write: the read that follows has to run against
+        # a store whose writers work, and the autouse fixtures this test
+        # inherits stay patched either way.
+        with monkeypatch.context() as full_disk:
+            self._fill_disk_on_write(full_disk)
+            with pytest.raises((ArtifactError, OSError)):
+                store.update(art.slug, content="<p>doomed</p>")
         assert "good" in store.get(art.slug).content
 
     def test_no_partial_temp_file_is_left_behind(
@@ -117,10 +120,10 @@ class TestDiskFullFailsClosed:
         disk takes room the next write needs and shows up in a listing as a file
         the store does not account for."""
         art = store.create(name="Report", kind="widget", content="<p>good</p>")
-        self._fill_disk_on_write(monkeypatch)
-        with pytest.raises((ArtifactError, OSError)):
-            store.update(art.slug, content="<p>doomed</p>")
-        monkeypatch.undo()
+        with monkeypatch.context() as full_disk:
+            self._fill_disk_on_write(full_disk)
+            with pytest.raises((ArtifactError, OSError)):
+                store.update(art.slug, content="<p>doomed</p>")
         leftovers = sorted(
             str(p.relative_to(store._root)) for p in store._root.rglob("*.tmp") if p.is_file()
         )
@@ -132,12 +135,81 @@ class TestDiskFullFailsClosed:
         """The owner has to be told which it is. "your content is invalid" sends
         someone editing a page that was fine; a full disk needs space freed."""
         art = store.create(name="Report", kind="widget", content="<p>good</p>")
-        self._fill_disk_on_write(monkeypatch)
-        with pytest.raises((ArtifactError, OSError)) as caught:
-            store.update(art.slug, content="<p>doomed</p>")
-        monkeypatch.undo()
+        with monkeypatch.context() as full_disk:
+            self._fill_disk_on_write(full_disk)
+            with pytest.raises((ArtifactError, OSError)) as caught:
+                store.update(art.slug, content="<p>doomed</p>")
         said = str(caught.value).lower()
         assert "space" in said or "disk" in said, f"the refusal did not name the disk: {said!r}"
+
+
+class TestAFailedWritebackDoesNotPublish:
+    """The sync's own failure is the one that decides whether the rename runs.
+
+    A filesystem with delayed allocation does not report a full disk or a failing
+    device at ``write`` -- it reports it at ``fsync``, after the writer has
+    already handed over every byte. If that error is treated as advisory the
+    rename still runs, so the artifact's name moves to a file the device never
+    took, the call returns success, and the last good version is gone.
+
+    The one error that may be ignored says the platform has no sync for this
+    descriptor, which is not a claim about the data.
+    """
+
+    def _fsync_raises(self, monkeypatch: pytest.MonkeyPatch, code: int, text: str) -> None:
+        def refusing_fsync(fd: int) -> None:
+            raise OSError(code, text)
+
+        monkeypatch.setattr(os, "fsync", refusing_fsync)
+
+    def test_a_full_disk_reported_at_sync_keeps_the_last_version(
+        self, store: ArtifactStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        art = store.create(name="Report", kind="widget", content="<p>good</p>")
+        with monkeypatch.context() as sync_fails:
+            self._fsync_raises(sync_fails, errno.ENOSPC, "No space left on device")
+            with pytest.raises(OSError):
+                store.update(art.slug, content="<p>doomed</p>")
+        assert "good" in store.get(art.slug).content
+
+    def test_a_failing_device_reported_at_sync_keeps_the_last_version(
+        self, store: ArtifactStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """EIO is the other half: the disk has room and still did not take the
+        bytes. Both are writeback failures and neither may publish."""
+        art = store.create(name="Report", kind="widget", content="<p>good</p>")
+        with monkeypatch.context() as sync_fails:
+            self._fsync_raises(sync_fails, errno.EIO, "Input/output error")
+            with pytest.raises(OSError):
+                store.update(art.slug, content="<p>doomed</p>")
+        assert "good" in store.get(art.slug).content
+
+    def test_no_partial_temp_file_is_left_when_the_sync_fails(
+        self, store: ArtifactStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A writeback error at ``fsync`` skips the rename, so the ``.tmp`` the
+        write opened must be unlinked rather than abandoned -- a full disk is the
+        worst place to leave a stray file."""
+        art = store.create(name="Report", kind="widget", content="<p>good</p>")
+        with monkeypatch.context() as sync_fails:
+            self._fsync_raises(sync_fails, errno.ENOSPC, "No space left on device")
+            with pytest.raises(OSError):
+                store.update(art.slug, content="<p>doomed</p>")
+        leftover = [
+            str(p.relative_to(store._root)) for p in store._root.rglob("*.tmp") if p.is_file()
+        ]
+        assert not leftover, f"a .tmp was left after the sync failed: {leftover}"
+
+    def test_a_platform_without_fsync_still_publishes(
+        self, store: ArtifactStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Refusing here would make the store unusable wherever a descriptor
+        cannot be synced, and the rename's atomicity holds without it."""
+        art = store.create(name="Report", kind="widget", content="<p>old</p>")
+        with monkeypatch.context() as no_sync:
+            self._fsync_raises(no_sync, errno.EINVAL, "Invalid argument")
+            store.update(art.slug, content="<p>new</p>")
+        assert "new" in store.get(art.slug).content
 
 
 class TestAWriteNeverLandsThroughALink:

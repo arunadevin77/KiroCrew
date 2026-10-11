@@ -1520,29 +1520,35 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     # rather than stored as a raw string: an unvalidated project file outside
     # $HOME yields a pointer the store then refuses to read.
     try:
-        art = get_default_store().create(
-            name=body.get("name", ""),
-            content=(
-                promoted_content if promoted_content is not None else body.get("content", "")
-            ),
-            slug=body.get("slug"),
-            kind=body.get("kind"),
-            # Honor an explicitly-supplied source (MCP tool / import path); for
-            # UI saves that omit it, derive the ACTUAL session origin
-            # (dashboard/slack/cli/cron/subagent/...) rather than "manual".
-            source=(body.get("source") or _artifact_source_for_request(request)),
-            description=body.get("description", ""),
-            tags=body.get("tags") or [],
-            source_path=link_source_path,
-            source_root=link_source_root,
-            source_copy_only=link_copy_only,
-            folder_id=folder_id,
-            # Originating chat session for the Source column. Only a real slot
-            # key that passes the permitted grammar is stored (validated to
-            # prevent attribution spoofing / metadata poisoning); anything else
-            # collapses to "".
-            session_key=_clean_origin_session_key(body.get("origin_session_key")),
-            webapp_metadata=webapp_metadata_from_dict(body.get("webapp_metadata")),
+        # Off the loop: a create writes the record, its first version and the
+        # index, and each of those syncs its bytes to the device before it
+        # renames. On slow or busy storage that is long enough to stall chat
+        # turns and heartbeats if it runs here.
+        art = await _run_off_loop(
+            lambda: get_default_store().create(
+                name=body.get("name", ""),
+                content=(
+                    promoted_content if promoted_content is not None else body.get("content", "")
+                ),
+                slug=body.get("slug"),
+                kind=body.get("kind"),
+                # Honor an explicitly-supplied source (MCP tool / import path); for
+                # UI saves that omit it, derive the ACTUAL session origin
+                # (dashboard/slack/cli/cron/subagent/...) rather than "manual".
+                source=(body.get("source") or _artifact_source_for_request(request)),
+                description=body.get("description", ""),
+                tags=body.get("tags") or [],
+                source_path=link_source_path,
+                source_root=link_source_root,
+                source_copy_only=link_copy_only,
+                folder_id=folder_id,
+                # Originating chat session for the Source column. Only a real slot
+                # key that passes the permitted grammar is stored (validated to
+                # prevent attribution spoofing / metadata poisoning); anything else
+                # collapses to "".
+                session_key=_clean_origin_session_key(body.get("origin_session_key")),
+                webapp_metadata=webapp_metadata_from_dict(body.get("webapp_metadata")),
+            )
         )
     except ArtifactValidationError as exc:
         _audit(
@@ -2344,7 +2350,9 @@ async def api_artifact_delete(request: web.Request) -> web.Response:
 async def api_artifact_versions(request: web.Request) -> web.Response:
     slug = request.match_info.get("slug", "")
     try:
-        versions = get_default_store().list_versions(slug)
+        # Off the loop although it only reads: it takes the store's lock, and a
+        # writer holds that lock across the sync of every file it publishes.
+        versions = await _run_off_loop(lambda: get_default_store().list_versions(slug))
     except ArtifactNotFoundError as exc:
         return _err(str(exc), status=404)
     except ArtifactValidationError as exc:
@@ -2360,7 +2368,10 @@ async def api_artifact_version_detail(request: web.Request) -> web.Response:
     except ValueError:
         return _err(f"invalid version: {version_str}")
     try:
-        art = get_default_store().get(slug, version=version)
+        # A read that can write: an artifact stored before the event log existed
+        # gets its synthetic history backfilled and persisted on first read, so
+        # this reaches _write_meta and its sync.
+        art = await _run_off_loop(lambda: get_default_store().get(slug, version=version))
     except ArtifactNotFoundError as exc:
         return _err(str(exc), status=404)
     except ArtifactValidationError as exc:
@@ -2459,12 +2470,18 @@ async def api_artifact_record_event(request: web.Request) -> web.Response:
     if widget_index is not None and not isinstance(widget_index, int):
         return _err("metadata.widget_index must be an integer")
     try:
-        art, appended = get_default_store().record_impression(
-            slug,
-            by=actor,
-            session_id=session_id_hdr,
-            message_ts=message_ts,
-            widget_index=widget_index,
+        # Off the loop for the same reason as the create path: an impression
+        # appends to the event log and rewrites the record, both synced before
+        # their rename. This one fires per rendered widget, so it is the more
+        # frequent of the two.
+        art, appended = await _run_off_loop(
+            lambda: get_default_store().record_impression(
+                slug,
+                by=actor,
+                session_id=session_id_hdr,
+                message_ts=message_ts,
+                widget_index=widget_index,
+            )
         )
     except ArtifactNotFoundError as exc:
         return _err(str(exc), status=404)

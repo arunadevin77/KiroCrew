@@ -54,6 +54,7 @@ with one identity, so callers import from here.
 
 from __future__ import annotations
 
+import errno as _errno
 import hashlib
 import hmac as _hmac
 import importlib
@@ -416,6 +417,25 @@ def _owner_only_tmp_opener(path: str, flags: int) -> int:
     return fd
 
 
+# The errnos that mean "this descriptor or filesystem has no fsync", as opposed
+# to "the writeback failed". Only the first class may be ignored: a descriptor
+# that cannot be synced on a given platform must not make the store unusable
+# there. Built with ``getattr`` because the errno module only defines the name
+# the host's C library has, and the set collapses duplicates on the platforms
+# where ENOTSUP and EOPNOTSUPP share a value.
+#
+# The import is aliased private (``_errno``) like ``_sys`` and ``_hmac`` above:
+# this module's ``__all__`` is derived from what it binds, so a bare ``import
+# errno`` would publish the errno module as part of the store's facade.
+_SYNC_UNSUPPORTED_ERRNOS = frozenset(
+    code
+    for code in (
+        getattr(_errno, name, None) for name in ("EINVAL", "ENOSYS", "ENOTSUP", "EOPNOTSUPP")
+    )
+    if code is not None
+)
+
+
 def _sync_before_publish(fh: Any) -> None:
     """Flush *fh* to the device before its temp file is renamed into place.
 
@@ -426,17 +446,56 @@ def _sync_before_publish(fh: Any) -> None:
     rule out. Flushing the Python buffer and then ``fsync`` is what makes "the
     rename published real bytes" true rather than likely.
 
-    A platform that cannot sync a descriptor is not a reason to refuse the write:
-    the write is still atomic in the sense the rename gives it, and refusing here
-    would make the store unusable where ``fsync`` is unsupported. So an
-    ``OSError`` is logged and swallowed -- the durability is best-effort, the
-    atomicity is not.
+    The failure this raises on is the one that matters. A filesystem with delayed
+    allocation reports a full disk or a failing device at ``fsync``, not at
+    ``write``; treating that as advisory would let the caller's rename replace
+    the last good file with a partial one and report success, which is the exact
+    data loss the sync is here to prevent. So a writeback error propagates, the
+    caller never reaches its rename, and the previous version stays published.
+
+    An errno in :data:`_SYNC_UNSUPPORTED_ERRNOS` says the platform has no sync
+    for this descriptor rather than that the write failed, and that is logged and
+    ignored: the atomicity the rename gives still holds where the durability
+    cannot be had.
     """
     fh.flush()
     try:
         os.fsync(fh.fileno())
-    except OSError as exc:  # pragma: no cover - platform dependent
-        logger.debug("fsync before publish failed for fd %s: %s", fh.fileno(), exc)
+    except OSError as exc:
+        if exc.errno not in _SYNC_UNSUPPORTED_ERRNOS:
+            raise
+        logger.debug("fsync is unsupported for fd %s: %s", fh.fileno(), exc)
+
+
+def _write_tmp_then_publish(
+    tmp: Path,
+    resolved: Path,
+    write_body: Callable[[Any], None],
+    mode: str,
+    **open_kwargs: Any,
+) -> None:
+    """Write *tmp*, sync it to the device, then rename it onto *resolved*.
+
+    The temp file is the write's alone; nothing publishes it until the rename, so
+    a failure before the rename must not leave it behind. A writeback error
+    reported at ``fsync`` (:func:`_sync_before_publish`) is exactly such a
+    failure: on a full disk the sync raises, the rename is skipped, and the
+    half-written ``meta.json.tmp`` would otherwise sit on a disk that is already
+    out of room. Unlink it on any error before the rename, best-effort -- the
+    original error is what the caller must see, so a failure to clean up is
+    swallowed.
+    """
+    try:
+        with open(tmp, mode, opener=open_kwargs.pop("opener", None), **open_kwargs) as fh:
+            write_body(fh)
+            _sync_before_publish(fh)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    tmp.replace(resolved)
 
 
 def _prepare_store_write(resolved: Path, *, owner_only: bool) -> Callable[[str, int], int] | None:
@@ -2747,10 +2806,9 @@ class ArtifactStore:
         # left one behind), so the published file is never readable by others.
         opener = _prepare_store_write(resolved, owner_only=self._owner_only)
         tmp = resolved.with_suffix(resolved.suffix + ".tmp")
-        with open(tmp, "w", encoding="utf-8", opener=opener) as fh:
-            fh.write(text)
-            _sync_before_publish(fh)
-        tmp.replace(resolved)
+        _write_tmp_then_publish(
+            tmp, resolved, lambda fh: fh.write(text), "w", encoding="utf-8", opener=opener
+        )
 
     def _read_bytes(self, path: Path) -> bytes:
         """Binary sibling of :meth:`_read_text` (image asset reads).
@@ -2841,10 +2899,7 @@ class ArtifactStore:
         self._refuse_write_outside_root(path, resolved)
         opener = _prepare_store_write(resolved, owner_only=self._owner_only)
         tmp = resolved.with_suffix(resolved.suffix + ".tmp")
-        with open(tmp, "wb", opener=opener) as fh:
-            fh.write(data)
-            _sync_before_publish(fh)
-        tmp.replace(resolved)
+        _write_tmp_then_publish(tmp, resolved, lambda fh: fh.write(data), "wb", opener=opener)
 
     def _prune_versions(self, slug: str) -> None:
         versions_dir = self._artifact_dir(slug) / "versions"
