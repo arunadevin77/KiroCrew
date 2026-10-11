@@ -752,6 +752,13 @@ def _live_session_work_dirs(sessions: Any) -> list[str]:
     ]
 
 
+def _live_session_agents(sessions: Any) -> set[str]:
+    """The agent names every provider the session registry holds now was spawned with."""
+    if sessions is None:
+        return set()
+    return {agent for agent in map(read_effective_agent, sessions.active_providers()) if agent}
+
+
 def _sweep_predecessor_session_work_dirs(live_work_dirs: list[str]) -> int:
     """Sweep the run directories a dead predecessor of this data home left, off-loop.
 
@@ -14867,6 +14874,18 @@ async def run_gateway(
                         kiro_agents_dir(),
                         sweep_backups=cfg.agent.sweep_agents_backups,
                     )
+                    # Derived read-only side-chat specs whose base agent is gone
+                    # (the hourly wake below repeats it). No live-session names
+                    # are passed: a side session starting meanwhile publishes
+                    # its spec first, and the reap re-checks the base under the
+                    # publication lock. It parses only the files named in a
+                    # derived shape, and scans for a base only when no file of
+                    # that base's name exists.
+                    from kiro_crew.dashboard.side_readonly_spec import (
+                        reap_orphaned_readonly_specs,
+                    )
+
+                    reap_orphaned_readonly_specs()
                     # The per-spawn skill-view prune is capped, so a backlog
                     # left by earlier builds would take hundreds of spawns to
                     # clear. Drain it once here, in lock-bounded batches.
@@ -14952,6 +14971,21 @@ async def run_gateway(
                     logging.getLogger(__name__).debug(
                         "session work-dir sweep failed", exc_info=True
                     )
+                # Derived read-only side-chat specs whose base agent was removed
+                # while the gateway stayed up. A spec a live session was spawned
+                # under is skipped: its base may go, but its session stays bound
+                # to that file until it ends.
+                try:
+                    from kiro_crew.dashboard.side_readonly_spec import (
+                        reap_orphaned_readonly_specs,
+                    )
+
+                    await asyncio.to_thread(
+                        reap_orphaned_readonly_specs,
+                        _live_session_agents(getattr(orchestrator, "sessions", None)),
+                    )
+                except Exception:
+                    logging.getLogger(__name__).debug("read-only spec reap failed", exc_info=True)
 
         _AGENT_SCRATCH_SWEEP_TASK = asyncio.create_task(
             _run_agent_scratch_sweep(), name="agent-scratch-sweep"
