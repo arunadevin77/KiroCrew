@@ -3411,6 +3411,12 @@ def _build_session_config(session_data: dict) -> SessionConfig:
         ),
         eager_spawn=bool(section.get("eager_spawn")),
         archive_retention_days=_archive_retention_days(session_data),
+        # Bounds via the module handle: this module's names are a frozen facade.
+        file_changes_keep_turns=section.read(
+            "file_changes_keep_turns",
+            _safe_int,
+            _sections.FILE_CHANGES_KEEP_TURNS_MIN,
+        ),
         watchdog_rss_max_mb=section.read("watchdog_rss_max_mb", _safe_int),
         # Clamped HERE as well as in the `_SECURITY_BOUNDED_FIELDS` sweep, for the
         # reason `_safe_int` states: that sweep runs over the raw dict and skips

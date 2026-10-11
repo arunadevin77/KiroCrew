@@ -6577,6 +6577,7 @@
       "diff_unavailable_file_exceeds_snapshot_limit": "差分を表示できません：ファイルが大きすぎて比較できません（{{limit}} 文字超）。",
       "file_only": "ファイルのみ",
       "diff_unavailable_turn_snapshot_budget": "このターンの変更が大きすぎて、すべてのファイルの差分を保存できませんでした（合計 {{limit}} 文字超）。",
+      "diff_unavailable_older_turn": "このターンは古いため、差分は保存されていません。差分が保存されるのは、このチャットでファイルを変更した最近のターンだけです。",
       "turn_snapshot_budget_open_hint": "ファイル名をクリックすると開きます。",
       "omitted_files_notice_other": "このターンで変更されたさらに {{files}} 個のファイルは一覧にありません。",
       "file_other": "{{count}} 個のファイル",

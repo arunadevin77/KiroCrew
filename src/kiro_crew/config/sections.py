@@ -2237,6 +2237,17 @@ class SessionConfig:
             nullable=True,
         ),
     )
+    file_changes_keep_turns: int = field(
+        default=0,
+        metadata=_meta(
+            "File-Change Copies Kept (turns)",
+            "How many of a dashboard chat's most recent file-changing turns keep "
+            "the before and after copies their file-change card diffs. An older "
+            "turn keeps its file list, and the rows that held its copies are "
+            "written to the session archive first. 0, the default, keeps every "
+            "turn's copies.",
+        ),
+    )
     watchdog_rss_max_mb: int = field(
         default=DEFAULT_WATCHDOG_RSS_MAX_MB,
         metadata=_meta(
@@ -4125,6 +4136,9 @@ EXTRACTION_POOL_SIZE_MAX = 10
 # "every bound is shared with the write gate" claim stays true.
 EMPTY_RESPONSE_MAX_CONTINUES_MIN = 1
 EMPTY_RESPONSE_MAX_CONTINUES_MAX = 10
+# Also load-only, and a floor only: 0 keeps every turn's copies, so a negative
+# value reads as 0, and any larger count is a real choice.
+FILE_CHANGES_KEEP_TURNS_MIN = 0
 # A hand-edited ``session.idle_exempt_keys`` can be any size, and every idle sweep copies it.
 # Each listed key can also keep a whole kiro-cli process and its MCP servers running, the
 # per-entry cost ``POOL_SIZE_MAX`` bounds for the warm pool, so the count shares that ceiling.

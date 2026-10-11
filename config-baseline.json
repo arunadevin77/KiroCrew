@@ -1535,6 +1535,7 @@
         "pool_ttl_secs": 1800,
         "eager_spawn": true,
         "archive_retention_days": 30,
+        "file_changes_keep_turns": 0,
         "watchdog_rss_max_mb": 0,
         "reconcile_max_kills": 5
       }
@@ -1707,6 +1708,20 @@
       "enumValues": null,
       "defaultValue": 30,
       "nullable": true
+    },
+    {
+      "path": "session.file_changes_keep_turns",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "File-Change Copies Kept (turns)",
+      "help": "How many of a dashboard chat's most recent file-changing turns keep the before and after copies their file-change card diffs. An older turn keeps its file list, and the rows that held its copies are written to the session archive first. 0, the default, keeps every turn's copies.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": 0
     },
     {
       "path": "session.watchdog_rss_max_mb",

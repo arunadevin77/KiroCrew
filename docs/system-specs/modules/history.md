@@ -845,8 +845,21 @@ no longer destroy older turns.
 
 - **Frozen prefix**: the first `slot._disk_older_count` on-disk message lines —
   the turns OLDER than the in-memory window (set at restore/resume/rehydrate
-  from `len(disk) - window`). These bytes are read verbatim and NEVER rewritten.
-  They are cached on the slot keyed by the file's `(mtime, size)` and
+  from `len(disk) - window`). A save never changes their count or order. The
+  one change it makes to their bytes is the **file-change copy bound**
+  (`transcript_merge._file_change_prefix_bound`), applied when the prefix is
+  read from disk and never on the cached fast path or a rewrite save: a row
+  older than the chat's newest `session.file_changes_keep_turns` rows carrying
+  `meta.file_changes` (default `0`, which turns the bound off and keeps every
+  row's copies) loses each entry's `before`/`after`
+  text and keeps everything else, with `content_omitted: true` and
+  `omitted_reason: "older_turn"`, which the card renders as "File only" plus one
+  sentence. Rows in the in-memory window count towards the newest N and are
+  never changed. The changed rows' original lines are written to the session
+  archive (`reason="file-changes"`, which `read_rotated_messages` never serves
+  back) BEFORE the payload uses them; a failed archive write keeps the prefix
+  as read and the next prefix read retries. The prefix is
+  cached on the slot keyed by the file's `(mtime, size)` and
   `_disk_older_count`, together with the foreign lines that save kept, so a
   steady 5s flush is O(window), not O(file size).
 - **Live window**: all of `slot.messages` (small, bounded by the 10000-message

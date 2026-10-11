@@ -28,18 +28,34 @@ export interface FileChangeEntry {
    *  the real file. */
   content_omitted?: boolean
   turn_budget_chars?: number
+  /** Why `content_omitted` holds. `older_turn`: the chat keeps copies only for
+   *  its most recent file-changing turns, and this turn is older
+   *  (`transcript_merge.py::FILE_CHANGES_OLDER_TURN`). Absent: the turn
+   *  budget. */
+  omitted_reason?: string
 }
 
 const LEGACY_SNAPSHOT_LIMIT_CHARS = 200_000
 
-const turnBudgetSentence = (fc: FileChangeEntry) =>
-  i18nT('components.fileChangeChips.diff_unavailable_turn_snapshot_budget', {
-    limit: fmtNumber(fc.turn_budget_chars ?? LEGACY_SNAPSHOT_LIMIT_CHARS * 2),
-  })
+const OLDER_TURN = 'older_turn'
 
-/* Two reasons a row carries no diff, and they are NOT the same sentence: one
- * file outgrew the per-file cap, or the turn as a whole outgrew its budget and
- * this file's content was dropped to keep the newest changes complete. Telling
+const omittedContentSentence = (fc: FileChangeEntry) =>
+  fc.omitted_reason === OLDER_TURN
+    ? i18nT('components.fileChangeChips.diff_unavailable_older_turn')
+    : i18nT('components.fileChangeChips.diff_unavailable_turn_snapshot_budget', {
+        limit: fmtNumber(fc.turn_budget_chars ?? LEGACY_SNAPSHOT_LIMIT_CHARS * 2),
+      })
+
+/** The entry whose reason the card's one notice states. An older turn's
+ *  sentence covers every row of the card, including a row the turn budget had
+ *  already left without content, so it is preferred. */
+const noticeEntry = (fileChanges: FileChangeEntry[]) =>
+  fileChanges.find(fc => fc.omitted_reason === OLDER_TURN) ?? fileChanges.find(fc => fc.content_omitted)
+
+/* Three reasons a row carries no diff, and they are NOT the same sentence: one
+ * file outgrew the per-file cap, the turn as a whole outgrew its budget and
+ * this file's content was dropped to keep the newest changes complete, or the
+ * turn is older than the chat keeps copies for (`older_turn`). Telling
  * a small file's owner it was "too large to compare" sends them looking for a
  * size problem that is not theirs.
  *
@@ -66,7 +82,7 @@ function TruncatedNotice({ fc }: { fc: FileChangeEntry }) {
  *  badge's `title`, so hovering the tag restates the turn-budget reason the
  *  card's notice row gives once. */
 function DemotedTag({ fc }: { fc: FileChangeEntry }) {
-  return <span data-fcc-demoted-tag title={turnBudgetSentence(fc)} className="shrink-0 text-[10px] leading-none px-1.5 py-0.5 rounded-full border border-border text-muted font-medium">{i18nT('components.fileChangeChips.file_only')}</span>
+  return <span data-fcc-demoted-tag title={omittedContentSentence(fc)} className="shrink-0 text-[10px] leading-none px-1.5 py-0.5 rounded-full border border-border text-muted font-medium">{i18nT('components.fileChangeChips.file_only')}</span>
 }
 
 /** The omitted-files count as a positive integer, or 0 for an absent, zero or
@@ -106,7 +122,7 @@ const PILL_ROW_NOTICE_CLASS = 'basis-full text-muted text-[11px] italic'
 function TurnBudgetNotice({ fc, canOpen, className }: { fc: FileChangeEntry; canOpen: boolean; className: string }) {
   return (
     <div data-fcc-turn-notice className={className}>
-      {turnBudgetSentence(fc)}
+      {omittedContentSentence(fc)}
       {canOpen && <> {i18nT('components.fileChangeChips.turn_snapshot_budget_open_hint')}</>}
     </div>
   )
@@ -544,9 +560,8 @@ function ExpandedList({ fileChanges, omittedFiles, onFileOpen, artifactPaths, di
   const stats = fileChanges.map(fc => fc.truncated ? { added: 0, removed: 0 } : countLines(fc.before, fc.after))
   const hasTruncatedSnapshot = fileChanges.some(fc => fc.truncated)
   const hasCompleteDiff = fileChanges.some(fc => !fc.truncated)
-  // Every demoted entry in one turn carries the same budget, so the first one
-  // speaks for the card.
-  const demoted = fileChanges.find(fc => fc.content_omitted)
+  // The card says one reason once, for every row without content.
+  const demoted = noticeEntry(fileChanges)
   const totalAdded = stats.reduce((s, x) => s + x.added, 0)
   const totalRemoved = stats.reduce((s, x) => s + x.removed, 0)
   const overflow = n > COLLAPSED_COUNT
@@ -703,9 +718,8 @@ const FileChangeChips = memo(function FileChangeChips({ fileChanges, omittedFile
   const omitted = omittedFilesOf(omittedFiles)
   // Minimal keeps the wrapping pill row; anything else uses the grouped card.
   if (style === 'minimal') {
-    // Every demoted entry in one turn carries the same budget, so the first
-    // one speaks for the row.
-    const demoted = fileChanges.find(fc => fc.content_omitted)
+    // The pill row says one reason once, for every pill without content.
+    const demoted = noticeEntry(fileChanges)
     return (
       <div className="ft-block-reveal flex flex-wrap items-center gap-1.5 mt-2 mb-1.5">
         {fileChanges.map(fc => (
