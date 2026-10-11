@@ -44,6 +44,20 @@ code should import the Agent SDK path so the registry keeps one owner:
 | membership in `ACP_BACKENDS_KNOWN` | `AcpProvider.__init__` rejects anything outside it (H8), and every capability set is asserted a subset of it. |
 | `PROVIDER_LABEL_<NAME>` in `acp/types.py` | A closed mapping; an absent label means Kiro, so a harness without one persists as a Kiro session and has its transcript pruned for want of a Kiro session file (H11). |
 | an entry in `POLICY_ID_BY_BACKEND` | A governance rule is written by a human as an identifier. The mapping is what makes the id nameable in a deny rule **before** anything registers it — so this is required even for a dormant harness. |
+| an entry in `_MODEL_REGISTRY_NAMESPACE_BY_BACKEND` | The model-id namespace, which is also the harness's bucket in the cross-session advertised-model cache. An id with no entry falls back to `acp` and joins the kiro family, so its advertised models can replace the list the picker offers for kiro-cli. |
+
+**A fresh id and a fresh namespace.** A new harness takes an id no other
+`ACP_BACKEND_*` constant spells, and a namespace no other backend reads; the one
+deliberate share is kiro-cli and KAS on `acp`, because they serve one model
+vocabulary. A second implementation that reaches the same provider — a direct
+adapter beside a harness, say — is a new harness and takes its own id. A shipped
+id is never re-pointed at a different implementation: saved `agent.acp_backend`
+values and governance rules already name it, so re-pointing it silently runs
+something else under an existing config and changes what an existing deny rule
+denies. Python gives no error for either collapse — two constants with one value
+become one set member and one dict key — so `test/test_backend_id_uniqueness.py`
+fails CI on a duplicated id, an unmapped known id, or a shared namespace outside
+the kiro family.
 
 `acp/types.py` and the top-level shim re-export the vocabulary, so existing callers
 keep their import sites. Do not define the constants there: both are compatibility
