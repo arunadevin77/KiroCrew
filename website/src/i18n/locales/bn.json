@@ -9193,7 +9193,7 @@
       "path_copied": "পাথ কপি করা হয়েছে",
       "reveal_blocked": "এই পাথটি সুরক্ষিত এবং খোলা যাবে না।",
       "reveal_failed": "{{productName}} চালানো মেশিনে এই পাথটি খোলা যায়নি।",
-      "show_in_files_panel": "ফাইল প্যানেলে দেখাও"
+      "show_folder_in_side_panel": "সাইড প্যানেলে ফোল্ডার দেখাও"
     },
     "pendingQuestionCard": {
       "answer_failed": "আপনার উত্তর পাঠানো যায়নি। এজেন্ট এখনও অপেক্ষা করছে, তাই আবার চেষ্টা করুন।",

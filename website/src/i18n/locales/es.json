@@ -9321,7 +9321,7 @@
       "path_copied": "Ruta copiada",
       "reveal_blocked": "Esta ruta está protegida y no se puede abrir.",
       "reveal_failed": "No se pudo abrir esta ruta en el equipo donde se ejecuta {{productName}}.",
-      "show_in_files_panel": "Mostrar en el panel Archivos"
+      "show_folder_in_side_panel": "Mostrar la carpeta en el panel lateral"
     },
     "pendingQuestionCard": {
       "answer_failed": "No se pudo enviar tu respuesta. El agente sigue esperando, así que inténtalo de nuevo.",

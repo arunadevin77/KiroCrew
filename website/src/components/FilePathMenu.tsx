@@ -16,12 +16,13 @@
  * sessions do not get them, because opening Finder on a host the user is not
  * looking at is useless.
  *
- * The in-app items ("Open in side panel", "Show in Files panel") render whenever
- * the host passes the matching handler, in every deployment. They act on the
- * viewer's own screen, so they are the menu's one action that works whether or
- * not the browser shares a machine with the gateway, including an `ssh -L`
- * tunnel that `directLocal` cannot tell apart from a local browser. They need no
- * locality gate and do not change the native rows' gates.
+ * The in-app items ("Open in side panel", "Show folder in side panel") render
+ * whenever the host passes the matching handler, in every deployment, as their
+ * own group above the native rows. They act on the viewer's own screen, so they
+ * are the menu's one action that works whether or not the browser shares a
+ * machine with the gateway, including an `ssh -L` tunnel that `directLocal`
+ * cannot tell apart from a local browser. They need no locality gate and do not
+ * change the native rows' gates.
  *
  * The reveal label is platform-aware — it reuses the same gatewayPlatform-driven
  * wording MarkdownPanel's overflow menu uses, so the two menus name the identical
@@ -44,6 +45,7 @@ import {
   ContextMenuTrigger,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
 } from './ui/context-menu'
 import ErrorNotice, { ErrorNoticeMenuItem } from './ErrorNotice'
 import { useBranding } from '../hooks/useBranding'
@@ -182,11 +184,12 @@ export function useCanOpenFile(kind?: FilePathKind): boolean {
 /** The host's in-app openers. Each one, when passed, adds its menu row; a host
  *  with no side panel passes neither and the menu keeps its native rows only. */
 interface InAppPathHandlers {
-  /** Open the FILE in the host's side panel ("Open in side panel"). Not
-   *  offered for a directory. */
+  /** Open the FILE in the host's side panel ("Open in side panel" on a file). */
   onFileOpen?: (path: string) => void
-  /** Open the CONTAINING folder in the host's Files panel ("Show in Files
-   *  panel"). Not offered for a path with no parent directory. */
+  /** Open a folder as a folder tab in the host's side panel: the directory
+   *  itself on a directory ("Open in side panel"), the containing folder on a
+   *  file ("Show folder in side panel", not offered for a path with no parent
+   *  directory). */
   onFolderOpen?: (path: string) => void
 }
 
@@ -293,13 +296,17 @@ function FilePathMenuItems({ filePath, kind, onFileOpen, onFolderOpen }: FilePat
 
   // In-app rows: gated on the host's handler alone, never on locality, so a
   // viewer on another machine always has an entry that acts on its own screen.
-  // "Show in Files panel" opens the containing folder, the in-app counterpart of
-  // the native reveal; a path with no parent (a filesystem root, a bare
-  // relative name) has nothing to open there, so the row is not offered.
-  const openInPanel = kind !== 'dir' && onFileOpen ? onFileOpen : null
-  const containingFolder = onFolderOpen ? parentDir(filePath) : null
+  // "Open in side panel" opens the path itself: a file in the viewer, a
+  // directory as a folder tab. A file also gets its containing folder, the
+  // in-app counterpart of the native reveal; a path with no parent (a
+  // filesystem root, a bare relative name) has nothing to open there, so that
+  // row is not offered. Its label leads with the folder, so it reads apart
+  // from "Open in side panel" and not as selecting the file in a listing.
+  const isDir = kind === 'dir'
+  const openInPanel = (isDir ? onFolderOpen : onFileOpen) ?? null
+  const containingFolder = !isDir && onFolderOpen ? parentDir(filePath) : null
   const openInPanelLabel = i18nT('components.filePathMenu.open_in_side_panel')
-  const showInFilesLabel = i18nT('components.filePathMenu.show_in_files_panel')
+  const openFolderLabel = i18nT('components.filePathMenu.show_folder_in_side_panel')
 
   // Copy path's whole acknowledgment is the glyph flipping to a tick and back
   // (see useCopyAck, shared with the Office card). The Copy item keeps the menu
@@ -373,12 +380,15 @@ function FilePathMenuItems({ filePath, kind, onFileOpen, onFolderOpen }: FilePat
       {containingFolder && onFolderOpen && (
         <ContextMenuItem
           onSelect={() => onFolderOpen(containingFolder)}
-          aria-label={showInFilesLabel}
+          aria-label={openFolderLabel}
         >
           <FolderTree size={14} className="lucide-inline" aria-hidden="true" />
-          {showInFilesLabel}
+          {openFolderLabel}
         </ContextMenuItem>
       )}
+      {/* The in-app rows are their own group, so they do not read as variants of
+          the native rows below that act on the gateway host. */}
+      {(openInPanel || containingFolder) && <ContextMenuSeparator />}
       {canOpenInEditor && (
         <ContextMenuItem
           // preventDefault keeps the menu open so a launch failure can render

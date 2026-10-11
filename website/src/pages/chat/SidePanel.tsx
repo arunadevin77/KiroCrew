@@ -1628,7 +1628,7 @@ function FileTabBody({ tab, active, projectDir, scrollMemoryKey, onContentChange
   onDiffModeChange: (diffMode: boolean) => void
   onFileSave: (fp: string, c: string) => Promise<void>
   onFileOpen?: (p: string, opts?: { diffMode?: boolean; line?: number; replaceId?: string; canReplace?: () => boolean }) => void
-  /** The header path menu's "Show in Files panel" target. */
+  /** The header path menu's "Show folder in side panel" target. */
   onFolderOpen?: (p: string) => void
   /** Right-click "Add to context" on a rail row. */
   onAddToContext?: (absPath: string, kind: 'file' | 'dir') => void
@@ -1792,8 +1792,8 @@ function TabBody({ tab, active, slot, projectDir, onClose, onContentChange, onDi
   onPathChange: (p: string) => void
   onFileSave: (fp: string, c: string) => Promise<void>
   onFileOpen?: (p: string, opts?: { diffMode?: boolean; line?: number; replaceId?: string; canReplace?: () => boolean }) => void
-  /** Open a directory as a folder tab: the file tab header's "Show in Files
-   *  panel" row. */
+  /** Open a directory as a folder tab: the file tab header's "Show folder in
+   *  side panel" row. */
   onFolderOpen?: (p: string) => void
   /** Right-click "Add to context" on a file-browser rail row. */
   onAddToContext?: (absPath: string, kind: 'file' | 'dir') => void

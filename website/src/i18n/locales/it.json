@@ -9321,7 +9321,7 @@
       "path_copied": "Percorso copiato",
       "reveal_blocked": "Questo percorso è protetto e non può essere aperto.",
       "reveal_failed": "Impossibile aprire questo percorso sul computer che esegue {{productName}}.",
-      "show_in_files_panel": "Mostra nel pannello File"
+      "show_folder_in_side_panel": "Mostra la cartella nel pannello laterale"
     },
     "pendingQuestionCard": {
       "answer_failed": "Impossibile inviare la tua risposta. L’agente è ancora in attesa, quindi riprova.",

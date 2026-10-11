@@ -1,6 +1,6 @@
 /**
- * The file-path menu's in-app rows: "Open in side panel" and "Show in Files
- * panel".
+ * The file-path menu's in-app rows: "Open in side panel" and "Show folder in
+ * side panel".
  *
  * A browser on another machine than the gateway cannot use the native rows
  * (they act on the gateway host), and an `ssh -L` viewer is indistinguishable
@@ -51,10 +51,9 @@ import { api } from '../api/client'
 const FILE = '/home/user/project/docs/report.md'
 const DIR = '/home/user/project/docs'
 const PARENT_OF_FILE = '/home/user/project/docs'
-const PARENT_OF_DIR = '/home/user/project'
 
 const OPEN_IN_PANEL = () => i18nT('components.filePathMenu.open_in_side_panel')
-const SHOW_IN_FILES = () => i18nT('components.filePathMenu.show_in_files_panel')
+const OPEN_FOLDER = () => i18nT('components.filePathMenu.show_folder_in_side_panel')
 
 const realFetch = globalThis.fetch
 
@@ -96,13 +95,13 @@ describe('FilePathMenu in-app rows', () => {
       </FilePathMenu>,
     )
     expect(menu.textContent).toContain(OPEN_IN_PANEL())
-    expect(menu.textContent).toContain(SHOW_IN_FILES())
+    expect(menu.textContent).toContain(OPEN_FOLDER())
     expect(menu.textContent).toContain('Copy path')
     expect(menu.textContent).not.toContain('Open with default app')
     expect(menu.textContent).not.toContain('Show in file manager')
   })
 
-  it('"Open in side panel" hands the file to onFileOpen; "Show in Files panel" hands its folder to onFolderOpen', async () => {
+  it('"Open in side panel" hands the file to onFileOpen; the folder row hands its folder to onFolderOpen', async () => {
     const onFileOpen = vi.fn()
     const onFolderOpen = vi.fn()
     await openMenu(
@@ -116,13 +115,13 @@ describe('FilePathMenu in-app rows', () => {
 
     fireEvent.contextMenu(screen.getByTestId('trigger'))
     await waitFor(() => expect(document.querySelector('[role="menu"]')).not.toBeNull())
-    fireEvent.click(item(SHOW_IN_FILES()))
+    fireEvent.click(item(OPEN_FOLDER()))
     expect(onFolderOpen).toHaveBeenCalledWith(PARENT_OF_FILE)
     // Neither in-app row touches the gateway's native opener.
     expect(api.revealPath).not.toHaveBeenCalled()
   })
 
-  it('offers only "Show in Files panel" for a directory, opening the folder that contains it', async () => {
+  it('offers "Open in side panel" for a directory, opening that directory itself as a folder tab', async () => {
     const onFileOpen = vi.fn()
     const onFolderOpen = vi.fn()
     const menu = await openMenu(
@@ -130,10 +129,22 @@ describe('FilePathMenu in-app rows', () => {
         <span data-testid="trigger">docs</span>
       </FilePathMenu>,
     )
-    expect(menu.textContent).not.toContain(OPEN_IN_PANEL())
-    fireEvent.click(item(SHOW_IN_FILES()))
-    expect(onFolderOpen).toHaveBeenCalledWith(PARENT_OF_DIR)
+    // One in-app row, and it names the directory itself: a parent-folder row
+    // beside it would leave the reader unsure which of the two folders opens.
+    expect(menu.textContent).not.toContain(OPEN_FOLDER())
+    fireEvent.click(item(OPEN_IN_PANEL()))
+    expect(onFolderOpen).toHaveBeenCalledWith(DIR)
     expect(onFileOpen).not.toHaveBeenCalled()
+  })
+
+  it('offers no in-app row for a directory when the host passes only a file opener', async () => {
+    const menu = await openMenu(
+      <FilePathMenu filePath={DIR} kind="dir" onFileOpen={vi.fn()}>
+        <span data-testid="trigger">docs</span>
+      </FilePathMenu>,
+    )
+    expect(menu.textContent).not.toContain(OPEN_IN_PANEL())
+    expect(menu.textContent).not.toContain(OPEN_FOLDER())
   })
 
   it('opens the containing folder of a Windows gateway path with its own separator', async () => {
@@ -143,17 +154,17 @@ describe('FilePathMenu in-app rows', () => {
         <span data-testid="trigger">report.md</span>
       </FilePathMenu>,
     )
-    fireEvent.click(item(SHOW_IN_FILES()))
+    fireEvent.click(item(OPEN_FOLDER()))
     expect(onFolderOpen).toHaveBeenCalledWith('C:\\Users\\me')
   })
 
-  it('offers no "Show in Files panel" for a path with no containing folder', async () => {
+  it('offers no folder row for a path with no containing folder', async () => {
     const menu = await openMenu(
       <FilePathMenu filePath="report.md" onFolderOpen={vi.fn()}>
         <span data-testid="trigger">report.md</span>
       </FilePathMenu>,
     )
-    expect(menu.textContent).not.toContain(SHOW_IN_FILES())
+    expect(menu.textContent).not.toContain(OPEN_FOLDER())
     expect(menu.textContent).toContain('Copy path')
   })
 
@@ -164,7 +175,7 @@ describe('FilePathMenu in-app rows', () => {
       </FilePathMenu>,
     )
     expect(menu.textContent).toContain(OPEN_IN_PANEL())
-    expect(menu.textContent).not.toContain(SHOW_IN_FILES())
+    expect(menu.textContent).not.toContain(OPEN_FOLDER())
   })
 
   it('adds no in-app rows when the host passes no handlers', async () => {
@@ -174,8 +185,10 @@ describe('FilePathMenu in-app rows', () => {
       </FilePathMenu>,
     )
     expect(menu.textContent).not.toContain(OPEN_IN_PANEL())
-    expect(menu.textContent).not.toContain(SHOW_IN_FILES())
+    expect(menu.textContent).not.toContain(OPEN_FOLDER())
     expect(menu.textContent).toContain('Copy path')
+    // No in-app group, so no separator for one.
+    expect(menu.querySelector('[role="separator"]')).toBeNull()
   })
 
   describe('native rows keep their own gates', () => {
@@ -187,9 +200,17 @@ describe('FilePathMenu in-app rows', () => {
         </FilePathMenu>,
       )
       expect(menu.textContent).toContain(OPEN_IN_PANEL())
-      expect(menu.textContent).toContain(SHOW_IN_FILES())
+      expect(menu.textContent).toContain(OPEN_FOLDER())
       expect(menu.textContent).toContain('Open with default app')
       expect(menu.textContent).toContain('Show in file manager')
+      // The in-app rows are their own group, ahead of the native rows.
+      const children = Array.from(menu.children)
+      const separator = children.findIndex(el => el.getAttribute('role') === 'separator')
+      const nativeOpen = children.findIndex(el => el.textContent?.includes('Open with default app'))
+      const inAppFolder = children.findIndex(el => el.textContent?.includes(OPEN_FOLDER()))
+      expect(inAppFolder).toBeGreaterThanOrEqual(0)
+      expect(separator).toBeGreaterThan(inAppFolder)
+      expect(nativeOpen).toBeGreaterThan(separator)
       fireEvent.click(item('Show in file manager'))
       await waitFor(() => expect(api.revealPath).toHaveBeenCalledWith(FILE, 'reveal'))
     })
@@ -252,15 +273,27 @@ describe('path chip menu threads the renderer handlers', () => {
     expect(onFileOpen).toHaveBeenCalledWith(FILE, { line: 12 })
   })
 
-  it('a remote file chip shows its folder in the Files panel', async () => {
+  it('a remote file chip opens its containing folder in the side panel', async () => {
     stubKind('file')
     const onFolderOpen = vi.fn()
     const { container } = render(
       <MarkdownRenderer content={`\`${FILE}\``} onFileOpen={vi.fn()} onFolderOpen={onFolderOpen} />,
     )
     await rightClickChip(container, 'file')
-    fireEvent.click(item(SHOW_IN_FILES()))
+    fireEvent.click(item(OPEN_FOLDER()))
     expect(onFolderOpen).toHaveBeenCalledWith(PARENT_OF_FILE)
+  })
+
+  it('a remote directory chip opens that directory in the side panel', async () => {
+    stubKind('dir')
+    const onFolderOpen = vi.fn()
+    const { container } = render(
+      <MarkdownRenderer content={`\`${DIR}\``} onFileOpen={vi.fn()} onFolderOpen={onFolderOpen} />,
+    )
+    const menu = await rightClickChip(container, 'dir')
+    expect(menu.textContent).not.toContain(OPEN_FOLDER())
+    fireEvent.click(item(OPEN_IN_PANEL()))
+    expect(onFolderOpen).toHaveBeenCalledWith(DIR)
   })
 
   it('a chip in a renderer with no handlers keeps the native-only menu', async () => {
@@ -268,7 +301,7 @@ describe('path chip menu threads the renderer handlers', () => {
     const { container } = render(<MarkdownRenderer content={`\`${FILE}\``} />)
     const menu = await rightClickChip(container, 'file')
     expect(menu.textContent).not.toContain(OPEN_IN_PANEL())
-    expect(menu.textContent).not.toContain(SHOW_IN_FILES())
+    expect(menu.textContent).not.toContain(OPEN_FOLDER())
     expect(menu.textContent).toContain('Copy path')
   })
 })

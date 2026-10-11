@@ -546,12 +546,12 @@ describe('FileHeaderBreadcrumb accessibility (#7900)', () => {
 describe('FileHeaderBreadcrumb right-click menu: the in-app folder row', () => {
   const path = '/repo/alpha/src/index.ts'
 
-  it('offers "Show in Files panel" for the file\'s folder on a remote session, and no side-panel open', async () => {
+  it('offers "Show folder in side panel" on a remote session, and no "Open in side panel"', async () => {
     brandingEnv.directLocal = false
     const onFolderOpen = vi.fn()
     render(<FileHeaderBreadcrumb filePath={path} onFolderOpen={onFolderOpen} />, { wrapper })
     fireEvent.contextMenu(screen.getByRole('group'))
-    const row = await screen.findByRole('menuitem', { name: i18nT('components.filePathMenu.show_in_files_panel') })
+    const row = await screen.findByRole('menuitem', { name: i18nT('components.filePathMenu.show_folder_in_side_panel') })
     // The file is already on screen in this panel, so the menu has no row to
     // open it there again.
     expect(screen.queryByRole('menuitem', { name: i18nT('components.filePathMenu.open_in_side_panel') })).toBeNull()
@@ -564,7 +564,7 @@ describe('FileHeaderBreadcrumb right-click menu: the in-app folder row', () => {
     render(<FileHeaderBreadcrumb filePath={path} />, { wrapper })
     fireEvent.contextMenu(screen.getByRole('group'))
     await screen.findByRole('menuitem', { name: i18nT('components.filePathMenu.copy_path') })
-    expect(screen.queryByRole('menuitem', { name: i18nT('components.filePathMenu.show_in_files_panel') })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: i18nT('components.filePathMenu.show_folder_in_side_panel') })).toBeNull()
   })
 })
 

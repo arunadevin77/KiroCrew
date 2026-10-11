@@ -1579,7 +1579,7 @@
   "components": {
     "filePathMenu": {
       "open_in_side_panel": "Open in side panel",
-      "show_in_files_panel": "Show in Files panel"
+      "show_folder_in_side_panel": "Show folder in side panel"
     },
     "fileChangeChips": {
       "diff_unavailable_file_exceeds_snapshot_limit": "Diff unavailable: file is too large to compare (over {{limit}} characters).",

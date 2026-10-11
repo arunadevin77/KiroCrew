@@ -9193,7 +9193,7 @@
       "path_copied": "Pfad kopiert",
       "reveal_blocked": "Dieser Pfad ist geschützt und kann nicht geöffnet werden.",
       "reveal_failed": "Dieser Pfad konnte auf dem Computer, auf dem {{productName}} läuft, nicht geöffnet werden.",
-      "show_in_files_panel": "Im Dateien-Panel anzeigen"
+      "show_folder_in_side_panel": "Ordner im Seitenpanel anzeigen"
     },
     "pendingQuestionCard": {
       "answer_failed": "Ihre Antwort konnte nicht gesendet werden. Der Agent wartet noch; bitte erneut versuchen.",

@@ -135,9 +135,8 @@ export function breadcrumbSegments(filePath: string): BreadcrumbSegment[] {
  * `tabIndex={0}` is what puts the element in the tab order in the first place.
  * The label and the readout both ARE the path (runtime data), so no localized
  * string is added. Right-click still opens the FilePathMenu, which offers "Show
- * in Files panel" for the file's folder when the host passes `onFolderOpen`.
- * The file is already on screen here, so the menu gets no "Open in side panel"
- * handler.
+ * folder in side panel" when the host passes `onFolderOpen`. The file is
+ * already on screen here, so the menu gets no "Open in side panel" handler.
  *
  * Exported so the accessibility contract is unit-testable without mounting the
  * whole panel (which drags in the Pierre editor tree).
@@ -381,8 +380,8 @@ interface Props {
    *  this is what lets the document come back where the user left it (see
    *  `useScrollMemory`). Omitted by hosts without that lifecycle. */
   scrollMemoryKey?: string
-  /** Open a folder in the host's Files panel. When passed, the header path's
-   *  right-click menu offers "Show in Files panel" for the file's folder, an
+  /** Open a folder as a folder tab in the host's side panel. When passed, the
+   *  header path's right-click menu offers "Show folder in side panel", an
    *  in-app action that works whichever machine the browser is on. */
   onFolderOpen?: (path: string) => void
 }

@@ -9321,7 +9321,7 @@
       "path_copied": "Caminho copiado",
       "reveal_blocked": "Este caminho está protegido e não pode ser aberto.",
       "reveal_failed": "Não foi possível abrir este caminho na máquina que executa o {{productName}}.",
-      "show_in_files_panel": "Mostrar no painel Arquivos"
+      "show_folder_in_side_panel": "Mostrar a pasta no painel lateral"
     },
     "pendingQuestionCard": {
       "answer_failed": "Não foi possível enviar sua resposta. O agente ainda está aguardando, então tente novamente.",

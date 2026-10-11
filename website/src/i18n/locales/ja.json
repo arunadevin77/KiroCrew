@@ -9065,7 +9065,7 @@
       "path_copied": "パスをコピーしました",
       "reveal_blocked": "このパスは保護されているため開けません。",
       "reveal_failed": "{{productName}} を実行しているマシンでこのパスを開けませんでした。",
-      "show_in_files_panel": "ファイルパネルに表示"
+      "show_folder_in_side_panel": "フォルダーをサイドパネルに表示"
     },
     "pendingQuestionCard": {
       "answer_failed": "回答を送信できませんでした。エージェントはまだ待機しているので、もう一度お試しください。",

@@ -1,6 +1,6 @@
 /**
- * A file tab's header menu "Show in Files panel" lands in the side panel as a
- * folder tab.
+ * A file tab's header menu "Show folder in side panel" lands in the side panel
+ * as a folder tab.
  *
  * The side panel is the host that owns the folder-tab opener, so it is the one
  * that hands `onFolderOpen` down to the file tab's MarkdownPanel. The panel body
@@ -65,7 +65,7 @@ function renderPanel() {
   return () => ctl as TabsCtl
 }
 
-describe('side panel file tab: "Show in Files panel" opens a folder tab', () => {
+describe('side panel file tab: "Show folder in side panel" opens a folder tab', () => {
   beforeEach(() => { localStorage.clear() })
 
   it('opens the folder as a focused folder tab carrying the file tab\'s origin chat', () => {
