@@ -17991,7 +17991,7 @@
       "dashboard_render_error": "यह डैशबोर्ड ड्रॉ नहीं हो सका।",
       "dashboard_frame_title": "{{crew}} का डैशबोर्ड",
       "dashboard_rendering": "डैशबोर्ड बनाया जा रहा है…",
-      "back_to_roster": "साथियों की सूची पर वापस",
+      "toggle_roster": "साथियों की सूची दिखाएँ/छिपाएँ",
       "fresh_start": "नई शुरुआत",
       "fresh_start_failed": "नई शुरुआत पूरी नहीं हुई। बातचीत बची हुई है।",
       "fresh_start_confirm_title": "इस साथी को नई शुरुआत दो?",

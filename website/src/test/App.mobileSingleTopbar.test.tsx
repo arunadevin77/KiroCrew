@@ -20,11 +20,13 @@
  * ChatPage.mobileSingleTopbar.test.tsx) and renders whatever rail it is handed.
  */
 import { describe, it, expect, vi } from 'vitest'
-import { act, fireEvent, screen, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { useLocation } from 'react-router-dom'
 import { sseConnected, sseDisconnected } from '../store/dashboardSlice'
 import { renderWithProviders } from './helpers'
 import App from '../App'
 import { useMobileNavRail } from '../components/MobileNavRailContext'
+import { NavigationLeaveGuardProvider, useRegisterNavigationLeaveGuard } from '../components/NavigationLeaveGuard'
 
 function ChatPageStub() {
   const rail = useMobileNavRail()
@@ -38,6 +40,20 @@ vi.mock('../pages/ChatPage', () => ({
   default: ChatPageStub,
 }))
 vi.mock('../pages/SettingsPage', () => ({ default: () => <div data-testid="settings-page">SettingsPage</div> }))
+/** Records the host drawer's close, so a case can tell a close from a navigation. */
+const membersRailActivate = vi.hoisted(() => ({ calls: 0, mayLeave: true }))
+function MembersPageStub() {
+  const rail = useMobileNavRail()
+  // Stands in for the page's unsaved-draft guard (a Profile schedule form).
+  useRegisterNavigationLeaveGuard(() => membersRailActivate.mayLeave)
+  const loc = useLocation()
+  return (
+    <div data-testid="members-page-stub" data-path={loc.pathname}>
+      {rail ? rail({ onActivate: () => { membersRailActivate.calls += 1 } }) : <span data-testid="no-rail" />}
+    </div>
+  )
+}
+vi.mock('../pages/members/MembersPage', () => ({ default: MembersPageStub }))
 vi.mock('../hooks/useWebSocket', () => ({ useWebSocket: () => ({ subscribeLogs: () => {} }) }))
 vi.mock('../hooks/useAgents', () => ({ useAgents: vi.fn(() => ({ agents: [{ name: 'kirocrew' }], defaultAgent: 'kirocrew' })) }))
 vi.mock('../providers/context', () => ({ useProvider: () => ({ id: 'acp' }) }))
@@ -88,6 +104,8 @@ Object.defineProperty(window, 'matchMedia', {
 globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as typeof ResizeObserver
 
 const header = () => document.querySelector('header.topbar') as HTMLElement
+/** Ceiling for a wait behind App's React.lazy route boundary. */
+const LAZY_ROUTE = { timeout: 5000 }
 const flowChildren = (el: HTMLElement) => [...el.children].filter(c => !c.className.includes('absolute'))
 
 describe('phone chat page: one top bar', () => {
@@ -208,6 +226,30 @@ describe('phone chat page: one top bar', () => {
     expect(flow[2]).toHaveClass('tb-right')
     // No rail off the chat route.
     expect(screen.queryByTestId('mobile-nav-rail')).toBeNull()
+  })
+
+  it('hands the Crewmates page the same rail for its roster drawer; Home asks the page before leaving', async () => {
+    localStorage.setItem('mc-onboarded', '1')
+    membersRailActivate.calls = 0
+    membersRailActivate.mayLeave = false
+    renderWithProviders(<NavigationLeaveGuardProvider><App /></NavigationLeaveGuardProvider>, { route: '/members?member=alpha' })
+    // `/members` is a React.lazy route: the stub (and the rail it renders) only
+    // appears once that chunk resolves, so the wait names its own ceiling.
+    const rail = await screen.findByTestId('mobile-nav-rail', undefined, LAZY_ROUTE)
+    expect(screen.getByTestId('members-page-stub')).toContainElement(rail)
+    // The page draws its own title row, so the shell keeps its regular bar.
+    expect(header()).not.toHaveClass('topbar-single')
+    // Home leaves for the chat root WITHOUT closing the host drawer first: that
+    // close pops the drawer's duplicate entry, which would land after the
+    // replace and carry the user back to the crewmate.
+    // A draft the page's leave guard refuses to drop keeps the user on the page.
+    fireEvent.click(within(rail).getByTestId('mobile-nav-rail-home'))
+    expect(screen.getByTestId('members-page-stub')).toBeInTheDocument()
+    membersRailActivate.mayLeave = true
+    fireEvent.click(within(rail).getByTestId('mobile-nav-rail-home'))
+    // Leaving swaps in the lazy `/chat` route, behind the same boundary.
+    await waitFor(() => expect(screen.queryByTestId('members-page-stub')).toBeNull(), LAZY_ROUTE)
+    expect(membersRailActivate.calls).toBe(0)
   })
 
   it('shows a reconnecting strip under the bar while the socket is down, since the phone has no capsule dot', async () => {

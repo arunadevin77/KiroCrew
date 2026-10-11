@@ -39,7 +39,7 @@ const EXPECTED: Record<string, [string, string, string, string, string[], string
   'members.add-menu.new': ['menu-item', 'pages.membersPage.add_member', 'New crewmate', '新建队友', ['page.members', 'members.add-menu'], 'menu', '/members', [CREW_PREVIEW, cond('has_crewmates'), ROSTER_SHOWN, ROSTER_SHOWN_PHONE]],
   'members.switcher.new': ['menu-item', 'pages.membersPage.add_member', 'New crewmate', '新建队友', ['page.members', 'members.switcher'], 'menu', '/members', [CREW_PREVIEW, vp('desktop'), cond('crewmate_selected')]],
   'members.add-menu.advanced': ['menu-item', 'pages.membersPage.create_advanced', 'Advanced', '高级', ['page.members', 'members.add-menu'], 'menu', '/members', [CREW_PREVIEW, cond('has_crewmates'), ROSTER_SHOWN, ROSTER_SHOWN_PHONE]],
-  'members.back': ['button', 'pages.membersPage.back_to_roster', 'Back to crewmates', '返回队友列表', ['page.members'], 'header', '/members', [CREW_PREVIEW, vp('mobile'), cond('crewmate_selected')]],
+  'members.back': ['button', 'pages.membersPage.toggle_roster', 'Toggle crewmates', '切换队友列表', ['page.members'], 'header', '/members', [CREW_PREVIEW, vp('mobile'), cond('crewmate_selected')]],
   'members.switcher': ['button', 'pages.membersPage.switch_crewmate', 'Switch crewmate', '切换队友', ['page.members'], 'header', '/members', [CREW_PREVIEW, vp('desktop'), cond('crewmate_selected')]],
   'members.switcher.show-roster': ['menu-item', 'pages.membersPage.roster_show', 'Show the full roster', '显示完整队友列表', ['page.members', 'members.switcher'], 'menu', '/members', [CREW_PREVIEW, vp('desktop'), cond('crewmate_selected')]],
   // Under the switcher chip: one pill per crewmate with an unread message, then a "+N" pill opening the list (#19045).

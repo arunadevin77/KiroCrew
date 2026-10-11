@@ -28,6 +28,7 @@ import { resolve } from 'node:path'
 
 const app = readFileSync(resolve(__dirname, '../App.tsx'), 'utf8')
 const chat = readFileSync(resolve(__dirname, '../pages/ChatPage.tsx'), 'utf8')
+const members = readFileSync(resolve(__dirname, '../pages/members/MembersPage.tsx'), 'utf8')
 const hook = readFileSync(resolve(__dirname, '../hooks/useDrawerSwipe.ts'), 'utf8')
 
 describe('mobile nav drawer (left) — compositor pairing', () => {
@@ -287,7 +288,7 @@ describe('a panel with a gesture is bound LIVE to its offset', () => {  // The d
     // arm on one touch. App.tsx is the shell instance itself, so it declares
     // nothing — everyone else must. A new page that adds a drawer gesture and
     // forgets the attribute trips this rather than shipping a fight.
-    const consumers = { 'App.tsx': app, 'ChatPage.tsx': chat }
+    const consumers = { 'App.tsx': app, 'ChatPage.tsx': chat, 'MembersPage.tsx': members }
     for (const [name, src] of Object.entries(consumers)) {
       if (!/useDrawerSwipe\(/.test(src)) continue
       const isShellInstance = /useDrawerSwipe\(shellRef, \{/.test(src)

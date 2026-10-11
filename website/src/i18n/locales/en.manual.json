@@ -8473,7 +8473,7 @@
     },
     "membersPage": {
       "drawer_delegated_working": "Delegated work running",
-      "back_to_roster": "Back to crewmates",
+      "toggle_roster": "Toggle crewmates",
       "fresh_start": "Fresh start",
       "fresh_start_failed": "Fresh start didn't finish. The conversation was kept.",
       "fresh_start_confirm_title": "Give this crewmate a fresh start?",

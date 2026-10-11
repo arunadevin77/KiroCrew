@@ -17991,7 +17991,7 @@
       "dashboard_render_error": "Dieses Dashboard konnte nicht gezeichnet werden.",
       "dashboard_frame_title": "Dashboard von {{crew}}",
       "dashboard_rendering": "Dashboard wird gezeichnet…",
-      "back_to_roster": "Zurück zu den Crewmates",
+      "toggle_roster": "Crewmates umschalten",
       "fresh_start": "Neu anfangen",
       "fresh_start_failed": "Neu anfangen hat nicht geklappt. Das Gespräch ist noch da.",
       "fresh_start_confirm_title": "Diesen Crewmate neu anfangen lassen?",

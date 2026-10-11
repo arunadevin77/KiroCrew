@@ -18250,7 +18250,7 @@
       "dashboard_render_error": "Nao foi possivel desenhar este painel.",
       "dashboard_frame_title": "Painel de {{crew}}",
       "dashboard_rendering": "Desenhando o painel…",
-      "back_to_roster": "Voltar aos colegas",
+      "toggle_roster": "Alternar colegas",
       "fresh_start": "Começar do zero",
       "fresh_start_failed": "Não deu para começar do zero. A conversa foi mantida.",
       "fresh_start_confirm_title": "Fazer este colega começar do zero?",

@@ -17732,7 +17732,7 @@
       "dashboard_render_error": "无法绘制该仪表板。",
       "dashboard_frame_title": "{{crew}} 的仪表板",
       "dashboard_rendering": "正在绘制仪表板…",
-      "back_to_roster": "返回队友列表",
+      "toggle_roster": "切换队友列表",
       "fresh_start": "重新开始",
       "fresh_start_failed": "重新开始没有完成，对话已保留。",
       "fresh_start_confirm_title": "让这位队友重新开始吗？",

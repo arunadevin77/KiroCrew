@@ -453,6 +453,56 @@ const CLIPBOARD_FALLBACK_SHIM_BODY = `(function(){
  * popups are already allowed); it is a usability fix for the
  * frame-replaced-by-login-page case.
  */
+/**
+ * Touch relay: reports this frame's single-finger touches to the parent, so a
+ * host's drawer gesture can follow a drag that began over the frame.
+ *
+ * A touch that lands on an iframe is delivered to the frame's own document and
+ * never reaches the host page, so a host panel holding a full-width frame (the
+ * phone Crewmates side panel's Dashboard) had nowhere a closing drag could start.
+ * The relay posts `{type: 'mc-frame-touch', phase, x, y}` in frame coordinates;
+ * the host maps them onto the frame element and decides what, if anything, they
+ * mean.
+ *
+ * It stands down for a touch the frame's own content owns -- inside a
+ * horizontally scrollable element, an editable, or an active text selection --
+ * the same deference the host gesture applies to its own DOM. Passive listeners:
+ * the frame keeps scrolling exactly as before. Not a security boundary: any
+ * script in the frame can post the same shape, so a host must treat the
+ * messages as untrusted (accept them only from the frame's window, only while
+ * the gesture they can drive is harmless).
+ */
+const FRAME_TOUCH_RELAY_BODY = `(function(){
+  function scrollsX(n){
+    for(;n&&n.nodeType===1;n=n.parentElement){
+      if(n.scrollWidth-n.clientWidth>1){var o=getComputedStyle(n).overflowX;if(o==='auto'||o==='scroll')return true;}
+    }
+    return false;
+  }
+  function editable(n){
+    for(;n&&n.nodeType===1;n=n.parentElement){
+      if(n.isContentEditable||n.tagName==='INPUT'||n.tagName==='TEXTAREA'||n.tagName==='SELECT')return true;
+    }
+    return false;
+  }
+  var on=false;
+  function send(phase,e){
+    var t=(e.touches&&e.touches[0])||(e.changedTouches&&e.changedTouches[0]);
+    if(!t)return;
+    parent.postMessage({type:'mc-frame-touch',phase:phase,x:t.clientX,y:t.clientY},'*');
+  }
+  var opts={passive:true,capture:true};
+  window.addEventListener('touchstart',function(e){
+    if(on&&e.touches.length>1){send('cancel',e);on=false;return;}
+    var sel=window.getSelection?window.getSelection():null;
+    on=e.touches.length===1&&!scrollsX(e.target)&&!editable(e.target)&&!(sel&&!sel.isCollapsed);
+    if(on)send('start',e);
+  },opts);
+  window.addEventListener('touchmove',function(e){if(on)send('move',e);},opts);
+  window.addEventListener('touchend',function(e){if(on){on=false;send('end',e);}},opts);
+  window.addEventListener('touchcancel',function(e){if(on){on=false;send('cancel',e);}},opts);
+})();`
+
 const EXTERNAL_LINK_TARGET_SHIM_BODY = `(function(){
   window.addEventListener('click', function(e){
     var path = typeof e.composedPath === 'function' ? e.composedPath() : null;
@@ -934,6 +984,10 @@ interface BuildSrcdocOptions {
    * `allow-popups`: there a `_blank` link is a blocked popup (a dead click),
    * so in-frame navigation must be left alone. */
   rewriteBareLinks?: boolean
+  /** Report the frame's touches to the parent (see FRAME_TOUCH_RELAY_BODY), for
+   * a host whose drawer gesture must be able to start over the frame. Off by
+   * default: nothing else listens for them. */
+  relayTouches?: boolean
 }
 
 /** Build the srcdoc HTML for a sandboxed widget iframe. The LLM `html`
@@ -950,6 +1004,7 @@ export function buildSrcdoc({
   loadingLabel = '',
   rewriteBareLinks = true,
   offlineScripts = false,
+  relayTouches = false,
 }: BuildSrcdocOptions): string {
   // A widget hardcoded for a light canvas renders on a light canvas even when
   // the dashboard is dark -- see resolveWidgetTheme. Resolved once here so the
@@ -1078,6 +1133,14 @@ export function buildSrcdoc({
     const linkTargetShim = doc.createElement('script')
     linkTargetShim.textContent = EXTERNAL_LINK_TARGET_SHIM_BODY
     body.appendChild(linkTargetShim)
+  }
+
+  // Touch relay (see FRAME_TOUCH_RELAY_BODY), ahead of the LLM html so its
+  // capture-phase listeners are registered first. textContent assignment only.
+  if (relayTouches) {
+    const touchRelay = doc.createElement('script')
+    touchRelay.textContent = FRAME_TOUCH_RELAY_BODY
+    body.appendChild(touchRelay)
   }
 
   // Parse LLM html into a document fragment via the typed DOM API. The

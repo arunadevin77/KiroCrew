@@ -522,36 +522,6 @@ describe('MembersPage hides unlisted crewmates', () => {
     expect(screen.queryByTestId('crewmate-empty-hero')).toBeNull()
   })
 
-  it('below md, a roster whose every row is hidden names the search instead of an empty list', async () => {
-    const own = Object.getOwnPropertyDescriptor(window, 'matchMedia')
-    window.matchMedia = vi.fn().mockImplementation((q: string) => ({
-      matches: /max-width/.test(q),
-      media: q,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    }))
-    try {
-      ;(api.defaultAgent as ReturnType<typeof vi.fn>).mockResolvedValue({ default_agent: '' })
-      ;(api.members as ReturnType<typeof vi.fn>).mockResolvedValue({
-        members: [row('pkg-tool', { ...NO }), row('legacy-aim', { source: 'aim', ...NO })],
-      })
-      // Below md a bare visit is the roster.
-      renderWithProviders(<MembersPage />, { route: '/members' })
-      expect(await screen.findByTestId('member-all-hidden')).toBeTruthy()
-      expect(names()).toEqual([])
-      fireEvent.change(screen.getByTestId('member-search'), { target: { value: 'pkg' } })
-      expect(screen.queryByTestId('member-all-hidden')).toBeNull()
-      expect(names()).toEqual(['pkg-tool'])
-    } finally {
-      if (own) Object.defineProperty(window, 'matchMedia', own)
-      else delete (window as unknown as { matchMedia?: typeof window.matchMedia }).matchMedia
-    }
-  })
-
   it('the default-crew failure notice hands the agent the journal report, not just its localized copy', async () => {
     ;(api.defaultAgent as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Forbidden'))
     await renderPage(MIXED)

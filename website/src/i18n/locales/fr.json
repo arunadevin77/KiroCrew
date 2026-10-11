@@ -18250,7 +18250,7 @@
       "dashboard_render_error": "Ce tableau de bord n'a pas pu etre dessine.",
       "dashboard_frame_title": "Tableau de bord de {{crew}}",
       "dashboard_rendering": "Affichage du tableau de bord…",
-      "back_to_roster": "Retour aux coéquipiers",
+      "toggle_roster": "Afficher/masquer les coéquipiers",
       "fresh_start": "Repartir à zéro",
       "fresh_start_failed": "Impossible de repartir à zéro. La conversation est conservée.",
       "fresh_start_confirm_title": "Faire repartir ce coéquipier à zéro ?",

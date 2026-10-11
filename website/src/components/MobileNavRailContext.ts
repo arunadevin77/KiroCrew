@@ -8,8 +8,10 @@ import { createContext, useContext, type ReactNode } from 'react'
  * shell's — its rows come from the same nav registry, badges and active-state
  * rules the desktop rail and the mobile nav drawer render, so it is rendered by
  * `App.tsx` and handed down here rather than rebuilt from a second list inside
- * the chat page. `App.tsx` provides a renderer only while the chat route is
- * mounted on a phone; every other surface reads `null` and renders no rail.
+ * the chat page. `App.tsx` provides a renderer only while the chat route or the
+ * Crewmates route is mounted on a phone (the Crewmates page hosts the rail the
+ * same way, beside its roster drawer); every other surface reads `null` and
+ * renders no rail.
  *
  * A render FUNCTION, not a node: the drawer owns the close gesture, so it has
  * to say what a row tap that STAYS on the chat page does to it (`onActivate`

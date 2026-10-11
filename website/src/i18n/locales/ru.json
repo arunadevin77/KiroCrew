@@ -18509,7 +18509,7 @@
       "dashboard_render_error": "Не удалось отрисовать эту панель.",
       "dashboard_frame_title": "Панель {{crew}}",
       "dashboard_rendering": "Отрисовка панели...",
-      "back_to_roster": "Назад к напарникам",
+      "toggle_roster": "Показать или скрыть напарников",
       "fresh_start": "Начать заново",
       "fresh_start_failed": "Не получилось начать заново. Разговор сохранён.",
       "fresh_start_confirm_title": "Начать с этим напарником заново?",

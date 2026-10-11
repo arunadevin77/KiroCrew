@@ -18250,7 +18250,7 @@
       "dashboard_render_error": "Non e stato possibile disegnare questa dashboard.",
       "dashboard_frame_title": "Dashboard di {{crew}}",
       "dashboard_rendering": "Disegno della dashboard…",
-      "back_to_roster": "Torna ai compagni",
+      "toggle_roster": "Attiva/disattiva i compagni",
       "fresh_start": "Ricomincia da capo",
       "fresh_start_failed": "Non è stato possibile ricominciare da capo. La conversazione è rimasta.",
       "fresh_start_confirm_title": "Far ricominciare questo compagno da capo?",

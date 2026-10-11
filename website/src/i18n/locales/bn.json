@@ -17991,7 +17991,7 @@
       "dashboard_render_error": "এই ড্যাশবোর্ড আঁকা যায়নি।",
       "dashboard_frame_title": "{{crew}}-এর ড্যাশবোর্ড",
       "dashboard_rendering": "ড্যাশবোর্ড আঁকা হচ্ছে…",
-      "back_to_roster": "সঙ্গীদের তালিকায় ফিরুন",
+      "toggle_roster": "সঙ্গীদের তালিকা দেখাও/লুকাও",
       "fresh_start": "নতুন করে শুরু",
       "fresh_start_failed": "নতুন করে শুরু শেষ হয়নি। কথোপকথন রাখা আছে।",
       "fresh_start_confirm_title": "এই সঙ্গীকে নতুন করে শুরু করাবে?",

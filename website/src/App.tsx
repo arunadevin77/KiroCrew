@@ -1511,9 +1511,12 @@ export default function App() {
    * pinned at the bottom and opens the same command palette the header's
    * search square used to.
    *
-   * `null` off the phone chat page, so every other consumer renders no rail.
+   * `null` off the phone chat and Crewmates pages, so every other consumer
+   * renders no rail. The Crewmates page hosts it the same way, beside its
+   * roster in the drawer over the open chat.
    */
-  const mobileNavRail = mobileSingle
+  const railHost = mobileSingle || (isMobile && (activePath === '/members' || activePath.startsWith('/members/')))
+  const mobileNavRail = railHost
     ? ({ onActivate }: MobileNavRailOptions) => {
       const railRow = (
         n: { path: string; id: string; label: string; labelKey?: string; icon: React.ReactNode; appName?: string },
@@ -1552,7 +1555,18 @@ export default function App() {
             <button
               type="button"
               data-testid="mobile-nav-rail-home"
-              onClick={() => { onActivate(); if (!(activePath === '/chat' || activePath === '/')) navigate('/chat', { replace: true }) }}
+              // On the chat page it closes the host drawer (and goes to the chat
+              // root). From another host page it navigates with `replace` and
+              // does NOT close first: closing pops the drawer's duplicate
+              // entry, and that pop would land after the replace and carry the
+              // user back to the page being left. Leaving asks the page's
+              // leave guard first, as every rail row does, so a draft held
+              // there (a Profile schedule form) is not dropped silently.
+              onClick={() => {
+                if (!isChat) { if (mayLeaveForErrorHandoff()) navigate('/chat', { replace: true }); return }
+                onActivate()
+                if (!(activePath === '/chat' || activePath === '/')) navigate('/chat', { replace: true })
+              }}
               className="w-11 h-11 mb-1 flex items-center justify-center shrink-0 rounded-xl bg-transparent border-none cursor-pointer"
               // Named for what it DOES (home = the chat root), not for the brand
               // it shows: an icon-only control announced as the product name told

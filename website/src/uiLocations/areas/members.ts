@@ -77,8 +77,9 @@ export const LOCATIONS = {
       ],
     }],
   },
-  // The phone's way from a crewmate chat back to the roster (the header arrow,
-  // named after the page). It returns to the bare `/members` roster.
+  // The phone's way from a crewmate chat to the roster: the header's drawer
+  // toggle, the same control as the Sessions page's. It slides the roster
+  // drawer in over the open chat, and closes it again.
   'members.back': {
     kind: 'button',
     label: { from: 'attr', attr: 'aria-label' },

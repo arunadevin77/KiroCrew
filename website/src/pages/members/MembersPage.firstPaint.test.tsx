@@ -137,6 +137,35 @@ describe('MembersPage first paint', () => {
     expect(snapshot()).toEqual({ ...frames[0], waiting: false })
   })
 
+  it('a phone paints no roster page before it lands either: the roster goes straight to the closed drawer', async () => {
+    // Below md the page lands on a crewmate too, with the roster in a drawer.
+    // Its first frame must not draw the roster as the page, only for the next
+    // frame to move it into the drawer.
+    const realMatchMedia = window.matchMedia
+    window.matchMedia = vi.fn().mockImplementation((q: string) => ({
+      matches: /max-width/.test(q),
+      media: q,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+    try {
+      const frames = renderPage({ members: ROSTER, teams: [], defaultAgent: '' })
+      expect(frames).toHaveLength(1)
+      expect(frames[0].folded).toBe(true)
+      expect(frames[0].waiting).toBe(true)
+      expect(await screen.findByTestId('chat-pane-stub')).toHaveTextContent('member-scribe')
+      // Landed: the roster lives in the drawer, which stays closed.
+      expect(screen.queryByTestId('roster-drawer')).toBeNull()
+      expect(screen.queryByTestId('member-roster')).toBeNull()
+    } finally {
+      window.matchMedia = realMatchMedia
+    }
+  })
+
   it('an empty roster paints its open column first, and keeps it', async () => {
     const frames = renderPage({ members: [row('default', 0)], teams: [], defaultAgent: '' })
     expect(frames[0].folded).toBe(false)

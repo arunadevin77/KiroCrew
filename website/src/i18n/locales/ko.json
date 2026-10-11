@@ -17732,7 +17732,7 @@
       "dashboard_render_error": "이 대시보드를 그릴 수 없습니다.",
       "dashboard_frame_title": "{{crew}}의 대시보드",
       "dashboard_rendering": "대시보드 그리는 중…",
-      "back_to_roster": "크루메이트 목록으로",
+      "toggle_roster": "크루메이트 목록 표시 전환",
       "fresh_start": "새로 시작",
       "fresh_start_failed": "새로 시작하지 못했어요. 대화는 그대로예요.",
       "fresh_start_confirm_title": "이 크루메이트를 새로 시작할까요?",

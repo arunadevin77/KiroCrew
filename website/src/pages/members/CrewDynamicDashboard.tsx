@@ -295,6 +295,8 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
             mode: theme,
             rewriteBareLinks: false,
             offlineScripts: true,
+            // The phone side panel's closing drag starts over this frame.
+            relayTouches: true,
           })
         : null,
     [shown, isError, themeVars, theme],
@@ -332,6 +334,8 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
             mode: theme,
             rewriteBareLinks: false,
             offlineScripts: true,
+            // The phone side panel's closing drag starts over this frame.
+            relayTouches: true,
           })
         : null,
     [probating, candidate, isError, themeVars, theme],

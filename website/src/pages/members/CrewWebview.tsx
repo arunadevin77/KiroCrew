@@ -1104,7 +1104,8 @@ function CrewDashboardFrameView({ slug, member, displayName, avatar, onAct, onOp
   const srcdoc = useMemo(
     () =>
       html && !isError
-        ? buildSrcdoc({ html, themeVars, mode: theme, rewriteBareLinks: false })
+        // relayTouches: the phone side panel's closing drag starts over this frame.
+        ? buildSrcdoc({ html, themeVars, mode: theme, rewriteBareLinks: false, relayTouches: true })
         : null,
     [html, isError, themeVars, theme],
   );

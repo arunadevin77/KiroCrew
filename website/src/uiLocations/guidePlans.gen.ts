@@ -3,7 +3,7 @@
 import type { UiGuidePlan } from './types'
 
 /** The `build_digest` of the packaged index this bundle was built with (see `guideBuildDigest`). */
-export const GUIDE_BUILD_DIGEST = "sha256:515ce57654d554c6a834d0265b68ac48329e0a09c23bf5ab3246cb9ad54d5daa"
+export const GUIDE_BUILD_DIGEST = "sha256:8ab228754d23ceb58f5c723082e776d7f9a6fc9563ecb0373980a5d4d1096b2d"
 
 /** Curated location ids: the only ids a live observation may name. */
 export const GUIDE_OBSERVABLE_IDS: readonly string[] = [
@@ -1807,7 +1807,7 @@ export const GUIDE_PLANS: Readonly<Record<string, UiGuidePlan>> = {
           {
             "id": "mobile:members.back",
             "location": "members.back",
-            "label_key": "pages.membersPage.back_to_roster",
+            "label_key": "pages.membersPage.toggle_roster",
             "when": "crewmate_chat_open_phone",
             "scope": "members.roster-phone"
           },
@@ -1881,7 +1881,7 @@ export const GUIDE_PLANS: Readonly<Record<string, UiGuidePlan>> = {
           {
             "id": "mobile:members.back",
             "location": "members.back",
-            "label_key": "pages.membersPage.back_to_roster",
+            "label_key": "pages.membersPage.toggle_roster",
             "when": "crewmate_chat_open_phone",
             "scope": "members.roster-phone"
           },
@@ -1961,7 +1961,7 @@ export const GUIDE_PLANS: Readonly<Record<string, UiGuidePlan>> = {
           {
             "id": "mobile:members.back",
             "location": "members.back",
-            "label_key": "pages.membersPage.back_to_roster",
+            "label_key": "pages.membersPage.toggle_roster",
             "when": "crewmate_chat_open_phone",
             "scope": "members.roster-phone"
           },
@@ -1985,7 +1985,7 @@ export const GUIDE_PLANS: Readonly<Record<string, UiGuidePlan>> = {
   },
   "members.back": {
     "version": 2,
-    "label_key": "pages.membersPage.back_to_roster",
+    "label_key": "pages.membersPage.toggle_roster",
     "placements": [
       {
         "id": "mobile",
@@ -2009,7 +2009,7 @@ export const GUIDE_PLANS: Readonly<Record<string, UiGuidePlan>> = {
           {
             "id": "mobile:members.back",
             "location": "members.back",
-            "label_key": "pages.membersPage.back_to_roster"
+            "label_key": "pages.membersPage.toggle_roster"
           }
         ]
       }

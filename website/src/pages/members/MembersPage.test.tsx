@@ -7,6 +7,7 @@ import { defaultScheduler, notifyManager } from '@tanstack/react-query'
 import { CREWMATES_PAGE_ENTERED_EVENT } from '../../components/MeetCrewmatesFlow'
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { renderWithProviders } from '../../test/helpers'
+import { scopeOpen } from '../../guide/liveRegistry'
 import { NavigationLeaveGuardProvider, useMayLeaveForNavigation } from '../../components/NavigationLeaveGuard'
 import { ApiError } from '../../api/apiError'
 import { memberProjectionStore } from '../../state/memberProjectionStore'
@@ -5831,55 +5832,130 @@ describe('MembersPage default member, memory and URL', () => {
       window.matchMedia = realMatchMedia
     })
 
-    it('does not auto-open: no ?member= IS the roster, like a two-level list', async () => {
+    /** Slides the roster drawer in from the header's back control and returns
+     *  the drawer (the roster aside is portaled into it). */
+    const openRosterDrawer = async () => {
+      fireEvent.click(screen.getByTestId('member-back'))
+      return await screen.findByTestId('roster-drawer')
+    }
+    /** A horizontal drag across the page root, well inside both 24px platform
+     *  edge bands and on one row, so the axis lock reads it as a swipe. */
+    const drag = (from: number, to: number) => {
+      const el = screen.getByTestId('members-page')
+      const at = (x: number) => ({ clientX: x, clientY: 400 })
+      const mid = from + (to - from) / 3
+      fireEvent.touchStart(el, { touches: [at(from)] })
+      fireEvent.touchMove(el, { touches: [at(mid)] })
+      fireEvent.touchMove(el, { touches: [at(to)] })
+      fireEvent.touchEnd(el, { changedTouches: [at(to)] })
+    }
+
+    it('a rightward drag over the chat reveals the roster drawer; a leftward one reveals the side panel', async () => {
+      setWindowWidth(390)
+      await renderPage(alphaBeta(), 'kirocrew', { route: '/members?member=alpha' })
+      await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+      drag(120, 330)
+      const drawer = await screen.findByTestId('roster-drawer')
+      expect(within(drawer).getByTestId('member-roster')).toBeTruthy()
+      expect(screen.queryByTestId('member-side-panel')).toBeNull()
+      // Dragging it back shut, and only then the other way, opens the panel.
+      drag(330, 60)
+      await waitFor(() => expect(screen.queryByTestId('roster-drawer')).toBeNull(), { timeout: 3000 })
+      drag(330, 80)
+      const overlay = await screen.findByTestId('member-side-panel')
+      expect(overlay).toHaveAttribute('data-placement', 'overlay')
+      await screen.findByTestId('member-dashboard')
+      expect(screen.queryByTestId('roster-drawer')).toBeNull()
+      // And a rightward drag on the open panel puts it away again.
+      drag(80, 330)
+      await waitFor(() => expect(screen.queryByTestId('member-side-panel')).toBeNull(), { timeout: 3000 })
+    })
+
+    it('lands on the remembered crewmate like a wide window, with the roster waiting in a closed drawer', async () => {
       localStorage.setItem(LAST_MEMBER_KEY, 'beta')
       await renderPage(alphaBeta())
-      await rosterRow('alpha')
-      expect(screen.queryByTestId('chat-pane-stub')).toBeNull()
-      expect(api.memberThread).not.toHaveBeenCalled()
-      expect(currentUrl()).toBe('/members')
+      expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-beta')
+      expect(currentUrl()).toBe('/members?member=beta')
+      // The chat is the screen: the roster renders only inside the drawer.
+      expect(screen.queryByTestId('roster-drawer')).toBeNull()
+      expect(screen.queryByTestId('member-roster')).toBeNull()
+      // The page binds its own drawers, so it claims the drag from the shell's.
+      expect(screen.getByTestId('members-page')).toHaveAttribute('data-owns-swipe', 'left right')
+      // The header control opens that drawer, so it wears the Sessions page's
+      // drawer toggle (a panel glyph), not a back arrow, and says it is closed.
+      const toggle = screen.getByTestId('member-back')
+      expect(toggle.querySelector('.pi-pane')).not.toBeNull()
+      expect(toggle.querySelector('.lucide-arrow-left')).toBeNull()
+      // A screen reader hears a toggle too, not "Back", in either state.
+      expect(toggle).toHaveAccessibleName('Toggle crewmates')
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      fireEvent.click(toggle)
+      await screen.findByTestId('roster-drawer')
+      expect(toggle).toHaveAttribute('aria-expanded', 'true')
     })
 
-    it('once Mate has a chat a bare visit is still the roster: nothing auto-opens, as on main', async () => {
-      localStorage.setItem(LAST_MEMBER_KEY, 'beta')
-      await renderPage([...alphaBeta(), assistantRow({ has_dm_message: true })])
-      await rosterRow('alpha')
-      // Flush the effects the loaded roster scheduled: nothing may open behind it.
-      await act(async () => {})
-      expect(screen.queryByTestId('chat-pane-stub')).toBeNull()
-      expect(api.memberThread).not.toHaveBeenCalled()
-      expect(currentUrl()).toBe('/members')
-    })
-
-    it('a never-chatted Mate opens below md too; its header Back returns to the bare roster and stays there', async () => {
+    it('a never-chatted Mate opens below md too; its header Back slides the roster in and Mate stays open', async () => {
       localStorage.setItem(LAST_MEMBER_KEY, 'beta')
       await renderPage([...alphaBeta(), assistantRow({ has_dm_message: false })])
       expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-mate')
       expect(currentUrl()).toBe('/members?member=mate')
-      fireEvent.click(screen.getByTestId('member-back'))
-      await waitFor(() => expect(screen.queryByTestId('chat-pane-stub')).toBeNull())
-      expect(currentUrl()).toBe('/members')
-      // The landing is spent for this visit: the roster is not bounced back
-      // into Mate once the effects the Back scheduled have run.
-      await act(async () => {})
-      expect(screen.queryByTestId('chat-pane-stub')).toBeNull()
-      expect(currentUrl()).toBe('/members')
+      const drawer = await openRosterDrawer()
+      expect(within(drawer).getByTestId('member-roster')).toBeTruthy()
+      expect(currentUrl()).toBe('/members?member=mate')
+      expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-mate')
     })
 
-    it('a save from the team view keeps the pushed entry, so Back still leaves the page in one press', async () => {
-      // Driven history: a page before /members, a real push into it, the team
-      // header's PUSH (fromRoster), the Edit team dialog's Save -- which
-      // re-opens the saved team with a REPLACE -- then the view's own Back and
-      // one more. The replace must keep `fromRoster`: without it the view's
-      // Back writes a second roster entry instead of popping, and leaving the
-      // page takes two presses.
-      vi.mocked(api.teams.list).mockResolvedValue({ teams: [{ id: 'abc123abc123', name: 'Triage', members: ['oncall'] }] })
-      vi.mocked(api.teams.update).mockResolvedValue({ team: { id: 'abc123abc123', name: 'Release', members: ['oncall'] } })
-      ;(api.members as ReturnType<typeof vi.fn>).mockResolvedValue({ members: [row({ name: 'oncall', slug: 'oncall' })], default_agent: 'kirocrew' })
+    it('a drag the Dashboard frame relays closes the open side panel; nothing else does', async () => {
+      // A touch over an iframe goes to the frame's own document and never reaches
+      // the page root the swipe listens on, so the frame relays its touches
+      // (`relayTouches`) and the page replays them onto the frame element.
+      setWindowWidth(390)
+      await renderPage(alphaBeta(), 'kirocrew', { route: '/members?member=alpha' })
+      await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+      fireEvent.click(screen.getByTestId('member-panel-toggle'))
+      const host = await screen.findByTestId('member-dashboard')
+      const frame = document.createElement('iframe')
+      host.appendChild(frame)
+      const relay = (phase: string, x: number, source: Window | null = frame.contentWindow) =>
+        act(() => {
+          window.dispatchEvent(new MessageEvent('message', { data: { type: 'mc-frame-touch', phase, x, y: 300 }, source }))
+        })
+      // A window that is not a frame in the panel posting the same shape is ignored.
+      const stranger = document.createElement('iframe')
+      document.body.appendChild(stranger)
+      for (const [phase, x] of [['start', 120], ['move', 200], ['move', 340], ['end', 340]] as const) relay(phase, x, stranger.contentWindow)
+      expect(screen.getByTestId('member-side-panel')).toBeInTheDocument()
+      for (const [phase, x] of [['start', 120], ['move', 200], ['move', 340], ['end', 340]] as const) relay(phase, x)
+      await waitFor(() => expect(screen.queryByTestId('member-side-panel')).toBeNull(), { timeout: 3000 })
+      stranger.remove()
+    })
+
+    it('the header back slides the drawer in on a duplicate entry; a pick spends that entry before switching', async () => {
+      await renderPage(alphaBeta(), 'kirocrew', { route: '/members?member=alpha' })
+      expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-alpha')
+      navigateSpy.mockClear()
+      await openRosterDrawer()
+      // One push: a bare copy of the address, so Back has a drawer to dismiss.
+      expect(navigateSpy).toHaveBeenCalledTimes(1)
+      expect(navigateSpy.mock.calls[0][0]).toMatchObject({ pathname: '/members', search: '?member=alpha' })
+      expect(currentUrl()).toBe('/members?member=alpha')
+      fireEvent.click(await rosterRow('beta'))
+      await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-beta'), PANE_READY)
+      // The duplicate was popped FIRST and the switch replaced the entry under it,
+      // so the page still holds one entry however many crewmates are visited.
+      expect(navigateSpy).toHaveBeenCalledWith(-1)
+      expect(currentUrl()).toBe('/members?member=beta')
+      await waitFor(() => expect(screen.queryByTestId('roster-drawer')).toBeNull(), { timeout: 3000 })
+      expect(localStorage.getItem(LAST_MEMBER_KEY)).toBe('beta')
+    })
+
+    it('Back with the drawer open closes it and stays on the crewmate; one more Back leaves the page', async () => {
+      ;(api.members as ReturnType<typeof vi.fn>).mockResolvedValue({ members: alphaBeta(), default_agent: 'kirocrew' })
+      ;(api.memberThread as ReturnType<typeof vi.fn>).mockImplementation(echoThread)
       function Elsewhere() {
         const nav = useNavigate()
         return (
-          <button data-testid="go-members" onClick={() => nav('/members')}>
+          <button data-testid="go-members" onClick={() => nav('/members?member=alpha')}>
             go
           </button>
         )
@@ -5904,32 +5980,68 @@ describe('MembersPage default member, memory and URL', () => {
         { route: '/elsewhere' },
       )
       fireEvent.click(screen.getByTestId('go-members'))
-      await rosterRow('oncall')
-      fireEvent.click((await screen.findAllByTestId('team-group-header'))[0])
-      const view = await screen.findByTestId('team-view')
-      expect(currentUrl()).toBe('/members?team=abc123abc123')
-      fireEvent.click(within(view).getByTestId('team-edit'))
-      await screen.findByTestId('team-dialog-body')
-      fireEvent.change(screen.getByTestId('team-dialog-name'), { target: { value: 'Release' } })
-      fireEvent.click(screen.getByTestId('team-dialog-save'))
-      await waitFor(() => expect(api.teams.update).toHaveBeenCalledTimes(1))
-      await waitFor(() => expect(screen.queryByTestId('team-dialog-body')).toBeNull())
-      expect(currentUrl()).toBe('/members?team=abc123abc123')
-      // The view's Back pops the pushed entry: the bare roster, still on the page.
-      fireEvent.click(screen.getByTestId('team-back'))
-      await waitFor(() => expect(currentUrl()).toBe('/members'))
-      expect(screen.queryByTestId('team-view')).toBeNull()
-      // One more Back: off the page -- the save did not stack a second roster entry.
+      expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-alpha')
+      await openRosterDrawer()
+      fireEvent.click(screen.getByTestId('history-back'))
+      await waitFor(() => expect(screen.queryByTestId('roster-drawer')).toBeNull(), { timeout: 3000 })
+      expect(currentUrl()).toBe('/members?member=alpha')
+      expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha')
+      // The drawer's entry is spent: the next Back is off the page.
       fireEvent.click(screen.getByTestId('history-back'))
       await waitFor(() => expect(currentUrl()).toBe('/elsewhere'))
+    })
+
+    it('a scrim tap closes the drawer and spends its entry without switching', async () => {
+      await renderPage(alphaBeta(), 'kirocrew', { route: '/members?member=alpha' })
+      await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+      await openRosterDrawer()
+      navigateSpy.mockClear()
+      fireEvent.click(screen.getByTestId('roster-drawer-backdrop'))
+      expect(navigateSpy).toHaveBeenCalledWith(-1)
+      await waitFor(() => expect(screen.queryByTestId('roster-drawer')).toBeNull(), { timeout: 3000 })
+      expect(currentUrl()).toBe('/members?member=alpha')
+    })
+
+    it('a team header in the drawer opens the team view, and the view\'s Back slides the roster in again', async () => {
+      vi.mocked(api.teams.list).mockResolvedValue({ teams: [{ id: 'abc123abc123', name: 'Triage', members: ['alpha'] }] })
+      await renderPage(alphaBeta(), 'kirocrew', { route: '/members?member=alpha' })
+      await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+      const drawer = await openRosterDrawer()
+      fireEvent.click((await within(drawer).findAllByTestId('team-group-header'))[0])
+      await screen.findByTestId('team-view')
+      await waitFor(() => expect(currentUrl()).toBe('/members?team=abc123abc123'))
+      await waitFor(() => expect(screen.queryByTestId('roster-drawer')).toBeNull(), { timeout: 3000 })
+      fireEvent.click(screen.getByTestId('team-back'))
+      expect(await screen.findByTestId('roster-drawer')).toBeTruthy()
+      expect(currentUrl()).toBe('/members?team=abc123abc123')
+    })
+
+    it('with a team open the guide sees the phone roster only while its drawer is open', async () => {
+      // The team view keeps the roster in the drawer, so a closed drawer is no
+      // roster on screen even though no crewmate is open.
+      vi.mocked(api.teams.list).mockResolvedValue({ teams: [{ id: 'abc123abc123', name: 'Triage', members: ['alpha'] }] })
+      await renderPage(alphaBeta(), 'kirocrew', { route: '/members?team=abc123abc123' })
+      await screen.findByTestId('team-view')
+      expect(screen.queryByTestId('roster-drawer')).toBeNull()
+      await waitFor(() => expect(scopeOpen('members.roster-phone')).toBe(false))
+      fireEvent.click(screen.getByTestId('team-back'))
+      expect(await screen.findByTestId('roster-drawer')).toBeTruthy()
+      await waitFor(() => expect(scopeOpen('members.roster-phone')).toBe(true))
     })
 
     it('the guided flow takes the whole screen below md and Not now returns to the originating chat', async () => {
       await renderPage([row({ name: 'alpha', slug: 'alpha' }), defaultRow()], 'kirocrew', { route: '/members?member=alpha' })
       expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-alpha')
+      // The roster's "+" lives in the drawer below md.
+      await openRosterDrawer()
+      navigateSpy.mockClear()
       await clickAddCrewmate()
+      // Opened on the drawer's own duplicate entry, so the close spends it.
+      await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith(-1))
       const pane = screen.getByTestId('member-create-pane')
       await waitFor(() => expect(pane.className).not.toMatch(/(^|\s)hidden(\s|$)/))
+      // The creation surface retires the drawer and the roster yields with it.
+      await waitFor(() => expect(screen.queryByTestId('roster-drawer')).toBeNull(), { timeout: 3000 })
       expect(screen.getByTestId('member-roster').className).toMatch(/(^|\s)hidden(\s|$)/)
       fireEvent.click(await within(pane).findByTestId('meet-crewmates-not-now'))
       await waitFor(() => expect(pane.className).toMatch(/(^|\s)hidden(\s|$)/))
@@ -5937,60 +6049,112 @@ describe('MembersPage default member, memory and URL', () => {
       expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-alpha')
     })
 
-    it('a stale ?member= returns to the roster and says where the member went', async () => {
-      await renderPage(alphaBeta(), 'kirocrew', { route: '/members?member=ghost' })
-      await rosterRow('alpha')
-      await waitFor(() => expect(currentUrl()).toBe('/members'))
-      expect(screen.queryByTestId('chat-pane-stub')).toBeNull()
-      expect(api.memberThread).not.toHaveBeenCalled()
-      // The roster is the answer surface here, so the notice sits above it.
-      const notice = screen.getByTestId('member-gone-roster-notice')
-      expect(notice).toHaveTextContent('“ghost” is no longer on the roster')
-      expect(notice).toHaveAttribute('role', 'status')
-      // Tapping a member retires it.
-      fireEvent.click(await rosterRow('beta'))
-      await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-beta'), PANE_READY)
-      expect(screen.queryByTestId('member-gone-roster-notice')).toBeNull()
-    })
-
-    it('tapping a member opens it; the header back POPS the entry the roster pushed', async () => {
-      await renderPage(alphaBeta())
-      fireEvent.click(await rosterRow('beta'))
-      expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-beta')
-      expect(currentUrl()).toBe('/members?member=beta')
+    it('a guide pushing the create link over the open drawer closes it without popping the guide\'s entry', async () => {
+      await renderPage([row({ name: 'alpha', slug: 'alpha' }), defaultRow()], 'kirocrew', { route: '/members?member=alpha' })
+      await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+      await openRosterDrawer()
       navigateSpy.mockClear()
-      fireEvent.click(screen.getByTestId('member-back'))
-      // The entry was pushed from this page's roster, so back is a history
-      // pop — the browser's own Back afterwards does not land on a second,
-      // identical roster entry.
-      expect(navigateSpy).toHaveBeenCalledWith(-1)
-      // The memory survives the back gesture: the next desktop visit resumes here.
-      expect(localStorage.getItem(LAST_MEMBER_KEY)).toBe('beta')
-    })
-
-    it('from a deep link the header back drops the param in place — there is no roster entry behind it', async () => {
-      await renderPage(alphaBeta(), 'kirocrew', { route: '/members?member=beta' })
-      expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-beta')
-      navigateSpy.mockClear()
-      fireEvent.click(screen.getByTestId('member-back'))
-      await waitFor(() => expect(screen.queryByTestId('chat-pane-stub')).toBeNull())
-      expect(currentUrl()).toBe('/members')
+      fireEvent.click(screen.getByTestId('guide-nav-granted'))
+      const pane = screen.getByTestId('member-create-pane')
+      await waitFor(() => expect(pane.className).not.toMatch(/(^|\s)hidden(\s|$)/))
+      await waitFor(() => expect(screen.queryByTestId('roster-drawer')).toBeNull(), { timeout: 3000 })
+      // The pop would have taken the guide's entry, not the drawer's duplicate.
       expect(navigateSpy).not.toHaveBeenCalledWith(-1)
     })
 
-    it('leaving the thread with Profile open does not carry the card to the next crewmate', async () => {
-      // The phone's Back clears the member param; `profile` stayed non-null
-      // across it, so the next crewmate opened with the card already up.
+    /** A page before /members, so one Back can be seen leaving the page. */
+    function renderFromElsewhere(go: { to: string; state?: unknown }) {
+      function Elsewhere() {
+        const nav = useNavigate()
+        return (
+          <button data-testid="go-members" onClick={() => nav(go.to, go.state ? { state: go.state } : undefined)}>
+            go
+          </button>
+        )
+      }
+      function BackProbe() {
+        const nav = useNavigate()
+        return (
+          <button data-testid="history-back" onClick={() => nav(-1)}>
+            back
+          </button>
+        )
+      }
+      renderWithProviders(
+        <NavigationLeaveGuardProvider>
+          <Routes>
+            <Route path="/elsewhere" element={<Elsewhere />} />
+            <Route path="/members" element={<MembersPage />} />
+          </Routes>
+          <BackProbe />
+          <LocationProbe />
+        </NavigationLeaveGuardProvider>,
+        { route: '/elsewhere' },
+      )
+      fireEvent.click(screen.getByTestId('go-members'))
+    }
+
+    it('on the leave guard\'s own duplicate entry the drawer pushes and pops nothing, so the guard stays armed', async () => {
+      // NavigationBackGuard parks a duplicate entry marked as its trap while a
+      // draft is unsaved. A drawer entry above it would be popped back onto the
+      // trap on close, which the guard reads as a press to carry past.
+      ;(api.members as ReturnType<typeof vi.fn>).mockResolvedValue({ members: alphaBeta(), default_agent: 'kirocrew' })
+      ;(api.memberThread as ReturnType<typeof vi.fn>).mockImplementation(echoThread)
+      renderFromElsewhere({ to: '/members?member=alpha', state: { __navigationLeaveTrap: true } })
+      expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-alpha')
+      navigateSpy.mockClear()
+      await openRosterDrawer()
+      expect(navigateSpy).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByTestId('roster-drawer-backdrop'))
+      await waitFor(() => expect(screen.queryByTestId('roster-drawer')).toBeNull(), { timeout: 3000 })
+      expect(navigateSpy).not.toHaveBeenCalled()
+      expect(currentUrl()).toBe('/members?member=alpha')
+    })
+
+    it('the first crewmate created from an empty roster opens on a replace, so one Back still leaves the page', async () => {
+      // A pushed open would leave a bare /members under the chat, and the phone
+      // lands a bare /members on a crewmate by itself: Back would bounce back in.
+      const membersMock = api.members as ReturnType<typeof vi.fn>
+      membersMock.mockResolvedValue({ members: [defaultRow()], default_agent: 'kirocrew' })
+      ;(api.memberThread as ReturnType<typeof vi.fn>).mockImplementation(echoThread)
+      renderFromElsewhere({ to: '/members' })
+      fireEvent.click((await screen.findAllByTestId('crewmate-empty-advanced'))[0])
+      await screen.findByTestId('crewmate-create-form')
+      fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'radar' } })
+      membersMock.mockResolvedValue({ members: [defaultRow(), row({ name: 'radar', slug: 'radar' })], default_agent: 'kirocrew' })
+      fireEvent.click(screen.getByTestId('crewmate-create-submit'))
+      await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-radar'), PANE_READY)
+      expect(currentUrl()).toBe('/members?member=radar')
+      fireEvent.click(screen.getByTestId('history-back'))
+      await waitFor(() => expect(currentUrl()).toBe('/elsewhere'))
+    })
+
+    it('a stale ?member= opens a stand-in with the notice above the chat, as on a wide window', async () => {
+      await renderPage(alphaBeta(), 'kirocrew', { route: '/members?member=ghost' })
+      await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+      expect(currentUrl()).not.toBe('/members?member=ghost')
+      expect(screen.getByTestId('member-gone-notice')).toHaveTextContent(/^Showing /)
+      expect(screen.queryByTestId('member-gone-roster-notice')).toBeNull()
+    })
+
+    it('switching from the drawer with Profile open does not carry the card to the next crewmate', async () => {
       await renderPage(alphaBeta(), 'kirocrew', { route: '/members?member=alpha' })
       await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
       fireEvent.click(await screen.findByTestId('member-identity-pill'))
       await screen.findByTestId('crew-profile-modal')
-      fireEvent.click(screen.getByTestId('member-back'))
-      await waitFor(() => expect(currentUrl()).toBe('/members'))
+      await openRosterDrawer()
       fireEvent.click(await rosterRow('beta'))
       await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-beta'), PANE_READY)
-      expect(screen.queryByTestId('crew-profile-modal')).toBeNull()
+      // The card leaves through its exit animation.
+      await waitFor(() => expect(screen.queryByTestId('crew-profile-modal')).toBeNull(), { timeout: 3000 })
       expect(screen.getByTestId('member-identity-pill')).toHaveAttribute('aria-expanded', 'false')
+    })
+
+    it('with nothing to open the roster is the page, and the page claims no drag', async () => {
+      await renderPage([defaultRow()], 'kirocrew')
+      await screen.findAllByTestId('crewmate-empty-hero')
+      expect(screen.queryByTestId('roster-drawer')).toBeNull()
+      expect(screen.getByTestId('members-page')).not.toHaveAttribute('data-owns-swipe')
     })
 
     it('floats Profile instead of adding its fixed-width column on a 320px phone', async () => {
@@ -6002,6 +6166,41 @@ describe('MembersPage default member, memory and URL', () => {
       expect(await screen.findByTestId('crew-profile-modal')).toBeInTheDocument()
       expect(screen.getByTestId('crew-profile-card')).toBeInTheDocument()
       expect(screen.queryByTestId('crew-profile-docked')).toBeNull()
+    })
+
+    it('the side panel first mounts offscreen, so a non-gesture open never paints it at rest before it slides in', async () => {
+      setWindowWidth(390)
+      await renderPage(alphaBeta(), 'kirocrew', { route: '/members?member=beta' })
+      expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-beta')
+      // The transform the slide carries at the moment React inserts it, read
+      // synchronously inside the commit: before the open effect re-seats the
+      // offset, which for a non-discrete open runs only after a paint.
+      let mountedTransform: string | null = null
+      const capture = (n: Node) => {
+        if (mountedTransform !== null || !(n instanceof HTMLElement)) return
+        const slide = n.matches('[data-testid="member-side-panel-slide"]')
+          ? n
+          : n.querySelector<HTMLElement>('[data-testid="member-side-panel-slide"]')
+        if (slide) mountedTransform = slide.style.transform
+      }
+      const realAppend = Node.prototype.appendChild
+      const realInsert = Node.prototype.insertBefore
+      const append = vi.spyOn(Node.prototype, 'appendChild').mockImplementation(function <T extends Node>(this: Node, n: T): T {
+        capture(n)
+        return realAppend.call(this, n) as T
+      })
+      const insert = vi.spyOn(Node.prototype, 'insertBefore').mockImplementation(function <T extends Node>(this: Node, n: T, ref: Node | null): T {
+        capture(n)
+        return realInsert.call(this, n, ref) as T
+      })
+      try {
+        fireEvent.click(screen.getByTestId('member-panel-toggle'))
+        await screen.findByTestId('member-side-panel')
+      } finally {
+        append.mockRestore()
+        insert.mockRestore()
+      }
+      expect(mountedTransform).toMatch(/translate(X|3d)\(390px/)
     })
 
     it('the overlay fills the phone: the panel is handed the window width, not left to a 100% it cannot resolve (#9979)', async () => {
@@ -6025,44 +6224,6 @@ describe('MembersPage default member, memory and URL', () => {
       // A filled panel has no left-edge splitter: there is nothing to drag
       // against when the panel already spans the window (the chat page's rule).
       expect(overlay.querySelector('[role="separator"][aria-orientation="vertical"]')).toBeNull()
-    })
-
-    it('a greeting notice does not hide the roster below md once its chat is closed — only a roster failure has no chat to show', async () => {
-      const membersMock = api.members as ReturnType<typeof vi.fn>
-      const sendMock = api.sendChat as ReturnType<typeof vi.fn>
-      await renderPage([row()])
-      // Below md nothing auto-opens: the roster is the screen until a tap.
-      await rosterRow('oncall')
-      await clickAddAdvanced()
-      await screen.findByTestId('crewmate-create-form')
-      fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'radar' } })
-      membersMock.mockResolvedValue({
-        members: [row(), row({ name: 'radar', slug: 'radar' })],
-        default_agent: 'kirocrew',
-      })
-      sendMock.mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: 'slot busy' }), { status: 409, headers: { 'Content-Type': 'application/json' } }),
-      )
-      fireEvent.click(screen.getByTestId('crewmate-create-submit'))
-      await waitFor(() => expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-radar'), PANE_READY)
-      await screen.findByTestId('member-post-create-error', undefined, PANE_READY)
-      // Chat open: the roster yields below md, as for any open chat.
-      expect(screen.getByTestId('member-roster').className).toMatch(/\bhidden\b/)
-      // The header back closes the chat. The greeting notice is still pending,
-      // but it sits over a chat that is now closed: the roster must be the
-      // screen again, not a notice bar over a blank column.
-      fireEvent.click(screen.getByTestId('member-back'))
-      await waitFor(() => expect(screen.queryByTestId('chat-pane-stub')).toBeNull())
-      const aside = screen.getByTestId('member-roster')
-      expect(aside.className).not.toMatch(/\bhidden\b/)
-      // The retry is not lost, and not hidden with the chat column either: with
-      // no chat open the notice moves INTO the roster, where the "+" it holds
-      // sits, so its dismiss and "Send it again" are on the screen the user
-      // sees (Opus, round 43). One notice in the document, not one per column.
-      const notice = screen.getByTestId('member-post-create-error')
-      expect(aside).toContainElement(notice)
-      expect(screen.getAllByTestId('member-post-create-error')).toHaveLength(1)
-      expect(screen.getByTestId('member-post-create-retry')).toHaveTextContent('Send it again')
     })
   })
 })

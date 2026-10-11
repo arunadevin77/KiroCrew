@@ -367,6 +367,21 @@ the apps, behind a separator. The decision reads `stableRailHeight` — the tall
 height seen at the current window width — so the on-screen keyboard or a browser
 toolbar shrinking the rail at the same width never moves the tiles.
 
+**The Crewmates page hosts the same drawer.** On a phone `/members` lands on a
+crewmate exactly as a wide window does, and its roster is a left drawer over the
+open chat: the same rail (App provides `MobileNavRailContext` on this route too)
+beside the roster aside, which is portaled into the drawer while a chat or team
+is open. A rightward drag or the header's back control reveals it, a leftward
+drag reveals the side panel (a full-width overlay that slides on `sidePanelX`),
+and each gesture is off while the other's panel is open. The drawer mints the
+same duplicate history entry, and a roster pick spends it FIRST, then opens the
+crewmate on the entry below (`consumeRosterDrawerEntry`), so Back never reopens
+the crewmate just left. With nothing open the roster is the page, the page
+binds nothing and claims no side, and the shell's nav-drawer swipe works there.
+The rail's Home control navigates with `replace` without closing the drawer
+when its host is not the chat page, since that close would pop the entry after
+the replace.
+
 **Haptics.** `lib/haptic.ts` makes one best-effort tap: `navigator.vibrate` on
 Android, the hidden switch-checkbox click on iOS where the `switch` attribute exists
 (iOS 17.4+), and a silent no-op everywhere else; it never throws. Call it for a
