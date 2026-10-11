@@ -462,6 +462,64 @@ class CronLoopSafetyError(RuntimeError):
     """
 
 
+class CronPauseNotSaved(RuntimeError):
+    """Raised by :meth:`CronService.cancel` when a cancelled one-shot's pause did not reach the store.
+
+    The run is cancelled and its history entry written; only the park failed to
+    land, and nothing retries the save later. The message describes the job as the
+    cancel last saw it, after the merge (see :func:`_cancelled_park_report`).
+    """
+
+
+# Reasons ``_merge_terminal_state_locked`` gives for saving no park.
+_PARK_JOB_REMOVED = "the job is no longer in the cron store"
+_PARK_NEWER_RUN = "the cron store already holds a newer run of the job"
+_PARK_NOT_ONE_SHOT = "the job is no longer a one-shot in the cron store"
+_PARK_NOT_SAVED = "The run was cancelled, but its pause could not be saved"
+_ON_SCHEDULE_MESSAGE = (
+    f"{_PARK_NOT_SAVED}: a newer run of the job was recorded meanwhile, so the job is back"
+    " on its schedule now. Pause or delete it if it must not run again."
+)
+_RECURRING_MESSAGE = (
+    f"{_PARK_NOT_SAVED}: the job was changed to a recurring schedule meanwhile and runs on"
+    " that schedule now. Pause or delete it if it must not run again."
+)
+
+
+def _cancelled_park_report(
+    job: CronJob | None, reason: str | None, saved: str | None = None
+) -> tuple[str, str | None]:
+    """The history note and the message for a cancelled one-shot's park.
+
+    ``job`` is the job as ``cancel`` sees it after the merge, and ``reason`` the
+    merge's answer (None: a save holding the park returned). Every end of the
+    merge is worded here, from that job and not from the reason, so the text
+    is true whatever wrote the store meanwhile. A message of None means nothing
+    is left to pause, and ``cancel`` returns True: a failed park answers that
+    only on ``saved``, what the store as saved shows when it shows the job
+    cannot run again (``CronService._saved_job_state``).
+    """
+    if reason is None:
+        return "", None
+    if saved == "absent":
+        return "; the job was removed from the cron store meanwhile", None
+    note = f"; the pause could not be saved ({reason})"
+    if saved == "paused":
+        return f"{note}, and the job is paused", None
+    if job is not None and job.enabled:
+        if job.schedule.kind == "at":
+            return f"{note}, so the job is back on its schedule now", _ON_SCHEDULE_MESSAGE
+        return f"{note}, so the job runs on its recurring schedule now", _RECURRING_MESSAGE
+    # Held off the schedule in this process only, or gone from memory, and not
+    # shown paused or absent by the saved store: a reload or a restart can bring
+    # it back enabled, so it may run again.
+    subject = "this one-shot" if job is None or job.schedule.kind == "at" else "the job"
+    return f"{note}, so {subject} may run again", (
+        f"{_PARK_NOT_SAVED}, so {subject} may run again once the cron store is reloaded or"
+        " the gateway restarts. Delete it if it must not run again."
+    )
+
+
 # ── Service ──
 
 
@@ -1555,6 +1613,12 @@ class CronService:
         untouched. Returns True when a running execution was found. A kill
         that raises still cancels the task, releases the run's claim and
         records the entry (its error names the failure), then propagates.
+        A cancelled one-shot whose pause could not be saved raises
+        :class:`CronPauseNotSaved` after the entry and the audit, unless nothing
+        is left to pause: a job removed from the store meanwhile, or one paused
+        by whatever wrote the store meanwhile, is noted in the entry and the
+        cancel returns True. The entry and the message describe the job as the
+        cancel last saw it (:func:`_cancelled_park_report`).
         """
         # A finished task is not a running execution, whatever the claim says.
         # Trusting the claim here would kill nothing, answer True, record a
@@ -1661,6 +1725,7 @@ class CronService:
             # asyncio.to_thread) — NOT a bare on-loop self._save() — so it re-syncs
             # under the store lock and cannot clobber a concurrent add/update
             # worker; the bounded spin never parks this loop-side coroutine.
+            pause_not_saved: CronPauseNotSaved | None = None
             if job:
                 last_error = f"Cancelled by user after {int(elapsed)}s"
                 if kill_failed is not None:
@@ -1677,16 +1742,20 @@ class CronService:
                 job.last_error = last_error
                 job.last_run_ts = last_run_ts
                 # A cancelled one-shot is parked, not left due: its run never
-                # reaches _execute's one-shot disable. Live at once, so a busy
-                # store cannot let the next tick run it again; the merge parks
-                # the disk copy. A delete_after_run one-shot is left to
-                # _execute_with_timeout, whose failed-run auto-pause parks it.
+                # reaches _execute's one-shot disable. The hold is provisional:
+                # the job leaves the schedule in this process at once, so the next
+                # tick does not run it while the save below is pending, but
+                # ``user_paused`` is set only by the save that lands the park. A
+                # delete_after_run one-shot is left to _execute_with_timeout,
+                # whose failed-run auto-pause parks it.
                 park_one_shot = job.schedule.kind == "at" and not job.delete_after_run
                 if park_one_shot:
                     job.enabled = False
-                    job.user_paused = True
+                # Why the park was not saved, or None once a store write that
+                # holds it has returned (the merge's own answer).
+                park_failure: str | None = None
                 try:
-                    await asyncio.to_thread(
+                    park_failure = await asyncio.to_thread(
                         self._merge_terminal_state_locked,
                         job_id,
                         last_status="error",
@@ -1696,8 +1765,42 @@ class CronService:
                         result_produced=claim.started_monotonic is not None and job.result_produced,
                         park_one_shot=park_one_shot,
                     )
-                except Exception:
+                except Exception as exc:
                     logger.exception("Cancel: failed to persist state for cron %s", job_id)
+                    park_failure = failure_name(exc)
+                # A park that did not land is not retried later, so nothing can
+                # overwrite a choice made since. The history entry and the caller
+                # (below) say so, from the job as it is now: the cancel's own text
+                # first, because another run of the job can replace
+                # ``job.last_error`` while the merge is awaited. The merge's own
+                # rules first, for one that did not run (a busy store raises before
+                # it) or whose job a reload replaced since: a newer run's record, or
+                # a schedule that is not a one-shot, takes the hold off as a reload
+                # derives it; a one-shot the cancel's record never reached is held.
+                # A failed park answers success only when the saved store shows the
+                # job cannot run again: flags a failed save left in memory are not
+                # proof, so a job gone or paused here is read from the store.
+                live = self.get_job(job_id)
+                saved: str | None = None
+                if park_one_shot and park_failure is not None:
+                    if live is not None and (
+                        live.run_generation > generation or live.schedule.kind != "at"
+                    ):
+                        live.enabled = not (live.user_paused or live.auto_paused)
+                    elif live is not None and live.run_generation < generation:
+                        live.enabled = False
+                    if live is None or live.user_paused or live.auto_paused:
+                        saved = await asyncio.to_thread(self._saved_job_state, job_id)
+                note, message = _cancelled_park_report(live, park_failure, saved)
+                history_error = f"{last_error}{note}" if park_one_shot else last_error
+                if park_one_shot and park_failure is not None:
+                    logger.warning(
+                        "Cancel: the pause of cancelled one-shot cron %s was not saved (%s)",
+                        job_id,
+                        park_failure,
+                    )
+                if park_one_shot and message is not None:
+                    pause_not_saved = CronPauseNotSaved(message)
                 try:
                     record = CronRunRecord(
                         job_id=job_id,
@@ -1706,8 +1809,8 @@ class CronService:
                         finished_at=time.time(),
                         duration_ms=int(elapsed * 1000),
                         status="cancelled",
-                        summary=job.last_error or "",
-                        error=job.last_error or "",
+                        summary=history_error,
+                        error=history_error,
                     )
                     await self._history.append(record)
                     if self._push_refresh:
@@ -1749,6 +1852,8 @@ class CronService:
                 logger.exception("Cancel: SEL audit failed for cron %s", job_id)
         if kill_failure is not None:
             raise kill_failure
+        if pause_not_saved is not None:
+            raise pause_not_saved
         return True
 
     # ── Public API ──
@@ -4570,7 +4675,7 @@ class CronService:
         result_produced: bool = False,
         count_failure: bool = False,
         park_one_shot: bool = False,
-    ) -> None:
+    ) -> str | None:
         """Persist a job's terminal runtime state under the store lock.
 
         Used for the reaper timeout (:meth:`_force_reap`) and user cancel
@@ -4603,13 +4708,29 @@ class CronService:
         count when ``count_failure``, and the one-shot park when
         ``park_one_shot``), and the save after them has nothing to
         record once they are skipped.
+
+        Returns None only once a ``_save()`` holding this record has returned,
+        with the park in it when ``park_one_shot`` asks for one. Every other
+        path returns why it was not saved, so a caller never reports a park the
+        store did not take: the job missing from the store (removed, or an
+        unreadable store loaded as empty), a newer run's record, a disk copy whose
+        schedule is not a one-shot, or an unreadable store refusing the save (logged,
+        not raised). A busy store (``CronStoreBusy``) and any other write error
+        raise, after a failed save has taken the park back off the disk copy.
+        Nothing saves a park later. A park request also leaves the job as a
+        reload would show it: at a newer run's record, and for a disk copy whose
+        schedule is not a one-shot, the caller's provisional hold comes off, and a
+        failed save restores the hold only onto a one-shot. The caller words every
+        end from that job (:func:`_cancelled_park_report`).
         """
         with self._file_lock():
             self._sync()
             by_id = {j.id: j for j in self._jobs}
             target = by_id.get(job_id)
             if target is None:
-                return
+                if self._load_failed:
+                    return "the cron store could not be read"
+                return _PARK_JOB_REMOVED
             if run_generation < target.run_generation:
                 logger.debug(
                     "Cron: not applying the terminal record of an older run of '%s'"
@@ -4618,7 +4739,11 @@ class CronService:
                     run_generation,
                     target.run_generation,
                 )
-                return
+                if park_one_shot:
+                    # The newer record decides whether the job runs again, so the
+                    # caller's provisional hold comes off as a reload derives it.
+                    target.enabled = not (target.user_paused or target.auto_paused)
+                return _PARK_NEWER_RUN
             target.run_generation = run_generation
             target.last_status = last_status
             target.last_error = last_error
@@ -4626,14 +4751,25 @@ class CronService:
             # A one-shot whose run the user cancelled is parked like a
             # fire-time-denied one: its due time has passed, so leaving it
             # enabled would run it again on the next tick. Disabled, so the user
-            # can re-enable it. Set before the snapshot below, so a failed save
-            # keeps the park in memory, as the caller's live park does.
-            if park_one_shot and target.schedule.kind == "at":
+            # can re-enable it. Written to the disk copy for the save below; a
+            # failed save takes ``user_paused`` back off, so a park the store
+            # did not take is never reported, and leaves the caller's
+            # provisional hold (``enabled`` False) in place.
+            parking = park_one_shot and target.schedule.kind == "at"
+            if park_one_shot and not parking:
+                # Recurring in the store: it keeps that schedule, so the caller's
+                # provisional hold comes off as a reload derives it, before the
+                # snapshot below, so a failed save does not put it back.
+                target.enabled = not (target.user_paused or target.auto_paused)
+            # Snapshotted before the park and the failure count, so a failed
+            # save leaves the job as the disk says.
+            counted = (target.enabled, target.auto_paused, target.consecutive_failures)
+            paused_before = target.user_paused
+            if parking:
                 target.enabled = False
                 target.user_paused = True
             # Counted on the disk copy under the lock, so the failure count and
             # any auto-pause it triggers persist with the terminal record.
-            counted = (target.enabled, target.auto_paused, target.consecutive_failures)
             if count_failure:
                 target.record_failure()
             # A command/script run that produced nothing must not show the
@@ -4650,9 +4786,30 @@ class CronService:
                 # Keep scheduling as the disk says (like the loop-stall breaker):
                 # a pause the store did not take must not stop the job in memory.
                 target.enabled, target.auto_paused, target.consecutive_failures = counted
+                target.user_paused = paused_before
+                if parking:
+                    target.enabled = False  # the cancel's provisional hold
                 if not isinstance(exc, CronStoreUnreadable):
                     raise
                 logger.warning("Cron terminal state not persisted: %s", exc)
+                return "the cron store could not be read"
+        if park_one_shot and not parking:
+            return _PARK_NOT_ONE_SHOT
+        return None
+
+    def _saved_job_state(self, job_id: str) -> str | None:
+        """``"absent"`` or ``"paused"`` when the store as saved shows the job cannot run
+        again, read under the store lock; None when it can, or when the store is busy or
+        unreadable. Worker-thread only: the lock spins."""
+        try:
+            with self._file_lock():
+                records, readable = _read_job_records(self._path)
+        except Exception:
+            return None
+        record = next((j for j in records if j.get("id") == job_id), None)
+        if not readable or (record is not None and _record_is_enabled(record)):
+            return None
+        return "absent" if record is None else "paused"
 
     # ── Loop-stall breaker ──
 

@@ -22,6 +22,7 @@ from kiro_crew import model_registry
 from kiro_crew.config.loader import KiroCrewConfig, config_dir
 from kiro_crew.context import ContextBuilder
 from kiro_crew.cron import (
+    CronPauseNotSaved,
     CronPendingMismatch,
     CronStoreBusy,
     CronStoreUnreadable,
@@ -2055,7 +2056,15 @@ async def api_cron_cancel(request: web.Request) -> web.Response:
     job = next((j for j in jobs if j.id == job_id), None)
     if not job:
         return web.json_response({"error": "job not found"}, status=404)
-    cancelled = await state.crons.cancel(job_id)
+    try:
+        cancelled = await state.crons.cancel(job_id)
+    except CronPauseNotSaved as exc:
+        # The run is cancelled; only the one-shot's pause did not reach the store.
+        state.push_refresh("crons")
+        return web.json_response(
+            {"error": str(exc), "code": "cron_pause_not_saved", "retryable": False},
+            status=409,
+        )
     if not cancelled:
         return web.json_response({"error": "job is not running"}, status=409)
     state.push_refresh("crons")
