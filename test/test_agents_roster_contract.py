@@ -43,6 +43,7 @@ from kiro_crew.dashboard.handlers.agents import (
 # interface the dashboard reads).
 ROSTER_ROW_KEYS = frozenset(
     {
+        "acp_backend",
         "name",
         "scope",
         "kiro_agent",
@@ -107,6 +108,7 @@ def _seed_config_with_every_field_set() -> dict:
                 "workspace": "probe-ws",
                 "memory_store": "probe-ms",
                 "model": "claude-opus-5",
+                "acp_backend": "claude",
                 "reasoning_effort": "high",
                 "description": "probe description",
                 "triggers": "probe triggers",
@@ -308,6 +310,7 @@ class TestUnshowableValuesAreMasked:
             memory_store=f"ms-{self.PROBE}",
             triggers=f"use when {self.PROBE}",
             model=self.PROBE,
+            acp_backend=self.PROBE,
             reasoning_effort=self.PROBE,
             session_color=self.PROBE,
             display_name=f"label {self.PROBE}",
@@ -340,20 +343,19 @@ class TestUnshowableValuesAreMasked:
         assert _carries_mask(row[field])
         assert "nested" not in json.dumps(row)
 
-    def test_every_value_is_a_string_except_the_one_structured_field(self) -> None:
-        """`dict[str, object]` is honest about exactly one field, not a loophole.
-
-        Every value is a `str` but `avatar`, which is a `dict` the dashboard needs
-        verbatim. Asserting the exception BY NAME means a second structured field
-        cannot appear without this test failing.
-        """
+    def test_values_are_strings_except_avatar_and_inherited_backend(self) -> None:
+        """Only the avatar is structured; an inherited backend is null."""
         cfg = KiroCrewAgentConfig()
         object.__setattr__(cfg, "description", {"nested": "object"})
         for redact in (False, True):
             row = _agent_roster_row("probe", "global", cfg, redact=redact)
             assert isinstance(row["avatar"], dict)
             non_str = {k for k, v in row.items() if not isinstance(v, str)}
-            assert non_str == {"avatar"}, f"unexpected structured value(s): {non_str}"
+            assert row["acp_backend"] is None
+            assert non_str == {
+                "avatar",
+                "acp_backend",
+            }, f"unexpected structured value(s): {non_str}"
 
     def test_owner_keeps_name_addressable_but_app_token_does_not_need_it(self) -> None:
         """``name`` survives only where something can actually address it.

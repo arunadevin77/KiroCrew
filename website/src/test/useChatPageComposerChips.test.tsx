@@ -13,6 +13,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { http, HttpResponse } from 'msw'
+import { server } from '../../integration/mocks/server'
 
 const apiMock = vi.hoisted(() => ({ updateKirocrewAgent: vi.fn(), projectGit: vi.fn(), kirocrewConfig: vi.fn() }))
 vi.mock('../api/client', async (importOriginal) => {
@@ -21,13 +23,16 @@ vi.mock('../api/client', async (importOriginal) => {
 })
 
 import { useComposerChips } from '../pages/chat/page/composerChips'
+import { AcpAdapter } from '../providers/adapters/acp'
 import { triggerRefresh } from '../store/dashboardSlice'
 import type { ChatSlot } from '../types'
 
 type Opts = Parameters<typeof useComposerChips>[0]
 
-function harness() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+function harness(
+  overrides: Partial<Opts> = {},
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }),
+) {
   const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
   const provider = {
     id: 'test-provider',
@@ -48,6 +53,7 @@ function harness() {
     dispatch: vi.fn() as never,
     queryClient,
     showActionError: vi.fn(),
+    ...overrides,
   }
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
@@ -59,6 +65,88 @@ function harness() {
 beforeEach(() => {
   apiMock.updateKirocrewAgent.mockReset()
   apiMock.projectGit.mockReset()
+  apiMock.kirocrewConfig.mockReset()
+  apiMock.kirocrewConfig.mockResolvedValue({ agent: { model: 'global-choice' } })
+})
+
+describe('resolving the model for the actual conversation', () => {
+  const globalModel = 'global-choice'
+  const memberModel = 'member-choice'
+  const settledTimeout = { timeout: 10_000 }
+
+  it.each([
+    { label: 'ordinary member', key: 'slot-a', kind: 'member', linked: '', expected: globalModel },
+    { label: 'explicit template', key: 'slot-a', kind: 'template', linked: '', expected: globalModel },
+    { label: 'member DM', key: 'member-default', kind: 'member', linked: '', expected: memberModel },
+    { label: 'linked channel', key: 'member-default', kind: 'member', linked: 'slack:probe', expected: globalModel },
+  ] as const)('shows the $label model through the real adapter and API client', async ({ key, kind, linked, expected }) => {
+    const requests: URLSearchParams[] = []
+    server.use(http.get('/api/agents/resolved-model', ({ request }) => {
+      const query = new URL(request.url).searchParams
+      requests.push(query)
+      // These are the disjoint API answers from the backend regression: an
+      // omitted context previews the member DM, not an ordinary conversation.
+      const model = !query.has('session_key') || query.get('session_key') === 'member-default'
+        ? memberModel : globalModel
+      return HttpResponse.json({ model, pinned: true })
+    }))
+    const { hook } = harness({
+      currentSlot: {
+        key, agent: 'default', agent_kind: kind, model: '', linked_session_key: linked,
+      } as ChatSlot,
+      provider: new AcpAdapter() as never,
+      availableModels: [{ name: 'auto' }, { name: expected }] as never,
+    })
+    // The adapter's API response and the hook's React Query render must both
+    // settle; the initial Auto chip proves neither.
+    await waitFor(() => expect(hook.result.current.shownModel).toBe(expected), settledTimeout)
+    expect(requests.some(query =>
+      query.get('agent') === 'default' &&
+      query.get('session_key') === (linked || key) &&
+      query.get('selection_kind') === kind,
+    )).toBe(true)
+  })
+
+  it('keeps same-named member and template answers in separate query entries', async () => {
+    server.use(http.get('/api/agents/resolved-model', ({ request }) => {
+      const query = new URL(request.url).searchParams
+      return HttpResponse.json({
+        model: query.get('selection_kind') === 'template' ? globalModel : memberModel,
+        pinned: query.get('selection_kind') !== 'template',
+      })
+    }))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
+    const { opts, hook } = harness({
+      currentSlot: { key: 'slot-a', agent: 'default', agent_kind: 'member', model: '' } as ChatSlot,
+      provider: new AcpAdapter() as never,
+      availableModels: [{ name: globalModel }, { name: memberModel }] as never,
+    }, queryClient)
+    // Wait for the first API answer before changing only the selection kind.
+    await waitFor(() => expect(hook.result.current.shownModel).toBe(memberModel), settledTimeout)
+    hook.rerender({ ...opts, currentSlot: { ...opts.currentSlot!, agent_kind: 'template' } })
+    // A fresh query must replace the indefinitely fresh same-name member answer.
+    await waitFor(() => expect(hook.result.current.shownModel).toBe(globalModel), settledTimeout)
+  })
+
+  it('keeps ordinary and DM routes in separate query entries for the same member', async () => {
+    server.use(http.get('/api/agents/resolved-model', ({ request }) => {
+      const query = new URL(request.url).searchParams
+      return HttpResponse.json({
+        model: query.get('session_key') === 'slot-a' ? globalModel : memberModel,
+        pinned: true,
+      })
+    }))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
+    const { opts, hook } = harness({
+      currentSlot: { key: 'slot-a', agent: 'default', agent_kind: 'member', model: '' } as ChatSlot,
+      provider: new AcpAdapter() as never,
+      availableModels: [{ name: globalModel }, { name: memberModel }] as never,
+    }, queryClient)
+    // The API answer must settle before switching only the conversation key.
+    await waitFor(() => expect(hook.result.current.shownModel).toBe(globalModel), settledTimeout)
+    hook.rerender({ ...opts, currentSlot: { ...opts.currentSlot!, key: 'member-default' } })
+    await waitFor(() => expect(hook.result.current.shownModel).toBe(memberModel), settledTimeout)
+  })
 })
 
 describe('pinning the shown model to the agent', () => {

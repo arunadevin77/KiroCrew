@@ -28,12 +28,16 @@ describe('AcpAdapter.resolveModel — delegates to the backend resolver', () => 
     expect(await new AcpAdapter().resolveModel('oncall')).toBe('claude-opus-5')
   })
 
-  it('passes the KiroCrew agent name through, not a kiro template name', async () => {
-    // Several agents can share one template, so the agent name is the only
-    // input that can select a per-agent pin.
+  it.each([
+    undefined,
+    { sessionKey: '', selectionKind: 'member' as const },
+    { sessionKey: 'dashboard:thread', selectionKind: 'template' as const },
+  ])('passes the member name and routing context through (%j)', async (context) => {
+    // Members can share a template while their caller's session and selection
+    // kind determine which saved model applies.
     agentResolvedModel.mockResolvedValue({ model: 'claude-opus-5' })
-    await new AcpAdapter().resolveModel('oncall')
-    expect(agentResolvedModel).toHaveBeenCalledWith('oncall')
+    await new AcpAdapter().resolveModel('oncall', context)
+    expect(agentResolvedModel).toHaveBeenCalledWith('oncall', context)
   })
 
   it('does NOT re-derive the precedence client-side', async () => {

@@ -6,13 +6,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
+import type { ModelResolutionContext } from '../providers/types'
 
 const { kirocrewConfigMock, kirocrewAgentsMock, agentResolvedModelMock, updateKirocrewAgentMock, patchConfigMock } = vi.hoisted(() => ({
   kirocrewConfigMock: vi.fn(() =>
     Promise.resolve({ agent: { model: 'claude-opus-5.5', reasoning_effort: '' } })
   ),
   kirocrewAgentsMock: vi.fn(() => Promise.resolve({ agents: [], default_agent: 'default' })),
-  agentResolvedModelMock: vi.fn(() => Promise.resolve({ model: 'claude-opus-5.5', pinned: false })),
+  agentResolvedModelMock: vi.fn((_agent: string, _context?: ModelResolutionContext) => Promise.resolve({ model: 'claude-opus-5.5', pinned: false })),
   updateKirocrewAgentMock: vi.fn(() => Promise.resolve({ ok: true })),
   patchConfigMock: vi.fn(() => Promise.resolve({})),
 }))
@@ -65,6 +66,7 @@ const seedResolved = (model: string, pinned = false) =>
   agentResolvedModelMock.mockImplementation(() => Promise.resolve({ model, pinned }) as never)
 
 const CLEAR_BUTTON = { name: 'Clear its pin' }
+const DEFAULT_MODEL_CONTEXT = { sessionKey: '', selectionKind: 'member' } as const
 
 /** The Default Model select is rendered and has left its loading state, and
  *  both reads the notice depends on have answered. */
@@ -85,11 +87,15 @@ async function settled() {
  */
 describe('ChatPanel — default agent model pin notice', () => {
   beforeEach(() => {
-    updateKirocrewAgentMock.mockClear()
-    patchConfigMock.mockClear()
+    updateKirocrewAgentMock.mockReset()
+    updateKirocrewAgentMock.mockResolvedValue({ ok: true })
+    patchConfigMock.mockReset()
     patchConfigMock.mockImplementation(() => Promise.resolve({}) as never)
-    kirocrewAgentsMock.mockClear()
-    agentResolvedModelMock.mockClear()
+    kirocrewConfigMock.mockReset()
+    kirocrewConfigMock.mockResolvedValue({ agent: { model: 'claude-opus-5.5', reasoning_effort: '' } })
+    kirocrewAgentsMock.mockReset()
+    kirocrewAgentsMock.mockResolvedValue({ agents: [], default_agent: 'default' })
+    agentResolvedModelMock.mockReset()
     seedResolved('claude-opus-5.5')
   })
 
@@ -118,7 +124,7 @@ describe('ChatPanel — default agent model pin notice', () => {
     // Never an unnamed ask: that would let the server answer for a different
     // agent than the one the clear button writes to.
     expect(agentResolvedModelMock).not.toHaveBeenCalledWith('')
-    expect(agentResolvedModelMock).toHaveBeenCalledWith('oncall')
+    expect(agentResolvedModelMock).toHaveBeenCalledWith('oncall', DEFAULT_MODEL_CONTEXT)
     expect(agentResolvedModelMock.mock.invocationCallOrder[0]).toBeGreaterThan(
       kirocrewAgentsMock.mock.invocationCallOrder[0]
     )
@@ -126,6 +132,24 @@ describe('ChatPanel — default agent model pin notice', () => {
     await waitFor(() =>
       expect(updateKirocrewAgentMock).toHaveBeenCalledWith('oncall', { model: '' })
     )
+  })
+
+  it('uses non-DM defaults instead of claiming the member DM pin overrides new chats', async () => {
+    seedAgent('member-choice', { acp_backend: null })
+    agentResolvedModelMock.mockImplementation((_agent, context) => Promise.resolve({
+      model: context?.sessionKey === '' && context.selectionKind === 'member'
+        ? 'claude-opus-5.5' : 'member-choice',
+      pinned: true,
+    }))
+    const qc = wrap()
+    // The roster names the default member before the resolver can ask for it.
+    // Wait for that chained query and its render before asserting no notice.
+    await waitFor(() => {
+      expect(qc.getQueryState(['resolved-model', 'default', DEFAULT_MODEL_CONTEXT])?.status).toBe('success')
+      expect(screen.queryByTestId('agent-model-pin-notice')).not.toBeInTheDocument()
+    }, { timeout: 10_000 })
+    expect(agentResolvedModelMock).toHaveBeenCalledWith('default', DEFAULT_MODEL_CONTEXT)
+    expect(screen.queryByRole('button', CLEAR_BUTTON)).not.toBeInTheDocument()
   })
 
   it('holds the clear button while the roster or the resolver is being re-read', async () => {
@@ -318,7 +342,7 @@ describe('ChatPanel — default agent model pin notice', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(kirocrewAgentsMock.mock.calls.length).toBeGreaterThan(calls))
     expect(await screen.findByTestId('agent-model-pin-notice')).toBeInTheDocument()
-    expect(agentResolvedModelMock).toHaveBeenCalledWith('default')
+    expect(agentResolvedModelMock).toHaveBeenCalledWith('default', DEFAULT_MODEL_CONTEXT)
   })
 
   it('folds two failed reads into one banner whose Retry re-asks both', async () => {

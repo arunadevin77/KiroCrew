@@ -1240,7 +1240,7 @@ class TestAllocatedEffortReceipt:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "selection,global_model,member_model,explicit_model,role_model,template_model",
+        "selection,global_model,member_model,explicit_model,role_model,template_model,member_backend",
         [
             pytest.param(
                 "explicit",
@@ -1249,6 +1249,7 @@ class TestAllocatedEffortReceipt:
                 "",
                 "",
                 "",
+                None,
                 id="literal-template-rejects-member-effort",
             ),
             pytest.param(
@@ -1258,6 +1259,7 @@ class TestAllocatedEffortReceipt:
                 "",
                 "",
                 "",
+                None,
                 id="literal-template-keeps-global-effort",
             ),
             pytest.param(
@@ -1267,6 +1269,7 @@ class TestAllocatedEffortReceipt:
                 "",
                 "",
                 "",
+                None,
                 id="inherited-template-rejects-member-effort",
             ),
             pytest.param(
@@ -1276,6 +1279,7 @@ class TestAllocatedEffortReceipt:
                 "",
                 "",
                 "",
+                None,
                 id="inherited-member-keeps-model-pin",
             ),
             pytest.param(
@@ -1285,6 +1289,7 @@ class TestAllocatedEffortReceipt:
                 "sonnet-test-model",
                 "",
                 "",
+                None,
                 id="explicit-model-control",
             ),
             pytest.param(
@@ -1294,6 +1299,7 @@ class TestAllocatedEffortReceipt:
                 "",
                 "sonnet-test-model",
                 "",
+                None,
                 id="role-model-control",
             ),
             pytest.param(
@@ -1303,7 +1309,28 @@ class TestAllocatedEffortReceipt:
                 "",
                 "",
                 "sonnet-test-model",
+                None,
                 id="member-defers-to-bound-template-pin",
+            ),
+            pytest.param(
+                "member",
+                "deepseek-3.2",
+                "sonnet-test-model",
+                "",
+                "deepseek-3.2",
+                "",
+                None,
+                id="member-pin-beats-role-for-receipt",
+            ),
+            pytest.param(
+                "member",
+                "deepseek-3.2",
+                "sonnet-test-model",
+                "",
+                "deepseek-3.2",
+                "",
+                "codex",
+                id="member-backend-controls-receipt",
             ),
         ],
     )
@@ -1316,6 +1343,7 @@ class TestAllocatedEffortReceipt:
         explicit_model,
         role_model,
         template_model,
+        member_backend,
     ):
         from kiro_crew.config.loader import KiroCrewAgentConfig, KiroCrewConfig
         from kiro_crew.dashboard.handlers.messaging import api_spawn
@@ -1335,7 +1363,7 @@ class TestAllocatedEffortReceipt:
             cfg.agent.model = global_model
             cfg.agent.role_models = {"subagent": role_model} if role_model else {}
             cfg.agents["worker"] = KiroCrewAgentConfig(
-                kiro_agent="member-parent", model=member_model
+                kiro_agent="member-parent", model=member_model, acp_backend=member_backend
             )
             member_store = provision_member_memory(cfg, "worker")
             cfg.save()
@@ -1458,10 +1486,11 @@ class TestAllocatedEffortReceipt:
                 assert provider.crew_agent == ("worker" if member else "")
                 expected_model = (
                     explicit_model
+                    or (member_model if member else "")
                     or role_model
-                    or (member_model or template_model or global_model if member else global_model)
+                    or (template_model or global_model if member else global_model)
                 )
-                expected_override = None if template_model else expected_model
+                expected_override = expected_model
                 assert provider.model_override == expected_override
                 assert actual_inputs[key]["reasoning_effort_override"] == "high"
                 assert await asyncio.to_thread(private_memory_store_for_session, key) == store
@@ -1477,6 +1506,7 @@ class TestAllocatedEffortReceipt:
                 gate = await asyncio.to_thread(factory_gate)
                 assert prepare.call_count == (2 if selection != "explicit" else 1)
                 assert gate["model"] == expected_model
+                assert gate["acp_backend"] == (member_backend if member_backend is not None else "")
                 applies = bool(gate["effort_per_model"])
                 assert bool(receipt.get("effort_applied")) == applies, (receipt, gate)
                 assert bool(receipt.get("effort_dropped")) != applies, (receipt, gate)

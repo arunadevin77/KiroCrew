@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         _carry_motions_through_motionless_save,
         _carry_pack_through_faceless_save,
         _commit_promoted_avatar,
+        _crew_backend_rejected,
         _crew_effort_rejected,
         _crew_memory_store_rejected,
         _discard_pending_avatar,
@@ -50,23 +51,11 @@ if TYPE_CHECKING:
     )
 
 
-def _effort_inputs(crew: KiroCrewAgentConfig | None) -> tuple[str, str] | None:
-    """The crew fields `resolve_session_effort` reads, or ``None`` for no crew.
-
-    Derived from the resolver's inputs rather than enumerated per call site. The
-    chain reads two things off the record -- the pin itself, and the bound
-    ``kiro_agent`` the role default keys on -- and the factory answers from the
-    config it captured, so ANY change to either (including a crew appearing or
-    disappearing) must invalidate that capture. Three rounds of review found the
-    per-condition version incomplete one case at a time (an unpinned crew whose
-    binding makes it a background worker; a re-bound `kiro_agent`); comparing this
-    tuple before and after a write is the invariant those cases are instances of,
-    and a future field the chain starts reading is added here once instead of at
-    every handler.
-    """
+def _effort_inputs(crew: KiroCrewAgentConfig | None) -> tuple[str, str, str, str | None] | None:
+    """Defaults captured by the provider factory; changes require a refresh."""
     if crew is None:
         return None
-    return (crew.kiro_agent, coerce_effort(crew.reasoning_effort))
+    return (crew.kiro_agent, coerce_effort(crew.reasoning_effort), crew.model, crew.acp_backend)
 
 
 async def _apply_member_approval_to_live_thread(request: web.Request, name: str, mode: str) -> None:
@@ -223,6 +212,12 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "name": name})
     if "model" in body:
         pending_model = normalize_agent_model(body["model"])
+    if "acp_backend" in body:
+        backend_reason = _crew_backend_rejected(body["acp_backend"])
+        if backend_reason:
+            return web.json_response(
+                {"error": backend_reason, "code": "invalid_acp_backend"}, status=400
+            )
     # Rejected before the config is even loaded: the check is pure, and every
     # validation must land before the first field assignment below so a bad value
     # cannot leave the in-memory record half-updated.
@@ -276,13 +271,27 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
             status=400,
         )
     if "model" in body:
-        pending_reason = await _revalidate_crew_pin(pending_model, request)
+        pending_reason = await _revalidate_crew_pin(
+            pending_model, request, name, body.get("acp_backend", ...)
+        )
         if pending_reason:
             return web.json_response({"error": pending_reason, "code": "invalid_model"}, status=400)
     async with _get_config_lock():
         cfg = KiroCrewConfig.load()
         if name not in cfg.agents:
             return web.json_response({"error": f"Agent '{name}' not found"}, status=404)
+        if (
+            "acp_backend" in body
+            and body["acp_backend"] != cfg.agents[name].acp_backend
+            and not {"model", "reasoning_effort"}.issubset(body)
+        ):
+            return web.json_response(
+                {
+                    "error": "Changing acp_backend requires explicit model and reasoning_effort choices",
+                    "code": "backend_choices_required",
+                },
+                status=400,
+            )
         if "model" in body:
             # Validated before the write, reusing the config loaded just above so
             # this costs no extra read.
@@ -290,7 +299,7 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
                 pending_model,
                 request,
                 cfg.agent.provider,
-                backend=_pin_entitlement_backend(cfg),
+                backend=_pin_entitlement_backend(cfg, name, body.get("acp_backend", ...)),
             )
             if model_reason:
                 return web.json_response(
@@ -384,6 +393,9 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
         if "workspace" in body:
             agent.workspace = body["workspace"]
             changed.append("workspace")
+        if "acp_backend" in body:
+            agent.acp_backend = body["acp_backend"]
+            changed.append("acp_backend")
         if "model" in body:
             # "auto"/"" both mean inherit; store the single "" spelling so the
             # agent keeps deferring to the kiro pin / global fallback. Raw, not

@@ -13,6 +13,7 @@ import type {
   NormalizedProviderHook,
   NormalizedPlugin,
   ModelInfo,
+  ModelResolutionContext,
   PermissionMode,
 } from '../types'
 
@@ -259,7 +260,7 @@ export class AcpAdapter implements ProviderAdapter {
     return agent.kiro_agent || agent.name
   }
 
-  async resolveModel(agentName: string): Promise<string> {
+  async resolveModel(agentName: string, context?: ModelResolutionContext): Promise<string> {
     // Ask the backend which model a new session on this agent would run on, so
     // the composer shows the real value before a session exists to report one.
     //
@@ -271,11 +272,10 @@ export class AcpAdapter implements ProviderAdapter {
     // the configured default, and the mismatch would only self-correct once the
     // first turn backfilled slot.model from the live session.
     //
-    // `agentName` is a KiroCrew agent name (a "crew"), not a kiro agent
-    // template — the per-agent default is stored per crew, and several crews can
-    // share one template.
+    // Context preserves the slot's route and member/template namespace. Without
+    // it the endpoint retains the member editors' DM preview.
     try {
-      const d = await api.agentResolvedModel(agentName)
+      const d = await api.agentResolvedModel(agentName, context)
       return d?.model || ''
     } catch {
       return ''

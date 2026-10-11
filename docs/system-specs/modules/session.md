@@ -156,6 +156,21 @@ tests have moved off the corresponding legacy seam.
 
 ## Agent selection provenance
 
+Member backend pins are resolved before provider allocation. An explicit pin,
+including Kiro's empty-string id, uses the existing `backend_override` allocation
+path and bypasses the installation's warm pool. Editing member backend, model
+or effort refreshes defaults; registered live providers retain their running
+harness. Registration captures every member thread's actual running
+backend after pool selection, including unpinned members that inherit through
+the installation's routing, and the model resolved by the factory, retaining
+explicit Auto when none was configured. Queued-work reset successors and
+failed-compaction restarts keep that original backend and model after either a
+member-profile edit or a change to `agent.member_acp_backend` while the member's
+`acp_backend` remains null. New allocations without a captured identity use the
+current member pin or installation global/member default, including a brand-new
+session or an allocation after a plain reset with no queued work to rescue. An
+explicitly selected template never inherits a same-named member's execution settings.
+
 Each session owns one canonical `execution_context` in its ordinary metadata.
 The frozen record binds `member_id` (or explicit Global/V1), `MemoryStoreRef`,
 member/template namespace, provider template, privacy mode and app attribution.
@@ -2206,6 +2221,36 @@ envelope on a cold session.
   resume expected.
 - `close_all()`: saves all active mappings before killing processes.
 - `start_pool()`: prunes stale entries (files deleted by kiro-cli GC).
+
+### Profile model and effort writes
+
+The existing slot `/model` and `/reasoning-effort` POSTs accept an optional
+`expected_backend` string (`""` identifies Kiro). Profile supplies the member's
+resolved backend after saving its record. Under the slot and session switch
+locks, the handlers verify the live ACP backend or resolve an idle cold slot
+through the provider factory's backend selector. A cold allocation reservation
+is unverified. They recheck the slot binding, provider and start reservation
+after asynchronous work, before changing a selection or resetting a session.
+
+A mismatched or unverified backend returns HTTP 200 with `ok: false`,
+`applied: false` and `selection_backend_changed` or
+`selection_backend_unverified` as its `code`. Profile retains the saved record
+and shows its neutral saved-for-new-sessions status. Busy turns, attached
+children, identity refusals and genuine request failures retain their error
+responses. Omitting the guard retains the ordinary explicit slot-pick contract.
+
+The backend checks are preconditions, not rollback signals after a committed
+operation. A successful effort RPC followed by a slot rebind retains the existing
+committed-effort response with a warning. A successful reset, including a teardown
+failure after the session pop, keeps the selection a successor may already have
+captured. A declined reset verifies any remaining backend before retrying; with
+no remaining provider, the cold selection stays committed. The existing reset
+rebind checks still apply.
+
+A verified matching cold slot accepts the Profile pick even though it cannot
+advertise live model capabilities. This replaces an earlier Profile pin that
+would otherwise outrank the updated member default on the next allocation.
+Fresh start preserves slot selections; it does not clear deliberate overrides.
 
 ### Asking for a fresh conversation on a slot that stays open
 

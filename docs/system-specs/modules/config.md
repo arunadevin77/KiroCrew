@@ -3791,8 +3791,22 @@ one precedence step below the operator override.
 
 ## Model Resolution Chain
 
+`agents.<name>.acp_backend` pins a member's harness. Null or an absent field
+inherits session routing; `""` explicitly selects Kiro. The provider factory
+resolves this choice before the model: caller override, member pin, member-DM
+route, then `agent.acp_backend`. The existing selectable-backend gate applies.
+An explicit member backend pin that resolves into a different model namespace
+from `agent.acp_backend` skips the installation's template/global model defaults.
+Null backend pins retain that fallback. The actual execution namespace separately
+controls inheritance of subagent-role defaults. Each candidate still passes through
+`model_scope.scoped_pin`; that compatibility check does not decide which default
+tiers enter the chain. Model and effort changes refresh factory defaults without
+restarting live sessions.
+
 Default-model precedence is owned by [model-selection](../common/model-selection.md),
-and `loader.resolve_effective_model` is its single implementation: crew agent
+and `loader.resolve_effective_model` serves its readout. The provider factory uses
+`KiroCrewConfig.acp_effective_model` to scope and translate runtime candidates.
+Subject to the member-backend rule above, the default chain is the crew agent
 model, then the bound kiro agent's pin, then `agent.model`, then
 `KiroCrewConfig._resolve_agent_model()` (the installed `kirocrew.json`, then the
 bundled `config/defaults.json`, then `DEFAULT_MODEL`, the `auto` sentinel that the

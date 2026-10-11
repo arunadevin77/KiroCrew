@@ -19,6 +19,29 @@ Session-map, busy, retention and policy mutations stay on-loop, with busy/admiss
 rechecked after the read. Retry carries the original run's member, app and mode
 even after its parent closes; it never reconstructs them from the current parent.
 
+Member executions also capture backend, model and reasoning effort before
+admission queues or persists them. Caller choices win over the member's pins;
+an unpinned member may inherit a subagent-role model only in the installation's
+model namespace. Template selections retain their existing default chain even
+when their memory context belongs to a member. Async capture runs off-loop,
+including when the caller already supplied an execution context.
+The final member/template selection is applied before capture; a capture failure
+uses the normal counted refusal path without queueing work.
+The queue parameters and ordinary run `state.json` retain these settings with
+`execution_settings_captured`. A captured `"auto"` and empty effort remain
+explicit on retry and live or cold continuation; profile edits cannot change
+them while the run waits. Older records without the flag keep legacy behavior.
+No separate identity record or member-memory registry participates.
+Effort receipts use captured settings when present, matching the provider factory
+rather than resolving the request against later role or member defaults.
+
+Capturing a backend does not grant additional capabilities. An enrolled member's
+saved capability revision still requires full saved-spec support at allocation;
+an unsupported backend refuses startup before executing work. Unenrolled members
+retain that backend's existing projections and tool/MCP channels. The support
+boundary and its runtime tests are documented in
+[Crew records and binding](crew-mode.md#crew-records-and-binding).
+
 Incognito and temporary spawns retain queued work only in memory. They always
 keep their queue entry, including when the durable dispatch window is full, and
 refill never evicts that sole copy. Only persistent entries consume the durable

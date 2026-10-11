@@ -2331,6 +2331,14 @@ class SessionAllocationService:
                 effective_cwd = stored_cwd
         claim_crew = extra_factory_kwargs.get("crew_agent")
         session_agent = agent
+        crew_name = self._deps.resolve_crew_identity(owner._cfg, agent, claim_crew)
+        selected_crew = owner._cfg.agents.get(crew_name) if crew_name else None
+        if (
+            extra_factory_kwargs.get("backend_override") is None
+            and selected_crew is not None
+            and isinstance(selected_crew.acp_backend, str)
+        ):
+            extra_factory_kwargs["backend_override"] = selected_crew.acp_backend
         preparation = await asyncio.to_thread(prepare_runtime, agent, claim_crew, effective_cwd)
         if preparation.revision:
             # The factory may retain the pre-reconciliation config snapshot.
@@ -2781,6 +2789,21 @@ class SessionAllocationService:
                     # what keeps the id sent and the id read identical.
                     session.requested_model = model or ""
                     session.backend_override = extra_factory_kwargs.get("backend_override")
+                    if selected_crew is not None:
+                        started_backend = getattr(
+                            getattr(provider, "client", provider), "backend", None
+                        )
+                        if isinstance(started_backend, str):
+                            # Capture the running app after pool selection, including
+                            # inheritance. A restart must not adopt later member pins.
+                            session.backend_override = started_backend
+                            # The factory may have collapsed Auto through its agent spec.
+                            configured_model = getattr(provider, "_configured_model", "")
+                            session.requested_model = (
+                                model
+                                or (configured_model if isinstance(configured_model, str) else "")
+                                or "auto"
+                            )
                     session.loaded_capabilities = stamp
                     self.state.capability_failures.pop(key, None)
                     replay_needed = getattr(provider, "_history_replay_needed", False) is True

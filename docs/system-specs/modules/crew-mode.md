@@ -759,6 +759,36 @@ show refuses with `409 unreviewable_drift`, naming the file
 
 ## Crew records and binding
 
+The Model pane in both crew editors offers an AI app selector backed by
+`agents.<name>.acp_backend`. "Use default: {{backend}}" follows the installation's
+AI app through the existing route and stores null; choosing an app explicitly
+pins it for this member, including Kiro's empty-string id. The hint explains this
+distinction and when the choice applies. The model catalog follows the pending backend, while
+the Template pane retains the installation's catalog. Switching harness clears
+the pending model and effort; returning to the opening selection restores them.
+Roster refreshes and catalog failures do not reset the draft.
+The update API requires explicit model and effort values with a changed backend
+before it mutates the record. `/api/agents/resolved-model` reports the resolved
+and inherited backend alongside the existing model and effort; the roster
+supplies the stored backend selection. Without session context this endpoint
+previews a member DM for the editors. The composer supplies its actual session
+key (the linked session for channel slots) and member/template selection kind;
+Settings supplies an explicit empty key for non-DM routing. These readouts use
+the same backend selection as allocation, so an inherited member in an ordinary
+chat is not treated as a member DM, and an explicit template does not take a
+same-named member's backend or effort pin. Their query caches include that context.
+New sessions use the saved choices; live sessions keep their running harness.
+
+Saved-member capability adoption still follows the selected backend's existing
+support. Only Kiro currently supports an enrolled member's full saved capability
+revision. Selecting another backend for an enrolled member refuses startup with
+`capability_harness_unsupported`, before the provider starts; it never silently
+drops that revision. Unenrolled members use the selected backend's existing
+field projections and tool/MCP channels. Full saved-spec adoption, Crew tools,
+and member dispatch are separate capability lines in `agent_sdk/backend_cards.py`.
+`test_session_capabilities.py` exercises both adoption and refusal through the
+real session manager and pins the actual providers' declared support.
+
 A crew lives only in `config.json` under `agents.<name>`. It is not a kiro-cli
 agent file: `kiro_agent` points at one. `resolve_agent_bindings` turns a crew
 name into `ResolvedBindings`, in this order:
@@ -1410,8 +1440,17 @@ open.
 The Profile tab holds the crewmate's own settings (`CrewProfileSettings`):
 permission (Normal / Reads / Trust), model and effort. They are changed there,
 never in the chat. Each pick writes the crew record (`approval_mode`, `model`,
-`reasoning_effort` on `PUT /api/agents/{name}`) and then the live DM slot, so
-the open thread follows at once. `approval_mode` is `""` until the user picks
+`reasoning_effort` on `PUT /api/agents/{name}`). Model and effort then use
+backend-guarded writes to a matching live or idle cold DM slot, replacing an
+older Profile pin even when no provider is running. If the backend differs or
+cannot be verified before the write, the member record remains saved for new
+sessions.
+A dedicated neutral `role="status"` message confirms the save and says the
+conversation keeps its current AI app, without claiming a known mismatch.
+Busy or failed requests, including permission conflicts, use `ErrorNotice`;
+a new save clears the prior
+status. Its model catalog follows the member's resolved backend.
+`approval_mode` is `""` until the user picks
 one; only then does `POST /api/members/{slug}/thread` open the thread in
 `trust`. A stored choice is applied as stored, a grant already on the slot is
 kept, and the seed runs once per in-memory slot (`_member_approval_seeded`).
@@ -2225,6 +2264,12 @@ it must not be used to infer access to a member's memory.
 The model-facing `spawn_run` schema advertises `crew` separately from `agent`,
 so a caller can select a member through tool discovery. A batch's `crew` applies
 to every task; delegating to different members requires separate calls.
+
+Backend, model and effort are captured from the selected member before admission
+can queue the run. Caller overrides win; a member's model pin precedes the
+subagent role default. Role/template/global models from another harness's
+namespace do not become member defaults. Retry and continuation reuse the
+captured settings from the ordinary run record.
 
 An ordinary member sub-task inherits its captured member/store. An explicit
 existing target member selects that member's store under ordinary spawn,

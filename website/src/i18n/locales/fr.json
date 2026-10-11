@@ -13278,7 +13278,11 @@
       "built_from": "Basé sur",
       "change_default_crewmate": "Changer le coéquipier par défaut",
       "change_default_hint": "Ouvre le réglage Coéquipier par défaut dans Développeur → Configuration.",
-      "keep_crew": "Garder le coéquipier"
+      "keep_crew": "Garder le coéquipier",
+      "ai_app": "Application d’IA",
+      "ai_app_hint": "Le choix par défaut suit l’application d’IA de ton installation. Une application choisie explicitement reste fixée pour ce membre. Les nouvelles sessions utilisent ce choix ; les conversations ouvertes gardent leur application.",
+      "inherited_ai_app": "Utiliser l’application par défaut : {{backend}}",
+      "ai_apps_load_failed": "Impossible de charger les applications d’IA."
     },
     "knowledge": {
       "detailView": {
@@ -17869,6 +17873,7 @@
       "show_controls": "Afficher les commandes"
     },
     "membersPage": {
+      "profile_settings_saved_for_new_sessions": "Enregistré pour les nouvelles sessions. Cette conversation conserve son application d’IA actuelle.",
       "drawer_delegated_working": "Tâches déléguées en cours",
       "agent_template": "Construit à partir de",
       "details": "Détails",

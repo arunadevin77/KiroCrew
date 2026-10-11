@@ -12,6 +12,7 @@ import ErrorNotice from './ErrorNotice'
 import { i18nT } from '../i18n/t'
 import { isAssistantMember } from '../lib/assistantMember'
 export interface KiroCrewAgent {
+  acp_backend?: string | null
   name: string
   kiro_agent: string
   workspace: string

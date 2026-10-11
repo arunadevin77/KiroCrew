@@ -2237,7 +2237,7 @@ class RunEventCoordinator(ManagerComponent):
         # -> chat default). Passed as an override so it wins over the factory's
         # agent-derived default; "" leaves it to that default.
         eff_effort = plan.eff_effort
-        if eff_effort:
+        if eff_effort or info.execution_settings_captured:
             extra_kwargs["reasoning_effort_override"] = eff_effort
         # The per-spawn backend (spawn_run ``backend``). ``is not None``: ``""``
         # is a Kiro request and must reach the factory under a non-Kiro default.
@@ -4101,8 +4101,16 @@ class RunEventCoordinator(ManagerComponent):
         here names a harness. *cfg* is a config the caller already loaded.
         """
         kind = _selection_kind(info)
-        eff_model = info.model or _subagent_default_model(cfg)
-        eff_effort = info.reasoning_effort or _subagent_default_effort(cfg)
+        eff_model = (
+            info.model
+            if info.execution_settings_captured
+            else info.model or _subagent_default_model(cfg)
+        )
+        eff_effort = (
+            info.reasoning_effort
+            if info.execution_settings_captured
+            else info.reasoning_effort or _subagent_default_effort(cfg)
+        )
         # Not coerced: the eligibility answer is passed through as the run has
         # always read it, and admission prices a start shared only on a real
         # ``True``, so an answer it cannot trust is priced dedicated.

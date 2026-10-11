@@ -847,6 +847,14 @@ def _session_model(
         crew_model = normalize_agent_model(crew.model)
         if crew_model:
             return crew_model
+        if crew.acp_backend is not None:
+            from kiro_crew.agent_sdk.capabilities import capabilities_for
+
+            if (
+                capabilities_for(crew.acp_backend).model_id_namespace
+                != capabilities_for(cfg.agent.acp_backend).model_id_namespace
+            ):
+                return None
         # The crew defers, so continue down the chain on the template it binds.
         agent = crew.kiro_agent or agent
 
@@ -1087,9 +1095,9 @@ class _Session:
     # the caller's existing stale-provider path evicts it and cold starts. Default
     # False so every existing construction site is unaffected.
     retire_on_identity_change: bool = False
-    # The ``backend_override`` the session was cold-started with (``None``: the
-    # factory's default backend). Carried by ``allocation_identity`` so a reset
-    # successor or a compaction restart starts on the same harness.
+    # The caller's backend override, or the running backend captured for a member.
+    # Carried by ``allocation_identity`` so a reset successor or a compaction
+    # restart cannot adopt a later member pin. Other sessions retain None.
     backend_override: str | None = None
     # True while the lease is held for a LIFETIME rather than a turn -- see
     # ``session_lifecycle._turn_in_flight``, which is what asks.
@@ -2190,7 +2198,11 @@ class SessionManager:
         """
         if change.new.degraded_sections.intersection(self._CONFIG_SECTIONS):
             raise live.ConfigDeferred(change.changed)
-        if change.touched(*self._FACTORY_CONFIG_PATHS):
+        member_execution_changed = any(
+            path.rsplit(".", 1)[-1] in {"acp_backend", "model", "reasoning_effort", "kiro_agent"}
+            for path in change.under("agents")
+        )
+        if change.touched(*self._FACTORY_CONFIG_PATHS) or member_execution_changed:
             await self.refresh_defaults(cfg=change.new)
         else:
             async with self._lock:

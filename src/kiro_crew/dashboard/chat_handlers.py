@@ -6432,6 +6432,87 @@ def _broadcast_context_reset(state: "DashboardState", slot_key: str, provider: A
         logger.exception("Failed to broadcast context_usage reset for slot %s", slot_key)
 
 
+def _cold_slot_selection_backend(slot: _ChatSlot, session_key: str) -> str | None:
+    """Resolve the next allocation off-loop; degraded config cannot verify it."""
+    cfg = KiroCrewConfig.load()
+    if cfg._base_unreadable or cfg._overlay_unreadable:
+        return None
+    bindings = resolve_session_agent_bindings(
+        resolve_agent_bindings, cfg, session_key, slot.agent or None, slot.project or None
+    )
+    if not bindings.requested_resolved:
+        return None
+    return cfg.resolve_session_backend(
+        session_key,
+        agent=bindings.kiro_agent,
+        crew_agent=bindings.resolved_alias if bindings.selection_kind == "member" else "",
+    )
+
+
+async def _slot_selection_backend_guard(
+    request: web.Request,
+    state: DashboardState,
+    slot: _ChatSlot,
+    session_key: str,
+    expected_backend: str | None,
+    *,
+    before_pick: bool = False,
+) -> web.Response | None:
+    """Optional Profile guard, called under the existing switch locks.
+
+    A capability read is not a write precondition: an absent provider can be
+    starting, and every await can publish a different provider. Re-read after
+    cold config IO and again at each caller's mutation/reset boundary.
+    """
+    if expected_backend is None:
+        return None
+    name = request.match_info["slot"]
+    binding = (slot.agent, slot.agent_kind, slot.project)
+    cold_backend = None
+    if state.sessions.get_provider(session_key) is None:
+        cold_backend = await asyncio.to_thread(_cold_slot_selection_backend, slot, session_key)
+    if _slot_replaced_while_queued(state, slot, name, request, "chat.slot_selection"):
+        return slot_not_found()
+    if effective_session_key(slot) != session_key or binding != (
+        slot.agent,
+        slot.agent_kind,
+        slot.project,
+    ):
+        return web.json_response(
+            {"error": "slot session was rebound during the switch", "code": "session_rebound"},
+            status=409,
+        )
+    provider = state.sessions.get_provider(session_key)
+    if isinstance(provider, AcpProvider):
+        backend: str | None = provider.capabilities.backend
+    elif provider is None and not state.sessions._has_allocation_reservation(session_key):
+        backend = cold_backend
+    else:
+        backend = None
+    # After a live RPC, a matching session may already serve the new selection
+    # when a turn starts. Preserve the handlers' truthful-success/deferral
+    # paths; their existing busy checks still gate every reset.
+    if _switch_target_busy(state, slot, session_key, provider) and (
+        before_pick or not isinstance(provider, AcpProvider) or backend != expected_backend
+    ):
+        return web.json_response(
+            {"error": "a turn is in flight", "code": "turn_in_flight"}, status=409
+        )
+    if not isinstance(backend, str) or backend != expected_backend:
+        return web.json_response(
+            {
+                "ok": False,
+                "applied": False,
+                "code": (
+                    "selection_backend_unverified"
+                    if not isinstance(backend, str)
+                    else "selection_backend_changed"
+                ),
+            }
+        )
+    return None
+
+
 async def api_chat_slot_model(request: web.Request) -> web.Response:
     """POST /api/chat/slots/{slot}/model — set model for a chat slot.
 
@@ -6452,6 +6533,12 @@ async def api_chat_slot_model(request: web.Request) -> web.Response:
     if body_err is not None:
         return body_err
     assert body is not None  # read_bounded_json returns (dict, None) on success
+    expected_backend = body.get("expected_backend")
+    if "expected_backend" in body and not isinstance(expected_backend, str):
+        return web.json_response(
+            {"error": "expected_backend must be a string", "code": "invalid_expected_backend"},
+            status=400,
+        )
     # The "Auto (Jev)" entry is resolved HERE and nowhere else: every reader below
     # -- the guard, the live switch, the reset, the session allocation, the
     # composer chip -- takes the id it produces, which is the plain ``auto`` the
@@ -6549,6 +6636,11 @@ async def api_chat_slot_model(request: web.Request) -> web.Response:
         denied = _app_cancel_denied(request, slot, "chat.slot_model", session_key)
         if denied is not None:
             return denied
+        guarded = await _slot_selection_backend_guard(
+            request, state, slot, session_key, expected_backend, before_pick=True
+        )
+        if guarded is not None:
+            return guarded
         # The routing flag is committed on each SUCCESS path and nowhere else -- see
         # the two writes below. Nothing is written here, because the busy check
         # between this line and the transaction answers 409 without a rollback: a
@@ -6724,6 +6816,12 @@ async def api_chat_slot_model(request: web.Request) -> web.Response:
                 {"error": "slot session was rebound during the switch", "code": "session_rebound"},
                 status=409,
             )
+        guarded = await _slot_selection_backend_guard(
+            request, state, slot, session_key, expected_backend
+        )
+        if guarded is not None:
+            _rollback_pick()
+            return guarded
         if went_live:
             # The live session runs the pick; refresh the slot's served-model
             # cache from it so an inheriting chip ("auto") does not keep naming
@@ -6757,6 +6855,12 @@ async def api_chat_slot_model(request: web.Request) -> web.Response:
             if children_409 is not None:
                 _rollback_pick()
                 return children_409
+            guarded = await _slot_selection_backend_guard(
+                request, state, slot, session_key, expected_backend
+            )
+            if guarded is not None:
+                _rollback_pick()
+                return guarded
             # Probed AFTER the children await, so this is the NO-AWAIT window
             # the reset needs; same predicate as the pre-check
             # (_switch_target_busy), so a sibling alias that began
@@ -6834,6 +6938,16 @@ async def api_chat_slot_model(request: web.Request) -> web.Response:
                         "override, if any, applies on the next cold start)",
                         name,
                     )
+                if not live_serves_target and busy_provider is not None:
+                    # A decline has not committed the reset. Verify a remaining
+                    # session before retrying against it; after a successful pop,
+                    # a successor may already have captured the committed pick.
+                    guarded = await _slot_selection_backend_guard(
+                        request, state, slot, session_key, expected_backend
+                    )
+                    if guarded is not None:
+                        _rollback_pick()
+                        return guarded
                 if not live_serves_target and isinstance(busy_provider, LLMProvider):
                     if busy_provider.has_active_turn():
                         # A turn slipped in: roll back the commit and answer
@@ -7584,6 +7698,12 @@ async def api_chat_slot_reasoning_effort(request: web.Request) -> web.Response:
     if body_err is not None:
         return body_err
     assert body is not None  # read_bounded_json returns (dict, None) on success
+    expected_backend = body.get("expected_backend")
+    if "expected_backend" in body and not isinstance(expected_backend, str):
+        return web.json_response(
+            {"error": "expected_backend must be a string", "code": "invalid_expected_backend"},
+            status=400,
+        )
     effort = body.get("reasoning_effort", "")
     valid_efforts = get_reasoning_effort_values()
     if not isinstance(effort, str) or effort not in valid_efforts:
@@ -7638,6 +7758,11 @@ async def api_chat_slot_reasoning_effort(request: web.Request) -> web.Response:
         denied = _app_cancel_denied(request, slot, "chat.slot_reasoning_effort", session_key)
         if denied is not None:
             return denied
+        guarded = await _slot_selection_backend_guard(
+            request, state, slot, session_key, expected_backend, before_pick=True
+        )
+        if guarded is not None:
+            return guarded
         _live = state.sessions.get_provider(session_key)
         if effort and isinstance(_live, AcpProvider) and not _live.accepts_effort_level(effort):
             # A level the live session's own vocabulary hides: refused here, so
@@ -7681,6 +7806,13 @@ async def api_chat_slot_reasoning_effort(request: web.Request) -> web.Response:
             slot._dirty = True
             return {"model": legacy_base}
 
+        guarded = await _slot_selection_backend_guard(
+            request, state, slot, session_key, expected_backend
+        )
+        if guarded is not None:
+            return guarded
+        if expected_backend is not None:
+            provider = state.sessions.get_provider(session_key)
         if slot.reasoning_effort == effort:
             # Re-picking the level already shown is still an explicit user
             # choice: bump the effort generation so a pending session_set_model
@@ -7772,6 +7904,11 @@ async def api_chat_slot_reasoning_effort(request: web.Request) -> web.Response:
                 }
             )
 
+        guarded = await _slot_selection_backend_guard(
+            request, state, slot, session_key, expected_backend
+        )
+        if guarded is not None:
+            return guarded
         if not _updated_live:
             if effective_session_key(slot) != session_key:
                 # Rebound while a FAILED live push awaited: the reset fallback
@@ -7797,6 +7934,11 @@ async def api_chat_slot_reasoning_effort(request: web.Request) -> web.Response:
             )
             if children_409 is not None:
                 return children_409
+            guarded = await _slot_selection_backend_guard(
+                request, state, slot, session_key, expected_backend
+            )
+            if guarded is not None:
+                return guarded
             # Probed AFTER the change_effort and children awaits above, in
             # the NO-AWAIT window before the commit and reset below; the
             # signals and the sibling-alias window are on _switch_target_busy.
@@ -7866,6 +8008,16 @@ async def api_chat_slot_reasoning_effort(request: web.Request) -> web.Response:
                 # nothing to tear down, the next message cold-starts under
                 # the new effort.
                 busy_provider = state.sessions.get_provider(session_key)
+                if busy_provider is not None:
+                    # Only a declined reset can still be refused. A successful
+                    # pop already published the pick to a starting successor.
+                    guarded = await _slot_selection_backend_guard(
+                        request, state, slot, session_key, expected_backend
+                    )
+                    if guarded is not None:
+                        if slot.reasoning_effort == effort:
+                            slot.reasoning_effort = prior_effort
+                        return guarded
                 if isinstance(busy_provider, LLMProvider):
                     if busy_provider.has_active_turn():
                         slot.reasoning_effort = prior_effort

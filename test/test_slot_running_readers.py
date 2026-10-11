@@ -21,6 +21,8 @@ _BUSY_HELPERS: dict[str, frozenset[str]] = {
     # RESERVATION, because ``slot.running`` is set at dispatch and so sees a
     # cold-starting first turn that no provider has registered yet.
     "_switch_target_busy": frozenset({"running"}),
+    # Profile app checks delegate to the reservation-aware switch guard.
+    "_slot_selection_backend_guard": frozenset({"running"}),
     # Member Fresh start: the slot's task or the session's turn.
     "_turn_busy": frozenset({"running"}),
 }
@@ -130,6 +132,7 @@ def test_running_and_turn_running_slot_readers_are_enumerated() -> None:
                 ("mate_welcome.py", "maybe_start_first_greeting"),
                 ("chat_folders.py", "api_chat_slot_mode"),
                 ("chat_handlers.py", "_switch_target_busy"),
+                ("chat_handlers.py", "_slot_selection_backend_guard"),
                 ("handlers/members.py", "_turn_busy"),
                 ("handlers/members.py", "_turn_ends_within"),
                 # The agent route's transaction; the in-turn /agent command shares it.

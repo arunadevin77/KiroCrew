@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         MemberAlreadyExists,
         MemberNameError,
         UnknownMemoryStore,
+        _crew_backend_rejected,
         _drained_to_thread,
         _foreign_private_copy_owner,
         _get_config_lock,
@@ -55,14 +56,39 @@ async def api_kirocrew_agent_resolved_model(request: web.Request) -> web.Respons
     to re-derive the precedence client-side (and drift from it). ``agent`` is a
     Kiro Crew agent name; omitted falls back to the configured default agent.
     ``model`` is "" when every tier defers to the backend's own choice.
+
+    Without ``session_key`` this remains the member editors' DM preview.
+    An explicit key (including "" for Settings) uses that session's routing;
+    ``selection_kind`` preserves an explicit member/template choice.
     """
     agent_name = request.query.get("agent", "").strip()
+    selection_kind = request.query.get("selection_kind", "").strip()
+    if selection_kind not in ("", "member", "template"):
+        return web.json_response(
+            {"error": "Invalid selection kind", "code": "invalid_selection_kind"}, status=400
+        )
     cfg = await asyncio.to_thread(KiroCrewConfig.load)
     # Globs ~/.kiro/agents and may read the installed agent file — keep the
     # filesystem work off the event loop.
-    model = await asyncio.to_thread(resolve_effective_model, cfg, agent_name or None)
     alias, kiro_agent, model_pin = await asyncio.to_thread(
-        resolve_agent_identity, cfg, agent_name or None
+        resolve_agent_identity, cfg, agent_name or None, selection_kind=selection_kind
+    )
+    from kiro_crew.members import DM_SLOT_KEY_PREFIX, select_provider_backend
+
+    session_key = request.query.get("session_key")
+    if session_key is None:
+        session_key = DM_SLOT_KEY_PREFIX + (alias or "default")
+    crew_alias = "" if selection_kind == "template" else alias
+    backend = cfg.resolve_session_backend(session_key, crew_agent=crew_alias)
+    inherited_backend = select_provider_backend(
+        session_key, cfg.agent.member_acp_backend, cfg.agent.acp_backend
+    )
+    model = await asyncio.to_thread(
+        resolve_effective_model,
+        cfg,
+        agent_name or None,
+        selection_kind=selection_kind,
+        backend=backend,
     )
     # Effort resolves through its own chain, served from the SAME resolver the
     # provider factory calls so the pane cannot disagree with what a session will
@@ -70,15 +96,17 @@ async def api_kirocrew_agent_resolved_model(request: web.Request) -> web.Respons
     # background worker agent takes instead of the chat default. Keyed on what the
     # bindings resolved, which is what makes an omitted `agent` answer for the
     # configured default crew rather than for no crew at all.
-    crew_effort = cfg.crew_pinned_effort(None, alias)
-    session_effort = cfg.resolve_session_effort(kiro_agent, alias)
+    crew_effort = cfg.crew_pinned_effort(None, crew_alias)
+    session_effort = cfg.resolve_session_effort(kiro_agent, crew_alias)
     return web.json_response(
         {
             "model": model,
             "agent": agent_name,
             "kiro_agent": kiro_agent,
+            "resolved_acp_backend": backend,
+            "inherited_acp_backend": inherited_backend,
             # Whether the agent itself pins the model, vs inheriting it.
-            "pinned": bool(model_pin),
+            "pinned": bool(model_pin) and selection_kind != "template",
             # The effort a new session on this crew starts at, and whether the
             # crew pinned it or inherited a default. "" means no tier pins one
             # and the model's own default applies.
@@ -350,7 +378,13 @@ async def _api_kirocrew_agents_create(request: web.Request) -> web.Response:
             },
             status=400,
         )
-    pending_reason = await _revalidate_crew_pin(model, request)
+    backend_pin = body.get("acp_backend")
+    backend_reason = _crew_backend_rejected(backend_pin)
+    if backend_reason:
+        return web.json_response(
+            {"error": backend_reason, "code": "invalid_acp_backend"}, status=400
+        )
+    pending_reason = await _revalidate_crew_pin(model, request, acp_backend=backend_pin)
     if pending_reason:
         return web.json_response({"error": pending_reason, "code": "invalid_model"}, status=400)
     async with _get_config_lock():
@@ -365,7 +399,10 @@ async def _api_kirocrew_agents_create(request: web.Request) -> web.Response:
             )
         name, display_name = keyed.key, keyed.display_name
         model_reason = _model_pin_rejected(
-            model, request, cfg.agent.provider, backend=_pin_entitlement_backend(cfg)
+            model,
+            request,
+            cfg.agent.provider,
+            backend=_pin_entitlement_backend(cfg, acp_backend=backend_pin),
         )
         if model_reason:
             return web.json_response({"error": model_reason, "code": "invalid_model"}, status=400)
@@ -401,6 +438,7 @@ async def _api_kirocrew_agents_create(request: web.Request) -> web.Response:
         # create and team the same name between the purge and the registration.
         # A purge that cannot be made refuses the create (409 below).
         new_agent = KiroCrewAgentConfig(
+            acp_backend=backend_pin,
             kiro_agent=kiro_agent,
             workspace=body.get("workspace", "default"),
             memory_store=memory_store,

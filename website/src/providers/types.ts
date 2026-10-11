@@ -166,6 +166,12 @@ export interface PermissionMode {
   description: string
 }
 
+/** Omitted context previews a member DM. An empty key selects non-DM defaults. */
+export interface ModelResolutionContext {
+  sessionKey: string
+  selectionKind?: 'member' | 'template' | ''
+}
+
 export interface ProviderAdapter {
   readonly id: ProviderId
   readonly displayName: string
@@ -174,10 +180,9 @@ export interface ProviderAdapter {
 
   resolveAgentTemplate(agent: AgentBinding): string
   /** The model a NEW session on this KiroCrew agent would run on ('' = the
-   *  backend picks). Takes a KiroCrew agent name, not a kiro agent template:
-   *  the per-agent default is stored per agent, and several agents can share
-   *  one template. */
-  resolveModel(agentName: string): Promise<string>
+   *  backend picks). Context distinguishes an explicit template from a member
+   *  with the same name and selects this session's backend routing. */
+  resolveModel(agentName: string, context?: ModelResolutionContext): Promise<string>
   /** The provider-level default model for NEW sessions ('' when none is set).
    *  Distinct from resolveModel, which resolves a specific agent template. */
   resolveDefaultModel(): Promise<string>

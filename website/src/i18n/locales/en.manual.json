@@ -6013,7 +6013,11 @@
       "built_from": "Built from",
       "change_default_crewmate": "Change default crewmate",
       "change_default_hint": "Opens the Default crewmate setting on Developer → Config.",
-      "keep_crew": "Keep crewmate"
+      "keep_crew": "Keep crewmate",
+      "ai_app": "AI app",
+      "ai_app_hint": "Use default follows your installation’s AI app. Choosing an app pins it for this member. New sessions use this choice; open conversations keep their app.",
+      "inherited_ai_app": "Use default: {{backend}}",
+      "ai_apps_load_failed": "Could not load AI apps."
     },
     "knowledge": {
       "detailView": {
@@ -8447,6 +8451,7 @@
       "failed_to_load_app": "Failed to load app"
     },
     "membersPage": {
+      "profile_settings_saved_for_new_sessions": "Saved for new sessions. This conversation keeps its current AI app.",
       "drawer_delegated_working": "Delegated work running",
       "back_to_roster": "Back to crewmates",
       "fresh_start": "Fresh start…",

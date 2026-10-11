@@ -41,15 +41,16 @@ export default function CrewProfileSettings({ member, slotKey, waiting = false }
   const [draft, setDraft] = useState<Partial<Record<Setting, string>>>({})
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [saveStatus, setSaveStatus] = useState('')
   // One save at a time. Each pick writes the record, then the live slot; two
   // picks in flight could land out of order and leave the slot on an older mode.
   const [saving, setSaving] = useState(false)
   const inFlight = useRef(false)
-  const models = useAvailableModelsQuery({ enabled: true })
   const { data: resolved, error: resolvedError } = useQuery({
     queryKey: ['agent-resolved-model', member.name],
     queryFn: () => api.agentResolvedModel(member.name),
   })
+  const models = useAvailableModelsQuery({ backend: resolved?.resolved_acp_backend, enabled: resolved?.resolved_acp_backend !== undefined })
   const stored = {
     approval_mode: String(member.approval_mode || 'trust'),
     model: member.model || INHERIT_MODEL,
@@ -77,6 +78,7 @@ export default function CrewProfileSettings({ member, slotKey, waiting = false }
     setDraft((d) => ({ ...d, [key]: next }))
     setError('')
     setNotice('')
+    setSaveStatus('')
     // The record spells "inherit" as ''; the picker spells it INHERIT_MODEL.
     const wire = key === 'model' && next === INHERIT_MODEL ? '' : next
     try {
@@ -100,11 +102,23 @@ export default function CrewProfileSettings({ member, slotKey, waiting = false }
       }
       queryClient.setQueryData<MemberRosterRow[]>(MEMBERS_ROSTER_QUERY_KEY, (rows) =>
         rows?.map((r) => (r.name === member.name ? { ...r, [key]: wire } : r)))
-      // The server applied the permission to the live thread in the same step
-      // (PUT /api/agents/{name}). Model and effort still follow from here; if
-      // that write fails the error says so, and the next thread uses the record.
-      if (slotKey && key === 'model') await api.chatSlotModel(slotKey, wire)
-      else if (slotKey && key === 'reasoning_effort') await api.chatSlotReasoningEffort(slotKey, wire)
+      if (slotKey && key !== 'approval_mode') {
+        const backend = resolved?.resolved_acp_backend
+        if (backend === undefined) {
+          setSaveStatus(t('pages.membersPage.profile_settings_saved_for_new_sessions'))
+          return
+        }
+        // The gateway verifies the backend under the mutation locks, including
+        // cold slots whose next session must not retain an earlier Profile pin.
+        const result = key === 'model'
+          ? await api.chatSlotModel(slotKey, wire, backend)
+          : await api.chatSlotReasoningEffort(slotKey, wire, backend)
+        if (result.applied === false) {
+          setSaveStatus(t('pages.membersPage.profile_settings_saved_for_new_sessions'))
+        }
+      }
+      // Permission is applied by PUT /api/agents/{name}; model and effort use
+      // the guarded slot writes above. A failed slot request remains an error.
     } catch (e) {
       setDraft((d) => ({ ...d, [key]: undefined }))
       setError(e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e))
@@ -174,6 +188,7 @@ export default function CrewProfileSettings({ member, slotKey, waiting = false }
       />
       <ErrorNotice message={error || null} testId="crew-profile-settings-error" />
       <ErrorNotice message={notice || null} testId="crew-profile-settings-notice" />
+      {saveStatus && <p className="text-[12px] text-muted" role="status" data-testid="crew-profile-settings-status">{saveStatus}</p>}
       </fieldset>
     </section>
   )

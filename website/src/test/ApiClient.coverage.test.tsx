@@ -2199,6 +2199,7 @@ describe('every api method issues one well-formed /api request', () => {
   // each one names the minimal shape its URL is read from. Signal-bearing methods
   // also receive a real signal so the probe can assert their dispatch contract.
   const ARGS: Record<string, unknown[]> = {
+    agentResolvedModel: ['sw-1', { sessionKey: 'dashboard:sw-2', selectionKind: 'member' }],
     // Memory reads take typed objects; positional strings do not satisfy the
     // query/record contract and would manufacture undefined URL parameters.
     memoryRecords: ['member-reviewer', { q: 'contact', kind: 'fact' }, 0, 50],

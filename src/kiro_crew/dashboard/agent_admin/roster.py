@@ -296,6 +296,9 @@ def _agent_roster_row(
         "workspace": _roster_mask(agent_cfg.workspace),
         "memory_store": _roster_mask(agent_cfg.memory_store),
         "model": _roster_mask(agent_cfg.model),
+        "acp_backend": (
+            _roster_mask(agent_cfg.acp_backend) if agent_cfg.acp_backend is not None else None
+        ),
         "reasoning_effort": _roster_mask(agent_cfg.reasoning_effort),
         # Presentation label only — masked like every other user-authored string.
         # The picker and roster render it in place of ``name`` when non-empty;

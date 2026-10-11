@@ -4375,6 +4375,8 @@ class KiroCrewConfig:
         model_override: str | None,
         global_model: str | None = None,
         namespace: str | None = None,
+        *,
+        crew_agent: str | None = None,
     ) -> str:
         """The model id the ACP factory selects — what its effort gate keys on.
 
@@ -4422,13 +4424,24 @@ class KiroCrewConfig:
                 global_model = self._resolve_agent_model()
         # Kiro's namespace is ``acp``, so a supplied member route is unambiguous.
         if namespace is None:
-            namespace = capabilities_for(self.agent.acp_backend).model_id_namespace
+            namespace = capabilities_for(
+                self.resolve_session_backend(agent=agent, crew_agent=crew_agent)
+            ).model_id_namespace
+        crew = self._crew_record(agent, crew_agent)
         candidates: list[tuple[str, str]] = []
         if model_override:
             candidates.append((model_override, "model_override"))
-        if agent and agent != "kirocrew":
-            candidates.append((self._resolve_named_agent_model(agent), f"agent spec {agent}"))
-        candidates.append((global_model, "agent.model"))
+        if crew is not None:
+            candidates.append((normalize_agent_model(crew.model), "member.model"))
+        foreign_member_backend = (
+            crew is not None
+            and crew.acp_backend is not None
+            and namespace != capabilities_for(self.agent.acp_backend).model_id_namespace
+        )
+        if not foreign_member_backend:
+            if agent and agent != "kirocrew":
+                candidates.append((self._resolve_named_agent_model(agent), f"agent spec {agent}"))
+            candidates.append((global_model, "agent.model"))
         # A pin says WHAT was picked, never for WHICH harness, so a backend switch
         # hands the next session a model the new harness never served. Scope each
         # precedence tier to the namespace that will run it and let an out-of-scope
@@ -4458,6 +4471,27 @@ class KiroCrewConfig:
         if translated != m and not model_registry.namespace_vocabulary(m, namespace):
             return m
         return translated
+
+    def resolve_session_backend(
+        self,
+        session_key: str | None = None,
+        agent: str | None = None,
+        crew_agent: str | None = None,
+        backend_override: str | None = None,
+    ) -> str:
+        """Resolve caller, member and session defaults through the existing gate."""
+        from kiro_crew.members import select_provider_backend
+
+        crew = self._crew_record(agent, crew_agent)
+        selected = backend_override
+        if selected is None and crew is not None:
+            selected = crew.acp_backend
+        return select_provider_backend(
+            session_key,
+            self.agent.member_acp_backend,
+            self.agent.acp_backend,
+            backend_override=selected,
+        )
 
     def crew_pinned_effort(self, agent: str | None, crew_agent: str | None = None) -> str:
         """The reasoning effort THIS CREW pins, or ``""`` when it pins none.
@@ -4787,13 +4821,8 @@ class KiroCrewConfig:
             # kiro -- the member thread then runs as plain chat and the mount
             # step logs why.
             # circular import: members sits above config in the layering.
-            from kiro_crew.members import select_provider_backend
-
-            _backend = select_provider_backend(
-                session_key,
-                self.agent.member_acp_backend,
-                self.agent.acp_backend,
-                backend_override=backend_override,
+            _backend = self.resolve_session_backend(
+                session_key, agent, crew_agent, backend_override=backend_override
             )
             # Resolved BEFORE the model, and threaded into the resolution: the
             # model's namespace translation and its pin-scope check both have to
@@ -4807,6 +4836,7 @@ class KiroCrewConfig:
                 model_override,
                 global_model=model,
                 namespace=capabilities_for(_backend).model_id_namespace,
+                crew_agent=crew_agent,
             )
             # Thread the slot's effort into a per-model override so the kiro
             # cli.json overlay is written from it at spawn — without this, a
@@ -4819,7 +4849,11 @@ class KiroCrewConfig:
             # crews API also serves its readout from. An explicit override (the
             # dashboard slot's effort, or a sub-agent's resolved "subagent"
             # effort) still wins over all of it.
-            _eff = reasoning_effort_override or self.resolve_session_effort(agent, crew_agent)
+            _eff = (
+                reasoning_effort_override
+                if reasoning_effort_override is not None
+                else self.resolve_session_effort(agent, crew_agent)
+            )
             # On a harness whose effort capability and vocabulary come from the
             # option it ADVERTISES, neither check below can answer here. This
             # factory runs before any session exists, the registry carries none of
@@ -5461,6 +5495,11 @@ def build_config(
                 # name) rather than reaching the wire.
                 raw_display_name = crew.get("display_name")
                 agents[name] = KiroCrewAgentConfig(
+                    acp_backend=(
+                        _normalize_acp_backend(entry["acp_backend"])
+                        if entry.get("acp_backend") is not None
+                        else None
+                    ),
                     member_id=crew.get("member_id"),
                     kiro_agent=crew.get("kiro_agent"),
                     workspace=crew.get("workspace"),
@@ -7210,7 +7249,7 @@ def resolve_agent_identity(config, agent_name=None, *, selection_kind="") -> tup
         alias,
         passthrough
         or (dispatch_kiro_agent(record.kiro_agent) if record else config.agent.default_agent),
-        normalize_agent_model(record.model) if record else "",
+        normalize_agent_model(record.model) if record and selection_kind != "template" else "",
     )
 
 
@@ -7304,7 +7343,9 @@ def resolve_agent_bindings(
         memory_store_name=store_name,
         effective_memory_config=effective_memory,
         kiro_agent=kiro_agent,
-        model=normalize_agent_model(agent_cfg.model),
+        # An explicit template can borrow the default binding's workspace, but
+        # its model must not become a caller override sourced from that member.
+        model=normalize_agent_model(agent_cfg.model) if selection_kind != "template" else "",
         requested_resolved=requested_resolved,
         resolved_alias=resolved_alias,
         selection_kind="template" if passthrough else "member",
@@ -7316,6 +7357,7 @@ def resolve_effective_model(
     agent_name: str | None = None,
     *,
     selection_kind: str = "",
+    backend: str | None = None,
 ) -> str:
     """Return the model a new session on *agent_name* would start with.
 
@@ -7341,7 +7383,11 @@ def resolve_effective_model(
     pin the active harness cannot claim is skipped, so the next tier down answers
     -- exactly as if that tier were unset.
     """
-    namespace = capabilities_for(config.agent.acp_backend).model_id_namespace
+    if backend is None:
+        backend = config.resolve_session_backend(
+            agent=agent_name, crew_agent="" if selection_kind == "template" else None
+        )
+    namespace = capabilities_for(backend).model_id_namespace
 
     def _in_scope(pin: str) -> str:
         return model_scope.scoped_pin(
@@ -7353,6 +7399,17 @@ def resolve_effective_model(
     )
     if _in_scope(model_pin):
         return model_pin
+    crew = (
+        config.agents.get(agent_name or config.default_agent)
+        if selection_kind != "template"
+        else None
+    )
+    if (
+        crew is not None
+        and crew.acp_backend is not None
+        and namespace != capabilities_for(config.agent.acp_backend).model_id_namespace
+    ):
+        return ""
     if kiro_agent and kiro_agent != "kirocrew":
         pinned = normalize_agent_model(config._resolve_named_agent_model(kiro_agent))
         if _in_scope(pinned):

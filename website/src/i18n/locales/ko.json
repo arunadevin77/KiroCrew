@@ -12890,7 +12890,11 @@
       "built_from": "기반",
       "change_default_crewmate": "기본 크루메이트 바꾸기",
       "change_default_hint": "개발자 → 구성에 있는 기본 크루메이트 설정을 엽니다.",
-      "keep_crew": "크루메이트 유지"
+      "keep_crew": "크루메이트 유지",
+      "ai_app": "AI 앱",
+      "ai_app_hint": "기본값 사용은 설치 환경의 AI 앱을 따릅니다. 앱을 직접 선택하면 이 멤버에 해당 앱이 고정됩니다. 새 세션에는 이 선택이 적용되며, 열린 대화는 기존 앱을 계속 사용합니다.",
+      "inherited_ai_app": "기본값 사용: {{backend}}",
+      "ai_apps_load_failed": "AI 앱을 불러오지 못했습니다."
     },
     "knowledge": {
       "detailView": {
@@ -17369,6 +17373,7 @@
       "show_controls": "컨트롤 표시"
     },
     "membersPage": {
+      "profile_settings_saved_for_new_sessions": "새 세션에 적용하도록 저장되었습니다. 이 대화는 현재 AI 앱을 계속 사용합니다.",
       "drawer_delegated_working": "위임한 작업 실행 중",
       "agent_template": "기반 에이전트",
       "details": "세부 정보",

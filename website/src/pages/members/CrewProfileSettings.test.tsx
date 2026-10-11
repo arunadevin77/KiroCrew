@@ -70,14 +70,18 @@ const pick = (label: string, option: string) =>
   fireEvent.click(within(screen.getByTestId(`select-${label}`)).getByRole('option', { name: option }))
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  Object.values(mockApi).forEach(mock => mock.mockReset())
   modelsState.isDegraded = false
   mockApi.updateKirocrewAgent.mockResolvedValue({ ok: true })
   mockApi.chatMode.mockResolvedValue({ ok: true })
   mockApi.chatSlotModel.mockResolvedValue({ ok: true })
   mockApi.chatSlotReasoningEffort.mockResolvedValue({ ok: true })
-  mockApi.agentResolvedModel.mockResolvedValue({ model: 'claude-opus-5' })
+  mockApi.agentResolvedModel.mockResolvedValue({ model: 'claude-opus-5', resolved_acp_backend: '' })
 })
+
+const backendReady = () => waitFor(() => expect(
+  lastQc.getQueryData<{ resolved_acp_backend?: string }>(['agent-resolved-model', 'oncall'])?.resolved_acp_backend,
+).toBe(''))
 
 describe('CrewProfileSettings permission', () => {
   it('reads Trust when the crewmate never chose a permission', () => {
@@ -171,23 +175,59 @@ describe('CrewProfileSettings permission', () => {
 describe('CrewProfileSettings model and effort', () => {
   it('pins a model on the record and the thread', async () => {
     setup(member())
+    await backendReady()
     pick('Edit default model', 'claude-opus-5')
-    await waitFor(() => expect(mockApi.chatSlotModel).toHaveBeenCalledWith('member-oncall', 'claude-opus-5'))
+    await waitFor(() => expect(mockApi.chatSlotModel).toHaveBeenCalledWith('member-oncall', 'claude-opus-5', ''))
     expect(mockApi.updateKirocrewAgent).toHaveBeenCalledWith('oncall', { model: 'claude-opus-5' })
   })
 
   it('sends Inherited as the empty pin', async () => {
     setup(member({ model: 'claude-opus-5' }))
+    await backendReady()
     pick('Edit default model', 'Inherited')
-    await waitFor(() => expect(mockApi.chatSlotModel).toHaveBeenCalledWith('member-oncall', ''))
+    await waitFor(() => expect(mockApi.chatSlotModel).toHaveBeenCalledWith('member-oncall', '', ''))
     expect(mockApi.updateKirocrewAgent).toHaveBeenCalledWith('oncall', { model: '' })
   })
 
   it('offers effort on a model that reasons and writes both sides', async () => {
     setup(member({ model: 'claude-opus-5' }))
+    await backendReady()
     pick('Edit reasoning effort', 'High')
-    await waitFor(() => expect(mockApi.chatSlotReasoningEffort).toHaveBeenCalledWith('member-oncall', 'high'))
+    await waitFor(() => expect(mockApi.chatSlotReasoningEffort).toHaveBeenCalledWith('member-oncall', 'high', ''))
     expect(mockApi.updateKirocrewAgent).toHaveBeenCalledWith('oncall', { reasoning_effort: 'high' })
+  })
+
+  it.each(['model', 'effort'])('keeps the saved %s and reports a partial save when the gateway guard declines', async setting => {
+    const slotWrite = setting === 'model' ? mockApi.chatSlotModel : mockApi.chatSlotReasoningEffort
+    slotWrite.mockResolvedValue({ ok: false, applied: false })
+    setup(member({ model: 'claude-opus-5' }))
+    await backendReady()
+    pick(setting === 'model' ? 'Edit default model' : 'Edit reasoning effort', setting === 'model' ? 'claude-haiku-4' : 'High')
+    await waitFor(() => expect(screen.getByTestId('crew-profile-settings-status')).toHaveTextContent('Saved for new sessions.'))
+    expect(screen.getByTestId('crew-profile-settings-status')).toHaveAttribute('role', 'status')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(lastQc.getQueryData<MemberRosterRow[]>(MEMBERS_ROSTER_QUERY_KEY)?.[0][setting === 'model' ? 'model' : 'reasoning_effort']).toBe(setting === 'model' ? 'claude-haiku-4' : 'high')
+  })
+
+  it.each(['model', 'effort'])('surfaces a genuine %s slot error after saving the profile', async setting => {
+    const slotWrite = setting === 'model' ? mockApi.chatSlotModel : mockApi.chatSlotReasoningEffort
+    slotWrite.mockRejectedValue(new ApiError(409, 'a turn is in flight', '{"code":"turn_in_flight"}'))
+    setup(member({ model: 'claude-opus-5' }))
+    await backendReady()
+    pick(setting === 'model' ? 'Edit default model' : 'Edit reasoning effort', setting === 'model' ? 'claude-haiku-4' : 'High')
+    await waitFor(() => expect(screen.getByTestId('crew-profile-settings-error')).toHaveTextContent('a turn is in flight'))
+    expect(screen.queryByTestId('crew-profile-settings-status')).not.toBeInTheDocument()
+    expect(mockApi.updateKirocrewAgent).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not send an unguarded slot write when the selected backend is unavailable', async () => {
+    mockApi.agentResolvedModel.mockRejectedValue(new Error('resolver down'))
+    setup(member())
+    await screen.findByText('resolver down')
+    pick('Edit default model', 'claude-opus-5')
+    await waitFor(() => expect(screen.getByTestId('crew-profile-settings-status')).toHaveTextContent('Saved for new sessions.'))
+    expect(mockApi.chatSlotModel).not.toHaveBeenCalled()
+    expect(mockApi.updateKirocrewAgent).toHaveBeenCalledWith('oncall', { model: 'claude-opus-5' })
   })
 
   it('names the model an inherited pin resolves to', async () => {

@@ -1,3 +1,4 @@
+import { MemberBackendField, useMemberBackend } from '../components/crew/MemberBackendField'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/apiError'
@@ -970,10 +971,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
   // picker so the list is fetched once. INHERIT_MODEL leads so "no pin" is the
   // obvious choice rather than an absent option.
   const availableModels = useAvailableModels()
-  const modelOptions = [
-    INHERIT_MODEL,
-    ...(availableModels || []).map((m: { name: string }) => m.name).filter((n: string) => n && n !== INHERIT_MODEL),
-  ]
+
 
   const [filter, setFilter] = useState('')
   const [view, setView] = useState<CrewView>(readStoredView)
@@ -1092,10 +1090,12 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
    *  about to stop using, and the level would then be dropped at spawn. Nothing
    *  here can know what the inherit chain lands on until the write happens, so
    *  that state reports unresolved and says so. */
+  const memberBackend = useMemberBackend(editing, editingAgent, resolved?.inherited_acp_backend, setEditModel, setEditEffort)
+  const modelOptions = [INHERIT_MODEL, ...memberBackend.models.data.map(m => m.name).filter(name => name && name !== INHERIT_MODEL)]
   const modelPinPendingClear = editModel === INHERIT_MODEL && !!editingAgent?.model
   const effortModel = editModel !== INHERIT_MODEL
     ? editModel
-    : modelPinPendingClear ? '' : (resolved?.model || '')
+    : modelPinPendingClear || memberBackend.dirty ? '' : (resolved?.model || '')
   const effortCapable = modelSupportsEffort(effortModel)
 
   /** Argument-free so a click event is never mistaken for one. Opens the
@@ -1295,7 +1295,10 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
 
   const updateMut = useMutation({
     mutationFn: ({ name, data }: { name: string; data: AgentUpdatePayload; epoch: number }) => api.updateKirocrewAgent(name, data),
-    onSuccess: (r: AgentMutationResult, vars) => { settleFor(vars.epoch, r.error); refetchAgents() },
+    onSuccess: (r: AgentMutationResult, vars) => {
+      if (!r.error) void queryClient.invalidateQueries({ queryKey: ['agent-resolved-model', vars.name] })
+      settleFor(vars.epoch, r.error); refetchAgents()
+    },
     onError: (e: Error, vars) => settleFor(vars.epoch, e.message || i18nT('pages.kiroCrewAgentsPage.failed_to_update_agent')),
   })
   const deleteMut = useMutation({
@@ -1432,6 +1435,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
       // INHERIT_MODEL is normalized to '' server-side; send it verbatim so
       // clearing a pin is a real write rather than a skipped field.
       model: editModel,
+        acp_backend: memberBackend.backend,
       // Sent unconditionally for the same reason as `model`: '' is a real
       // value (clear the pin), so a skipped field would make clearing
       // impossible.
@@ -1673,7 +1677,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
       out.add('place')
     }
     if (editModel !== (editingAgent.model || INHERIT_MODEL)) out.add('model')
-    if (editEffort !== (editingAgent.reasoning_effort || '')) out.add('model')
+    if (editEffort !== (editingAgent.reasoning_effort || '') || memberBackend.dirty) out.add('model')
     if (triggers !== (editingAgent.triggers || '')) out.add('routing')
     // Trim-compared on BOTH sides, because the server trims on save: "  Ops  "
     // over a stored "Ops" persists nothing, so it must not read as an unsaved
@@ -1727,7 +1731,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
     if (schedDraft) out.add('schedules')
     if (capabilityDirty) out.add('capabilities')
     return out
-  }, [editingAgent, kiroAgent, workspace, memoryStore, editModel, editEffort, triggers, displayName, sessionColor, schedDraft, editAvatar, capabilityDirty])
+  }, [editingAgent, kiroAgent, workspace, memoryStore, editModel, editEffort, memberBackend.dirty, triggers, displayName, sessionColor, schedDraft, editAvatar, capabilityDirty])
 
   /** Rail-driven pane changes route through here: leaving the schedules pane
    *  while a schedule draft is open asks before destroying the typed work
@@ -2330,6 +2334,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
 
                   {pane === 'model' && (
                     <>
+                      <MemberBackendField draft={memberBackend} />
                       <ModelField options={modelOptions} value={editModel} onChange={setEditModel} />
                       {/* Offered when the model the crew will actually run on
                           accepts effort — OR when a pin is already stored on a
@@ -2358,7 +2363,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
                         message={resolvedError ? errorText(resolvedError) : null}
                         testId="crew-resolved-model-error"
                       />
-                      {resolved && (
+                      {resolved && !memberBackend.dirty && (
                         <div className="flex flex-col gap-1 rounded-md border border-border bg-bg-accent px-3 py-2.5 text-[11.5px] leading-relaxed text-muted">
                           <div>
                             <span className="text-text">

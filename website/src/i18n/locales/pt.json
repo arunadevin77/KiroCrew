@@ -13278,7 +13278,11 @@
       "built_from": "Baseado em",
       "change_default_crewmate": "Trocar o colega padrão",
       "change_default_hint": "Abre a configuração Colega padrão em Desenvolvedor → Configuração.",
-      "keep_crew": "Manter colega"
+      "keep_crew": "Manter colega",
+      "ai_app": "Aplicativo de IA",
+      "ai_app_hint": "Usar padrão segue o aplicativo de IA da sua instalação. Ao escolher um aplicativo, ele fica definido para este membro. Novas sessões usam essa escolha; conversas abertas mantêm seu aplicativo.",
+      "inherited_ai_app": "Usar padrão: {{backend}}",
+      "ai_apps_load_failed": "Não foi possível carregar os aplicativos de IA."
     },
     "knowledge": {
       "detailView": {
@@ -17869,6 +17873,7 @@
       "show_controls": "Mostrar controles"
     },
     "membersPage": {
+      "profile_settings_saved_for_new_sessions": "Salvo para novas sessões. Esta conversa mantém o aplicativo de IA atual.",
       "drawer_delegated_working": "Tarefas delegadas em execução",
       "agent_template": "Baseado em",
       "details": "Detalhes",

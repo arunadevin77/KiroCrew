@@ -1,3 +1,4 @@
+import { MemberBackendField } from './MemberBackendField'
 /**
  * CrewEditorDialog — the crew editor's EDIT-mode modal. Per CREW-18688 it is
  * mounted in place on the Crewmates page (`MembersPage`) instead of navigating
@@ -80,7 +81,7 @@ export default function CrewEditorDialog({ ctl }: { ctl: CrewEditorController })
     editing, editingAgent,
     kiroAgent, setKiroAgent, workspace, setWorkspace, memoryStore,
     triggers, setTriggers, displayName, setDisplayName, sessionColor, setSessionColor,
-    editModel, setEditModel, editEffort, setEditEffort, editAvatar,
+    memberBackend, editModel, setEditModel, editEffort, setEditEffort, editAvatar,
     kiroAgentOptions, workspaceOptions, modelOptions, availableModels, templateProvenance,
     templateFieldLabel, kirocrewCfg, editorOptionsError, modelsDegraded,
     resolved, resolvedError, effortCapable, effortModel,
@@ -249,6 +250,7 @@ export default function CrewEditorDialog({ ctl }: { ctl: CrewEditorController })
 
               {pane === 'model' && (
                 <>
+                  <MemberBackendField draft={memberBackend} />
                   <ModelField options={modelOptions} value={editModel} onChange={setEditModel} />
                   {/* The model list resolved DEGRADED (transport failure → the
                       adapter returned an auto-only/cached list). Surfaced through
@@ -281,7 +283,7 @@ export default function CrewEditorDialog({ ctl }: { ctl: CrewEditorController })
                     message={resolvedError ? (resolvedError instanceof Error ? resolvedError.message : String(resolvedError)) : null}
                     testId="crew-resolved-model-error"
                   />
-                  {resolved && (
+                  {resolved && !memberBackend.dirty && (
                     <div className="flex flex-col gap-1 rounded-md border border-border bg-bg-accent px-3 py-2.5 text-[11.5px] leading-relaxed text-muted">
                       <div>
                         <span className="text-text">

@@ -16,7 +16,8 @@ export const SLASH_COMMANDS_TIMEOUT_MS = 15_000
 
 export function createChatSlotSettingsEndpoints({ post, j, jfetch: fetch }: ClientTransport) {
   const selection = {
-    models: () => fetch('/api/models').then(j),
+    models: (backend?: string) =>
+      fetch('/api/models' + (backend === undefined ? '' : '?backend=' + encodeURIComponent(backend))).then(j),
     chatSlotSelectionCapabilities: (slot: string) =>
       fetch('/api/chat/slots/' + encodeURIComponent(slot) + '/selection-capabilities').then(j) as Promise<{
         known: boolean
@@ -44,8 +45,10 @@ export function createChatSlotSettingsEndpoints({ post, j, jfetch: fetch }: Clie
         ...(kind ? { agent_kind: kind } : {}),
         ...(opts?.announce ? { announce: true } : {}),
       }).then(j) as Promise<{ ok?: boolean; agent?: string; agent_kind?: 'member' | 'template' | ''; workspace?: string }>,
-    chatSlotModel: (slot: string, model: string) =>
-      post('/api/chat/slots/' + encodeURIComponent(slot) + '/model', { model }).then(j) as Promise<{ ok?: boolean; model?: string }>,
+    chatSlotModel: (slot: string, model: string, expectedBackend?: string) =>
+      post('/api/chat/slots/' + encodeURIComponent(slot) + '/model', {
+        model, ...(expectedBackend === undefined ? {} : { expected_backend: expectedBackend }),
+      }).then(j) as Promise<{ ok?: boolean; model?: string; applied?: boolean }>,
     /** This slot's auto-compact threshold override (null = follows a default:
      *  `agent_pct` when the session's agent declares one, else `global_pct`). */
     chatSlotAutocompact: (slot: string) =>
@@ -55,8 +58,10 @@ export function createChatSlotSettingsEndpoints({ post, j, jfetch: fetch }: Clie
       post('/api/chat/slots/' + encodeURIComponent(slot) + '/autocompact', { pct }).then(j) as Promise<{ ok?: boolean; pct: number | null; global_pct: number; agent_pct?: number | null; agent?: string | null }>,
     chatSlotsModel: (model: string, skip_running: boolean) =>
       post('/api/chat/slots/model', { model, skip_running }).then(j) as Promise<{ ok: boolean; model: string; switched: string[]; skipped_running: string[]; unchanged: string[]; failed: string[] }>,
-    chatSlotReasoningEffort: (slot: string, reasoning_effort: string) =>
-      post('/api/chat/slots/' + encodeURIComponent(slot) + '/reasoning-effort', { reasoning_effort }).then(j) as Promise<{ ok?: boolean; reasoning_effort?: string; model?: string; deferred?: boolean }>,
+    chatSlotReasoningEffort: (slot: string, reasoning_effort: string, expectedBackend?: string) =>
+      post('/api/chat/slots/' + encodeURIComponent(slot) + '/reasoning-effort', {
+        reasoning_effort, ...(expectedBackend === undefined ? {} : { expected_backend: expectedBackend }),
+      }).then(j) as Promise<{ ok?: boolean; reasoning_effort?: string; model?: string; deferred?: boolean; applied?: boolean }>,
     chatSlotWorkspace: (slot: string, workspace: string) =>
       post('/api/chat/slots/' + encodeURIComponent(slot) + '/workspace', { workspace }).then(j),
     // Relaunch the slot's agent process in place (fresh agent spec, env, and MCP

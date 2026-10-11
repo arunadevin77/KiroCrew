@@ -13,6 +13,8 @@ the mid-turn 409 (clones of the concurrency template in
 from __future__ import annotations
 
 import asyncio
+import threading
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,8 +30,12 @@ from kiro_crew.dashboard.chat import (
     api_chat_slot_workspace,
     api_chat_slots_model,
 )
-from kiro_crew.dashboard.chat_handlers import _slot_switch_session_lock
+from kiro_crew.dashboard.chat_handlers import (
+    _reset_slot_session_or_warn,
+    _slot_switch_session_lock,
+)
 from kiro_crew.dashboard.state import DashboardState, _ChatSlot
+from kiro_crew.providers.acp import AcpProvider
 
 MOD = "kiro_crew.dashboard.chat_handlers"
 
@@ -100,6 +106,483 @@ def private_switch_state():
         key, {"agent": slot.agent, "memory_store": slot.memory_store}
     )
     return state, slot, key
+
+
+@pytest.fixture
+def profile_selection_state(private_switch_state, monkeypatch):
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.dashboard import chat_handlers
+
+    state, slot, key = private_switch_state
+    cfg = KiroCrewConfig.load()
+    cfg.agent.acp_backend = "claude"
+    cfg.agent.member_acp_backend = "codex"
+    cfg.agents["writer"].acp_backend = ""
+    cfg.save()
+    state.sessions._has_allocation_reservation.return_value = False
+    monkeypatch.setattr(chat_handlers, "_subagents_attached_response", AsyncMock(return_value=None))
+    monkeypatch.setattr(chat_handlers, "_reset_slot_session_or_warn", AsyncMock(return_value=True))
+    monkeypatch.setattr(chat_handlers, "_remember_reasoning_effort_for_restore", MagicMock())
+    slot.model = _MODEL_A
+    slot.reasoning_effort = "low"
+    return state, slot, key
+
+
+def _profile_provider(backend=""):
+    provider = MagicMock(spec=AcpProvider)
+    provider.capabilities = SimpleNamespace(backend=backend)
+    provider.has_active_turn.return_value = False
+    provider.supports_effort.return_value = True
+    provider.accepts_effort_level.return_value = True
+    provider.change_effort = AsyncMock(return_value=True)
+    return provider
+
+
+async def _profile_pick(client, slot, setting, **extra):
+    route, field, value = (
+        ("model", "model", _MODEL_B)
+        if setting == "model"
+        else ("reasoning-effort", "reasoning_effort", "high")
+    )
+    response = await asyncio.wait_for(
+        client.post(f"/api/chat/slots/{slot.key}/{route}", json={field: value, **extra}),
+        timeout=10,
+    )
+    return response.status, await asyncio.wait_for(response.json(), timeout=5)
+
+
+@pytest.mark.parametrize("setting", ["model", "effort"])
+class TestProfileSelectionBackendGuard:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("pinned", [False, True], ids=["fresh", "prior-profile-pin"])
+    async def test_matching_cold_member_uses_its_pin_not_installation_defaults(
+        self, profile_selection_state, setting, pinned
+    ):
+        state, slot, _ = profile_selection_state
+        if not pinned:
+            slot.model = ""
+            slot.reasoning_effort = ""
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(client, slot, setting, expected_backend="")
+        assert status == 200 and body["ok"] is True
+        assert slot.model == (_MODEL_B if setting == "model" else (_MODEL_A if pinned else ""))
+        assert slot.reasoning_effort == (
+            "high" if setting == "effort" else ("low" if pinned else "")
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "condition", ["mismatch", "unknown-provider", "starting", "cold-mismatch"]
+    )
+    async def test_nonmatching_or_unverified_target_changes_no_slot_selection(
+        self, profile_selection_state, setting, condition
+    ):
+        state, slot, _ = profile_selection_state
+        if condition == "mismatch":
+            state.sessions.get_provider.return_value = _profile_provider("codex")
+        elif condition == "unknown-provider":
+            state.sessions.get_provider.return_value = object()
+        elif condition == "starting":
+            state.sessions._has_allocation_reservation.return_value = True
+        before = (slot.model, slot.reasoning_effort, slot._model_pick_gen, slot._effort_pick_gen)
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(
+                client,
+                slot,
+                setting,
+                expected_backend="claude" if condition == "cold-mismatch" else "",
+            )
+        assert status == 200
+        assert body == {
+            "ok": False,
+            "applied": False,
+            "code": (
+                "selection_backend_changed"
+                if condition in ("mismatch", "cold-mismatch")
+                else "selection_backend_unverified"
+            ),
+        }
+        assert (
+            slot.model,
+            slot.reasoning_effort,
+            slot._model_pick_gen,
+            slot._effort_pick_gen,
+        ) == before
+        state.push_slots_update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_busy_is_an_error_even_when_the_backend_differs(
+        self, profile_selection_state, setting
+    ):
+        state, slot, _ = profile_selection_state
+        provider = _profile_provider("codex")
+        provider.has_active_turn.return_value = True
+        state.sessions.get_provider.return_value = provider
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(client, slot, setting, expected_backend="")
+        assert status == 409 and body["code"] == "turn_in_flight"
+        assert (slot.model, slot.reasoning_effort) == (_MODEL_A, "low")
+        provider.change_effort.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("change", ["backend", "starting", "replaced"])
+    async def test_cold_resolution_rechecks_a_change_during_its_await(
+        self, profile_selection_state, monkeypatch, setting, change
+    ):
+        from kiro_crew.dashboard import chat_handlers
+
+        state, slot, _ = profile_selection_state
+        entered, release = threading.Event(), threading.Event()
+        original = chat_handlers._cold_slot_selection_backend
+
+        def delayed(*args):
+            result = original(*args)
+            entered.set()
+            assert release.wait(10), "cold backend lookup was never released"
+            return result
+
+        monkeypatch.setattr(chat_handlers, "_cold_slot_selection_backend", delayed)
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            request = asyncio.create_task(_profile_pick(client, slot, setting, expected_backend=""))
+            try:
+                assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 5), timeout=6)
+                if change == "backend":
+                    state.sessions.get_provider.return_value = _profile_provider("codex")
+                elif change == "starting":
+                    state.sessions._has_allocation_reservation.return_value = True
+                else:
+                    state._slots[slot.key] = _ChatSlot(slot.key)
+                release.set()
+                status, body = await asyncio.wait_for(request, timeout=10)
+            finally:
+                release.set()
+                if not request.done():
+                    request.cancel()
+                await asyncio.wait_for(asyncio.gather(request, return_exceptions=True), timeout=10)
+        if change == "replaced":
+            assert status == 404
+        else:
+            assert status == 200 and body["applied"] is False
+        assert (slot.model, slot.reasoning_effort) == (_MODEL_A, "low")
+
+    @pytest.mark.asyncio
+    async def test_backend_change_after_the_initial_guard_does_not_reach_reset(
+        self, profile_selection_state, monkeypatch, setting
+    ):
+        from kiro_crew.dashboard import chat_handlers
+
+        state, slot, _ = profile_selection_state
+        replacement = _profile_provider("codex")
+
+        def change_backend(*args, **kwargs):
+            state.sessions.get_provider.return_value = replacement
+
+        if setting == "model":
+            monkeypatch.setattr(
+                chat_handlers,
+                "_subagents_attached_response",
+                AsyncMock(side_effect=change_backend),
+            )
+        else:
+            monkeypatch.setattr(
+                chat_handlers, "_remember_reasoning_effort_for_restore", change_backend
+            )
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(client, slot, setting, expected_backend="")
+        assert status == 200 and body["code"] == "selection_backend_changed"
+        assert (slot.model, slot.reasoning_effort) == (_MODEL_A, "low")
+        replacement.change_effort.assert_not_awaited()
+        chat_handlers._reset_slot_session_or_warn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_queued_children_refusal_is_not_a_partial_save(
+        self, profile_selection_state, monkeypatch, setting
+    ):
+        from kiro_crew.dashboard import chat_handlers
+
+        state, slot, _ = profile_selection_state
+        monkeypatch.setattr(
+            chat_handlers,
+            "_subagents_attached_response",
+            AsyncMock(
+                return_value=web.json_response(
+                    {"error": "children still attached", "code": "subagents_attached"}, status=409
+                )
+            ),
+        )
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(client, slot, setting, expected_backend="")
+        assert status == 409 and body["code"] == "subagents_attached"
+        assert (slot.model, slot.reasoning_effort) == (_MODEL_A, "low")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("invalid", [None, False, 0])
+    async def test_explicit_nonstring_guard_is_rejected_not_treated_as_omitted(
+        self, profile_selection_state, setting, invalid
+    ):
+        state, slot, _ = profile_selection_state
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(client, slot, setting, expected_backend=invalid)
+        assert status == 400 and body["code"] == "invalid_expected_backend"
+        assert (slot.model, slot.reasoning_effort) == (_MODEL_A, "low")
+
+    @pytest.mark.asyncio
+    async def test_cold_resolution_preserves_the_recorded_template_namespace(
+        self, profile_selection_state, setting, tmp_path
+    ):
+        import json
+
+        from kiro_crew.config.loader import (
+            KiroCrewAgentConfig,
+            KiroCrewConfig,
+            resolve_agent_bindings,
+        )
+        from kiro_crew.session_agent_selection import record_agent_selection
+
+        state, _, _ = profile_selection_state
+        cfg = KiroCrewConfig.load()
+        cfg.agents["guard-template"] = KiroCrewAgentConfig(
+            kiro_agent="kirocrew", acp_backend="codex"
+        )
+        cfg.save()
+        specs = tmp_path / ".kiro" / "agents"
+        specs.mkdir(parents=True)
+        (specs / "guard-template.json").write_text(
+            json.dumps({"name": "guard-template", "prompt": "test", "tools": []}), encoding="utf-8"
+        )
+        slot = _ChatSlot("recorded-template")
+        slot.agent = "writer"
+        slot.project = str(tmp_path)
+        slot.model = _MODEL_A
+        slot.reasoning_effort = "low"
+        state._slots = {slot.key: slot}
+        bindings = await asyncio.wait_for(
+            asyncio.to_thread(
+                resolve_agent_bindings,
+                cfg,
+                "guard-template",
+                slot.project,
+                selection_kind="template",
+            ),
+            timeout=10,
+        )
+        assert bindings.selection_kind == "template" and bindings.requested_resolved
+        record_agent_selection("dashboard:recorded-template", "guard-template", bindings)
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            # The recorded template uses global Claude, neither writer's Kiro
+            # nor the same-named guard-template member's Codex.
+            status, body = await _profile_pick(client, slot, setting, expected_backend="claude")
+        assert status == 200 and body["ok"] is True
+
+    @pytest.mark.asyncio
+    async def test_backend_replacement_during_live_rpc_is_not_committed_to_the_slot(
+        self, profile_selection_state, monkeypatch, setting
+    ):
+        from kiro_crew.dashboard import chat_handlers
+
+        state, slot, _ = profile_selection_state
+        provider = _profile_provider()
+        state.sessions.get_provider.return_value = provider
+
+        async def replace(*args):
+            state.sessions.get_provider.return_value = _profile_provider("codex")
+            return True
+
+        if setting == "model":
+            monkeypatch.setattr(chat_handlers, "_try_live_model_switch", replace)
+        else:
+            provider.change_effort.side_effect = replace
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(client, slot, setting, expected_backend="")
+        assert status == 200 and body["code"] == "selection_backend_changed"
+        assert (slot.model, slot.reasoning_effort) == (_MODEL_A, "low")
+        chat_handlers._reset_slot_session_or_warn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_matching_live_success_is_kept_when_a_turn_starts_during_the_rpc(
+        self, profile_selection_state, monkeypatch, setting
+    ):
+        from kiro_crew.dashboard import chat_handlers
+
+        state, slot, _ = profile_selection_state
+        provider = _profile_provider()
+        provider.served_model = _MODEL_B
+        state.sessions.get_provider.return_value = provider
+
+        async def applied(*args):
+            provider.has_active_turn.return_value = True
+            return True
+
+        if setting == "model":
+            monkeypatch.setattr(chat_handlers, "_try_live_model_switch", applied)
+        else:
+            provider.change_effort.side_effect = applied
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(client, slot, setting, expected_backend="")
+        assert status == 200 and body["ok"] is True
+        assert (slot.model if setting == "model" else slot.reasoning_effort) == (
+            _MODEL_B if setting == "model" else "high"
+        )
+        chat_handlers._reset_slot_session_or_warn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unguarded_explicit_slot_pick_keeps_its_existing_contract(
+        self, profile_selection_state, monkeypatch, setting
+    ):
+        from kiro_crew.dashboard import chat_handlers
+
+        state, slot, _ = profile_selection_state
+        # An ordinary slot override is not a Profile/default write.
+        monkeypatch.setattr(
+            chat_handlers,
+            "_cold_slot_selection_backend",
+            MagicMock(
+                side_effect=AssertionError("unguarded pick must not resolve a Profile backend")
+            ),
+        )
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(client, slot, setting)
+        assert status == 200 and body["ok"] is True
+        assert (slot.model if setting == "model" else slot.reasoning_effort) == (
+            _MODEL_B if setting == "model" else "high"
+        )
+
+
+class TestProfileSelectionCommitBoundaries:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("effort", ["high", ""])
+    @pytest.mark.parametrize("applied", [True, False])
+    async def test_effort_rpc_rebind_reports_what_was_persisted(
+        self, profile_selection_state, effort, applied
+    ):
+        from kiro_crew.dashboard import chat_handlers
+
+        state, slot, _ = profile_selection_state
+        provider = _profile_provider()
+        state.sessions.get_provider.return_value = provider
+        persisted = {"effort": "low"}
+
+        async def rebind(*args):
+            if applied:
+                persisted["effort"] = effort
+            slot.linked_session_key = "slack:profile-rebound"
+            return applied
+
+        provider.change_effort = AsyncMock(side_effect=rebind)
+        provider.clear_effort = AsyncMock(side_effect=rebind)
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(
+                client, slot, "effort", expected_backend="", reasoning_effort=effort
+            )
+        if applied:
+            assert status == 200 and body["ok"] is True
+            assert "rebound" in body["warning"]
+            assert body.get("applied") is not False
+        else:
+            assert status == 409 and body["code"] == "session_rebound"
+        assert slot.reasoning_effort == persisted["effort"]
+        chat_handlers._reset_slot_session_or_warn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("setting", ["model", "effort"])
+    @pytest.mark.parametrize("retry", [False, True])
+    @pytest.mark.parametrize("shutdown_raises", [False, True])
+    async def test_committed_reset_keeps_the_selection_captured_by_a_starting_successor(
+        self, profile_selection_state, monkeypatch, setting, retry, shutdown_raises
+    ):
+        from kiro_crew.dashboard import chat_handlers
+
+        state, slot, _ = profile_selection_state
+        provider = _profile_provider()
+        provider.served_model = _MODEL_A
+        provider.change_effort.return_value = False
+        state.sessions.get_provider.return_value = provider
+        monkeypatch.setattr(chat_handlers, "_try_live_model_switch", AsyncMock(return_value=False))
+        monkeypatch.setattr(
+            chat_handlers, "_reset_slot_session_or_warn", _reset_slot_session_or_warn
+        )
+        captured = []
+        attempts = 0
+
+        async def pop_and_start(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if retry and attempts == 1:
+                return False
+            # The real helper must classify a raise after this pop as committed.
+            # A successor captures the new slot setting before registration.
+            captured.append(slot.model if setting == "model" else slot.reasoning_effort)
+            state.sessions.get_provider.return_value = None
+            state.sessions._has_allocation_reservation.return_value = True
+            if shutdown_raises:
+                raise RuntimeError("post-pop teardown failed")
+            return True
+
+        reset = AsyncMock(side_effect=pop_and_start)
+        monkeypatch.setattr(chat_handlers, "_reset_slot_session", reset)
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(client, slot, setting, expected_backend="")
+        expected = _MODEL_B if setting == "model" else "high"
+        assert status == 200 and body["ok"] is True
+        assert body.get("applied") is not False
+        assert (slot.model if setting == "model" else slot.reasoning_effort) == expected
+        assert captured == [expected]
+        assert reset.await_count == (2 if retry else 1)
+        assert ("warning" in body) is shutdown_raises
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("setting", ["model", "effort"])
+    async def test_declined_reset_does_not_retry_against_a_different_backend(
+        self, profile_selection_state, monkeypatch, setting
+    ):
+        from kiro_crew.dashboard import chat_handlers
+
+        state, slot, _ = profile_selection_state
+        provider = _profile_provider()
+        provider.served_model = _MODEL_A
+        provider.change_effort.return_value = False
+        state.sessions.get_provider.return_value = provider
+        monkeypatch.setattr(chat_handlers, "_try_live_model_switch", AsyncMock(return_value=False))
+
+        async def declined(*args, **kwargs):
+            replacement = _profile_provider("codex")
+            replacement.served_model = _MODEL_A
+            state.sessions.get_provider.return_value = replacement
+            return False
+
+        reset = AsyncMock(side_effect=declined)
+        monkeypatch.setattr(chat_handlers, "_reset_slot_session_or_warn", reset)
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(client, slot, setting, expected_backend="")
+        assert status == 200 and body["applied"] is False
+        assert body["code"] == "selection_backend_changed"
+        assert (slot.model, slot.reasoning_effort) == (_MODEL_A, "low")
+        reset.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("setting", ["model", "effort"])
+    async def test_cold_reset_without_a_provider_keeps_the_starting_successors_pick(
+        self, profile_selection_state, monkeypatch, setting
+    ):
+        from kiro_crew.dashboard import chat_handlers
+
+        state, slot, _ = profile_selection_state
+        captured = []
+
+        async def nothing_to_reset(*args, **kwargs):
+            captured.append(slot.model if setting == "model" else slot.reasoning_effort)
+            state.sessions._has_allocation_reservation.return_value = True
+            return False
+
+        reset = AsyncMock(side_effect=nothing_to_reset)
+        monkeypatch.setattr(chat_handlers, "_reset_slot_session_or_warn", reset)
+        async with TestClient(TestServer(as_owner(_make_app(state)))) as client:
+            status, body = await _profile_pick(client, slot, setting, expected_backend="")
+        expected = _MODEL_B if setting == "model" else "high"
+        assert status == 200 and body["ok"] is True
+        assert (slot.model if setting == "model" else slot.reasoning_effort) == expected
+        assert captured == [expected]
+        reset.assert_awaited_once()
 
 
 class TestPrivateChatMemberSwitch:

@@ -13278,7 +13278,11 @@
       "built_from": "Basado en",
       "change_default_crewmate": "Cambiar el compañero predeterminado",
       "change_default_hint": "Abre el ajuste Compañero predeterminado en Desarrollador → Configuración.",
-      "keep_crew": "Conservar compañero"
+      "keep_crew": "Conservar compañero",
+      "ai_app": "Aplicación de IA",
+      "ai_app_hint": "Usar predeterminada sigue la aplicación de IA de tu instalación. Elegir una aplicación la fija para este miembro. Las sesiones nuevas usan esta elección; las conversaciones abiertas conservan su aplicación.",
+      "inherited_ai_app": "Usar predeterminada: {{backend}}",
+      "ai_apps_load_failed": "No se pudieron cargar las aplicaciones de IA."
     },
     "knowledge": {
       "detailView": {
@@ -17869,6 +17873,7 @@
       "show_controls": "Mostrar los controles"
     },
     "membersPage": {
+      "profile_settings_saved_for_new_sessions": "Guardado para las sesiones nuevas. Esta conversación mantiene su aplicación de IA actual.",
       "drawer_delegated_working": "Tareas delegadas en curso",
       "agent_template": "Basado en",
       "details": "Detalles",

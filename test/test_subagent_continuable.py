@@ -1541,7 +1541,10 @@ class TestContinuationTemplateNamespace:
             assert provider.model_override == expected_override
             # Exercise the same remaining model tier used by the real factory.
             resolved = await asyncio.to_thread(
-                cfg.acp_effective_model, provider.template, provider.model_override
+                cfg.acp_effective_model,
+                provider.template,
+                provider.model_override,
+                crew_agent=provider.crew_agent,
             )
             assert resolved == (override or template_model or "global-model")
         finally:

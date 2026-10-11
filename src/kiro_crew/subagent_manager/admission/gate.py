@@ -239,6 +239,7 @@ class _GateMixin(ManagerComponent):
         target_member: str | None = None,
         delegation: dict[str, str] | None = None,
         backend: str | None = None,
+        _execution_settings_captured: bool | None = None,
         _execution_context: dict | None = None,
         _parent_spawn_policy: "ParentSpawnPolicy | None" = None,
         _agent_check: "AgentCheck | None" = None,
@@ -627,6 +628,34 @@ class _GateMixin(ManagerComponent):
                 )
             )
 
+        if _execution_settings_captured is None and not conversation_key and not _from_queue:
+            from kiro_crew.subagent import _capture_member_settings
+
+            try:
+                backend, model, reasoning_effort, _execution_settings_captured = (
+                    _capture_member_settings(execution, backend, model, reasoning_effort)
+                )
+            except (OSError, ValueError) as exc:
+                return _refuse_row(
+                    SubagentInfo(
+                        id=agent_id,
+                        task=_redacted_task,
+                        parent_session_key=parent_session_key,
+                        agent=agent,
+                        memory_mode=_memory_mode,
+                        done=True,
+                        error=f"memory_unavailable: {exc}",
+                        batch_id=batch_id,
+                        batch_total=max(0, int(batch_total)),
+                    )
+                )
+        execution_settings: dict[str, Any] = {
+            "backend": backend,
+            "model": model or "",
+            "reasoning_effort": reasoning_effort,
+            "execution_settings_captured": bool(_execution_settings_captured),
+        }
+
         # --- Persist BEFORE any resource check: write-before-ack. Policy refusals
         # above (empty task, memory identity, cwd, governance, the parent spec's
         # allowlist) never reach the
@@ -643,6 +672,7 @@ class _GateMixin(ManagerComponent):
             # The drain re-enters ``spawn`` from this dict alone: a run that hit
             # the concurrency gate would otherwise start on the default backend.
             "backend": backend,
+            "_execution_settings_captured": bool(_execution_settings_captured),
             "allowed_tools": allowed_tools,
             "bare": bare,
             "cwd": resolved_cwd,
@@ -792,6 +822,7 @@ class _GateMixin(ManagerComponent):
                 app=app,
                 parent_session_key=parent_session_key,
                 queued=True,
+                **execution_settings,
                 queued_reason=str(wait.get("reason", "")),
                 queued_reason_detail=reason,
                 batch_id=batch_id,
@@ -949,9 +980,7 @@ class _GateMixin(ManagerComponent):
         run_fields: dict[str, Any] = {
             "id": agent_id,
             "parent_session_key": parent_session_key,
-            "model": model or "",
-            "reasoning_effort": reasoning_effort or "",
-            "backend": backend,
+            **execution_settings,
             "allowed_tools": list(allowed_tools) if allowed_tools else [],
             "bare": bare,
             "keep": keep,
@@ -1400,6 +1429,7 @@ class _GateMixin(ManagerComponent):
                 app=app,
                 parent_session_key=parent_session_key,
                 queued=True,
+                **execution_settings,
                 queued_reason=str(capacity_wait["reason"]),
                 queued_reason_detail=capacity_detail,
                 memory_mode=_memory_mode,
@@ -1481,6 +1511,7 @@ class _GateMixin(ManagerComponent):
                 app=app,
                 parent_session_key=parent_session_key,
                 queued=True,
+                **execution_settings,
                 batch_id=batch_id,
                 batch_total=max(0, int(batch_total)),
                 delegation=dict(delegation or {}),
@@ -1505,6 +1536,7 @@ class _GateMixin(ManagerComponent):
                 agent=agent,
                 parent_session_key=parent_session_key,
                 queued=True,
+                **execution_settings,
                 done=True,
                 user_stopped=True,
                 batch_id=batch_id,

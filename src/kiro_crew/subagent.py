@@ -1369,6 +1369,45 @@ def _subagent_default_effort(cfg: Any = None) -> str:
         return ""
 
 
+def _capture_member_settings(
+    execution: Any,
+    backend: str | None,
+    model: str | None,
+    reasoning_effort: str,
+) -> tuple[str | None, str | None, str, bool]:
+    """Freeze a member's execution choices before admission can queue its run."""
+    if execution.selection_kind != "member":
+        return backend, model, reasoning_effort, False
+    from kiro_crew.agent_sdk.capabilities import capabilities_for
+    from kiro_crew.config.loader import normalize_agent_model
+    from kiro_crew.execution_context import member_config_for_id
+
+    cfg = KiroCrewConfig.load()
+    if execution.member_id is not None:
+        alias, member = member_config_for_id(cfg, execution.member_id)
+    else:
+        alias = execution.selection_name
+        member = cfg.agents.get(alias)
+        if member is None:
+            raise ValueError("selected member is unavailable")
+    backend = cfg.resolve_session_backend(crew_agent=alias, backend_override=backend)
+    namespace = capabilities_for(backend).model_id_namespace
+    same_namespace = namespace == capabilities_for(cfg.agent.acp_backend).model_id_namespace
+    selected_model = model or normalize_agent_model(member.model)
+    if not selected_model and same_namespace:
+        selected_model = _subagent_default_model(cfg)
+    selected_model = cfg.acp_effective_model(
+        execution.template_id, selected_model, namespace=namespace, crew_agent=alias
+    )
+    effort = (
+        reasoning_effort
+        or member.reasoning_effort
+        or (_subagent_default_effort(cfg) if same_namespace else "")
+        or cfg.resolve_session_effort(execution.template_id, alias)
+    )
+    return backend, selected_model or DEFAULT_MODEL, effort, True
+
+
 def _spawn_effective_model(
     model: str, agent: str, *, crew_agent: str | None = None, backend: str | None = None
 ) -> str | None:
@@ -1417,7 +1456,10 @@ def _spawn_effective_model(
             from kiro_crew.agent_sdk.capabilities import capabilities_for
 
             namespace = capabilities_for(backend).model_id_namespace
-        return cfg.acp_effective_model(agent or None, override, namespace=namespace) or ""
+        return (
+            cfg.acp_effective_model(agent or None, override, namespace=namespace, crew_agent=claim)
+            or ""
+        )
     except Exception:
         return None
 
@@ -2952,6 +2994,7 @@ class SubagentInfo:
     # own id. Like ``model``, a value forces the dedicated-process path -- the
     # shared runtime is the PARENT's process, on the parent's backend.
     backend: str | None = None
+    execution_settings_captured: bool = False
     allowed_tools: list[str] = field(default_factory=list)
     bare: bool = False
     # Continuable conversations (spawn_run keep=True / spawn_continue):
@@ -5183,6 +5226,7 @@ class SubagentManager:
         target_member: str | None = None,
         delegation: dict[str, str] | None = None,
         backend: str | None = None,
+        _execution_settings_captured: bool | None = None,
         _execution_context: dict | None = None,
         _parent_spawn_policy: "ParentSpawnPolicy | None" = None,
         _agent_check: "AgentCheck | None" = None,
@@ -5225,6 +5269,7 @@ class SubagentManager:
             target_member=target_member,
             delegation=delegation,
             backend=backend,
+            _execution_settings_captured=_execution_settings_captured,
             _execution_context=_execution_context,
             _parent_spawn_policy=_parent_spawn_policy,
             _agent_check=_agent_check,
@@ -5344,6 +5389,28 @@ class SubagentManager:
             or getattr(self._sessions, "admission_closed", False) is True
         ):
             return self.spawn(task, **kwargs)
+
+        def refuse_execution(exc: Exception, mode: object = None) -> SubagentInfo:
+            batch_id = str(kwargs.get("batch_id") or "")
+            batch_total = max(0, int(kwargs.get("batch_total") or 0))
+            if batch_id and not kwargs.get("_from_queue") and not kwargs.get("_store_accepted"):
+                submitted = self._batch_submitted.setdefault(batch_id, [0, batch_total])
+                submitted[0] += 1
+                self._batch_progress_ts[batch_id] = time.time()
+            return self._announce_rejection(
+                SubagentInfo(
+                    id=kwargs.get("_preassigned_id") or self._mint_agent_id(),
+                    task=_redact(task),
+                    parent_session_key=str(kwargs.get("parent_session_key") or ""),
+                    agent=str(kwargs.get("agent") or ""),
+                    memory_mode=mode if isinstance(mode, str) else "persistent",
+                    done=True,
+                    error=f"memory_unavailable: {exc}",
+                    batch_id=batch_id,
+                    batch_total=batch_total,
+                )
+            )
+
         if kwargs.get("_execution_context") is None:
             from kiro_crew.execution_context import read_session_execution
             from kiro_crew.subagent_persistence import read_run_execution
@@ -5406,25 +5473,41 @@ class SubagentManager:
                 kwargs["_execution_context"] = execution.to_record()
                 kwargs["_memory_mode"] = execution.memory_mode
             except (OSError, ValueError) as exc:
-                batch_id = str(kwargs.get("batch_id") or "")
-                batch_total = max(0, int(kwargs.get("batch_total") or 0))
-                if batch_id and not kwargs.get("_from_queue") and not kwargs.get("_store_accepted"):
-                    submitted = self._batch_submitted.setdefault(batch_id, [0, batch_total])
-                    submitted[0] += 1
-                    self._batch_progress_ts[batch_id] = time.time()
-                return self._announce_rejection(
-                    SubagentInfo(
-                        id=kwargs.get("_preassigned_id") or self._mint_agent_id(),
-                        task=_redact(task),
-                        parent_session_key=parent,
-                        agent=str(kwargs.get("agent") or ""),
-                        memory_mode=mode if isinstance(mode, str) else "persistent",
-                        done=True,
-                        error=f"memory_unavailable: {exc}",
-                        batch_id=batch_id,
-                        batch_total=batch_total,
-                    )
+                return refuse_execution(exc, mode)
+        if (
+            kwargs.get("_execution_settings_captured") is None
+            and not kwargs.get("conversation_key")
+            and not kwargs.get("_from_queue")
+        ):
+            from kiro_crew.execution_context import execution_from_record
+
+            try:
+                record = execution_from_record({"execution_context": kwargs["_execution_context"]})
+                execution = self._admission.resolve_spawn_execution(
+                    parent_session_key=str(kwargs.get("parent_session_key") or ""),
+                    agent=kwargs.get("agent", ""),
+                    crew=kwargs.get("crew", ""),
+                    target_member=kwargs.get("target_member"),
+                    app=kwargs.get("app", ""),
+                    _memory_mode=kwargs.get("_memory_mode") or record.memory_mode,
+                    _execution_context=record.to_record(),
                 )
+                kwargs["_execution_context"] = execution.to_record()
+                backend, model, effort, captured = await asyncio.to_thread(
+                    _capture_member_settings,
+                    execution,
+                    kwargs.get("backend"),
+                    kwargs.get("model"),
+                    str(kwargs.get("reasoning_effort") or ""),
+                )
+            except (OSError, ValueError) as exc:
+                return refuse_execution(exc, kwargs.get("_memory_mode"))
+            kwargs.update(
+                backend=backend,
+                model=model,
+                reasoning_effort=effort,
+                _execution_settings_captured=captured,
+            )
         if kwargs.get("_parent_spawn_policy") is None and not kwargs.get("_store_accepted"):
             # A caller that supplied the execution (``/api/spawn`` hands the
             # policy along with it; a continuation or retry does not): the

@@ -212,9 +212,10 @@ _BASE_OWNERS: dict[str, tuple[str, ...]] = {
 }
 
 #: SHA-256 of the sorted ``"<name> <kind> <signature>"`` lines of every name in
-#: ``_BASE_OWNERS``, captured from the one-module file before the split: each moved
-#: name keeps the kind and signature it had there.
-_BASE_SHAPE_DIGEST = "54f616ae7fbc7dbee618439bb16204802f68596743729e9b02f8d74e083abde8"
+#: ``_BASE_OWNERS``. The factory-default refresh tuple from ``_effort_inputs``
+#: includes template, effort, model and backend; every other moved definition
+#: retains its kind and signature from the one-module file.
+_BASE_SHAPE_DIGEST = "448b5c23b1f14dcfe9130b595f6a78edc48f5a25e41c7a6d0da082304bb4afbc"
 
 #: Definitions that stay in the facade file. The seams every owner reads; the
 #: config schema route; the model and picker reads with the crew model-pin checks,
@@ -247,6 +248,7 @@ _FACADE_DEFS = (
     "api_slash_commands",
     "api_kirocrew_agents",
     "_get_config_lock",
+    "_crew_backend_rejected",
     "_pin_entitlement_backend",
     "_revalidate_crew_pin",
     "_model_pin_rejected",
@@ -533,14 +535,14 @@ def test_a_facade_definition_stays_in_the_facade_file(name: str) -> None:
 
 def test_every_base_definition_is_in_exactly_one_place() -> None:
     """The facade keeps what ``_FACADE_DEFS`` names and the owners hold the rest:
-    together they are the one-module file's definitions, each once."""
+    every expected definition, including member backend validation, lives once."""
     defined = {
         node.name
         for node in ast.parse(_FACADE_PATH.read_text(encoding="utf-8")).body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
     }
     assert defined == set(_FACADE_DEFS)
-    assert len(defined | _MOVED) == len(defined) + len(_MOVED) == 121
+    assert len(defined | _MOVED) == len(defined) + len(_MOVED) == 122
 
 
 def test_the_owners_log_as_the_facade() -> None:

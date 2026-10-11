@@ -687,15 +687,22 @@ class ContinuationCoordinator(ManagerComponent):
         )
         # The conversation lives on the harness its first run started on: a
         # follow-up on another backend could not load it, and would start over.
-        backend = (
-            original.backend
+        saved_settings: dict[str, Any] = (
+            {
+                "backend": original.backend,
+                "model": original.model,
+                "reasoning_effort": original.reasoning_effort,
+                "execution_settings_captured": original.execution_settings_captured,
+            }
             if original is not None
-            else ((read_state(conv_id) or {}) if _captured_state is ... else _captured_state).get(
-                "backend"
-            )
+            else ((read_state(conv_id) or {}) if _captured_state is ... else _captured_state)
         )
+        backend = saved_settings.get("backend")
         if not isinstance(backend, str):
             backend = None
+        captured = saved_settings.get("execution_settings_captured") is True
+        if captured and model is None:
+            model = saved_settings.get("model") or "auto"
         # A continuation has to run WHERE THE RUN RAN. `spawn` resolves an empty
         # cwd to the pool project before it validates the agent name, so a run
         # spawned against a project-local agent (defined under that project's
@@ -722,6 +729,10 @@ class ContinuationCoordinator(ManagerComponent):
             conversation_key=conv_key,
             delegation=dict(delegation or {}),
             backend=backend,
+            _execution_settings_captured=captured,
+            **(
+                {"reasoning_effort": saved_settings.get("reasoning_effort", "")} if captured else {}
+            ),
             include_memory=inc_memory,
             include_lessons=inc_lessons,
             include_project=inc_project,

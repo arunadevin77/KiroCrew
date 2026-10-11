@@ -57,9 +57,13 @@ export function useComposerChips({
 }: ComposerChipsOptions) {
   // Resolve model for existing slots that don't have one stored
   const _slotAgentName = (currentSlot && !currentSlot.model) ? (currentSlot.agent || defaultAgent || 'default') : ''
+  const modelContext = {
+    sessionKey: currentSlot?.linked_session_key || currentSlot?.key || '',
+    selectionKind: currentSlot?.agent_kind || '',
+  } as const
   const { data: _slotResolvedModel } = useQuery({
-    queryKey: ['resolved-model', _slotAgentName, provider.id],
-    queryFn: () => provider.resolveModel(_slotAgentName),
+    queryKey: ['resolved-model', _slotAgentName, provider.id, modelContext],
+    queryFn: () => provider.resolveModel(_slotAgentName, modelContext),
     enabled: !!_slotAgentName,
   })
   // The agent the composer's "set as default" row acts on: the active slot's

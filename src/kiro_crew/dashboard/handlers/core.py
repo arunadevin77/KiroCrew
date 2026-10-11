@@ -2614,9 +2614,16 @@ def _validate_role_model(
     if not value or value == "auto":
         return None
     from kiro_crew.acp.client import model_is_unusable
+    from kiro_crew.agent_sdk.backends import ACP_BACKEND_KIRO, model_registry_namespace
+    from kiro_crew.agent_sdk.drivers.acp import resolve_pin_spelling
     from kiro_crew.dashboard.chat_handlers import _model_rejected_reason
 
-    reason = _model_rejected_reason(value, provider=provider)
+    reason = (
+        _model_rejected_reason(value, provider=provider)
+        if backend is None
+        or model_registry_namespace(backend) == model_registry_namespace(ACP_BACKEND_KIRO)
+        else None
+    )
     if reason:
         return reason
     advertised = (
@@ -2627,6 +2634,12 @@ def _validate_role_model(
     if advertised is None:
         return None
     if model_is_unusable(value, advertised):
+        if backend is not None:
+            from kiro_crew import model_registry
+
+            translated = model_registry.to_provider_id(value, model_registry_namespace(backend))
+            if resolve_pin_spelling(translated, advertised):
+                return None
         usable = ", ".join(advertised[:8]) or "auto"
         return f"{value!r} is not available on your account; choose one of: {usable}, or 'auto'."
     return None

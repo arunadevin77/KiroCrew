@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 
+import { api } from '../api/client'
 import { useProvider } from '../providers'
 import { modelListRefetchInterval, useModelsDegraded } from '../providers/modelListHealth'
 import { withAutoFirst } from '../providers/modelList'
@@ -37,24 +38,35 @@ const PLACEHOLDER: ModelInfo[] = [{ name: 'auto', description: '' }]
  * One key with one fetcher makes that class of bug unrepresentable: a caller
  * cannot supply a shape, only read one.
  *
- * `enabled` is the one option callers still control, because it is per-observer
+ * `enabled` is per-observer
  * and cannot corrupt the cached value: ChatSidebar's bulk switcher passes
  * `false` until its panel opens so merely rendering the sidebar does not spawn
  * kiro-cli. Other mounted observers still fetch normally — `enabled` gates who
  * *triggers* a fetch, not what lands in the cache.
+ *
+ * A member picker may name `backend`, including Kiro's empty-string id.
+ * Its catalog has a separate query key, so opening a member on another harness
+ * cannot replace the installation-default list used by template editors.
  */
-type AvailableModelsOptions = { enabled?: boolean }
+type AvailableModelsOptions = { enabled?: boolean; backend?: string }
 
-export function useAvailableModelsQuery({ enabled }: AvailableModelsOptions = {}) {
+export function useAvailableModelsQuery({ enabled, backend }: AvailableModelsOptions = {}) {
   const provider = useProvider()
   const isDegraded = useModelsDegraded(provider.id)
   const query = useQuery({
-    queryKey: ['available-models', provider.id],
-    queryFn: async () => withAutoFirst(await provider.fetchAvailableModels()),
+    queryKey: backend === undefined ? ['available-models', provider.id] : ['available-models', provider.id, backend],
+    queryFn: async () => {
+      if (backend === undefined) return withAutoFirst(await provider.fetchAvailableModels())
+      const rows = await api.models(backend)
+      if (!Array.isArray(rows) || !rows.length) throw new Error('Empty model catalog')
+      return withAutoFirst(rows.map((row: { model_name: string; description?: string; context_window?: number }) => ({
+        name: row.model_name, description: row.description || '', contextWindow: row.context_window,
+      })))
+    },
     refetchInterval: modelListRefetchInterval,
     ...(enabled === undefined ? {} : { enabled }),
   })
-  return { ...query, data: query.data ?? PLACEHOLDER, isDegraded }
+  return { ...query, data: query.data ?? PLACEHOLDER, isDegraded: backend === undefined ? isDegraded : query.isError }
 }
 
 export function useAvailableModels(options: AvailableModelsOptions = {}): ModelInfo[] {

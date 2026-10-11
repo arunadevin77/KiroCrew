@@ -12890,7 +12890,11 @@
       "built_from": "基于",
       "change_default_crewmate": "更换默认队友",
       "change_default_hint": "打开“开发者 → 配置”里的“默认队友”设置。",
-      "keep_crew": "保留队友"
+      "keep_crew": "保留队友",
+      "ai_app": "AI 应用",
+      "ai_app_hint": "使用默认应用会跟随安装环境的 AI 应用设置。选择具体应用会为此成员固定该应用。新会话使用此选择，已打开的对话继续使用原来的应用。",
+      "inherited_ai_app": "使用默认应用：{{backend}}",
+      "ai_apps_load_failed": "无法加载 AI 应用列表。"
     },
     "knowledge": {
       "detailView": {
@@ -17369,6 +17373,7 @@
       "show_controls": "展开控制项"
     },
     "membersPage": {
+      "profile_settings_saved_for_new_sessions": "已为新会话保存。当前对话继续使用原来的 AI 应用。",
       "drawer_delegated_working": "委派的任务正在运行",
       "agent_template": "基于",
       "details": "详情",

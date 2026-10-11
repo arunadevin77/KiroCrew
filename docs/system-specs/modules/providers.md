@@ -508,6 +508,12 @@ in [agent-host-contract.md](agent-host-contract.md).
 - `agent.acp_backend` is the harness choice, resolved through `agent_sdk.backends.resolve_selected_backend` (the top-level `acp_backends` module is a re-export shim kept for existing call sites).
 - `create_provider_factory()` returns a `Callable` that builds an `AcpProvider` for the resolved backend.
 
+Members may pin `agents.<name>.acp_backend`; null inherits and `""` names Kiro.
+An explicit caller backend wins over that pin. Member model validation and
+`GET /api/models?backend=...` use the selected harness's advertised catalog;
+Kiro spelling corrections apply only in Kiro's model namespace. Omitting the
+query keeps the installation-default catalog.
+
 An agent spec's model is consumed by kiro-cli before Kiro Crew reaches
 `session/new`, so the live-session entitlement guard cannot diagnose a wrong
 wire spelling at spawn time. Agent create/update validate a pin before

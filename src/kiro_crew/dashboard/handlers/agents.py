@@ -1279,6 +1279,12 @@ async def api_models(request: web.Request) -> web.Response:
     """
     cfg = await asyncio.to_thread(KiroCrewConfig.load)
     backend = getattr(cfg.agent, "acp_backend", "")
+    if "backend" in request.query:
+        backend = request.query["backend"]
+        if backend not in selectable_backend_values():
+            return web.json_response(
+                {"error": "backend is not selectable", "code": "invalid_acp_backend"}, status=400
+            )
     if backend == ACP_BACKEND_CLAUDE:
         return web.json_response(
             _cc_models(request, configured_default=_scoped_default(cfg, backend))
@@ -1581,7 +1587,16 @@ def _get_config_lock() -> LoopBoundLock:
     return _config_lock
 
 
-def _pin_entitlement_backend(cfg: Any) -> str:
+def _crew_backend_rejected(value: object) -> str | None:
+    """Validate a member pin without coercing an explicit choice into another harness."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in selectable_backend_values():
+        return "acp_backend must be null or a selectable backend"
+    return None
+
+
+def _pin_entitlement_backend(cfg: Any, agent_name: str = "", acp_backend: object = ...) -> str:
     """The harness whose live catalog may judge a crew's model pin.
 
     Every agent the crew create and update handlers write is a Crew Member whose DM slot
@@ -1601,6 +1616,11 @@ def _pin_entitlement_backend(cfg: Any) -> str:
     """
     default_backend = getattr(cfg.agent, "acp_backend", "")
     member_backend = getattr(cfg.agent, "member_acp_backend", "")
+    if acp_backend is ...:
+        member = getattr(cfg, "agents", {}).get(agent_name)
+        acp_backend = getattr(member, "acp_backend", None)
+    if isinstance(acp_backend, str):
+        return acp_backend
     if (
         capabilities_for(member_backend).model_id_namespace
         != capabilities_for(default_backend).model_id_namespace
@@ -1609,7 +1629,9 @@ def _pin_entitlement_backend(cfg: Any) -> str:
     return default_backend
 
 
-async def _revalidate_crew_pin(model: str, request: web.Request) -> str | None:
+async def _revalidate_crew_pin(
+    model: str, request: web.Request, agent_name: str = "", acp_backend: object = ...
+) -> str | None:
     """Revalidate the snapshot a crew's model pin is about to be judged by.
 
     Awaited BEFORE the handlers take the config lock: :func:`_model_pin_rejected`
@@ -1623,7 +1645,7 @@ async def _revalidate_crew_pin(model: str, request: web.Request) -> str | None:
     the retained claude_code seam and a known wrong-flavour spelling -- so no probe
     is spent on a value the snapshot does not decide.
     """
-    if not model or model == "auto" or model_registry.acp_id_correction(model):
+    if not model or model == "auto":
         return None
     cfg = await asyncio.to_thread(KiroCrewConfig.load)
     if is_claude_code(cfg.agent.provider):
@@ -1632,7 +1654,7 @@ async def _revalidate_crew_pin(model: str, request: web.Request) -> str | None:
     from kiro_crew.dashboard.handlers.core import _revalidate_role_pin_evidence
 
     return await _revalidate_role_pin_evidence(
-        model, request, backend=_pin_entitlement_backend(cfg)
+        model, request, backend=_pin_entitlement_backend(cfg, agent_name, acp_backend)
     )
 
 
@@ -1673,7 +1695,12 @@ def _model_pin_rejected(
     # kiro-cli serves; the others reach the child verbatim and kill it at startup.
     # Check this before live entitlement because a wrong-flavour id is naturally
     # absent from that set and would otherwise produce a less actionable error.
-    correction = model_registry.acp_id_correction(model)
+    correction = (
+        model_registry.acp_id_correction(model)
+        if backend is None
+        or model_registry_namespace(backend) == model_registry_namespace(ACP_BACKEND_KIRO)
+        else None
+    )
     if correction:
         # Deliberately NOT prescriptive. Upstream naming does not line up across
         # providers — Bedrock's ``claude-opus-4-8`` is the registry's

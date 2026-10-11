@@ -401,6 +401,10 @@ async def api_spawn(request: web.Request) -> web.Response:
     # a non-sentinel global). Additive, optional key — reporting only, never
     # changes whether the spawn happened.
     if reasoning_effort:
+        captured_settings = getattr(info, "execution_settings_captured", False) is True
+        verdict_model = info.model if captured_settings else model
+        verdict_backend = info.backend if captured_settings else backend
+        verdict_effort = info.reasoning_effort if captured_settings else reasoning_effort
         # Read the allocation-owned namespace on the loop. A reporting failure
         # cannot undo the submission or turn an unknown selection into "auto".
         selection: tuple[str, str] | None
@@ -429,12 +433,20 @@ async def api_spawn(request: web.Request) -> web.Response:
             claim = verdict_agent if kind == "member" else ""
             # Judged on the backend the run starts on, not the gateway default.
             d = effort_drop_reason(
-                model, reasoning_effort, verdict_agent, crew_agent=claim, backend=backend
+                verdict_model,
+                verdict_effort,
+                verdict_agent,
+                crew_agent=claim,
+                backend=verdict_backend,
             )
             if d:
                 return d, ""
             return "", effort_applied_note(
-                model, reasoning_effort, verdict_agent, crew_agent=claim, backend=backend
+                verdict_model,
+                verdict_effort,
+                verdict_agent,
+                crew_agent=claim,
+                backend=verdict_backend,
             )
 
         # The resolvers read config and glob ~/.kiro/agents — file I/O that

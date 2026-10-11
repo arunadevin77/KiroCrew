@@ -1092,9 +1092,10 @@ export function ChatPanel({ basePath }: { basePath?: string } = {}) {
   // agent") can answer for a different agent than a roster read that has not
   // caught up with a default-agent change, and the button would then clear
   // the wrong agent's pin.
+  const defaultModelContext = { sessionKey: '', selectionKind: 'member' } as const
   const resolvedQ = useQuery<{ model?: string; pinned?: boolean }>({
-    queryKey: ['resolved-model', pinAgentName],
-    queryFn: () => api.agentResolvedModel(pinAgentName),
+    queryKey: ['resolved-model', pinAgentName, defaultModelContext],
+    queryFn: () => api.agentResolvedModel(pinAgentName, defaultModelContext),
     enabled: agentsQ.isSuccess,
   })
   // Either read in flight means the name or the verdict may be about to change

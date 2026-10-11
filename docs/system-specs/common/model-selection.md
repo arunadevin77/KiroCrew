@@ -180,6 +180,12 @@ an out-of-scope pin reads exactly like an unset one:
 The two MUST agree on whether a pin survives, or the chip names a model no turn
 runs. `test_model_scope_wire_paths.py` pins that agreement.
 
+An explicit template selection excludes the default or same-named member's model
+pin before namespace checks, even when both pins belong to the same harness.
+The identity readout and session bindings retain the fallback alias for their
+existing binding rules but expose no member model override for that selection;
+the template's own model and the global defaults still resolve normally.
+
 The provider factory judges from the catalogs alone because it runs before any
 session exists. The three WIRE sites each hold this session's advertised list and
 pass it in, so they decide from fresher evidence than the factory can. That split
@@ -463,7 +469,13 @@ its own once the cache refreshes with a list that carries it.
   namespaces calls every legitimate model unusable (harness-parity invariant `H12`).
 
 Member create and update validation pass the DM slot's backend to the shared
-model-pin check. When the configured default harness (`agent.acp_backend`) and
+model-pin check. A member's explicit `agents.<name>.acp_backend` pin wins; null
+inherits the route below. Backend changes validate the proposed selection before
+the record is mutated. Registry translation followed by `resolve_pin_spelling`
+accepts equivalent advertised wire spellings in that backend's namespace, so a
+cold-catalog choice remains savable when live IDs omit an inference-profile
+prefix. A spelling fold never substitutes a different registered model.
+When the configured default harness (`agent.acp_backend`) and
 the member DM harness (`agent.member_acp_backend`) share a model-registry
 namespace, the default scopes the entitlement evidence; when they diverge the
 member backend does, because the DM thread runs on it. Entitlement evidence then

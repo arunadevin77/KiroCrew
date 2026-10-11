@@ -13,7 +13,6 @@ which harnesses have run.
 from __future__ import annotations
 
 import ast
-import inspect
 import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -168,8 +167,26 @@ class TestTheFactorySelection:
 class TestTheDisplayResolver:
     """The model chip must name the model the next turn will actually run."""
 
-    def test_the_resolver_has_no_unused_backend_override(self) -> None:
-        assert "backend" not in inspect.signature(resolve_effective_model).parameters
+    @pytest.mark.parametrize(
+        "configured_backend, selected_backend, expected_default, expected_explicit",
+        [
+            (ACP_BACKEND_CODEX, ACP_BACKEND_CLAUDE, "", CLAUDE_PIN),
+            (ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX, CLAUDE_PIN, ""),
+        ],
+        ids=["codex-to-claude", "claude-to-codex"],
+    )
+    def test_explicit_backend_controls_model_scope(
+        self,
+        both_warm: None,
+        configured_backend: str,
+        selected_backend: str,
+        expected_default: str,
+        expected_explicit: str,
+    ) -> None:
+        cfg = _cfg(configured_backend, CLAUDE_PIN)
+
+        assert resolve_effective_model(cfg, None) == expected_default
+        assert resolve_effective_model(cfg, None, backend=selected_backend) == expected_explicit
 
     def test_the_chip_drops_a_pin_the_active_harness_cannot_claim(self, both_warm: None) -> None:
         cfg = _cfg(ACP_BACKEND_CODEX, CLAUDE_PIN)

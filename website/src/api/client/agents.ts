@@ -6,6 +6,7 @@
  */
 
 import type { KiroCrewAgent } from '../../components/AgentSelector'
+import type { ModelResolutionContext } from '../../providers/types'
 import type { ProjectionsBlock } from '../../state/memberProjectionTypes'
 import type { ClientTransport } from './transport'
 
@@ -191,10 +192,16 @@ export function createAgentsEndpoints({ post, put, del, j, jfetch: fetch, sessio
       fetch('/api/agents', {
         headers: sessionKey ? { 'X-Session-Key': sessionKey } : { ..._sk },
       }).then(j),
-    /** The model a new session on this Kiro Crew agent would run on. Empty
-     *  `agent` resolves the configured default agent. */
-    agentResolvedModel: (agent: string) =>
-      fetch('/api/agents/resolved-model?agent=' + encodeURIComponent(agent)).then(j),
+    /** Without context, preview this member's DM. Empty `agent` resolves the
+     *  configured default; an explicit empty session key uses non-DM routing. */
+    agentResolvedModel: (agent: string, context?: ModelResolutionContext) => {
+      const query = new URLSearchParams({ agent })
+      if (context) {
+        query.set('session_key', context.sessionKey)
+        query.set('selection_kind', context.selectionKind || '')
+      }
+      return fetch('/api/agents/resolved-model?' + query).then(j)
+    },
     /** Execution choices for a chat: configured members AND installed shared
      *  templates, each row tagged with its `selection_kind`. Read-only -- unlike
      *  the sync route it enrols nothing and allocates no member memory, so

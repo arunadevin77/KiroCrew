@@ -1,3 +1,4 @@
+import { useMemberBackend, type MemberBackendDraft } from './MemberBackendField'
 /**
  * useCrewEditor — the whole EDIT-mode brain of the crew editor, extracted from
  * `KiroCrewAgentsPage` so more than one surface can open it.
@@ -88,6 +89,7 @@ interface AgentUpdatePayload {
   triggers: string
   display_name: string
   model: string
+  acp_backend: string | null
   reasoning_effort: string
   session_color: string
   avatar: CrewAvatarOverride | Record<string, unknown> | null
@@ -169,6 +171,7 @@ export interface CrewEditorController {
   setDisplayName: (v: string) => void
   sessionColor: string
   setSessionColor: (v: string) => void
+  memberBackend: MemberBackendDraft
   editModel: string
   setEditModel: (v: string) => void
   editEffort: string
@@ -378,10 +381,7 @@ export function useCrewEditor(args: UseCrewEditorArgs): CrewEditorController {
   const modelsDegraded = !modelsQuery.error && modelsQuery.isDegraded
   const editorOptionsError = installedError ?? workspacesError ?? cfgError ?? modelsQuery.error
 
-  const modelOptions = [
-    INHERIT_MODEL,
-    ...(availableModels || []).map((m: { name: string }) => m.name).filter((n: string) => n && n !== INHERIT_MODEL),
-  ]
+
 
   // ── Edit field state (own copies, seeded from the record on open) ──
   const [error, setError] = useState('')
@@ -534,10 +534,12 @@ export function useCrewEditor(args: UseCrewEditorArgs): CrewEditorController {
     queryFn: () => api.agentResolvedModel(editing),
     enabled: !!editing,
   })
+  const memberBackend = useMemberBackend(editing, editingAgent, resolved?.inherited_acp_backend, setEditModel, setEditEffort)
+  const modelOptions = [INHERIT_MODEL, ...memberBackend.models.data.map(m => m.name).filter(name => name && name !== INHERIT_MODEL)]
   const modelPinPendingClear = editModel === INHERIT_MODEL && !!editingAgent?.model
   const effortModel = editModel !== INHERIT_MODEL
     ? editModel
-    : modelPinPendingClear ? '' : (resolved?.model || '')
+    : modelPinPendingClear || memberBackend.dirty ? '' : (resolved?.model || '')
   const effortCapable = modelSupportsEffort(effortModel)
 
   // ── Mutations ──
@@ -550,6 +552,7 @@ export function useCrewEditor(args: UseCrewEditorArgs): CrewEditorController {
   const updateMut = useMutation({
     mutationFn: ({ name, data }: { name: string; data: AgentUpdatePayload; epoch: number }) => api.updateKirocrewAgent(name, data),
     onSuccess: (r: AgentMutationResult, vars) => {
+      if (!r.error) void queryClient.invalidateQueries({ queryKey: ['agent-resolved-model', vars.name] })
       settleFor(vars.epoch, r.error)
       refetchAgents()
     },
@@ -655,6 +658,7 @@ export function useCrewEditor(args: UseCrewEditorArgs): CrewEditorController {
         triggers,
         display_name: displayName,
         model: editModel,
+        acp_backend: memberBackend.backend,
         reasoning_effort: editEffort,
         session_color: sessionColor,
       }
@@ -806,7 +810,7 @@ export function useCrewEditor(args: UseCrewEditorArgs): CrewEditorController {
       out.add('place')
     }
     if (editModel !== (editingAgent.model || INHERIT_MODEL)) out.add('model')
-    if (editEffort !== (editingAgent.reasoning_effort || '')) out.add('model')
+    if (editEffort !== (editingAgent.reasoning_effort || '') || memberBackend.dirty) out.add('model')
     if (triggers !== (editingAgent.triggers || '')) out.add('routing')
     if (displayName.trim() !== (editingAgent.display_name || '').trim()) out.add('routing')
     if (sessionColor !== (editingAgent.session_color || '')) out.add('routing')
@@ -835,7 +839,7 @@ export function useCrewEditor(args: UseCrewEditorArgs): CrewEditorController {
     if (schedDraft) out.add('schedules')
     if (capabilityDirty) out.add('capabilities')
     return out
-  }, [editingAgent, kiroAgent, workspace, memoryStore, editModel, editEffort, triggers, displayName, sessionColor, schedDraft, editAvatar, capabilityDirty])
+  }, [editingAgent, kiroAgent, workspace, memoryStore, editModel, editEffort, memberBackend.dirty, triggers, displayName, sessionColor, schedDraft, editAvatar, capabilityDirty])
 
   const requestPane = useCallback((key: CrewPaneKey) => {
     if (schedDraft && key !== pane) { setDiscardAsk(key); return }
@@ -1018,6 +1022,7 @@ export function useCrewEditor(args: UseCrewEditorArgs): CrewEditorController {
     triggers, setTriggers,
     displayName, setDisplayName,
     sessionColor, setSessionColor,
+    memberBackend,
     editModel, setEditModel,
     editEffort, setEditEffort,
     editAvatar,

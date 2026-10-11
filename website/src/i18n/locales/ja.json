@@ -12890,7 +12890,11 @@
       "built_from": "ベース",
       "change_default_crewmate": "デフォルトのクルーメイトを変更",
       "change_default_hint": "開発者 → 設定にあるデフォルトのクルーメイト設定を開きます。",
-      "keep_crew": "クルーメイトを残す"
+      "keep_crew": "クルーメイトを残す",
+      "ai_app": "AIアプリ",
+      "ai_app_hint": "「デフォルトを使用」はインストール環境の AI アプリに従います。アプリを選ぶと、このメンバー用に固定されます。新しいセッションにはこの選択が適用され、開いている会話のアプリは変わりません。",
+      "inherited_ai_app": "デフォルトを使用：{{backend}}",
+      "ai_apps_load_failed": "AIアプリを読み込めませんでした。"
     },
     "knowledge": {
       "detailView": {
@@ -17369,6 +17373,7 @@
       "show_controls": "コントロールを表示"
     },
     "membersPage": {
+      "profile_settings_saved_for_new_sessions": "新しいセッション用に保存しました。この会話では現在の AI アプリを引き続き使います。",
       "drawer_delegated_working": "委任したタスクを実行中",
       "agent_template": "ベース",
       "details": "詳細",

@@ -509,7 +509,7 @@ class TestEffortVerdict:
 
         seen: dict = {}
 
-        def _effective(self, agent, override, global_model=None, namespace=None):
+        def _effective(self, agent, override, global_model=None, namespace=None, **kwargs):
             seen["namespace"] = namespace
             return "m"
 

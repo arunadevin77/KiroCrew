@@ -13084,7 +13084,11 @@
       "built_from": "Basiert auf",
       "change_default_crewmate": "Standard-Crew-Kameraden ändern",
       "change_default_hint": "Öffnet die Einstellung Standard-Crew-Kamerad unter Entwickler → Konfiguration.",
-      "keep_crew": "Crew-Kameraden behalten"
+      "keep_crew": "Crew-Kameraden behalten",
+      "ai_app": "KI-App",
+      "ai_app_hint": "„Standard verwenden“ folgt der KI-App deiner Installation. Wählst du eine App, bleibt sie für dieses Mitglied festgelegt. Neue Sitzungen nutzen diese Auswahl; offene Unterhaltungen behalten ihre App.",
+      "inherited_ai_app": "Standard verwenden: {{backend}}",
+      "ai_apps_load_failed": "KI-Apps konnten nicht geladen werden."
     },
     "knowledge": {
       "detailView": {
@@ -17619,6 +17623,7 @@
       "show_controls": "Steuerung anzeigen"
     },
     "membersPage": {
+      "profile_settings_saved_for_new_sessions": "Für neue Sitzungen gespeichert. Diese Unterhaltung behält ihre aktuelle KI-App.",
       "drawer_delegated_working": "Delegierte Aufgaben laufen",
       "agent_template": "Aufgebaut auf",
       "details": "Details",

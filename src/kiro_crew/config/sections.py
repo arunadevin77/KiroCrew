@@ -3652,6 +3652,14 @@ class DashboardConfig:
 
 @dataclass
 class KiroCrewAgentConfig:
+    acp_backend: str | None = field(
+        default=None,
+        metadata=_meta(
+            "Agent Backend",
+            "Harness for this member's conversations and tasks. Null inherits the "
+            "session default; an empty string selects Kiro explicitly.",
+        ),
+    )
     member_id: str = field(
         default="",
         metadata=_meta("Member ID", "Immutable identity assigned when member memory is created."),
