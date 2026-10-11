@@ -607,6 +607,51 @@ class SessionTreeProjection:
             return ""
         return creator
 
+    def spawned_creator(self, slot: str) -> str:
+        """*slot*'s creator from a trusted ``session/spawned`` record, or ``""``. No I/O.
+
+        The companion of :meth:`trusted_creator` for the one case that method cannot
+        answer: a child restored after a restart that happened BEFORE its first turn. It
+        has no predecessor log to inherit from, so :meth:`trusted_creator` is asked with
+        no ``head_sid`` and declines -- yet the creator recorded the edge on its OWN log
+        at ``session_create`` (the ``session/spawned`` entry this PR writes), and that is
+        exactly the record meant to carry the child across such a restart.
+
+        Only for a child with NO log of its own, which is the sole case
+        :func:`session_tree.fold_tree` lets a spawn speak for -- once the child opens a
+        log, its own records and any release/adopt edge decide, and this must not
+        re-cite the creator over a move. And only when the creator still has a log, the
+        same floor the fold applies (a spawn whose creator unit is gone is a citation
+        with nothing behind it). When more than one spawn names the child (only damage
+        does), the earliest by ``(at, seq, sid)`` wins, matching the fold's own order so
+        the two never disagree.
+
+        The caller still gates this on the restored ``_created_by`` matching the answer,
+        the way it gates :meth:`trusted_creator`: the fence that keeps a metadata edit
+        from forging lineage is that both the restored attribution and this record,
+        written independently, must name the same creator.
+        """
+        if not slot:
+            return ""
+        with self._lock:
+            if self._unattributed_gap:
+                return ""
+            if any(record.slot == slot for record in self._records.values()):
+                # The child has a log of its own; the fold reads that, not a spawn.
+                return ""
+            have_log = {record.slot for record in self._records.values() if record.slot}
+            best: EdgeRecord | None = None
+            for spawn in self._spawned.values():
+                if spawn.slot != slot or not spawn.parent_slot:
+                    continue
+                if spawn.parent_slot not in have_log:
+                    continue
+                if best is None or (spawn.at, spawn.seq, spawn.sid) < (best.at, best.seq, best.sid):
+                    best = spawn
+        if best is None or not best.parent_slot or best.parent_slot == slot:
+            return ""
+        return best.parent_slot
+
     # ── the delta ──────────────────────────────────────────────────────────
 
     def apply(self, record: OpenedRecord) -> None:
@@ -957,9 +1002,17 @@ class SessionTreeProjection:
         with self._lock:
             if not any(spawn.sid == sid for spawn in self._spawned.values()):
                 return
+            # Children whose own log already names a parent: the fold applies that over
+            # any spawn, so dropping such a spawn past the cap costs nothing and must
+            # not report the unit cut. Read under the lock that guards ``_records``.
+            self_parented = {
+                rec.slot for rec in self._records.values() if rec.slot and rec.parent_slot
+            }
         try:
             root = _checked_crew_log_root(KIND_SESSION)
-            entries, truncated = find_spawned_entries(root / _store_name(sid), SPAWNED_PER_UNIT_CAP)
+            entries, cut, _hit_cap = find_spawned_entries(
+                root / _store_name(sid), SPAWNED_PER_UNIT_CAP, self_parented
+            )
         except (OSError, ValueError):
             with self._lock:
                 self._incomplete = True
@@ -968,8 +1021,11 @@ class SessionTreeProjection:
             return
         found = [s for e in entries if (s := spawned_record(slot, sid, e)) is not None]
         with self._lock:
+            # This path never caches a scan identity for the unit (it pops it), so a
+            # hit_cap-but-not-cut scan needs no extra guard here -- the next read is a
+            # fresh reconcile. Only a load-bearing cut makes the projection incomplete.
             self._spawn_scans.pop(sid, None)
-            if truncated:
+            if cut:
                 # The newest spawns are installed, and the unit is reported as cut.
                 self._incomplete = True
                 self._over_cap = True
@@ -1564,6 +1620,10 @@ class SessionTreeProjection:
         spawned = {key: s for key, s in loaded_spawned.items() if s.sid in records}
         scans = {sid: ident for sid, ident in loaded_scans.items() if sid in records}
         incomplete = False
+        # Children whose own log already names a parent: the fold applies that over any
+        # spawn, so a spawn for such a child is dead weight and dropping it past the cap
+        # must not report the creator cut.
+        self_parented = {rec.slot for rec in records.values() if rec.slot and rec.parent_slot}
         try:
             root = _checked_crew_log_root(KIND_SESSION)
         except OSError:
@@ -1583,10 +1643,10 @@ class SessionTreeProjection:
             if identity is not None and scans.get(record.sid) == identity:
                 continue
             try:
-                entries, truncated = (
-                    find_spawned_entries(directory, SPAWNED_PER_UNIT_CAP)
+                entries, cut, hit_cap = (
+                    find_spawned_entries(directory, SPAWNED_PER_UNIT_CAP, self_parented)
                     if identity is not None
-                    else ([], False)
+                    else ([], False, False)
                 )
             except (OSError, ValueError):
                 incomplete = True
@@ -1599,12 +1659,17 @@ class SessionTreeProjection:
                 spawn = spawned_record(record.slot, record.sid, entry)
                 if spawn is not None:
                     spawned[(spawn.slot, spawn.sid)] = spawn
-            if truncated:
-                # A cut answer is not this unit's whole answer: report it, and never
-                # cache its identity, so the next boot reads the unit again.
+            if cut:
+                # A load-bearing cut is not this unit's whole answer: report it.
                 incomplete = True
                 if faults is not None:
                     faults.sids.append(record.sid)
+            if hit_cap:
+                # The cap evicted at least one spawn, self-parented or not. Even when
+                # the eviction was all self-parented (cut suppressed), a later removal
+                # of one of those children's own logs leaves this creator's identity
+                # unchanged -- so caching this scan would re-serve an answer that is no
+                # longer complete. Never cache a capped scan; re-read it next boot.
                 scans.pop(record.sid, None)
             elif identity is not None:
                 scans[record.sid] = identity
@@ -2037,6 +2102,29 @@ def inherited_parent(slot: str, head_sid: str) -> str:
         return proj.trusted_creator(slot, head_sid)
     except Exception:  # pragma: no cover -- defensive; a read must not fail an open
         log_exception_text(logger, logging.DEBUG, "session tree parent could not be read")
+        return ""
+
+
+def spawned_creator(slot: str) -> str:
+    """The creator a trusted ``session/spawned`` names for a logless *slot*, or ``""``.
+
+    The fallback for :func:`inherited_parent` when the slot has no predecessor log to
+    cite -- a child restored after a restart that happened before its first turn. The
+    edge then lives only in the creator's ``session/spawned`` record, which this reads
+    from the fold. No I/O; the same seeded-for-this-store guard applies, so a provisional
+    or another store's answer is never used. See
+    :meth:`SessionTreeProjection.spawned_creator` for the logless-only and creator-has-a-log
+    conditions.
+    """
+    if not slot:
+        return ""
+    try:
+        proj = projection()
+        if not proj.seeded_for_current_store:
+            return ""
+        return proj.spawned_creator(slot)
+    except Exception:  # pragma: no cover -- defensive; a read must not fail an open
+        log_exception_text(logger, logging.DEBUG, "session tree spawn creator could not be read")
         return ""
 
 

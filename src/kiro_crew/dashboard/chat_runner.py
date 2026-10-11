@@ -1722,27 +1722,42 @@ def _crew_log_inherited_parent(slot: Any, head_sid: str) -> str:
     predecessor take and the emit, where nothing may yield (see
     :func:`_crew_log_seed_tree`, which seeds the tree before the take).
 
-    Only for a slot that came back with a creator, and only when the tree names the
-    SAME one. A slot key is reusable: a tab opened under the name of a closed worker
-    has no creator of its own, and the tree still holds the old unit's edge under that
-    key, so reading the tree alone would hand the new tab the old worker's lead. The
-    restored ``_created_by`` alone is not evidence either (see above). Each check
-    covers the other's gap: a metadata edit cannot name a creator the fold does not
-    hold, and the fold cannot attach a parent to a slot nobody restored.
+    Only for a slot that came back with a creator, and only when the record it reads
+    names the SAME one. A slot key is reusable: a tab opened under the name of a closed
+    worker has no creator of its own, and the tree still holds the old unit's edge under
+    that key, so reading the tree alone would hand the new tab the old worker's lead. The
+    restored ``_created_by`` alone is not evidence either (see above). Each check covers
+    the other's gap: a metadata edit cannot name a creator the fold does not hold, and
+    the fold cannot attach a parent to a slot nobody restored.
 
-    *head_sid* is the predecessor the new log cites; ``""`` (no predecessor, or one
-    that could not be determined) answers ``""``, since the tree cannot be checked
-    against a log that is not named.
+    Two sources, by whether the slot has a predecessor log. *head_sid* is the predecessor
+    the new log cites: when it is named, the creator comes from the edge the tree already
+    folded for the slot (:func:`inherited_parent`). When it is empty -- a child restored
+    after a restart BEFORE its first turn, which has no predecessor -- the creator comes
+    instead from the trusted ``session/spawned`` record the creator wrote at
+    ``session_create`` (:func:`spawned_creator`); that is the record meant to carry the
+    child across exactly this restart, so a child whose first turn runs after the restart
+    still cites its creator rather than opening as a root. Both answer ``""`` when the
+    fence is not met.
     """
     restored = str(getattr(slot, "_created_by", "") or "")
-    if not restored or not head_sid:
+    if not restored:
         return ""
+    key = str(getattr(slot, "key", "") or "")
     try:
         if not crew_log_emit.enabled():
             return ""
-        from kiro_crew.crew_log.session_tree_projection import inherited_parent
+        from kiro_crew.crew_log.session_tree_projection import inherited_parent, spawned_creator
 
-        inherited = inherited_parent(str(getattr(slot, "key", "") or ""), head_sid)
+        if head_sid:
+            inherited = inherited_parent(key, head_sid)
+        else:
+            # No predecessor log to inherit from -- the child restored after a restart
+            # that happened before its first turn. The edge then lives only in the
+            # creator's session/spawned record, written at session_create for exactly
+            # this case. Reading it here lets the child's first session/opened cite the
+            # creator, so the lineage survives in the child's own log.
+            inherited = spawned_creator(key)
     except Exception:
         return ""
     return inherited if inherited == restored else ""

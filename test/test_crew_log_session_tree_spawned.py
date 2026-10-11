@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -89,11 +90,58 @@ def test_the_childs_own_opened_parent_wins_over_a_spawn():
     assert nodes["W"].parent_slot == "M"
 
 
-def test_a_spawn_fills_a_child_whose_own_log_names_no_parent():
-    """The child's first turn ran after the restart, so its log carries no parent."""
+def test_a_childs_own_log_speaks_for_itself_over_a_spawn():
+    """Once the child has a log of its own, the spawn is not consulted for it: its own
+    records and any later edge decide where it hangs. A child whose log names no parent
+    is a root, not refilled from the creator's long-lived spawn -- that refill is what
+    would resurrect a creator edge after a move's unit is evicted."""
     records = [_rec("s-l", "L"), _rec("s-w", "W", created=2)]
     nodes = fold_tree(records, spawned=[_spawn("W", "L", "s-l")])
-    assert nodes["W"].parent_slot == "L"
+    assert nodes["W"].parent_slot is None
+
+
+def test_a_released_child_does_not_snap_back_under_its_creator_after_eviction():
+    """The regression trusted_creator refuses: a long-lived spawn in the creator's log
+    outlives the unit that recorded the move. The child's own records and its release
+    edge decide where it hangs; the spawn is not consulted for a child that has a log,
+    so retention removing an EARLIER unit does not let the creator's spawn re-establish
+    the old edge over the surviving release."""
+    spawned = [_spawn("W", "L", "s-l")]
+    # L created W (spawn on L's log). W ran (first unit s-w0, parent L), then was
+    # released -- the release rides on a later unit s-w1.
+    records_before = [
+        _rec("s-l", "L"),
+        _rec("s-w0", "W", created=2, parent="L"),
+        _rec("s-w1", "W", created=3),
+    ]
+    edges = [EdgeRecord("W", None, at=50, sid="s-w1", seq=3)]
+    released = fold_tree(records_before, edges, spawned)
+    assert released["W"].parent_slot is None
+    # Retention removes W's first unit s-w0; the release-bearing unit s-w1 survives, so W
+    # still has a log and the release still stands. W must NOT snap back under L.
+    records_after = [_rec("s-l", "L"), _rec("s-w1", "W", created=3)]
+    after = fold_tree(records_after, edges, spawned)
+    assert after["W"].parent_slot is None
+
+
+def test_an_adopted_child_does_not_snap_back_under_its_creator_after_eviction():
+    """Same shape for a takeover: once W's first unit is evicted, L's spawn must not
+    re-establish L as W's parent over the surviving adopt edge to B."""
+    spawned = [_spawn("W", "L", "s-l")]
+    records_before = [
+        _rec("s-l", "L"),
+        _rec("s-b", "B"),
+        _rec("s-w0", "W", created=2, parent="L"),
+        _rec("s-w1", "W", created=3),
+    ]
+    edges = [EdgeRecord("W", "B", at=50, sid="s-w1", seq=3)]
+    adopted = fold_tree(records_before, edges, spawned)
+    assert adopted["W"].parent_slot == "B"
+    # W's first unit is evicted; the adopt-bearing unit s-w1 and B's unit remain. W must
+    # hang under B, never back under L.
+    records_after = [_rec("s-l", "L"), _rec("s-b", "B"), _rec("s-w1", "W", created=3)]
+    after = fold_tree(records_after, edges, spawned)
+    assert after["W"].parent_slot == "B"
 
 
 def test_adoption_and_release_still_win_over_a_spawn():
@@ -137,8 +185,8 @@ def test_mint_then_restart_with_no_child_first_turn_still_nests_the_child():
     assert stp.projection().nodes()["W"].parent_slot == "L"
 
     directory = crew_store.unit_dir_for(lg.KIND_SESSION, "s-l")
-    entries, truncated = crew_store.find_spawned_entries(directory, 10)
-    assert entries[0].data == {"child": {"slot": "W"}} and truncated is False
+    entries, cut, hit_cap = crew_store.find_spawned_entries(directory, 10)
+    assert entries[0].data == {"child": {"slot": "W"}} and cut is False and hit_cap is False
     # No unit was ever written for the child.
     assert crew_store.unit_dir_for(lg.KIND_SESSION, "s-w") is None or not (
         crew_store.unit_dir_for(lg.KIND_SESSION, "s-w").exists()
@@ -155,6 +203,49 @@ def test_mint_then_restart_with_no_child_first_turn_still_nests_the_child():
     ]
     parents = lineage_parents(rows, revived.nodes())
     assert parents["W"] == {"slot": "L", "key": "L"}
+
+
+def test_spawned_creator_resolves_a_logless_child_but_not_once_it_has_a_log():
+    """The open-time fallback: spawned_creator names the creator for a child with no log
+    of its own, and declines once the child opens one (its own records then decide)."""
+    _open_creator("s-l", "L")
+    emit.on_session_spawned("s-l", creator_slot="L", child_slot="W")
+    assert emit.flush(timeout=5.0) is True
+    proj = stp.projection()
+    # Child W has no log yet -> the trusted spawn names its creator.
+    assert proj.spawned_creator("W") == "L"
+    # A creator with no log of its own cannot be cited this way.
+    assert proj.spawned_creator("unknown-child") == ""
+    # Once the child opens its own log, its own records decide and the spawn is skipped.
+    _open_creator("s-w", "W")
+    assert emit.flush(timeout=5.0) is True
+    assert stp.projection().spawned_creator("W") == ""
+
+
+def test_a_childs_first_turn_after_a_restart_cites_the_creator_from_the_spawn():
+    """The scenario this PR exists for, end to end: mint, restart before the child's
+    first turn, then that first turn runs. It has no predecessor log, so the parent is
+    resolved from the trusted session/spawned record and written on the child's OWN
+    session/opened -- so the edge now lives in the child's log and outlives the
+    creator's spawn being dropped."""
+    _open_creator("s-l", "L")
+    emit.on_session_spawned("s-l", creator_slot="L", child_slot="W")
+    assert emit.flush(timeout=5.0) is True
+
+    revived = _restart()
+    # The child's first turn runs post-restart: no predecessor log (head_sid == "").
+    # The open path resolves the parent from the spawn and writes it on the child.
+    resolved = revived.spawned_creator("W")
+    assert resolved == "L"
+    emit.on_session_opened(
+        "s-w", agent="kirocrew", slot="W", model="opus", cwd="/w", owner="o", parent_slot=resolved
+    )
+    assert emit.flush(timeout=5.0) is True
+    assert stp.projection().nodes()["W"].parent_slot == "L"
+
+    # The edge now lives in the child's own log: dropping the creator's spawn leaves it.
+    stp.projection().forget("s-l")
+    assert stp.projection().nodes()["W"].parent_slot == "L"
 
 
 def test_the_spawn_survives_a_restart_through_the_checkpoint_too():
@@ -213,9 +304,9 @@ def test_a_cut_read_keeps_the_newest_spawns_and_says_it_was_cut(_floor_monkeypat
     _spawn_many("s-l", "L", ["W1", "W2", "W3", "W4", "W5"])
 
     directory = crew_store.unit_dir_for(lg.KIND_SESSION, "s-l")
-    entries, truncated = crew_store.find_spawned_entries(directory, 3)
+    entries, cut, hit_cap = crew_store.find_spawned_entries(directory, 3)
     assert [e.data["child"]["slot"] for e in entries] == ["W3", "W4", "W5"]
-    assert truncated is True
+    assert cut is True and hit_cap is True
 
     reading = SessionTree().reading(with_edges=True)
     assert reading.nodes["W5"].parent_slot == "L"
@@ -225,6 +316,136 @@ def test_a_cut_read_keeps_the_newest_spawns_and_says_it_was_cut(_floor_monkeypat
     revived = _restart()
     assert revived.nodes()["W5"].parent_slot == "L"
     assert revived.reading().incomplete is True
+
+
+def test_a_cut_read_of_spawns_whose_children_self_record_stays_complete(_floor_monkeypatch):
+    """A creator past the per-unit bound whose children have ALL opened their own log
+    naming a parent is not a cut answer the fold needs: those spawns are dead weight the
+    child's own ``session/opened.parent`` wins over, so dropping them past the cap must
+    leave the reading complete and keep adopt/release lineage working."""
+    _floor_monkeypatch.setattr(stp_session_tree, "SPAWNED_PER_UNIT_CAP", 3)
+    children = ["W1", "W2", "W3", "W4", "W5"]
+    _spawn_many("s-l", "L", children)
+    # Every child then took its first turn and opened its own log, naming L as parent --
+    # the ordinary life of a child once it starts, which makes its spawn redundant.
+    for i, child in enumerate(children):
+        emit.on_session_opened(
+            f"s-{child.lower()}",
+            agent="kirocrew",
+            slot=child,
+            model="opus",
+            cwd="/w",
+            owner="o",
+            parent_slot="L",
+            parent_sid="s-l",
+        )
+    assert emit.flush(timeout=10.0) is True
+
+    directory = crew_store.unit_dir_for(lg.KIND_SESSION, "s-l")
+    # The held set is ALWAYS the newest ``limit`` spawns -- a pure function of the
+    # creator's own log, so it caches soundly by that log's identity. ``self_parented``
+    # relaxes only the cut flag: every dropped spawn here is a self-parented child, so
+    # the scan is NOT cut even though it dropped two -- but hit_cap stays True, so a
+    # caller still refuses to cache the scan (a child's own log can later vanish).
+    kept_known, cut_when_known, hit_cap_known = crew_store.find_spawned_entries(
+        directory, 3, set(children)
+    )
+    assert [e.data["child"]["slot"] for e in kept_known] == ["W3", "W4", "W5"]
+    assert cut_when_known is False and hit_cap_known is True
+    # Without that knowledge the same held set reports cut -- the signal is intact for a
+    # caller that cannot name self-parented children.
+    kept_blind, cut_when_blind, hit_cap_blind = crew_store.find_spawned_entries(directory, 3)
+    assert [e.data["child"]["slot"] for e in kept_blind] == ["W3", "W4", "W5"]
+    assert cut_when_blind is True and hit_cap_blind is True
+
+    reading = SessionTree().reading(with_edges=True)
+    assert all(reading.nodes[c].parent_slot == "L" for c in children)
+    assert reading.incomplete is False
+    assert "s-l" not in reading.suspect_sids
+
+    revived = _restart()
+    assert all(revived.nodes()[c].parent_slot == "L" for c in children)
+    assert revived.reading().incomplete is False
+
+
+def test_the_self_parented_filter_never_drops_a_spawn_from_the_held_set(_floor_monkeypatch):
+    """The held set stays the newest ``limit`` spawns whatever ``self_parented`` says, so
+    it is a pure function of the creator's log. If it filtered the held set by the
+    children's logs instead, forgetting a child's own log would leave a scan that no
+    longer carries the creator's spawn and strand the child at the top level across a
+    restart. Deleting a child's log must leave the creator's spawn to re-root it."""
+    _floor_monkeypatch.setattr(stp_session_tree, "SPAWNED_PER_UNIT_CAP", 5)
+    children = ["W1", "W2", "W3"]
+    _spawn_many("s-l", "L", children)
+    for child in children:
+        emit.on_session_opened(
+            f"s-{child.lower()}",
+            agent="kirocrew",
+            slot=child,
+            model="opus",
+            cwd="/w",
+            owner="o",
+            parent_slot="L",
+            parent_sid="s-l",
+        )
+    assert emit.flush(timeout=10.0) is True
+
+    directory = crew_store.unit_dir_for(lg.KIND_SESSION, "s-l")
+    kept_all = [e.data["child"]["slot"] for e in crew_store.find_spawned_entries(directory, 5)[0]]
+    kept_filtered = [
+        e.data["child"]["slot"]
+        for e in crew_store.find_spawned_entries(directory, 5, set(children))[0]
+    ]
+    # Under cap, nothing is dropped and the held set is the same whether or not the
+    # caller names the children self-parented -- the filter touches only the cut flag.
+    assert kept_all == kept_filtered == children
+
+    # While its own log stands, W2 nests from that log (its own parent edge wins).
+    assert SessionTree().reading(with_edges=True).nodes["W2"].parent_slot == "L"
+
+    # W2's own log is then removed (retention / delete). The creator's spawn for W2 must
+    # survive in the held set so a fresh disk scan still roots W2 under L.
+    w2_dir = crew_store.unit_dir_for(lg.KIND_SESSION, "s-w2")
+    assert w2_dir is not None and w2_dir.exists()
+    # Drop the live writer's cached handles first: Windows refuses to unlink a file a
+    # handle still holds open, which is exactly the lease a live log handle keeps.
+    emit.reset_caches()
+    shutil.rmtree(w2_dir)
+    rooted = SessionTree().reading(with_edges=True)
+    assert rooted.nodes["W2"].parent_slot == "L"
+
+
+def test_a_capped_scan_is_never_cached_even_when_self_parented_suppresses_the_cut(
+    _floor_monkeypatch,
+):
+    """The replay must not cache a scan that hit the per-unit cap, even when every
+    evicted child is self-parented and the cut flag is suppressed. If it did, removing
+    one of those children's own logs later -- which leaves the creator's identity
+    unchanged -- would re-serve the cached scan with that now-load-bearing spawn still
+    omitted, and report the reading complete. So a capped scan leaves the unit uncached
+    and the next boot re-reads it."""
+    _floor_monkeypatch.setattr(stp_session_tree, "SPAWNED_PER_UNIT_CAP", 2)
+    children = ["W1", "W2", "W3"]
+    _spawn_many("s-l", "L", children)
+    for child in children:
+        emit.on_session_opened(
+            f"s-{child.lower()}",
+            agent="kirocrew",
+            slot=child,
+            model="opus",
+            cwd="/w",
+            owner="o",
+            parent_slot="L",
+            parent_sid="s-l",
+        )
+    assert emit.flush(timeout=10.0) is True
+
+    first = _restart()
+    assert first.flush_checkpoint() is True
+    # Every evicted spawn is self-parented, so the reading is complete (not cut) ...
+    assert first.reading().incomplete is False
+    # ... but the capped unit must NOT be cached: the next boot has to re-read it.
+    assert "s-l" not in first._spawn_scans
 
 
 def test_a_cut_replay_is_not_cached_as_the_units_whole_answer(_floor_monkeypatch):
@@ -313,7 +534,7 @@ def test_the_create_is_answered_only_after_the_spawn_is_on_disk():
     minted = SimpleNamespace(key="W", _lineage_minted=True, _created_by="L", _created_by_sid="s-l")
     assert asyncio.run(sc._record_spawn("L", minted)) is True
     directory = crew_store.unit_dir_for(lg.KIND_SESSION, "s-l")
-    entries, _ = crew_store.find_spawned_entries(directory, 10)
+    entries, _, _ = crew_store.find_spawned_entries(directory, 10)
     assert [e.data["child"]["slot"] for e in entries] == ["W"]
 
     # A creator sid with no log: nothing lands, and the reply says so.

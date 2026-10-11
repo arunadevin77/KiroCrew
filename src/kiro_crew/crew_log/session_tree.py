@@ -586,15 +586,18 @@ def fold_tree(
 
     *spawned* are the creators' own records of a ``session_create``: ``slot`` is the
     child, ``parent_slot`` the creator, ``sid`` the creator's unit. One fills the
-    child's creating citation only when none of the child's own records names a
-    parent, so a child that opened a log in the minting process keeps the edge that
-    log recorded. A child with NO log yet still gets a node from it -- that is the
-    child between ``session_create`` and its first turn, which no other record can
-    speak for after a restart. The decisions above still apply over it for a child
-    that has a log, since they replace the creating citation whatever its source.
-    When a child is cited by more than one creator record (only damage produces
-    that), the earliest by ``(at, seq, sid)`` wins, so the answer does not depend
-    on input order.
+    child's creating citation only for a child that has NO log of its own -- the child
+    between ``session_create`` and its first turn, which no other record can speak for
+    after a restart. A child that opened a log speaks for itself: its own
+    ``session/opened`` and any later edge decide where it hangs, and the spawn is not
+    consulted for it. That restriction is also what keeps a released or adopted child
+    from snapping back under its creator once retention removes the unit recording the
+    move: the long-lived spawn in the creator's log outlives that unit, so citing the
+    creator from it would re-establish the very edge the move took away. Only a creator
+    that still has a log can be cited this way, since the record was read FROM that log.
+    When a child is cited by more than one creator record (only damage produces that),
+    the earliest by ``(at, seq, sid)`` wins, so the answer does not depend on input
+    order.
     """
     # ONE order for the records and for the decisions below, from ``log_rank_of``: within a
     # slot's succession chain it is the ``previous_sid`` link the store wrote, so neither
@@ -620,19 +623,26 @@ def fold_tree(
         if record.parent_slot and record.slot not in cited:
             cited[record.slot] = record.parent_slot
 
-    # The creators' own records, for a child whose records name no parent. Only a
-    # creator that has a log can be cited this way -- the record was read FROM that
-    # log -- so a spawn whose creator unit is gone is a citation with nothing behind it.
+    # The creators' own records, for a child that has NO log of its own yet -- the
+    # child between ``session_create`` and its first turn, which no other record can
+    # speak for after a restart. A child that opened a log speaks for itself: its own
+    # ``session/opened`` and any later edge decide where it hangs, so the spawn is not
+    # consulted for it. Restricting the spawn to a logless child is also what keeps a
+    # released or adopted child from snapping back under its creator once retention
+    # removes the unit that recorded the move: the long-lived spawn in the creator's log
+    # outlives that unit, and re-citing the creator from it would bring the old edge back
+    # -- the very edge ``trusted_creator`` refuses to re-establish for this reason. Only
+    # a creator that still has a log can be cited this way, since the record was read
+    # FROM that log.
     spawned_only: set[str] = set()
     for spawn in sorted(spawned, key=lambda s: (s.at, s.seq, s.sid, s.slot)):
         child = spawn.slot
-        if not child or not spawn.parent_slot or child in cited:
+        if not child or not spawn.parent_slot or child in cited or child in has_log:
             continue
         if spawn.parent_slot not in has_log:
             continue
         cited[child] = spawn.parent_slot
-        if child not in has_log:
-            spawned_only.add(child)
+        spawned_only.add(child)
 
     # The decisions are placed by the SAME log order the records above were folded in,
     # handed to the comparison rather than re-derived inside it (see
@@ -1407,6 +1417,7 @@ class SessionTree:
         """
         out: list[OpenedRecord] = []
         edges: list[EdgeRecord] = []
+        spawn_units: list[tuple[Path, OpenedRecord]] = []
         seen: set[str] = set()
         faulted = False
         with self._lock:
@@ -1455,16 +1466,32 @@ class SessionTree:
                     if edge is not None:
                         edges.append(edge)
                 if spawned_out is not None and record is not None and record.slot:
+                    # Deferred to a second pass below: a creator's spawn is dead weight
+                    # once the child has a parent edge of its own, and which children
+                    # do is known only once every unit in this scan has been read.
+                    spawn_units.append((directory, record))
+            # Children whose OWN log already names a parent -- the fold applies that
+            # over any spawn, so a spawn for such a child neither helps when kept nor
+            # makes the reading any less whole when dropped past the per-unit cap.
+            self_parented = {rec.slot for rec in out if rec.slot and rec.parent_slot}
+            # ``spawn_units`` is populated only when ``spawned_out`` was given, so it is
+            # non-None here whenever there is anything to do.
+            if spawned_out is not None:
+                for directory, record in spawn_units:
                     # The children this unit's session created. Not cached: only the
                     # projection's cold seed asks, once per process, and the
                     # projection keeps the answer from then on.
                     try:
-                        entries, truncated = find_spawned_entries(directory, SPAWNED_PER_UNIT_CAP)
+                        entries, cut, _hit_cap = find_spawned_entries(
+                            directory, SPAWNED_PER_UNIT_CAP, self_parented
+                        )
                     except (OSError, ValueError):
-                        entries, truncated = [], True
-                    if truncated:
-                        # A fault, or more spawns than the bound: either way this
-                        # unit's children are not all here, so the reading says so.
+                        entries, cut = [], True
+                    if cut:
+                        # A fault, or more LOAD-BEARING spawns than the bound: either
+                        # way this unit's children are not all here, so the reading
+                        # says so. This cold scan holds no per-unit identity cache, so
+                        # it needs no hit_cap signal -- it always re-reads.
                         faulted = True
                         if faults is not None:
                             faults.sids.append(record.sid)

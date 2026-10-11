@@ -3367,6 +3367,11 @@ async def create_session(
             # Always present: "false" is the record that the grant did not transfer.
             "inherited_trust": "true" if inherited_trust else "false",
             "inherited_trust_reads": "true" if inherited_trust_reads else "false",
+            # Whether the creating edge reached the creator's crew log. "false" means
+            # the child nests from this process's witness alone and would float at top
+            # level after a restart. The audit log is this fact's durable home -- the
+            # API reply has no reader for it (and _record_spawn also logs a warning).
+            "lineage_recorded": "true" if lineage_recorded else "false",
         },
     )
     return {
@@ -3374,9 +3379,6 @@ async def create_session(
         "target": slot.key,
         "title": slot.title or slot.key,
         **({"model": model_name} if model_name else {}),
-        # Present only when the creating edge did not reach the crew log: the child is
-        # nested now, from this process's witness, but not after a restart.
-        **({} if lineage_recorded else {"lineage_recorded": False}),
     }
 
 
@@ -3719,6 +3721,9 @@ async def fork_session(
             "folder_id": child.folder_id or "",
             "inherited_trust": "true" if posture.get("trust") else "false",
             "inherited_trust_reads": "true" if posture.get("trust_reads") else "false",
+            # See create_session: whether the creating edge landed is kept in the audit
+            # log, its durable home, rather than the API reply, which has no reader.
+            "lineage_recorded": "true" if lineage_recorded else "false",
         },
     )
     return {
@@ -3728,7 +3733,6 @@ async def fork_session(
         "source": source_slot.key,
         "messages": result.messages,
         "folder_id": child.folder_id or None,
-        **({} if lineage_recorded else {"lineage_recorded": False}),
     }
 
 

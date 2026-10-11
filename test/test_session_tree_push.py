@@ -206,6 +206,31 @@ def test_a_new_slot_on_a_reused_key_inherits_nothing():
     assert chat_runner._crew_log_inherited_parent(restored, "") == ""
 
 
+def test_a_restored_child_with_no_predecessor_inherits_from_the_spawn():
+    """A child restored after a restart that happened before its first turn has no
+    predecessor log, so the edge is read from the creator's trusted session/spawned
+    record. The forged-attribution fence still holds: the answer must match the
+    restored _created_by."""
+    from kiro_crew.dashboard import chat_runner
+
+    emit.on_session_opened("s-lead", agent="kirocrew-lead", slot="lead")
+    emit.on_session_spawned("s-lead", creator_slot="lead", child_slot="worker")
+    assert emit.flush(timeout=5.0) is True
+    stp.reset_for_tests()
+    emit.reset_caches()
+
+    restored = SimpleNamespace(key="worker", _created_by="lead")
+    asyncio.run(chat_runner._crew_log_seed_tree(restored))
+    # No predecessor (head_sid == ""); the spawn names the creator and it matches.
+    assert chat_runner._crew_log_inherited_parent(restored, "") == "lead"
+    # The fence: a forged _created_by the spawn does not name resolves to nothing.
+    forged = SimpleNamespace(key="worker", _created_by="someone-else")
+    assert chat_runner._crew_log_inherited_parent(forged, "") == ""
+    # A slot the spawn never named inherits nothing.
+    other = SimpleNamespace(key="stranger", _created_by="lead")
+    assert chat_runner._crew_log_inherited_parent(other, "") == ""
+
+
 def test_an_adopter_is_never_re_cited_as_the_creator():
     """A takeover moves the node; a restored slot then cites no creator at all."""
     proj = stp.projection()
