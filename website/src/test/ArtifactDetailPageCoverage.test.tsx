@@ -1171,6 +1171,39 @@ describe('ArtifactDetailPage — upstream sync banner', () => {
     expect(screen.queryByTitle(/Pull the latest remote content/i)).toBeNull()
   })
 
+  it('links the published copy when the artifact is neither a fork nor behind', async () => {
+    vi.mocked(api).upstreamStatus = vi.fn().mockResolvedValue({})
+    await mount(mkArtifact({ publication }))
+    const link = await screen.findByRole('link', { name: /View remote/i })
+    expect(link).toHaveAttribute('href', publication.view_url)
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(screen.getByText(/Published artifact/)).toBeInTheDocument()
+  })
+
+  it('links the published copy beside the unpublished-edits prompt', async () => {
+    vi.mocked(api).upstreamStatus = vi.fn().mockResolvedValue({ live_dirty: true })
+    await mount(mkArtifact({ publication, live_dirty: true }))
+    await screen.findByText(/Local changes not yet published to/)
+    expect(screen.getByRole('link', { name: /View remote/i }))
+      .toHaveAttribute('href', publication.view_url)
+  })
+
+  it('never links a published copy whose URL is not http(s)', async () => {
+    vi.mocked(api).upstreamStatus = vi.fn().mockResolvedValue({})
+    await mount(mkArtifact({ publication: { ...publication, view_url: 'javascript:alert(1)' } }))
+    await waitFor(() => expect(vi.mocked(api).upstreamStatus).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByText('CR Queue')).toBeInTheDocument())
+    expect(screen.queryByRole('link', { name: /View remote/i })).toBeNull()
+    expect(screen.queryByText(/Published artifact/)).toBeNull()
+  })
+
+  it('shows no published link when the publication carries no URL', async () => {
+    vi.mocked(api).upstreamStatus = vi.fn().mockResolvedValue({})
+    await mount(mkArtifact({ publication: { ...publication, view_url: '' } }))
+    await waitFor(() => expect(vi.mocked(api).upstreamStatus).toHaveBeenCalled())
+    expect(screen.queryByRole('link', { name: /View remote/i })).toBeNull()
+  })
+
   it('links the remote copy through the safe-URL guard', async () => {
     vi.mocked(api).upstreamStatus = vi.fn().mockResolvedValue({ upstream_ahead: true })
     await mount(mkArtifact({ fork_metadata: forkMetadata }))

@@ -7891,6 +7891,11 @@
       "title": "इससे एक सार्वजनिक रूप से पहुँच योग्य वेबसाइट बनेगी"
     },
     "publishHub": {
+      "checking_for_existing_public_link": "मौजूदा सार्वजनिक लिंक की जाँच हो रही है…",
+      "live_on_public_web": "सार्वजनिक वेब पर पहले से लाइव है",
+      "open_live_page": "लाइव पेज खोलें",
+      "update_same_url": "अपडेट करें (वही URL)",
+      "update_replaces_live_page": "इससे लाइव पेज बदल जाता है। उसका URL वही रहता है।",
       "back": "वापस",
       "cancel": "रद्द करें",
       "checking": "जाँच हो रही है…",

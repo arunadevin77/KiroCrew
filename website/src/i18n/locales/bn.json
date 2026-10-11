@@ -7891,6 +7891,11 @@
       "title": "এটি একটি সর্বজনীনভাবে অ্যাক্সেসযোগ্য ওয়েবসাইট তৈরি করবে"
     },
     "publishHub": {
+      "checking_for_existing_public_link": "আগে থেকে কোনো পাবলিক লিঙ্ক আছে কি না যাচাই করা হচ্ছে…",
+      "live_on_public_web": "পাবলিক ওয়েবে ইতিমধ্যে লাইভ",
+      "open_live_page": "লাইভ পেজ খুলুন",
+      "update_same_url": "আপডেট করুন (একই URL)",
+      "update_replaces_live_page": "এটি লাইভ পেজটি প্রতিস্থাপন করে। এর URL একই থাকে।",
       "back": "পিছনে",
       "cancel": "বাতিল",
       "checking": "যাচাই করা হচ্ছে…",

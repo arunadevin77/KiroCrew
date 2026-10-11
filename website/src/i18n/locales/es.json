@@ -8007,6 +8007,11 @@
       "title": "Esto creará un sitio web de acceso público"
     },
     "publishHub": {
+      "checking_for_existing_public_link": "Comprobando si ya hay un enlace público…",
+      "live_on_public_web": "Ya está publicado en la web pública",
+      "open_live_page": "Abrir la página publicada",
+      "update_same_url": "Actualizar (misma URL)",
+      "update_replaces_live_page": "Esto reemplaza la página publicada. Su URL no cambia.",
       "back": "Atrás",
       "cancel": "Cancelar",
       "checking": "Comprobando…",

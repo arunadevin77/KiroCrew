@@ -7775,6 +7775,11 @@
       "title": "即将创建一个可公开访问的网站"
     },
     "publishHub": {
+      "checking_for_existing_public_link": "正在检查是否已有公开链接…",
+      "live_on_public_web": "已在公共网络上线",
+      "open_live_page": "打开线上页面",
+      "update_same_url": "更新（URL 不变）",
+      "update_replaces_live_page": "这会替换线上页面，其 URL 保持不变。",
       "back": "返回",
       "cancel": "取消",
       "checking": "正在检查…",

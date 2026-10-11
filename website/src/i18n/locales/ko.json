@@ -7775,6 +7775,11 @@
       "title": "누구나 접근할 수 있는 웹사이트가 만들어집니다"
     },
     "publishHub": {
+      "checking_for_existing_public_link": "기존 공개 링크를 확인하는 중…",
+      "live_on_public_web": "이미 공개 웹에 게시됨",
+      "open_live_page": "게시된 페이지 열기",
+      "update_same_url": "업데이트(같은 URL)",
+      "update_replaces_live_page": "게시된 페이지를 교체합니다. URL은 그대로 유지됩니다.",
       "back": "뒤로",
       "cancel": "취소",
       "checking": "확인하는 중…",

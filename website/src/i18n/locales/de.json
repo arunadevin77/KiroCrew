@@ -7891,6 +7891,11 @@
       "title": "Dies erstellt eine öffentlich zugängliche Website"
     },
     "publishHub": {
+      "checking_for_existing_public_link": "Es wird nach einem vorhandenen öffentlichen Link gesucht…",
+      "live_on_public_web": "Bereits im öffentlichen Web live",
+      "open_live_page": "Live-Seite öffnen",
+      "update_same_url": "Aktualisieren (gleiche URL)",
+      "update_replaces_live_page": "Damit wird die Live-Seite ersetzt. Ihre URL bleibt gleich.",
       "back": "Zurück",
       "cancel": "Abbrechen",
       "checking": "Wird geprüft…",

@@ -7775,6 +7775,11 @@
       "title": "一般公開されるウェブサイトが作成されます"
     },
     "publishHub": {
+      "checking_for_existing_public_link": "既存の公開リンクを確認中…",
+      "live_on_public_web": "すでに公開ウェブで公開中",
+      "open_live_page": "公開中のページを開く",
+      "update_same_url": "更新（同じURL）",
+      "update_replaces_live_page": "公開中のページを置き換えます。URLは変わりません。",
       "back": "戻る",
       "cancel": "キャンセル",
       "checking": "確認中…",

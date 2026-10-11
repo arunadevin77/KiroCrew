@@ -5,7 +5,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import WebAppArtifactCard from '../components/WebAppArtifactCard'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
-import { ArrowLeft, ArrowUp, Camera, Check, Copy, ExternalLink, Download, GitFork, Pencil, RefreshCw, X, AlertCircle, AlertTriangle, RotateCcw, Plus, Sparkles, MessageSquare, Monitor, Undo2, Upload, Star, Folder as FolderIcon } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Camera, Check, Copy, ExternalLink, Download, GitFork, Globe, Pencil, RefreshCw, X, AlertCircle, AlertTriangle, RotateCcw, Plus, Sparkles, MessageSquare, Monitor, Undo2, Upload, Star, Folder as FolderIcon } from 'lucide-react'
 import { copyToClipboard } from '../utils/clipboard'
 import { useTheme } from '../hooks/useTheme'
 import { type IframeSelection } from '../hooks/useCommentBridge'
@@ -2655,6 +2655,14 @@ function UpstreamSyncBanner({ artifact, busy = false, onPulled, onBeforeMutate }
   // hardcoded vendor string.
   const provLabel = providers.find((p) => p.name === pub?.provider)?.display_name
     || pub?.provider || 'the remote'
+  // The publication's own link, scheme-checked before it becomes clickable so a
+  // provider cannot smuggle a javascript:/file: URL into it.
+  const publishedUrl = safeHttpUrl(pub?.view_url || '')
+  const publishedLink = publishedUrl && (
+    <a href={publishedUrl} target="_blank" rel="noopener noreferrer" className="underline hover:no-underline">
+      {i18nT('pages.artifactDetailPage.view_remote')}
+    </a>
+  )
 
   // Local edits not yet published, with no remote drift: a visible prompt to
   // publish them. (When the remote is ALSO ahead, the pull/overwrite banner
@@ -2663,7 +2671,10 @@ function UpstreamSyncBanner({ artifact, busy = false, onPulled, onBeforeMutate }
     return (
       <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-md border text-[13px] border-warn/40 bg-warn-subtle text-warn">
         <Camera size={14} className="lucide-inline shrink-0" />
-        <span className="flex-1">{i18nT('pages.artifactDetailPage.local_changes_not_yet_published_to')} {provLabel}.</span>
+        <span className="flex-1">
+          {i18nT('pages.artifactDetailPage.local_changes_not_yet_published_to')} {provLabel}.
+          {publishedLink && <>{' · '}{publishedLink}</>}
+        </span>
         {/* No hand-off: editor buffer editedContent may be dirty */}
         <ErrorNotice variant="inline" message={error} />
         <Btn
@@ -2680,8 +2691,20 @@ function UpstreamSyncBanner({ artifact, busy = false, onPulled, onBeforeMutate }
     )
   }
 
-  // Nothing to surface: not a fork and the remote copy isn't ahead.
-  if (!fm && !upstreamAhead) return null
+  // Not a fork and the remote copy isn't ahead: nothing to sync, so a published
+  // artifact shows only where its published copy lives.
+  if (!fm && !upstreamAhead) {
+    if (!pub || !publishedLink) return null
+    const info = _SYNC_TONES.info
+    return (
+      <div className={`mb-3 flex items-center gap-2 px-3 py-2 rounded-md border text-[13px] ${info.wrap}`}>
+        <Globe size={14} className="lucide-inline shrink-0" />
+        <span className="flex-1">
+          {i18nT('pages.artifactDetailPage.published_artifact')}{' · '}{publishedLink}
+        </span>
+      </div>
+    )
+  }
 
   const tone = _SYNC_TONES[upstreamAhead ? 'warn' : 'info']
   // Provider-supplied (fork/publication metadata) — validate the scheme before

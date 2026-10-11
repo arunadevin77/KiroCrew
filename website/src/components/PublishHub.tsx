@@ -8,10 +8,10 @@
 // Webapp artifacts have their own deploy flow (Artifact Deploy page).
 
 import { useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { AlertCircle, AlertTriangle, Check, ExternalLink, Globe, Settings, Upload, X } from 'lucide-react'
-import { api, type AppPublishProvider } from '../api/client'
+import { api, type AppPublishProvider, type DeploySite, type DeploySitesResponse } from '../api/client'
 import { Card, Btn, ContentSkeleton } from './ui'
 import PublicPublishAckModal from './PublicPublishAckModal'
 import ErrorDetails from './ErrorDetails'
@@ -64,6 +64,42 @@ function iconFor(name: string): typeof Globe {
 export function isPublicWebDeploy(p: { id: string; app?: { endpoint?: string } }): boolean {
   if (p.id === 'deploy-web') return true
   return (p.app?.endpoint ?? '').startsWith('/api/deploy/')
+}
+
+/** The longest site id the public-web deploy stores. */
+const SITE_ID_MAX = 64
+
+/**
+ * The site id the public-web deploy stores for an artifact slug.
+ *
+ * The panel sends `site_id: artifact.slug`, and the deploy route normalizes it
+ * (`_safe_site_id` in the deploy handlers): lowercased, every character other
+ * than a letter, digit, `-` or `_` replaced by `-`, leading and trailing `-`/`_`
+ * stripped, then cut to 64 characters. A slug longer than that is stored
+ * truncated, so comparing the raw slug would miss its site.
+ */
+export function deploySiteIdFor(slug: string): string {
+  const normalized = Array.from(slug.trim().toLowerCase(), c => (/[\p{L}\p{N}_-]/u.test(c) ? c : '-')).join('')
+  return Array.from(normalized.replace(/^[-_]+|[-_]+$/g, '')).slice(0, SITE_ID_MAX).join('')
+}
+
+/**
+ * The live public-web site this artifact already has, or `null`.
+ *
+ * Reads the deploy's own listing, which comes from the AWS account's resource
+ * tags. A site removed by teardown, by the expiry reaper, or outside the
+ * dashboard is not listed, so the answer cannot go stale the way a stored copy
+ * of the link would. No listing, an unconfigured deploy, and no site under this
+ * artifact's id all answer `null`, which leaves the panel on its destination list.
+ */
+export function findLiveSite(
+  resp: DeploySitesResponse | null | undefined,
+  slug: string,
+): DeploySite | null {
+  if (!resp || resp.configured === false || !Array.isArray(resp.sites)) return null
+  const id = deploySiteIdFor(slug)
+  if (!id) return null
+  return resp.sites.find(s => !!s && s.site_id === id) ?? null
 }
 
 /**
@@ -324,6 +360,24 @@ export function PublishHub({
   const deployPreview = usePreviewFlag(PREVIEW_ARTIFACT_DEPLOY)
   const unified = buildProviderList(appProviders, artifact.kind, coreProviders)
     .filter(p => deployPreview || !isPublicWebDeploy(p))
+  const queryClient = useQueryClient()
+  // An artifact already on the public web keeps its link in the AWS account, not
+  // on the artifact, so the panel asks the deploy for it. Only when the public-web
+  // row is offered AND set up: with no registered profile there is no account to
+  // list. Shares the Artifact Deploy page's cache entry, which reads the same route.
+  const publicWebRow = unified.find(p => isPublicWebDeploy(p))
+  const lookupLiveSite = !!publicWebRow?.configured
+  const sitesQuery = useQuery({
+    queryKey: ['deploy-web', 'sites'],
+    queryFn: () => api.deploySites(),
+    enabled: lookupLiveSite,
+    staleTime: 30_000,
+    // A failed lookup leaves the panel exactly as it is without one, so a retry
+    // would only hold the "checking" line on screen longer.
+    retry: false,
+  })
+  const liveSite = lookupLiveSite ? findLiveSite(sitesQuery.data, artifact.slug) : null
+  const liveUrl = liveSite?.url ? safeHttpUrl(liveSite.url) : null
 
   const [selectedId, setSelectedId] = useState<string>('')
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null)
@@ -348,6 +402,12 @@ export function PublishHub({
   const onTtlChange = (v: string) => { setTtlHours(v); setPreview(null) }
 
   const selected = unified.find(p => p.id === selectedId)
+  // Updating the live site deploys with the profile whose account holds it. The
+  // deploy reuses the site it finds by tag in the account it runs against, so the
+  // default profile, pointed at a different account, would create a second site
+  // under a new URL instead of updating this one.
+  const updatingLiveSite = !!liveSite && !!selected && selected.id === publicWebRow?.id
+  const deployProfile = updatingLiveSite ? (liveSite?.profile ?? '') : ''
   // Whether a TTL may be chosen for the CURRENT selection. One condition, read by
   // both the control's visibility and the value everything downstream uses, because
   // the bug here was those two disagreeing: `ttlHours` is a single piece of state
@@ -391,7 +451,9 @@ export function PublishHub({
         setPreview({ requires_confirm: true, core: true })
         return
       }
-      const resp = await api.publishToProvider(artifact.slug, selected.id, selected.app, selectedTtlHours())
+      const resp = await api.publishToProvider(
+        artifact.slug, selected.id, selected.app, selectedTtlHours(), deployProfile || undefined,
+      )
       const outcome = readPublishOutcome(resp)
       if (resp?.requires_confirm) {
         setPreview(resp)
@@ -416,6 +478,9 @@ export function PublishHub({
         // Immediate success (already deployed / no confirm needed), or a
         // persisted push failure the route reported with a 200.
         setResult('error' in outcome ? { error: outcome.error } : { url: outcome.url, notice: outcome.notice, notice_code: outcome.notice_code })
+        if (!('error' in outcome) && isPublicWebDeploy(selected)) {
+          void queryClient.invalidateQueries({ queryKey: ['deploy-web', 'sites'] })
+        }
       } else {
         setResult({ error: i18nT('components.publishHub.unexpected_response') })
       }
@@ -472,6 +537,7 @@ export function PublishHub({
         ttl_hours: selectedTtlHours(),
       }
       if (contentDigest) payload.expected_content_digest = contentDigest
+      if (deployProfile) payload.profile = deployProfile
       // Bind the previewed identity -- backend 409s (stale_preview) if
       // the resolved profile/region drifted between preview and confirm.
       if (previewIdentity.profile) payload.expected_profile = previewIdentity.profile
@@ -510,6 +576,11 @@ export function PublishHub({
         // generic warning -- the one case whose whole point is telling the user how to
         // re-enable. Every site that reads an outcome must copy BOTH fields.
         setResult('error' in outcome ? { error: outcome.error } : { url: outcome.url, notice: outcome.notice, notice_code: outcome.notice_code })
+        // The next open of this panel reads the site list again, so it shows the
+        // link this publish just made.
+        if (!('error' in outcome) && isPublicWebDeploy(selected)) {
+          void queryClient.invalidateQueries({ queryKey: ['deploy-web', 'sites'] })
+        }
       } else {
         // An unrecognized shape is a failure we cannot describe — say so.
         // Reporting it as `{url: ''}` (the previous shape) rendered the error
@@ -579,7 +650,42 @@ export function PublishHub({
       {/* Provider list */}
       {!selectedId && (
         <div className="space-y-2">
-          {unified.map(p => {
+          {/* The lookup never holds the list back: the destinations stay usable
+              while it runs, and a failed lookup simply leaves them as they are. */}
+          {lookupLiveSite && sitesQuery.isLoading && (
+            <p role="status" className="text-[12px] text-muted">
+              {i18nT('components.publishHub.checking_for_existing_public_link')}
+            </p>
+          )}
+          {/* An artifact already live on the public web shows its link, and the
+              public-web row becomes an update of that same site. */}
+          {liveSite && publicWebRow && (
+            <div className="px-3 py-2.5 rounded-md border border-ok/40 bg-ok-subtle space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-text">
+                <Globe size={16} className="text-ok shrink-0" />
+                {i18nT('components.publishHub.live_on_public_web')}
+              </div>
+              {liveUrl && (
+                <div className="text-[12px] font-mono text-text break-all">{liveUrl}</div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {liveUrl && (
+                  <a
+                    href={liveUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border text-[13px] text-text hover:border-border-strong hover:bg-bg-hover"
+                  >
+                    <ExternalLink size={12} /> {i18nT('components.publishHub.open_live_page')}
+                  </a>
+                )}
+                <Btn primary onClick={() => setSelectedId(publicWebRow.id)}>
+                  <Upload size={12} /> {i18nT('components.publishHub.update_same_url')}
+                </Btn>
+              </div>
+            </div>
+          )}
+          {unified.filter(p => !(liveSite && p.id === publicWebRow?.id)).map(p => {
             const Icon = p.icon
             return (
               <button
@@ -701,6 +807,9 @@ export function PublishHub({
             {i18nT('components.publishHub.publish')} <span className="font-mono font-semibold text-text">{artifact.slug}</span> {i18nT('components.publishHub.via')}{' '}
             <span className="font-semibold text-text">{selected.label}</span>?
           </div>
+          {updatingLiveSite && (
+            <p className="text-[12px] text-muted">{i18nT('components.publishHub.update_replaces_live_page')}</p>
+          )}
           {/* Unconfigured core destination: no live Publish. Offering one here lets the
               user pass the acknowledgment and only THEN hit a failure. Show the remedy
               (the provider's own hint) plus a link to set it up, and no Publish CTA. */}

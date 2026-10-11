@@ -2965,6 +2965,11 @@
       "title": "This will create a publicly accessible website"
     },
     "publishHub": {
+      "checking_for_existing_public_link": "Checking for an existing public link…",
+      "live_on_public_web": "Already live on the public web",
+      "open_live_page": "Open live page",
+      "update_same_url": "Update (same URL)",
+      "update_replaces_live_page": "This replaces the live page. Its URL stays the same.",
       "checking": "Checking…",
       "content_changed_since_preview_re_run_publish_to": "Content changed since preview — re-run publish to confirm with the current version.",
       "open_artifact_deploy": "Register an AWS profile",
