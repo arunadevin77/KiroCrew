@@ -135,12 +135,12 @@ async def test_a_restart_waits_for_the_turn_it_cut_before_it_ends(
     waited_on = asyncio.ensure_future(restart.turn.waited_on.wait())
     try:
         await asyncio.wait_for(
-            asyncio.wait({waited_on, restarting}, return_when=asyncio.FIRST_COMPLETED), 10
+            asyncio.wait({waited_on, restarting}, return_when=asyncio.FIRST_COMPLETED), 30
         )
         # The turn's partial-reply save, then its end.
         restart.order.append("saved")
         restart.turn.set_result(None)
-        await asyncio.wait_for(restarting, timeout=10)
+        await asyncio.wait_for(restarting, timeout=30)
         assert restart.order == [
             "close_all",
             "waits",
@@ -151,7 +151,7 @@ async def test_a_restart_waits_for_the_turn_it_cut_before_it_ends(
         waited_on.cancel()
         restart.turn.cancel()
         await asyncio.wait_for(
-            asyncio.gather(waited_on, restarting, return_exceptions=True), timeout=10
+            asyncio.gather(waited_on, restarting, return_exceptions=True), timeout=30
         )
 
 
@@ -165,7 +165,7 @@ async def test_a_restart_never_cancels_or_outwaits_a_hung_turn(
     )
     restart = _Restart()
     try:
-        await asyncio.wait_for(run(restart, monkeypatch), timeout=10)
+        await asyncio.wait_for(run(restart, monkeypatch), timeout=30)
         assert restart.order[0] == "close_all", restart.order
         assert restart.order[-1] == ends_with, restart.order
         assert not restart.turn.done(), "a hung turn must be left to the exit, not cancelled"

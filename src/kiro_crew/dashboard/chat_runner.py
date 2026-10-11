@@ -7026,6 +7026,14 @@ async def _start_next_queued_turn(
     store.
     """
 
+    # Nothing starts while the process is going away. The successor would write
+    # its own in-flight marker before the session gate refuses it, and that marker
+    # is what the next start reads in place of the ending turn's: the restart would
+    # show the recovery's row, not the cut reply. The queue stays as it is, so the
+    # history save keeps it for the next start, as the parked drain already does.
+    if _gateway_shutdown_requested(state):
+        return False
+
     # A drain that follows a turn's end marks that end before it writes anything:
     # the drop notices, the held-note flush and the cancellation notices below
     # belong to what comes next, not to the turn that ended. Held back only while

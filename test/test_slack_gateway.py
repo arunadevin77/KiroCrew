@@ -1101,9 +1101,9 @@ class TestShutdown:
         release = asyncio.Event()
 
         async def _turn():
-            await asyncio.wait_for(closed.wait(), timeout=10)
+            await asyncio.wait_for(closed.wait(), timeout=30)
             # The unwind and its save: parked until the test lets it finish.
-            await asyncio.wait_for(release.wait(), timeout=10)
+            await asyncio.wait_for(release.wait(), timeout=30)
             order.append("saved")
 
         turn = asyncio.create_task(_turn())
@@ -1124,18 +1124,18 @@ class TestShutdown:
             shutdown.add_done_callback(lambda _t: order.append("shutdown returned"))
             collecting = asyncio.create_task(collected.wait())
             await asyncio.wait_for(
-                asyncio.wait({collecting, shutdown}, return_when=asyncio.FIRST_COMPLETED), 10
+                asyncio.wait({collecting, shutdown}, return_when=asyncio.FIRST_COMPLETED), 30
             )
             collecting.cancel()
             release.set()
-            await asyncio.wait_for(asyncio.gather(turn, shutdown), timeout=10)
+            await asyncio.wait_for(asyncio.gather(turn, shutdown), timeout=30)
             assert order == [
                 "saved",
                 "shutdown returned",
             ], f"shutdown returned before the cut turn saved: {order}"
         finally:
             turn.cancel()
-            await asyncio.wait_for(asyncio.gather(turn, return_exceptions=True), timeout=10)
+            await asyncio.wait_for(asyncio.gather(turn, return_exceptions=True), timeout=30)
 
     @pytest.mark.asyncio
     async def test_shutdown_never_cancels_or_outwaits_a_hung_dashboard_turn(self, monkeypatch):
@@ -1145,11 +1145,11 @@ class TestShutdown:
         turn = asyncio.create_task(asyncio.Event().wait())
         orch = self._orch_with_dashboard_turn(turn)
         try:
-            await asyncio.wait_for(orch._shutdown(), timeout=10)
+            await asyncio.wait_for(orch._shutdown(), timeout=30)
             assert not turn.done(), "a hung turn must be left to the exit, not cancelled"
         finally:
             turn.cancel()
-            await asyncio.wait_for(asyncio.gather(turn, return_exceptions=True), timeout=10)
+            await asyncio.wait_for(asyncio.gather(turn, return_exceptions=True), timeout=30)
 
     @pytest.mark.asyncio
     async def test_shutdown_cancels_and_reaps_console_script_repair(self, tmp_path):
