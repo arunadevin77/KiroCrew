@@ -1054,6 +1054,26 @@ async def test_internal_path_non_loopback_cookie_auth_when_not_local_only() -> N
 
 
 @pytest.mark.asyncio
+async def test_internal_path_non_loopback_cookie_marks_the_cookie_credential() -> None:
+    """A session cookie on the mixed non-loopback branch records a cookie credential.
+
+    The off-loopback mixed branch (DCV/SSH-forwarded browsers) must set
+    ``auth_from_query_token`` the same way the loopback branch does, so the proxy
+    sees the owner's cookie as an owner session rather than failing closed to
+    ``none``.
+    """
+    token = generate_token("owner", ttl_seconds=300)
+    mw = token_auth_middleware(
+        internal_paths=frozenset({"/api/spawn"}), internal_secret="s", local_only=False
+    )
+    req = _make_request(path="/api/spawn", remote="10.0.0.1", cookies={"mc_token_5476": token})
+    resp = await mw(req, _ok_handler)
+    assert resp.status == 200
+    marks = {call.args[0]: call.args[1] for call in req.__setitem__.call_args_list}
+    assert marks["auth_from_query_token"] is False
+
+
+@pytest.mark.asyncio
 async def test_internal_path_non_loopback_no_cookie_denied() -> None:
     """When local_only=False, non-loopback without cookie is denied."""
     mw = token_auth_middleware(
