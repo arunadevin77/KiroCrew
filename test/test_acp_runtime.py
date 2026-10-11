@@ -103,7 +103,15 @@ def _pinned_kiro_cli_version(monkeypatch):
 
 @pytest.fixture
 def kas_readiness_wire(monkeypatch, tmp_path):
-    """Real demux and session startup; only the subprocess and clock are fake."""
+    """Real demux and session startup; only the subprocess and clock are fake.
+
+    The fake stdout is an ``asyncio.StreamReader`` built here at (synchronous)
+    fixture-setup time, so its loop is pinned to the one current then rather than
+    the loop pytest-asyncio runs the test on. ``_start_reader`` re-points the
+    reader at the running loop before it first awaits, which is where the
+    cross-loop ``readuntil`` waiter would otherwise be created -- see the comment
+    there.
+    """
     from types import SimpleNamespace
 
     import kiro_crew.acp.runtime as runtime_mod
@@ -995,6 +1003,17 @@ def _replying_send(queue_for, *, error: dict | None = None, req_id: int = 1) -> 
 
 
 async def _start_reader(rt: AcpRuntime) -> asyncio.Task:
+    # The fake stdout is an ``asyncio.StreamReader`` built at (synchronous)
+    # fixture-setup time, so its ``_loop`` is pinned to whatever loop was current
+    # then -- the autouse ``_ensure_event_loop`` loop. Under a pytest-asyncio
+    # newer than CI's pin the test coroutine runs on a different loop, and the
+    # reader's ``readuntil`` waiter -- created from ``_loop`` -- then belongs to
+    # the setup loop, raising "got Future attached to a different loop". Point the
+    # reader at the running loop before it first awaits; nothing has awaited on it
+    # yet, and for a reader already built on this loop it is a no-op.
+    stdout = getattr(rt._process, "stdout", None)
+    if isinstance(stdout, asyncio.StreamReader):
+        stdout._loop = asyncio.get_running_loop()
     task = asyncio.ensure_future(rt._reader_loop())
     await asyncio.sleep(0)  # let the loop reach its first readline
     return task
