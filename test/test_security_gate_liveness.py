@@ -249,7 +249,14 @@ def _url_payload_command(n: int) -> str:
 #: write redirect exactly as the read-only tier does, and for ``_DEVNULL_REDIR_RE``
 #: ending each discard idiom where bash ends the word, with its classes spelled out
 #: so a Unicode space or digit cannot pose as one. No verb or allowlist moved.
-_PACKAGE_LINE_BUDGET = 28_857
+#:
+#: Raised again, from 28,857, for ``shell_normalizer._SCRIPT_EXECUTES_RE``: its sed
+#: ``e`` branch reads the ``e`` command as a word of the script, not the bare
+#: ``-e``/``-E`` option, so a ``grep -E`` over a product-named directory keeps the
+#: data-consumer exemption. The branch grows a ``(?<!^-)`` guard and its comment states
+#: which terminal ``e`` is the command. Every execute construct it read before is still
+#: read; no other pattern moved.
+_PACKAGE_LINE_BUDGET = 28_864
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
