@@ -8,10 +8,11 @@ everything Kiro Crew sets for the session itself; and the scrub still removes a
 denied name whatever put it there.
 
 Config load already drops names the config layer refuses
-(``sections.coerce_agent_env``). This module adds the one check that needs the
-sandbox's own list: a name the agent environment scrub strips would be removed
-after it is applied, so it is dropped here with a warning instead of vanishing
-without one.
+(``sections.coerce_agent_env``), and a config write refuses them up front
+(``sections.agent_env_write_refusals``). This module adds the one load-side check
+that needs the sandbox's own list: a name the agent environment scrub strips
+would be removed after it is applied, so it is dropped here with a warning
+instead of vanishing without one.
 """
 
 from __future__ import annotations
@@ -40,9 +41,8 @@ def agent_env_overlay() -> dict[str, str]:
         return {}
     if not configured:
         return {}
-    from kiro_crew.sandbox import agent_env_scrub_prefixes
+    from kiro_crew.config.sections import agent_env_scrub_removes
 
-    scrubbed = agent_env_scrub_prefixes()
     out: dict[str, str] = {}
     for key, value in configured.items():
         # Windows environment names are case-insensitive: fold to the spelling
@@ -52,7 +52,7 @@ def agent_env_overlay() -> dict[str, str]:
         # is refused rather than slipping past a case-sensitive prefix match.
         if os.name == "nt":
             key = key.upper()
-        if any(key.upper().startswith(prefix) for prefix in scrubbed):
+        if agent_env_scrub_removes(key):
             logger.warning(
                 "agent.env: ignoring %r, the agent environment scrub removes that name", key
             )

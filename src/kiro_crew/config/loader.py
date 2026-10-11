@@ -1702,10 +1702,11 @@ class ConfigWriteRefused(ValueError):
     """A config document was refused at the publish floor and nothing was written.
 
     Raised by :func:`write_config_atomically` before any byte reaches disk, for
-    content that must never be persisted: today, a provider key in plaintext under
+    content that must never be persisted: a provider key in plaintext under
     ``agent.deepseek_env``, where the only admissible value is a
     ``secret://<vault name>`` reference (``sections.deepseek_env_plaintext_keys``),
-    and an ``aws.project_profiles`` entry the load would ignore.
+    an ``aws.project_profiles`` entry the load would ignore, and an ``agent.env``
+    entry no agent process would receive (``sections.agent_env_write_refusals``).
     The message names env-var KEYS only, never the value, so it is safe to print
     on a terminal and to log. A ``ValueError`` so the CLI's existing refusal shape
     applies, and so a caller cannot mistake it for the unreadable-file case
@@ -1773,12 +1774,22 @@ def _refuse_unpublishable(data: dict, path: Path) -> None:
     The publish floor for every writer that lands a config document -- the locked
     read-modify-write (``update_config_locked``, behind ``config set`` and every
     dashboard PUT) and the whole-document :meth:`KiroCrewConfig.save` alike -- so
-    the rule holds however a value arrived. One rule today: a provider key typed
-    in plaintext under ``agent.deepseek_env`` is refused, because that mapping
-    takes ``secret://`` references only and a plaintext that reaches disk is
-    already the defect the spawn-time validator would later name. Keyed on the
-    document's SHAPE rather than on the path, so an agent spec written through the
-    same function is untouched -- it has no ``agent.deepseek_env`` to refuse.
+    each rule holds however a value arrived. Two rules, both on mappings of
+    environment variables an agent process receives: a provider key in plaintext
+    under ``agent.deepseek_env`` (:func:`_refuse_deepseek_env_plaintext`), and an
+    ``agent.env`` entry no spawn would ever apply (:func:`_refuse_agent_env_entries`).
+    Keyed on the document's SHAPE rather than on the path, so an agent spec written
+    through the same function is untouched -- it has neither mapping.
+    """
+    _refuse_deepseek_env_plaintext(data, path)
+    _refuse_agent_env_entries(data, path)
+
+
+def _refuse_deepseek_env_plaintext(data: dict, path: Path) -> None:
+    """Refuse a plaintext provider key under ``agent.deepseek_env``.
+
+    That mapping takes ``secret://`` references only, and a plaintext that reaches
+    disk is already the defect the spawn-time validator would later name.
 
     What is refused is what THIS write does: a plaintext it introduces, or a
     mapping it changes while a plaintext entry stays in it. A plaintext an older
@@ -1821,17 +1832,66 @@ def _refuse_unpublishable(data: dict, path: Path) -> None:
 def _deepseek_env_on_disk(path: Path) -> object:
     """The ``agent.deepseek_env`` value the document at *path* holds, or ``None``.
 
-    Read for :func:`_refuse_unpublishable` alone, to tell a plaintext this write
-    introduces from one it merely re-writes unchanged. ``None`` for an absent,
+    Read for :func:`_refuse_deepseek_env_plaintext` alone, to tell a plaintext this
+    write introduces from one it merely re-writes unchanged. ``None`` for an absent,
     unreadable or unparseable file -- and for a document with no such mapping --
     which the caller treats as "not shown pre-existing".
+    """
+    return _agent_key_on_disk(path, "deepseek_env")
+
+
+def _agent_key_on_disk(path: Path, key: str) -> object:
+    """The ``agent.<key>`` value the document at *path* holds, or ``None``.
+
+    ``None`` for an absent, unreadable or unparseable file and for a document
+    without that key, which every caller treats as "not shown pre-existing".
     """
     try:
         document = json.loads(read_config_text(path))
     except (OSError, ValueError):
         return None
     agent = document.get("agent") if isinstance(document, dict) else None
-    return agent.get("deepseek_env") if isinstance(agent, dict) else None
+    return agent.get(key) if isinstance(agent, dict) else None
+
+
+def _refuse_agent_env_entries(data: dict, path: Path) -> None:
+    """Refuse an ``agent.env`` entry that no agent spawn would ever apply.
+
+    ``agent.env`` drops such an entry at load (``sections.coerce_agent_env``) and
+    at spawn (``acp.agent_env``) with only a gateway-log line, so a write that
+    stored it would succeed, the entry would sit in the file, and the variable
+    would never reach the agent. Refusing it here names the key and the reason at
+    the moment it is saved -- ``kirocrew config set`` prints it, a dashboard write
+    answers 400 with it -- and nothing is written. The rule is
+    ``sections.agent_env_write_refusals``; the message carries keys and reasons
+    only, never a value.
+
+    Scoped to what THIS write does, exactly like
+    :func:`_refuse_deepseek_env_plaintext`: a refused entry a hand edit or an older
+    build already landed, in a mapping this write leaves exactly as it found it,
+    publishes with a warning naming the key, because every writer in the product
+    reaches this function and most of them have nothing to do with ``agent.env``.
+    A write that changes the mapping has to leave it with no refused entry. An
+    unreadable prior file cannot show the entry pre-existing, so it is refused.
+    """
+    agent = data.get("agent") if isinstance(data, dict) else None
+    mapping = agent.get("env") if isinstance(agent, dict) else None
+    refusals = _sections.agent_env_write_refusals(mapping)
+    if not refusals:
+        return
+    detail = "; ".join(refusals)
+    if _agent_key_on_disk(path, "env") == mapping:
+        logger.warning(
+            "config.json already holds agent.env entries no agent process will receive "
+            "(%s); this write left that mapping as it found it.",
+            detail,
+        )
+        return
+    raise ConfigWriteRefused(
+        f"agent.env refuses {detail}. Nothing was written, because an agent "
+        "process would never receive that variable: remove or rename the entry, "
+        "and keep credentials under Settings > Secrets."
+    )
 
 
 def _refuse_aws_project_profiles(data: dict, path: Path) -> None:

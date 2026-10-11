@@ -394,6 +394,27 @@ class TestRoleModels:
             assert resp.status == 400
 
 
+class TestAgentEnvFloor:
+    @pytest.mark.asyncio
+    async def test_a_refused_agent_env_entry_on_disk_does_not_refuse_an_unrelated_patch(
+        self, tmp_config
+    ) -> None:
+        """The publish floor refuses an ``agent.env`` entry a write introduces; a
+        hand-edited one this write leaves as it found it must not turn an unrelated
+        dashboard setting into a 400."""
+        seeded = _seed_config()
+        seeded["agent"]["env"] = {"OPENCODE_CONFIG": "/x", "HTTPS_PROXY": "http://p:1"}
+        tmp_config.write_text(json.dumps(seeded), encoding="utf-8")
+
+        async with TestClient(TestServer(_make_app())) as c:
+            resp = await _patch(c, "agent.approval_mode", "interactive")
+            assert resp.status == 200, await resp.text()
+
+        stored = json.loads(tmp_config.read_text(encoding="utf-8"))
+        assert stored["agent"]["approval_mode"] == "interactive"
+        assert stored["agent"]["env"] == seeded["agent"]["env"]
+
+
 # ── General ──────────────────────────────────────────────────────────────
 
 
