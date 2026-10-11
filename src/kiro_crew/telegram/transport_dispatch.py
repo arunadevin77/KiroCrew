@@ -1242,16 +1242,21 @@ class TelegramDispatcher:
                     "resetting the session",
                     session_key,
                 )
-                await self.sessions.record_failure(session_key)
-                try:
-                    await self.sessions.reset(session_key)
-                except Exception:
-                    logger.warning(
-                        "Telegram transport_dispatch: session reset after an unfinished "
-                        "turn failed session=%s",
-                        session_key,
-                        exc_info=True,
-                    )
+                # At its threshold the breaker resets the session inside
+                # record_failure and answers True. A same-key message can claim a
+                # successor while that reset is awaited, so a second reset here
+                # would end the successor mid-turn: reset only when it did not.
+                breaker_reset = await self.sessions.record_failure(session_key)
+                if breaker_reset is not True:
+                    try:
+                        await self.sessions.reset(session_key)
+                    except Exception:
+                        logger.warning(
+                            "Telegram transport_dispatch: session reset after an "
+                            "unfinished turn failed session=%s",
+                            session_key,
+                            exc_info=True,
+                        )
             else:
                 self.sessions.record_success(session_key)
                 # Beside the counter it stands in for: a landed turn clears the

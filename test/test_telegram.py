@@ -8776,6 +8776,39 @@ class TestTurnLifecycleCharacterization:
         assert ("charge", self._KEY) in events
         assert resets == [self._KEY]
 
+    @pytest.mark.parametrize("stop_reason", ["timeout", STOP_REASON_STALE_RECOVER])
+    def test_at_the_breaker_threshold_an_unfinished_turn_resets_once(
+        self, monkeypatch: Any, stop_reason: str
+    ) -> None:
+        """The failure that trips the breaker resets the session inside
+        ``record_failure`` and answers True. A successor a same-key message started
+        during that reset is the live runtime afterwards, so the turn must not reset
+        it again."""
+        d, _cli, sess = _dispatcher({7})
+
+        async def _stream(message: str) -> Any:
+            yield _Ev(EVENT_TEXT_CHUNK, text="half an answer")
+            yield _Ev(EVENT_COMPLETE, stop_reason=stop_reason)
+
+        events = self._instrument(monkeypatch, d, sess, stream=_stream)
+        runtimes = ["first"]
+        killed: list[str] = []
+
+        async def _reset(key: str) -> None:
+            killed.append(runtimes[-1])
+            runtimes.append(f"successor {len(runtimes)}")
+
+        async def _breaker_at_threshold(key: str) -> bool:
+            events.append(("charge", key))
+            await sess.reset(key)
+            return True
+
+        sess.reset = _reset
+        sess.record_failure = _breaker_at_threshold
+        asyncio.run(d.handle_message(_dm("hi")))
+        assert ("charge", self._KEY) in events and sess.successes == []
+        assert killed == ["first"], f"the dispatcher reset again after the breaker did: {killed}"
+
     def test_a_finished_turn_is_a_success_and_keeps_the_session(self, monkeypatch: Any) -> None:
         events, sess, resets = self._run_turn_ending(monkeypatch, "end_turn")
         assert sess.successes == [self._KEY]

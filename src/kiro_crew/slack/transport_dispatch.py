@@ -917,21 +917,54 @@ async def handle_message_transport(
         accumulated = await driver.run(full_message)
 
         # ── Post-turn bookkeeping ──
-        # The turn already succeeded (we have `accumulated`), so record success
-        # first and isolate the non-critical bookkeeping below — a failure in
+        # The turn ended without raising (we have `accumulated`), so book its
+        # verdict first and isolate the non-critical bookkeeping below — a failure in
         # context-usage accounting or conversation logging must NOT fall through
         # to the outer except and double-record the turn as a failure.
-        sessions.record_success(session_key)
-        # Beside the counter it stands in for: a landed turn clears the
-        # shared-death streak exactly as it clears the consecutive-failure count,
-        # so the streak stays a consecutive run rather than a lifetime total whose
-        # bound is permanently tripped.
-        runtime_death.clear_shared_deaths(session_key)
+        _unfinished = getattr(driver, "unfinished_turn", False) is True
+        if _unfinished:
+            # The handle ended a turn the backend never finished; the driver
+            # already followed the partial text with the timeout notice. The
+            # runtime still reads alive, so book a failure and reset the session
+            # (keeping the conversation), as the shared channel dispatcher and
+            # Telegram's do, or the next message waits on it again. The reset runs
+            # while this turn holds its permit, like the breaker reset the except
+            # branch below can make; the release in the ``finally`` sees that the
+            # permit died with the reset session and leaves a successor's alone.
+            logger.warning(
+                "transport_dispatch: the turn for %s ended unfinished; resetting the session",
+                session_key,
+            )
+            # At its threshold the breaker resets the session inside
+            # record_failure and answers True. A same-key message can claim a
+            # successor while that reset is awaited, so a second reset here
+            # would end the successor mid-turn: reset only when it did not.
+            breaker_reset = await sessions.record_failure(session_key)
+            if breaker_reset is not True:
+                try:
+                    await sessions.reset(session_key)
+                except Exception:
+                    logger.warning(
+                        "transport_dispatch: session reset after an unfinished turn "
+                        "failed session=%s",
+                        session_key,
+                        exc_info=True,
+                    )
+        else:
+            sessions.record_success(session_key)
+            # Beside the counter it stands in for: a landed turn clears the
+            # shared-death streak exactly as it clears the consecutive-failure
+            # count, so the streak stays a consecutive run rather than a lifetime
+            # total whose bound is permanently tripped.
+            runtime_death.clear_shared_deaths(session_key)
         # The prompt (with any re-injected context) reached the model and the
         # turn completed, so the finally must NOT restore the one-shot flag --
         # unless the user cancelled it, which discards that prompt.
         _turn_landed = driver_turn_landed(driver)
-        Stats().inc_message_success()
+        if _unfinished:
+            Stats().inc_message_failed()
+        else:
+            Stats().inc_message_success()
 
         # Remember this turn's OPTIONS control, if it posted one, so the next
         # turn on this thread can strike it through.
@@ -976,7 +1009,11 @@ async def handle_message_transport(
             )
 
         try:
-            sessions.check_context_usage(session_key, client)
+            # Not for an unfinished turn: its runtime was just reset, so the
+            # reading is moot, and a compaction it fired would land on whatever
+            # holds the key now. The except branch below skips this check too.
+            if not _unfinished:
+                sessions.check_context_usage(session_key, client)
         except Exception:
             logger.warning(
                 "transport_dispatch: check_context_usage failed session=%s",

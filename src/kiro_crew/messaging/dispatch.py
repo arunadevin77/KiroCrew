@@ -2430,17 +2430,22 @@ class ChannelTurns:
                     session_key,
                     stop_reason,
                 )
-                await sessions.record_failure(session_key)
+                # At its threshold the breaker resets the session inside
+                # record_failure and answers True. A same-key message can claim a
+                # successor while that reset is awaited, so a second reset here
+                # would end the successor mid-turn: reset only when it did not.
+                breaker_reset = await sessions.record_failure(session_key)
                 verdict = Verdict.FAILED
-                try:
-                    await sessions.reset(session_key)
-                except Exception:
-                    logger.warning(
-                        "%s: session reset after an unfinished turn failed session=%s",
-                        channel,
-                        session_key,
-                        exc_info=True,
-                    )
+                if breaker_reset is not True:
+                    try:
+                        await sessions.reset(session_key)
+                    except Exception:
+                        logger.warning(
+                            "%s: session reset after an unfinished turn failed session=%s",
+                            channel,
+                            session_key,
+                            exc_info=True,
+                        )
             else:
                 _record_success(sessions, session_key, channel)
                 verdict = Verdict.ANSWERED
