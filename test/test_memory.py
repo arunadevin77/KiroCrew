@@ -1095,6 +1095,62 @@ class TestIndexCatchesUpAfterAFailedUpdate:
         assert store.search("zebracrossingwidget")
         assert not [r for r in caplog.records if "FTS index" in r.getMessage()]
 
+    def test_a_search_catch_up_cannot_overwrite_another_processs_newer_update(
+        self, tmp_path, monkeypatch
+    ):
+        """The catch-up reads a file and commits its row under the writers' own lock.
+
+        Two stores on one workspace stand in for the gateway and a second process
+        (``kirocrew consolidate``). Inside the gateway's catch-up, between its read
+        and its commit, the test checks whether the writers' directory lock is free.
+        If it is, another process's newer save can land there, and the catch-up then
+        commits the older text over it, so the newer text is never found.
+        """
+        import os
+        from pathlib import Path
+
+        from kiro_crew.platform_compat import file_lock
+
+        gateway = MemoryStore(workspace=tmp_path)
+        other = MemoryStore(workspace=tmp_path)
+        gateway.write_preferences("- likes tea\n")
+        real = gateway._get_db
+        monkeypatch.setattr(gateway, "_get_db", lambda: _FullDiskIndex(real()))
+        assert gateway.write_preferences("- likes tea\n- codename oldzebra\n")
+        monkeypatch.setattr(gateway, "_get_db", real)
+
+        lock_file = gateway._memory_dir / ".write.lock"
+        read_text = gateway._files.read_text
+        window: list[str] = []
+
+        def _read_then_probe(path, *args, **kwargs):
+            content = read_text(path, *args, **kwargs)
+            if Path(path) == gateway._preferences_file and not window:
+                fd = os.open(lock_file, os.O_RDWR)
+                try:
+                    with file_lock(fd, exclusive=True, wait=False):
+                        window.append("open")
+                except BlockingIOError:
+                    window.append("held")
+                finally:
+                    os.close(fd)
+                if window == ["open"]:
+                    # Nothing keeps another process out of this read-to-commit window.
+                    assert other.write_preferences("- likes tea\n- codename newzebra\n")
+            return content
+
+        monkeypatch.setattr(gateway._files, "read_text", _read_then_probe)
+        gateway.search("tea")
+        assert window, "the search ran no catch-up"
+        if window == ["held"]:
+            assert other.write_preferences("- likes tea\n- codename newzebra\n")
+
+        reader = MemoryStore(workspace=tmp_path)
+        assert reader.search("newzebra"), (
+            "the catch-up committed older text over another process's newer update "
+            f"(writers' lock during the window: {window[0]})"
+        )
+
     def test_a_write_that_fails_before_the_index_step_raises_as_before(
         self, tmp_path, monkeypatch, caplog
     ):

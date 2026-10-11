@@ -1235,6 +1235,11 @@ class MemoryStore:
         Best-effort: a failure never fails the memory write that called it. It is
         logged at WARNING once per failure streak, and the path is kept in
         ``_index_stale`` so the next update or search re-indexes it.
+
+        The caller holds the cross-process writer lock of *path*'s directory
+        (``_index_lock_dir``), so a success also re-indexes the stale paths under
+        that same lock; a stale path in the other directory waits for a write
+        there or for :meth:`_catch_up_stale_index`, which takes its own lock.
         """
         if self._memory_version == 2:
             return  # Manual profiles are outside learned-memory search.
@@ -1242,9 +1247,17 @@ class MemoryStore:
         with self._index_lock:
             if self._write_index_row(path_str, content):
                 self._index_stale.discard(path_str)
-                self._drain_stale_index_locked()
+                self._drain_stale_index_locked(self._index_lock_dir(path))
             else:
                 self._index_stale.add(path_str)
+
+    def _index_lock_dir(self, path: Path) -> Path:
+        """The directory whose ``_files.lock`` every writer of *path* holds.
+
+        History files are written under ``history_dir``'s lock, every other memory
+        file under ``memory_dir``'s (``write_preferences``, ``append_history``).
+        """
+        return self._history_dir if self._history_dir in path.parents else self._memory_dir
 
     def _write_index_row(self, path_str: str, content: str, *, quiet: bool = False) -> bool:
         """Replace *path_str*'s row in the FTS index; False when the write failed.
@@ -1279,13 +1292,18 @@ class MemoryStore:
         self._index_failure_warned = False
         return True
 
-    def _drain_stale_index_locked(self) -> None:
-        """Re-index every stale path from its file; one that fails again stays.
+    def _drain_stale_index_locked(self, lock_dir: Path) -> None:
+        """Re-index each stale path under *lock_dir* from its file; one that fails stays.
 
-        Caller holds ``_index_lock``. Reads the file itself rather than a kept copy,
-        so the row matches what is on disk now.
+        Caller holds ``_index_lock`` and the cross-process ``_files.lock(lock_dir)``,
+        the lock every writer of those files holds while it writes the file and its
+        row, so another process cannot update a file between this read and commit.
+        Reads the file itself rather than a kept copy, so the row matches what is on
+        disk now.
         """
         for path_str in sorted(self._index_stale):
+            if self._index_lock_dir(Path(path_str)) != lock_dir:
+                continue
             try:
                 content = self._files.read_text(Path(path_str))
             except Exception:
@@ -1293,6 +1311,23 @@ class MemoryStore:
                 continue
             if self._write_index_row(path_str, content, quiet=True):
                 self._index_stale.discard(path_str)
+
+    def _catch_up_stale_index(self) -> None:
+        """Re-index the stale paths before a search, one directory lock at a time.
+
+        Lock order is the writers' own: the cross-process directory lock first,
+        then ``_index_lock``. Only one directory lock is held at a time, and none is
+        taken while ``_index_lock`` is held. A lock that cannot be taken (its
+        bounded wait expired) leaves those paths stale for the next attempt.
+        """
+        with self._index_lock:
+            lock_dirs = sorted({self._index_lock_dir(Path(p)) for p in self._index_stale})
+        for lock_dir in lock_dirs:
+            try:
+                with self._files.lock(lock_dir), self._index_lock:
+                    self._drain_stale_index_locked(lock_dir)
+            except Exception:
+                logger.debug("FTS catch-up under %s skipped; kept", lock_dir, exc_info=True)
 
     @named_store_operation
     def rebuild_index(self) -> int:
@@ -1420,8 +1455,7 @@ class MemoryStore:
         if self._index_stale:
             # A file whose index update failed earlier is re-indexed before the
             # query reads the index, so it is found once the cause has cleared.
-            with self._index_lock:
-                self._drain_stale_index_locked()
+            self._catch_up_stale_index()
         conn = None
         try:
             # Inside the try, not around it: this method handles its own errors
