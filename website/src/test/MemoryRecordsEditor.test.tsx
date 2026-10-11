@@ -348,6 +348,25 @@ it.each([
   await waitFor(() => expect(within(detail).getByText(label, { exact: true })).toBeVisible())
 })
 
+it('keeps a raw source tag from setting the record card’s minimum width', async () => {
+  const source = 'consolidation:dashboard:member-kiro-crew-rust.memory'
+  records = [record(0, { source })]
+  mount('member-review')
+  const body = await screen.findByText(records[0].text)
+  // jsdom has no layout, so pin the CSS that lets a phone-width column shrink.
+  const card = body.closest('[data-testid="memory-records-editor"] > .grid > *') as HTMLElement
+  expect(card).toHaveClass('min-w-0')
+  expect(card.parentElement).toHaveClass('grid-cols-1')
+  const badge = within(card).getByText(source, { exact: true })
+  expect(badge).toHaveClass('block', 'truncate', 'max-w-full')
+  expect(badge).toHaveAttribute('title', source)
+  fireEvent.click(within(card).getByRole('button', { name: 'View details' }))
+  const detail = screen.getByRole('dialog', { name: 'Memory details' })
+  const full = await within(detail).findByText(source, { exact: true })
+  expect(full).toHaveClass('whitespace-normal', 'max-w-full')
+  expect(full).not.toHaveClass('truncate')
+})
+
 it.each([
   { extra: { metadata: { source_ref: 'user_explicit' } }, reference: 'You' },
   { extra: { metadata: { source_ref: 'consolidation' } }, reference: 'Conversation' },
