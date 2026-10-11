@@ -2706,6 +2706,7 @@ _TTL_COST_RATIO_MIN = 0.0
 _TTL_COST_RATIO_MAX = 1000.0
 _TTL_MAX_SECS_ENV = "KIROCREW_PATH_GATE_TTL_MAX_SECS"
 _TTL_MAX_SECS_DEFAULT = 30.0
+#: Floor on the ceiling: a ceiling below the expiry floor would invert the clamp.
 _TTL_MAX_SECS_MIN = 0.1
 _TTL_MAX_SECS_MAX = 60.0
 
