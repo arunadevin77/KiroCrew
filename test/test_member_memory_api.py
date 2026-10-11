@@ -129,6 +129,43 @@ async def test_internal_spawn_without_session_or_parent_is_admitted(env, body_ex
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("body_extra", [{}, {"parent_session": ""}], ids=["omitted", "empty"])
+async def test_internal_spawn_with_session_but_no_parent_is_refused(env, body_extra):
+    """A caller WITH a verified session may not drop its parent: a run parented to
+    "" would be owned by no session, so the initiating session could not control
+    it while any sessionless internal caller could. The empty claim stays a claim."""
+    from kiro_crew.dashboard.handlers import messaging
+
+    env.state.subagents = SimpleNamespace(spawn=mock.Mock())
+    response = await messaging.api_spawn(
+        request(env, body={"task": "spawn", **body_extra}, internal=True)
+    )
+    assert response.status == 409
+    assert json.loads(response.text)["code"] == "member_identity_unavailable"
+    env.state.subagents.spawn.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "header, parent, claim",
+    [
+        ("", "", None),
+        ("", "dashboard:alice", "dashboard:alice"),
+        ("dashboard:alice", "", ""),
+        ("dashboard:alice", "dashboard:alice", "dashboard:alice"),
+    ],
+    ids=["sessionless-no-parent", "sessionless-parent", "session-no-parent", "session-parent"],
+)
+def test_spawn_parent_claim_drops_only_a_sessionless_empty_parent(header, parent, claim):
+    """Every spawn route (create, continue, both batch routes) takes its claim from
+    this helper, so this pins the rule for all four."""
+    from kiro_crew.dashboard.handlers._shared import spawn_parent_claim
+
+    headers = {"X-Session-Key": header} if header else {}
+    req = make_mocked_request("POST", "/api/spawn", headers=headers)
+    assert spawn_parent_claim(req, parent) == claim
+
+
+@pytest.mark.asyncio
 async def test_private_taskrunner_start_forwards_protected_origin(env):
     from kiro_crew.execution_context import read_session_execution
 

@@ -992,6 +992,21 @@ async def internal_memory_scope(
     )
 
 
+def spawn_parent_claim(request: web.Request, parent_session: str) -> str | None:
+    """The session a spawn route claims for ``internal_memory_scope``.
+
+    The spawn routes default a missing ``parent_session`` to ``""``. For a caller
+    without a session (no ``X-Session-Key``: only the internal secret, e.g. a
+    host-side sidecar or the CLI) that empty parent is "no claim", so it is passed
+    as ``None``. A caller WITH a session keeps the empty claim, which does not
+    match its own session and is refused: it may not start a run detached from
+    the session that owns it.
+    """
+    if parent_session or request.headers.get("X-Session-Key", ""):
+        return parent_session
+    return None
+
+
 #: The three chat routes a script cron opens, seeds and sets the approval mode of
 #: its sessions on. Session control is what ``agent.session_control`` switches
 #: off, and these are its writes.
