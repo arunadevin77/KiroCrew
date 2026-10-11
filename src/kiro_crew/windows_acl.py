@@ -485,7 +485,17 @@ def describe(path: Path) -> ComponentSecurity:
     different things for each.
     """
     advapi32, kernel32 = _load()
-    is_dir = path.is_dir()
+    try:
+        is_dir = path.is_dir()
+    except OSError as exc:
+        # `is_dir` stats the path, which reaches the file system. On a network
+        # volume that round-trip can fail transiently -- a disconnected mapped
+        # drive or an unreachable UNC share answers with WinError 64. Fold it
+        # into the same refusal the rest of this function raises: a trust check
+        # that cannot even stat the component has cleared nothing, so refusing
+        # is the fail-safe answer, and the caller turns `AclUnavailable` into a
+        # plain refusal.
+        raise AclUnavailable(f"cannot stat the path (error {exc})") from exc
     volume_is_local = _volume_is_local(kernel32, path)
 
     owner = C.c_void_p()
