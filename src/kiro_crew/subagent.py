@@ -6482,6 +6482,13 @@ class SubagentManager:
         """
         self._cancellation.release_teardown_fence_impl(parent_session_key, expected)
 
+    async def cancel_queued(
+        self, agent_id: str, parent_session_key: str, *, stop_origin: str = ""
+    ) -> bool:
+        return await self._cancellation.cancel_queued_impl(
+            agent_id, parent_session_key, stop_origin=stop_origin
+        )
+
     def snapshot_teardown_children(self, parent_session_key: str) -> tuple[str, ...]:
         """Run ids under *parent_session_key*, taken with no await. Parent-end use.
 

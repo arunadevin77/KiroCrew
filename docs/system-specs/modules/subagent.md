@@ -1842,6 +1842,21 @@ then raises that failure; a row whose report raised was removed and counts as
 stopped. Pinned by
 `test_queue_depth_reconcile.py::test_a_row_that_could_not_be_unqueued_fails_the_stop_and_reaps_nothing`.
 
+### `cancel_queued(agent_id, parent_session_key, *, stop_origin="") -> bool`
+The queued half of `cancel_for_parent` for ONE accepted, not-started spawn: the
+same writer-thread store phase (`_stop_queued`) under the same refill hold
+(`_stopping_parents`), so the row is neither windowed back nor started while its
+cancel is in flight. True when the row was stopped; a row that registered as a
+run meanwhile is the live path's and answers False with nothing stopped.
+*stop_origin* is written onto the queued-stop report's record
+(`SubagentInfo._stop_origin`), so the parent's completion event names who
+stopped the run. Reached from `spawn_release` (REST
+`POST /api/spawn/{id}/release`) on an id that `queued_run_async` names and that
+is not resuming: the route answers `{"status": "cancelled"}`. It is the parent's
+one control over a run the gate is holding, which otherwise keeps the parent
+attached (`subagents_attached_async`), so a reload refuses until it starts.
+Pinned by `test_spawn_release_queued.py`.
+
 ### `cancel_all() -> None`
 Cancels all running subagents, stops the reaper loop, and awaits their cleanup. Handles `CancelledError` gracefully — sessions released, count decremented.
 The shielded terminal reports (`_report_tasks`) are then drained inside ONE

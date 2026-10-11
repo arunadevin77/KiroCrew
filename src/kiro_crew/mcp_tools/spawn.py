@@ -538,7 +538,9 @@ def schemas(*, names_only: bool = False) -> list[dict[str, Any]]:
                 "End a continuable subagent conversation (spawn_run keep=true): "
                 "deletes its persisted session so it can no longer be continued. "
                 "Call when the delegated workstream is finished. Idle "
-                "conversations also expire automatically after several hours."
+                "conversations also expire automatically after several hours. "
+                "On a run of yours that is still queued (accepted, not started) "
+                "it CANCELS the run instead: it never starts."
             ),
             "inputSchema": {
                 "type": "object",
@@ -547,7 +549,8 @@ def schemas(*, names_only: bool = False) -> list[dict[str, Any]]:
                         "type": "string",
                         "description": (
                             "Conversation id — the run id of any completed subagent "
-                            "run (keep=true only extends retention)"
+                            "run (keep=true only extends retention), or of a queued "
+                            "run to cancel"
                         ),
                     },
                 },
@@ -1131,6 +1134,12 @@ def spawn_release(name: str, args: dict[str, Any]) -> str:
     d = mcp_core._post(f"/api/spawn/{conv}/release", {})
     if d.get("error"):
         return f"Error: {d['error']}"
+    if d.get("status") == "cancelled":
+        return (
+            f"Cancelled run {conv} before it started: it will not start. Its stop "
+            "arrives as a [Subagent completion event]; do not spawn it again unless "
+            "you still need the work."
+        )
     return f"Released conversation {conv} — it can no longer be continued."
 
 
@@ -1167,13 +1176,18 @@ def spawn_list(name: str, args: dict[str, Any]) -> str:
         return redact(text)
 
     lines: list[str] = []
+    not_started = False
     for q in queued:
         if isinstance(q, Mapping) and q.get("id"):
-            tag = "resuming" if q.get("resuming") is True else "not started"
+            resuming = q.get("resuming") is True
+            not_started = not_started or not resuming
+            tag = "resuming" if resuming else "not started"
             lines.append(
                 f"{q['id']}  [queued] ({tag}: {_queued_why(q)})  "
                 f"{_redact(str(q.get('task') or ''))[:60]}"
             )
+    if not_started:
+        lines.append("(a not-started run you no longer need: cancel it with spawn_release)")
     if d.get("queued_truncated") is True:
         # The gateway listed only the oldest queued spawns, or could not read
         # them all; the rest exist too.
@@ -1298,7 +1312,8 @@ def spawn_status(name: str, args: dict[str, Any]) -> str:
     elif queued:
         result = (
             f"(not started — queued: {_queued_why(d)}. It starts on its own once that "
-            "clears and its completion event arrives as usual; do not spawn it again)"
+            "clears and its completion event arrives as usual; do not spawn it again. "
+            "If you no longer need it, cancel it with spawn_release)"
         )
     elif running and not result:
         turns = d.get("turns", 0)

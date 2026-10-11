@@ -314,6 +314,12 @@ async def api_spawn_release(request: web.Request) -> web.Response:
 
     Deletes the persisted session mapping and the on-disk session files.
     Refuses while a run is in flight on the conversation.
+
+    A spawn that was accepted and has not started is cancelled instead: it
+    never starts, and the answer says ``cancelled``. That is the one control a
+    parent has over a run the gate is still holding, which otherwise keeps the
+    parent attached until it starts on its own. A run that is resuming already
+    started, so it takes the release path like any run in flight.
     """
     state: DashboardState = request.app["state"]
     if not state.subagents:
@@ -322,6 +328,21 @@ async def api_spawn_release(request: web.Request) -> web.Response:
             status=503,
         )
     conv_id = request.match_info["agent_id"]
+    if state.subagents.get(conv_id) is None:
+        try:
+            queued = await _queued_lookup(request, state, conv_id)
+        except QueuedReadUnavailable:
+            return _queue_unreadable()
+        if queued is not None and not queued.resuming:
+            cancelled = await state.subagents.cancel_queued(
+                conv_id,
+                queued.parent_session_key,
+                stop_origin="cancelled by its parent session",
+            )
+            if cancelled:
+                return web.json_response({"conversation": conv_id, "status": "cancelled"})
+            # It started (or another stop ended it) between the read and the
+            # cancel: the release below answers for whatever it is now.
     ok, detail = await state.subagents.release_conversation_async(conv_id)
     if not ok:
         if detail.startswith("conversation_busy"):
