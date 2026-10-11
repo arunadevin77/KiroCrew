@@ -1413,12 +1413,13 @@ class TestSlotFollowup:
         assert [i["title"] for i in payload["items"]] == ["Ship it", "Later"]
 
     @pytest.mark.asyncio
-    async def test_unscoped_slot_gets_the_worktree_warning(self):
+    async def test_unscoped_slot_gets_the_new_chat_note(self):
         slot = _ChatSlot("s1")
         slot.project = ""
         status, body = await self._post(self._state_with(slot), "s1", {"items": [_item()]})
         assert status == 200
         assert "no project directory" in body["warning"]
+        assert "start in new chat" in body["warning"].lower()
 
     @pytest.mark.asyncio
     async def test_a_failed_delivery_reports_zero_not_a_500(self):

@@ -6985,10 +6985,13 @@
       "suggested_follow_up_many": "Acompanhamentos sugeridos",
       "suggested_follow_up_one": "Acompanhamento sugerido",
       "suggested_follow_up_other": "Acompanhamentos sugeridos",
-      "project_directory_is_not_a_git_repository": "{{path}} não é um repositório git, então não há repositório do qual criar uma branch",
-      "this_session_has_no_project_directory_so_there_i": "Esta sessão não tem diretório de projeto, então não há repositório do qual criar uma branch",
-      "worktree_disabled_no_project_directory": "\"Adicionar a esta sessão\" pré-preenche o campo de mensagem — nada é enviado até você clicar em enviar. Worktrees não estão disponíveis aqui: esta sessão não tem diretório de projeto (escolha um no chip Projeto do campo de mensagem).",
-      "worktree_disabled_not_a_git_repository": "\"Adicionar a esta sessão\" pré-preenche o campo de mensagem — nada é enviado até você clicar em enviar. Worktrees não estão disponíveis aqui: o diretório de projeto desta sessão não é um repositório git (escolha um repositório git no chip Projeto do campo de mensagem)."
+      "start_in_new_chat": "Iniciar em um novo chat",
+      "opening_new_chat": "Abrindo o chat…",
+      "failed_to_open_new_chat": "Não foi possível abrir um novo chat",
+      "open_new_chat_in_project": "Abrir um novo chat em {{path}} sem worktree, porque não é um repositório git",
+      "open_new_chat": "Abrir um novo chat sem worktree, porque esta sessão não tem diretório de projeto",
+      "new_chat_footer_not_a_git_repository": "As duas ações pré-preenchem um campo de mensagem — nada é enviado até você clicar em enviar. O diretório de projeto desta sessão não é um repositório git, então o novo chat abre nele sem worktree.",
+      "new_chat_footer_no_project_directory": "As duas ações pré-preenchem um campo de mensagem — nada é enviado até você clicar em enviar. Esta sessão não tem diretório de projeto, então o novo chat abre sem worktree."
     },
     "inboundLinkChip": {
       "driven_from": "Controlada por {{label}}",
@@ -12049,7 +12052,13 @@
       "run_in_terminal_copy_failed_error": "Não foi possível copiar o comando, por isso nada foi enviado ao terminal. Copie-o do bloco de código e cole você mesmo.",
       "run_in_terminal_no_tab_error": "Não foi possível executar o comando: não foi possível abrir um novo terminal porque já há muitos abertos. Feche um e tente novamente.",
       "run_in_terminal_cwd_pending_error": "Não foi possível executar o comando: o diretório de trabalho deste chat ainda não foi carregado. Tente novamente em instantes.",
-      "run_in_terminal_config_read_failed_error": "Não foi possível ler as configurações do terminal, então \"reutilizar o terminal atual\" foi ignorado e o comando abriu em um novo terminal. Recarregue para tentar novamente."
+      "run_in_terminal_config_read_failed_error": "Não foi possível ler as configurações do terminal, então \"reutilizar o terminal atual\" foi ignorado e o comando abriu em um novo terminal. Recarregue para tentar novamente.",
+      "followup_worktree_session_not_created": "Worktree criada em {{path}}, mas não foi possível abrir e vincular a sessão dela. Clique no botão de novo para tentar outra vez — a worktree existente será reutilizada.",
+      "followup_worktree_no_session_returned": "Worktree criada em {{path}}, mas nenhuma sessão foi retornada. Clique no botão de novo para tentar outra vez — a worktree existente será reutilizada.",
+      "followup_worktree_session_not_opened": "Worktree pronta em {{path}}, mas não foi possível abrir a sessão dela. Mude para ela na barra lateral ou clique no botão de novo.",
+      "followup_worktree_session_not_focused": "Worktree pronta em {{path}}, mas a sessão dela não está em foco. Mude para ela na barra lateral ou clique no botão de novo.",
+      "followup_chat_not_created": "Não foi possível abrir o novo chat. Clique no botão de novo para tentar outra vez.",
+      "followup_chat_not_focused": "O novo chat foi criado, mas não foi possível colocá-lo em foco. Mude para ele na barra lateral."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 ignorada — atualmente selecionada)",

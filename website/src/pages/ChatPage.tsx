@@ -2912,56 +2912,40 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     return `followup/${slug || 'suggestion'}`
   }, [])
 
-  const followupStartInWorktree = useCallback(async (item: FollowupItem) => {
-    const repo = currentSlot?.project
-    if (!repo) throw new Error(i18nT('pages.chatPage.this_session_has_no_project_directory_to_branch'))
-    const originSlot = activeSlot
-    // Inherit the spawning session's sidebar folder, so a worktree started from
-    // a session filed under a project folder lands in that same folder instead
-    // of at the sidebar's top level (#6347). `currentSlot` IS the spawning
-    // session (it already supplies `.project` above), and its `folder_id` is
-    // undefined when that session is itself unfiled — in which case the new
-    // session lands top-level, exactly today's behaviour. No default folder is
-    // invented; unfiled stays unfiled.
-    const originFolderId = currentSlot?.folder_id
-    // Capture the card's ts up front so completion clears only THIS card. A
-    // newer card can arrive for the same slot while the request is in flight;
-    // without the guard the older action's completion would clobber it.
-    const originTs = originSlot ? followupTsRef.current[originSlot]?.ts : undefined
-    // Create the worktree FIRST: if git refuses (branch exists, not a repo),
-    // we must not have already spawned an empty session the user has to clean
-    // up. The card surfaces the thrown message inline.
-    const res = await api.createWorktree(repo, followupBranchFor(item))
-    const path = res?.path
-    if (!path) throw new Error(res?.error || i18nT('pages.chatPage.worktree_creation_returned_no_path'))
+  // The post-create half both spawn routes share: open a session (scoped to
+  // `project` when there is one), hand it the prompt, take the user to it, and
+  // only then clear the card. Every step fails CLOSED with the caller's message
+  // for that step, so a route can name what it already left behind (the
+  // worktree route names the reusable worktree) and no failure ever prefills
+  // an unrelated conversation.
+  const openFollowupSession = useCallback(async (
+    item: FollowupItem,
+    target: {
+      project?: string
+      folderId?: string | null
+      originSlot: string | null
+      originTs: number | undefined
+      fail: { notCreated: string; noSession: string; notOpened: string; notFocused: string }
+    },
+  ) => {
+    const { project, folderId, originSlot, originTs, fail } = target
     let slotKey = ''
     try {
-      // `activate: false` on purpose: the slot must be SCOPED to the worktree
+      // `activate: false` on purpose: the slot must be SCOPED to its directory
       // before the user can type into it. Activating first (the default) leaves a
       // window where the composer is live but `chatSlotProject` is still pending,
       // so a turn sent in that window would run in the default directory — agent
       // tools writing to the wrong checkout. It also means a scoping failure can
       // render its error on the still-mounted card instead of unmounting it.
-      const slot = await dispatch(createSlot({ mode, project: path, folder_id: originFolderId, activate: false })).unwrap()
+      const slot = await dispatch(createSlot({ mode, project, folder_id: folderId, activate: false })).unwrap()
       slotKey = slot?.key || ''
     } catch {
-      // The worktree exists but the session does not. Say so, and name the path:
-      // the create endpoint is idempotent for its own destination, so pressing
-      // the button again reuses this worktree instead of 409-ing on it.
-      throw new Error(
-        `Worktree created at ${path}, but its session could not be opened and scoped. ` +
-        'Press the button again to retry — the existing worktree will be reused.',
-      )
+      throw new Error(fail.notCreated)
     }
     // A fulfilled thunk with no key would skip every guard below (scoping,
     // activation, focus verification) and prefill whatever session is on screen
     // — the exact fail-open the docs promise not to do. Fail closed instead.
-    if (!slotKey) {
-      throw new Error(
-        `Worktree created at ${path}, but no session was returned. ` +
-        'Press the button again to retry — the existing worktree will be reused.',
-      )
-    }
+    if (!slotKey) throw new Error(fail.noSession)
     // Scoping is NOT done here: `createSlot({ activate: false })` awaits the
     // project assignment before it publishes the slot, and deletes the session if
     // that fails, so the slot is never reachable in an unscoped state. A failure
@@ -2970,9 +2954,9 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     // if the user switched sessions while the create was in flight. The
     // prefill below writes to the *active* composer, so without this the
     // prompt would land in whatever unrelated session is on screen and the new
-    // worktree session would open empty. The user asked for this worktree by
-    // clicking; take them to it — and if that fails, surface the error and
-    // keep the card rather than prefilling the wrong conversation.
+    // session would open empty. The user asked for this session by clicking;
+    // take them to it — and if that fails, surface the error and keep the card
+    // rather than prefilling the wrong conversation.
     // Read the store directly, NOT activeSlotRef: the ref is refreshed by a
     // render, and `unwrap()` resolves as soon as the reducer ran — so a stale
     // ref would report a failure (and skip the prefill) on a switch that in
@@ -2989,21 +2973,71 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       try {
         await dispatch(switchSlot(slotKey)).unwrap()
       } catch {
-        throw new Error(
-          `Worktree ready at ${path}, but its session could not be opened. ` +
-          'Switch to it in the sidebar, or press the button again.',
-        )
+        throw new Error(fail.notOpened)
       }
     }
-    if (store.getState().chat.activeSlot !== slotKey) {
-      throw new Error(
-        `Worktree ready at ${path}, but its session is not in focus. ` +
-        'Switch to it in the sidebar, or press the button again.',
-      )
-    }
+    if (store.getState().chat.activeSlot !== slotKey) throw new Error(fail.notFocused)
     dispatch(setPendingInput(item.prompt))
     if (originSlot) dispatch(clearFollowupCard({ slot: originSlot, ts: originTs }))
-  }, [currentSlot?.project, currentSlot?.folder_id, followupBranchFor, dispatch, mode, activeSlot])
+  }, [dispatch, mode])
+
+  // Both spawn routes file the new session in the spawning session's sidebar
+  // folder, so a follow-up started from a session filed under a project folder
+  // lands in that same folder instead of at the sidebar's top level.
+  // `currentSlot` IS the spawning session, and its `folder_id` is undefined
+  // when that session is itself unfiled — in which case the new session lands
+  // top-level. No default folder is invented; unfiled stays unfiled. The card's
+  // ts is captured up front so completion clears only THIS card: a newer card
+  // can arrive for the same slot while the request is in flight, and the older
+  // action's completion must not clobber it.
+  const followupOrigin = useCallback(() => ({
+    originSlot: activeSlot,
+    originTs: activeSlot ? followupTsRef.current[activeSlot]?.ts : undefined,
+    folderId: currentSlot?.folder_id,
+  }), [activeSlot, currentSlot?.folder_id])
+
+  const followupStartInWorktree = useCallback(async (item: FollowupItem) => {
+    const repo = currentSlot?.project
+    if (!repo) throw new Error(i18nT('pages.chatPage.this_session_has_no_project_directory_to_branch'))
+    const origin = followupOrigin()
+    // Create the worktree FIRST: if git refuses (branch exists, not a repo),
+    // we must not have already spawned an empty session the user has to clean
+    // up. The card surfaces the thrown message inline.
+    const res = await api.createWorktree(repo, followupBranchFor(item))
+    const path = res?.path
+    if (!path) throw new Error(res?.error || i18nT('pages.chatPage.worktree_creation_returned_no_path'))
+    // The worktree exists from here on, so every failure names its path: the
+    // create endpoint is idempotent for its own destination, so pressing the
+    // button again reuses this worktree instead of refusing it.
+    await openFollowupSession(item, {
+      ...origin,
+      project: path,
+      fail: {
+        notCreated: i18nT('pages.chatPage.followup_worktree_session_not_created', { path }),
+        noSession: i18nT('pages.chatPage.followup_worktree_no_session_returned', { path }),
+        notOpened: i18nT('pages.chatPage.followup_worktree_session_not_opened', { path }),
+        notFocused: i18nT('pages.chatPage.followup_worktree_session_not_focused', { path }),
+      },
+    })
+  }, [currentSlot?.project, followupBranchFor, followupOrigin, openFollowupSession])
+
+  // The route for a session that has no repository to branch: a plain new chat
+  // in the spawning session's project directory (where a new chat starts by
+  // default when it has none), with no git call at all. Pressing the button
+  // again after a failure opens another chat, so the not-opened and
+  // not-focused messages point at the sidebar instead of a retry.
+  const followupStartInNewChat = useCallback(async (item: FollowupItem) => {
+    await openFollowupSession(item, {
+      ...followupOrigin(),
+      project: currentSlot?.project || undefined,
+      fail: {
+        notCreated: i18nT('pages.chatPage.followup_chat_not_created'),
+        noSession: i18nT('pages.chatPage.followup_chat_not_created'),
+        notOpened: i18nT('pages.chatPage.followup_chat_not_focused'),
+        notFocused: i18nT('pages.chatPage.followup_chat_not_focused'),
+      },
+    })
+  }, [currentSlot?.project, followupOrigin, openFollowupSession])
 
   // Outside events feeding the side panel, the dock terminal and the composer,
   // then the cold file tabs' reads.
@@ -6373,6 +6407,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                     projectIsRepo={projectGitError ? undefined : projectGit?.repo}
                     onAddToSession={followupAddToSession}
                     onStartInWorktree={followupStartInWorktree}
+                    onStartInNewChat={followupStartInNewChat}
                     onSkip={(index) => dispatch(dismissFollowupItem({ slot: activeSlot, index, ts: pendingFollowup.ts }))}
                   />
                 </div>

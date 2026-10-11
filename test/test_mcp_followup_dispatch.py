@@ -99,12 +99,13 @@ class TestSuggestFollowupApplier:
         assert "restate" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_unscoped_slot_warns_that_the_worktree_button_is_disabled(self):
-        """A slot with no project directory renders the card's 'Start in new
-        worktree' button DISABLED (FollowUpCard.tsx gates on projectDir). The
-        confirmation is the model's only window into that, so it must say so —
-        otherwise the agent recommends a route that cannot work (Research Lab
-        worker slots are always unscoped: auto_research/handlers.py)."""
+    async def test_unscoped_slot_says_the_card_offers_a_new_chat(self):
+        """A slot with no project directory has no repository to branch, so the
+        card's first button is 'Start in new chat' rather than the worktree
+        route (FollowUpCard.tsx gates on projectDir). The confirmation is the
+        model's only window into that, so it must name the button the user
+        sees (Research Lab worker slots are always unscoped:
+        auto_research/handlers.py)."""
 
         async def deliver_ws_owners(event, payload):
             return 1
@@ -120,7 +121,8 @@ class TestSuggestFollowupApplier:
             producer_is_user_facing=True,
         )
         assert "no project directory" in result.lower()
-        assert "add to this session" in result.lower()
+        assert "start in new chat" in result.lower()
+        assert "disabled" not in result.lower()
         # Still a success, not an error: the card WAS shown.
         assert "error" not in result.lower()
 

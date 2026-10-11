@@ -6875,10 +6875,13 @@
       "start_in_new_worktree": "In neuem Worktree starten",
       "suggested_follow_up_one": "Vorgeschlagene Folgefrage",
       "suggested_follow_up_other": "Vorgeschlagene Folgefragen",
-      "project_directory_is_not_a_git_repository": "{{path}} ist kein Git-Repository, daher gibt es kein Repository, von dem verzweigt werden kann",
-      "this_session_has_no_project_directory_so_there_i": "Diese Sitzung hat kein Projektverzeichnis, daher gibt es kein Repository, von dem verzweigt werden kann",
-      "worktree_disabled_no_project_directory": "„Zu dieser Sitzung hinzufügen“ füllt das Eingabefeld vor — es wird nichts gesendet, bis Sie auf Senden drücken. Worktrees sind hier nicht verfügbar: Diese Sitzung hat kein Projektverzeichnis (wählen Sie eines über den Projekt-Chip des Eingabefelds).",
-      "worktree_disabled_not_a_git_repository": "„Zu dieser Sitzung hinzufügen“ füllt das Eingabefeld vor — es wird nichts gesendet, bis du auf Senden drückst. Worktrees sind hier nicht verfügbar: Das Projektverzeichnis dieser Sitzung ist kein Git-Repository (wähle ein Git-Repository über den Projekt-Chip des Eingabefelds)."
+      "start_in_new_chat": "In neuem Chat starten",
+      "opening_new_chat": "Chat wird geöffnet…",
+      "failed_to_open_new_chat": "Neuer Chat konnte nicht geöffnet werden",
+      "open_new_chat_in_project": "Einen neuen Chat in {{path}} ohne Worktree öffnen, da es kein Git-Repository ist",
+      "open_new_chat": "Einen neuen Chat ohne Worktree öffnen, da diese Sitzung kein Projektverzeichnis hat",
+      "new_chat_footer_not_a_git_repository": "Beide Aktionen füllen ein Eingabefeld vor — es wird nichts gesendet, bis du auf Senden drückst. Das Projektverzeichnis dieser Sitzung ist kein Git-Repository, daher öffnet sich der neue Chat dort ohne Worktree.",
+      "new_chat_footer_no_project_directory": "Beide Aktionen füllen ein Eingabefeld vor — es wird nichts gesendet, bis du auf Senden drückst. Diese Sitzung hat kein Projektverzeichnis, daher öffnet sich der neue Chat ohne Worktree."
     },
     "inboundLinkChip": {
       "driven_from": "Gesteuert von {{label}}",
@@ -11882,7 +11885,13 @@
       "run_in_terminal_copy_failed_error": "Der Befehl konnte nicht kopiert werden, daher wurde nichts an das Terminal gesendet. Kopiere ihn aus dem Codeblock und füge ihn selbst ein.",
       "run_in_terminal_no_tab_error": "Der Befehl konnte nicht ausgeführt werden: Es ließ sich kein neues Terminal öffnen, weil bereits zu viele offen sind. Schließe eines und versuche es erneut.",
       "run_in_terminal_cwd_pending_error": "Der Befehl konnte nicht ausgeführt werden: Das Arbeitsverzeichnis dieses Chats ist noch nicht geladen. Versuche es gleich noch einmal.",
-      "run_in_terminal_config_read_failed_error": "Deine Terminal-Einstellungen konnten nicht gelesen werden, daher wurde „das aktuelle Terminal wiederverwenden“ übersprungen und der Befehl in einem neuen Terminal geöffnet. Lade neu, um es erneut zu versuchen."
+      "run_in_terminal_config_read_failed_error": "Deine Terminal-Einstellungen konnten nicht gelesen werden, daher wurde „das aktuelle Terminal wiederverwenden“ übersprungen und der Befehl in einem neuen Terminal geöffnet. Lade neu, um es erneut zu versuchen.",
+      "followup_worktree_session_not_created": "Worktree unter {{path}} erstellt, aber die zugehörige Sitzung konnte nicht geöffnet und zugeordnet werden. Drücke die Schaltfläche erneut, um es noch einmal zu versuchen — der vorhandene Worktree wird wiederverwendet.",
+      "followup_worktree_no_session_returned": "Worktree unter {{path}} erstellt, aber es wurde keine Sitzung zurückgegeben. Drücke die Schaltfläche erneut, um es noch einmal zu versuchen — der vorhandene Worktree wird wiederverwendet.",
+      "followup_worktree_session_not_opened": "Worktree unter {{path}} ist bereit, aber die zugehörige Sitzung konnte nicht geöffnet werden. Wechsle in der Seitenleiste zu ihr oder drücke die Schaltfläche erneut.",
+      "followup_worktree_session_not_focused": "Worktree unter {{path}} ist bereit, aber die zugehörige Sitzung ist nicht im Fokus. Wechsle in der Seitenleiste zu ihr oder drücke die Schaltfläche erneut.",
+      "followup_chat_not_created": "Der neue Chat konnte nicht geöffnet werden. Drücke die Schaltfläche erneut, um es noch einmal zu versuchen.",
+      "followup_chat_not_focused": "Der neue Chat wurde erstellt, konnte aber nicht in den Fokus geholt werden. Wechsle in der Seitenleiste zu ihm."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 übersprungen — aktuell ausgewählt)",

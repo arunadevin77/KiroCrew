@@ -6765,10 +6765,13 @@
       "skip": "跳过",
       "start_in_new_worktree": "在新工作树中开始",
       "suggested_follow_up_other": "建议的后续操作",
-      "project_directory_is_not_a_git_repository": "{{path}} 不是 git 仓库，因此没有可用于开分支的仓库",
-      "this_session_has_no_project_directory_so_there_i": "此会话没有项目目录路径，因此没有可用于开分支的仓库",
-      "worktree_disabled_no_project_directory": "“添加到此会话”只是预填输入框 — 在你按下发送前不会发送任何内容。此处无法使用工作树：此会话没有项目目录（可通过输入框的“项目”按钮选择一个）。",
-      "worktree_disabled_not_a_git_repository": "“添加到此会话”只是预填输入框 — 在你按下发送前不会发送任何内容。此处无法使用工作树：此会话的项目目录不是 git 仓库（可通过输入框的“项目”按钮选择一个 git 仓库）。"
+      "start_in_new_chat": "在新聊天中开始",
+      "opening_new_chat": "正在打开聊天…",
+      "failed_to_open_new_chat": "无法打开新聊天",
+      "open_new_chat_in_project": "在 {{path}} 中打开新聊天，不创建工作树，因为它不是 git 仓库",
+      "open_new_chat": "打开新聊天，不创建工作树，因为此会话没有项目目录",
+      "new_chat_footer_not_a_git_repository": "两种操作都只是预填输入框 — 在你按下发送前不会发送任何内容。此会话的项目目录不是 git 仓库，因此新聊天会在该目录中打开，且不创建工作树。",
+      "new_chat_footer_no_project_directory": "两种操作都只是预填输入框 — 在你按下发送前不会发送任何内容。此会话没有项目目录，因此新聊天打开时不会创建工作树。"
     },
     "inboundLinkChip": {
       "driven_from": "由 {{label}} 驱动",
@@ -11715,7 +11718,13 @@
       "run_in_terminal_copy_failed_error": "命令无法复制，因此没有发送到终端。请从代码块中自行复制并粘贴。",
       "run_in_terminal_no_tab_error": "命令无法运行：已打开的终端太多，无法再新开一个。请关闭一个后重试。",
       "run_in_terminal_cwd_pending_error": "命令无法运行：此聊天的工作目录尚未加载。请稍后重试。",
-      "run_in_terminal_config_read_failed_error": "无法读取你的终端设置，因此已跳过“复用当前终端”，命令改为在新终端中打开。请重新加载后重试。"
+      "run_in_terminal_config_read_failed_error": "无法读取你的终端设置，因此已跳过“复用当前终端”，命令改为在新终端中打开。请重新加载后重试。",
+      "followup_worktree_session_not_created": "已在 {{path}} 创建工作树，但无法打开其会话并设置作用域。再次按下按钮即可重试 — 将复用现有工作树。",
+      "followup_worktree_no_session_returned": "已在 {{path}} 创建工作树，但未返回会话。再次按下按钮即可重试 — 将复用现有工作树。",
+      "followup_worktree_session_not_opened": "{{path}} 处的工作树已就绪，但无法打开其会话。请在侧边栏中切换过去，或再次按下按钮。",
+      "followup_worktree_session_not_focused": "{{path}} 处的工作树已就绪，但其会话未获得焦点。请在侧边栏中切换过去，或再次按下按钮。",
+      "followup_chat_not_created": "无法打开新聊天。再次按下按钮即可重试。",
+      "followup_chat_not_focused": "新聊天已创建，但无法切换到它。请在侧边栏中切换过去。"
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "（跳过 1 个 — 当前已选中）",

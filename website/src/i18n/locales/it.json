@@ -6985,10 +6985,13 @@
       "suggested_follow_up_many": "Follow-up suggeriti",
       "suggested_follow_up_one": "Follow-up suggerito",
       "suggested_follow_up_other": "Follow-up suggeriti",
-      "project_directory_is_not_a_git_repository": "{{path}} non è un repository git, quindi non c'è un repository da cui creare un branch",
-      "this_session_has_no_project_directory_so_there_i": "Questa sessione non ha una directory di progetto, quindi non c'è un repository da cui creare un branch",
-      "worktree_disabled_no_project_directory": "\"Aggiungi a questa sessione\" precompila il campo di scrittura — nulla viene inviato finché non premi invia. I worktree non sono disponibili qui: questa sessione non ha una directory di progetto (scegline una con il chip Progetto del campo di scrittura).",
-      "worktree_disabled_not_a_git_repository": "\"Aggiungi a questa sessione\" precompila il campo di scrittura — nulla viene inviato finché non premi invia. I worktree non sono disponibili qui: la directory di progetto di questa sessione non è un repository git (scegli un repository git con il chip Progetto del campo di scrittura)."
+      "start_in_new_chat": "Avvia in una nuova chat",
+      "opening_new_chat": "Apertura della chat…",
+      "failed_to_open_new_chat": "Impossibile aprire una nuova chat",
+      "open_new_chat_in_project": "Apri una nuova chat in {{path}} senza worktree, perché non è un repository git",
+      "open_new_chat": "Apri una nuova chat senza worktree, perché questa sessione non ha una directory di progetto",
+      "new_chat_footer_not_a_git_repository": "Entrambe le azioni precompilano un campo di scrittura — nulla viene inviato finché non premi invia. La directory di progetto di questa sessione non è un repository git, quindi la nuova chat si apre lì senza worktree.",
+      "new_chat_footer_no_project_directory": "Entrambe le azioni precompilano un campo di scrittura — nulla viene inviato finché non premi invia. Questa sessione non ha una directory di progetto, quindi la nuova chat si apre senza worktree."
     },
     "inboundLinkChip": {
       "driven_from": "Pilotata da {{label}}",
@@ -12049,7 +12052,13 @@
       "run_in_terminal_copy_failed_error": "Non è stato possibile copiare il comando, quindi non è stato inviato nulla al terminale. Copialo dal blocco di codice e incollalo tu stesso.",
       "run_in_terminal_no_tab_error": "Impossibile eseguire il comando: non è stato possibile aprire un nuovo terminale perché ce ne sono già troppi aperti. Chiudine uno e riprova.",
       "run_in_terminal_cwd_pending_error": "Impossibile eseguire il comando: la directory di lavoro di questa chat non è ancora stata caricata. Riprova tra un momento.",
-      "run_in_terminal_config_read_failed_error": "Non è stato possibile leggere le impostazioni del terminale, quindi «riutilizza il terminale corrente» è stato saltato e il comando è stato aperto in un nuovo terminale. Ricarica per riprovare."
+      "run_in_terminal_config_read_failed_error": "Non è stato possibile leggere le impostazioni del terminale, quindi «riutilizza il terminale corrente» è stato saltato e il comando è stato aperto in un nuovo terminale. Ricarica per riprovare.",
+      "followup_worktree_session_not_created": "Worktree creato in {{path}}, ma non è stato possibile aprire e associare la sua sessione. Premi di nuovo il pulsante per riprovare — il worktree esistente verrà riutilizzato.",
+      "followup_worktree_no_session_returned": "Worktree creato in {{path}}, ma non è stata restituita alcuna sessione. Premi di nuovo il pulsante per riprovare — il worktree esistente verrà riutilizzato.",
+      "followup_worktree_session_not_opened": "Worktree pronto in {{path}}, ma non è stato possibile aprire la sua sessione. Passa alla sessione dalla barra laterale o premi di nuovo il pulsante.",
+      "followup_worktree_session_not_focused": "Worktree pronto in {{path}}, ma la sua sessione non è in primo piano. Passa alla sessione dalla barra laterale o premi di nuovo il pulsante.",
+      "followup_chat_not_created": "Impossibile aprire la nuova chat. Premi di nuovo il pulsante per riprovare.",
+      "followup_chat_not_focused": "La nuova chat è stata creata, ma non è stato possibile portarla in primo piano. Passa alla chat dalla barra laterale."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 saltata — attualmente selezionata)",

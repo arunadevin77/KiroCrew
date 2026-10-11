@@ -65,7 +65,7 @@ index, first-time setup, and connecting messaging channels.
 | [Inbound Webhooks](inbound-webhooks.md) | Let an external system trigger an agent turn over HTTP — named tokens, HMAC request signing, a reversible off switch, ephemeral sessions, `register_hook` resume context |
 | [Feature Tips](feature-tips.md) | Occasional personalized tips above the composer pointing at features you have not used yet |
 | [Feature Videos](feature-videos.md) | Short recorded intro clips for features this install has not used yet, picked by a deterministic rule set |
-| [Follow-up Suggestions](followup-suggestions.md) | Agent-proposed next steps above the composer: start in a new git worktree, add to this session, or skip |
+| [Follow-up Suggestions](followup-suggestions.md) | Agent-proposed next steps above the composer: start in a new chat (in a new git worktree when the project is a git repository), add to this session, or skip |
 | [Queued-Message Editing](dashboard.md) | Edit, reorder, or cancel a chat message waiting in the queue before it runs |
 | [Cooperative Stop](dashboard.md) | Stop sends a cancel first and only hard-kills after a budget, so session state survives |
 | [Streaming Speech-to-Text](configuration.md) | Live transcription partials in the dashboard input, with local Whisper, the macOS on-device recognizer, or optional AWS Transcribe |

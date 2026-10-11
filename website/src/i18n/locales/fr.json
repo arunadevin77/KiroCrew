@@ -6985,10 +6985,13 @@
       "suggested_follow_up_many": "Suivis suggérés",
       "suggested_follow_up_one": "Suivi suggéré",
       "suggested_follow_up_other": "Suivis suggérés",
-      "project_directory_is_not_a_git_repository": "{{path}} n’est pas un dépôt git, il n’y a donc aucun dépôt d’où créer une branche",
-      "this_session_has_no_project_directory_so_there_i": "Cette session n’a pas de répertoire de projet, il n’y a donc aucun dépôt d’où créer une branche",
-      "worktree_disabled_no_project_directory": "« Ajouter à cette session » pré-remplit le champ de saisie — rien n'est envoyé avant que vous appuyiez sur Envoyer. Les worktrees ne sont pas disponibles ici : cette session n'a pas de répertoire de projet (choisissez-en un via la puce Projet du champ de saisie).",
-      "worktree_disabled_not_a_git_repository": "« Ajouter à cette session » pré-remplit le champ de saisie — rien n’est envoyé avant que tu appuies sur Envoyer. Les worktrees ne sont pas disponibles ici : le répertoire de projet de cette session n’est pas un dépôt git (choisis un dépôt git via la puce Projet du champ de saisie)."
+      "start_in_new_chat": "Démarrer dans un nouveau chat",
+      "opening_new_chat": "Ouverture du chat…",
+      "failed_to_open_new_chat": "Impossible d’ouvrir un nouveau chat",
+      "open_new_chat_in_project": "Ouvrir un nouveau chat dans {{path}} sans worktree, car ce n’est pas un dépôt git",
+      "open_new_chat": "Ouvrir un nouveau chat sans worktree, car cette session n’a aucun répertoire de projet",
+      "new_chat_footer_not_a_git_repository": "Les deux actions pré-remplissent un champ de saisie — rien n’est envoyé avant que tu appuies sur Envoyer. Le répertoire de projet de cette session n’est pas un dépôt git, donc le nouveau chat s’y ouvre sans worktree.",
+      "new_chat_footer_no_project_directory": "Les deux actions pré-remplissent un champ de saisie — rien n’est envoyé avant que tu appuies sur Envoyer. Cette session n’a aucun répertoire de projet, donc le nouveau chat s’ouvre sans worktree."
     },
     "inboundLinkChip": {
       "driven_from": "Pilotée depuis {{label}}",
@@ -12049,7 +12052,13 @@
       "run_in_terminal_copy_failed_error": "La commande n'a pas pu être copiée, donc rien n'a été envoyé au terminal. Copie-la depuis le bloc de code et colle-la toi-même.",
       "run_in_terminal_no_tab_error": "La commande n'a pas pu s'exécuter : impossible d'ouvrir un nouveau terminal, car trop de terminaux sont déjà ouverts. Fermes-en un et réessaie.",
       "run_in_terminal_cwd_pending_error": "La commande n'a pas pu s'exécuter : le répertoire de travail de ce chat n'est pas encore chargé. Réessaie dans un instant.",
-      "run_in_terminal_config_read_failed_error": "Tes paramètres de terminal n'ont pas pu être lus ; « réutiliser le terminal actuel » a donc été ignoré et la commande a été ouverte dans un nouveau terminal. Recharge pour réessayer."
+      "run_in_terminal_config_read_failed_error": "Tes paramètres de terminal n'ont pas pu être lus ; « réutiliser le terminal actuel » a donc été ignoré et la commande a été ouverte dans un nouveau terminal. Recharge pour réessayer.",
+      "followup_worktree_session_not_created": "Worktree créé dans {{path}}, mais sa session n’a pas pu être ouverte et rattachée. Appuie à nouveau sur le bouton pour réessayer — le worktree existant sera réutilisé.",
+      "followup_worktree_no_session_returned": "Worktree créé dans {{path}}, mais aucune session n’a été renvoyée. Appuie à nouveau sur le bouton pour réessayer — le worktree existant sera réutilisé.",
+      "followup_worktree_session_not_opened": "Worktree prêt dans {{path}}, mais sa session n’a pas pu être ouverte. Bascule dessus dans la barre latérale, ou appuie à nouveau sur le bouton.",
+      "followup_worktree_session_not_focused": "Worktree prêt dans {{path}}, mais sa session n’a pas le focus. Bascule dessus dans la barre latérale, ou appuie à nouveau sur le bouton.",
+      "followup_chat_not_created": "Impossible d’ouvrir le nouveau chat. Appuie à nouveau sur le bouton pour réessayer.",
+      "followup_chat_not_focused": "Le nouveau chat a été créé, mais n’a pas pu prendre le focus. Bascule dessus dans la barre latérale."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 ignorée — actuellement sélectionnée)",

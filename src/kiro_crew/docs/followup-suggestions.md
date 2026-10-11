@@ -2,7 +2,8 @@
 
 At the end of a turn the agent can offer concrete next steps as a card above the
 chat composer. Each suggestion carries an **expanded handoff prompt** and three
-actions: start it in a new git worktree, add it to the current session, or skip.
+actions: start it in a new chat (in a new git worktree when the project is a git
+repository), add it to the current session, or skip.
 
 Both non-skip actions **pre-fill a composer and stop**. Nothing is sent until
 you press send, so a single click can never launch an unattended agent turn.
@@ -36,7 +37,8 @@ Calling the tool is the agent's own judgement call; there is no turn-boundary ho
 
 | Action | Effect |
 | --- | --- |
-| **Start in new worktree** | Creates `<parent>/<repo>-wt-<slug>` on a new branch off the repo's default branch, opens a new chat session scoped to that directory, and pre-fills its composer with the prompt. Disabled — and demoted from the accent style to the secondary look — when the session has no project directory, or its project directory is not a git repository; the card footer says why. With no project directory the tool result also tells the agent, so it can steer to "Add to this session" instead. |
+| **Start in new worktree** | Shown when the session's project directory is a git repository (or the repository check has not answered yet). Creates `<parent>/<repo>-wt-<slug>` on a new branch off the repo's default branch, opens a new chat session scoped to that directory, and pre-fills its composer with the prompt. |
+| **Start in new chat** | Takes the worktree button's place when the session has no project directory, or its project directory is not a git repository. Opens a new chat session in the same project directory (or, when the session has none, wherever a new chat starts by default) and the same sidebar folder, with no worktree and no git call, and pre-fills its composer with the prompt. The card footer says why no worktree is created. With no project directory the tool result also tells the agent which button the card shows. |
 | **Add to this session** | Pre-fills the current session's composer with the prompt. An unsent draft is preserved — the prompt is appended below it, not written over it. |
 | **Skip** | Dismisses that one suggestion; siblings remain. The card disappears when its last item is gone. |
 
