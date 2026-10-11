@@ -600,12 +600,29 @@ class TestScoutShellCapability:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("stage", ["prepush", "discovery"])
     async def test_git_request_is_available_but_only_review_can_approve_it(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, stage: str
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        stage: str,
     ) -> None:
         template_path = Path(agent_runner_mod.__file__).parents[1] / "agents" / "scout.json"
         template = json.loads(template_path.read_text(encoding="utf-8"))
         assert "execute_bash" in template["tools"]
         assert template["allowedTools"] == []
+
+        # Pin the PLATFORM governance gate open so this test exercises ONLY the
+        # app-local allowlist/approval path it asserts. ``_governance_denial`` runs
+        # before both decisions and resolves sensitive paths through the subprocess
+        # pool; in a test host that cannot spawn that worker (and whose ``_refuse``
+        # guard forbids it), the resolver cannot finish within its wall-clock budget
+        # and the gate fails closed non-deterministically — refusing ``git diff`` as
+        # a governance deny on a slow or loaded shard before the allowlist branch
+        # runs, so ``approve_tool`` / ``reject_tool`` is never awaited and the
+        # allowlist-deny log line is absent. Allowing the gate here keeps the test
+        # free of that timing and subprocess dependency; the gate is covered by its
+        # own tests.
+        monkeypatch.setattr(agent_runner_mod, "_governance_denial", lambda *a, **k: "")
 
         provider = SimpleNamespace(
             approve_tool=AsyncMock(return_value=None),
