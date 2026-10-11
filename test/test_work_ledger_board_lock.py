@@ -11,19 +11,27 @@ from kiro_crew.dashboard.handlers import work_ledger as routes
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, _floor_monkeypatch):
     _floor_monkeypatch.setenv("KIROCREW_HOME", str(tmp_path / "home"))
-    routes._BOARD_LOCKS.clear()
+    _board_entries().clear()
     yield
-    routes._BOARD_LOCKS.clear()
+    _board_entries().clear()
 
 
 BOUND = 10.0
 
 
+def _board_entries() -> dict:
+    """The board registry's entries, read so the tests do not depend on how the
+    registry stores them: a ``_KeyedLocks`` keeps them in ``_locks``, a plain dict
+    of locks is its own entry map."""
+    registry = routes._BOARD_LOCKS
+    return getattr(registry, "_locks", registry)
+
+
 def _waiting_on(slot: str) -> int:
     """How many tasks wait on *slot*'s board lock, read on the ``asyncio.Lock``
-    itself so the count does not depend on how the map stores it."""
-    entry = routes._BOARD_LOCKS.get(slot)
-    lock = getattr(entry, "lock", entry)
+    itself so the count does not depend on how the registry stores it."""
+    entry = _board_entries().get(slot)
+    lock = entry[0] if isinstance(entry, tuple) else entry
     return len(getattr(lock, "_waiters", None) or ())
 
 
@@ -43,7 +51,8 @@ async def test_a_finished_session_leaves_no_board_lock_behind():
         key = session_ledger.ledger_key(f"dashboard:chat-{i}-1791000000")
         async with routes._board_lock(key):
             pass
-    assert len(routes._BOARD_LOCKS) == 0, f"{len(routes._BOARD_LOCKS)} board locks kept"
+    kept = len(_board_entries())
+    assert kept == 0, f"{kept} board locks kept"
 
 
 @pytest.mark.asyncio
@@ -51,7 +60,7 @@ async def test_a_use_that_raises_leaves_no_board_lock_behind():
     with pytest.raises(LookupError):
         async with routes._board_lock("chat-refused"):
             raise LookupError("not this caller's ledger")
-    assert routes._BOARD_LOCKS == {}
+    assert _board_entries() == {}
 
 
 @pytest.mark.asyncio
@@ -77,7 +86,7 @@ async def test_two_writers_to_one_board_still_take_turns():
     await asyncio.wait_for(first_in.wait(), BOUND)
     await _until_waiting("chat-one", 1)
     assert order == ["first in"]
-    assert len(routes._BOARD_LOCKS) == 1
+    assert len(_board_entries()) == 1
     let_first_go.set()
     await asyncio.wait_for(asyncio.gather(a, b), BOUND)
     assert order == ["first in", "first out", "second in"]
@@ -109,7 +118,7 @@ async def test_a_cancelled_waiter_takes_nothing_from_the_holder():
     w.cancel()
     with pytest.raises(asyncio.CancelledError):
         await w
-    assert len(routes._BOARD_LOCKS) == 1
+    assert len(_board_entries()) == 1
     n = asyncio.ensure_future(newcomer())
     await _until_waiting("chat-one", 1)
     assert not newcomer_in.is_set()
