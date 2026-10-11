@@ -143,6 +143,12 @@ export const SHORTCUT_REGISTRY: readonly ShortcutEntry[] = [
     defaults: mac({ key: '`', ctrl: true, alt: true }, { key: '`', alt: true }) },
   { id: 'chat-mru-back', group: 'chat-navigation', dispatch: 'code',
     defaults: mac({ key: '`', ctrl: true, alt: true, shift: true }, { key: '`', alt: true, shift: true }) },
+  // Previous/next turn of the open chat — the pinned-prompt jump, stepped from
+  // the keyboard (pages/chat/turnStep). Alt+↑/↓ on both platforms, the vertical
+  // twin of Alt+←/→ above, and like it kept out of text fields, where
+  // Option+↑/↓ is paragraph movement on macOS.
+  { id: 'turn-prev', group: 'chat-navigation', dispatch: 'code', defaults: both({ key: 'ArrowUp', alt: true }) },
+  { id: 'turn-next', group: 'chat-navigation', dispatch: 'code', defaults: both({ key: 'ArrowDown', alt: true }) },
   // ---- Panel navigation (code-driven: CORE_PANEL_MAP + the extension seam) ---
   { id: 'nav-chat', group: 'panel-navigation', dispatch: 'code', defaults: both({ key: 'c', alt: true }) },
   { id: 'nav-notifications', group: 'panel-navigation', dispatch: 'code', defaults: both({ key: 'n', alt: true }) },

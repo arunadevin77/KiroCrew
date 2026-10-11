@@ -107,6 +107,7 @@ import EarlierMessagesBar from './chat/EarlierMessagesBar'
 import TranscriptScrollShell, { useTranscriptWidth } from './chat/TranscriptScrollShell'
 import { devLog, devWatchMessages, inspectorOn } from '../dev/scrollInspector'
 import TurnNavigationMinimap from './chat/TurnNavigationMinimap'
+import { useTurnStepper } from './chat/useTurnStepper'
 import { useVirtualChat } from '../hooks/virtualizer/useVirtualChat'
 import { carryPastes, expandAll as expandPasteTokens, mergeCarriedDraft } from '../utils/pasteTokens'
 import { extractPromptFromToken, extractSlackContextFromToken } from '../utils/tokenPrompt'
@@ -1739,6 +1740,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     scrollTranscriptBy,
     updatePinnedPrompt,
     onScrollPin,
+    pinnedJumpChrome,
     scrollToPinnedPrompt,
   } = transcriptEarly
 
@@ -4001,6 +4003,19 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // landing history page by one deferred commit -- deliberate, and harmless for
   // a side panel.
   const chatNav = useChatNavigation(renderedTranscript.messages, messageToDisplayIdx)
+  // Alt+↑ / Alt+↓ step through the same turns by way of the pinned-prompt jump.
+  // Single chat only: split view draws its sessions as panes, a crew window
+  // covers this transcript, and an embedded chat is not the page the keyboard
+  // drives.
+  const turnStepAnnouncement = useTurnStepper({
+    active: !embedded && !(splitMode && splitFeatureEnabled) && !crewWindow && !isWelcomeState && !!activeSlot,
+    turns: chatNav.sections,
+    windowed: slotHasMore && cursorIsForActiveSlot,
+    scrollerRef,
+    landingInset: pinnedJumpChrome,
+    jump: scrollToPinnedPrompt,
+    setHighlightTs,
+  })
 
   // ── Chat Pins ──────────────────────────────────────────────────────────────
   const {
@@ -6017,6 +6032,8 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               </motion.div>
             ) : (
             <>
+            {/* Speaks the turn an Alt+↑ / Alt+↓ step landed on. */}
+            <span className="sr-only" aria-live="polite" aria-atomic="true">{turnStepAnnouncement}</span>
             <TurnNavigationMinimap
               items={chatNav.sections}
               scrollerRef={scrollerRef}

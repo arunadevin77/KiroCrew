@@ -38,6 +38,7 @@ import { useGuardedHistoryStep } from '../components/NavigationLeaveGuard'
 import { MOBILE_BREAKPOINT } from './useIsMobile'
 import { isEditableTarget } from '../utils/editableTarget'
 import { closeShownCrewWindow, crewWindowShown } from '../pages/chat/crew-window/crewWindowStore'
+import { stepTurn } from '../pages/chat/turnStep'
 
 /** Shortcuts scoped to the session on screen (see the crew-window guard). */
 const CREW_WINDOW_SCOPED: ReadonlySet<string> = new Set([
@@ -255,6 +256,8 @@ export const SHORTCUT_LABEL_KEY: Record<string, string> = {
   'chat-next-bracket': 'hooks.useKeyboardShortcuts.next_chat',
   'chat-mru': 'hooks.useKeyboardShortcuts.last_visited_chat_mru',
   'chat-mru-back': 'hooks.useKeyboardShortcuts.walk_back_mru_history',
+  'turn-prev': 'hooks.useKeyboardShortcuts.previous_prompt',
+  'turn-next': 'hooks.useKeyboardShortcuts.next_prompt',
   'nav-chat': 'hooks.useKeyboardShortcuts.chats_panel',
   'nav-notifications': 'hooks.useKeyboardShortcuts.notifications_panel',
   'nav-projects': 'hooks.useKeyboardShortcuts.projects_panel',
@@ -379,6 +382,11 @@ export const RESERVED_PANEL_CODES: ReadonlySet<string> = new Set<string>([
   'Backquote', // MRU toggle (Alt+`)
   'ArrowLeft',
   'ArrowRight', // prev/next chat
+  // prev/next turn of the open chat (Alt+↑/↓), read off the registry: a named
+  // key's chord token is its code
+  ...SHORTCUT_REGISTRY
+    .filter(e => e.id === 'turn-prev' || e.id === 'turn-next')
+    .flatMap(e => (e.defaults.other ? [e.defaults.other.key] : [])),
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
   'Digit6', 'Digit7', 'Digit8', 'Digit9', // chat jump
 ])
@@ -1108,6 +1116,18 @@ export function useKeyboardShortcuts({ onToggleShortcutsModal, onNewChat, onCycl
       const nextIdx = wrapIndex(orderedSlots.length, curIdx, code === 'ArrowLeft' ? -1 : 1)
       if (nextIdx < 0) return
       kbSwitch(orderedSlots[nextIdx].key)
+      return
+    }
+
+    // Alt+↑/↓: previous/next turn of the open chat (turn-prev / turn-next).
+    // Kept out of text fields like Alt+←/→ (Option+↑/↓ moves the caret by
+    // paragraph on macOS) and out of a keystroke a focused control already
+    // claimed (the turn minimap steps its own selection on any ↑/↓).
+    // Claimed only when a transcript took the step, so on any other page the
+    // browser keeps the chord. The chat page does not register its stepper
+    // while a crew window covers its transcript. Shift is left free.
+    if ((code === 'ArrowUp' || code === 'ArrowDown') && !e.shiftKey && !isInput && !e.defaultPrevented) {
+      if (stepTurn(code === 'ArrowUp' ? -1 : 1)) e.preventDefault()
       return
     }
 
