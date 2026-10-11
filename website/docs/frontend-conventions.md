@@ -451,7 +451,7 @@ href resolves to the current page — matching `md-notebook/Preview.tsx`'s
 destination the transform rejects is pinning a defect.
 
 One deliberate, key-scoped exception exists: a Windows absolute path
-(`WINDOWS_ABS_PATH_RE` — drive letter or UNC) is passed through **for image
+(`WINDOWS_ABS_PATH_RE` — a drive-letter path) is passed through **for image
 `src` only**, because `defaultUrlTransform` parses `C:` as an unknown scheme and
 would blank the sender's own uploaded image (issue #3497). The invariant that
 makes it safe: `ImgWithFallback` (`components/markdown/ImgWithFallback.tsx`)
@@ -468,6 +468,25 @@ To SHOW a gateway path's file name, use `pathBasename` (and
 split shows whole. The helper treats `\` as a separator only in a drive-rooted
 or backslash-UNC path, because on POSIX a backslash is a legal file-name
 character. It is display-only and decides nothing about which paths may be read.
+
+## Serving under a URL sub-path (`KIROCREW_BASE_PATH`)
+
+The dashboard can be built to live under a URL prefix (e.g. behind a reverse
+proxy at `/proxy/kirocrew/`) with `KIROCREW_BASE_PATH=/proxy/kirocrew npm run
+build`; see [Behind a reverse proxy at a sub-path](../../docs/guides/remote-and-mobile.md#behind-a-reverse-proxy-at-a-sub-path).
+The value is read once at build time and becomes Vite's `base`. `src/lib/basePath.ts`
+exposes it as `BASE_PATH` (`''` in the stock root build, so every helper is the
+identity).
+
+The transport shims (`installBasePathShims`) and DOM shims
+(`installBasePathDomShims`) rebase `fetch`, `WebSocket`, `EventSource` and
+URL-valued attributes automatically, so most call sites need no change. But a
+dynamic `import()`, a `window.location` navigation, an `AudioWorklet.addModule`
+load and a direct `window.location.pathname` read reach neither hook: wrap a
+root-relative URL passed to those in `withBase()`, and read the app route with
+`appPathname()` instead of `window.location.pathname`. `basePath.test.ts`
+(*call sites the shims cannot reach*) scans the source and fails the build if an
+unwrapped one slips in.
 
 ## Data fetching
 

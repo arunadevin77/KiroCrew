@@ -289,10 +289,11 @@ The agent path passes `on_committed_in_txn=True`, so the finalize hop opens one
 `BEGIN IMMEDIATE`, runs `delete_items_batch_in_txn` on the old group, invokes
 `on_committed` (which writes the row and clears this attempt's intent marker without
 committing), and commits once. Run-to-completion covers a cancellation, not a hard kill
-or a raising write; as two commits, a failure between them persisted "previous version
-deleted, new version named by no row, intent marker present", and the residue sweep below
-then deleted the new version as crash residue — the document's only copy (#18423). A
-raise inside the callback now rolls the delete back with it. The folder and artifact
+or a raising write. Committing as one transaction is what keeps a crash from leaving
+the old version deleted and the new version named by no row with its intent marker
+present, a state the residue sweep below would read as crash residue and reap,
+deleting the document's only copy. A raise inside the callback rolls the delete back
+with it. The folder and artifact
 paths keep the two-step form; their owners never reap on intent markers.
 
 **The residue sweep never deletes a document's sole surviving copy.**

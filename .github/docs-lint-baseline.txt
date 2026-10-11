@@ -38,7 +38,6 @@ dead-identifier	docs/app-kit/api-reference.md	listLessons
 dead-identifier	docs/app-kit/api-reference.md	listMcpServers
 dead-identifier	docs/app-kit/api-reference.md	listModels
 dead-identifier	docs/app-kit/api-reference.md	listNotifications
-dead-identifier	docs/app-kit/api-reference.md	listSlots
 dead-identifier	docs/app-kit/api-reference.md	listSubagents
 dead-identifier	docs/app-kit/api-reference.md	memorySearch
 dead-identifier	docs/app-kit/api-reference.md	onConnectionChange

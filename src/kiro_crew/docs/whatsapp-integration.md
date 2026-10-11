@@ -43,7 +43,11 @@ configuration allows, and rate-limits unprompted group replies.
    session on disk, the gateway begins pairing as it starts the channel and holds
    a rotating code. Click **Show pairing code** to see it, then scan with your
    phone: WhatsApp, Settings, Linked devices, Link a device. The code rotates
-   every ~20 seconds and the panel follows it until the scan lands.
+   every ~20 seconds and the panel follows it until the scan lands. If the
+   pairing run stops emitting a fresh code before you scan, the last code
+   expires (WhatsApp stops accepting it after about a minute): the gateway
+   withholds it, and the panel clears it and asks you to restart the gateway
+   for a new code.
 4. The badge flips to **Connected**. Pairing state persists in
    `~/.kiro/crew/whatsapp/session.db`, so you scan once rather than per restart.
 

@@ -670,8 +670,8 @@ _CREW_READONLY_LEAVES: tuple[str, ...] = (
     # stay the real directory because the gateway later execs out of it. Those lists are
     # walked identically for every backend and carry no per-adapter branch, so an
     # unsafe state here refuses the spawn exactly as it does for any other entry.
-    # ``acp/client.py``'s ``_pi_gate_artifact_dir`` re-checks the same states on the pi
-    # spawn path, before the sandbox is built, so a pi session refuses with a message
+    # ``acp/harness/pi.py``'s ``_pi_gate_artifact_dir`` re-checks the same states on the
+    # pi launch path, before the sandbox is built, so a pi session refuses with a message
     # that names the directory it actually resolves.
     "pi-gate",
     # The app dev-mode AUTHORIZATION record (operator grants binding each dev
@@ -13081,7 +13081,7 @@ def session_host_preexec() -> "Callable[[], None] | None":
     This preexec raises NOFILE soft+hard to the *gateway's* inherited hard
     limit (typically 10240 from the systemd unit, or 524288 kernel max) so
     the session host has headroom proportional to the gateway itself.  Other
-    resource limits (NPROC, CPU, AS) are left at their sandbox values — a
+    resource limits (NPROC, CPU, AS) are left inherited (this preexec touches NOFILE only) — a
     session host has no legitimate reason to fork-bomb or allocate unbounded
     memory.
 

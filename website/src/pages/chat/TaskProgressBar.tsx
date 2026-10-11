@@ -74,7 +74,7 @@ const TaskProgressBar = memo(function TaskProgressBar({ slot, disclosureKey }: {
   const todo = useAppSelector(s =>
     (s.dashboard.slots ?? []).find(x => x.key === slot)?.todo ?? null
   ) as TodoList | null
-  // A remote-bound session's checklist is a relay of the peer's: the local slot
+  // An `executor: 'remote'` slot is a read-only relay archive: the local slot
   // holds no list to write, so the PATCH would 404. Rows stay read-only there.
   const editable = useAppSelector(s =>
     (s.dashboard.slots ?? []).find(x => x.key === slot)?.executor !== 'remote'

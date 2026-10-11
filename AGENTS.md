@@ -268,8 +268,8 @@ from the suffix rule: [release](docs/build/release.md).
 ## The gate before you commit
 
 ```bash
-python3 scripts/check_black_formatting.py && python3 scripts/check_subprocess_encoding.py && isort src/kiro_crew test
-flake8 src/kiro_crew test && mypy src/kiro_crew
+python3 scripts/check_black_formatting.py && python3 scripts/check_subprocess_encoding.py && isort src/kiro_crew test conftest.py xdist_budget.py
+flake8 src/kiro_crew test conftest.py xdist_budget.py && mypy src/kiro_crew
 BASE="$(git merge-base HEAD origin/main)" && COMMENT_HISTORY_BASE_REF="$BASE" python3 scripts/check_comment_history.py && BRAND_BASE_REF="$BASE" python3 scripts/check_brand_name.py
 python3 scripts/local-gate.py
 ```
@@ -312,7 +312,7 @@ job's `semgrep/test-determinism.yaml` refuses the commonest on a new line, and
 `test/test_flake_pattern_ratchet.py` counts per file the clock, wait, port, environment
 and module-cache shapes those patterns miss, failing a change that adds one to a file
 (measured against its merge-base; a deliberate one carries `# flake-ok: <reason>`).
-CI's Backend Tests checkout is depth 1 today, so the ratchet is a local, pre-push gate:
+It is a local, pre-push gate (why: testing-conventions.md "Determinism contract"):
 run `python -m pytest -n0 test/test_flake_pattern_ratchet.py` before pushing.
 Contract:
 [testing-conventions § Determinism contract](docs/system-specs/common/testing-conventions.md#determinism-contract-read-this-first).

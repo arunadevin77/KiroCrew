@@ -182,7 +182,7 @@ darkening rather than at the reported failure):
   `area: tests`, as the `kirocrew-prepare-pr` skill describes) and rerun the job once.
   Never raise the ceiling or `retries` for it.
 
-The run itself is bounded by `PLAYWRIGHT_RUN_CEILING_SECS` (18 min, so the stop, the
+The run itself is bounded by `PLAYWRIGHT_RUN_CEILING_SECS` (17 min, so the stop, the
 report and the summary fit inside the job's 25), and the harness stops Playwright as
 soon as the gateway it drives exits, quoting the gateway's own output, so a dead
 gateway is reported as one, not as every remaining spec timing out on retries. A

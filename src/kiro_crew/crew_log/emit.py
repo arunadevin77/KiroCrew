@@ -4814,8 +4814,9 @@ def on_session_closed(
     """Record a session teardown and drop its cached state.
 
     ``reason`` is the caller's own word for the teardown, recorded verbatim rather
-    than remapped onto a second vocabulary. Two routes call it: reset, and
-    destroy (``destroyed`` or ``destroyed_sid_retained``), each passing the same
+    than remapped onto a second vocabulary. Three routes call it: reset,
+    destroy (``destroyed`` or ``destroyed_sid_retained``), and the deliberate tab
+    close (``removed``, from ``_close_slot``), each passing the same
     ``end_reason`` it records elsewhere; another teardown path passing its own
     reason needs no change here.
 

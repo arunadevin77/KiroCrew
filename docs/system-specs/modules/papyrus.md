@@ -493,7 +493,7 @@ config keys name an *executable* git will run. Push deliberately runs in
 `standard` sandbox mode (an SSH push needs the key), so on that path the OS
 sandbox does **not** back this up: the denylist is the load-bearing control.
 
-`_git` therefore neutralizes three classes, each shaped by what `-c` can and
+`_git` therefore neutralizes four classes, each shaped by what `-c` can and
 cannot reach:
 
 1. **~19 `-c` overrides** — `core.sshCommand`, `core.hooksPath=/dev/null`,
@@ -510,6 +510,15 @@ cannot reach:
 3. **`GIT_PROXY_COMMAND=true` in the env** — because `core.gitProxy` is
    **multi-valued**, so `-c` APPENDS and git uses the repo's value first. `=none`,
    `=` and `=true` were all tested via `-c` and all still executed the script.
+4. **Config-defined hooks** (`hook.<name>.command`, git 2.54+) are disabled by
+   name: `core.hooksPath=/dev/null` moves only the hook directory, so `_git`
+   scans the repository config through
+   `git_config_hooks.config_hook_disable_args_sandboxed_async` (wrapped by the
+   same `sandboxed_spawn_argv` the real call uses) and emits
+   `-c hook.<name>.enabled=false` for each, because a config hook's name is the
+   repository's choice, the same reason the attributes pin and pack-program
+   flags exist. A sandbox-unavailable scan becomes `GitSandboxUnavailable`; an
+   unreadable config becomes `GitError`.
 
 **Two ways the pin itself was defeatable**, both fixed and both pinned by
 `TestTheAttributesPinCannotBeNeutralized`:

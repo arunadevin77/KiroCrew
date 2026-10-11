@@ -427,7 +427,9 @@ Each cycle:
    substance, a stall's shape. Never for a verdict, and never as the routine
    cycle read: the ledger is that.
 6. **Say nothing unless there is a real signal.** An item passing acceptance,
-   failing it, asking a question, or stalling. Never post "nothing changed".
+   failing it, asking a question, or stalling. Never post "nothing changed":
+   a cycle with no signal ends with a `nothing_to_do` call, because a turn
+   that stops bare after its tool calls keeps the empty-response recovery.
 
 **Shell exists for the two bundled scripts, not for work.** `execute_bash` is
 granted so patrol can run `accept_eval.py` and `patrol_budget.py`. Running a work item's build, test, or fix
@@ -705,7 +707,7 @@ what the composer renders:
   `autonudge_stop`, `wait`, `resource_status`, `list_sessions`,
   `session_ledger_read`, `session_ledger_record`, `skill_search`, `skill_fetch`,
   `select_crew`, `send_message`, `send_notification`, `ask_question`,
-  `reset_conversation`. That covers
+  `nothing_to_do`, `reset_conversation`. That covers
   every core call this procedure asks you to make; **any other core tool is
   mounted but prompts**, including `task_run`, `workflow_run` and the `spawn_*`
   family, which this charter forbids you to route a work item to in the first

@@ -33,6 +33,15 @@ own gate model is [computer-use](../system-specs/modules/computer-use.md).
 | `~/.kiro/settings/mcp.json` | User | Kiro global MCP servers | kiro-cli for all agents; merged into Kiro Crew's agent file at render time |
 | `~/.kiro/crew/mcp.json` | User, via the dashboard MCP panel | specific to Kiro Crew additions and per-server tool disables | Kiro Crew gateway only |
 
+Kiro Crew reads every MCP config file (`~/.kiro/crew/mcp.json`,
+`~/.kiro/settings/mcp.json`, and every seam-contributed scope global) as JSONC:
+comments and trailing commas are tolerated (`user_json.loads_user_jsonc`), so a
+commented-out server never discards the rest of the file. The dashboard MCP
+panel's writers emit plain JSON, so a save over a file that holds comments or
+trailing commas is refused with a `409 mcp_config_has_comments`
+(`_refuse_commented_config` / `McpConfigHasComments`) rather than rewriting the
+file and dropping them; edit such a file by hand, or remove the comments first.
+
 `rebuild_agent_config()` writes exactly **one** file, `~/.kiro/agents/kirocrew.json`.
 There is no second rendered agent file: Kiro Crew's provider is ACP-only, and
 non-kiro ACP harnesses consume projected configuration rather than another Kiro
@@ -743,7 +752,7 @@ honoured from the next turn — so the sync's write order (entry, then ref) is
 fine. But a ref REMOVED while the server keeps running leaves its tools mounted,
 so dropping the ref is not a disable. The dashboard's disable path
 (`_sync_mcp_to_agent`, single and batch) therefore writes `disabled: true` onto
-the agent-file entry as well as removing the ref, and the enable path lifts it.
+the agent-file entry as well as removing the ref from `tools` and the ref and every per-tool `@server/tool` grant from `allowedTools` (`mcp_utils.without_mcp_refs`; the `/` boundary keeps a prefix-sharing `@serverx`), and the enable path lifts it.
 The `disabled` in the kiro-global file cannot stand in: `includeMcpJson` is
 pinned false, so kiro-cli never reads that file. The marker also helps a cold
 session — a disabled server is no longer spawned only to sit unmounted.
@@ -888,9 +897,8 @@ after the change.
 `PoolKey` (`mcp_gateway/pool.py`) is the sharing boundary: two stubs whose keys
 hash equal get one backend process. Its rule is that **every attribute which
 changes backend behaviour must be a dimension**, or two sessions can see
-cross-tenant state. The eight dimensions are `server_name`, `agent_name`,
-`command_args_hash`, `effective_env_hash`, `work_dir`, `binary_version`,
-`os_uid` and `config_snapshot_hash`.
+cross-tenant state. The six dimensions are `server_name`, `command_args_hash`,
+`effective_env_hash`, `work_dir`, `binary_version` and `os_uid`.
 
 The rule has a second edge that matters just as much: **an attribute which does
 NOT change backend behaviour must stay out.** The hash is injective over every
@@ -898,11 +906,15 @@ field, so a difference in one that isolates nothing still forks a process.
 
 Read the cost carefully before tuning the pool from it. A field is only as
 expensive as the number of distinct values that reach it, and `agent_name` is
-itself a dimension — so two agents never share a backend regardless of what
-else the key holds. Dropping a field that does not isolate anything removes a
-split that is real but narrow on its own (one agent across a config change, or
-its own `autoApprove` list) and is a precondition for the broader sharing that
-dropping an identity dimension would unlock.
+**not** a dimension: the agent never reaches the backend process, so two
+agents declaring one server identically asked for the same process and now get
+it. What the agent name was still reached for is answered per call or by
+content instead — `app_call` governance resolves the acting agent from the
+call's own session key and denies when it cannot, and a private backend's
+declared-env sidecar is content-addressed by server plus the
+`effective_env_hash` the key already carries. `config_snapshot_hash` is not a
+dimension either: the stub sends a constant run of zeros for it, so it
+partitioned nothing at all.
 
 Four fields a stub reports under a "security boundary" label are in that class
 and are **not** dimensions: `sandbox_mode`, `autoapprove_set_hash`,
@@ -1546,8 +1558,8 @@ Managed servers, registered by `agent._MANAGED_MCP_SERVERS` and installed into
 | `kirocrew-work` | `kirocrew mcp-work` (`mcp_work.py`) | `work_brief`, `work_report`, `work_ledger_read`, `work_ledger_rebuild`, `work_ledger_record` |
 | `kirocrew-crew-log` | `kirocrew mcp-crew-log` (`mcp_crew_log.py`) | `crew_log_list`, `crew_log_read`, `crew_log_projection` |
 | `kirocrew-debug` | `kirocrew mcp-debug` (`mcp_debug.py`) | `debug_gateway`, `debug_refusals`, `debug_threads`, `debug_processes`, `debug_snapshots` |
-| `kirocrew-panel` | `kirocrew mcp-panel` (`mcp_panel.py`) | `panel_publish`, `panel_templates` |
-| `kirocrew-guide` | `kirocrew mcp-guide` (`mcp_guide.py`) | `guide_list_actions`, `guide_start`, `guide_status`, `guide_cancel`, `list_change_kinds`, `find_setting`, `get_member_capabilities`, `diagnose_settings`, `propose_change`, `get_change_status`, `search_docs`, `find_ui` |
+| `kirocrew-panel` | `kirocrew mcp-panel` (`mcp_panel.py`) | `panel_publish`, `panel_templates`, `dashboard_fields`, `dashboard_types`, `dashboard_write`, `dashboard_templates`, `dashboard_preview`, `dashboard_apply`, `dashboard_rollback` |
+| `kirocrew-guide` | `kirocrew mcp-guide` (`mcp_guide.py`) | `guide_list_actions`, `guide_start`, `guide_status`, `guide_cancel`, `list_change_kinds`, `find_setting`, `get_member_capabilities`, `diagnose_settings`, `propose_change`, `get_change_status`, `rename_self`, `search_docs`, `find_ui` |
 
 `kirocrew-guide` is a platform capability: it is always emitted (not `opt_in`),
 so the default `kirocrew` template, every crewmate built from it, the worker
@@ -1564,15 +1576,16 @@ once (`guide_platform.grant_guide_platform_once`, recorded by the
 `guide_platform_granted.json` marker after the spec is written), and keeps
 whatever its owner does with them afterwards. Its entry carries no `autoApprove`,
 and doctor never mints a whole-server `allowedTools` grant for it
-(`cli_doctor._NO_BLANKET_ALLOW_MCPS`). Exactly the twelve tools in
+(`cli_doctor._NO_BLANKET_ALLOW_MCPS`). Exactly the thirteen tools in
 `agent._GUIDE_AUTO_GRANTS` are exact `allowedTools` grants, each through the
 same `auto_approve._apply_allowed_tools_ceiling` path every grant passes, so a
 governance ceiling that denies one keeps it out and the user is asked instead:
 the reads (`find_ui`, `search_docs`, `guide_list_actions`, `guide_status`,
 `list_change_kinds`, `find_setting`, `get_member_capabilities`,
-`diagnose_settings`, `get_change_status`) and the offers (`guide_start`,
+`diagnose_settings`, `get_change_status`), the offers (`guide_start`,
 `propose_change`), which change nothing until the user presses the card's own
-button, plus `guide_cancel`, which only removes this conversation's pointer. A
+button, `guide_cancel`, which only removes this conversation's pointer, and
+`rename_self`, which renames only the calling crewmate. A
 tool added to the server later is not in the tuple and asks first. KAS
 permissions derive from that final filtered list. A harness whose projection
 does not carry the server reports it through the ordinary unresolved-ref doctor
@@ -1589,7 +1602,8 @@ the provenance the turn runner recorded: the slot must be executing a turn now
 (`_turn_channel_origin`, set from `_run_chat`'s `_directive_channel_origin` at the
 turn's start and cleared at its end) nor have taken a channel steer since
 (`_turn_channel_narrowed`). Starting something on screen (`guide_start`,
-`propose_change`) or renaming the calling crewmate (`rename_self`) also needs
+`propose_change`), renaming the calling crewmate (`rename_self`), or taking
+`find_ui`'s live observation (`guide.observe`) also needs
 the turn to be one the person sent (`_turn_user_sent`, set from
 `_directive_user_origin` the same way): a loop wake, a cron or app injection, a
 `session_send`, a subagent completion and a crewmate's hidden first-welcome
@@ -1995,7 +2009,7 @@ glob, so it auto-approves every tool the server advertises, while naming tools i
 to `hooks.on_tool_call`. `_CONDUCTOR_DASHBOARD_GRANTS` and
 `_MEMBER_DASHBOARD_GRANTS` (`agent.py`) are the shipped examples of the individual
 form, and they differ from each other on exactly this axis: the member's list
-includes `session_send`, `session_broadcast` and `session_stop` because `authorize_target` refuses a
+includes `session_send`, `session_broadcast`, `session_stop` and `session_retry` because `authorize_target` refuses a
 member caller on any session it did not create, and the conductor's withholds them
 because it has no such fence.
 
@@ -2074,9 +2088,10 @@ answers `tools/list` from):
     deliver into the parent's chat window. An unresolvable identity refuses the
     call rather than guessing.
 - **Session-bound directives** (`session_directive.DIRECTIVE_TOOLS`):
-  `ask_question`, `nothing_to_do`, `suggest_followup`, `monitor_start`,
-  `monitor_watch`, `monitor_update`, `monitor_stop`, `autonudge_stop`,
-  `set_project`, `reset_conversation`, `chat_tag`
+  `nothing_to_do`, `suggest_followup`, `monitor_start`, `monitor_watch`,
+  `monitor_update`, `monitor_stop`, `autonudge_stop`, `set_project`,
+  `reset_conversation`, `chat_tag`. `ask_question` is not one: it blocks and
+  returns the answers as its own result (see the stateful-tool model below).
 - **Memory recall (V1 and V2):** `memory_recall` resolves authenticated session identity
   once through `require_strict_session_key` and passes that same identity to the gateway.
   Missing identity returns the shared gate's refusal and installation diagnosis.
@@ -2499,13 +2514,15 @@ that very action, and says what it removes and that it cannot be undone.
 `gen:ui` gives a registered location a `guide_plan` (`guidePlanFor` in
 `scripts/lib/ui-index.mjs`), deny by default: only a curated location (its
 render-site marker proven), whose every placement requires only `viewport`,
-`shown_by` and `preview_flag`, whose placements each take at most 6 steps
-(placements may differ in length), with one placement per viewport, and which
+`shown_by`, `preview_flag` and the conditions described below, whose
+placements each take at most 7 steps (six pointing steps plus a preview gate;
+`GUIDE_MAX_STEPS`; placements may differ in length), with one placement per viewport, and which
 is not denied. `GUIDE_CAUTION_IDS` lists the destructive or data-replacing
 controls (crewmate delete, app uninstall, backup import, notification
-clear-all, schedule delete and cancel-run, sessions clean-up): each is planned
+clear-all, schedule delete and cancel-run, stop monitor, sessions clean-up): each is planned
 like any other, and its last step carries `caution: true`. `GUIDE_DENY_IDS`
-lists the registered controls of the agent's own ceiling (none today; the
+lists the registered controls of the agent's own ceiling (the composer's
+approval-mode picker and the crewmate Permissions button today; the
 Security, Computer Use and Secrets tabs are refused whole by
 `TRUST_ROOT_PARENTS`, the tabs `settings.show` refuses too). The script fails
 when either list names an id that is not registered, or one id is on both; a
@@ -2798,7 +2815,7 @@ beside `title={t('copy')}`) is labelled by that key.
 Every new static-label button changes this tier, so it is not in the committed
 index: committing it made any frontend PR that added a button stale
 `gen:ui --check`. `npm run build` starts with
-`node scripts/gen-ui-index.mjs --check --auto-out
+`node scripts/gen-ui-index.mjs --check --warn-if-stale --auto-out
 node_modules/.cache/kc-ui-auto/ui-index.auto.json --sites-out
 node_modules/.cache/kc-ui-auto/sites.json`, and the ui-auto-stamp Vite plugin
 emits that artifact into the vite output (see "Auto locations a guide may
@@ -2891,7 +2908,7 @@ purge, destroy, clear all / data / history / ...), or a site or location in
 danger-styled control that removes nothing (Sign out, Deny, Deploy anyway,
 Clear selection) is a plain `point`, since the caution line says what it
 deletes is gone for good. It is `search-only` when its label only trips the
-ceiling-label lint (`SENSITIVE_LABEL_RE`: approve, grant, trust, allow; listed
+ceiling-label lint (`SENSITIVE_LABEL_RE`: approve, grant, trust, allow, autopilot, yolo; listed
 in the `--report`, it never promotes anything), else `point`.
 Everything else is `search-only`. A location is guidable only when it groups
 exactly one site, that site is guidable, and none of its placements has a
@@ -2992,7 +3009,7 @@ pathname; `ui_find_routes`), never a trust-root page (`TRUST_ROOT_ROUTES`:
 Security, Computer Use, Secrets; `sensitive_page`); no route means the page the
 person is on. `label` and `container` are agent text under the same rules as a
 note (plain text, 80 characters); a label `CEILING_LABEL_RE` matches (approve,
-grant, trust, allow) is `sensitive_label`, and one `REMOVAL_LABEL_RE` matches
+grant, trust, allow, autopilot, yolo) is `sensitive_label`, and one `REMOVAL_LABEL_RE` matches
 always carries `caution`. `role` is one of `FIND_ROLES`. `location_id` is
 accepted only when `ui_find_location_ids` lists it: a control of the committed
 index (curated or generated, not the auto tier) that is not a page, list,
@@ -3057,7 +3074,7 @@ and project trust dialogs and the Security panel's confirms), when its
 registered location or auto site belongs to those tabs,
 when it is a settings row `isSensitiveSetting` refuses, or when its English
 name or any catalog key it renders from names a ceiling word (approve, grant,
-trust, allow). The marker crosses portals: a trust-root region provides
+trust, allow, autopilot, yolo). The marker crosses portals: a trust-root region provides
 `GuideTrustRootProvider` (`guide/trustRoot.ts`; `GuideTrustRootRegion` is the
 marker and provider in one), and every shared primitive that portals its
 content (`DropdownMenu`, `Popover`, `Dialog`, `Select` and `ContextMenu`
@@ -3183,7 +3200,9 @@ Two steps, and the generator fails on either one alone; then regenerate:
    `forwardUiLocation(id, ...ownRefs)`), proven by a rendered test: `uiIndex.test.ts` scans every production marker and
    accepts an intrinsic element, or a component in its `FORWARDING_PROVEN`
    list (`Btn`, `SendBtn`, `DropdownMenuItem`, `Glass`, `IconButton`,
-   `Clickable`, `Link`, `NavItem`, `SimpleSelect`, `SegmentedControl` today),
+   `Clickable`, `Link`, `NavItem`, `Row`, `AddMenuItem`, `SimpleSelect`,
+   `SegmentedControl`, `CrewEditorRail`, `Table`, `DropdownMenuSubTrigger`,
+   `Item` today),
    each with its own rendered forwarding test, whose `afterEach` fails on any
    `data-ui-location` in the document not registered under that same id
    (`unregisteredMarkers`, `src/test/guideTargets.ts`). `NavItem` (App.tsx) takes a fixed
@@ -3204,8 +3223,8 @@ Two steps, and the generator fails on either one alone; then regenerate:
    read from data.
 2. Add one entry to your area's file, `src/uiLocations/areas/<area>.ts` (its
    `LOCATIONS` table; `apps`, `artifacts`, `capabilities`, `chat`, `composer`,
-   `members`, `notifications`, `schedule`, `sessions`, `shell` today, some
-   still empty): `kind`, `placements` (`surface`, the `parent` location id, `entry`,
+   `members`, `notifications`, `schedule`, `sessions`, `settings`, `shell`
+   today): `kind`, `placements` (`surface`, the `parent` location id, `entry`,
    optional `route`, `parentPlacement` and `requires`), optional `aliasKeys`,
    optional `terms` (newcomer words per shipped locale), optional opt-in
    `guide`, and `label` only when the label is not the element's own text
@@ -3750,7 +3769,12 @@ parent's tree. `mcp_core.py` offers two resolvers:
   which gatewayd stamps on every forwarded frame after stripping any
   client-forged `kirocrew.caller` block), the signed per-session token
   (`session_token_sig.session_key_from_env_token`), the injected
-  `KIROCREW_SESSION_KEY`, or
+  `KIROCREW_SESSION_KEY` (accepted EXCEPT on a host pid the signed session-pid
+  mapping records as hosting several sessions, where both
+  `_resolve_session_key_strict` and the client ladder `resolve_own_identity` drop
+  it through the same `host_pid_is_shared` read, an unsigned denies-only read:
+  the var is stamped once per runtime and inherited by every MCP child, so on a
+  multi-session runtime it names one tenant and cannot say which is calling), or
   a `KIROCREW_HOST_PID` lookup whose HMAC sidecar verifies against the
   keystone-protected `sel_hmac.key`. It deliberately **drops** the `/proc`
   ancestor walk and the bare `session_pid_<pid>.txt` fallback: the `.txt` file is
@@ -3777,8 +3801,10 @@ in the `env` of that session's injected stub entries
 handle. The stub returns it on its `register` frame as a sibling field — never a
 `PoolKey` dimension, which would make every session's backend private and turn
 pooling into a no-op — and `claim` frames carry it too. gatewayd then keys claims
-by `(pid, token)`: a claim re-targets the connections carrying its token, plus any
-connection carrying none, and a claim with NO token re-targets every connection
+by `(pid, token)`: a claim re-targets the connections carrying its token.
+Tokenless connections are re-targeted only on a non-shared runtime; on a
+shared runtime their identity is cleared and subscriptions evicted instead.
+A claim with NO token re-targets every connection
 under the PID, which is what a stub launched from a
 hand-written config or an older overlay still needs.
 
@@ -4155,6 +4181,18 @@ strips the marker from the stored transcript. Sub-agent isolation is therefore
 structural rather than cryptographic: a sub-agent's tool result flows through the
 sub-agent's own runner, so it can only bind to the sub-agent's session. There is
 no walk to get wrong.
+
+A second, provider-neutral channel covers a backend that emits no
+`_meta.kiro` identity. After encoding, the tool reports the CALL (tool name and
+raw arguments, never the payload) to `POST /api/session-directive`; the gateway
+re-runs the tool on those arguments (`mcp_core.derive_directive`) and parks the
+record in `dashboard/directive_queue.py`, keyed by the digest of the raw call
+input. The runner applies it only when `directive_queue.claim` finds a record
+whose digest equals the one the turn's own `tool_call` frame carried, parked
+during that turn; on such a backend the marker in the result text is display
+only. Records are in memory, expire after `MAX_AGE_SECS` (300 s), and are capped
+per session (`MAX_PER_SESSION`) and in total (`MAX_SESSIONS`). The messaging
+`TurnDriver` applies directives from the verified marker alone.
 
 **Terminal directives carry a structured turn-end signal.** One directive is
 the turn's intended LAST act — a recorded `nothing_to_do` quiet end

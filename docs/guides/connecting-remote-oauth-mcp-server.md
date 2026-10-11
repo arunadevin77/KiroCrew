@@ -237,20 +237,28 @@ exchange. It only delivers a code that was already minted.
 
 ## If the host is not recognized: the OAuth endpoint allowlist
 
-If the browser step fails **before** you ever reach the provider — the chat
-banner reports a prose warning like:
+If the browser step fails **before** you ever reach the provider, the failed
+OAuth banner in the chat reads like this (host and path are the refused
+authorization endpoint):
 
 ```text
-🚫 miro sent an authentication URL containing a credential pattern
-(rejected). If this is a self-hosted or otherwise unlisted identity
-provider, its authorization endpoint may need adding to oauth_endpoints.json
-in the Kiro Crew data home; otherwise ask the server owner to fix the URL.
+Authentication failed: URL contained credential or exfiltration pattern
+(endpoint: <host><path>). If you trust this identity provider, add
+{"host": "<host>", "path": "<path>"} to "additional_authorization_endpoints"
+in <Kiro Crew data home>/oauth_endpoints.json and retry
 ```
 
-(The terse string `URL contained credential or exfiltration pattern` is the
-message's `error` metadata field, not on-screen text — you will not find it by
-grepping the transcript for a visible line.) The authorization URL was rejected
-by Kiro Crew's gate, not by the provider.
+The failed banner renders the message's `error` field, so that is the on-screen
+text. The last sentence appears only when writing the entry would clear the
+rejection; a URL refused for a fixed credential, `http`, an explicit port or a
+host the file cannot hold (an IP literal, or a name without a letter TLD) shows
+the bare reason. The transcript row's own `content` is a longer prose version
+of the same notice. A sign-in URL on this machine (`localhost`, `127.0.0.1`,
+`::1`) is the one case with a different hint: the file cannot hold a loopback
+host, so the banner says that a local MCP server that needs no sign-in usually
+lands here when its first connection failed and the MCP client fell back to
+OAuth, and suggests checking that the server is running and starting a new chat.
+The authorization URL was rejected by Kiro Crew's gate, not by the provider.
 Kiro Crew scans consent URLs for credential-exfiltration patterns, and it
 relaxes the base64-blob / query-length heuristics **only** for authorization
 endpoints it recognizes by exact `(host, path)`. That recognized set is
@@ -314,8 +322,10 @@ them from the provider's authorization-server metadata (RFC 8414 —
 `/.well-known/oauth-authorization-server`), reached from the server's own
 RFC 9728 protected-resource document — the same route the code-owned pairs were
 derived from. Neither the rejected banner nor the log echoes the URL that was
-refused (logging a URL that tripped the credential scanner would defeat the
-scanner), so there is nothing to copy out of Kiro Crew here.
+refused (its query carries state and PKCE material, and logging a URL that
+tripped the credential scanner would defeat the scanner). The banner shows only
+the sanitized host and path of the refused endpoint. Check that pair against the
+provider's metadata before you add it, because an override widens trust.
 **Miro's exact authorization endpoint is verified in this repo** as
 [`https://mcp.miro.com/authorize`](https://mcp.miro.com/authorize) and is
 already in the code-owned set, so do not add an operator override for it. For

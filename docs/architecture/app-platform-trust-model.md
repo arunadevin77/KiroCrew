@@ -20,7 +20,9 @@ The `AppContext` capability permissions (`permissions.cron`,
 currently has no runtime call site and must not be treated as an execution
 boundary. Neither mechanism restricts imports, filesystem, network, or
 subprocess use by the loaded module. There is currently **no process-level
-sandbox** around app code itself.
+sandbox** around in-process app code (hooks and route handlers). An app's
+separate backend process is launched under the OS sandbox's `standard` mode
+where a sandbox backend applies, which does not bound the in-process modules.
 
 > **Admitting and enabling an app is therefore equivalent to running that code with the same privileges as Kiro Crew itself.** Only trust apps you trust.
 

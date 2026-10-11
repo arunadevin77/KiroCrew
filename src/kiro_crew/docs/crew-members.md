@@ -56,7 +56,10 @@ carries:
   schedule). Picking two shows a crewmate in either state.
 
 Each row shows the crewmate's face, the last message in its thread, and a
-**Stopped** chip when you stopped that turn yourself.
+**Stopped** chip when you stopped that turn yourself. A crewmate whose own
+thread has a live monitor or goal loop running shows an **on watch** mark — a
+faint accent ring with one dot orbiting its avatar, and the word beside it —
+until the loop stops.
 
 ## The standing thread
 

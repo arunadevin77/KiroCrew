@@ -163,7 +163,7 @@ A transport that lands before its controls invites exactly the record it is mean
 to refuse, so these are in the same PR (RFC §5).
 
 - [ ] Add `allowed_methods` to `InstancesConfig`
-      (`src/kiro_crew/config/sections.py`), defaulting to every registered
+      (`src/kiro_crew/config/integration_sections.py`), defaulting to every registered
       method so existing installs are unchanged
 - [ ] Enforce it in `Instance.validate()`
       (`src/kiro_crew/instances/registry.py`), which the add and update paths

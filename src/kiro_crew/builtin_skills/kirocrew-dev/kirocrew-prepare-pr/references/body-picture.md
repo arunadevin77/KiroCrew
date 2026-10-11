@@ -36,9 +36,8 @@ boxes and arrows. The constraints below make every PR read the same way at a gla
 
   The colour lives in the Mermaid fence, which renders the `classDef` fills; the
   table and the legend carry words. Do not put coloured squares (or any emoji) in
-  the published body: the publish step rejects them, so an author who follows an
-  emoji legend is refused at `gh pr create`. The words already carry the
-  colour-to-meaning mapping. If you want the squares, keep them to a rendering
+  the published body: the words already carry the colour-to-meaning mapping, and
+  emoji render inconsistently across platforms and themes. If you want the squares, keep them to a rendering
   that is not the published body.
 
   Colour the edges too: `linkStyle <n> stroke:#16A34A,stroke-width:2px` on the

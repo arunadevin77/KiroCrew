@@ -51,8 +51,7 @@ distilled result is needed, when you need an independent review or reproduction
 whose result would be wrong if it saw this session's context, or when the user
 asks for delegation or the task needs a different agent, model or crew. A long task, empty slots or a different
 model name alone is not a reason to delegate. Guidance lives in the prompt; no
-runtime gate refuses a one-task call. (A solo-spawn gate shipped in #11710 and
-was removed after audit data showed it passed 33 of 34 one-task calls.)
+runtime gate refuses a one-task call.
 
 The spawn receipt says whether bounded parent work is supported (a
 dashboard-owned parent turn). When supported, the parent may finish at most one

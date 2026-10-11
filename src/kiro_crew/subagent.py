@@ -4,7 +4,9 @@ Each subagent gets its own LLM session (via SessionManager) with a
 focused system prompt.  Results are announced back to the caller via
 a callback.  Max concurrent limit prevents resource exhaustion.
 
-No spawn recursion: subagents cannot spawn other subagents.
+Nested spawns are supported: a subagent may spawn its own subagents, and a
+nested spawn is tracked apart from the parent's wave, so its children are not
+counted against that wave's completion total.
 """
 
 from __future__ import annotations

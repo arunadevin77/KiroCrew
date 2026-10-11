@@ -736,6 +736,7 @@ rather than starting two threads and hoping, so it is deterministic.
 - `POST /setup-clone` re-checks `_run_is_active()` inside `clone_lock` and answers 409 `run_in_progress`. (D-95)
 - `PUT /config` takes `clone_lock` and re-checks `_run_is_active()` inside it; a structural test asserts both workspace-mutating handlers do. (D-96)
 - The draft and commit routes re-check the run status inside `clone_lock`; a structural guard asserts all four clone-mutating handlers do. (D-115)
+- `POST /run` admits under `app_lifecycle_lock` and answers 403 `app_disabled` when `is_app_enabled` is false at admission; otherwise it records `RunSupervisor.stop_seq()` and passes it to `start` as `admitted_at`, which `start` re-checks after `_build_driver` and raises `RuntimeError` ("the run was stopped before it started", mapped to 409 `session_conflict`) when a `stop` or the disable hook landed meanwhile, so a run cannot launch into an app disabled or stopped while its driver was being built (`test_run_start_honors_stop`, `test_start_is_refused_once_the_app_is_disabled`).
 
 ### Why the manual draft path materializes its own diff
 
@@ -972,6 +973,7 @@ attributes pin, and a structural test enumerates the helpers that must.
 - `clone_setup.checkout_branch` routes through the shared `git_safety` config and pin. (D-129)
 - `proposer._capture_diff` calls `require_pinned` first, and the structural helper list includes it (`test_every_host_side_git_helper_injects_the_safe_config`). (D-132)
 - Host-side `git` decodes output leniently (`errors="replace"`), so a non-UTF-8 byte in a changed file cannot kill a watcher. (D-142)
+- Every host-side git call also disables git's config-defined hooks (`hook.<name>.command`, git 2.54+), emitting `-c hook.<name>.enabled=false` for each `hook.<name>.*` git would read in the worktree and every initialized submodule (`git_safety.hook_off_args`, which delegates to `git_config_hooks.config_hook_disable_args`), because `core.hooksPath=<devnull>` moves only the hook directory and does not reach a config-defined hook whose name the repository chooses. The same call pins submodule recursion off (`submodule.recurse=false`, `fetch.recurseSubmodules=false`, `_SUBMODULE_RECURSION_PINS`) so a recursive fetch or checkout cannot read an uninitialized submodule's config, and it fails closed (`ConfigHookScanError` to `GitSafetyError`) when the hook names cannot be listed safely.
 
 ### Gate and measurement invariants
 

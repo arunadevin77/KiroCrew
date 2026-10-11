@@ -7,7 +7,7 @@ created: 2026-09-12
 last-audited: 2026-10-06
 audited-at: 9348a25a34
 doc-pr:
-implementation-prs: [10521, 15876, 16347, 16355, 17017]
+implementation-prs: [10521, 15876, 16347, 16355, 17017, 17030]
 tracking-issues: ["#15244"]
 supersedes: [rfc-durable-run-coordinator.md]
 superseded-by: []
@@ -17,8 +17,8 @@ superseded-by: []
 - Status: partial. The core shipped in [#10521](https://github.com/kirodotdev/KiroCrew/pull/10521):
   the durable task store, admission and host budgets, session-start collection,
   adaptive controller, recovery and wait states, TaskRunner/workflow adapters,
-  API, and dashboard surface. Q9–Q11 shipped in #15876, #16347, #16355 and
-  #17017. Not built: the dedicated-runtime parent checkpoint-pause (excluded by
+  API, and dashboard surface. Q9–Q12 shipped in #15876, #16347, #16355, #17017
+  and #17030. Not built: the dedicated-runtime parent checkpoint-pause (excluded by
   Q3), an interactive-chat reserve slot, the `taskrunner.auto_resume` gate, and
   the PTY-driving controlled terminal (§14.6). The shipped contracts are
   [`../system-specs/modules/taskq.md`](../system-specs/modules/taskq.md),

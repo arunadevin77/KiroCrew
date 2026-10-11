@@ -1059,15 +1059,6 @@ class KnowledgeStore:
                 PRIMARY KEY (item_id, entity_id)
             );
 
-            -- merged_into_source_id names the SOURCE whose copy of this document
-            -- survived a de-duplication collapse. It is deliberately a source id and
-            -- never an item id: item_ids must keep meaning "the items this row owns",
-            -- because dedup derives a document's hash and embedding from whatever
-            -- item_ids points at, and delete authority follows the same list. A row
-            -- naming another source's items would therefore be enumerated as a second
-            -- document over one physical item set, and collapsing that pair deletes
-            -- the surviving copy. The marker records the relationship instead, so
-            -- deleting the surviving source can clear it and let this row re-ingest.
             CREATE TABLE IF NOT EXISTS source_locations (
                 id TEXT PRIMARY KEY,
                 item_id TEXT NOT NULL REFERENCES items(id),
@@ -1104,6 +1095,15 @@ class KnowledgeStore:
             -- extraction call per chunk, so a file that never completes has to be
             -- retired rather than retried on every sweep. Reset to 0 by any terminal
             -- write ('done', 'deduped', 'failed').
+            -- merged_into_source_id names the SOURCE whose copy of this document
+            -- survived a de-duplication collapse. It is deliberately a source id and
+            -- never an item id: item_ids must keep meaning "the items this row owns",
+            -- because dedup derives a document's hash and embedding from whatever
+            -- item_ids points at, and delete authority follows the same list. A row
+            -- naming another source's items would therefore be enumerated as a second
+            -- document over one physical item set, and collapsing that pair deletes
+            -- the surviving copy. The marker records the relationship instead, so
+            -- deleting the surviving source can clear it and let this row re-ingest.
             CREATE TABLE IF NOT EXISTS folder_file_state (
                 source_id TEXT NOT NULL REFERENCES sources(id),
                 file_path TEXT NOT NULL,

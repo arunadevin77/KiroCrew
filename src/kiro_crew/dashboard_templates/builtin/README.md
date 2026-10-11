@@ -208,7 +208,7 @@ presses send.
 (template, fold seq, theme, width) for a shot whose subject is how the page itself looks.
 The caption stays on by default, because a screenshot that cannot say what produced it is
 not evidence.
-++ b/src/kiro_crew/dashboard_templates/builtin/README.md
+
 ## The two views: who was working when, and who dispatched whom
 
 Two more, read as a pair and sharing one palette, because a reader opens them one after

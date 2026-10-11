@@ -25,9 +25,14 @@ absolute:
   past a block has broken the rules of engagement, and the finding is void.
 
 The scripts below are the deterministic half of the loop — run them via
-`execute_bash`, read their output, never re-derive what they compute. Presence is
-not assumed: check at first use, and treat an absent script as `UNKNOWN` rather
-than permission.
+`execute_bash`, through Kiro Crew's runtime interpreter and an absolute path:
+`"$KIROCREW_RUNTIME_PYTHON" -B "<skill-dir>/scripts/<name>.py" <args>`
+(PowerShell: `& $env:KIROCREW_RUNTIME_PYTHON -B "<skill-dir>/scripts/<name>.py"
+<args>`). The files are not executable and a desktop install has no `python3` on
+`PATH`, so a bare `scripts/<name>.py`, `python3` or `python` fails there; every
+`scripts/<name>.py` below means that command. Read their output, never re-derive
+what they compute. Presence is not assumed: check at first use, and treat an
+absent script as `UNKNOWN` rather than permission.
 
 - `scripts/scope_check.py` — is this path, repository or technique in scope?
   `IN_SCOPE` / `OUT_OF_SCOPE` / `NEEDS_APPROVAL` / `UNKNOWN`. `UNKNOWN` is never
@@ -145,8 +150,10 @@ rules yourself.
    that skill's default full loop arms auto-merge and lands the PR on checks
    green — before `verify_fix.py` has run. Both halves of acceptance are read for
    ONE head SHA: run `verify_fix.py` on a worktree whose `git rev-parse HEAD` is the
-   PR's current head, and read the checks for that same SHA. A push after either
-   reading voids both.
+   PR's current head, and read the checks for that same SHA. `verify_fix.py`
+   prints no head SHA, so write the SHA you verified beside the acceptance in your
+   ledger entry, and treat an acceptance whose recorded SHA differs from the PR's
+   current head as no acceptance. A push after either reading voids both.
 
 ### Declare the fix contract before you dispatch a fixer
 
@@ -405,10 +412,15 @@ another tool's output.
 
 ## The patrol cycle
 
-Arm the patrol with `monitor_start` (interval ~120s), never `wait`. Pass
-`max_cycles` explicitly — the default expires long before a round drains, and the
-loop then stops with no symptom. Call `autonudge_stop` yourself when a stop
-condition fires; coasting into the cycle cap is a failure, not a finish.
+Arm the patrol with `monitor_start` (interval ~120s), never `wait`. Pass BOTH
+bounds explicitly, `max_cycles` and `max_runtime_secs`: each has its own short
+default (24 cycles; 14400 s, four hours of wall clock), they expire
+independently, and a large `max_cycles` does not extend the runtime budget — the
+loop then deactivates and only the person is told. Size both to the round (for
+example `max_cycles=720` and `max_runtime_secs=86400`) and, if a gate or a
+verifier outlasts them, raise either with `monitor_update` before it expires;
+`monitor_start` is create-only. Call `autonudge_stop` yourself when a stop
+condition fires; coasting into a cap is a failure, not a finish.
 
 **Before the first dispatch, file yourself in the audit's folder** — one
 `chat_folder_file_self` with `folder` set to a few-word name for the target

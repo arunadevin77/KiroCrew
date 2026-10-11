@@ -3849,9 +3849,10 @@ class AcpClient:
         """Whether the adapter may ignore ``settingSources``.
 
         After a handshake, judged on the ``agentInfo.version`` it reported. Before
-        one, on the installed package's own version, read by the claude spawn arm
-        before the settings writer runs (``_claude_adapter_disk_version``). Unknown
-        reads as below the floor, so the exclusion is never taken on a guess.
+        one, on the installed package's own version, read by the claude adapter's
+        launch (``ClaudeLaunch.resolve_spawn``) before the settings writer runs
+        (``_claude_adapter_disk_version``). Unknown reads as below the floor, so the
+        exclusion is never taken on a guess.
         """
         if getattr(self, "_agent_version_read", False):
             version = getattr(self, "_agent_version", "")

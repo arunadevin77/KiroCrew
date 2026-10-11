@@ -344,7 +344,7 @@ so every later admission charges a row at the price it was admitted at:
   requires no `_force_dedicated` (a recovery respawn), no member execution context
   (`execution_context.member_id`, whose capability and prompt documents are
   prepared at launch), `agent.session_sharing` on, no per-spawn `model` /
-  `allowed_tools` / `bare`, a parent session key, and, as its last term, the
+  `allowed_tools` / `bare` / `backend`, a parent session key, and, as its last term, the
   backend's opt-in `is_session_sharing_eligible`. `_run_inner` takes the shared arm from
   the same plan, so the price cannot follow a copy of the rule. Only a real
   `True` prices a start shared; an unknown answer is priced dedicated. Native
@@ -1796,7 +1796,7 @@ queued-stop claim is also taken per ROW: `_report_queued_stop` reports nothing
 for a row that already holds its finalized queued-stop record, and the batch
 re-posts nothing for one but still counts it, since it took the row from the
 window: Stop all's queued count does not depend on which stop reported the row
-first. Each report builds a fresh `SubagentInfo`, so the
+first. A second Stop that reaches a queued stop's terminal record before its report task runs joins a batched Stop all if one owns the row and otherwise answers not running, with no store call and no slot freed. Each report builds a fresh `SubagentInfo`, so the
 record's own one-shot claim cannot see an earlier report of the row. A store that
 closes under the batch (`TaskStore.close` cancels the queued job) reports
 nothing: the rows stay `queued` on disk for the next start, their entries are
@@ -2141,7 +2141,7 @@ An unmarked `CancelledError` (see intentional-cancel rule) triggers `_schedule_c
 - **Terminal completion is arbitrated by FOUR separate guards, not by `reaped` alone.** Two paths can finish a subagent — `_force_reap` and `_run`'s `finally` — and between them there are four distinct one-time concerns. Earlier revisions tried to arbitrate them with `reaped` plus `done` and every attempt satisfied two while breaking a third (duplicate delivery when the marker was set late; a lost outcome when it was set early and the reaper was cancelled; a lost outcome when the claim was handed back to a run that had already exited; and finally **no reporter at all plus a leaked concurrency slot** when the report claim was gated on `not info.done`). The guards are now:
   1. **`info.reaped` — classification.** Was this a deliberate reap? The cancel-recovery scheduler reads it, and the marker MUST precede the intentional cancel (see the intentional-cancel rule above) or an unexpected-cancel respawn fires on the run being killed. Unchanged.
   2. **`if not info.done` — the terminal RECORD.** Error synthesis, failure stat, tombstone, cost. First-arrival-wins, so it is never written twice (pinned by `test_subagent.py::TestOnDoneTimeout::test_force_reap_skips_tombstone_when_already_done`).
-  3. **`_release_slot(info)` — SLOT accounting.** A one-shot token per `SubagentInfo`; the winner decrements `_running_count` once and drains the queue. Deliberately independent of both flags above: inferring slot ownership from `done` or `reaped` produced a double decrement in one interleaving and none at all in another. A leaked slot permanently starves the spawn queue, which matters far more at the 60-100 concurrent agents the scale work targets. The cancel-recovery respawn **re-arms** this token when it re-admits a slot (`_running_count += 1`), because the respawned run occupies a fresh slot and needs its own release.
+  3. **`_release_slot(info)` — SLOT accounting.** A one-shot token per `SubagentInfo`; the winner decrements `_running_count` once and drains the queue. Deliberately independent of both flags above: inferring slot ownership from `done` or `reaped` produced a double decrement in one interleaving and none at all in another. A leaked slot permanently starves the spawn queue, which matters far more at the 60-100 concurrent agents the scale work targets. The cancel-recovery respawn **re-arms** this token when it re-admits a slot (`_running_count += 1`), because the respawned run occupies a fresh slot and needs its own release. A `queued` record never holds a slot (admission registers a fresh, unqueued record when it takes one, and the records left `queued` are a waiting row's and a queued stop's terminal record), so `_release_slot` returns False for it on every terminal path.
   4. **`_claim_finalize(info)` — REPORT ownership** (`subagent_done` + the `_on_done` injection, plus wave-digest settling and the result.txt TTL bookkeeping). Granted to exactly one caller; contains no `await` so the check-and-set is atomic on the loop. It does **not** consult `info.done` — that was the last defect. It returns False while `_recovering` *without consuming itself*, so a pending respawn is not reported done and its respawned run can claim later.
 - **A claimed report is atomic, not merely exclusive.** The claim alone still lost outcomes when the claimer was cancelled mid-report. `_report_terminal` therefore runs on a strongly-referenced task under `asyncio.shield`, spawned by `_run` **before** its teardown awaits so the task is already live wherever a cancellation lands; the caller still receives `CancelledError` while the report completes. `cancel_all()` drains outstanding reports with a bounded timeout and then **cancels and gathers** any straggler, so none is left invoking `_on_done` against tearing-down state or killed by a closing loop. Because the awaiter is shielded, shutdown is bounded by that drain rather than the `_ON_DONE_TIMEOUT` injection cap. Enforced by `test_subagent_reap_race.py`.
 - **Finished-run deletion waits for its report.** Explicit finished-run deletion (`settle_before_delete`) first waits for any active terminal-report task of that run, then records the panel dismissal and removes the record.
@@ -3255,7 +3255,10 @@ Blocking poll semantics:
 - A member that is accepted but not started answers `queued: true` with `done: false`, and when the gate DEFERRED it (its own `reason_detail` sentence, sent only while the deferral is in force; the parent-wide `reason` label is last-writer-wins and not trusted for this) it SETTLES the wait: the call returns once every member is done, errored or deferral-held, so one gate-deferred member does not hold a dashboard parent's turn inside the tool for up to `max_wait`. A member queued only behind the concurrency cap (`concurrency_limit`) or waiting to resume is NOT settled: it drains with the wave, and the tool returns its result (a sub-agent parent still waits for its own slot grant afterwards, `_hold_for_parent_resume`, which follows its children). Done and queued members are not polled again; an error settles only the pass it was seen in, since it can be one failed poll of a running member. A queued member is reported ONCE, in the `{"status": "queued", "agents": {id: reason}}` record (the reason is its current wait, `queued_wait_text`), never as an `error` member too: a caller shown an error for accepted work dispatches it again. Its result arrives later as a completion event, and it is never marked collected. A queued member that already ran and waits to resume (`resuming: true`) is reported under `still_running` as `waiting_to_resume`, never as not started. "Held" is read off `queued: true` only, never off a 404's prose; a member the accept answer marked deferred whose final poll failed in transport keeps its error entry plus the hint "accepted at spawn time; its state couldn't be read now; check spawn_status before re-spawning".
 - The loop pings `POST /api/session-keepalive` every 60s so the gateway's `is_responsive()` does not flag the (legitimately long-blocked) session as stale and SIGTERM the ACP subprocess mid-poll. The `wait` tool pings the same endpoint for the same reason but on a **5s** interval and with a body, because there the reply doubles as an early-end control channel (see `modules/learn-cron-dashboard.md` § Wait countdown and early end); this loop sends `{}` and ignores the reply, so 60s is sufficient.
 - `max_wait` defaults to 7200s (2 hours), clamped to `[60, 7200]`, and is configurable via the `KIROCREW_SPAWN_SUB_AGENTS_MAX_WAIT` environment variable. The deadline uses `time.monotonic()`.
-- Returns a newline-separated list of per-agent JSON results (`status`: `completed` / `error`), followed when they apply by the `still_running` envelope, the `queued` record of members not yet started, a `resume_pending` note and a `spawn_errors` record, all redacted for credentials and exfiltration URLs.
+- Returns a newline-separated list of per-agent JSON results (`status`: `completed` / `error`), followed when they apply by the `still_running` envelope, the `queued` record of members not yet started, a `resume_pending` note and a `spawn_errors` record, all redacted for credentials and exfiltration URLs. A failed child's result entry
+carries its retained transcript in a `text` field, summarized past
+`COMPLETION_KEEP_DEFAULT_CHARS` to the same disk-path pointer a completed child's
+result uses.
 - **The result is held until the parent holds its slot again.** A `subagent:<id>` parent yielded its lane slot for this wait (W3); once every child is settled the tool long-polls `GET /api/spawn/{parent}/resume?wait_secs=8` (`_hold_for_parent_resume`) until `granted` — each request is held server-side on the grant event, so there is no grant interval — bounded by the same `max_wait` deadline. `known=False` (finished run, other incarnation, legacy gateway error payload) and a chat-turn parent release the hold at once. If the deadline passes while the slot is still ungranted, the children's results are still returned, followed by `{"status": "resume_pending", "parent": id, "note": ...}`.
 - **The wait expiring is a fact about the call, not about the children.** When `max_wait` passes with sub-agents unsettled, the result ends with ONE envelope `{"status": "still_running", "task_ids": [...], "states": {id: "running" | "waiting_permission" | "waiting_to_resume"}, "waited_secs": N, "query": "spawn_status/spawn_list", "note": ...}`. Members accepted but not started are not in it: they are reported in the separate `{"status": "queued", "agents": {id: reason}}` record described above. Those children are NOT cancelled, NOT marked failed or timed out, NOT marked collected (so their completion events still inject), and keep their own execution budget (`subagent_timeout_secs`); the SEL outcome is `partial` with a `still_running` count. Settled siblings' results are still returned inline in the same reply.
 
@@ -3572,7 +3575,12 @@ Retrieves live status and a redacted partial transcript for a running subagent, 
 the retained full transcript for a completed subagent. The completion event carries
 a **summary + the `result_path`** whenever the completion copy was truncated
 (`result_truncated`), so the parent reads the full transcript
-on demand instead of re-running the subagent.
+on demand instead of re-running the subagent. A run that FINISHED with an error
+(`done` is True with an `error` set, such as a timed-out or reaped run that kept
+partial output) returns that retained output under an `[ENDED WITH ERROR · <reason>]`
+header, the reason passed through the exfiltration-URL and credential redaction; a
+non-finished error (a failed lookup or a transport error) still returns the error
+line alone.
 
 For a running in-memory record, `GET /api/spawn/{id}` keeps `done: false` and
 returns the manager's bounded `streaming_text` as `result` alongside `turns`,
@@ -3827,7 +3835,7 @@ Decision + lifecycle:
   left to the queue cap. The paused total is capped (`_START_QUEUE_MAX_SECS`, above),
   and each queue's own holders finish within one start.
 - **The dedicated-process path pauses at all three start queues.** Every `model` /
-  `reasoning_effort` / `allowed_tools` / `bare` spawn takes `get_or_create`,
+  `reasoning_effort` / `allowed_tools` / `bare` / `backend` spawn takes `get_or_create`,
   which waits at `SessionManager._start_sem`, then its provider's runtime spawn
   waits at the cold-start admission and its `create_session` at the same
   `SessionStartGate`; without the pause that queue time would be charged to the

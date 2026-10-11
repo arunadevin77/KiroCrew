@@ -15,23 +15,30 @@ rather than tested for.
 
 ## The layout
 
-``<backup_prefix>/<crew_name>/data/<tail>``, where ``tail`` is the object's path
-inside the data home. Transcripts are ``data/sessions/<stem>.jsonl``, archived
-segments keep their own path under ``data/sessions/archive/``, and the authority
-files sit at the data home's root, so theirs are ``data/session_map.json`` and
-``data/open_slots.json``.
+``<backup_prefix>/<crew_name>/<tail>``, with the prefix and the crew name each optional
+and stripped of their own slashes. Four kinds of object sit under it:
 
-The ``data/`` namespace is a segment of its own so that anything the owner's
-control plane later files beside the data (a manifest, a label) cannot collide with
-a conversation whose slot id happens to match.
+* ``authority_generation.json`` -- the pointer naming the committed generation. It sits
+  BESIDE the ``data/`` namespace, not inside it.
+* ``gen/<id>/session_map.json``, ``gen/<id>/open_slots.json`` and
+  ``gen/<id>/transcript_index.json`` -- one writer-unique, immutable generation: the two
+  authority files and the ``stem -> digest`` index of the live transcripts.
+* ``data/blob/<sha256>`` -- a live transcript, addressed by the digest of its bytes.
+* ``data/sessions/archive/<...>/<name>.<sha256>`` -- an archived segment: its path inside
+  the data home with the digest of its own bytes appended, so the owner's control plane
+  can still find a conversation's segments by listing the path prefix.
 
-## One function does the work
+The ``data/`` namespace is a segment of its own so that anything the owner's control
+plane later files beside the data (a manifest, a label) cannot collide with a
+conversation whose slot id happens to match.
 
-Every key comes from :func:`data_key`, which is the only place a path becomes a
-key. Each named derivation (an authority file under a committed generation, a
-content-addressed blob) calls it, so the same file addressed two ways cannot produce
-two different keys. Writing a case out separately is how the two ways of naming one
-object start to disagree.
+## Where a path becomes a key
+
+:func:`data_key` is the derivation for a data-home path, and every other named derivation
+(a generation's object, a content-addressed blob, an archived segment) builds its key from
+the same prefix through :func:`full_key`. Neither process keeps its own copy, so the same
+object addressed two ways cannot produce two different keys. Writing a case out
+separately is how the two ways of naming one object start to disagree.
 """
 
 from __future__ import annotations

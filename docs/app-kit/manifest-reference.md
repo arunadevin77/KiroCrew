@@ -695,7 +695,7 @@ absolute imports are for built-in apps only.
 
 **Python dependencies.** Runtime `requirements.txt` provisioning — the
 `data/.kirocrew-deps/` tree described in the stdio `command`-resolution passage
-above (see #7878 / #7901 for the mechanism) — runs only where app code executes
+above — runs only where app code executes
 as its own process: the `backend.entryPoint` spawn path (a real file entry
 point in the app's own tree) and stdio MCP server registration. Hook code gets
 nothing from it: the tree reaches processes **spawned on the app's behalf** —
@@ -963,7 +963,9 @@ installs do not run `onInstall`; build first, then install. The `onEnable`,
 **not run on native Windows** (which has no `/bin/bash`): the runner refuses the
 hook before any process is started and reports a failure whose message names the
 unsupported platform, rather than letting the spawn fail opaquely and look like
-your script breaking. Write hooks for POSIX shells; do not rely on them running
+your script breaking. `onInstall` also runs through `/bin/bash`, without that
+up-front refusal, so a registry install of an app that declares it fails on a
+native-Windows host. Write hooks for POSIX shells; do not rely on them running
 on a native-Windows host.
 
 **Exception — `platform.installMode: "client"` apps.** For a client app the

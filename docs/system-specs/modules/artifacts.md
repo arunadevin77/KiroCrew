@@ -332,6 +332,7 @@ and keep their own rules. Pinned by `test/test_artifacts_owner_gate.py`.
 | `description` | string | Optional, ≤ 2,000 chars |
 | `tags` | string[] | ≤ 16 labels, each a well-formed tag (see [Validation & Limits](#validation--limits)) stored in its NFC spelling |
 | `version` | int | Latest snapshot version; bumps when a content change is snapshotted |
+| `content_token` | string | Optimistic-concurrency token for the current store-backed content: 256 random bits as 64-char lowercase hex, rotated on every content write (`ArtifactStore._rotate_content_token_locked`). A current store-backed read echoes it back as `expected_token` on a conditional save (see [HTTP](#http)); a malformed value is dropped and reassigned on the next current read. Absent for untokened legacy records and live file-backed artifacts |
 | `created_at` / `updated_at` | string | ISO 8601 UTC microseconds |
 
 ## Public API

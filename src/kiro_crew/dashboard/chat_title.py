@@ -893,8 +893,9 @@ async def _persist_title(
     could reload either), ``False`` when the off-thread write failed. Callers
     that must not proceed on a non-durable mark (the refresh's token budget)
     check the result; best-effort callers ignore it. ``still_current`` is the
-    app request's identity predicate, checked inside the metadata write lock;
-    background and dashboard callers leave it unset.
+    caller's slot-identity predicate, checked inside the metadata write lock so
+    a write for a slot that has left its key is refused; the app request and
+    the auto-title and refresh tasks pass it, other callers leave it unset.
 
     WRITE-ORDER GUARD: two concurrent persists (a background titler's and a
     manual rename's) race on worker threads, and flock acquisition order is

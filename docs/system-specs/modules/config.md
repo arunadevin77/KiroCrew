@@ -925,7 +925,16 @@ drop an ack stored in the config document. Three properties of that file matter:
   between the listing and the call would otherwise be acknowledged at its superseded
   snapshot, which then suppresses the report for a value the operator never affirmed.
   The ack write happens inside that same config lock hold; lock order is
-  config-then-ack at the only site that nests them.
+  config-then-ack wherever they nest.
+
+A settings save is itself an answer, exactly as `--keep` is. When a config PATCH
+writes the old default of an `auto_adopt` row, `api_kirocrew_config_patch` calls
+`ack_explicit_write` under the config write lock and BEFORE the write (the same
+config-then-ack order), so the value is acked and the next load does not
+un-materialize the choice the operator just made. A refused ack raises `OSError`
+and aborts the write, rather than persisting a value the next load would delete.
+Only `auto_adopt` rows are acked this way; a report-only row loses nothing on
+load and is left untouched.
 
 `--adopt` also drops the ack for a key it removed, since the acked value is no
 longer stored and keeping it would silence a genuinely deliberate choice made
@@ -2028,7 +2037,8 @@ this is what closes the torn-read window for everyone else. Mode-preserving
 because tmp+rename creates a NEW inode, so the umask default (typically `0644`)
 would silently replace an operator's tightened `0600`; `config.json` can hold
 inline credentials, so a settings write must never widen who can read it. An
-existing file's mode carries over and a newly created one is owner-only. On
+existing file's mode carries over, minus group/other access when the file is inside the
+data home (see security.md "Data Home File Modes"); a newly created one is owner-only. On
 Windows it also applies a real owner-only DACL via
 `platform_compat.restrict_to_owner` (`restrict_on_error="warn"`, so a DACL that
 cannot be applied warns rather than making the config unwritable).
@@ -2494,6 +2504,15 @@ own the shared agent home (`wrote=False`) takes the same failure path, notify an
 defer, rather than reading as applied; a successful rebuild also re-runs
 `SessionManager.refresh_defaults` so warm-pool providers minted from the old spec
 are reconciled (`dashboard/server_runtime/config_watch.py` `_apply_default_model`).
+The `wrote=False` refusal is one case of a general ownership guard: every write through
+the shared-spec primitive (`agent.py` `_atomic_json_write`) is refused with
+`SharedAgentHomeRefused` when the data home does not own the shared agents directory. The
+derived worker, conductor and service-agent specs and the read-only side spec all take
+that refusal, so the worker's stale mirror raises `DerivedSpecStale` rather than
+re-deriving, and the dashboard spec editor and the MCP toggle, remove, sync and apply
+handlers answer HTTP 409 `agent_home_not_owned` (listed in learn-cron-dashboard.md)
+instead of recording a change the file never took. Every admitted or refused shared-home
+write is audited as the SEL `agent_home_write` operation, allowed or denied.
 The provider applier only schedules the switch: `reload_provider_factory` clears
 the session registry and then shuts the retired providers down one at a time,
 which can outlast the applier bound, and a timed-out applier is retried on the
@@ -2601,7 +2620,11 @@ that constant is what has to rise instead. Because the key's help text is the
 only statement of this an operator reads, `test_config_baseline.py` pins the
 sentence against that arithmetic rather than leaving it to review;
 `initialize_timeout_secs` (10) bounds a fresh backend's first
-`initialize` and is threaded onto each `Backend` as a constructor field;
+`initialize` and is threaded onto each `Backend` as a constructor field (on Windows the
+effective deadline is floored to 30 s by `_WINDOWS_INITIALIZE_TIMEOUT_FLOOR_SECS` through
+`_effective_initialize_timeout_secs`, since a Windows cold start routinely overruns the
+POSIX-measured 10 s default and would otherwise be reaped and respawned; a configured
+value already above the floor and every POSIX host are unchanged);
 `host_budget_max_procs` / `host_budget_max_rss_mb` / `host_budget_max_fds` (all
 0) cap what the host budget admits across pooled, private and fallback
 backends, where `0` means derive from the available-memory sample the gateway
@@ -2691,14 +2714,14 @@ class AgentConfig:
     task_queue_enabled: bool = True   # persist every accepted subagent spawn to $KIROCREW_HOME/tasks/tasks.db before its id is returned; memory pressure defers instead of refusing, and with false (or no store) a floor miss also queues, in memory. false = the in-memory spawn queue, for one release (tasks.db left in place, unread). See modules/taskq.md
     task_dispatch_window: int = 64    # max queued spawns held in memory; the rest are rows read FIFO as the window drains. Load-time clamped to [1, 4096]; restart=True
     task_store_journal_mode: str = "auto"  # tasks.db SQLite journal: "auto" = WAL locally, DELETE when $KIROCREW_HOME is on a network filesystem; "wal" | "delete" force one (RFC overload-resilience §13 Q6 reversal). Unknown -> "auto"; restart=True
-    admit_wait_secs: int = 30         # admitted -> queued after this, and how long a memory-deferred spawn waits before re-check. Load-time clamped to [1, 3600]; restart=True
+    admit_wait_secs: int = 30         # admitted -> queued after this, and the longest a memory-deferred spawn waits before its re-check (a memory event re-checks it sooner). Load-time clamped to [1, 3600]; restart=True
     subagent_queue_max_wait_secs: int = 1800  # DEFAULT_SUBAGENT_QUEUE_MAX_WAIT_SECS; longest a spawn deferred by spawn_min_memory_gb stays parked (spawns are not gated on the memory posture tier) (time spent eligible, queued for a slot, is not counted) before it ends as 'never started: waiting for memory' (delivered, depth 0). Also the per-start and per-episode bound of the macOS kernel memory-pressure hold. 0 = no bound. Load-time clamped to [0, 86400]. Live (SubagentManager.LIVE_CONFIG_PATHS). See modules/subagent.md § Durable task queue and § macOS: the kernel memory-pressure hold
     start_collect_timeout_secs: int = 300  # how long the session-start gate's StartCollector keeps a timed-out session/new (row `recovering`) to adopt a late answer before the attempt is abandoned. Load-time clamped to [10, 3600]; restart=True
     session_start_concurrency: int | str = "auto"  # ACP session/new requests outstanding per gateway event loop (SessionStartGate; fixed, not adaptive). Queue time behind it is not start time. "auto" is sized once per process by session_start_sizing: clamp(min(cpus // 4, available_GB // 3), 2, 16), cpus = affinity capped by cgroup v2 cpu.max; an integer is load-time clamped to [1, 64]; junk falls back to "auto"; restart=True
     child_env_defaults: dict[str, str] = {}  # env vars set on every spawned kiro-cli child (AcpRuntime via KiroHarness/KasHarness.apply_spawn_env, auxiliary AcpClient via _resolve_spawn_env(kiro_api_key=True)) ONLY when the key is absent from the inherited env (ambient or per-session overlay; an explicit empty value wins). Applied before the agent-env scrub. Opt-in tuning, e.g. {"TOKIO_WORKER_THREADS": "4", "RAYON_NUM_THREADS": "4"} to cap kiro-cli's core-count-sized pools. Allowlist only (CHILD_ENV_DEFAULT_NAMES): TOKIO_WORKER_THREADS and RAYON_NUM_THREADS, each a decimal integer string (ASCII digits, nothing stripped) in [1, 1024], stored as str(int) ("04" -> "4"); any other name or value is dropped with a warning (key named, never value). Live (next spawn). See acp/child_env_defaults.py
     cold_start_concurrency: int | str = "auto"   # background cold starts one SessionManager runs at once (_start_sem; a person's start has one more reserved permit). "auto" = the effective session_start_concurrency width clamped to [4, 16] (cold_start_sizing). Integer load-time clamped to [1, 32]; junk -> "auto"; restart=True
     runtime_spawn_concurrency: int | str = "auto"  # ACP runtime spawn + initialize handshakes per gateway event loop (cold-start admission). "auto" = half the effective session_start_concurrency width clamped to [2, 8]. Integer load-time clamped to [1, 32]; junk -> "auto"; restart=True
-    lane_weights: dict[str, int] = {}    # per-lane weight overrides keyed by root session key or 'system'; unlisted lanes weigh 1, and a weight shapes the share of picks, never a hard cap. Each value load-time clamped to [1, 64]; non-string and empty keys dropped. Live
+    lane_weights: dict[str, int] = {}    # per-lane weight overrides keyed by root session key or 'system'; unlisted lanes weigh 1, and a weight shapes the share of picks and, while a lane waits for memory, that lane's share of running dedicated subagents, never a hard cap. Each value load-time clamped to [1, 64]; non-string and empty keys dropped. Live
     child_reserve: int = 1               # execution slots a depth-0 task may never take while a nested task is queued or a parent waits on children; also lifts an adaptive squeeze to adaptive_floor + child_reserve while a parent waits (never above max_subagents). 0 disables. Load-time clamped to [0, 8]. Live. See modules/subagent.md § Fairness lanes and the child reserve
     recovery_backoff_base_secs: float = 2.0    # first retry delay of the shared recovery ladder (tool call / backend / ACP runtime) and of a dependency wait; doubles with equal jitter. Snapshotted onto the process ladder by `recovery.ladder.configure_default_ladder(cfg)` in `GatewayOrchestrator._init_subagents`; the gatewayd supervisor's rung is pinned and does not follow it, and the two import-time readers (`acp/client._ACP_RESPAWN_BACKOFF_S`, `taskq/model.recovery_backoff_secs`) keep the static defaults. Load-time clamped to [0.1, 60]; restart=True. See modules/session.md § Recovery ladder
     recovery_backoff_max_secs: float = 120.0   # cap on that delay; a server retry hint is honoured up to it. Same snapshot seam and same exclusions as the base. Load-time clamped to [1, 3600], never below the base; restart=True
@@ -3510,7 +3533,7 @@ Two consequences fall out of naming in a non-latin script:
 - **The reveal animation needs characters.** The sidebar types a new title in one
   word at a time; a single-token title skipped the animation entirely, so
   `_title_reveal_prefixes` steps unspaced scripts two characters at a time
-  instead, landing in the same step count as an equivalent latin title.
+  instead, landing in the same step count as an equivalent latin title. Every cut is extended to the end of the grapheme cluster it lands in (`_grapheme_end`), so a frame never shows half a Thai tone mark, flag, skin-tone or ZWJ emoji sequence.
 
 `_clean_title` strips the full-width and CJK quote/period forms (`「」`, `“”`,
 `。`) alongside the ASCII ones, since that is what a zh/ja reply wraps a name in.
@@ -3550,7 +3573,7 @@ minted only after the scrub, exactly as the post-compaction skills index is.
 A `subagent:` session is the one kind that does NOT receive the frame
 (`_response_preferences_apply`, resolved through the same runtime-source seam
 as `[RUNTIME]`): its final message is read by its parent agent, which needs the
-caveats and edge cases the `ultra` and `answer_only` levels tell the writer to
+caveats and edge cases the `answer_only` level tells the writer to
 drop.
 
 Session-start context is what compaction drops, so `build_message` re-injects
@@ -3611,10 +3634,13 @@ config sections cannot enter configuration through this path.
 ### Meet CrewMates first-run state
 
 `DashboardConfig.crewmates_onboarded` records completion of the "Meet CrewMates"
-creation flow (`website/src/components/MeetCrewmatesFlow.tsx`). It no longer
-controls automatic presentation: neither completing the tour nor entering
-Crewmates opens a fullscreen chapter. The Crewmates page owns the flow and
-opens it only on an explicit create action.
+creation flow (`website/src/components/MeetCrewmatesFlow.tsx`). It gates automatic
+presentation but does not trigger it: the first-run host owns automatic entry
+and the Crewmates page owns explicit creation (`useMeetCrewmatesGate`). The flow
+opens automatically at the first of the first-run tour's end (while the Crew
+preview is on and `crewmates_onboarded` is unset) or the first Crewmates visit
+(while the seen flag is unset), and the page's own create action opens it through
+`START_MEET_CREWMATES_EVENT`.
 The embedded steps collect a goal, choose a name, review the run schedule and
 confirm the result. They reuse the chapter shell without a portal or modal focus
 trap. Technical template selection stays under Advanced. The default is
@@ -3641,9 +3667,13 @@ The today/tomorrow label is calculated when creation completes, at minute
 precision; the selected minute itself counts as passed. Failed schedule writes
 show their recovery notice without a next-run claim. This flow creates a crew
 and optional recurring schedule, not a separate goal-completion control loop.
-`useMeetCrewmatesGate` listens only for the explicit create event
-(`START_MEET_CREWMATES_EVENT`); it does not inspect the roster, installed
-agents, tour completion or prior completion flag before opening. The crewmate name is free-form: `POST /api/agents` keeps it as the crew's
+`useMeetCrewmatesGate` opens on the explicit create event
+(`START_MEET_CREWMATES_EVENT`) and automatically: `tourEndDue` fires at first-run
+tour completion while the Crew preview is on and `crewmates_onboarded` is unset,
+and `pageEntryDue` fires on the first Crewmates visit while the seen flag is
+unset. It reads the roster (`membersRosterQuery`) to hold the flow for a pending
+Mate, so it does inspect tour completion, the seen flags and the roster before
+opening. The crewmate name is free-form: `POST /api/agents` keeps it as the crew's
 label and derives an id-shaped key from it (`members.key_new_crew`), so spaces
 and CJK are accepted. The flow disables Next only on a blank name; the server's
 `validate_member_name` is the gate, and a 400 `invalid_member_name` or

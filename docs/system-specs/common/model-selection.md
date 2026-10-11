@@ -374,9 +374,8 @@ its own once the cache refreshes with a list that carries it.
   model-name heuristic until ACP reports the session's actual options. A slot the
   gateway has not registered yet answers 404 `slot_not_found`, and the composer
   reads that the same way (`selectionCapabilitiesFailed` in `website/src/lib/effort.ts`):
-  only a real fault (403, 503 `peer_unavailable`, transport failure) shows the
-  "could not verify effort options" notice and hides the effort control. The same
-  endpoint proxies a remote slot to its execution peer. Model and effort are ONE
+  only a real fault (any error other than that 404, such as a 403 or a transport failure) shows the
+  "could not verify effort options" notice and hides the effort control. Model and effort are ONE
   composer control (`docs/decisions/2026-06-14-chat-composer-model-and-effort-are-one-control.md`):
   the model chip names the level in force, and the model picker embeds the effort
   slider below its model list whenever the capability read reports support, offering

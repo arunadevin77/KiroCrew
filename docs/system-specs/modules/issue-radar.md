@@ -249,7 +249,7 @@ per-repo store-scoping rule.
 | GET | `/labels` | Repo label set (cached with a **10-min TTL**; see "The label cache expires") |
 | GET | `/members` | Repo collaborators (authoritative API or fallback) |
 | GET | `/repos` | Connected repos list. Rows missing a cached `permissions` object (connected before permissions were tracked) are self-healed with a live `verify_repo_access`, run CONCURRENTLY under a bounded semaphore (`_REPO_HEAL_CONCURRENCY`) rather than one-at-a-time, since this gates app open; a single unreadable repo is skipped, not fatal |
-| GET | `/recent-repos` | Repos the `gh` user contributed to recently (connect-dialog picker) |
+| GET | `/recent-repos` | Repos the authenticated user contributed to recently, for the connect-dialog picker; provider-neutral (`?provider=&host=`), so GitHub, GitLab and Azure DevOps all populate it, not only `gh` |
 | DELETE | `/repos` | Disconnect a repo (drops config + cache) |
 | GET | `/me` | Current `gh` login |
 | GET/PUT | `/settings` | Per-repo triage settings. The PUT replaces the whole document, so it carries the `revision` it read and is refused with **409** if the stored revision has moved — otherwise a stale tab would erase a label appended meanwhile |

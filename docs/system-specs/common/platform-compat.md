@@ -185,7 +185,7 @@ update and restart actions, `service.live_target.maybe_reexec` for a live-target
 cutover), so a successor re-enters the prelude holding its predecessor's value.
 Honoured as an operator override, that value keeps the successor pointing at the
 previous install's bundle; once an upgrade or an installer re-run deletes that tree
-every TLS handshake fails until a restart from a clean environment (#15713).
+every TLS handshake fails until a restart from a clean environment.
 
 The rule is shared with the other install-pinned runtime export,
 `LLAMA_CPP_LIB_PATH`: **a value the runtime exported is its own transitional value, not an
@@ -573,9 +573,8 @@ whose only edge to the root ran through an intermediary that exited before the
 first scan is a different case and must not be read as covered by that refusal:
 Toolhelp reports its parent as a vanished PID, so no walk from the root reaches
 it, the drain confirms the exits it can see and reports success, and that
-residue falls to the PID-file orphan sweep exactly as it did before this
-change. Pinning at spawn closes the window for the ROOT, which is the reaped-root
-case this fix exists for; it does not pin an intermediary nobody has seen yet. POSIX teardown and Windows resource Job limits are
+residue falls to the PID-file orphan sweep. Pinning at spawn closes the window
+for the ROOT; it does not pin an intermediary nobody has seen yet. POSIX teardown and Windows resource Job limits are
 unchanged. Native small-process regressions live in
 `test/test_runtime_cleanup_windows.py`; deterministic timing/error contracts
 live in `test/test_windows_tree_reap.py`.

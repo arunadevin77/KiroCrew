@@ -3205,8 +3205,11 @@ class _ChatSlot:
         # inheriting rather than pinning. "" = unknown. Written through
         # `record_served_model`.
         self.served_model: str = ""
-        # Reasoning effort: "" = provider default, else one of low/medium/high/max.
-        # Currently consumed by an alternate ACP backend (--effort flag); ACP wired later.
+        # Reasoning effort: "" = provider default, else one of
+        # low/medium/high/xhigh/max (``EFFORT_LEVELS`` in ``effort.py``). A live
+        # session applies it as ``session/set_config_option`` on the backends in
+        # ``ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION`` (claude, codex, deepseek, KAS as
+        # ``effortLevel``, pi) and as the ``/effort`` command on kiro-cli.
         # Every write that changes the level bumps ``_effort_pick_gen`` (see the
         # property), so a queued session_set_model effort can tell that a newer
         # choice landed even when that choice returned to the level it saw.

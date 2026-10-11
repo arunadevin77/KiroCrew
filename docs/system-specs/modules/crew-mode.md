@@ -982,7 +982,7 @@ roster's chat mark beside it (`mc-members-last-member-chat-mark` = the greatest
 crewmate `last_chat_ts` at that open); it is never ranked by its own
 `last_chat_ts` (that also moves for every plain chat that picked no crew, so it
 would win nearly always), and instead outranks the last-chatted crewmate exactly
-while no crewmate's `last_chat_ts` has moved past the mark (#17210). Both sides
+while no crewmate's `last_chat_ts` has moved past the mark. Both sides
 are the server's clock, so a remote dashboard compares the same. The mark is the
 user's own open (click or link): a restore re-reads it but never re-writes it.
 A roster holding only `default` still shows the hero.
@@ -1044,7 +1044,7 @@ crew are refused, and so is a name `members.check_crew_label` refuses: one anoth
 already shows (`400 name_taken`) or a credential-shaped one (`400 invalid_name`). The rename is a `member/config` event, so the open chat header,
 the roster and the switcher show the new name at once through the roster projection,
 with no reload and no confirm card. The kickoff says the user has typed nothing,
-forbids "welcome back", and allows a user name only when the User Preferences block
+frames it as the crewmate's first conversation with the user, so it greets as someone it is meeting for the first time, and allows a user name only when the User Preferences block
 or a memory result states one, never one inferred from a username, home path, email
 or host name. The route answers `{"outcome": ...}` (`started`, `already_greeted`,
 `not_empty`, `busy`, `not_crewmate`, `no_thread`, `not_owed`). A welcome turn that
@@ -1230,7 +1230,14 @@ roster count. Faces and a number alone did not read as the crew list to a
 first-time visitor whom a bare `/members` had dropped into a thread, so the
 word names the chip as the roster. The chip's accessible name starts with that
 visible word (label in name) and the action ("Switch crewmate") is its tooltip.
-Its popover searches every crewmate, marks the current one, switches
+Its popover lists the roster's own population, not every crewmate: the rows
+`listedByDefault` keeps (chatted-with, starred, Mate, the default crew) plus the
+open crewmate (`rosterPopulation`), the same rule and count the roster column
+reads, so the chip can never disagree with the column. A typed search decides
+alone and falls back to the full roster, so a hidden row -- a background or
+app-driven crew, a sync-generated template nobody has chatted with -- is reached
+by typing exactly as from the column's search (`rosterShows`). It marks the
+current one, switches
 the thread through the existing verified `openMember` path, and opens the same
 `NewCrewmateDialog` as the roster's create entry. The stacked faces are the OTHER
 crewmates' in roster order — the open crewmate's face is already the identity
@@ -1313,7 +1320,7 @@ the same `aria-hidden` word, read through the same `signalsOf` resolver
 never disagree about who is parked on a question.
 
 The thread header (`member-thread-header`: the switcher, the identity pill, the
-panel opener) floats OVER the top of the thread (#18325): an absolute row with no
+panel opener) floats OVER the top of the thread: an absolute row with no
 solid background, so the conversation scrolls under the Glass pill the way it
 scrolls under the composer dock, and the pill reads as a chip on the conversation
 rather than a bar above it. Every control on the row is a Glass chip — the
@@ -1327,13 +1334,14 @@ scroller's top padding — `ChatPane`'s `topInset`, the header's measured height
 (`useMeasuredHeight`, never a constant) plus the pane's own 12px — so at scroll
 top nothing hides under the pill (a crewmate's chat draws no pinned-prompt band,
 #18346, so nothing else hangs under it). Whatever can sit between the header and the pane (notices, the
-greeting cards) stays in flow in one `empty:hidden` box padded below the header
-by that height, and while that box has a height the pane's inset is 0: a card
+greeting cards) stays in flow in a measured inner box wrapped by an outer box that is padded
+below the header by that height only while the inner box has a height (no
+`empty:hidden`: a `display:none` child measures 0 but is not `:empty`), and while that box has a height the pane's inset is 0: a card
 with controls is never under the glass, and the pane is under the header only
 when it is the thing directly below it. The row and its cells pass input through
 (`pointer-events-none`); only the controls catch it, so a wheel beside the pill
 reaches the transcript. It sits at z-20 — above the pane's own chrome (its
-dock), below the floating Profile card (z-30), whose scrim covers it. No hairline under it (#9425).
+dock), below the floating Profile card (z-30), whose scrim covers it. No hairline under it.
 
 The identity pill is compact at rest: the crewmate's face (with its loop mark)
 and the chevron. Its name and activity line fold to a zero-width grid column
@@ -1371,7 +1379,7 @@ clock (`FACE_FLIGHT_SECS`, the `defaultLayoutTransition` the `layoutId` flight r
 re-read every frame because the landing face moves while the column reveals or folds;
 both real faces hold their place with `visibility: hidden` until it lands, and reduced
 motion or a face with no box (jsdom) is a plain swap. It is NOT a framer `layoutId`
-shared by the two faces (#18236): a shared element travels inside whichever surface
+shared by the two faces: a shared element travels inside whichever surface
 owns it, so the card's face was clipped by the card's rounded `overflow-hidden`
 shell, its scrolling body and the width-revealing aside until it was already inside
 them, and the pill's face was painted under the thread and the folding card, both
@@ -1388,7 +1396,7 @@ visible. The pill stays, but with its face slot held empty (`visibility: hidden`
 the face is IN the card. Opening flies it there with the same `CrewFaceFlight`
 copy the docked card uses while the card fades in on the flight's clock, and
 closing flies it back while the card fades out — the floating portal is mounted
-through `AnimatePresence` so the close plays (#18329). The flight fires on the
+through `AnimatePresence` so the close plays. The flight fires on the
 card opening or closing in either placement; a re-placement (column <-> floating)
 flies nothing. The card matches SidePanel's vertical bounds but is not a SidePanel tab
 or a second panel. Escape is handled on the card subtree, not the window, so it
@@ -1411,9 +1419,10 @@ The Profile tab holds the crewmate's own settings (`CrewProfileSettings`):
 permission (Normal / Reads / Trust), model and effort. They are changed there,
 never in the chat. Each pick writes the crew record (`approval_mode`, `model`,
 `reasoning_effort` on `PUT /api/agents/{name}`) and then the live DM slot, so
-the open thread follows at once. `approval_mode` is `""` until the user picks
-one; only then does `POST /api/members/{slug}/thread` open the thread in
-`trust`. A stored choice is applied as stored, a grant already on the slot is
+the open thread follows at once. `approval_mode` is `""` until the user picks one, and while it is `""` the
+thread opens in `trust` (`_seed_member_approval` seeds the slot from `mode or
+"trust"`); picking `Normal` is what opens it without trust, and `trust_reads` /
+`trust` are applied as stored. A stored choice is applied as stored, a grant already on the slot is
 kept, and the seed runs once per in-memory slot (`_member_approval_seeded`).
 YOLO is never a crewmate setting: it is process-global.
 The permission PUT is compare-and-set: the profile sends
@@ -1888,17 +1897,15 @@ pins it (`test_records_bound_to_a_removed_row_stay_executable`: every row the
 pass removes decodes as an executable template), and
 `test_pruned_crewmate_records.py` pins each reader.
 
-Removed rows do not come back: since #12224 the dashboard pickers read
-`GET /api/agents/catalog` and nothing calls `POST /api/agents/sync`, so the rows
-this pass removes were written by builds before that change. The sync route's
+Removed rows do not come back: the dashboard pickers read
+`GET /api/agents/catalog` and nothing calls `POST /api/agents/sync` (`useAgents`),
+so the rows this pass removes were written by older builds. The sync route's
 own contract is unchanged.
 
-The RFC's original screen 03 ("a user with custom agents but no crewmates is
-offered to add them") is superseded: #12224 ended the enrol-on-mount behaviour,
-and the Crewmates page's empty state with **New crewmate** (#12924) is the path
-from a custom agent to a crewmate. What an existing user actually has is the
-opposite problem — the crewmates that sync already made — and that is what this
-migration settles.
+There is no enrol-on-mount path from a custom agent to a crewmate; the
+Crewmates page's empty state with **New crewmate** is that path. What an existing
+user actually has is the opposite problem — the crewmates the old sync already
+made — and that is what this migration settles.
 ## A crewmate's chat
 
 A member-mode slot's transcript is the crewmate's whole working record: the
@@ -1987,7 +1994,7 @@ label while the call runs (`data-activity=tool`), the indicator's own
 (`thinking`), the pill's other phase words otherwise (`writing`, `working`,
 `delegated`), and text-free (same height) for `compacting` and `stopping`,
 which the `ChatFooter` directly under it already spells out; and the line goes
-with the turn (#18238). Words only — the ghost under it carries the motion; a second
+with the turn. Words only — the ghost under it carries the motion; a second
 spinner read as a second "working" sign. The line is a status, not a
 transcript row, for a reason that is part of the contract: it is one
 fixed-height row (`h-5`, truncating), mounted for the WHOLE live turn and

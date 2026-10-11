@@ -135,6 +135,9 @@ live Slack OPTIONS and the context owed by a first claim, including speculative
 resume, while completing that claim's session-start bookkeeping. The sibling
 `/compact` gate may refuse before acquisition; when no positively alive provider
 exists, it uses the factory's member-aware `select_provider_backend` authority.
+`GET /api/slash-commands` has no session key, so it lists `/todos` from the
+default `agent.acp_backend` capability only; a member session routed to a
+different harness is still judged by the gate above when the command is sent.
 
 ## Group C: the Kiro path keeps its own machinery
 

@@ -36,7 +36,7 @@ This RFC does not propose a new product surface. It proposes a transport **below
 an existing choke point**. Every peer interaction in the tree already funnels
 through one method — `SshTunnelManager.proxy_request`
 (`src/kiro_crew/instances/ssh_tunnel_manager.py`) — so the dashboard proxy
-route, the remote-turn mirror, slot adoption and the capability probe do not need
+route, the peer slot read and the capability probe do not need
 to know how bytes reach the peer. What a new transport owes them is a small
 contract: a reachable local origin, a credential, a status, and a teardown.
 
@@ -101,9 +101,8 @@ Three properties, in the order they matter:
 This RFC is small because it changes one layer and leaves four contracts alone.
 
 - **`proxy_request` stays the only way to talk to a peer.** Its callers
-  (`api_instances_proxy`, `src/kiro_crew/dashboard/handlers_instances.py`;
-  the remote-turn mirror in `src/kiro_crew/dashboard/remote_relay.py`; slot
-  adoption in `src/kiro_crew/dashboard/remote_adopt.py`) are not touched.
+  (`api_instances_proxy` and `read_peer_slots`, both in
+  `src/kiro_crew/dashboard/handlers_instances.py`) are not touched.
 - **The peer's own token auth stays the authorisation boundary.** An outbound
   transport does not introduce a second way to be authorised to a dashboard; it
   changes only how the token is obtained.
@@ -166,9 +165,10 @@ enrolment_ref    opaque reference to the local secret used to authenticate
 Deliberately **not** on the record: any secret. The record is agent-writable, so
 it names a reference and the value lives in the existing secret store.
 
-The word *relay* is avoided in code and field names: `dashboard/remote_relay.py`
-already means something else (mirroring a peer's turn into a local transcript),
-and reusing the word would make two unrelated concepts grep the same.
+The word *relay* is avoided in code and field names: it already means something
+else (the retired mirror of a peer's turn into a local transcript, whose chats
+`dashboard/relay_archive.py` keeps as read-only archives), and reusing the word
+would make two unrelated concepts grep the same.
 
 ### 3.3 Reach: an in-process loopback listener
 
@@ -668,14 +668,16 @@ A phase is done when these are measured, not argued:
   mapping, asserted by a test that an unmapped method renders as unmapped and
   acquires no sibling's badge, hint, target field or repair steps — with the
   `fargate` diagnostics report naming `fargate` as the regression test of record;
-- the badge label and hint of every registered method exist in every shipped
-  locale catalog, asserted by a test rather than by review;
+- the badge label, the card hint and the form's method hint of every registered
+  method exist in every shipped locale catalog (§3.9), asserted by a test rather
+  than by review;
 - the effective method posture appears as a row in the security-posture registry
   whose items are the permitted methods, and reports itself unresolved rather than
   permissive when it cannot be determined (§5.7);
 - `ssh`, `ssm` and `fargate` behaviour is byte-identical after §3.1, asserted by
-  the pre-existing tests with no edits, the single exception being the `fargate`
-  diagnostics label corrected in §3.9.
+  the pre-existing tests with no edits, the two exceptions being the `fargate`
+  diagnostics label and the edit form no longer rewriting an unmapped method to
+  `ssh`, both corrected in §3.9.
 
 ## 10. Open questions
 

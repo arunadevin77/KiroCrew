@@ -823,6 +823,10 @@ closes the popup and collapses the labels back to the hamburger. The menu surfac
 uses the dashboard theme because native Windows popups capture window input and
 cannot support hover switching; a narrow IPC bridge keeps command execution and
 standard Electron roles in the main process.
+The View submenu's **Toggle Focus Mode** flips focus mode from the native menu,
+which is the way out that stays visible once focus mode has hidden the
+dashboard's own top-bar toggle; it is a plain item (no check mark, no
+accelerator) because the state and its rebindable chord live in the renderer.
 When a remote crew is connected, the instance switcher shares the same bounded
 left region as the menu: it is a single trigger naming the crew on screen (see
 InstanceTabBar's SwitcherMenu), not a row of per-crew tabs, so it costs constant

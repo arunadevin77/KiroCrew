@@ -268,6 +268,7 @@ writes.
 | `kirocrew memory search "query"` | Search episodic memories |
 | `kirocrew memory stats` | Show memory statistics |
 | `kirocrew memory audit` | Scan memory for suspicious content |
+| `kirocrew memory create-store <name>` | Create the directory of a named V1 store declared in `memory_stores` (`use` never creates it; refuses the default store, an undeclared name and a V2 member store) |
 | `kirocrew memory export` | Export the default store's rows to JSON (stdout) |
 | `kirocrew memory export -o file.json` | Export to file |
 | `kirocrew memory export --store <name>` | Export a named store's rows instead |

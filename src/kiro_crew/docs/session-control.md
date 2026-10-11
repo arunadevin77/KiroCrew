@@ -93,7 +93,8 @@ Two things it deliberately does not take:
   agent, model, memory store and mode, project and folder — exactly what a human
   fork inherits, and for the same reason: a transcript belongs to the memory
   boundary it was written in, and a fork must stay inside it. A session bound to
-  a different agent is `session_create`'s job.
+  a different agent is `session_create`'s job. One difference: a person's fork of a
+  pinned session is pinned, but a fork you make is never pinned.
 - **No tail fork.** Only the head (everything up to the fork point) is offered.
 
 Forking another session is a **read** of its transcript, so naming a `source`
@@ -802,6 +803,7 @@ gateway-issued key counts. Refusals you should expect, by code:
 | `memory_delegation_denied` | HTTP 403: session_create named a crew member's agent the caller may not bind (a cron, a fenced deputy, a peer member). Use a template agent, or ask the owner |
 | `model_owner_only` | HTTP 403: `auto` and **Auto (Jev)** can only be picked by the owner from the model picker |
 | `model_rejected` | The model id is missing, malformed, looks like a credential, or is one the target's backend would refuse |
+| `effort_rejected` | session_set_model: `reasoning_effort` is not one of the five standard levels (low, medium, high, xhigh, max). `""` is refused too; set it from the target's effort dropdown |
 | `target_replaced` | HTTP 409: the target was replaced by another session under the same key while the call ran; nothing was changed. Try again |
 | `invalid_field_type` | An argument had the wrong type (for example a broadcast target list that is not a list of strings) |
 
@@ -912,7 +914,7 @@ person can see it happening.
 | Visibility | The person reads, steers and takes over the tab | A completion event injected into your turn |
 | Lifetime | Until closed; survives your session ending | Bounded by the spawn timeout |
 | Two-way traffic | `session_send` in, `session_read_message` out, any number of rounds | Task in, result out; `spawn_steer` for one injection |
-| Nesting | A created session can create its own | Subagents cannot spawn subagents |
+| Nesting | A created session can create its own | A subagent can spawn its own, tracked apart from the parent's wave |
 | Cost of a mistake | A tab the person can inspect and stop | A run you re-do |
 | Reach for it when | A workstream needs its own identity, a long life, or the person's oversight | You need fan-out, distillation of a large input, or a blind second opinion |
 

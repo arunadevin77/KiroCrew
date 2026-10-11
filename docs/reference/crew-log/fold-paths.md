@@ -3,7 +3,7 @@
 Every path each ADVERTISED session fold renders, with the type its empty
 state carries. Produced by calling each fold's own `start()` and `render()`
 (`kiro_crew.crew_log.projection._FOLDS`), so it is the shape the routes
-`/api/sessions/{slot}/crew-log/projection/{name}` actually serve rather than a
+`/api/sessions/{id}/crew-log/projection/{name}` actually serve rather than a
 reading of them.
 
 A `null` type is a field whose EMPTY value is null and whose populated value is a
@@ -66,6 +66,7 @@ An `object (empty)` is a map keyed at run time: `usage.by_model` by model name,
 | path | type |
 |---|---|
 | `subagents.by_id` | object (empty) |
+| `subagents.dismissed` | number |
 | `subagents.omitted` | number |
 | `subagents.running` | number |
 | `subagents.running_exact` | boolean |

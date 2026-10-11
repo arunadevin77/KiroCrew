@@ -279,9 +279,10 @@ TypeScript under `src`, `integration` and `playwright`, and a new `waitForTimeou
 shapes no semgrep rule reads (promise-sleeps in the Electron tests, unpinned `Date`, `isVisible` branches,
 elapsed-time upper bounds, unrestored fake timers) and fails a change that raises a
 file's count above its count at the change's merge-base; a line that keeps one on
-purpose carries `// flake-ok: <reason>` with a reason of ten characters or more. CI's
-backend checkout is depth 1 today, so the ratchet is a local, pre-push gate: run
-`python -m pytest -n0 test/test_flake_pattern_ratchet.py` before pushing.
+purpose carries `// flake-ok: <reason>` with a reason of ten characters or more. The
+ratchet is a local, pre-push gate (the
+[Determinism contract](../../docs/system-specs/common/testing-conventions.md#determinism-contract-read-this-first)
+says why): run `python -m pytest -n0 test/test_flake_pattern_ratchet.py` before pushing.
 
 - **Time.** A test whose output reads the clock pins it with `vi.setSystemTime(...)`,
   set after the last real-timer wait (with fake timers, see the fake-timer rule below).

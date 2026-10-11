@@ -304,11 +304,11 @@ the row is in exactly one place. Where the shell renders no slot (the popout
 window, an embedded host, a desktop width) the page keeps its inline row: a missing
 target degrades to yesterday's layout, never to no title.
 
-**What left the bar, and where it went.** The readout capsule (connection dot,
+**What left the bar, and where it went.** The readout capsule (connection glyph,
 metrics, credits) is not rendered on the phone at all: a phone user does not act on
 a resource readout, and the bar's right side holds two controls (bell + overflow
 menu) by the max-two-buttons-per-row rule. The capsule's one generic job -- the
-dot turning red on a transport drop -- is taken by `mobile-offline-strip`: a 24px
+connection glyph switching to an unplugged plug (the capsule also tinting danger) on a transport drop -- is taken by `mobile-offline-strip`: a 24px
 `Gateway offline -- reconnecting` strip hanging off the bar (absolute, so the
 header's three-child invariant holds), rendered while `isMobile && !connected &&
 !authRequired`, `pointer-events-none` because it hangs over the top 24px of whatever

@@ -644,6 +644,13 @@ Wired sites:
   exfil-then-credential two-pass (the Default `CredentialPolicy.redact` delegates
   to `security.redact`); a loaded companion adds its internal-token regexes
   uniformly across every egress surface.
+- Content scans (`binary_content_is_flagged`, `wide_content_is_flagged`) are serialized
+  behind one re-entrant lock (`_SCAN_LOCK`) and their verdicts are kept in a 256-entry LRU
+  (`_SCAN_VERDICTS`) keyed by (scan kind, SHA-256 of the bytes, `governance_generation()`),
+  so the same file served repeatedly is scanned once. A verdict is kept only if neither the
+  governance generation nor this thread's redact-degrade count moved while it ran, so an
+  answer the bare baseline gave in the active context's place is never reused; a scan that
+  raises caches nothing and still fails closed.
 - Gate-side LOG lines (`kiro_crew.platform.redact_log_via_context`) — the same
   companion-aware redaction for an operational log or audit line, which unlike an
   egress sink cannot afford to raise. `redact_via_context` propagates

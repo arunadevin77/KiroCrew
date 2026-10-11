@@ -1275,6 +1275,12 @@ Every mutation route that accepts JSON requires a top-level object. A syntactica
 valid scalar or array is rejected with 400 and `code: invalid_json` instead of
 reaching field access and surfacing as an internal-server error.
 
+When the service layer itself raises, the author, source run, intent run and
+subtree rerun handlers catch it and return a structured JSON 500 `{error, code}`
+with a stable per-handler code (`workflow_author_failed`, `workflow_run_failed`,
+`workflow_run_intent_failed`, `workflow_rerun_failed`) instead of an opaque 500
+with no body, so a caller can tell a deterministic fault from a transient one.
+
 With no `workflow_service` on state, every route answers 503.
 
 Every response body passes through `_redact_obj`, which redacts dict **keys** as

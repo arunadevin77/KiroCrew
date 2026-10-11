@@ -1,12 +1,12 @@
 ---
 title: Work-ledger person-wait hold -- a conductor patrol rests while every open item waits on a person, and a worker can say why it is blocked
-status: in-progress
+status: implemented
 author: iamwhatever, with kirocrew-worker
 created: 2026-10-08
-last-audited: 2026-10-08
-audited-at: 230b9141c8
+last-audited: 2026-10-11
+audited-at: a84f616557
 doc-pr: null
-implementation-prs: []
+implementation-prs: [18109]
 tracking-issues: [18054]
 supersedes: []
 superseded-by: []
@@ -14,7 +14,7 @@ superseded-by: []
 
 # RFC: Work-ledger person-wait hold
 
-- Status: in-progress. The decision was made by the operator who owns the conductor patrol (2026-10-08). The implementation PR follows this document and links back to it; its First Principles lane reads an RFC's status off the base branch, so this document lands on its own first, as GOVERNANCE.md asks of an RFC.
+- Status: implemented. The decision was made by the operator who owns the conductor patrol (2026-10-08). This document landed on its own first, as GOVERNANCE.md asks of an RFC, and its implementation [#18109](https://github.com/kirodotdev/KiroCrew/pull/18109) (`c8da67c030`) has merged. [monitor-architecture](../system-specs/modules/monitor-architecture.md) owns the shipped behaviour.
 - Amends [rfc-goal-loop-approval-hold.md](rfc-goal-loop-approval-hold.md) in one place, named in section 3.3: a `work-ledger` watch whose open items all wait on a person is no longer extended.
 - Related: [rfc-conductor-work-ledger.md](rfc-conductor-work-ledger.md) (the ledger and `work_report`), [rfc-crew-log-wake.md](rfc-crew-log-wake.md) (how a worker's report wakes the conductor).
 - Measured at `230b9141c8`.

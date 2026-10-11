@@ -407,6 +407,16 @@ installer is attached as `KiroCrew-<version>-Setup-x64.exe`; its blockmap stays
 on the update feed path rather than becoming a human download. The release is
 marked `prerelease` when the channel is insider, and notes are generated.
 
+The `Create GitHub Release` step uploads the assets one at a time
+(`preserve_order: true`) rather than all at once, the action's default. The
+three macOS pairs make the set several GB, and with `overwrite_files` (also the
+action's default) a rerun deletes each asset just before it re-uploads it, so a
+parallel rerun would first empty the page; serially, at most one asset is missing
+at any moment. `fail_on_unmatched_files: true` fails the step when `release/*`
+matches nothing, and the job's `timeout-minutes` is 60 to fit the serial upload.
+`test_release_promotion_contract.py::test_release_assets_upload_one_at_a_time`
+pins all three.
+
 `github-release` and `record-stable-promotion` are the two jobs that need
 `contents: write`, and they are the only ones that have it: the signing jobs hold
 AWS credentials but never `contents: write`.
@@ -620,18 +630,13 @@ pair an old-day date with a new-day time, which would move the version backward.
 
 The nightly semver shape is not cosmetic. Date and time are **one alphanumeric
 identifier separated by `t`** (`<YYYYMMDD>t<HHMMSS>`), never a bare 14-digit run
-and never two dot-separated numeric identifiers. Two independent constraints
-force it, both proven live on `windows-latest`:
-
-- Squirrel.Windows derives each release entry's version from the nupkg
-  *filename* and Int32-parses digit runs when sorting, so a run above
-  2147483647 makes `Update.com --releasify` die with an overflow. The bound is
-  magnitude, not digit count. Dot-splitting does not help: electron-builder
-  concatenates the identifiers back into the filename. A letter between the
-  digit runs is what survives that concatenation.
-- SemVer forbids leading zeros in a purely numeric prerelease identifier, and
-  the 06:00 cron yields `HHMMSS=060000`. Inside an alphanumeric identifier the
-  leading zero is legal.
+and never two dot-separated numeric identifiers. One constraint forces it:
+SemVer forbids leading zeros in a purely numeric prerelease identifier, and the
+06:00 cron yields `HHMMSS=060000`. Inside an alphanumeric identifier the leading
+zero is legal. (The Int32 digit-run overflow Squirrel.Windows imposed on a bare
+timestamp no longer applies: the Windows target is NSIS, and `nightly.yml`
+records the retired constraint.) The `t` separator is kept so the stamp stays a
+single fixed-width identifier.
 
 Ordering still works: the identifier is fixed-width and semver compares
 alphanumeric identifiers lexically, which for a zero-padded `YYYYMMDDtHHMMSS` is

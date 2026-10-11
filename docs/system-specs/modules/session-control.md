@@ -40,7 +40,11 @@ unreachable in production because the caller's `X-Internal-Secret` is ignored.
 through `authorize_target` like every other verb and add tree checks of their
 own. Adopt refuses 409 `would_cycle` when the target is an ancestor of the
 caller, and 409 `tree_unavailable` / `tree_not_ready` when the tree cannot be
-read. Release waives the self-target refusal (`allow_self=True`), since a
+read. Both also refuse 409 `target_replaced` when the slot under the target
+key, compared by object identity after the final authorization, is a
+different session from the one captured before the first suspension (a close
+plus a same-key reopen); nothing is appended and a retry acts on the current
+session. Release waives the self-target refusal (`allow_self=True`), since a
 session releasing itself reaches no peer, and refuses 409 `already_root` or 403
 `not_parent`. Both wait until the tree append is durable before answering, so a
 takeover that never reached the disk is refused rather than reported. Neither
@@ -154,8 +158,10 @@ The row's `status` separates `working` / `queued` / `idle` / `closed` / `lost` /
 roster records that a session the dashboard no longer holds still existed, and
 its folded lifecycle says which fate it met. `closed` (carrying `closed_at`) is
 the DELIBERATE tab close -- the worker finished and its tab was closed
-(`remove` -> `END_REASON_REMOVED`); nothing is there to re-dispatch. `lost` is
-the fail-safe default: a session gone with a turn still open, or whose only close
+(`session/closed` with reason `removed`, written by `_close_slot`); nothing is there to re-dispatch. `lost` is
+the fail-safe default: a session gone with a turn still open, or whose newest completed turn did not end
+cleanly (a deliberate mid-turn close cancels the running turn, whose `turn/completed`
+carries an abnormal `stop_reason` and clears `turn_open`), or whose only close
 edge came from a process recycle (`reset`) or a `destroy`, or whose fold could
 not be read -- the state a patrol re-dispatches. A history-only row is `unknown`:
 its metadata proves the session was created, but does not claim whether it
@@ -430,7 +436,7 @@ window and replaces it with a narrower one: the steer RPC suspends on
   it; a peer's steer does not.
 
 A steer is a delivery MODE, not a permission: `authorize_target` decides who may
-send, unchanged, and a crew-bound (`executor == "remote"`) target stays refused
+send, unchanged, and a relay archive (`executor == "remote"`) stays refused with `relay_archive_read_only`
 before either arm is reached. `steer` is strictly typed at both entry points (the
 tool schema and the HTTP handler) and defaults false, so a caller that omits it
 keeps the queue-or-run behaviour.
@@ -526,7 +532,7 @@ through the child's mint, message copy, save and the deleted-source rollback. Th
 session-control verb calls the same two, so what an agent's fork copies and what
 it inherits — agent, model, memory store and mode bound at birth, project,
 folder, tags, `forked_from` — is by construction what a person's fork copies
-and inherits. The human route's behaviour is unchanged by the split; the core
+and inherits, except the sidebar pin (last table row). The human route's behaviour is unchanged by the split; the core
 takes the request-derived facts as arguments (`request_app`, `origin`,
 `count_user_session`, `jev_route_allowed`, the SEL caller and operation) and the
 two routes answer them differently:
@@ -537,6 +543,7 @@ two routes answer them differently:
 | `count_user_session` | `True` — a human request-layer session for the pulse survey | `False` — an agent-made session is not one (`test_session_pulse_session_count` sweeps for the literal, so the core takes it as a parameter and the only literal `True` stays in `chat_fork.py`) |
 | `jev_route_allowed` | `is_owner_dashboard_request` | `False` — arming a second routed session is the owner's own click, which no agent caller made; the child keeps the parent's pinned `model` |
 | SEL operation | `chat.slot_fork` | `session_control.fork`, on the core's rows and on this module's own `_audit` row (`session_fork`), so the two entry points stay distinguishable |
+| Sidebar pin (`stamp`) | `_inherit_pin(source.slot)` copies the parent's `pinned` onto the child before its birth save, so the fork stays beside its parent in the pinned group; the response carries `pinned` | Never pinned: `pinned` marks a session as human-owned |
 
 The core's refusals are `web.json_response` objects — that is the module's
 refusal shape and its coded sites are what the error-code ratchet

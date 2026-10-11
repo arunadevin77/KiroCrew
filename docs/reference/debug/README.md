@@ -1,5 +1,8 @@
 # Debugging a running gateway
 
+**Local page, not a mirror.** This page is Kiro Crew's own documentation and has
+no upstream source, so a re-fetch of the `kiro-cli/` mirror must leave it alone.
+
 The `kirocrew-debug` MCP server answers five questions about a live Kiro Crew
 gateway. Each tool is one question plus a time window, answered by the process that
 owns the truth. Every tool is read-only, and the set is ratcheted to exactly five

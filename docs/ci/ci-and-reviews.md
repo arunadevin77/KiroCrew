@@ -79,7 +79,7 @@ pull_request
   |-- security-scope-review.yml
   |                     "Security Scope Review"  which legit ops a tightening refuses, blocking
   |-- sensitive-change-review.yml
-  |                     "Sensitive Change Review"  reasoned human approval on sensitive paths, advisory
+  |                     "Sensitive Change Review"  reasoned review record on sensitive paths, advisory
   |-- CodeQL                                GitHub default setup, not a checked-in file
   |
   '-> pr-readiness.yml  "PR Readiness"  one commit status + one readiness: label
@@ -383,7 +383,8 @@ A second identical failure counts as evidence, not bad luck.
 ### Code ownership
 
 `.github/CODEOWNERS` assigns every repository path to
-`@kirodotdev/kirocrew-pr-review` through a single wildcard rule. GitHub reads that
+`@kirodotdev/kirocrew-pr-review` and `@KiroCrewCaptain` (the maintainers'
+automation account) through a single wildcard rule naming both, so an approval from either satisfies the ruleset's code owner review. GitHub reads that
 file to request reviews; the file
 itself establishes no approval count and enforces no branch protection, so a tier, a
 required number of reviewers, or a designated-maintainer requirement cannot be
@@ -446,7 +447,7 @@ See [oss-fork-boundaries](../system-specs/oss-fork-boundaries.md).
 | `cwd-relative-repo-reads` | `scripts/check_cwd_relative_repo_reads.py`, self-test first. Fails when a test reaches the repository through a bare relative literal: the read resolves against whatever directory the process started in, so launched from anywhere but the root it raises FileNotFoundError before a single assertion runs -- a failure that says nothing about the behaviour the test pins. Whole-tree, not diff-scoped: the backlog is zero, so there is nothing to charge to whoever pushes next. A file that changes directory itself is skipped, and a single access can carry a `# cwd-ok:` reason |
 | `harness-parity` | `scripts/check_harness_parity.py`, self-test first. Fails on a newly added line that expresses "this is the Kiro harness" as the absence of another one — a shape that fails toward the permissive answer, so nothing else goes red. Diff-scoped; the whole-tree backlog is a non-failing report |
 | `memory-store-seam` | `scripts/check_memory_store_seam.py`, self-test first, with `MEMSTORE_BASE_REF` resolved to the diff base. Enforces explicit store selection on added memory-context calls. The kirocrew-prepare-pr floor runs both commands; the main ratchet lane classifies this as a diff-only gate because its whole-tree backlog is a non-failing report |
-| `docs-lint` | `scripts/docs_lint.py --test` then `scripts/docs-lint.sh`. Every internal link resolves, every doc is reachable from its directory index, every directory holding docs has one, no code comment cites a doc that does not exist, no doc cites a source LINE past the end of the file it names, no module spec names a source file that exists nowhere, every bare harness `H<n>` ID in a source comment names a row in `harness-parity.md`, and no doc whose filename is hardcoded in code has been renamed out from under its consumer. Four trees are walked: `docs/`, the packaged `src/kiro_crew/docs/`, `website/docs/`, and the markdown a builtin app ships under `src/kiro_crew/apps/builtins/`. Plus the fact checks below, behind a shrink-only baseline |
+| `docs-lint` | `scripts/docs_lint.py --test` then `scripts/docs-lint.sh`. Every internal link resolves, every doc is reachable from its directory index, every directory holding docs has one, no code comment cites a doc that does not exist, no doc cites a source LINE past the end of the file it names, no module spec names a source file that exists nowhere, every bare harness `H<n>` ID in a source comment names a row in `docs/system-specs/modules/harness-parity.md`, and no doc whose filename is hardcoded in code has been renamed out from under its consumer. Four trees are walked: `docs/`, the packaged `src/kiro_crew/docs/`, `website/docs/`, and the markdown a builtin app ships under `src/kiro_crew/apps/builtins/`. Plus the fact checks below, behind a shrink-only baseline |
 | `static-ratchets` | The seven source-only exact-set / exact-count ratchets (error codes, crew-log `exc_info` sites, PID readers, fleet-routing parity, security posture, backend cards, fold catalogue), run with `-n 4 --no-cov`. They also stay in the backend shards; this job only returns the verdict in about a minute instead of after a 20-40 min shard |
 
 Each of these runs its own self-test in the same step, ahead of the real check. A
@@ -517,7 +518,7 @@ yet decided: install from a committed constraints file, or set
 |---|---|
 | `changes` | "Detect changed surface". Resolves the path filters every other job reads, so a diff that cannot affect a surface does not pay for it |
 | `await-fast-gate` | Polls the `Fast Gate` run for this exact head commit and **fails closed** in all three ways it can go wrong: a run that never appears (180s budget), one that never completes (720s budget), and one whose conclusion is a decided non-success. `action_required` is not one of them: GitHub reports a fork run still awaiting maintainer approval as `completed`/`action_required`, so the barrier polls it as pending under the 720s budget rather than letting approval order decide whether the matrix runs. A listing read that errors is not a run that never appeared: the error is logged, it spends only the 720s budget, and the barrier fails closed there with a message saying the code was never judged. A barrier that passed when it could not read its subject would be worse than none, because the matrix would run anyway and the log would claim it was cleared to. One extra ~1-minute job buys the whole matrix the right to not start |
-| `backend-lint` | `isort --check-only`, `flake8`, `mypy` on Python 3.12, plus `scripts/check_black_formatting.py` — black enforced on every file outside `.github/black-baseline.txt`, which can only shrink — and `scripts/check_subprocess_encoding.py` (self-test first) — no text-mode subprocess call without an explicit `encoding=`, `**UTF8_TEXT`, or a `# subprocess-encoding: locale` marker, outside `.github/subprocess-encoding-baseline.txt`, which can only shrink — and `scripts/check_sync_io_in_async.py` (self-test first) — no blocking db / subprocess / http / `time.sleep` call inside an `async def` under `src/`, outside `.github/sync-io-in-async-baseline.txt`, which can only shrink. A stall past `dashboard.loop_stall_exit_after_secs` (25s) makes the watchdog kill the gateway and drop every in-flight turn (#3057, #1572); the escape is an offload (`await asyncio.to_thread(...)`, or a named lane from `src/kiro_crew/executors.py`) or a `# on-loop-io-ok: <why it cannot block>` marker whose reason is mandatory. All four baselined gates in this job read their diff scope from the one shared resolver in `scripts/ratchet_scope.py`, so they cannot disagree about which lines a change added; the env-base gates (`check_brand_name.py`, `check_harness_parity.py`, `check_focus_cue.py`) share the same diff parsing through its explicit-base entry points while keeping their `*_BASE_REF` base semantics |
+| `backend-lint` | `isort --check-only`, `flake8`, `mypy` on Python 3.12, plus `scripts/check_black_formatting.py` — black enforced on every file outside `.github/black-baseline.txt`, which can only shrink; on a PR it runs only on the changed `src/` and `test/` Python files (a baseline edit that only deletes entries adds those paths), and an edit to `pyproject.toml` or an added baseline entry forces the whole tree, as does `main-ratchet-audit.yml` — and `scripts/check_subprocess_encoding.py` (self-test first) — no text-mode subprocess call without an explicit `encoding=`, `**UTF8_TEXT`, or a `# subprocess-encoding: locale` marker, outside `.github/subprocess-encoding-baseline.txt`, which can only shrink — and `scripts/check_sync_io_in_async.py` (self-test first) — no blocking db / subprocess / http / `time.sleep` call inside an `async def` under `src/`, outside `.github/sync-io-in-async-baseline.txt`, which can only shrink. A stall past `dashboard.loop_stall_exit_after_secs` (25s) makes the watchdog kill the gateway and drop every in-flight turn (#3057, #1572); the escape is an offload (`await asyncio.to_thread(...)`, or a named lane from `src/kiro_crew/executors.py`) or a `# on-loop-io-ok: <why it cannot block>` marker whose reason is mandatory. All four baselined gates in this job read their diff scope from the one shared resolver in `scripts/ratchet_scope.py`, so they cannot disagree about which lines a change added; the env-base gates (`check_brand_name.py`, `check_harness_parity.py`, `check_focus_cue.py`) share the same diff parsing through its explicit-base entry points while keeping their `*_BASE_REF` base semantics |
 | `backend-test` | 8 whole-file shards on Python 3.12, assigned before import, `-n auto` within each; 60-minute job budget includes coverage upload, with the 120-second per-test timeout retained. Large CodeBuild compute with the non-root boundary for eligible actors; hosted fallback |
 | `backend-test-windows` | All 8 whole-file shards use large CodeBuild compute for eligible actors, windows-latest otherwise; `--no-cov`, 180s per-test timeout. See the migration contract below |
 | `backend-test-ipv6` | Five native IPv6 cases on hosted Linux and Windows; fail-closed report check, Linux full-run coverage merged with the ordinary shards |
@@ -553,15 +554,14 @@ fourth shrink-only, diff-scoped baseline gate referenced in the table above.
 
 `src/kiro_crew/docs/ui-index.generated.json` and
 `website/src/uiLocations/guidePlans.gen.ts` are committed and regenerated by
-`npm run gen:ui`. Their `input_digest` covers every input, the 12 catalogs
-included, so almost any frontend or i18n merge moves them. Each PR is fresh at
-its own head, but branch protection does not require an up-to-date branch, so
-two PRs that are each fresh merge into a stale `main`. That used to fail every
-build on `main`, the nightly, every PR's merge-ref build lanes and every local
-`make build` until someone landed a regen commit, because `npm run build`
-started with a strict `gen-ui-index.mjs --check`.
-
-The check now depends on where it runs:
+`npm run gen:ui`. They are generated from every input, the 12 catalogs
+included, and their `input_digest` is a digest of the index's own content, so
+any frontend or i18n merge that changes an indexed location or label moves them.
+Each PR is fresh at its own head, but branch protection does not require an
+up-to-date branch, so two PRs that are each fresh merge into a stale `main`. A
+strict check everywhere would then fail every build on `main`, the nightly,
+every PR's merge-ref build lanes and every local `make build` until someone
+landed a regen commit, so the check depends on where it runs:
 
 | Where | Stale index | Mechanism |
 |---|---|---|
@@ -1271,15 +1271,22 @@ Details worth knowing:
     empty reserve reads as an outage; the verdict is re-derived from a fresh read
     immediately before the cancel and the cancel is sent only if the same
     attempt is still orphaned (a human who re-ran it by hand has moved it to a
-    new attempt, which is left alone); fork runs are reported, never touched, and so
-    are PULL-REQUEST runs -- the successor check asks whether a newer run of this
-    branch is in flight, GitHub's runs listing can only be filtered by branch NAME,
-    and two pull requests can share one head branch, so each would read as the
-    other's successor and abandon a cancelled orphan behind a green
-    `skipped-superseded`; matching by pull-request number instead is not available
-    (of 20 sampled same-repository `pull_request` runs only 9 carried
-    `pull_requests[].number`). Their owners read their own pull request's checks,
-    unlike the `main` orphans this watchdog exists for, which still heal; a
+    new attempt, which is left alone); fork runs are reported, never touched,
+    because the workflow token cannot re-run them. Same-repository PULL-REQUEST
+    runs ARE healed, but only where the workflow is declared heal-safe for that
+    event: a ref-keyed declaration (`HEAL_SAFE_WORKFLOWS`) covers every event,
+    while a PR-keyed one (`HEAL_SAFE_PULL_REQUEST_WORKFLOWS`) covers
+    pull-request runs alone, since on any other event the PR number is empty and
+    the workflow has no concurrency group to protect a re-run. Their successor is
+    judged by HEAD SHA -- against the open pull requests on the head branch, then
+    against the listing for a newer run at that same SHA -- rather than by the
+    branch-name listing a push run uses, because two pull requests can share one
+    head branch and would otherwise read as each other's successor and abandon a
+    cancelled orphan behind a green `skipped-superseded`. The head question is
+    answered from the pulls API, never from `pull_requests[].number` on the run
+    payload (of 20 sampled same-repository runs only 9 carried it); that field
+    only distinguishes a same-SHA newer run's pull request from the judged run's,
+    and its absence fails that one question closed. A
     run at attempt 3 or later is reported, never touched, so a run that keeps
     orphaning is escalated rather than looped — unless its workflow is heal-exempt,
     where the cap is not the operative reason (we never re-run those at all) and the
@@ -1472,7 +1479,7 @@ Details worth knowing:
   dependency with `collect_ignore_glob`, so the whole suite reads as present while
   executing zero times, survives any dependency rename or extras split. So the lane
   that installs them also sets `CREW_CONTAINER_TESTS_REQUIRED=1`, and under that
-  variable the suite refuses to skip: a missing dependency or a non-POSIX host is a
+  variable the suite refuses to skip: a missing dependency or a host that is not Linux is a
   collection error, every `test_*.py` that defines a test function must contribute at
   least one collected item, every `test*` name the source declares must yield an item
   of its own, and the total must sit at or above `_MIN_COLLECTED` while running no
@@ -2407,7 +2414,7 @@ Retaining the verdict (above) keeps it from being lost, but on its own it never
 reaches the pull request: nothing re-ran the lane, so a whole-design advisory
 lane -- Design, UX, First Principles -- that withheld its verdict left the PR
 reading as unreviewed for its own head until a human noticed. The self-heal
-sweep now closes that. When an advisory lane completes `success` but its comment
+sweep closes that. When an advisory lane completes `success` but its comment
 slot still carries an older head's verdict, `pr-readiness.yml` scores the lane as
 a named pending (`<Lane> (verdict not published, re-run this lane)`) and stamps
 `[verdict-unpublished]` first on the readiness status description -- the same
@@ -2423,13 +2430,20 @@ because the lane's own check-run is already `success`), runs
 gate which advisory lanes are owed, locates each owing lane's run -- the
 same-repo `pull_request` run by head, or the fork Stage-2 run via its
 `<!-- ai-review-fork-lane run=<id> -->` check-run marker, exactly as the
-human-override handler does -- and `gh run rerun`s it. The re-run recomputes a
+human-override handler does -- and re-runs it (`POST
+actions/runs/<id>/rerun`). The re-run recomputes a
 fresh verdict and republishes it through the lanes' own guarded comment upsert,
 whose authority rule is unchanged (it replaces only an older head's occupant and
 stands down on a current-head one), so the recovery adds no new trust surface. It
 is scoped to the three advisory lanes: the required reviewer lanes (Opus, GPT,
 Security Scope) fail CLOSED on a withheld verdict and are recovered by their own
 check-run finalize, never read as a stale `success`.
+
+Bounded: a run already at `MAX_RERUN_ATTEMPTS` (3) attempts is not re-run
+again, because a verdict still withheld after that is not transient; the script
+prints a line asking for a manual re-run from the Actions tab, and the lane
+stays a named pending until someone does. A lane whose run cannot be located
+gets the same manual-re-run line.
 
 Self-terminating: once a re-run republishes, the lane leaves the gate's
 `unpublished` set, the token clears, and the next sweep does nothing; a re-run
@@ -2962,7 +2976,7 @@ exact head is not a re-roll. A *transient* failure needs none of this: such a ru
 marks its own check-run `[scope-floor:unsettled]`, sets no per-head floor, and clears
 on a re-run.
 
-## `sensitive-change-review.yml`: a reasoned human approval
+## `sensitive-change-review.yml`: a reasoned review record
 
 A PR that touches the sandbox, the command floor, the tool gate, secret
 scrubbing or redaction (`SENSITIVE_GLOBS` in
@@ -3093,10 +3107,13 @@ status plus one `readiness:` label**.
   stale, not of the whole lane set: a lane with no slot has two causes that read
   identically from the comments -- it published nothing because it deliberately
   had nothing to say, and its create-path publish was lost -- and only the lane
-  itself can tell them apart, by leaving a notice naming the head. Reporting
-  absence before the scope-skip arms write one would hold every revision that
-  touches no UI surface on a lane a re-run cannot fill, so that half waits on a
-  change to those lanes. Two answers still exempt a lane whose slot is there: a
+  itself can tell them apart, by leaving a notice naming the head. Every
+  whole-design skip arm (Dependabot, UI scope, no added surface, no contract, in
+  both the same-repo and fork lanes) leaves that notice whenever it runs,
+  creating the slot when it is empty and re-confirming the head before it
+  overwrites an occupant. The reader still asks only of a slot that exists: a
+  lane with no slot at all is not yet reported, and closing that half is a
+  `pr_status.py` change. Two answers still exempt a lane whose slot is there: a
   writer's override record for this head (that path does not re-run the model, so
   no stamp can exist), and a slot holding the lanes' own stampless "skipped"
   notice FOR THIS HEAD (a re-run reproduces it rather than filling it; a notice
@@ -3493,6 +3510,21 @@ Nothing the fork controls can influence these reviews:
   bootstrap and the bun release asset are pinned by tests in
   `test/test_ai_review_workflows.py`, because a `workflow_run` lane always executes
   the default branch's yaml and so cannot exercise its own change pre-merge.
+- The fork GPT lane is the one fork reviewer whose model drives a shell
+  (`codex exec`), so its Bedrock credential sits behind a UID boundary rather than
+  an environment filter. A loopback signing proxy
+  (`.github/review-cli/bedrock-signing-proxy.py`) runs as a separate
+  `bedrock-signer` user, re-reads the credential per request from a signer-only
+  0400 file, SigV4-signs each call and forwards it to the Bedrock mantle host.
+  codex is configured with only that loopback URL (`model_providers.bedrock-signer`)
+  and no AWS credential; the "Start the loopback signing proxy" and "Refresh the
+  signer's credentials" steps move each minted credential across the boundary,
+  blank it in `$GITHUB_ENV` and truncate the `set_env_*` copies before each
+  pass. The boundary holds only while codex's read-only sandbox blocks the job
+  user's passwordless `sudo`, so "Verify the review sandbox fails closed" probes
+  `sudo -n true` and a read of the credential file through `codex sandbox` and
+  fails the job if either succeeds. The lane's Opus adjudication pass is
+  shell-less and keeps the scrub step and its own Bedrock credential.
 
 **`fork-workflow-guard.yml`** blocks a fork PR that modifies anything under
 `.github/**`, the vector a fork would use to fake basic-CI results (rewrite `ci.yml`

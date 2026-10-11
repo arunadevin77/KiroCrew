@@ -322,6 +322,15 @@ agentic field written with `dashboard_write` (it appears under "Needs you" with 
 act it needs). So publish every item under `you` here, and also write it to the
 dashboard field for readers who turned the preview on.
 
+`panel_publish` and `dashboard_write` belong to the `@kirocrew-panel` server,
+which is mounted only on a crew member's own chat session (with `agent.crew_panel`
+on). The `kirocrew-pipeline-conductor` agent spec mounts `@kirocrew-core`,
+`@kirocrew-dashboard` and `@kirocrew-work` and not that server, so in an ordinary
+dashboard chat neither tool exists. Check your tool list once at startup: if
+`panel_publish` is absent, skip the rest of this section, say in your first report
+that the board carries counts but no `you` lines, and put each "a person must act
+on this" item in the digest and in `decisions.md` instead.
+
 `panel_publish` with template `kirocrew-pipeline-conductor` takes exactly four keys,
 and nothing else — an unknown key is refused and the refusal names it:
 
@@ -1205,7 +1214,9 @@ of the two you are running rather than assuming the table applies.
 
 Never page through worker transcripts yourself, and never pull the whole
 fleet's state into context — the probe line is the interface. Quiet cycle:
-print nothing beyond the probe's own `OK` line, end the turn.
+print nothing beyond the probe's own `OK` line and end the turn with
+`nothing_to_do`, because a bare stop after the probe keeps the empty-response
+recovery.
 
 ## Independent green verification
 

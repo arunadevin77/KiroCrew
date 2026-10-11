@@ -23,9 +23,12 @@ controls. The layout rules that belong here:
 - In chat, the dock sits above the composer, in the composer's own column
   (`--mc-input-width`), and its tiles wrap in a narrow column. Long-run status reuses
   the side-panel dock, expansion and narrow-screen overlay, not another drawer.
-- Crew's permanent **Dashboard** tab renders the crewmate's published page
-  (`CrewDashboardFrame`) straight into the panel, with no Command Center, no Published
-  view selector and no in-chat dock opener. Once visited, its body stays mounted across
+- Crew's permanent **Dashboard** tab is a standing entry either way; only what
+  fills it moves with the `PREVIEW_DASHBOARD` feature preview. With the preview
+  off the tab renders the crewmate's published page (`CrewDashboardFrame`)
+  straight into the panel; with it on it renders the crewmate's dynamic
+  dashboard (`CrewDashboardTab`). Either way there is no Command Center, no
+  Published view selector and no in-chat dock opener. Once visited, its body stays mounted across
   tab-strip switches (Dashboard to Files), so it keeps its scroll and document.
 - The All Dashboards page uses the standard page header and scroll container, with one
   column narrow and two wide.

@@ -127,7 +127,16 @@ mic -> AudioWorklet (16 kHz mono Int16 PCM) -> WebSocket /api/ws/stt
 
 The microphone selector represents devices with an empty ID through System
 default only. Identifiable devices remain separately selectable; anonymous
-enumeration results cannot create a duplicate default option.
+enumeration results cannot create a duplicate default option. The default
+option is named: where the resolver can read the backing device it reads
+`System default (<device>)` (`components.micSourceMenu.system_default_named`
+in the composer's `MicSourceMenu`, `pages.settings.sttSettings.system_default_named`
+in the Settings picker), both folding Chromium's `default` pseudo-device through
+`selectableMicrophones`/`defaultMicName` in `website/src/hooks/mic.ts`. Under the
+Settings picker a **Test microphone** strip (`website/src/components/MicTestStrip.tsx`)
+opens the selected input, or the system default, and shows its live level through
+an `AnalyserNode` only -- no recorder, upload or transcription -- releasing
+capture on Stop, on a device change, and on unmount.
 
 The capture worklet keeps resampling phase across render blocks and applies a
 63-tap low-pass filter before downsampling, preventing high-frequency input from
@@ -228,9 +237,7 @@ Server to client, JSON. `stt.session.SttEvent.kind` supplies the local provider'
   was read changes nothing, because that stop already owns the teardown. A reader
   stuck inside the frame it is forwarding (a helper that stopped reading its
   stdin) is cancelled after `_CAP_READER_GRACE_SECS`, so a wedged recogniser
-  cannot hold the session, and its slot, past the cap. (Before this, the deadline task closed the socket first and the
-  pending utterance was cancelled or drained into a closed socket: up to the
-  utterance backstop of accepted speech per cap.) The
+  cannot hold the session, and its slot, past the cap. The
   English `message` is advisory and the `code` is the contract, because
   the dashboard renders localised text and cannot key off a sentence. Codes the
   `stt` package already owns travel through unchanged rather than being remapped;

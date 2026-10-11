@@ -101,7 +101,9 @@ Auto-approved core verbs are reads (`resource_status`, `list_sessions`,
 `skill_search`, `skill_fetch`), the conductor's own patrol lifecycle
 (`monitor_start`, `monitor_update`, `autonudge_stop`, `wait`), its own durable
 ledger (`session_ledger_read`, `session_ledger_record`), and reporting to the
-owner (`send_message`, `send_notification`, `ask_question`). Auto-approved
+owner (`send_message`, `send_notification`, `ask_question`), and the quiet end
+of a patrol cycle with nothing to report (`nothing_to_do`, which mutates
+nothing). Auto-approved
 dashboard verbs are create-or-read only: `chat_folder_tree`,
 `chat_folder_create`, `session_create`, `session_read_message`, and
 `session_status` (a read of the caller's own children).

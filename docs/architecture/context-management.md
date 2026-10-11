@@ -63,10 +63,11 @@ begin on its own line; the assembly newline-terminates the caller's
 | 14 | `[PREVIOUS TURN WAS CANCELLED …]` | `_build_stop_event_notes` | recent user stop |
 | 15 | `[Memory …]` + `[Memory activity index]` + `[Memory activity]` + `[Memory tools]` | `memory.py` → `get_context`, `activity_index`, `get_activity_context` | not temporary, `memory` group; the activity block also needs `memory.inject_activity` |
 | 16 | `[Skills:]` (pinned bodies, then discovery) | `skill_runtime/delivery.py` → `get_context` | see §4 |
-| 17 | `[Learned corrections …]` | vector `get_lessons_context`, else `lessons.jsonl` | `lessons` group |
+| 17 | `[Learned corrections …]`, then `[Learned experience …]` | vector `get_lessons_context`, else `lessons.jsonl` | `lessons` group; standing rules in the first block, `on_topic` past findings in the second, which a request overlapping none of them leaves as a notice only |
 | 18 | `## Recent Session Context` | `conversation_log.recent_with_provenance` | `memory` group |
-| 19 | `[RESPONSE PREFERENCES]` | `_build_response_preferences_section` | reply-style level set |
-| 20 | `[CONVERSATION HISTORY …]` | outer replay, `build_session_replay` | compressed history passed |
+| 19 | `[FOLDER STEERING …]` | `context_assembly/inclusion.py` → `_render_folder_steering_section`, bounded by the steering share | every provider; non-member chat, `project` group, not a minimal or slim run (a member's envelope carries it instead) |
+| 20 | `[RESPONSE PREFERENCES]` | `_build_response_preferences_section` | reply-style level set |
+| 21 | `[CONVERSATION HISTORY …]` | outer replay, `build_session_replay` | compressed history passed |
 
 **A Memory V2 member is the one exception to this order.** Its essentials
 envelope (`_build_v2_essentials`) is not a row in the table: the last step of
@@ -143,17 +144,19 @@ than a byte figure (`docs/system-specs/common/code-style.md` owns this rule).
 | Preferences | 2.6% | `_MEMORY_PREFS_CAP` |
 | Projects | 3.9% | `_MEMORY_PROJECTS_CAP` |
 | Daily history | 16% | `_MEMORY_HISTORY_CAP` |
-| Lessons | 22.6% | `_LESSONS_CAP` |
+| Lessons (ordinary budget) | 22.6% | `_LESSONS_CAP` |
+| Learned experience (past findings) | 5% | `_LESSON_EXPERIENCE_CAP` |
 | Semantic / episodic | 7.7% each | `_SEMANTIC_MEMORY_CAP`, `_EPISODIC_MEMORY_CAP` |
 | Skills discovery block | 15% | `_SKILLS_CAP` |
 | Steering | 10% | `_STEERING_CAP` |
 | Preamble headroom | 3% | `_PREAMBLE_HEADROOM` |
 
-Four more limits are fixed constants rather than shares of that base, so read each
+Five more limits are fixed constants rather than shares of that base, so read each
 one where it is defined:
 
 | Name | Constant |
 |---|---|
+| Standing-rule block at session start (window-independent) | `_LESSONS_STARTUP_CAP` |
 | Confined project skill bodies | `PROJECT_SKILL_BODY_CAP` in `skills.py` |
 | Episodic block on a new session | `_EPISODIC_INJECT_CAP` |
 | Memory activity index | the `cap` default of `activity_index` in `memory.py` |
@@ -174,16 +177,17 @@ seconds.
 - **The model-safe ceiling** on protected content is
   `max(3 × the base, window_tokens × 4.0 × 0.125)` (`_PROTECTED_CONTEXT_FLOOR` is
   the base tripled; `_PROTECTED_CONTEXT_CHARS_PER_TOKEN` and
-  `_PROTECTED_CONTEXT_WINDOW_FRACTION` are the two factors). Over it, lessons
-  fall back to the ordinary lessons budget (`caps.lessons`, still bounded by the
-  ceiling) and re-render smaller, highest-ranked complete entries first;
+  `_PROTECTED_CONTEXT_WINDOW_FRACTION` are the two factors). Over it,
+  `refit_lessons` re-renders the lessons into the room the ceiling leaves (the
+  standing-rule block is already bounded by `_LESSONS_STARTUP_CAP`),
+  highest-ranked complete entries first;
   preferences are kept from their head with an in-prompt notice naming the file.
 - **A bigger model window does not buy more background.** `_resolve_caps` scales
   only thread/replay limits; an unknown or `auto` window resolves to the 1M
   reference (`_effective_window`).
 
-No memory cap is a config key — they are module constants. The keys that do change
-assembly are `skills.max_triggered`, `skills.lazy_load`, `agent.session_sharing`,
+No memory cap is a config key — they are module constants. The keys that change
+assembly include `skills.max_triggered`, `skills.lazy_load`, `agent.session_sharing`,
 `agent.member_dispatch`, and each agent's `includeCrewContext`.
 
 Memory, lessons, history, folder names, channel text and skill bodies are all
@@ -288,7 +292,9 @@ on its next match, never drops the skill.
 
 - **Reset.** The record for a session is dropped on a new session, on the first
   turn after a compaction that armed `needs_reinjection` (Kiro Crew's own, or a
-  backend compaction reported to the dashboard runner or the heartbeat), and when
+  backend compaction the turn's stream reported: the dashboard runner arms it as the
+  status arrives, and every other turn loop that consumes the flag passes
+  `compacted=True` to `rearm_reinjection` as its turn settles), and when
   the agent on that key changes. The reset runs whether or not a skill matches that turn.
 - **Commit or roll back.** The record is written at build time, and each build
   keeps an undo entry for what it wrote. A turn that lands calls
@@ -298,11 +304,11 @@ on its next match, never drops the skill.
   the driver's landed result. `test/test_skill_body_dedup.py` pins both outcomes.
 - **Confined skills are exempt.** A confined project skill takes the body path on
   every match.
-- **Known soft failure.** A backend that trims or compacts its own window under
-  a turn loop that does not watch for its compaction report (anything but the
-  dashboard runner and the heartbeat) does not arm the reset, so the next match of a recorded skill gets its
-  pointer line rather than its body. The agent still learns the skill applies and
-  can read it.
+- **Known soft failure.** A turn path that never consumes the flag, such as the Slack thread's
+  auto-nudge turn (`gateway._fire_slack_nudge`), does not arm it either. When the
+  backend compacts under such a turn the record still names bodies the rebuilt
+  window does not hold, so the next match of a recorded skill gets its pointer line
+  rather than its body. The agent still learns the skill applies and can read it.
 
 ### What comes back after compaction
 
@@ -312,7 +318,8 @@ compaction; the next turn reads it through `consume_reinjection` (owned by
 `messaging/turn_bracket.py`, re-exported from `messaging/dispatch.py`) and passes
 `needs_reinjection=True`. Every turn loop that can compact (calls
 `check_context_usage` or `compact_if_needed`) must consume the flag, forward it and
-`rearm_reinjection` it when the turn does not land, or delegate to `drive_turn` or
+`rearm_reinjection` it when the turn does not land or its stream reported a
+completed backend compaction, or delegate to `drive_turn` or
 answer through `messaging.dispatch.ChannelTurns`; `test/test_reinjection_gate.py`
 pins that per module. `build_message` then
 re-adds, once:
@@ -336,7 +343,10 @@ re-adds, once:
    `kirocrew-computer` in its spec, the short pointer to Settings when it does not.
 
 If that turn does not land (cancelled, refused, errored), `rearm_reinjection` puts
-the flag back, so the context is never lost to a failed turn.
+the flag back, so the context is never lost to a failed turn. A minimal-context turn
+gets back only the agent contract and the reply-style preferences; the memory index,
+skills index, folder steering and member section stay withheld
+(`post_compaction_parts(minimal_context=True)`).
 
 ### The `[work ledger]` snapshot
 
@@ -390,13 +400,14 @@ resume fails closed rather than running without its prior context.
 ### Shared session vs dedicated process
 
 `subagent_manager/run.py` → `_should_use_session_sharing_impl`: sharing needs
-`agent.session_sharing` true (default **true**), a live ACP/kiro parent session, and
-no per-run `model`, `allowed_tools` or `bare` flag. `keep=True`, a continuation, a
+`agent.session_sharing` true (default **true**), a live parent session on a backend
+in `ACP_BACKENDS_SESSION_SHARING` (kiro-cli or codex), and no per-run `model`,
+`allowed_tools`, `bare` or `backend`. `keep=True`, a continuation, a
 per-run model or effort override, or a member launch force the dedicated path.
 
 | | Shared runtime | Dedicated process |
 |---|---|---|
-| Process | the parent's kiro-cli | its own kiro-cli |
+| Process | the parent's runtime (kiro-cli or codex) | its own process |
 | Start cost | ~200ms | ~3–5s |
 | Context assembly | identical `build_message` call | identical |
 | `$KIROCREW_SCRATCH` | **the parent's** | **the parent's** (mounted as a second window) |

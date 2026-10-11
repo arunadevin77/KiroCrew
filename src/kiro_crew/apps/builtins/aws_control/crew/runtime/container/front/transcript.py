@@ -643,10 +643,10 @@ async def ensure_local_transcript(
     # Resolve the key through the committed generation's transcript index: the sidecar
     # writes a transcript at a CONTENT-ADDRESSED ``data/blob/<digest>`` key and records
     # ``stem -> digest`` in the committed generation's index, so the front reads the pointer
-    # then that index then the blob -- three single-key GETs, no listing. When the bucket
-    # predates this protocol (no pointer, or a committed generation with no index entry for
-    # this stem) the LEGACY per-stem key is what holds the bytes, so the resolution falls
-    # back to it. All of it is blocking boto3, so it runs off the event loop like the GET.
+    # then that index then the blob -- three single-key GETs, no listing. There is no
+    # per-stem fallback key: a bucket with no pointer is empty, and a stem the committed
+    # index does not name is a new conversation. All of it is blocking boto3, so it runs off
+    # the event loop like the GET.
     try:
         key = await asyncio.to_thread(_resolve_transcript_key, reader, settings, stem)
     except TranscriptUnavailable:

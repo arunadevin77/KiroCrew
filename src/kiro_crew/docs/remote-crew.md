@@ -182,7 +182,10 @@ at all.
 With it on, the list is grouped per machine: **Local** first, then one
 collapsible group per crew, its header badged **online**, **reconnecting**,
 **error** or **offline** from the tunnel's state. A crew's group holds the
-sessions it owns and any local session whose turns run on it. A crew that
+sessions it owns and any read-only relay archive that ran on it. Inside the group
+the crew's own folders nest its rows, with unfiled rows last — a read-only
+mirror of the crew's folder tree, edited on the crew, each space keeping its own
+collapse state. A crew that
 disconnects keeps its last listed rows, dimmed and without live status, until
 you reload; nothing asks it again while it is down. Collapsing a group never
 changes which session is open. With no crew to group, the list has no group

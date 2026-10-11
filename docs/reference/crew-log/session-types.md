@@ -3,7 +3,7 @@
 **Local page, not a mirror.** Part of the [crew log reference](README.md), which is
 marked as a named exception in [the Reference index](../README.md).
 
-Forty types. Read [envelope.md](envelope.md) first for the fields every entry
+Forty-three types. Read [envelope.md](envelope.md) first for the fields every entry
 carries; this page covers only each type's `data`.
 
 Session entries are written with `src` `gateway` or `acp` and nothing else. They
@@ -59,6 +59,9 @@ The **Emitter** column says whether this build writes the type. Every row below 
 | [`radar/recorded`](#radarrecorded) | One Issue Radar crew-ledger update: the work-item fields it set and the event explaining them. | live | `gateway` | — |
 | [`work/recorded`](#workrecorded) | One work-board mutation: who acted, on which item, and the fields it set. | live | `gateway` | — |
 | [`panel/published`](#panelpublished) | One publish of a crew's own webview: the data, and the template that renders it. | live | `gateway` | — |
+| [`dashboard/instance_changed`](#dashboardinstance_changed) | One crewmate dashboard-instance change: adopted, edited or rolled back. | live | `gateway` | — |
+| [`dashboard/agentic_value`](#dashboardagentic_value) | One agent-written dynamic dashboard value. | live | `gateway` | — |
+| [`dashboard/agentic_refused`](#dashboardagentic_refused) | A refused agentic dashboard write (the mistake book's input), or a correction. | live | `gateway` | — |
 | [`card/proposed`](#cardproposed) | The agent proposed a change card, at this point in the conversation. | live | `gateway` | opener of `card/finished` |
 | [`card/finished`](#cardfinished) | A change card reached a finished status. | live | `gateway` | closer, by `card_id`; may repeat |
 | [`guide/offered`](#guideoffered) | The agent offered a guide, at this point in the conversation. | live | `gateway` | opener of `guide/finished` |
@@ -262,7 +265,7 @@ The gateway stopped serving this session, for a stated reason.
 
 | Field | Type | Required | Meaning | Enum |
 |---|---|---|---|---|
-| `reason` | string | required | The gateway's own end reason, verbatim. | |
+| `reason` | string | required | The gateway's own end reason, verbatim. The format names these three without clamping them, so a reader handles an unlisted one. | `reset`, `destroyed`, `destroyed_sid_retained` |
 
 **Invariants** — **Not the end of the file.** Entries from turns already in flight
 may land after it.

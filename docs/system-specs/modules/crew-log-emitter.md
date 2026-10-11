@@ -201,7 +201,7 @@ unset here -- see "Reconnect is not resume" below for what it is for.
 | `tool/completed` | `EVENT_TOOL_RESULT` when `tool_final` | `call_id`, remembered `name` and `server`, `status`; optional `elapsed_ms`, `is_error`, `step`, `call_index`, and result digest/size |
 | `model/selected` | the fallback swap in `_run_chat`, after the pick lock is released | model id, source, turn |
 | `compaction/applied` | `_settle_compact_cooldown` when the after-reading is confirmed; `_compaction_gate_decision` when a deferred verdict settles | `pct_before`, `pct_after`, freed |
-| `session/closed` | `SessionLifecycle.reset` and `SessionLifecycle.destroy` | the gateway's own teardown reason |
+| `session/closed` | `SessionLifecycle.reset` and `SessionLifecycle.destroy`; `chat_api.slot_lifecycle._close_slot` for a deliberate tab close, awaited to commit (`awaiting_commit`) before the conductor is woken | the gateway's own teardown reason (`reset`, `destroyed`, `destroyed_sid_retained`, or `removed` for the tab close) |
 | `message/received` | `_run_chat`, before the dispatch gates | turn, role, redacted text, surface, attachment ids |
 | `message/sent` | `_flush_segment`, beside the assistant `slot.append`; `_persist_partial_reply` on a recovery path | turn, step, redacted text or cited `chunks`, `interrupted` |
 | `message/chunk` | the overflow split ONLY | turn, step, one slice of an already-redacted body |

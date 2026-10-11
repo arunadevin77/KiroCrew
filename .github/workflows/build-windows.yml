@@ -24,14 +24,13 @@ name: Build Windows Desktop (reusable)
 # A separate workflow keeps the credentialed surface to exactly the platform
 # that cannot avoid it.
 #
-# INSTALLER-ONLY LANE for now: win32 is still outside SUPPORTED_PLATFORMS in
-# auto-update.js, because electron-updater needs a published latest.yml feed
-# and verifies Authenticode fail-closed -- neither exists yet. The NSIS target
-# is the prerequisite for both (electron-updater's win32 path is NsisUpdater and
-# has no Squirrel support at all), so packaging lands first and the
-# publish+updater lane follows in publish-windows.yml. Unattested for now too:
-# no publish lane consumes these artifacts, so SLSA provenance lands in-lane
-# with publish-windows.yml (same pattern as publish-linux.yml).
+# win32 is a supported update platform (SUPPORTED_PLATFORMS in auto-update.js),
+# driven by electron-updater's NsisUpdater (its win32 path, with no Squirrel
+# support at all): it reads a published latest.yml feed and verifies the
+# installer's Authenticode signature fail-closed. The NSIS target this workflow
+# builds is the prerequisite for both; publish-windows.yml writes that feed,
+# consumes this workflow's installer artifact, and attests its SLSA provenance
+# in-lane before the immutable write (same pattern as publish-linux.yml).
 
 on:
   workflow_call:

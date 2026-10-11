@@ -140,7 +140,9 @@ state are composed behind that facade:
 carrying `instance_id` or `adopt_remote_slot` is refused with
 `400 remote_create_retired`. A session on a connected crew is created on that
 crew and opened here through its window. A slot already on disk with
-`executor: "remote"` still loads.
+`executor: "remote"` still loads, as a read-only relay archive: a send, regenerate, rewind,
+continue or checklist write, and a change of agent, model, effort or workspace, answer
+`409 relay_archive_read_only` (`dashboard/relay_archive.py`).
 
 Cross-boundary calls that were observable on `SessionManager` route back through
 the facade, and patchable module dependencies are resolved through injected
@@ -387,9 +389,9 @@ if needed — no compaction, since background tasks are stateless:
 Callers: heartbeat callback, taskrunner lesson extraction, `background_turn()`,
 and `run_bg_oneliner()` whenever its handle is a `_ProviderBgSession` (marked
 `shares_background_conversation`). That handle's `destroy()` only releases the
-turn semaphore, so without this call one-liner traffic (titles, nav labels,
-folder icons, summaries) grew the shared conversation for the whole gateway
-uptime with no criterion ever evaluated (#18230). A runtime handle's session is
+turn semaphore, so without this recycle one-liner traffic (titles, nav labels,
+folder icons, summaries) would grow the shared conversation unboundedly, with
+no context criterion ever evaluated. A runtime handle's session is
 ephemeral and carries no marker, so it is not followed by a recycle.
 
 ### Multiplexed _bg runtime
@@ -2178,7 +2180,9 @@ kiro-cli conversation history when a session is recycled.
 **Only long-lived conversational sessions are mapped.** Stateless sessions
 (cron, subagent, taskrunner, channel, secretary, side, heartbeat/background,
 `wf-author:` workflow authoring, and `wf-pool:` warm workflow-pool workers) are
-excluded via `_STATELESS_PREFIXES`. A `wf-author:` session is also explicitly
+excluded from resume mapping. The prefixed keys match `_STATELESS_PREFIXES`;
+`_bg` and `_hb` are excluded by the sibling persistent-key check in the same
+stateless classification, not by a prefix. A `wf-author:` session is also explicitly
 destroyed after each authoring attempt, which shuts down its provider, removes its
 registry entry, and deletes any stale map entry; stateless classification prevents
 resume lookup or persistence during acquisition. The `wf-pool:` prefix keeps
@@ -2705,6 +2709,23 @@ when a switch is detected (stored SID exists AND providers differ).
    during allocation and consume the lease directly. Cancelled, failed, empty, or
    synthetic terminals leave it armed for the next prompt.
 
+**Fresh first-turn history debt.** A fresh dashboard session has a second, separate
+lease, `_Session.first_turn_history_owed`, so the replay lease's SID-preservation
+role in `close_all` is untouched. The one-shot `first_turn` observation is spent
+at claim, so a first turn that assembled history and then failed with a pre-output
+backend 5xx would be re-queued onto the same live session reading `is_new=False`
+and send the message bare, with no session-resumed marker. `chat_runner` arms the
+lease at claim from the FRESH observation (`mark_first_turn_history_owed`, only
+when `is_new` and not natively resumed) and ORs it, read without clearing
+(`first_turn_history_owed_pending`), into `_context_is_new`, so the re-queued turn
+rebuilds history. `consume_first_turn_history_owed` settles it only when a turn
+assembled history and the provider kept it: a normal non-synthetic `end_turn`,
+output that streamed without a cancel or empty-response verdict, a completed
+mid-turn compaction, or the post-token recovery
+(`acp_recovery._recover_posttoken_transient`). A reset that suppressed replay and
+`/clear` also settle it. A cancelled, empty-response or pre-output exit leaves it
+armed, and a slash command that assembled nothing never settles it.
+
 **Replayed content carries no image reference.** `_replay_rows` and
 `_recall_rows` — the two row builders behind every history vehicle
 (`build_session_replay` and the thread-history fallback in
@@ -3057,7 +3078,7 @@ hands such a message to the dashboard slot's own machinery instead
 recording the same audience fence a peer steer records) or the slot's queue
 (`queue_for_next_turn`, drained by the dashboard turn loop), and confirms in the
 DM. The refusal stays when the slot cannot take the message — no open slot, a
-closing or remote-bound slot, a slot that is not itself running the turn (a
+closing slot, a relay archive, a slot that is not itself running the turn (a
 channel-driven turn on the resumed key), or attachments; an incognito or
 temporary session is taken like any other, since those modes keep their
 transcript and queue. See [messaging](messaging.md#a-busy-resumed-dashboard-session-takes-the-slots-own-machinery-discord).
@@ -3110,6 +3131,16 @@ so absence clears it.
   `_dirty_gen` to spot a concurrent mark: without it a refused pass would drop
   window rows it never wrote, and the queue signal cannot cover them once the
   overtaking writer has satisfied it.
+  The empty-window merge of a message-less slot takes the stale-queue and the
+  replaced-slot refusals only when the caller passes `refuse_stale_empty_merge`,
+  which the periodic flush alone does because it re-runs a refused pass on its next
+  tick. A route save (tag, folder, pin, transfer) and a close commit unconditionally,
+  since their callers roll back an acknowledged edit or ignore a refusal; a route save
+  holding a queue snapshot older than a committed queue still commits its edit and
+  leaves the on-disk `queued_prompts` as written (`queue_deferred_under_lock`), so the
+  queue stays owed. On a tab with no metadata line the merge writes nothing and
+  credits `_queue_persisted_sig`, so queue drift alone does not re-run the save on
+  every tick.
 
 - **Run now dispatches an idle queued card; it does not cancel child work.**
   `POST /api/chat/slots/{slot}/interrupt` keeps its stop-and-preserve behavior
@@ -3123,7 +3154,7 @@ so absence clears it.
   the `queue_id` there only promotes the matching card to the front, so a value
   that matches no card is a no-op rather than a refusal.
   This explicit action bypasses only the background-subagent user-message hold;
-  an active stage, a stop in progress, or a remote-bound slot still refuses it.
+  an active stage, a stop in progress, or a relay archive still refuses it.
   Attached subagents keep running, and their later completion injections use the
   ordinary busy-slot queue. If admission revalidation removed the selected card,
   the endpoint returns `409 queue_item_unavailable` so the client releases its
@@ -4289,7 +4320,7 @@ NOT-applied notice; acknowledgement alone never confirms activation. The
 subagent, caller, single-consumption and argument-matching fences still apply.
 
 
-The session-bound MCP tools in `session_directive.DIRECTIVE_TOOLS` (the monitor verbs, `autonudge_stop`, `set_project`, `suggest_followup`, `reset_conversation`, `chat_tag`) are **stateless**, so they need no per-process identity source and work with MCP-gateway pooling off (`ask_question` is not in the set: it blocks on the `/api/agent-ask/*` routes and returns the answers as its result): the tool validates its arguments and returns a *directive* — a human-readable confirmation line plus a machine-readable marker (`session_directive.encode`) carrying the validated payload and NO session key. The session-aware consumer, `dashboard/chat_runner._run_chat`'s `EVENT_TOOL_RESULT` handler, decodes the marker (`session_directive.decode`) and applies the effect IN-PROCESS against ITS OWN `slot`/`session_key` via `dashboard/session_directive_apply.py`, then strips the marker from the stored transcript. This works with pooling OFF (the default) because the consumer already owns the session. The directives that act on the user's own surface (`_USER_SURFACE_DIRECTIVES`: `set_project`, `reset_conversation`, `chat_tag`) additionally require a user-turn provenance.
+The session-bound MCP tools in `session_directive.DIRECTIVE_TOOLS` (the monitor verbs, `autonudge_stop`, `set_project`, `suggest_followup`, `nothing_to_do`, `reset_conversation`, `chat_tag`) are **stateless**, so they need no per-process identity source and work with MCP-gateway pooling off (`ask_question` is not in the set: it blocks on the `/api/agent-ask/*` routes and returns the answers as its result): the tool validates its arguments and returns a *directive* — a human-readable confirmation line plus a machine-readable marker (`session_directive.encode`) carrying the validated payload and NO session key. The session-aware consumer, `dashboard/chat_runner._run_chat`'s `EVENT_TOOL_RESULT` handler, decodes the marker (`session_directive.decode`) and applies the effect IN-PROCESS against ITS OWN `slot`/`session_key` via `dashboard/session_directive_apply.py`, then strips the marker from the stored transcript. This works with pooling OFF (the default) because the consumer already owns the session. The directives that act on the user's own surface (`_USER_SURFACE_DIRECTIVES`: `set_project`, `reset_conversation`, `chat_tag`) additionally require a user-turn provenance.
 
 Subagent isolation is therefore **structural, not cryptographic**: a subagent's tool result flows through the subagent's own runner and can only ever bind to the subagent's session, never its parent's — there is no `/proc` walk to get wrong. The tools still call `_resolve_session_key_strict()`, but only as a context guard to short-circuit sessions where a directive can never be applied (cron/hook/subagent) — not to bind the effect. `ask_question` is NOT a directive: it blocks on the strict `/api/agent-ask/*` routes, which attest the key the tool resolves and address the card to that session's own slot, so a sub-agent (no strict key) is refused before any card is shown.
 

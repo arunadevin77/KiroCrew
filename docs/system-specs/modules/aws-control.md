@@ -1593,7 +1593,8 @@ unattended upload starts.
 Due-ness is keyed per kind (`backup.due_for_sessions_nightly` against
 `KIND_SESSIONS`), so a snapshot that ran an hour ago does not make the
 transcripts look backed up, and a wake proceeds when EITHER kind is due. Each
-kind is pushed inside its own `hooks._push_nightly` call with its own
+kind is claimed through its own `start_async(kind, dedupe_key=account, …)` call
+in `hooks._run_once`, and `backup.make_job_runner`'s runner gives each its own
 try/except and its own audit subject (`backup/snapshots`, `backup/sessions`), so
 one kind failing costs the other nothing and an incident review can tell which
 bytes left the host. A platform without descriptor-pinned traversal is never due
@@ -2030,16 +2031,25 @@ The startup order is a correctness requirement rather than a preference:
 2. Write the container's own configuration. It must land after the bundle, because
    a bundle may ship config and the container's posture has to win on the keys it
    sets, and before the backend, which reads the file at boot.
-3. Restore the two authority files from the bucket, when one is configured. This
+3. Claim writer ownership in the bucket, when one is configured. Before it restores
+   anything, the task bumps the committed pointer's incarnation in place, same generation
+   id, marked as a provisional claim, under a compare-and-swap on the pointer's ETag, so a
+   predecessor that is still serving is fenced from that instant. A bucket with no pointer
+   writes nothing and the task mints a base token. The claimed token is exported as
+   `SMC_CLAIMED_INCARNATION` and the sidecar adopts it instead of minting its own. A task
+   that aborts before it is serving (a restore, spawn or readiness failure, or a stop
+   signal) releases the claim by restoring the committed owner's pointer under a
+   compare-and-swap, which is a no-op once a newer claimant has written the pointer.
+4. Restore the two authority files from the bucket, when one is configured. This
    must finish before the next step: the backend's periodic flush persists its
    in-memory slot table, so a flush landing before the restore completes writes an
    empty set over the record of which conversations existed. A restore that fails
    for any reason other than the objects being absent refuses the boot, because
    reading a denial as absence is that same empty flush by another route.
-4. Start the backend. `wait_until_ready` returns only when the port answers **and**
+5. Start the backend. `wait_until_ready` returns only when the port answers **and**
    the boot secret file exists; process-alive is not ready.
-5. Start the front process.
-6. Start the backup sidecar, last, because its first cycle should see a task that
+6. Start the front process.
+7. Start the backup sidecar, last, because its first cycle should see a task that
    is already serving.
 
 **The task owns its agent-spec directory, and that is what lets the backend write
@@ -2084,8 +2094,23 @@ because the alternative is silent loss. `SMC_BACKUP_INTERVAL_SECS` sets the cade
 and refuses only a value of zero or less, which is a busy loop rather than a faster
 cadence.
 
-Artifacts are NOT covered. That set is unbounded and the agent writes into it, so
-bounding it is an open question tracked on the issue rather than answered here.
+Artifacts are NOT covered: that set is unbounded and the agent writes into it, so it is
+outside the backup set.
+
+**Where it lands.** Keys sit under ``<SMC_BACKUP_PREFIX>/<SMC_CREW_NAME>/``, each part
+optional. The pointer is ``authority_generation.json``. A generation is ``gen/<id>/``
+holding ``session_map.json``, ``open_slots.json`` and ``transcript_index.json``, a
+``stem -> sha256`` map of the live transcripts. A live transcript is
+``data/blob/<sha256 of its bytes>``, written create-only, so two writers of different
+bytes never share a key and identical bytes converge. An archived segment keeps its path
+under ``data/sessions/archive/`` with the digest of its bytes appended, so the owner's
+control plane can still list a conversation's segments by prefix. The cycle carries
+forward the committed index's mappings for every conversation the captured pair still
+names, so a replacement that has not yet fetched a conversation does not drop it from the
+next generation. A merged index above 50,000 entries or half the read ceiling (32 MiB) is
+not published: the pair is withheld, the cycle fails loudly and the previous generation
+stays committed; a sessions directory holding more than 50,000 transcripts is withheld
+the same way.
 
 `session_index.db` is deliberately excluded: it is a search index the backend
 rebuilds, and its own module documents it as safe to be absent, stale or empty.
@@ -2120,32 +2145,37 @@ absent.
 
 A cycle that put the WHOLE pair in the bucket then commits ONE pointer object as the last
 thing it does: a single object naming the generation whose pair was just published whole.
-Each cycle publishes into a WRITER-UNIQUE, immutable generation id (``generations/<id>/``),
+Each cycle publishes into a WRITER-UNIQUE, immutable generation id (``gen/<id>/``),
 so the pair a cycle uploads never overwrites another generation's pair, and a publication
 interrupted halfway damages only an id nothing yet points at. There is no shared ``a``/``b``
 slot and no ``list``: the durability process holds only ``get`` and ``put``, so no cycle
 ever surveys the bucket for an orphaned pair. The pointer is settled by COMPARE-AND-SWAP on
 its ETag -- a cycle writes it ``If-Match`` the ETag it read (or ``If-None-Match: *`` for the
 first pointer) -- so two writers racing to commit cannot both win, and the loser re-reads
-and retries. An INCARNATION fence rides alongside the CAS: the pointer records the task
-incarnation that wrote it, and a strictly-older incarnation's commit is refused even if its
-CAS would pass, so a draining predecessor cannot roll the pointer back onto its older view
-after a replacement has committed newer state.
+and retries. An INCARNATION fence rides alongside the CAS: the pointer records the incarnation of the
+task that wrote it, and a commit is refused when the committed counter is strictly greater
+than this task's, or equal with a different token. A pointer that carries a provisional
+claim refuses the predecessor's commit as retryable, so a replacement that aborts cannot
+fence a healthy predecessor; once a replacement makes a real commit, the predecessor's
+commit is refused as superseded and its sidecar exits non-zero, which the supervisor
+treats as the end of the task. The sidecar exits non-zero for a configuration it cannot
+work with (2, no bucket), a bucket that cannot be written (3), a committed pointer it
+cannot read at startup (4) and a superseding replacement (5); a failed ordinary cycle is
+logged and retried at the next interval.
 
 The restore reads only the committed generation, by the id the pointer names, and decides
-FIVE cases. (1) No pointer: the legacy ``data/`` keys are GENERATION 0, and an authority
-file absent there is a first boot -- there is nothing to survey, because each generation
-lives at its own id and the process cannot list them. (2) A pointer whose generation holds
-every name it was committed with: the ordinary restore, fetched by that id. (3) A pointer
-whose generation is MISSING one committed name: refused, because the pair lost a member, and
-the next complete cycle mints a fresh generation and commits it, repairing the bucket. (4) A
-pointer present but UNUSABLE (unreadable, unparseable, or carrying a malformed incarnation):
-refused, since unusable is not absent -- reading it as absence would boot from the legacy
-keys the pointer was steering away from. (5) Legacy keys AND a committed generation both
-present: the pointer wins and the legacy keys are ignored, because they are the older
-publication no cycle of this writer rewrites. A read that fails for any other reason,
-including a denial, is failure too: reading a denial as absence is the same route to booting
-with an empty slot table.
+FOUR cases. (1) No pointer: the bucket is empty and both authority files are absent, which
+is a first boot. Nothing else in the bucket is consulted -- there is no pre-protocol
+``data/`` layout to read and no survey of generation ids, because the durability process
+holds only ``get`` and ``put`` and never a ``list``. A file already on local disk is still
+read, validated and loaded by the backend. (2) A pointer whose generation holds every name
+it was committed with: the ordinary restore, fetched by that id. (3) A pointer whose
+generation is MISSING one committed name: refused, because the pair lost a member, and the
+next complete cycle mints a fresh generation and commits it, repairing the bucket. (4) A
+pointer present but UNUSABLE (unreadable, unparseable, or carrying a malformed
+incarnation): refused, since unusable is not absent. A read that fails for any other
+reason, including a denial, is failure too: reading a denial as absence is the same route
+to booting with an empty slot table.
 
 The ARCHIVE root is the one root whose refusal must not withhold the pair. A link or a
 non-directory there is a SHAPE, so every later cycle meets the identical error and a withholding
@@ -2172,11 +2202,15 @@ flush, so it cannot contain what that flush wrote. That final cycle's verdict re
 the task's exit code, because it is the only copy of the turns in the flush.
 
 An overlapping deployment -- one that starts the replacement task before the old
-task has finished draining -- is outside that guarantee. The new task's restore
-reads authority files written before the old task's final cycle, and both sidecars
-then write the same keys, so the turns taken during the overlap window can be lost.
-The loss is bounded by that window rather than total, and the deployment driver is
-expected to serialize stop before start; where it cannot, this is the residual.
+task has finished draining -- is outside the lossless guarantee. The replacement claims
+writer ownership before it restores, which fences the old task: its commits are refused as
+retryable while the pointer carries the replacement's provisional claim, and as superseded
+once the replacement makes its first real commit, at which point its sidecar exits
+non-zero. Generations and transcript blobs are writer-unique, so neither task overwrites
+the other's objects, but the turns the old task takes after the replacement's restore are
+in no committed generation. The loss is bounded by that window rather than total, and the
+deployment driver is expected to serialize stop before start; where it cannot, this is the
+residual.
 
 ### The front layer
 
@@ -2320,6 +2354,15 @@ against the same 64 MiB ceiling, one chunk past it so an object of exactly that 
 be told from a larger one. The refusal is a `TranscriptUnavailable`, so an oversized
 object fails that turn rather than letting the backend serve one with the conversation
 missing.
+
+The front finds a conversation's transcript through the committed generation: it reads the
+pointer, then that generation's transcript index, then the one blob the index names for
+the slot's stem, three single-key reads and never a listing. A bucket with no pointer is
+empty and a stem the committed index does not name is a new conversation, so both serve
+fresh; no per-stem key is tried. A pointer or index that does not parse, an index the
+pointer references that is absent, or a blob the index references that is absent fails the
+turn with `TranscriptUnavailable`, because serving the conversation empty would let the
+next cycle replace its history. A local transcript is never overwritten by a fetched one.
 
 ### Launching the backend
 
@@ -2603,10 +2646,19 @@ process group and ESCAPES a `killpg` on the backend. Only the backend's own SIGT
 handling reaps it, which makes the drain window load-bearing rather than a
 courtesy: too short a drain SIGKILLs the backend before it finishes reaping and
 orphans a worker that goes on to finish its turn. Teardown order is front, then
-backend -- stop new turns arriving, then let the backend drain and flush -- and
-anything still alive afterwards is an escaped worker, which the teardown sweeps by
+backend, then the backup sidecar -- stop new turns arriving, let the backend drain and
+flush, then let the writer's final cycle upload what that flush produced -- and anything
+still alive afterwards is an escaped worker, which the teardown sweeps by
 process group over bounded rounds, because a killed process's children reparent to
 PID 1 and surface in the next round.
+
+The drain windows are 5 s for the front, 25 s for the backend and 75 s for the sidecar,
+declared in the image's `container/common/config.py`. The platform must wait for all of
+them plus a 10 s reap margin before it SIGKILLs the supervisor, so the task definition
+sets `stopTimeout` to their sum, 115 s, which stays under Fargate's 120 s cap; Fargate's
+30 s default would kill the writer before its final cycle starts. The gateway's
+`CREW_STOP_TIMEOUT_SECS` is a deliberate copy of that total, because the image tree
+cannot be imported there, and a test pins the two equal.
 
 A child in the supervisor's OWN process group is withheld from that discovery. The sweep's
 remedy is a group signal, and on its own group that SIGKILLs the supervisor -- so the

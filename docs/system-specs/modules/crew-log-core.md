@@ -291,7 +291,7 @@ subject -- this entry is that history (`monitor-architecture.md`).
 | `card/finished` | `{card_id, status, revision}` — `status` closed to the card store's finished statuses (`applied`, `partial`, `failed`, `cancelled`, `expired`, `undone`) | yes |
 | `guide/offered` | `{slot, guide_id, actions:[id], turn?, mid?}` — The agent offered a guide at this point of the conversation | yes |
 | `guide/started` | `{guide_id}` — the first claim after the person pressed Start | yes |
-| `guide/finished` | `{guide_id, status}` — `status` closed to `completed`, `cancelled`, `expired` | yes |
+| `guide/finished` | `{guide_id, status, reason?}` — `status` closed to `completed`, `cancelled`, `expired`; `reason` closed to `saved_without_guide` | yes |
 
 A proposal is part of the conversation, so it is recorded twice in one step: a
 `card` row in the slot's transcript (display-only, drawn where it was proposed) and
@@ -430,7 +430,7 @@ with the first fold that actually performs it rather than shipped ahead of any c
 
 Every refusal is a `CrewLogError` carrying a stable `code`; the codes are API surface and are additive-only.
 
-**Ownership** answers whether a kind of unit has such events at all. `schema.TYPE_OWNERSHIP` maps kind to owned `type` domains -- crew: `member` `activity` `slot` `patrol` `message` `crew` `item` `memory`; member: `member` `activity` `slot` `patrol`; session: `session` `turn` `step` `tool` `approval` `model` `compaction` `plan` `ledger` `object` `message` `request` `context` `background` `subagent` `write` `radar` `work` `panel` `card` `guide` -- and anything else is `event_type_not_owned`. It is prefix-based, so a new action under an owned domain needs no change: `crew/dispatch` and `crew/report` are owned by the `crew` domain the registry already lists. `message` appears in the crew and session registries, which is what ownership means: a crew forwards messages and a session records its own bodies, so both kinds have such events and neither name is a collision.
+**Ownership** answers whether a kind of unit has such events at all. `schema.TYPE_OWNERSHIP` maps kind to owned `type` domains -- crew: `member` `activity` `slot` `patrol` `message` `crew` `item` `memory`; member: `member` `activity` `slot` `patrol`; session: `session` `turn` `step` `tool` `approval` `model` `compaction` `plan` `ledger` `object` `message` `request` `context` `background` `subagent` `write` `radar` `work` `panel` `dashboard` `card` `guide` -- and anything else is `event_type_not_owned`. It is prefix-based, so a new action under an owned domain needs no change: `crew/dispatch` and `crew/report` are owned by the `crew` domain the registry already lists. `message` appears in the crew and session registries, which is what ownership means: a crew forwards messages and a session records its own bodies, so both kinds have such events and neither name is a collision.
 
 **Namespacing** answers whether an emitter may write it, and it is a rule about `src`. Two halves:
 

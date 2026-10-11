@@ -87,10 +87,13 @@ distinguished because they need different remedies:
 
 - **(a) Consumer parked at a `yield`.** Any await in the `async for` body. The
   approval future is the one that bit us, but it is not the only await in that
-  branch: `post_linked_approval` is a network call, `hooks.on_tool_call` runs
-  arbitrary user hook code, and the MCP Apps spool read is thread-offloaded.
-  Each is a candidate for the same freeze, and each new await added to a
-  consumer branch enlarges this class silently.
+  branch: `post_linked_approval` is a network call, and both `hooks.on_tool_call`
+  and the MCP Apps spool read are thread-offloaded: `hooks.on_tool_call` runs its
+  arbitrary user hook code through `executors.run_in_tool_gate_pool` on the
+  dedicated `mc-toolgate` pool, under a bounded `_TOOL_GATE_QUEUE_WAIT_SECS` wait
+  with a fail-closed `hook_gate_busy` refusal. Each remaining loop-resident await
+  is a candidate for the same freeze, and each new await added to a consumer
+  branch enlarges this class silently.
 - **(b) Consumer task gone or never resuming.** `slot.task` cancelled without
   draining, an exception swallowed above the loop, a slot lock held by a turn
   that will not finish.
@@ -370,5 +373,5 @@ diagnostic gap that this was written to close.
 
 Still open, and belonging to the *cause* rather than the detection: every
 transport's per-event outbound send is an unbounded network await inside the turn
-path, and `hooks.on_tool_call` is synchronous on the event loop. Both widen class
+path. It widens class
 (a) — and (c), which as noted above no loop-resident observer can cover.

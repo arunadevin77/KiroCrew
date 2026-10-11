@@ -1652,10 +1652,9 @@ the `_host` sentinel session key, which classifies to surface `host`. Operators 
 `surface:host` profile to narrow these on top of the policy ceiling (e.g. an
 `apps` allowlist that further restricts which apps may activate, or a `channels`
 allowlist that narrows which transports may connect below what the ceiling
-permits). NOTE: these callers used to pass an empty session key, which
-mis-classified to `slack` and accidentally picked up `surface:slack` profiles;
-they now use the honest `host` surface, so a `surface:slack` profile no longer
-governs host-side app activation or transport startup. The two policy-scope
+permits). These callers pass the `_host` sentinel session key, which classifies to
+surface `host`, so a `surface:slack` profile does not govern host-side app
+activation or transport startup. The two policy-scope
 chokepoints (app activation + transport start) audit their decisions via
 `sel().log_governance_decision` (`governance_permits` audits only its own
 degrade, never a normal permit/deny); Slack workspace admission audits via a
@@ -2142,11 +2141,10 @@ read-your-writes should add it deliberately, with its own tests.
   execution in `hooks._script_hooks_capability_denied` (at `run_script_hook`);
   app activation in `apps.manager._app_activation_denied` (at `enable_app`).
 
-Plane A carries **no live ordinal clamp**. It used to: a computer-use title under a
-`computer_use.approval: interactive` floor had both auto-approve branches suppressed,
-so the call fell through to interactive approval. That row and its clamp were removed
-along with the rest of the computer-use governance model — see [Computer use is NOT
-governed](#computer-use-is-not-governed-deliberately). The global `approval_mode`
+Plane A carries **no live ordinal clamp**. The computer-use governance model —
+including a `computer_use.approval` row and its clamp — is not present; computer
+use is not governed (see [Computer use is NOT
+governed](#computer-use-is-not-governed-deliberately)). The global `approval_mode`
 row's live clamp remains reserved (see "Still-reserved in v1").
 
 ### Owner capability previews

@@ -13,9 +13,10 @@ are checked by different machines, which is why they drift.
 > is `agent-spec.md` beside this file: the charter (what it is for and what it may never
 > do) plus the narrowed toolset that makes the charter true against a tool list rather
 > than only against prose. A human or another agent following this file gets the same
-> procedure. The spec is NOT yet registered as an installed agent (no installer or
-> owned-spec entry ships it; see `docs/system-specs/modules/dashboard-templates.md`), so
-> today nobody starts with this loaded: load this skill yourself.
+> procedure. The gateway installs the spec as the owned agent `kirocrew-dashboard-author` at
+> every start (`OWNED_KIRO_AGENT_FILES`, `_install_dashboard_author_agent`), so a
+> crewmate dispatched on it starts with this procedure as its prompt; a human or
+> another agent loads this skill directly.
 
 The page is inert html. The host sanitizes it, renders it, and binds text into it by
 `data-dashboard-field`. No type checker is anywhere near that binding, because one half
@@ -51,7 +52,7 @@ test directory. The scaffold writes all four and prints line 5 for you to paste.
 1. **Name the question the page answers, in one sentence a person would ask.** "How much
    of this goal is settled, and what is waiting on me." Not "a board of metrics". If you
    cannot write the sentence, you do not yet know which fold to read.
-2. **Pick the fold.** Take one of the ten advertised folds in `FOLDS.md` (not the
+2. **Pick the fold.** Take one of the advertised folds in `FOLDS.md` (not the
    *(internal)* `class` fold, which `--fold` still accepts). A new fold is the exception and needs
    its own justification section in the pull request body, because a fold is a durable
    projection of the append-only log and every reader pays for it.
@@ -243,7 +244,7 @@ catalogue does not list is refused before any file is written.
 Only when no existing fold can answer the sentence, and then say so in the pull request
 under its own heading:
 
-- the question, and which of the ten you tried and why each fails;
+- the question, and which advertised folds you tried and why each fails;
 - the entry type the fold reads, and why the log already carries it;
 - what it stores, and why that is bounded;
 - its `affects` set, which may be wider than the truth and must never be narrower — a

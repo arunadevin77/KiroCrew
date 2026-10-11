@@ -809,8 +809,9 @@ def edit(
     ``source`` label, so an edit that rewrote the page while leaving the label alone
     would produce a record that says ``builtin`` over bytes nobody reviewed -- and
     the label is what every reader downstream asks. Keeping the id while replacing
-    the page is exactly the shape :data:`AUTHORED_PAGE_REFUSAL` describes, so it
-    gets that sentence rather than one of its own.
+    the page is a different ask from previewing an authored page, so it gets its own
+    sentence, :data:`EDITED_PAGE_REFUSAL`, rather than :data:`AUTHORED_PAGE_REFUSAL`:
+    that one tells a caller to name a template, advice that fits a preview and not an edit.
 
     The parameter is kept rather than dropped so the refusal lives HERE, for the
     reason :func:`stage_preview` keeps its two: a caller added later cannot slip a

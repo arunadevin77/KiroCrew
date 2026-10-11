@@ -219,6 +219,7 @@ custom-rules:
     file-patterns:
       - "test/**/*.py"
       - "tests/**/*.py"
+      - "packages/**/tests/**/*.py"
       - "src/kiro_crew/apps/builtins/**/tests/**/*.py"
       - "src/kiro_crew/apps/builtins/**/*_tests/**/*.py"
       - "conftest.py"
@@ -361,6 +362,7 @@ custom-rules:
     blocking: true
     file-patterns:
       - "test/**/*.py"
+      - "packages/**/tests/**/*.py"
       - "src/kiro_crew/apps/builtins/**/tests/**/*.py"
       - "src/kiro_crew/apps/builtins/**/*_tests/**/*.py"
       - "conftest.py"
@@ -544,7 +546,8 @@ custom-rules:
         lookup, or that makes an unusable persisted acp_backend raise instead of
         degrading to kiro with a logged reason.
       - H6/H7 — capability grants. A new capability predicate must be membership
-        in a named ACP_BACKENDS_* set in acp/types.py, and every existing
+        in a named ACP_BACKENDS_* set (defined in agent_sdk/backends.py,
+        re-exported by acp/types.py), and every existing
         harness's membership must be an explicit decision in the diff. FLAG a
         new predicate that grants a capability to a harness the PR never
         mentions. For is_kiro_cli specifically the failure is OPEN — it makes
@@ -649,10 +652,11 @@ custom-rules:
         or backfills, and any fallback read of Global Memory or another store when
         the selected store is missing or unreadable. Explicit owner-selected
         copies must satisfy the allowed case below.
-      - THE GATE ITSELF WIDENED. FLAG an added ALLOWLIST entry (the table is
-        intended empty and its size is printed on every run), a rule made
-        conditional, or a `# memory-store-ok:` marker whose reason does not
-        survive reading — the reason exists so a reviewer can decide whether the
+      - THE GATE ITSELF WIDENED. FLAG an added exemption table or ALLOWLIST
+        (scripts/check_memory_store_seam.py has none today; a reintroduced one
+        is the widening), a rule made conditional, or a `# memory-store-ok:`
+        marker whose reason does not survive reading — the reason exists so a
+        reviewer can decide whether the
         call really has no store to name.
 
       Allowed (do NOT flag):

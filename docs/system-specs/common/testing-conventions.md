@@ -2015,7 +2015,11 @@ run, and each named a class the floor did not yet close.
   `~/.kiro/crew` and refreshes the breadcrumb: a fresh fake `HOME` grew both after four
   subagent `on_done` tests, none of which failed. Structural fix in the floor's
   `tryfirst` teardown hook, beside the receipt-worker join: cancel every pending task
-  and run the loop until they finish, then `shutdown_default_executor` — what
+  and run the loop until they finish, repeating while a cancelled task's `finally`
+  starts a new one (a dashboard turn's queue cycle dispatches the next queued turn,
+  which a single pass over a snapshot never sees, and asyncio then logs `Task was
+  destroyed but it is pending!` into a later test's `caplog`), all passes under one
+  deadline, then `shutdown_default_executor` — what
   `asyncio.run` does at shutdown — bounded, and before any fixture teardown so the pins
   still hold. A test that leaves an unstarted turn behind now shows up as a
   `coroutine ... was never awaited` warning at that point instead of as residue.
@@ -2152,7 +2156,7 @@ carrying forward:
   `requires_shell_and_node` gated on `shutil.which("node") is None`. `scripts/emit-symbols-manifest.mjs`
   uses `import.meta.dirname`, **undefined before Node 20.11**, so `path.resolve(undefined, "..")`
   raises `ERR_INVALID_ARG_TYPE` and two tests failed in all five runs on a host whose
-  PATH led with Node 18 — while the repo declares `.node-version` = 24 and
+  PATH led with Node 18 — while the repo declares `.nvmrc` = 24 and
   `engines.node >= 22.12.0`. This is the rule already stated for config ("a `skipif` helper
   must observe what the tests will observe") extended to a version floor. Same shape as
   the per-user-install resolvers below: presence is not capability.
@@ -3953,17 +3957,19 @@ python -m pytest
 ```
 
 `setup.cfg`'s `[tool:pytest] addopts` supplies `--verbose`,
-`--ignore=build/private`, `-n auto`, `--dist loadgroup`, `--max-worker-restart=2`,
+`--ignore=build/private`, `-p no:platformdirs` (refuses platformdirs' auto-loaded
+`pytest11` plugin), `-n auto`, `--dist loadgroup`, `--max-worker-restart=2`,
 `--timeout=120`, `--durations=5` and `--color=yes`. Coverage is deliberately NOT in
 `addopts`: measured on a 1,231-test subset it cost +21% wall time on every local and
-agent run, while CI asks for it explicitly. So you no longer need an override just to
+agent run, while CI asks for it explicitly. So a local run needs no override to
 avoid coverage. (Coverage's cost is overwhelmingly TIME, not memory: re-measured
 across three slices it added +33% to +160% wall clock but only +1.6% to +8.1% peak
 worker RSS.)
 
-### Opt-in Windows CI progress records
+### Opt-in CI progress records
 
-The Windows test job loads `scripts.ci_pytest_progress` explicitly with `-p` and
+The Linux (`backend-test`) and Windows (`backend-test-windows`) test jobs in `ci.yml`
+load `scripts.ci_pytest_progress` explicitly with `-p` and
 `--ci-progress-dir`; importing the plugin without that option registers no recorder
 and creates no files. It leaves selection, scheduling, coverage and timeout limits
 unchanged. One open JSONL stream per worker records collection start/end and selected
@@ -4349,6 +4355,24 @@ whole nightly publish chain skipped behind it. Scope the patches a test wants
 reverted with `with monkeypatch.context() as scoped:` instead, so leaving the block
 restores the fixture's readings rather than the host's.
 
+The memory POSTURE has its own pin. `resource_status._read_available_gb` is the
+live reading behind the posture that `admission_check` and `prewarm_allowance`
+act on; while it reads critical the cron due-scan defers interval and one-shot
+firings and the chat runner holds no eager pre-warm session, so a test that fires
+a cron job or an eager spawn fails on a runner with 2 GB or less free as a bare
+`KeyError` on `svc._claims[job_id]`, a wait that times out, or `get_or_create`
+awaited 0 times. Such a module opts into `ample_host_free_memory`
+(`test/conftest.py`) the same way:
+
+```python
+pytestmark = pytest.mark.usefixtures("ample_host_free_memory")
+```
+
+It pins the reading rather than `probe`, because `prewarm_allowance` reads it
+without going through `probe`, and it pins nothing below it: a test about the
+slice, cgroup or host readers must not opt in, and a test about the posture
+patches the reader in its own body, on top of the fixture.
+
 ### 2. Wall-clock races
 
 Asserting a *rate* or a *count* that the host controls. On Windows through Python 3.12
@@ -4660,9 +4684,10 @@ More shapes this class hides, all Windows-only and all green on every Linux run:
   the budget's own branch with the value set to `0`, which expires before the append is
   even dispatched and so carries no clock. The e2e file's `_generous_append_deadline`
   fixture is the shape (a new autouse fixture patches through `_floor_monkeypatch`,
-  D11): it lifts all three budgets on that path (`_APPEND_TIMEOUT_SECONDS`,
-  `gate._LOG_BUDGET_SECS`, `tool_risk.LOG_BUDGET_SECS`), because lifting one leaves the
-  assertion racing the next.
+  D11): it lifts both budgets on that path (`platform_log_append._APPEND_TIMEOUT_SECONDS`
+  and `gate._LOG_BUDGET_SECS`), because lifting one leaves the assertion racing the next.
+  `test_decisions_tool_risk.py` lifts `tool_risk.LOG_BUDGET_SECS` to
+  `GENEROUS_LOG_BUDGET_SECS` the same way.
 - **`TerminateProcess` returns before the process has exited.** It starts the
   termination and the object is signalled later, so a test that reads a member as
   exited on the line after a drain signalled it asserts on scheduling.
@@ -5005,8 +5030,11 @@ at a time from 1 to 24, on thread CPU, failing at the first size that overruns i
 budget (so catching any regression costs about one growth step), and only then tries
 ascending long pumps for the polynomial class, each held both to an absolute budget and to
 at most 25x the cost of the pump 10x shorter (above a 0.25 s floor, so a coarse clock tick
-cannot read a linear cost as an unbounded ratio). Size any complexity guard so the
-regression it exists to catch FAILS it, not hangs it.
+cannot read a linear cost as an unbounded ratio). The long pumps' absolute budget is
+`REDOS_LARGE_BUDGET_SECONDS` unless the caller passes the keyword-only `budget_seconds`:
+a guard converted from a wall-clock bound passes the constant it already carried, as
+`test/test_markdown_link_parentheses.py` does, since a ratchet may only tighten. Size any
+complexity guard so the regression it exists to catch FAILS it, not hangs it.
 
 **First check that the time is even the algorithm's.** A test that bounded `elapsed` around
 the bash gate took 144s under load — but with the gate's filesystem probes stubbed, the same
@@ -5544,6 +5572,7 @@ tools), use the **observe → diagnose → fix → verify** pattern:
 ```python
 """Test ACP handshake and MCP server loading."""
 import asyncio, json, time
+import kiro_crew
 
 async def main():
     kiro = await asyncio.create_subprocess_exec(
@@ -5582,11 +5611,15 @@ async def main():
 
     # Step through protocol, log everything
     t0 = time.time()
-    # Match production: acp.client sends PROTOCOL_VERSION plus clientCapabilities.
+    # Match production: acp.client sends PROTOCOL_VERSION, ACP_CLIENT_CAPABILITIES and
+    # clientInfo (CLIENT_NAME and the package __version__).
     await wait_response(await send("initialize", {
         "protocolVersion": "2025-08-22",
-        "clientCapabilities": {},
-        "clientInfo": {"name": "kirocrew", "version": "0.1.0"},
+        "clientCapabilities": {
+            "fs": {"readTextFile": False, "writeTextFile": False},
+            "terminal": False,
+        },
+        "clientInfo": {"name": "kirocrew", "version": kiro_crew.__version__},
     }))
     await wait_response(await send("session/new", {"cwd": "/tmp", "mcpServers": []}))
 

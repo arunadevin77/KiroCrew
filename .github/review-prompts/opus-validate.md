@@ -26,9 +26,15 @@ or a path to read. Do not try to obtain it any other way. The base-branch rule
 snapshots are at:
 
 ```
-.review-base-rules/AUTOSDE.yaml          (backend Python)
+.review-base-rules/AUTOSDE.yaml          (repo-wide)
 .review-base-rules/website-AUTOSDE.yaml  (frontend)
 ```
+
+Patterns in `AUTOSDE.yaml` are repo-relative. Patterns in `website-AUTOSDE.yaml`
+are relative to `website/`: match them against a changed path with its leading
+`website/` removed (`src/**/*.tsx` means `website/src/**/*.tsx`, never `src/kiro_crew/`).
+Both files use gitignore-style globs: `**` also matches zero directories, so
+`src/kiro_crew/**/*.py` covers `src/kiro_crew/hooks.py`.
 
 They are base-branch snapshots, so a PR cannot weaken the rules that govern it.
 

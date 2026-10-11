@@ -219,7 +219,7 @@ owners behind it are:
 | `transcript.ts` | message identity (the client id, the server `meta.mid`, the one-shot `sendId`), redelivery and duplicate detection, echo reconciliation, the chunk-seq floor a snapshot vouches for, and the bounded-page identity rules every slot-detail merge cuts by. Pure: callers pass the arrays in |
 | `paging.ts` | page sizes and limits, the switch and count-matched fetch limits, the coverage shortfall, the paging-cursor shift after a kept head, and the abort handle of the one older page in flight. The count-matched limit (`countMatchedFetchLimit`) sizes a refresh or warm to the rows the tab already holds (identified rows for `refreshSlot`, placeable rows for `warmSlotCache`), between a floor and a ceiling; it declines when nothing is identified or the floor would over-request into unidentified history. `warmSlotCache` asks one row more for a running slot |
 | `windowWalk.ts` | the bounded older-window walk (`walkWindowBackTo`) `refreshSlot`, `switchSlot` and `warmSlotCache` take when their newest window misses the rows a tab holds; see the bounded-read rule below |
-| `slotCache.ts` | what a slot-detail page writes besides its rows (`parkActiveTranscript` is the one writer of the outgoing active slot's cache entry): the active paging cursor (`has_more` and `next_before` become `slotHasMore` and `slotOldestIndex`), a background pane's page with its has-more and bounded markers, the retained server `total` baseline, and the context meter |
+| `slotCache.ts` | what a slot-detail page writes besides its rows (`parkActiveTranscript` is the one writer of the outgoing active slot's cache entry): the active paging cursor (`has_more` and `next_before` become `slotHasMore` and `slotOldestIndex`), a background pane's page with its has-more, bounded, and (while more history remains) `next_before` cursor (`slotPaneNextBefore`) markers, the retained server `total` baseline, and the context meter |
 | `messages.ts` | edits to a cached transcript outside the live frame: the optimistic send and its confirmation, streaming and final text, patches by tool-call id / `mid` / `ts`, and a background pane's one-time hydrate |
 | `thinking.ts` | client-only reasoning rows, re-seated after every server replace or parked until their anchor pages in |
 | `queue.ts` | queued rows, hydrated from a slot-detail `queue` field |
@@ -235,7 +235,7 @@ above the walked window leave the tab and are one page-back away.
 
 `loadOlderMessages` stays in the facade. The chat host answers the hook's
 older-page request with it; it reads the page before `slotOldestIndex` and lands
-it only while the slot it was read for is still active. None of these owners filters rows by memory
+it only while the slot it was read for is still active. A BACKGROUND pane (a crewmate DM on the Members page, a split pane) pages its OWN older history with the separate `loadOlderSlotMessages` thunk, which reads from that pane's own cursor (`slotPaneNextBefore`, written beside the page by `writeSlotPage`) and tracks its in-flight / failed state per slot in `slotPaneLoadingOlder` / `slotPaneOlderError`, so one pane's walk never blocks or reddens another's; `loadOlderMessages` walks only the active slot. None of these owners filters rows by memory
 mode, so a restricted transcript is cached and paged like any other.
 
 ### Card rows: change cards and guide offers
@@ -404,7 +404,7 @@ Per-thread JSONL files at `~/.kiro/crew/sessions/{safe_key}.jsonl`. First line i
   which is why the save path does not do it.
 - **Cache-fill staleness guard** — transcript memos use a cache identity of `(st_mtime_ns, st_ctime_ns, st_ino)`, rather than mtime alone. That makes the normal atomic rewrite visible even when housekeeping restores its pre-write mtime via `_restore_mtime`; the replacement inode or changed ctime forces a miss. A per-key invalidation **generation** still closes in-process fill races: `_invalidate_cache` bumps it BEFORE dropping entries, and each fill snapshots it before `stat` then re-checks it around publish via `_publish_if_current`, discarding a fill if it moved. `_meta_cache`, `_recent_cache`, `_folded_cache`, `_snippet_cache`, and `_msg_cache` record both identity and generation; `_folded_cache`/`_snippet_cache` serialize stat → read → store under `_file_lock`, while `_msg_cache`'s unlocked on-loop fallback additionally needs a cross-process flock-hold witness. The generation table is process-wide (class-level, keyed by transcript directory + sanitized stem), and invalidation covers each spelling of one session — logical key, sanitized `path.stem`, and canonical/legacy Slack aliases in both directions (`_cache_key_identities`).
 - `recent(key)` — last 20 messages for context injection
-- `recent_with_provenance(key)` — entries with source citations. Never a display-only row (`DISPLAY_ONLY_ROLES`, the `notice` role): notices are drawn for the reader, not conversation, and the consolidator's memory and skill-detection prompts skip them the same way while its offset still passes them (the Slack thread-parent row reaches a model only through its fenced block)
+- `recent_with_provenance(key)` — entries with source citations. Never a display-only row (`DISPLAY_ONLY_ROLES`, the `notice` and `card` roles): notices are drawn for the reader, not conversation, and the consolidator's memory and skill-detection prompts skip them the same way while its offset still passes them (the Slack thread-parent row reaches a model only through its fenced block)
 - `list_sessions(*, keys=None)` — lists all sessions with title (first user message or LLM-generated). Sort key uses ISO `created` string consistently (defaults to ISO from `st_mtime` if no metadata `created` field, ensuring string-only comparisons). Each returned session's meta dict also carries `folder_id` when present in the persisted metadata line, so sessions can be grouped by the folder they were filed in. Given `keys`, it reads only those sessions' files (the app-ownership screen uses this).
 - `agent_usage()` — returns `{agent_name: (session_count, last_used_mtime)}`; built on `list_sessions()` so it inherits canonical-session dedup + symlink-skip (counts per logical conversation). Used by `GET /api/agents` to order the roster most-used-first, degrading to config order on failure.
 - `history_index.py` stores file freshness identities without truncation: signed-64-bit
@@ -1312,7 +1312,14 @@ no longer destroy older turns.
   and carries every key another layer owns (`carry_unowned_metadata`); a forced
   or closing save of a message-less slot merges instead, writing clearable fields
   even when empty because a merge cannot delete a key, and only into a line that
-  exists. `memory_mode` is the stricter of the retained mode (the slot's, folded
+  exists. The periodic pass (`DashboardPersistenceCoordinator.flush_slot_now`)
+  forces this merge for a dirty message-less slot, so a `session_create` newborn's
+  sidebar color or title edit reaches its birth line while a plain empty tab still
+  gets no file. Only that pass passes `refuse_stale_empty_merge`: inside the
+  transcript lock `merge_empty_window` then refuses (`refusal_under_lock`, returned
+  as the reason, `_save_slot_to_history` returns False and keeps the slot owed)
+  when another writer committed a newer queue or a different slot now holds the
+  name. A closing merge is never refused. `memory_mode` is the stricter of the retained mode (the slot's, folded
   with the session's execution record, live or durable) and the line's own, a carried
   `execution_context` record is tightened to match, and the committed tightening
   reaches the event loop through `pending_slot_memory_mode`. `last_user_at` is
@@ -1788,6 +1795,24 @@ prefix would mark messages consolidated that no model has read, dropping them
 from memory silently — the same loss on the failure path as on the success path.
 A long tail therefore drains over successive passes.
 
+**An abandoned span is announced.** When a failed attempt reaches
+`_CONSOLIDATION_MAX_ATTEMPTS`, the abandon path logs a WARNING, marks the
+prompted prefix consolidated, and then calls
+`HistoryConsolidator.on_abandoned(key, message_count, reason)`. The callback
+defaults to `None`, and an exception it raises is logged at debug and never
+undoes the abandon. The gateway sets it to
+`GatewayOrchestrator._notify_consolidation_abandoned`, which posts one
+bell-feed notification (kind `agent`, title "Memory consolidation gave up on
+a session", `meta.kind` `consolidation-abandoned`, `meta.session_key`) naming
+the session, the number of dropped messages and the failure reason, and
+saying their history, preferences and lessons were not extracted. A marked
+span no longer appears in any pending listing, so this notification is the
+only user-visible record of the loss; with no dashboard state the method
+posts nothing. A consolidator built outside the gateway (`cli.py`,
+`cli_server.py`, `dashboard/server_runtime/skill_learning.py`,
+`eval/runner.py`) leaves the callback unset and abandons with the WARNING
+alone.
+
 `AttemptedSpan.total` stays the transcript's extent at snapshot time and is not
 collapsed into `prompted`. The retry accounting stamps both
 (`consolidation_attempts_count` and `consolidation_attempts_prompted`) and needs
@@ -2014,8 +2039,11 @@ panel reads the file whole), and the crewmate's stored reply is clipped at
 64 000 characters with a `[reply clipped]` marker (the streamed frames carried
 the whole text). The reader holds the same line whatever the file says
 (`THREAD_REPLY_CONTENT_MAX_CHARS`, `THREAD_MID_RE`,
-`THREADS_MAX_REPLIES_PER_THREAD`, `THREADS_MAX_REPLIES_PER_SIDECAR`, the one
-spelling the writer's caps and the routes' `_valid_mid` import): the file is opened once without
+`THREADS_MAX_REPLIES_PER_THREAD`, `THREADS_MAX_REPLIES_PER_SIDECAR` -- the
+reply-count caps and the mid shape spelled once here and imported by the writer,
+while the writer's own reply-content clip is a separate, smaller
+`_MAX_STORED_REPLY_CHARS` (64 000) that this reader bound deliberately stays above
+so a sidecar the writer wrote is read back whole -- and the routes' `_valid_mid` import): the file is opened once without
 following a link, sized on that descriptor and read to the ceiling
 (`THREADS_SIDECAR_MAX_BYTES`, 64 MiB; a link, a non-regular file or more
 bytes is `ThreadStoreUnreadable`, and the writer answers `threads_full` at the
@@ -2023,7 +2051,7 @@ same ceiling so a sidecar it wrote is never past it), a row's `id`, `role` and
 `ts` must be in the writer's own shape (uuid hex, one of the two speakers,
 ISO-8601) or the row is dropped -- so `content` is the only field that can
 carry prose, and it is redacted at the boundary -- the content is cut at the
-writer's bound, a thread keeps its newest 500 rows (a key left with none is
+reader's own `THREAD_REPLY_CONTENT_MAX_CHARS` bound, a thread keeps its newest 500 rows (a key left with none is
 not a thread), the map stops at 5 000 rows, and a key that is not a minted row id (`m-` + 16 hex, `mint_row_mid`) is
 not a thread, since the summary route hands keys to the dashboard as they are.
 The write side holds the same line: the `.threads` directory must be a real

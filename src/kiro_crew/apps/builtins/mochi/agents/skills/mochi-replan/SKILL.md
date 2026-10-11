@@ -34,7 +34,7 @@ Detect what changed and adjust:
 
 - **Watched item status changed**:
   → If a watch result notification came in (activity log), update planner_notes.watching_last_status
-  → Note: watch checks are driven by WatchlistService, not the queue. Do NOT schedule check_watching tasks.
+  → Note: watch checks are driven by the queue poller (based on `nextCheckAfter`), not scheduled as queue tasks. Do NOT schedule check_watching tasks.
 
 - **Quiet requested** (`planner_notes.silent_until` is set and in the future):
   → Remove upcoming notify tasks before that time, keep only moves
@@ -48,7 +48,7 @@ Detect what changed and adjust:
 The chat agent will provide context about what the user wants. Common requests:
 
 - **"Remind me at 5pm"** → Chat agent handles this directly via `update_watchlist` (see prompt.md Watch List section); no queue task is needed. Replan is only needed if the chat agent sets `needs_replan: true`.
-- **"Watch this page"** → Chat agent handles this directly via `update_watchlist`. WatchlistService timer will handle periodic checks automatically based on `nextCheckAfter`.
+- **"Watch this page"** → Chat agent handles this directly via `update_watchlist`. The queue poller will handle periodic checks automatically based on `nextCheckAfter`.
 - **"Be quiet for a while"** → Remove upcoming notify tasks, keep only moves
 - **"Come here"** → This should use `perform_pet_action` instead (instant), but if it comes through replan, add an immediate move
 - **"Stop moving"** → Remove upcoming move tasks

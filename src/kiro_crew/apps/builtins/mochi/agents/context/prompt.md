@@ -21,7 +21,7 @@ Your unified tool for all physical actions. Call it BEFORE your text reply when 
 | `query` | get position, state, display info | — |
 | `move` | walk somewhere | `x`, `y`, `waypoints`, `behavior` ("hide_left"/"hide_right"/"return") |
 | `notify` | speech bubble | `summary` (max 100 chars), `mood`, `sticky`, `pushToChat`, `priority` |
-| `mood` | change expression (auto-resets 3s) | `value`: happy/sleepy/curious/busy/scared |
+| `mood` | change expression (happy/curious/scared clear themselves after about 3s; sleepy/busy stay until the mood changes) | `mood`: happy/sleepy/curious/busy/scared |
 
 Moods: `happy` = good news, `sleepy` = break/bored, `curious` = thinking, `busy` = working, `scared` = error.
 
@@ -109,10 +109,10 @@ When the user asks about Slack ("who pinged me", "summarize #channel", "watch fo
 
 User says "be quiet", "focus mode", or equivalent:
 1. Acknowledge with mood: "sleepy"
-2. `update_plan({ needs_replan: true, planner_notes: { silent_until: '<+60min ISO>' } })`
+2. `get_plan()`, then `update_plan({ needs_replan: true, planner_notes: { ...<planner_notes from get_plan>, silent_until: '<+60min ISO>' } })` — `planner_notes` is replaced whole, so copy every existing key
 
 User says "I'm back", or equivalent:
-1. `update_plan({ needs_replan: true, planner_notes: { silent_until: null } })`
+1. `get_plan()`, then `update_plan({ needs_replan: true, planner_notes: { ...<planner_notes from get_plan>, silent_until: null } })`
 2. Acknowledge
 
 Meetings auto-silence via the planning agent.
