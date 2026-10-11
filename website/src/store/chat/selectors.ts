@@ -102,6 +102,7 @@ const TURN_INJECT_DISPATCHED: Readonly<Record<InjectKind, boolean>> = {
   recovery: true,
   synthesis: true,
   user_replay: true,
+  automation_notice: true,
 }
 const TURN_INJECT_KINDS: ReadonlySet<unknown> = new Set<string>(
   (Object.keys(TURN_INJECT_DISPATCHED) as InjectKind[]).filter((k) => TURN_INJECT_DISPATCHED[k]),

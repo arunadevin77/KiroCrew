@@ -1329,7 +1329,7 @@ def is_stop_event_row(m: dict) -> bool:
 #: turn; here the question is whether a dispatch happened that got no reply,
 #: and a recovery or replay dispatch that died is exactly such a turn.
 _TURN_INJECT_KINDS: frozenset[str] = frozenset(
-    {"cron", "mcp_app", "recovery", "user_replay", "synthesis"}
+    {"cron", "mcp_app", "recovery", "user_replay", "synthesis", "automation_notice"}
 )
 
 

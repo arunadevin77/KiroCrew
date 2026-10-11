@@ -130,6 +130,12 @@ _STOP_DIRECTIVES = frozenset({"monitor_stop", "autonudge_stop"})
 # Transcript row prefix for a refused arm. Fixed text so the frontend and tests
 # can match on it; the authorizer's reason follows the colon.
 ARM_REFUSAL_NOTICE_PREFIX = "⚠️ Automation loop NOT armed: "
+# ``meta.kind`` stamped on every arm/revision/stop refusal notice. The crewmate
+# chat's notice allowlist (``crewmateBubbles.CREWMATE_HIDDEN_NOTICE_KINDS``)
+# hides a notice ONLY by its kind, so a refusal must carry one to be dropped
+# there; every other notice (a dropped queued message, a model-fallback hint)
+# keeps drawing. Fixed string, mirrored by that allowlist and the tests.
+ARM_REFUSAL_NOTICE_KIND = "arm_refusal"
 ARM_SUCCESS_NOTICE_PREFIX = "✅ Automation loop armed: "
 # Same contract for a refused revision. Deliberately NOT the arm wording: a
 # denied monitor_update leaves a loop in place, so "NOT armed" would report the
@@ -142,6 +148,19 @@ REVISION_REFUSAL_NOTICE_PREFIX = (
 # armed and nothing was revised, and the loop the refusal names is untouched.
 STOP_REFUSAL_NOTICE_PREFIX = "⚠️ Automation loop NOT stopped: "
 
+# Live-only queue-entry meta keys that carry the ORIGINATING wake's provenance
+# across the re-routed refusal into the crewmate's successor turn. The refusal
+# enqueue is a system-injection kind, so the entry is NON-DURABLE
+# (`_is_durable_queue_entry` excludes any entry carrying a `kind`) and these
+# never reach disk — matching the rule that provenance flags grant authority
+# and are never persisted, so a hand-edited restored queue line cannot forge
+# self-wake authority. The drain reads them off the live entry and sets
+# `_run_chat`'s `_directive_self_wake` / `_directive_loop_id`, so a crewmate
+# that retries `monitor_stop` from this successor turn still hits the stale-wake
+# guard instead of removing a paused loop record a person kept.
+REFUSAL_SELF_WAKE_META_KEY = "refusalSelfWake"
+REFUSAL_WAKE_LOOP_ID_META_KEY = "refusalWakeLoopId"
+
 
 def _surface_arm_refusal(
     state: Any,
@@ -151,6 +170,8 @@ def _surface_arm_refusal(
     *,
     prefix: str = ARM_REFUSAL_NOTICE_PREFIX,
     session_key: str = "",
+    producer_is_self_wake: bool = False,
+    producer_wake_loop_id: str = "",
 ) -> None:
     """Append a ``notice`` row so a refused arm is VISIBLE where the session lives.
 
@@ -196,27 +217,54 @@ def _surface_arm_refusal(
         # transcript egress before it is persisted or broadcast.
         text, _ = redact_exfiltration_urls(f"{prefix}{reason}")
         text, _ = redact_credentials(text)
-        append_and_surface(state, slot, "notice", text, "msg msg-info")
-        _deliver_refusal_to_crewmate(slot, session_key, text)
+        append_and_surface(
+            state, slot, "notice", text, "msg msg-info", meta={"kind": ARM_REFUSAL_NOTICE_KIND}
+        )
+        _deliver_refusal_to_crewmate(
+            slot,
+            session_key,
+            text,
+            producer_is_self_wake=producer_is_self_wake,
+            producer_wake_loop_id=producer_wake_loop_id,
+        )
     except Exception:
         logger.debug("arm-refusal notice for %s could not be surfaced", kind, exc_info=True)
 
 
-def _deliver_refusal_to_crewmate(slot: Any, session_key: str, text: str) -> None:
+def _deliver_refusal_to_crewmate(
+    slot: Any,
+    session_key: str,
+    text: str,
+    *,
+    producer_is_self_wake: bool = False,
+    producer_wake_loop_id: str = "",
+) -> None:
     """Queue the refusal for a crewmate's next turn, so the agent still sees it.
 
     A crewmate's DM draws messages only and never replays a ``notice`` row to
     the model, so the ``notice`` written above reaches neither its reader nor
     the crewmate. Only there is a second surface needed: the refusal is queued
-    as an injected message (``[Automation notice] …``) so the crewmate's next
-    turn carries it and the crewmate can call ``monitor_stop`` + ``monitor_start``
+    with ``AUTOMATION_NOTICE_KIND`` so it drains as an ``inject`` row (never a
+    ``user`` row shown as the person's own bubble) that the crewmate's next turn
+    carries, and the crewmate can call ``monitor_stop`` + ``monitor_start``
     itself. Every other session keeps the ``notice`` row as its only surface.
 
+    When the refused directive was itself delivered by the loop's own wake, the
+    originating ``producer_is_self_wake`` / ``producer_wake_loop_id`` are stamped
+    on the (non-durable) entry meta so the drain can rebuild them on the
+    successor turn: a crewmate that retries ``monitor_stop`` from that turn then
+    still passes the stale-wake guard rather than silently removing a paused loop
+    record a person kept. The entry carries a ``kind``, so it is never persisted
+    (`_is_durable_queue_entry`) and the authority these flags grant cannot be
+    forged by a hand-edited restored queue line.
+
     Best-effort, like its caller: a delivery failure is telemetry about a
-    refusal already audited and must never fail the denial. The queue append is
-    the same primitive a queued user prompt uses, so an idle crewmate picks it
-    up on its next drain rather than starting a turn from here.
+    refusal already audited and must never fail the denial. The system-injection
+    kind makes an idle crewmate pick it up on its next drain, and keeps it out of
+    a user-message merge (``steer_queue``), so it is never counted as the person
+    stepping in.
     """
+    from kiro_crew.dashboard.chat_utils import AUTOMATION_NOTICE_KIND
     from kiro_crew.members import is_member_session_key
 
     key = session_key or getattr(slot, "key", "") or ""
@@ -225,7 +273,16 @@ def _deliver_refusal_to_crewmate(slot: Any, session_key: str, text: str) -> None
     append = getattr(slot, "queue_append", None)
     if not callable(append):
         return
-    append(f"[Automation notice] {text}")
+    meta: dict[str, Any] | None = None
+    if producer_is_self_wake:
+        # Carry the originating wake's provenance to the successor turn, so a
+        # retried stop from it still passes the stale-wake guard. Only when the
+        # refused directive was itself a self-wake, so an ordinary refusal does
+        # not fabricate wake authority.
+        meta = {REFUSAL_SELF_WAKE_META_KEY: True}
+        if producer_wake_loop_id:
+            meta[REFUSAL_WAKE_LOOP_ID_META_KEY] = producer_wake_loop_id
+    append(f"[Automation notice] {text}", kind=AUTOMATION_NOTICE_KIND, meta=meta)
 
 
 def _surface_arm_success(state: Any, slot: Any, summary: str) -> None:
@@ -555,7 +612,15 @@ async def apply_session_directive_outcome(
             exc,
         )
         if kind in _ARMING_DIRECTIVES:
-            _surface_arm_refusal(state, slot, kind, str(exc), session_key=session_key)
+            _surface_arm_refusal(
+                state,
+                slot,
+                kind,
+                str(exc),
+                session_key=session_key,
+                producer_is_self_wake=producer_is_self_wake,
+                producer_wake_loop_id=producer_wake_loop_id,
+            )
         elif kind in _REVISION_DIRECTIVES:
             _surface_arm_refusal(
                 state,
@@ -564,6 +629,8 @@ async def apply_session_directive_outcome(
                 str(exc),
                 prefix=REVISION_REFUSAL_NOTICE_PREFIX,
                 session_key=session_key,
+                producer_is_self_wake=producer_is_self_wake,
+                producer_wake_loop_id=producer_wake_loop_id,
             )
         elif kind in _STOP_DIRECTIVES:
             _surface_arm_refusal(
@@ -573,6 +640,8 @@ async def apply_session_directive_outcome(
                 str(exc),
                 prefix=STOP_REFUSAL_NOTICE_PREFIX,
                 session_key=session_key,
+                producer_is_self_wake=producer_is_self_wake,
+                producer_wake_loop_id=producer_wake_loop_id,
             )
         return DirectiveOutcome(str(exc))
     except Exception as exc:  # never propagate into the turn loop

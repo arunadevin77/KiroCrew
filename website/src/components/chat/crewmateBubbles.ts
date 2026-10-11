@@ -104,18 +104,33 @@ export function isCrewmateSpeech(m: ChatMessage): boolean {
   return !isHiddenInvisibleAssistantRow(m) && !isSystemNoticeRow(m) && !isWorkflowCompletionMessage(m) && !isSubagentCompletionMessage(m)
 }
 
+/** The `notice` kinds a crewmate's chat drops: the runtime's own machinery that
+ *  the person has nothing to do with. `empty_turn` is the runner's empty-response
+ *  recovery card (`chat_utils.EMPTY_TURN_NOTICE_KIND`); `arm_refusal` is the
+ *  automation arm/revision/stop refusal (`session_directive_apply.ARM_REFUSAL_NOTICE_KIND`),
+ *  which is re-routed to the crewmate's next turn as an `inject` row instead.
+ *  Every notice OUTSIDE this set names something the person may have to act on
+ *  (a dropped queued message, a model-fallback hint) and keeps drawing. */
+const CREWMATE_HIDDEN_NOTICE_KINDS: ReadonlySet<string> = new Set(['empty_turn', 'arm_refusal'])
+function isHiddenCrewmateNotice(m: ChatMessage): boolean {
+  const kind = (m.meta as { kind?: unknown } | undefined)?.kind
+  return typeof kind === 'string' && CREWMATE_HIDDEN_NOTICE_KINDS.has(kind)
+}
+
 /** Whether a row is drawn in a crewmate's chat at all. */
 export function isCrewmateChatRow(m: ChatMessage): boolean {
   if (MACHINERY_ROLES.has(m.role)) return false
   if (m.role === 'assistant') return isCrewmateSpeech(m)
   if (m.role === 'system') return isStopCard(m)
-  // A crewmate's chat shows messages only: the person's rows and the
-  // crewmate's speech. A `notice` is the runtime talking about its own
-  // machinery (an empty-turn recovery card, an automation arm refusal) — the
-  // person reading a crewmate's chat has nothing to do with it, whatever the
-  // notice's `meta.kind`. Where the information still matters it reaches the
-  // crewmate (its next turn) or the Sessions page, which keeps drawing notices.
-  if (m.role === 'notice') return false
+  // A crewmate's chat shows messages only, so a `notice` the runtime writes
+  // about its OWN machinery is dropped — an empty-turn recovery card, and the
+  // automation arm/revision/stop refusal, which reaches the crewmate through
+  // its next turn instead (`session_directive_apply`). The drop is by an
+  // ALLOWLIST of those kinds, never by role: a notice the PERSON must act on
+  // (a dropped queued message, a model-fallback hint, a directive-not-applied
+  // warning) has no second route, so it keeps drawing. The Sessions page draws
+  // every notice as today.
+  if (m.role === 'notice') return !isHiddenCrewmateNotice(m)
   // A pending approval is the approval surface and stays; a RESOLVED one draws
   // nothing (its renderer returns null) and must not count as content — kept,
   // it would hide the quiet hint behind a blank chat. Same rule `isRunTransparent`

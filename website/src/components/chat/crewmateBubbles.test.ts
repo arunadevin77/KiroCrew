@@ -56,12 +56,13 @@ describe('filterCrewmateChat', () => {
     for (const m of rows) expect(isCrewmateChatRow(m)).toBe(true)
   })
 
-  it('drops every notice row, whatever its tag — the chat shows messages only', () => {
-    // A crewmate's chat draws the person's rows and the crewmate's speech
-    // only; a `notice` is the runtime talking about its own machinery. Both
-    // the empty-turn recovery card (tagged `meta.kind = "empty_turn"` by
-    // chat_runner) and the automation arm refusal (no `empty_turn` tag) are
-    // dropped, so this fails if the old tag-only filter returns.
+  it('hides only the machinery notice kinds (empty_turn, arm_refusal); every other notice draws', () => {
+    // A crewmate's chat drops a `notice` by an ALLOWLIST of machinery kinds,
+    // never by role: the empty-turn recovery card and the automation arm
+    // refusal are the runtime talking about itself and are hidden, while a
+    // notice the person must act on (a dropped queued message, a model-fallback
+    // hint) has no second route and still draws. Fails if the filter goes back
+    // to a blanket role drop OR to the old empty_turn-only tag.
     const emptyTurn: ChatMessage = {
       role: 'notice', cls: 'msg msg-info', ts: at('2026-09-22T06:00:05Z'),
       content: 'ℹ️ The turn ended without a closing reply — continuing once from what already ran.',
@@ -69,14 +70,22 @@ describe('filterCrewmateChat', () => {
     }
     const armRefusal: ChatMessage = {
       role: 'notice', cls: 'msg msg-info', ts: at('2026-09-22T06:00:06Z'),
-      content: 'Automation update refused: a stopped loop cannot be restarted by updating it.',
+      content: '⚠️ Automation loop NOT updated — it kept its previous instruction: a stopped loop cannot be restarted.',
       meta: { kind: 'arm_refusal' },
     }
-    const untaggedNotice: ChatMessage = { role: 'notice', content: 'note', cls: '', ts: at('2026-09-22T06:00:07Z') }
-    for (const m of [emptyTurn, armRefusal, untaggedNotice]) {
-      expect(isCrewmateChatRow(m)).toBe(false)
+    const modelFallback: ChatMessage = {
+      role: 'notice', cls: 'msg msg-info', ts: at('2026-09-22T06:00:07Z'),
+      content: "That model isn't offered right now. Pick another model from the composer.",
+      meta: { kind: 'model_fallback' },
     }
-    expect(filterCrewmateChat([emptyTurn, armRefusal, untaggedNotice])).toEqual([])
+    const untaggedNotice: ChatMessage = { role: 'notice', content: 'note', cls: '', ts: at('2026-09-22T06:00:08Z') }
+    expect(isCrewmateChatRow(emptyTurn)).toBe(false)
+    expect(isCrewmateChatRow(armRefusal)).toBe(false)
+    // Person-actionable notices keep drawing — no second route for them.
+    expect(isCrewmateChatRow(modelFallback)).toBe(true)
+    expect(isCrewmateChatRow(untaggedNotice)).toBe(true)
+    expect(filterCrewmateChat([emptyTurn, armRefusal, modelFallback, untaggedNotice]))
+      .toEqual([modelFallback, untaggedNotice])
   })
 
   it('an all-machinery transcript filters to nothing (so the empty hint can show)', () => {

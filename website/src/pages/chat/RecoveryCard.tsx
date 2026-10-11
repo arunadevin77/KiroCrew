@@ -381,7 +381,7 @@ export function parseRecoveryMessage(content: string): ParsedRecovery | null {
  * emit time — vanishes after a flush + rehydrate. Anything keyed on its absence
  * therefore mis-renders every restored row.
  */
-export type InjectKind = 'cron' | 'mcp_app' | 'recovery' | 'synthesis' | 'user_replay'
+export type InjectKind = 'cron' | 'mcp_app' | 'recovery' | 'synthesis' | 'user_replay' | 'automation_notice'
 
 /**
  * Whether each gateway-stamped inject kind OPENS a turn of its own, or
@@ -412,6 +412,12 @@ export const INJECT_KIND_OPENS_TURN: Readonly<Record<InjectKind, boolean>> = {
   // this, isFeatureRequestRefusal walks past it to an earlier user row and
   // mis-attributes an app turn's error to that older message.
   mcp_app: true,
+  // A re-routed automation refusal is drained ALONE and dispatches a turn of
+  // its own (chat_runner `_start_next_queued_turn`), carrying the originating
+  // wake's provenance; so it OPENS a turn, and the interrupt-recovery and
+  // session-start-failure scans must land on it, not walk past to an earlier
+  // reply.
+  automation_notice: true,
 }
 
 /**
@@ -485,6 +491,10 @@ export function resolveInjectCard(m: { content: string; meta?: Record<string, un
   // early returns for those three were measured to be unreachable (the allowlist
   // already rejects them), so they are omitted rather than kept as dead code.
   // The behavioural contract for each is pinned in RecoveryCard.test.tsx.
+  // `automation_notice` is also NOT a note here: it is suppressed entirely on
+  // the Sessions page (transcriptRenderers `automation_notice_inject`) because
+  // the refusal's `notice` bar already shows it, and hidden in the crewmate DM
+  // by MACHINERY_ROLES — so it never needs a card.
   if (kind !== 'recovery' && kind !== 'synthesis') return null
 
   return {

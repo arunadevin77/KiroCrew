@@ -447,6 +447,20 @@ export function createTranscriptRenderers(
       },
     },
     {
+      // A re-routed automation refusal (`injectKind: 'automation_notice'`,
+      // session_directive_apply._deliver_refusal_to_crewmate) exists ONLY to
+      // carry the refusal into the crewmate's next turn for the model; the
+      // person-facing surface is the `notice` bar the same refusal already
+      // wrote. The crewmate DM hides this inject row via MACHINERY_ROLES; every
+      // other surface (the Sessions page) suppresses it here too, so the raw
+      // `[Automation notice] …` text never draws as a second row beside the
+      // notice bar. Must precede the generic inject bubble.
+      id: 'automation_notice_inject',
+      roles: ['inject'],
+      match: m => (m.meta as { injectKind?: unknown } | undefined)?.injectKind === 'automation_notice',
+      render: () => null,
+    },
+    {
       // Refines `assistant`: a gateway system notice (kind=compaction or
       // kind=session_reload, the SYSTEM_NOTICE_KINDS set the last-real-message
       // scans already skip) is a status card, not a reply. The gateway writes

@@ -378,6 +378,8 @@ from kiro_crew.dashboard.recovery_replays import (
 # ``chat_runner`` directly; the ratchet keeps it bound here even though the
 # turn loop itself consumes the structured outcome.
 from kiro_crew.dashboard.session_directive_apply import (  # noqa: F401
+    REFUSAL_SELF_WAKE_META_KEY,
+    REFUSAL_WAKE_LOOP_ID_META_KEY,
     DirectiveOutcome,
     _reset_conversation,
     apply_session_directive,
@@ -656,6 +658,7 @@ from kiro_crew.dashboard.chat_utils import (  # noqa: E402, F401
     _REFUSAL_FALLBACK_RESUME_MSG,
     _SYNTHETIC_RECOVERY_MSGS,
     AUTH_REQUIRED_KIND,
+    AUTOMATION_NOTICE_KIND,
     CRON_NOTIFICATION_KIND,
     EMPTY_RUNG_CONTINUE,
     EMPTY_RUNG_GIVE_UP,
@@ -7100,7 +7103,13 @@ async def _start_next_queued_turn(
     # message never merges (it is a system-injection kind, so the merge stops
     # at it), so `consumed` holds it alone.
     is_app_message = any(item.get("kind") == MCP_APP_MESSAGE_KIND for item in consumed)
-    if not (is_cron or is_subagent or is_recovery or is_app_message):
+    # A re-routed automation refusal (``session_directive_apply``): structural
+    # kind, like the app message above, so it drains as an ``inject`` row the
+    # crewmate's turn carries rather than a ``user`` row shown as the person's
+    # own bubble. Never merges (a system-injection kind), so ``consumed`` holds
+    # it alone.
+    is_automation_notice = any(item.get("kind") == AUTOMATION_NOTICE_KIND for item in consumed)
+    if not (is_cron or is_subagent or is_recovery or is_app_message or is_automation_notice):
         # A user message after the last completion takes over from the armed
         # synthesis and ends its batch, so its count starts over. Only the
         # caller that read the fire gate as `clear` with the floor held says so
@@ -7141,7 +7150,11 @@ async def _start_next_queued_turn(
             # write uses, so the client cannot drift from the server (an
             # EDITED cron card whose text lacks the cron prefix drains as
             # a real user row, and this flag correctly says "rebuild").
-            "drain_writes_row": is_cron or is_subagent or is_recovery or is_app_message,
+            "drain_writes_row": is_cron
+            or is_subagent
+            or is_recovery
+            or is_app_message
+            or is_automation_notice,
         }
         # The client rebuilds the drained entry as a user row from this frame
         # alone (no `chat_message` echo follows for a user row), so the lists
@@ -7175,7 +7188,7 @@ async def _start_next_queued_turn(
         app_label, _ = redact_credentials(app_label)
     if is_subagent:
         row_role = "subagent"
-    elif is_cron or is_recovery or is_app_message:
+    elif is_cron or is_recovery or is_app_message or is_automation_notice:
         row_role = "inject"
     else:
         row_role = "user"
@@ -7189,7 +7202,7 @@ async def _start_next_queued_turn(
         # `_prepare_messages` replace the stored meta on HTTP rebuild,
         # dropping `injectKind` and the row's collapse/fold exemptions.
         row_cls = app_inject_row(app_label or "app")[1]
-    elif is_recovery:
+    elif is_recovery or is_automation_notice:
         row_cls = "msg msg-inject"
     else:
         row_cls = "msg msg-u"
@@ -7320,6 +7333,8 @@ async def _start_next_queued_turn(
             # payload (that is what suppresses the channel mirror), but its
             # inject identity is its own, matching the direct-dispatch twin.
             _inject_kind = "mcp_app"
+        elif is_automation_notice:
+            _inject_kind = "automation_notice"
         elif synthetic_payload:
             _inject_kind = "recovery"
         else:
@@ -7451,6 +7466,22 @@ async def _start_next_queued_turn(
             _run_kwargs["_replays_completion"] = True
     if _possibly_delivered_steer:
         _run_kwargs["_steer_possibly_delivered"] = True
+    # A re-routed automation refusal carries the originating wake's provenance
+    # on its (non-durable, live-only) entry meta, so the successor turn it opens
+    # inherits `_directive_self_wake` / `_directive_loop_id`. Without it, a
+    # crewmate that retries `monitor_stop` from this turn would present an empty
+    # wake id, skip the stale-wake guard, and remove a paused loop record a
+    # person kept. Read from the live entry only (the entry carries a `kind`, so
+    # it never persists), so forged wake authority cannot ride in from disk.
+    if is_automation_notice:
+        for item in consumed:
+            _meta = item.get("meta")
+            if isinstance(_meta, dict) and _meta.get(REFUSAL_SELF_WAKE_META_KEY) is True:
+                _run_kwargs["_directive_self_wake"] = True
+                _loop_id = _meta.get(REFUSAL_WAKE_LOOP_ID_META_KEY)
+                if isinstance(_loop_id, str) and _loop_id:
+                    _run_kwargs["_directive_loop_id"] = _loop_id
+                break
     task = spawn_guarded_turn(
         state,
         slot,

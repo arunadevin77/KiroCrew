@@ -485,6 +485,15 @@ describe('resolveInjectCard – which inject rows become notes', () => {
     expect(card?.kind).toBe('generic')
   })
 
+  it('does not fold a re-routed automation refusal — it is suppressed by the renderer, not carded', () => {
+    // `automation_notice` is hidden on the Sessions page by the
+    // `automation_notice_inject` renderer (and in the crewmate DM by
+    // MACHINERY_ROLES), because the refusal's notice bar already shows it. So
+    // resolveInjectCard returns null for it — it never becomes a note card.
+    const card = resolveInjectCard(row('[Automation notice] ⚠️ Automation loop NOT updated.', { injectKind: 'automation_notice' }))
+    expect(card).toBeNull()
+  })
+
   it('leaves a cron row to its own labelled bubble, stamped OR restored-legacy', () => {
     // Stamped (durable, survives a flush):
     expect(resolveInjectCard(row('nightly report', { injectKind: 'cron', cronLabel: 'nightly' }))).toBeNull()
@@ -522,7 +531,7 @@ describe('injectOpensTurn – which inject rows begin a turn of their own', () =
 
   it('classifies every stamped kind, and the table is the union', () => {
     // A kind missing here fails to compile, so this pins the VALUES only.
-    expect(INJECT_KIND_OPENS_TURN).toEqual({ cron: true, mcp_app: true, synthesis: true, recovery: false, user_replay: false })
+    expect(INJECT_KIND_OPENS_TURN).toEqual({ cron: true, mcp_app: true, synthesis: true, recovery: false, user_replay: false, automation_notice: true })
     for (const [kind, opens] of Object.entries(INJECT_KIND_OPENS_TURN)) expect(injectOpensTurn(row({ injectKind: kind })), kind).toBe(opens)
   })
 

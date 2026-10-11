@@ -789,14 +789,21 @@ async def test_denied_arm_in_a_crewmate_session_is_queued_for_the_agent(tmp_path
     # A crewmate's DM draws messages only (crewmateBubbles.isCrewmateChatRow
     # drops every notice) and never replays a notice row to the model, so the
     # notice row written for a refused arm reaches NEITHER the person nor the
-    # crewmate. There the refusal is ALSO queued for the crewmate's next turn,
-    # the same path a [Cron notification] takes, so the crewmate can stop and
-    # re-arm the loop itself.
+    # crewmate. There the refusal is ALSO queued for the crewmate's next turn
+    # with a system-injection kind, so it drains as an inject row (never a user
+    # bubble) and the crewmate can stop and re-arm the loop itself.
+    from kiro_crew.dashboard import session_directive_apply as _sda
+    from kiro_crew.dashboard.chat_turn.steer_queue import _QUEUE_KIND_ACTORS
+    from kiro_crew.dashboard.chat_utils import (
+        AUTOMATION_NOTICE_KIND,
+        is_system_injection_item,
+    )
+
     service = AutoNudgeService(base_dir=tmp_path)
     loop = await service.add("member-helper", "watch the build", idle_secs=60)
     await service.update(loop.id, active=False, stopped_reason=APPROVAL_STALL_REASON)
     surfaced = MagicMock()
-    queued: list[str] = []
+    queued: list[dict] = []
     state = SimpleNamespace(
         _slots={
             "member-helper": SimpleNamespace(
@@ -810,7 +817,7 @@ async def test_denied_arm_in_a_crewmate_session_is_queued_for_the_agent(tmp_path
         key="member-helper",
         _app="",
         messages=[],
-        queue_append=lambda content, *a, **k: queued.append(content) or "qid-1",
+        queue_append=lambda content, *a, **k: queued.append({"content": content, **k}) or "qid-1",
     )
     with (
         patch("kiro_crew.autonudge.get_instance", return_value=service),
@@ -825,15 +832,26 @@ async def test_denied_arm_in_a_crewmate_session_is_queued_for_the_agent(tmp_path
         )
 
     assert "is PAUSED" in result
-    # The person-facing notice row is still written.
+    # The person-facing notice row is still written, tagged so the crewmate
+    # chat's allowlist can hide it (and only it, not person-actionable notices).
     surfaced.assert_called_once()
     _, _, role, notice_text, _ = surfaced.call_args.args
     assert role == "notice"
-    # AND the refusal reaches the crewmate's next turn as an injected message
-    # carrying the same refusal text.
+    assert surfaced.call_args.kwargs["meta"] == {"kind": _sda.ARM_REFUSAL_NOTICE_KIND}
+    # AND the refusal reaches the crewmate's next turn carrying the same text,
+    # stamped AUTOMATION_NOTICE_KIND so the drain treats it as a system
+    # injection (inject row, not a user follow-up) and never a person's bubble.
     assert len(queued) == 1
-    assert queued[0].startswith("[Automation notice] ")
-    assert notice_text in queued[0]
+    assert queued[0]["content"].startswith("[Automation notice] ")
+    assert notice_text in queued[0]["content"]
+    assert queued[0]["kind"] == AUTOMATION_NOTICE_KIND
+    assert is_system_injection_item(
+        {"kind": AUTOMATION_NOTICE_KIND, "content": queued[0]["content"]}
+    )
+    assert _QUEUE_KIND_ACTORS[AUTOMATION_NOTICE_KIND] == "autonudge"
+    # A system-injection kind is orchestration (the user-follow-up guard is
+    # synthetic_payload OR system_injection), so the refusal is never mistaken
+    # for the person stepping in and never aborts a pending recovery.
     service.stop()
 
 

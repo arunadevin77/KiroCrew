@@ -841,13 +841,25 @@ against sweep completeness, and are torn down at `close_all`.
   selectors mirror. The Crewmate chat draws nothing for it: tool rows are
   machinery there
   (`crewmateBubbles.MACHINERY_ROLES`), so the quiet turn leaves that surface
-  exactly as it was. The ladder's own cards — the continue and give-up rungs
-  and the post-compaction resume — carry `meta.kind = "empty_turn"`
-  (`chat_utils.EMPTY_TURN_NOTICE_KIND`), and the Crewmate chat drops a `notice`
-  row by that tag (`crewmateBubbles.isCrewmateChatRow`), never by its words: a
-  person reading a crewmate has nothing to do with the runner's recovery, while
-  an untagged notice (an automation arm refusal) still draws because it names
-  something they may have to act on. The Sessions page keeps drawing them.
+  exactly as it was. The Crewmate chat drops a `notice` row by an ALLOWLIST of
+  machinery `meta.kind`s (`crewmateBubbles.CREWMATE_HIDDEN_NOTICE_KINDS`), never
+  by role: the ladder's own cards — the continue and give-up rungs and the
+  post-compaction resume — carry `meta.kind = "empty_turn"`
+  (`chat_utils.EMPTY_TURN_NOTICE_KIND`), and the automation arm/revision/stop
+  refusal carries `meta.kind = "arm_refusal"`
+  (`session_directive_apply.ARM_REFUSAL_NOTICE_KIND`); both are the runtime
+  talking about its own machinery, so a person reading a crewmate has nothing to
+  do with them. Every notice OUTSIDE that allowlist still draws, because it
+  names something the person may have to act on (a dropped queued message, a
+  model-fallback hint). The refusal still reaches the crewmate: it is also
+  queued into the crewmate's NEXT turn with `chat_utils.AUTOMATION_NOTICE_KIND`,
+  so it drains as an `inject` row (never a `user` row shown as the person's own
+  bubble) the turn carries, and the crewmate can stop and re-arm the loop
+  itself. That inject row is model-only machinery: the crewmate chat hides it
+  via `MACHINERY_ROLES` and every other surface suppresses it too
+  (`transcriptRenderers` `automation_notice_inject` draws nothing), so the raw
+  `[Automation notice] …` text never appears as a row beside the refusal's own
+  `notice` bar. The Sessions page keeps drawing the `notice` bar as today.
   `ask_question` needs no exemption here: the tool BLOCKS and returns the
   user's answers as its own result, so the turn that asked continues and ends
   with ordinary visible output rather than parking on an unanswered card.

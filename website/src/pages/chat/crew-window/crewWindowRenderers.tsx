@@ -34,7 +34,7 @@ export function crewWindowSlot(instanceId: string, key: string): string {
 /** Shared rows that draw from the row alone (no hub API, no hub file). */
 export const PEER_SAFE_ROWS: ReadonlySet<string> = new Set([
   'skill_load', 'subagent_completion', 'tool', 'tool_completion', 'thinking_block',
-  'nudge', 'recovery_inject', 'system_notice', 'workflow_completion', 'error',
+  'nudge', 'recovery_inject', 'automation_notice_inject', 'system_notice', 'workflow_completion', 'error',
 ])
 
 function peerFileName(m: ChatMessage): string {

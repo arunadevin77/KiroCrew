@@ -3827,6 +3827,16 @@ CRON_NOTIFICATION_KIND = "cron_notification"
 #: into user-authored, persisted, channel-mirrored history).
 MCP_APP_MESSAGE_KIND = "mcp_app_message"
 
+#: A runner notice re-routed into a crew member's own next turn — today the
+#: automation arm/revision/stop refusal (``session_directive_apply``). A member
+#: DM draws messages only and never replays a ``notice`` row to the model, so a
+#: refused directive there would reach neither the person nor the crewmate; this
+#: kind delivers it as an ``inject`` row the crewmate's turn carries. System
+#: injection like the kinds above: runner-authored, never user speech, must
+#: break a user-message merge (folding it into a user turn would flip
+#: runner-authored text into user-authored, persisted history).
+AUTOMATION_NOTICE_KIND = "automation_notice"
+
 #: Provenance banner wrapped around every app-originated message. Structural
 #: classification is by the queue entry's ``kind`` tag (unforgeable, set at
 #: enqueue time); the banner exists for the MODEL and the transcript reader,
@@ -3840,7 +3850,12 @@ SUBAGENT_DELIVERY_KINDS = frozenset((SUBAGENT_COMPLETION_KIND, SYNTHETIC_RECOVER
 
 #: All system-injection kinds (for set-membership checks).
 _SYSTEM_INJECTION_KINDS = SUBAGENT_DELIVERY_KINDS | frozenset(
-    (CRON_NOTIFICATION_KIND, MCP_APP_MESSAGE_KIND, FALSE_TOOL_BLOCKER_REPLAY_KIND)
+    (
+        CRON_NOTIFICATION_KIND,
+        MCP_APP_MESSAGE_KIND,
+        AUTOMATION_NOTICE_KIND,
+        FALSE_TOOL_BLOCKER_REPLAY_KIND,
+    )
 )
 
 

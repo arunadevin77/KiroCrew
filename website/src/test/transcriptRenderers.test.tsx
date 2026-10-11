@@ -144,6 +144,14 @@ describe('narrow rows win over the broad row they refine', () => {
       content: 'run the backend gates on the changed modules',
       meta: { injectKind: 'user_replay' },
     }))).toBe('inject')
+
+    // A re-routed automation refusal is model-only machinery: the notice bar
+    // already shows the person the same text, so the Sessions page suppresses
+    // the inject row (renders nothing) rather than drawing a duplicate.
+    expect(idFor(msg('inject', {
+      content: '[Automation notice] ⚠️ Automation loop NOT updated — it kept its previous instruction.',
+      meta: { injectKind: 'automation_notice' },
+    }))).toBe('automation_notice_inject')
   })
 
   it('routes a workflow completion to its card and leaves a plain reply alone', () => {

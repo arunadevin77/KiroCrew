@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from kiro_crew.dashboard.chat_utils import (
+    AUTOMATION_NOTICE_KIND,
     CRON_NOTIFICATION_KIND,
     MCP_APP_MESSAGE_KIND,
     SUBAGENT_COMPLETION_KIND,
@@ -415,6 +416,9 @@ _QUEUE_KIND_ACTORS: dict[str, str] = {
     CRON_NOTIFICATION_KIND: "cron",
     SUBAGENT_COMPLETION_KIND: "subagent",
     MCP_APP_MESSAGE_KIND: "app",
+    # A re-routed automation refusal is the monitor subsystem talking, so the
+    # turn it rides is attributed to the autonudge actor, never the person.
+    AUTOMATION_NOTICE_KIND: "autonudge",
 }
 
 
