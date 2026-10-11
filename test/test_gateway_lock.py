@@ -560,6 +560,49 @@ class TestLockFileIdentity:
             listener.close()
             held.release()
 
+    @pytest.mark.skipif(sys.platform != "linux", reason="relies on /proc/locks")
+    def test_the_home_anchor_holder_is_named_when_the_proc_locks_scan_misses_its_row(
+        self, kernel_lock_home, monkeypatch
+    ):
+        """The verdict above must not depend on one ``/proc/locks`` read.
+
+        ``/proc/locks`` is handed out a page at a time and resumed by ordinal
+        index, so a lock any process on the host releases between two reads
+        hides the row that lands on the boundary; on a busy test shard that was
+        this process's own anchor lock, once in a while (``assert None == pid``
+        at the holder-pid check above). The fdinfo corroboration names the
+        holder from the descriptor itself, so the refusal carries the pid and
+        stays terminal even when the global scan comes back empty.
+        """
+        from kiro_crew import gateway_lock, platform_compat
+
+        if _directory_locks_supported(kernel_lock_home)[0] is not _DirectoryLockSupport.SUPPORTED:
+            pytest.skip("this filesystem does not implement directory locks")
+        monkeypatch.setattr(
+            platform_compat, "find_port_listeners", lambda _p: _listeners(os.getpid())
+        )
+        monkeypatch.setattr(gateway_lock, "_port_answers_http", lambda *_a, **_k: True)
+        monkeypatch.setattr(platform_compat, "_flock_acquirer_in_proc_locks", lambda _want: None)
+        held = GatewayLock(kernel_lock_home).acquire()
+        listener = socket.socket()
+        try:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+            os.unlink(kernel_lock_home / LOCK_FILENAME)
+            with pytest.raises(GatewayLockError) as excinfo:
+                GatewayLock(kernel_lock_home, port=port).acquire()
+            assert excinfo.value.holder_pid == os.getpid(), _lock_failure_evidence(
+                kernel_lock_home, (os.getpid(),)
+            )
+            assert f"held by pid {os.getpid()} (holds port {port}, answering HTTP" in str(
+                excinfo.value
+            )
+            assert excinfo.value.live_holder is True
+        finally:
+            listener.close()
+            held.release()
+
     @pytest.mark.skipif(platform_compat.IS_WINDOWS, reason="no home anchor on Windows")
     def test_release_frees_the_home_anchor_so_the_home_can_be_reacquired(self, tmp_path):
         # flock is per open file description, so a leaked anchor descriptor would
@@ -894,6 +937,30 @@ class TestLockHolder:
             assert holder.alive is True
             assert holder.source == "flock_owner", _lock_failure_evidence(
                 tmp_path / LOCK_FILENAME, (os.getpid(),)
+            )
+        finally:
+            held.release()
+
+    @pytest.mark.skipif(sys.platform != "linux", reason="relies on /proc/locks")
+    def test_a_proc_locks_scan_that_misses_the_held_row_is_corroborated_by_fdinfo(
+        self, kernel_lock_home, monkeypatch
+    ):
+        # /proc/locks resumes by ordinal index across its page-sized reads, so a
+        # lock released elsewhere on the host between two reads hides the row at
+        # the boundary. The held lock is still in this descriptor's fdinfo.
+        from kiro_crew import platform_compat
+
+        monkeypatch.setattr(platform_compat, "_flock_acquirer_in_proc_locks", lambda _want: None)
+        held = GatewayLock(kernel_lock_home).acquire()
+        try:
+            path = kernel_lock_home / LOCK_FILENAME
+            assert platform_compat.flock_owner_pid(path) == os.getpid(), _lock_failure_evidence(
+                path, (os.getpid(),)
+            )
+            assert platform_compat.flock_owner_pid(os.stat(path)) == os.getpid()
+            assert platform_compat.flock_owner_pid(kernel_lock_home) == os.getpid()
+            assert lock_holder(kernel_lock_home) == LockHolder(
+                pid=os.getpid(), alive=True, source="flock_owner"
             )
         finally:
             held.release()
