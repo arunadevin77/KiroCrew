@@ -1474,6 +1474,8 @@ def _cron_defs_from_manifest(
                 "timezone": cron.timezone,
                 "skip_dates": cron.skip_dates,
                 "folder": cron.folder,
+                "timeout": cron.timeout,
+                "timeout_secs": cron.timeout_secs,
             }
         )
         registered.append(namespaced)
@@ -1762,6 +1764,10 @@ async def register_app_crons_with_service(app_name: str, cron_service: Any) -> l
                 # second write after the job already exists.
                 timezone=d.get("timezone") or "",
                 skip_dates=d.get("skip_dates") or None,
+                # 0 (or a def written before these keys existed) = the
+                # scheduler default; CronService.add_job validates the pair.
+                timeout=d.get("timeout") or 0,
+                timeout_secs=d.get("timeout_secs") or 0,
                 folder_id=folder_id,
             )
             if job is None:

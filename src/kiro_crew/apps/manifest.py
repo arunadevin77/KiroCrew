@@ -23,6 +23,7 @@ from typing import Any
 
 from kiro_crew.constants import WINDOWS_DEVICE_STEMS
 from kiro_crew.cron import is_valid_skip_date, is_valid_timezone
+from kiro_crew.cron_service.fields import validate_create_timeouts
 
 # ---------------------------------------------------------------------------
 # Nested manifest types
@@ -227,6 +228,8 @@ _CRON_FIELD_JSON_TYPES = {
     "script": "a string script path",
     "timezone": "a string IANA zone name",
     "skip_dates": "an array of YYYY-MM-DD strings",
+    "timeout": "a whole number of seconds",
+    "timeout_secs": "a whole number of seconds",
 }
 
 
@@ -256,6 +259,13 @@ class CronEntry:
     # Calendar dates (YYYY-MM-DD, evaluated in ``timezone``) the job must not
     # fire on -- e.g. a publisher's own holiday list.
     skip_dates: list[str] = field(default_factory=list)
+    # Subprocess bound for a ``command``/``script`` job, in seconds. 0 = the
+    # scheduler default (30s script, 300s command).
+    timeout: int = 0
+    # Per-wake execution budget, in seconds (1..86400). 0 = the scheduler
+    # default. On a command/script job it must cover ``timeout`` plus cleanup;
+    # the same create-time check the cron SDK applies runs at validate().
+    timeout_secs: int = 0
     # Schedule-page folder NAME to file the job in (names, not ids: a manifest
     # is portable across installs, and folder ids are minted per-machine by the
     # dashboard). Resolved against existing folders at registration; a name
@@ -308,6 +318,13 @@ class CronEntry:
             d["skip_dates"] = self.skip_dates
         if self.folder:
             d["folder"] = self.folder
+        # Present only when set, like the calendar fields: signing_payload
+        # folds to_dict() into the signed body, so an unset value must not
+        # change an already-signed manifest's payload.
+        if self.timeout:
+            d["timeout"] = self.timeout
+        if self.timeout_secs:
+            d["timeout_secs"] = self.timeout_secs
         if not self.persistent_session:
             d["persistent_session"] = False
         if self.silent:
@@ -400,6 +417,8 @@ class CronEntry:
             timezone=_str_or_flagged("timezone", data.get("timezone")),
             skip_dates=[str(d) for d in _list_or_empty("skip_dates", data.get("skip_dates"))],
             folder=_str_or_empty(data.get("folder")),
+            timeout=_int_or_zero("timeout", data.get("timeout", 0)),
+            timeout_secs=_int_or_zero("timeout_secs", data.get("timeout_secs", 0)),
             persistent_session=bool(data.get("persistent_session", True)),
             silent=bool(data.get("silent", False)),
             # STRICT boolean: "enabled" gates whether a cron fires at all, so a
@@ -2606,6 +2625,15 @@ class AppManifest:
                         f"cron entry {cron.name!r}: invalid skip_date: {_skip!r} "
                         f"(expected zero-padded YYYY-MM-DD)"
                     )
+            # Same create-time rule build_job enforces, so a bad pair is
+            # reported at install/validate time instead of only as a logged
+            # per-job registration failure.
+            try:
+                validate_create_timeouts(
+                    cron.timeout, cron.timeout_secs, command=cron.command, script=cron.script
+                )
+            except ValueError as exc:
+                errors.append(f"cron entry {cron.name!r}: {exc}")
             if cron.enabled_type_invalid:
                 errors.append(
                     f"cron entry {cron.name!r}: 'enabled' must be a JSON boolean "

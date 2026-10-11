@@ -134,6 +134,8 @@ installed against:
 | `folder` | string | Existing Schedule-folder name; an unknown name leaves the job ungrouped until a later enable finds it |
 | `timezone` | string | IANA zone name the schedule and `skip_dates` are evaluated in, e.g. `America/New_York`. Optional, but an empty value falls back to the gateway config's timezone and then to **UTC** — so `"cron_expr": "0 6 * * *"` without it fires at 06:00 UTC, the wrong calendar day for most users. An unknown zone is rejected at manifest validation. A per-**user** zone is not manifest data: pass `timezone=` to `ctx.cron.add_job` instead |
 | `skip_dates` | string[] | Calendar dates the job must not fire on, evaluated in `timezone`. Must be zero-padded `YYYY-MM-DD` — `2026-1-1` parses but never matches the padded fire-time rendering, so it is rejected at manifest validation rather than silently skipping nothing |
+| `timeout` | number | Seconds a `command` or `script` subprocess may run. `0` or omitted uses the scheduler default: 30s for a script, 300s for a command |
+| `timeout_secs` | number | Seconds one run may take in total, within 1..86400. `0` or omitted uses the scheduler default. On a `command` or `script` cron it must cover `timeout` (or that default) plus 5s of cleanup, so a script that runs 40s needs both, e.g. `"timeout": 60, "timeout_secs": 65`. A value the cron SDK would refuse is rejected at manifest validation |
 | `enabled` | boolean | Default `true`. Must be a JSON boolean — any other type is rejected at manifest validation. When `false` the cron is registered **paused** (visible in the Schedule view, resumable) instead of firing on install/enable — for jobs that need user configuration first |
 
 > **Caveat:** disabling an app deletes its registered cron jobs when a cron

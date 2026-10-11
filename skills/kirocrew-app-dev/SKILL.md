@@ -95,6 +95,7 @@ my-app/
 | `version` | Semver string | Used by the App Store registry to compute `updateAvailable` |
 | `crons[].timezone` | IANA zone name; omit it only when the hour is zone-agnostic | An empty timezone falls back to the gateway config's zone and then to **UTC**, so `"cron_expr": "0 6 * * *"` without it fires at 06:00 UTC — the wrong calendar day for most users. A per-USER zone is not manifest data: pass `timezone=` to `ctx.cron.add_job` instead |
 | `crons[].skip_dates` | Zero-padded `YYYY-MM-DD`, evaluated in `timezone` | `"2026-1-1"` parses but never matches the padded fire-time rendering, so the skip silently does nothing. Both fields are rejected at manifest validation, not at fire time |
+| `crons[].timeout` / `crons[].timeout_secs` | Set both on a `script` cron that runs longer than 30s, e.g. `"timeout": 60, "timeout_secs": 65` | Omitted, a script is killed at 30s and a command at 300s. `timeout_secs` must cover `timeout` plus 5s of cleanup; a pair the cron SDK would refuse is rejected at manifest validation |
 
 ## Lifecycle and Resource Registration (CRITICAL)
 
