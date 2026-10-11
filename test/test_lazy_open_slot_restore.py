@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,6 +29,7 @@ from chat_test_helpers import _make_app, _make_state
 
 from kiro_crew.dashboard import chat_persistence as cp
 from kiro_crew.dashboard import session_control as sc
+from kiro_crew.dashboard import state as dashboard_state
 from kiro_crew.dashboard.chat_utils import _history_key_for
 from kiro_crew.dashboard.state import load_window_off_loop
 
@@ -91,8 +93,56 @@ def test_only_the_eager_tabs_read_their_whole_transcript(seeded, monkeypatch):
     assert len(reads) == 1
 
 
-def test_a_pending_rows_summary_matches_the_loaded_one(seeded):
+def test_a_pending_row_reads_only_the_end_of_its_transcript(seeded, monkeypatch):
+    from kiro_crew import history_projection
+
+    whole_file_reads: list[str] = []
+    projection = history_projection.TranscriptReadProjection
+    for name in ("_read_messages", "_row_index"):
+        real = getattr(projection, name)
+
+        def _spy(self, read_key, *args, _real=real, **kwargs):
+            whole_file_reads.append(read_key)
+            return _real(self, read_key, *args, **kwargs)
+
+        monkeypatch.setattr(projection, name, _spy)
+
+    state, _ = _restore(seeded)
+
+    pending = {_history_key_for(k) for k in _KEYS if state._slots[k].window_pending}
+    assert pending
+    assert not pending & set(whole_file_reads), "a sidebar row decoded its whole transcript"
+    assert all(state._slots[k].sidebar_messages() for k in _KEYS)
+
+
+def _append_ending(state, key: str, ending: str) -> None:
+    log = state.conversation_log
+    history_key = _history_key_for(key)
+    if ending == "answered":
+        return
+    # A cycle that ends through the quiet-end directive: its tool row carries the
+    # trusted identity, plus the flag the runner stamps only when it applied.
+    log.append(history_key, "user", f"{key} patrol cycle")
+    identity = {
+        "tool_name": dashboard_state.QUIET_END_TOOL,
+        "mcp_server": dashboard_state.QUIET_END_SERVER,
+    }
+    if ending == "quiet_end":
+        identity["ends_turn"] = True
+    log.append(history_key, "tool", "nothing_to_do", extra_meta=identity)
+
+
+@pytest.mark.parametrize(
+    ("ending", "interrupted"),
+    [("answered", False), ("quiet_end", False), ("refused_quiet_end", True)],
+)
+def test_a_pending_rows_summary_matches_the_loaded_one(seeded, monkeypatch, ending, interrupted):
+    seed_state = _make_state(seeded / "sessions")
+    for key in _KEYS:
+        _append_ending(seed_state, key, ending)
+    monkeypatch.setattr(cp, "EAGER_WINDOW_RESTORES", 0)
     lazy_state, _ = _restore(seeded)
+    assert all(lazy_state._slots[key].window_pending for key in _KEYS)
     lazy_rows = {row["key"]: row for row in lazy_state.serialize_slots()}
 
     for key in _KEYS:
@@ -102,6 +152,7 @@ def test_a_pending_rows_summary_matches_the_loaded_one(seeded):
     for key in _KEYS:
         for field in ("title", "last_ts", "last_message", "waiting_for_input", "interrupted"):
             assert lazy_rows[key][field] == loaded_rows[key][field], (key, field)
+        assert loaded_rows[key]["interrupted"] is interrupted, key
         assert lazy_rows[key]["messages"] > 0
 
 
@@ -195,6 +246,107 @@ def test_a_failed_load_fails_closed_and_retries(seeded, monkeypatch):
 
     assert slot.messages
     assert not slot.window_pending
+
+
+def test_a_window_snapshot_taken_before_the_load_stays_as_it_was(seeded):
+    state, _ = _restore(seeded)
+    slot = state._slots[_pending_key(state)]
+    # What a flush-thread save holds while the loop replays the window.
+    before = slot.loaded_messages()
+
+    slot.load_window()
+
+    assert before == [], "a save's snapshot must not fill in place with the replay"
+    assert slot.loaded_messages() == slot.messages
+    assert slot.messages
+
+
+def test_a_reader_on_another_thread_waits_for_the_whole_window(seeded, monkeypatch):
+    state, _ = _restore(seeded)
+    key = _pending_key(state)
+    slot = state._slots[key]
+    conv_log = state.conversation_log
+    expected = [m["content"] for m in conv_log.read_messages_chained(_history_key_for(key))]
+    in_replay = threading.Event()
+    release = threading.Event()
+    second_reader_moved = threading.Event()
+    armed = threading.Event()
+    real_replay = cp._load_rehydrated_window
+    real_read = conv_log.read_messages_chained
+
+    def _paused(*args, **kwargs):
+        in_replay.set()
+        release.wait(5)
+        return real_replay(*args, **kwargs)
+
+    def _read(history_key):
+        if armed.is_set():
+            # The second reader found the row still pending and is loading it.
+            second_reader_moved.set()
+        return real_read(history_key)
+
+    monkeypatch.setattr(cp, "_load_rehydrated_window", _paused)
+    monkeypatch.setattr(conv_log, "read_messages_chained", _read)
+    seen: list[str] = []
+
+    def _second_reader():
+        try:
+            seen.extend(m["content"] for m in slot.messages)
+        finally:
+            second_reader_moved.set()
+
+    first = threading.Thread(target=lambda: slot.messages)
+    second = threading.Thread(target=_second_reader)
+    first.start()
+    try:
+        assert in_replay.wait(5)
+        # The first reader is mid-replay, so the window holds nothing yet.
+        armed.set()
+        second.start()
+        assert second_reader_moved.wait(5)
+    finally:
+        release.set()
+        first.join(5)
+        if second.ident is not None:
+            second.join(5)
+
+    assert seen == expected
+    assert not slot.window_pending
+
+
+@pytest.mark.asyncio
+async def test_a_load_on_another_thread_never_holds_the_loop_behind_its_read(seeded, monkeypatch):
+    state = await _restore_on_loop(seeded)
+    slow_key, other_key = [k for k in _KEYS if state._slots[k].window_pending]
+    conv_log = state.conversation_log
+    real = conv_log.read_messages_chained
+    reading = threading.Event()
+    release = threading.Event()
+    slow_read_done = threading.Event()
+
+    def _slow(history_key):
+        if history_key == _history_key_for(slow_key):
+            reading.set()
+            # Released only after the other tab has loaded; the bound only
+            # keeps a loop held behind this read from hanging the run.
+            release.wait(5)
+            slow_read_done.set()
+        return real(history_key)
+
+    monkeypatch.setattr(conv_log, "read_messages_chained", _slow)
+    loader = threading.Thread(target=lambda: state._slots[slow_key].messages)
+    loader.start()
+    try:
+        assert await asyncio.to_thread(reading.wait, 5)
+        await load_window_off_loop(state._slots[other_key])
+        other_loaded_during_the_slow_read = not slow_read_done.is_set()
+    finally:
+        release.set()
+        await asyncio.to_thread(loader.join, 5)
+
+    assert not state._slots[other_key].window_pending
+    assert other_loaded_during_the_slow_read, "the loop waited behind another tab's read"
+    assert not state._slots[slow_key].window_pending
 
 
 @pytest.mark.parametrize(
@@ -295,6 +447,111 @@ async def test_a_send_to_a_pending_row_loads_it_off_the_loop(seeded, caplog, mon
 
     contents = [m["content"] for m in state._slots[key].messages]
     assert contents.index(f"{key} question 0") < contents.index("hello")
+    assert not _loads_on_loop(caplog)
+
+
+_THREAD_TS = "1790000000.000100"
+
+
+def _link_thread(state, key: str) -> None:
+    slot = state._slots[key]
+    slot._slack_linked = True
+    slot._slack_thread_ts = _THREAD_TS
+    slot._slack_channel = "C1"
+    state._slack_to_slot[_THREAD_TS] = key
+
+
+async def _reply_in_linked_thread(state, monkeypatch, text: str = "hello") -> bool:
+    from kiro_crew.slack import handler
+
+    monkeypatch.setattr("kiro_crew.dashboard.chat._run_chat", AsyncMock())
+    slack = MagicMock(post_message=AsyncMock())
+    with (
+        patch.object(handler, "_dashboard_state", state),
+        patch.object(handler, "is_allowed_user", return_value=True),
+    ):
+        return await handler.maybe_route_linked_thread(
+            text, f"slack:{_THREAD_TS}", "U1", "C1", slack, _THREAD_TS
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_reply_in_a_linked_thread_loads_its_pending_row_off_the_loop(
+    seeded, caplog, monkeypatch
+):
+    state = await _restore_on_loop(seeded)
+    key = _pending_key(state)
+    _link_thread(state, key)
+
+    with caplog.at_level(logging.WARNING):
+        routed = await _reply_in_linked_thread(state, monkeypatch)
+
+    assert routed is True
+    contents = [m["content"] for m in state._slots[key].messages]
+    assert contents.index(f"{key} question 0") < contents.index("hello")
+    assert not _loads_on_loop(caplog)
+
+
+@pytest.mark.asyncio
+async def test_a_thread_relinked_during_the_load_delivers_to_its_new_tab(
+    seeded, caplog, monkeypatch
+):
+    state = await _restore_on_loop(seeded)
+    first, second = [k for k in _KEYS if state._slots[k].window_pending]
+    _link_thread(state, first)
+    real = cp._PendingWindow.read
+
+    def _relink_during_read(self, slot):
+        if slot.key == first:
+            state._slots[first]._slack_linked = False
+            _link_thread(state, second)
+        return real(self, slot)
+
+    monkeypatch.setattr(cp._PendingWindow, "read", _relink_during_read)
+
+    with caplog.at_level(logging.WARNING):
+        routed = await _reply_in_linked_thread(state, monkeypatch)
+
+    assert routed is True
+    assert "hello" not in [m["content"] for m in state._slots[first].messages]
+    contents = [m["content"] for m in state._slots[second].messages]
+    assert contents.index(f"{second} question 0") < contents.index("hello")
+
+
+def _seed_card_rows(seeded, surface: str) -> None:
+    from kiro_crew.dashboard import chat_cards
+
+    seed_state = _make_state(seeded / "sessions")
+    status = chat_cards._PROPOSED[surface]
+    for key in _KEYS:
+        card = {"surface": surface, "id": f"card-{key}", "slot": key, "status": status}
+        seed_state.conversation_log.append(
+            _history_key_for(key), chat_cards.ROLE_CARD, "Proposal", extra_meta={"card": card}
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("surface", "status"), [("change", "cancelled"), ("guide", "cancelled")])
+async def test_a_card_outcome_for_a_pending_row_loads_it_off_the_loop(
+    seeded, caplog, surface, status
+):
+    from kiro_crew.dashboard import chat_cards
+    from kiro_crew.dashboard.handlers import change_cards, guide
+
+    _seed_card_rows(seeded, surface)
+    state = await _restore_on_loop(seeded)
+    key = _pending_key(state)
+    item = f"card-{key}"
+    public = {"slot_key": key, "status": status}
+    public.update({"id": item} if surface == "change" else {"guide_id": item})
+    broadcast = change_cards._broadcast if surface == "change" else guide._broadcast
+
+    with caplog.at_level(logging.WARNING):
+        await broadcast(state, public)
+
+    assert not _loads_on_loop(caplog)
+    row = chat_cards.find_row(state._slots[key], surface, item)
+    assert row is not None and row["meta"]["card"]["status"] == status
     assert not _loads_on_loop(caplog)
 
 

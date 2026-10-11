@@ -100,6 +100,7 @@ def _store(request: web.Request) -> GuideStore:
 async def _broadcast(state: Any, guide: dict[str, Any]) -> int:
     # Every public change of a guide passes here, so this is where its row in the
     # conversation learns the new status (and the crew log the outcome).
+    await chat_cards.load_conversation_window(state, guide)
     chat_cards.record_guide_status(state, guide)
     deliver = getattr(state, "deliver_ws_owners", None)
     if deliver is None:
@@ -288,6 +289,7 @@ async def api_guide_agent_start(request: web.Request) -> web.Response:
     # this point of the transcript, before the frame that makes it live.
     for old in superseded:
         await _broadcast(state, old)
+    await chat_cards.load_conversation_window(state, guide)
     chat_cards.record_guide_offered(state, guide)
     delivered = await _broadcast(state, guide)
     _audit(sk, "guide.start", "ok")

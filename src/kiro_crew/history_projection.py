@@ -404,6 +404,26 @@ class TranscriptReadProjection:
             messages.extend(self._log._read_messages(chained_key))
         return messages or self._log._read_messages(key)
 
+    def read_messages_chained_tail(self, key: str, limit: int) -> list[dict]:
+        """The newest *limit* rows of :meth:`read_messages_chained`, read from the end.
+
+        Reads only the end of the chain's newest file, growing back as far as
+        *limit* rows need, and skips the lines the full read skips, so the cost
+        follows *limit* and not the transcript's size. Bytes that are not UTF-8
+        are replaced where the full read would raise, which suits a display
+        tail; anything that needs the rows themselves reads them in full. When
+        that file alone cannot fill *limit* and the chain holds other files, the
+        exact chained page read answers instead.
+        """
+        if limit <= 0:
+            return []
+        keys = self._chain_keys(key)
+        if self._log._tail_reads:
+            newest = self._log._read_tail_messages(self._log._path(keys[-1]), limit, None)
+            if len(newest) >= limit or keys == [key]:
+                return newest
+        return self.read_messages_chained_page(key, limit=limit).messages
+
     def read_rotated_messages(self, key: str) -> list[dict]:
         """Messages size-rotation archived out of *key*'s transcript, oldest first.
 

@@ -1620,9 +1620,11 @@ def stuck_turn_notice(parked_secs: float) -> str:
 
 
 _MAX_SLOT_MESSAGES = 10000  # Keep all messages — virtual scrolling handles performance
-# Serializes the first-read load of a lazily restored slot's window. Re-entrant
-# because the load appends through ``_ChatSlot.messages`` itself; one lock for
-# every slot because a load is rare (once per restored row) and short.
+# Serializes the replay of a lazily restored slot's window, never its disk read:
+# ``_ChatSlot.load_window`` reads before it takes this, so the lock is held only
+# for the in-memory replay. Re-entrant because the replay appends through
+# ``_ChatSlot.messages`` itself; one lock for every slot because a replay is rare
+# (once per restored row) and short.
 _LAZY_WINDOW_LOCK = threading.RLock()
 
 
@@ -2879,6 +2881,7 @@ class _ChatSlot:
         "_messages",
         "_lazy_window",
         "_lazy_tail",
+        "_window_loader_thread",
         "total_messages",
         "_task",
         "_turn_admission_reserved",
@@ -3245,6 +3248,10 @@ class _ChatSlot:
         # that carries its window. See ``chat_persistence`` lazy restore.
         self._lazy_window: Callable[[_ChatSlot], None] | None = None
         self._lazy_tail: list[dict[str, Any]] | None = None
+        # The thread replaying that window right now, so the replay's own reads
+        # of ``messages`` see the list it is filling while every other thread's
+        # read waits for the replay to finish.
+        self._window_loader_thread: int | None = None
         self._buffers = SlotBufferCoordinator()
         self._projection = SlotProjection()
         self._queue_repository = SlotQueueRepository(
@@ -5882,13 +5889,19 @@ class _ChatSlot:
         """Run a pending window load now; a no-op once the window is loaded.
 
         *prefetched* are the loader's disk reads when the caller already made
-        them off the loop (:func:`load_window_off_loop`).
+        them off the loop (:func:`load_window_off_loop`). Without them the reads
+        run here, before the load lock is taken: the lock only ever covers the
+        replay, so a load on one thread never holds a reader on another (the
+        loop's among them) behind a transcript read. The row stays pending
+        until the replay has finished, so a reader on another thread waits for
+        the whole window instead of seeing the list half filled.
         """
-        with _LAZY_WINDOW_LOCK:
-            loader = getattr(self, "_lazy_window", None)
-            if loader is None:
-                return
-            if not prefetched and _on_event_loop():
+        loader = getattr(self, "_lazy_window", None)
+        if loader is None or getattr(self, "_window_loader_thread", None) == threading.get_ident():
+            # Loaded, or the replay's own read of the list it is filling.
+            return
+        if not prefetched:
+            if _on_event_loop():
                 # The load still runs (a reader must never see the empty stub),
                 # but it reads the transcript on the loop: the path that got
                 # here should have awaited ``load_window_off_loop`` first.
@@ -5898,9 +5911,17 @@ class _ChatSlot:
                     self.key,
                     stack_info=True,
                 )
-            # Cleared before the load so the loader's own appends read the list
-            # it is filling instead of re-entering it.
-            self._lazy_window = None
+            read = getattr(loader, "read", None)
+            if callable(read):
+                # A failed read leaves the row pending and raises, so the next
+                # read retries.
+                prefetched = read(self)
+        with _LAZY_WINDOW_LOCK:
+            if getattr(self, "_lazy_window", None) is not loader:
+                # Another reader's load landed while this one read, or the
+                # window was replaced wholesale; that answer stands.
+                return
+            self._window_loader_thread = threading.get_ident()
             try:
                 loader(self, *prefetched)
             except BaseException:
@@ -5911,7 +5932,11 @@ class _ChatSlot:
                 self._messages = []
                 self._lazy_window = loader
                 raise
-            self._lazy_tail = None
+            else:
+                self._lazy_window = None
+                self._lazy_tail = None
+            finally:
+                self._window_loader_thread = None
 
     @property
     def window_pending(self) -> bool:
@@ -5919,16 +5944,17 @@ class _ChatSlot:
         return getattr(self, "_lazy_window", None) is not None
 
     def loaded_messages(self) -> list[dict[str, Any]]:
-        """The window as it is in memory, without loading a pending one.
+        """A copy of the window as it is in memory, without loading a pending one.
 
         Empty for a row whose window was never loaded, which is exactly what the
         save path needs: such a row holds no rows that are not already on disk,
         so its save is the metadata-only merge and the transcript is untouched.
-        Taken under the load lock, so a save in the flush thread never snapshots
-        a window that is half replayed.
+        Copied under the load lock, which a replay holds throughout, so a save
+        in the flush thread snapshots the window from before a replay or after
+        it, never one the replay is still filling in place.
         """
         with _LAZY_WINDOW_LOCK:
-            return self._messages
+            return list(self._messages)
 
     def sidebar_messages(self) -> list[dict[str, Any]]:
         """The rows the sidebar summary projects from, without forcing a load.

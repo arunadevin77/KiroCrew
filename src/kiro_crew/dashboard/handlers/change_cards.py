@@ -100,6 +100,7 @@ def _store(request: web.Request) -> CardStore:
 async def _broadcast(state: Any, card: dict[str, Any]) -> int:
     # Every public change of a card passes here, so this is where its row in the
     # conversation learns the new status (and the crew log the outcome).
+    await chat_cards.load_conversation_window(state, card)
     chat_cards.record_change_status(state, card)
     deliver = getattr(state, "deliver_ws_owners", None)
     if deliver is None:
@@ -476,6 +477,7 @@ async def api_cards_agent_propose(request: web.Request) -> web.Response:
     public = store.public(rec)
     # The card is part of the conversation from here on: its row lands at this
     # point of the transcript, before the frame that makes it live.
+    await chat_cards.load_conversation_window(request.app["state"], public)
     chat_cards.record_change_proposed(request.app["state"], public)
     delivered = await _broadcast(request.app["state"], public)
     _audit(sk, "cards.propose", "ok")

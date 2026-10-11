@@ -3611,6 +3611,13 @@ class ConversationLog:
     def read_messages_chained(self, key: str) -> list[dict]:
         return self._read_projection.read_messages_chained(key)
 
+    def read_messages_chained_tail(self, key: str, limit: int) -> list[dict]:
+        """The newest *limit* rows of :meth:`read_messages_chained`, read from the end.
+
+        See ``TranscriptReadProjection.read_messages_chained_tail``.
+        """
+        return self._read_projection.read_messages_chained_tail(key, limit)
+
     def read_messages_chained_full(self, key: str) -> list[dict]:
         """Chained transcript INCLUDING each key's size-rotated archive head.
 

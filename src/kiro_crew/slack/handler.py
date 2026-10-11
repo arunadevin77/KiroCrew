@@ -87,7 +87,10 @@ from kiro_crew.dashboard.chat_utils import (  # noqa: F401 - read by the owners
     remember_slack_options,
     run_config_write,
 )
-from kiro_crew.dashboard.state import append_and_surface  # noqa: F401 - read by the owners
+from kiro_crew.dashboard.state import (  # noqa: F401 - read by the owners
+    append_and_surface,
+    load_window_off_loop,
+)
 from kiro_crew.dashboard.turn_dispatch import tool_approval_timeout_secs
 from kiro_crew.deny_notice import steer_refusal_notice
 from kiro_crew.executors import run_in_embed_pool, run_in_tool_gate_pool

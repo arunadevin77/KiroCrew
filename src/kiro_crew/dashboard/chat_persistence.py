@@ -563,10 +563,14 @@ TAIL_TEXT_BOUND = 4096
 #: The longest presentation class a tail row keeps; a longer one is dropped. The
 #: summary reads a class only for a stop or permission marker, both short.
 _TAIL_CLS_BOUND = 1024
-#: The one-word markers the summary reads off a tail row's ``meta``. Each is kept
-#: only as a short scalar; every other key (tool payloads, variants, records) is
-#: left out of the tail.
-_TAIL_META_KEYS = ("kind", "injectKind", "notice")
+#: The one-word markers the summary reads off a tail row's ``meta``: a notice's
+#: ``kind`` and ``notice`` (``is_system_notice``), a dispatching inject's
+#: ``injectKind`` (``_is_turn_inject``), and the applied quiet end's trusted tool
+#: identity and flag (``is_quiet_end_row``), without which a turn that ended
+#: through ``nothing_to_do`` reads as interrupted until the window loads. Each is
+#: kept only as a short scalar; every other key (tool payloads, variants,
+#: records) is left out of the tail.
+_TAIL_META_KEYS = ("kind", "injectKind", "notice", "tool_name", "mcp_server", "ends_turn")
 _TAIL_SCALAR_BOUND = 128
 
 
@@ -659,9 +663,7 @@ def _prefetch_open_slot_inputs(
             and _member_restore_identity(slot_name) is None
             and not crew_bound_on_disk(slot_name)
         ):
-            tail = _display_tail(
-                conv_log.read_messages_chained_page(history_key, limit=LAZY_TAIL_ROWS).messages
-            )
+            tail = _display_tail(conv_log.read_messages_chained_tail(history_key, LAZY_TAIL_ROWS))
             if tail:
                 return (
                     meta,

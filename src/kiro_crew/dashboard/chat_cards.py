@@ -121,6 +121,27 @@ def _get_slot(state: Any, slot_key: str) -> Any:
         return None
 
 
+async def load_conversation_window(state: Any, public: dict[str, Any]) -> None:
+    """Load the window of a card's or guide's conversation, with the read off the loop.
+
+    Every ``record_*`` below reads that conversation's rows, so the async route
+    that calls one awaits this first: a tab restored as a sidebar row loads on a
+    worker thread instead of inline on the loop. The record resolves the slot
+    again afterwards, so a tab closed or replaced during the await is never the
+    one written to. Never raises.
+    """
+    from kiro_crew.dashboard.state import load_window_off_loop
+
+    slot = _get_slot(state, str(public.get("slot_key") or ""))
+    if slot is None:
+        return
+    try:
+        await load_window_off_loop(slot)
+    except Exception:
+        # The record's own read retries the load and fails closed.
+        logger.warning("could not load a card's conversation off the loop", exc_info=True)
+
+
 def find_row(slot: Any, surface: str, item_id: str) -> dict[str, Any] | None:
     """The slot's ``card`` row for *item_id*, newest first, or ``None``."""
     for msg in reversed(getattr(slot, "messages", None) or []):
