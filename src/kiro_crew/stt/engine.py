@@ -44,7 +44,6 @@ without it starts normally and reports voice as unavailable with a reason.
 from __future__ import annotations
 
 import asyncio
-import functools
 import importlib.util
 import logging
 import math
@@ -249,6 +248,31 @@ def _whisper_binding() -> Any | None:
     except Exception:  # pragma: no cover (host-specific loader failures)
         return None
     return binding
+
+
+def _decode_handed_over(
+    handoff: list[Any],
+    pcm: np.ndarray,
+    should_abort: Callable[[], bool],
+    audio_ctx: int,
+) -> list[Any]:
+    """:func:`_decode_segments` on the one model in *handoff*, taken out of it first.
+
+    **The pool never holds the model: not in a work item's arguments, not in its
+    result.** ``ThreadPoolExecutor`` keeps each work item -- callable, arguments
+    and the future carrying the result -- until its thread gets around to dropping
+    it, which is strictly AFTER the result has reached the awaiting coroutine. A
+    model bound into the item, or returned as its bare result, therefore outlives
+    the ``await`` by one scheduler slice, and a ``close()`` or idle eviction that
+    follows at once finds the weights still resident. So the model crosses the
+    thread boundary in a one-element list the receiving side empties: here, the
+    worker pops it and this frame's local is the only reference the pool thread
+    holds, gone when the call returns; for a load,
+    :meth:`WhisperEngine._build_model_handed_over` returns it in a list the loop
+    thread pops. :meth:`WhisperEngine._unload_locked` relies on both.
+    """
+    model = handoff.pop()
+    return _decode_segments(model, pcm, should_abort, audio_ctx)
 
 
 def _decode_segments(
@@ -635,8 +659,10 @@ class WhisperEngine:
                 # hook, so a timeout cannot stop the native allocation. `wait_for` would
                 # cancel the wrapper and let this lock go while a 1.6 GB context was still
                 # being built, and the caller's retry would start a SECOND one.
+                # Returned in a list this thread empties, never bare: see
+                # `_decode_handed_over`.
                 future = loop.run_in_executor(
-                    stt_executor(), self._build_model_fused, key, marker_dir
+                    stt_executor(), self._build_model_handed_over, key, marker_dir
                 )
                 self._load_future = future
                 load_started = time.monotonic()
@@ -652,7 +678,7 @@ class WhisperEngine:
                         # build a second context for the same weights.
                         self._load_future = None
                         try:
-                            self._model = future.result()
+                            self._model = future.result().pop()
                             self._key = key
                             self._last_used = time.monotonic()
                             telemetry.recorder().record_load(
@@ -678,7 +704,7 @@ class WhisperEngine:
                     return Availability(False, CODE_IMPORT_FAILED, "model load timed out")
                 self._load_future = None
                 try:
-                    self._model = future.result()
+                    self._model = future.result().pop()
                 except Exception as exc:
                     logger.warning("Failed to load whisper model from %s: %s", path, exc)
                     return Availability(False, CODE_IMPORT_FAILED, f"model load failed: {exc}")
@@ -753,6 +779,16 @@ class WhisperEngine:
             return cls._build_model(key)
         finally:
             preflight.clear_load_marker(marker_dir)
+
+    @classmethod
+    def _build_model_handed_over(cls, key: LoadedKey, marker_dir: Any) -> list[Any]:
+        """:meth:`_build_model_fused`, its model returned inside a one-element list.
+
+        The load's half of the hand-over :func:`_decode_handed_over` describes: the
+        loop thread pops the model out, so the future the pool keeps carries an
+        empty list rather than the weights.
+        """
+        return [cls._build_model_fused(key, marker_dir)]
 
     @staticmethod
     def capabilities() -> caps_mod.Capabilities:
@@ -900,9 +936,11 @@ class WhisperEngine:
             # is a true reading and is the best input the partial budget can get.
             complete = False
             try:
+                # In a list the worker empties, never as a bound argument: see
+                # `_decode_handed_over`. The worker's own frame holds the model while
+                # the native call runs, which is the reference `_retire_decode` counts on.
                 future = loop.run_in_executor(
-                    stt_executor(),
-                    functools.partial(_decode_segments, model, pcm, should_abort, audio_ctx),
+                    stt_executor(), _decode_handed_over, [model], pcm, should_abort, audio_ctx
                 )
                 # `asyncio.wait` rather than `wait_for`, because a timeout here must NOT
                 # abandon the future: `wait_for` cancels the wrapper and leaves the
@@ -1115,7 +1153,8 @@ class WhisperEngine:
         under CPython's refcounting that happens here rather than at some later
         collection. Which is why the reference is cleared and nothing else is
         held onto: keeping the object alive in a worker thread to "free it
-        properly" would do the opposite.
+        properly" would do the opposite. It holds only because the pool never
+        kept a reference of its own (:func:`_decode_handed_over`).
         """
         self._model = None
         self._key = None

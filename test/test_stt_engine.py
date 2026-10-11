@@ -10,6 +10,7 @@ on an xdist worker.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import gc
 import hashlib
@@ -1017,6 +1018,56 @@ async def test_a_reloaded_model_gets_a_fresh_window_verdict(fake_engine, monkeyp
     assert binding.windows[-1] == engine_mod.PREVIEW_AUDIO_CTX_FLOOR
 
 
+class _LingeringPool(concurrent.futures.Executor):
+    """A pool whose worker keeps each finished work item until the test lets go.
+
+    ``ThreadPoolExecutor`` delivers a result inside ``_WorkItem.run`` and drops the
+    item -- callable, arguments and the future holding the result -- only after
+    ``run`` returns, so a worker descheduled between the two still references all
+    three while the event loop is already running the caller's next line. On a
+    loaded CI runner that gap is where ``close()`` found a model still alive. This
+    pool makes the gap last for the whole test: the engine passes only when nothing
+    it hands the pool keeps the model, so the race is a fail rather than a flake.
+    """
+
+    def __init__(self) -> None:
+        self._let_go = threading.Event()
+        self._threads: list[threading.Thread] = []
+
+    def submit(self, fn, /, *args, **kwargs):
+        future: concurrent.futures.Future = concurrent.futures.Future()
+
+        def run() -> None:
+            future.set_running_or_notify_cancel()
+            try:
+                future.set_result(fn(*args, **kwargs))
+            except BaseException as exc:
+                future.set_exception(exc)
+            # `fn`, `args` and `future` stay referenced by this frame until the test
+            # releases them: exactly what the real worker holds before `del work_item`.
+            self._let_go.wait()
+
+        thread = threading.Thread(target=run, name="mc-stt-lingering", daemon=True)
+        self._threads.append(thread)
+        thread.start()
+        return future
+
+    def release(self) -> None:
+        self._let_go.set()
+        for thread in self._threads:
+            thread.join(timeout=5.0)
+            assert not thread.is_alive(), "a lingering pool worker did not let go"
+
+
+@pytest.fixture
+def lingering_pool(monkeypatch):
+    """The engine's STT pool, replaced by a :class:`_LingeringPool` for one test."""
+    pool = _LingeringPool()
+    monkeypatch.setattr(engine_mod, "stt_executor", lambda: pool)
+    yield pool
+    pool.release()
+
+
 def _track_built_models(monkeypatch) -> list[weakref.ReferenceType]:
     """Build a fresh fake per load and keep only WEAK references to them.
 
@@ -1036,7 +1087,11 @@ def _track_built_models(monkeypatch) -> list[weakref.ReferenceType]:
 
 
 @pytest.mark.asyncio
-async def test_close_frees_a_model_that_ran_a_sized_decode(fake_engine, monkeypatch):
+async def test_close_frees_a_model_that_ran_a_sized_decode(
+    fake_engine, monkeypatch, lingering_pool
+):
+    """Under a pool that never lets a finished work item go: the load's result and
+    the decode's argument must both have been handed over, not kept."""
     eng, _fake = fake_engine
     refs = _track_built_models(monkeypatch)
     await eng.ensure_loaded("base", "en")
@@ -1050,7 +1105,9 @@ async def test_close_frees_a_model_that_ran_a_sized_decode(fake_engine, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_idle_eviction_frees_a_model_that_ran_a_sized_decode(monkeypatch, tmp_path):
+async def test_idle_eviction_frees_a_model_that_ran_a_sized_decode(
+    monkeypatch, tmp_path, lingering_pool
+):
     monkeypatch.setattr(engine_mod, "_engine", None)
     monkeypatch.setattr(engine_mod, "probe", lambda: engine_mod.Availability(True))
     stub = tmp_path / "ggml-base.bin"
@@ -1073,7 +1130,7 @@ async def test_idle_eviction_frees_a_model_that_ran_a_sized_decode(monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_a_model_switch_frees_the_old_weights_before_building_the_new(
-    fake_engine, monkeypatch
+    fake_engine, monkeypatch, lingering_pool
 ):
     """One model's worth of memory, not two, across a language or model change."""
     eng, _fake = fake_engine
