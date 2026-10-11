@@ -1844,7 +1844,8 @@ findings and settings, which are not memory, are still answered; output is cappe
 from `diagnose_probes.run_probes(app, topic)`: twelve symptom probes run on a
 bounded worker pool (4 s each, 8 s in all; a probe that raises or overruns
 reports `unknown`), each strictly read-only -- no `_doctor_*` call, no repair
-path, `memory.db` opened `mode=ro&immutable=1`, the crew log through
+path, `memory.db` opened `mode=ro` while its `-wal` exists (so committed but
+uncheckpointed rows count) and `mode=ro&immutable=1` otherwise, the crew log through
 `crew_log.read` -- with strings redacted and lists capped, and never a secret
 value, token or whole MCP spec. The read-only `kirocrew-crew-log` server stays an
 opt-in set no template mounts by default; an agent granted it in its own spec reads

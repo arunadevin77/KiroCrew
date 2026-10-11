@@ -10,8 +10,9 @@ fail") from state readable on this host, and returns one finding::
 change, or ``{"steps": [...]}`` for something only a person can do.
 
 Every probe is strictly read-only: it never calls a ``_doctor_*`` function or
-anything with a repair or atomic-write path, opens SQLite read-only and
-immutable, and never returns a secret value, a token or a whole MCP spec. Each
+anything with a repair or atomic-write path, opens SQLite read-only (reading a
+live write-ahead log when one exists), and never returns a secret value, a
+token or a whole MCP spec. Each
 runs under its own deadline on a worker thread, and a probe that raises or
 overruns reports ``unknown`` instead of failing the diagnosis.
 """
@@ -265,9 +266,13 @@ def probe_agent_picker_stale(ctx: ProbeContext) -> dict[str, Any]:
     from kiro_crew.config.paths import kiro_agents_dir
 
     try:
-        listed = {a.name for a in agent_discovery.list_agents(agents_dir=kiro_agents_dir())}
+        agents = agent_discovery.list_agents(agents_dir=kiro_agents_dir())
     except Exception:  # noqa: BLE001 -- a probe reports, it never raises
         return finding(pid, UNKNOWN, "The agent list could not be read from here.")
+    # The list names an agent by its spec's ``name`` field, which can differ from
+    # the file name (``{package}-{name}.json``), so a file is matched to its entry
+    # by file name and reported under the name the list offers it as.
+    listed = {a.filename: a.name for a in agents if a.scope == agent_discovery.SCOPE_GLOBAL}
     newer: list[dict[str, Any]] = []
     for path in _spec_files():
         try:
@@ -275,7 +280,13 @@ def probe_agent_picker_stale(ctx: ProbeContext) -> dict[str, Any]:
         except OSError:
             continue
         if mtime > started:
-            newer.append({"name": path.stem, "changed": _iso(mtime), "listed": path.stem in listed})
+            newer.append(
+                {
+                    "name": listed.get(path.name, path.stem),
+                    "changed": _iso(mtime),
+                    "listed": path.name in listed,
+                }
+            )
     if not newer:
         return finding(pid, OK, "Every agent spec on disk predates the gateway's start.")
     evidence = {"gateway_started": _iso(started), "specs": newer}
@@ -572,8 +583,13 @@ def probe_embedding_coverage(ctx: ProbeContext) -> dict[str, Any]:
         return finding(pid, OK, "There is no vector memory yet.")
     dim = int(ctx.cfg.memory.embedding_dim)
     want = dim * 4
-    # immutable=1: SQLite takes no lock and writes no -shm/-wal beside the file.
-    uri = path.resolve().as_uri() + "?mode=ro&immutable=1"
+    # The gateway keeps memory.db in WAL mode, so rows it has committed but not yet
+    # checkpointed live only in the -wal file. While that file exists, a plain
+    # read-only open reads it; immutable=1 would ignore it and undercount. With no
+    # -wal there is nothing to miss, and immutable=1 keeps the read from creating
+    # -shm/-wal beside the file.
+    wal = path.with_name(path.name + "-wal")
+    uri = path.resolve().as_uri() + ("?mode=ro" if wal.exists() else "?mode=ro&immutable=1")
     db = sqlite3.connect(uri, uri=True, timeout=1.0)
     try:
         tables: dict[str, dict[str, Any]] = {}
