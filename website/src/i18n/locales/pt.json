@@ -12434,8 +12434,8 @@
       "crew_spaces_unavailable": "Não foi possível carregar as pastas de {{name}}. Os chats são listados sem elas.",
       "crew_enable_failed": "Não foi possível ativar {{name}}",
       "muted": "Silenciada: sem som, aviso ou selo",
-      "chat_with_session": "Chat com {{title}}",
-      "chat_with_session_desc": "O chat que iniciou os outros chats desta pasta",
+      "chat_with_folder": "Chat com a pasta {{folder}}",
+      "chat_with_folder_desc": "O chat que iniciou os outros chats desta pasta",
       "conductor_tag": "maestro"
     },
     "connectionsPage": {
@@ -13051,7 +13051,7 @@
         "dashboard": "Painel dinâmico",
         "dashboard_desc": "Ativa o painel dinâmico, ainda em desenvolvimento: uma linha de status acima do compositor do chat, uma visualização Painel no painel lateral e na página de um membro da equipe, e uma página Todos os painéis. O layout ainda está sendo definido, por isso só aparece quando você o ativa. Também contém o interruptor dos cartões automáticos.",
         "folder_conductor": "Conductor da pasta",
-        "folder_conductor_desc": "Leva para o topo da pasta o chat que iniciou os outros chats dessa pasta: uma barra de destaque na borda esquerda e uma pequena etiqueta `conductor` ao lado do nome do agente. Isso muda a ordem da lista de sessões, por isso a lista fica como está até você ativar. O item de chat no menu da pasta está sempre lá."
+        "folder_conductor_desc": "Leva para o topo da pasta o chat que iniciou os outros chats dessa pasta: uma barra de destaque na borda esquerda e uma pequena etiqueta conductor ao lado do nome do agente. Isso muda a ordem da lista de sessões, por isso a lista fica como está até você ativar. O item de chat no menu da pasta está sempre lá."
       },
       "kiroSignInCard": {
         "title": "Login do Kiro",

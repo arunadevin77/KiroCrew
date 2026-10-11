@@ -148,10 +148,12 @@ export interface RowPlacement {
   /** Layout projection on for this copy (the facade's displacement-window gate). */
   rowAnimEnabled: boolean
   conductor?: ConductorRowView
-  /** This copy is the one its FOLDER is drawn around: pinned under the folder row,
-   *  at the folder row's own left edge, with every other row in the folder indented
-   *  under it. One boolean rather than a `ConductorRowView`, because the folder lane
-   *  knows none of that view's facts -- it does not nest, so there is no depth, no
+  /** This copy is the one its FOLDER is drawn around: lifted to the top of the
+   *  folder body, before the sub-folders and before the sorted rows. It is NOT a
+   *  parent of the rows below it -- they are its siblings at the same left edge,
+   *  drawn exactly as a plain folder's cards are, and only this one is marked.
+   *  One boolean rather than a `ConductorRowView`, because the folder lane knows
+   *  none of that view's facts -- it does not nest, so there is no depth, no
    *  chevron and no collapsed aggregate to carry. All the row does with it is wear
    *  the tag that says WHY it is up there. */
   folderConductor?: boolean
@@ -329,6 +331,19 @@ export interface SidebarRows {
   folderTree: {
     /** The `Local` rows filed directly in this folder, in lane order. */
     rowsIn: (folderId: string) => Slot[]
+    /** Every row filed directly in this folder, BEFORE any filter -- the folder's
+     *  membership, not its current render.
+     *
+     *  For the questions whose answer is a fact about the folder rather than about
+     *  what is on screen: who opened whom inside it (`detectFolderConductor`). Asked
+     *  against `rowsIn`, a search or a status hide that conceals the real root makes
+     *  the next row down look like a root, and the claim drawn from it -- "this is the
+     *  chat that started the others" -- is then false. A caller that also has to put
+     *  the answer on screen checks it against `rowsIn` itself.
+     *
+     *  Unordered: it is a membership set, and every caller either sorts it or asks a
+     *  question whose answer does not depend on the order. */
+    allRowsIn: (folderId: string) => Slot[]
   }
   /** The local folder this row is filed in; undefined for a peer row. */
   folderOf: (slot: Slot) => string | undefined
@@ -641,15 +656,28 @@ function hideInCrews(byCrew: Map<string, Slot[]>, hidden: SidebarRows['isRowFold
   return out
 }
 
-function makeFolderTree(filteredSlots: Slot[], folderOf: SidebarRows['folderOf']): SidebarRows['folderTree'] {
+function indexByFolder(slots: readonly Slot[], folderOf: SidebarRows['folderOf']): Map<string, Slot[]> {
   const index = new Map<string, Slot[]>()
-  for (const slot of filteredSlots) {
+  for (const slot of slots) {
     const folderId = folderOf(slot)
     if (!folderId) continue
     const list = index.get(folderId)
     if (list) list.push(slot); else index.set(folderId, [slot])
   }
-  return { rowsIn: folderId => index.get(folderId) ?? NO_ROWS }
+  return index
+}
+
+/** Two indices over the same membership rule: what this folder DRAWS, and what it
+ *  HOLDS. Built together because they differ in exactly one input -- the row list --
+ *  and a second walk written elsewhere would be free to disagree about which folder a
+ *  row is filed in. */
+function makeFolderTree(filteredSlots: Slot[], allSlots: Slot[], folderOf: SidebarRows['folderOf']): SidebarRows['folderTree'] {
+  const shown = indexByFolder(filteredSlots, folderOf)
+  const all = indexByFolder(allSlots, folderOf)
+  return {
+    rowsIn: folderId => shown.get(folderId) ?? NO_ROWS,
+    allRowsIn: folderId => all.get(folderId) ?? NO_ROWS,
+  }
 }
 
 function makeStaleSplit(listNarrowed: boolean, sortKey: SortKey, clock: () => number): SidebarRows['staleSplit'] {
@@ -764,8 +792,8 @@ export function buildSidebarRows(inputs: SidebarRowInputs, previous?: SidebarRow
     lane.filter(slot => !isPeerRow(slot) && !hidden(slot)))
   const boardPeerCount = reuse(prev?.boardPeerCount, [lane], () =>
     lane.filter(isPeerRow).length)
-  const folderTree = reuse(prev?.folderTree, [lane, slotFolders], () =>
-    makeFolderTree(lane, folderOf))
+  const folderTree = reuse(prev?.folderTree, [lane, rows, slotFolders], () =>
+    makeFolderTree(lane, rows, folderOf))
 
   const result: SidebarRows = {
     filteredSlots: filteredSlots.value,

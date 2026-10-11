@@ -179,10 +179,11 @@ export const PREVIEW_DASHBOARD = `${PREVIEW_FLAG_PREFIX}dashboard`
  * are handed on as the same array in the same order and the body is the same
  * element, so nothing about an ordinary render is conditional on this key.
  *
- * It does NOT gate the folder menu's "Chat with <title>" item. That item is an
- * ingress -- one entry in a menu a reader opened on purpose -- it moves nothing
- * on the resting list, and it shipped reviewed. Gating it here would hold a
- * released affordance behind an unreleased layout.
+ * It does NOT gate the two ways to REACH that session -- the folder row's chat
+ * button and the same action in the folder's menus. Those are ingresses a reader
+ * can decline, they move nothing on the resting list, and gating them here would
+ * leave a conducted folder with no way to the conversation it is drawn around.
+ * This key holds the layout and nothing else.
  */
 export const PREVIEW_FOLDER_CONDUCTOR = `${PREVIEW_FLAG_PREFIX}folder-conductor`
 

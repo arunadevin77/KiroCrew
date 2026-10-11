@@ -134,10 +134,10 @@ const slots: ChatSlot[] = [
  * that drives the menu must mount, open and assert with no await between them,
  * and call `settle` afterwards to let the lane finish painting.
  */
-function renderSidebar(slotData: ChatSlot[] = slots, onSelectSlot?: (key: string) => void, folderData: ChatFolder[] = folders) {
+function renderSidebar(slotData: ChatSlot[] = slots, onSelectSlot?: (key: string) => void, folderData: ChatFolder[] = folders, over: { connected?: boolean } = {}) {
   const store = createTestStore({
     dashboard: {
-      status: {}, connected: true, slots: slotData, approvalMode: 'normal',
+      status: {}, connected: over.connected ?? true, slots: slotData, approvalMode: 'normal',
       channelTrusted: false, refreshTrigger: 0, unreadSlots: [], updateProgress: null,
       subagentRunning: {}, subagentDetails: {}, subagentText: {},
       sessionDefaultColor: null, sessionColorsMode: 'tint', sessionColorsPalette: 'horizon', sessionColorsIntensity: 'clear',
@@ -216,6 +216,36 @@ function openFolderMenu(folderId: string) {
 const menuItem = (folderId: string, suffix = ''): HTMLElement | null =>
   document.querySelector(`[data-testid="folder-conductor-chat-${folderId}${suffix}"]`)
 
+/**
+ * Type into the lane's search box, the one filter a test can drive without a
+ * menu. `slotFilter` feeds `filters.search.text` with no debounce, so the lane
+ * is narrowed on the next commit and the whole case stays synchronous.
+ */
+function typeSearch(container: HTMLElement, text: string) {
+  const input = container.querySelector('[data-testid="search-field-glass"] input')
+  if (!input) throw new Error('no search field')
+  fireEvent.change(input, { target: { value: text } })
+}
+
+/** The folder row's own chat button -- the third control, not the menu item. */
+const rowChatButton = (container: HTMLElement, folderId: string): HTMLElement | null =>
+  container.querySelector(`[data-testid="folder-conductor-chat-row-${folderId}"]`)
+
+/**
+ * The folder row's action cluster, as the testids of its buttons in DOM order.
+ *
+ * The collapse toggle is excluded: it is the row's own disclosure control and
+ * sits outside the cluster. What is left is what a reader sees on hover, in the
+ * order they see it.
+ */
+function clusterOf(container: HTMLElement, folderId: string): string[] {
+  return Array.from(rowOf(container, folderId).querySelectorAll('button'))
+    .map(b => b.getAttribute('data-testid') ?? '')
+    .filter(id => id.startsWith('folder-menu-')
+      || id.startsWith('folder-new-chat-')
+      || id.startsWith('folder-conductor-chat-row-'))
+}
+
 /** The pinned conductor card's own wrapper: the element carrying the accent bar. */
 function pinnedOf(container: HTMLElement, folderId: string): HTMLElement | null {
   return container.querySelector(`[data-folder-conductor="${folderId}"]`)
@@ -241,15 +271,18 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe('the folder menu item', () => {
-  it('names the session it opens, and says what that session is', async () => {
-    // Not "Chat with conductor": the label carries the session's own title and
-    // the second line explains what that session is to the folder, because the
-    // word on its own told a first-time reader nothing.
+  it('names the FOLDER, and says what the chat it opens is to it', async () => {
+    // The label names the folder the menu was opened on -- the thing the reader
+    // has in front of them -- not the conductor's own session title, which they
+    // have not necessarily seen. And not "Chat with conductor" either: that word
+    // on its own told a first-time reader nothing, which is what the second line
+    // is for.
     const utils = renderSidebar()
     openFolderMenu(LANE)
     const item = menuItem(LANE)
     expect(item).not.toBeNull()
-    expect(item!.textContent).toContain('Remote crew rollout')
+    expect(item!.textContent).toContain('remote-crew')
+    expect(item!.textContent).not.toContain('Remote crew rollout')
     expect(item!.textContent).toContain('started this folder')
     await settle(utils)
   })
@@ -293,17 +326,21 @@ describe('the folder menu item', () => {
 })
 
 describe('what a conducted folder must still render', () => {
-  it('leaves the hover group at its two controls', async () => {
-    // The whole reason this is a menu item: the row's action group holds the ⋯
-    // trigger and new-chat, and a third peer control there is over the cap. With
-    // the menu closed the folder row offers nothing it does not offer on main.
+  it('keeps the two controls it has on main, unmoved, and adds the third after them', async () => {
+    // The two-controls-per-row cap is bypassed for this one action by an owner
+    // ruling, so the assertion is no longer the COUNT -- it is that the existing
+    // pair is untouched and the new control comes last. A reordering that put
+    // the chat button first would move the ⋯ trigger and new-chat under a
+    // reader's muscle memory, which the ruling did not ask for.
     const utils = renderSidebar()
     await settle(utils)
-    const row = rowOf(utils.container, LANE)
-    const actions = Array.from(row.querySelectorAll('button'))
-      .filter(b => b.getAttribute('data-testid')?.startsWith('folder-menu-')
-        || b.getAttribute('data-testid')?.startsWith('folder-new-chat-'))
-    expect(actions).toHaveLength(2)
+    expect(clusterOf(utils.container, LANE)).toEqual([
+      `folder-menu-${LANE}`,
+      `folder-new-chat-${LANE}`,
+      `folder-conductor-chat-row-${LANE}`,
+    ])
+    // The MENU item is still only in the menu: the row button is an addition,
+    // not a second copy of it rendered inline.
     expect(menuItem(LANE)).toBeNull()
   })
 
@@ -334,6 +371,104 @@ describe('a folder with no conductor', () => {
     expect(rowOf(container, PLAIN).textContent).toContain('2')
     expect(cardOf(container, 'k-plain-a')).not.toBeNull()
     expect(cardOf(container, 'k-plain-b')).not.toBeNull()
+  })
+
+  it('keeps the two-control cluster -- the third button is not emitted at all', async () => {
+    // `docs` holds two hand-made sessions: nobody opened anybody. The cap is
+    // bypassed only where there is something to reach, so this row is the row
+    // on main, and the button is ABSENT rather than present-and-disabled.
+    const { container, findByText } = renderSidebar()
+    await settle({ findByText })
+    expect(clusterOf(container, PLAIN)).toEqual([
+      `folder-menu-${PLAIN}`,
+      `folder-new-chat-${PLAIN}`,
+    ])
+    expect(rowChatButton(container, PLAIN)).toBeNull()
+  })
+})
+
+/**
+ * The folder ROW's chat button: the third control in the hover cluster.
+ *
+ * Zezhen's ruling put the action on the row itself and bypassed the
+ * two-controls-per-row cap for it, so these cases pin the three things that
+ * ruling is: the button is there for a conducted folder, it opens the conductor
+ * the same selector resolves, and it is always on -- the preview flag holds the
+ * pinned LAYOUT, never the way to reach the conversation.
+ */
+describe('the folder row\'s chat button', () => {
+  it('renders for a conducted folder and carries the folder-named label', async () => {
+    const { container, findByText } = renderSidebar()
+    await settle({ findByText })
+    const button = rowChatButton(container, LANE)
+    expect(button).not.toBeNull()
+    // Reachable without hover: the accessible name is the same string the menu
+    // item shows, so the action is named identically wherever it is reached.
+    expect(button!.getAttribute('aria-label')).toContain('remote-crew')
+    expect(button!.getAttribute('title')).toBe(button!.getAttribute('aria-label'))
+    // A glyph, not a mark standing in for it.
+    expect(button!.querySelector('svg')).not.toBeNull()
+  })
+
+  it('carries its name IN THE PAGE, not only in the OS tooltip', async () => {
+    // The UX finding this answers: an icon-only control keeps its name in
+    // `title`, which is OS chrome a reader may never see and no screenshot can
+    // show, and a blind read of the hovered row came back "nothing tells me
+    // what it does". So the name is rendered in the page, revealed on hover and
+    // on keyboard focus -- and it is the SAME string as `title`, `aria-label`
+    // and the menu item, so one action never acquires a second name.
+    const { container, findByText } = renderSidebar()
+    await settle({ findByText })
+    const button = rowChatButton(container, LANE)!
+    const tip = button.querySelector('span[aria-hidden="true"]')
+    expect(tip).not.toBeNull()
+    expect(tip!.textContent!.trim()).toBe(button.getAttribute('aria-label'))
+    // Hidden from assistive tech: the button's own `aria-label` already carries
+    // the string, and a screen reader must not say it twice.
+    expect(tip!.getAttribute('aria-hidden')).toBe('true')
+    // Out of flow, so it costs the row no width at any sidebar width -- the
+    // inline label this replaced made the hover overlay 136px of a 242px row
+    // and covered the folder's own name.
+    expect(tip!.className).toContain('absolute')
+    expect(tip!.className).toContain('pointer-events-none')
+    // Revealed by hover AND by keyboard focus, never only by hover.
+    expect(tip!.className).toContain('group-hover/conductor-chat:block')
+    expect(tip!.className).toContain('group-focus-visible/conductor-chat:block')
+    expect(button.className).toContain('group/conductor-chat')
+    // And the touch state is spelled out on the element rather than implied.
+    // `hoverVariantPolicy` fails the build without it; this pins it here too,
+    // so a reader who takes it for a redundant class has a second place saying
+    // it is load-bearing.
+    expect(tip!.className).toContain('[@media(hover:none)]:hidden')
+  })
+
+  it('switches to the conductor when clicked', async () => {
+    const onSelectSlot = vi.fn()
+    const { container, findByText } = renderSidebar(slots, onSelectSlot)
+    await settle({ findByText })
+    fireEvent.click(rowChatButton(container, LANE)!)
+    expect(onSelectSlot).toHaveBeenCalledWith(LEAD)
+  })
+
+  it('is a no-op while the backend is offline', async () => {
+    // The gate every session click has. Switching to a session nothing can load
+    // would leave an empty pane, and the row the click came from is the only way
+    // back to it.
+    const onSelectSlot = vi.fn()
+    const { container, findByText } = renderSidebar(slots, onSelectSlot, folders, { connected: false })
+    await settle({ findByText })
+    expect(rowChatButton(container, LANE)).not.toBeNull()
+    fireEvent.click(rowChatButton(container, LANE)!)
+    expect(onSelectSlot).not.toHaveBeenCalled()
+  })
+
+  it('is there with the preview flag OFF, which gates only the pinned layout', async () => {
+    // The explicit ruling: always-on. The flag-off lane pins nothing, and the
+    // row still has its way to the conversation.
+    const { container, findByText } = renderSidebar()
+    await settle({ findByText })
+    expect(container.querySelectorAll('[data-folder-conductor]')).toHaveLength(0)
+    expect(rowChatButton(container, LANE)).not.toBeNull()
   })
 })
 /**
@@ -537,5 +672,90 @@ describe('a conducted folder inside a conducted folder', () => {
     // that do not include it, and a session appears in one folder's block only.
     expect(cardOrderIn(container, SUB)).toEqual([SUB_LEAD, SUB_W1, SUB_W2])
     expect(cardOrderIn(container, LANE)[0]).toBe(LEAD)
+  })
+})
+
+/**
+ * A filter that conceals the folder's ROOT.
+ *
+ * Detection answers "which session in this folder opened the others", and that
+ * is a fact about the folder, not about what the lane is showing. Read off the
+ * FILTERED rows it was not: a query that dropped the root left the row below it
+ * with no visible creator, so that row became a root of what was left, and the
+ * menu offered it under a label reading "started this folder's other chats" --
+ * false, and with the pin on the wrong card was lifted and tagged as well.
+ *
+ * The fixture is a three-level chain for exactly that reason. Hide a root above
+ * two rows and the two are left rootless, which resolves to nothing; hide a root
+ * above a MIDDLE row and the middle row inherits a subtree, which is the shape
+ * that produced the false claim.
+ *
+ * So the folder's whole membership is detected over, and the answer is then
+ * required to be a row the folder DRAWS. A filter that hides the root therefore
+ * hides the feature -- no item, no pin -- rather than moving it to another
+ * session.
+ */
+const MID = 'k-mid-supervisor'
+/** Every title carrying `fargate` EXCEPT the root's; keys carry it nowhere. With
+ *  no backend ranking the query matches title + key + agent, so both are checked. */
+const chainSlots: ChatSlot[] = [
+  { key: LEAD, title: 'Remote crew rollout', messages: 9, running: false, folder_id: LANE },
+  { key: MID, title: 'Fargate lane supervisor', messages: 7, running: false, folder_id: LANE, parent: { slot: LEAD, key: LEAD } },
+  { key: W1, title: 'Fargate task definition', messages: 3, running: false, folder_id: LANE, parent: { slot: MID, key: MID } },
+  { key: W2, title: 'Fargate token rotation', messages: 2, running: false, folder_id: LANE, parent: { slot: MID, key: MID } },
+  { key: 'k-plain-a', title: 'Blog draft', messages: 4, running: false, folder_id: PLAIN },
+  { key: 'k-plain-b', title: 'Release notes', messages: 1, running: false, folder_id: PLAIN },
+]
+
+describe('a filter that hides the folder\'s root', () => {
+  it('opens the root with no filter, and offers NOTHING once the query hides it', async () => {
+    // One case, both states, so the pin cannot pass by the fixture simply
+    // having no conductor. What it OPENS is asserted rather than what it reads,
+    // because the label names the folder now and so says nothing about which
+    // row was detected: with no query the item opens `k-lead`, the real root,
+    // and not `k-mid-supervisor`, the row the filtered lane would leave on top.
+    const onSelectSlot = vi.fn()
+    const utils = renderSidebar(chainSlots, onSelectSlot)
+    openFolderMenu(LANE)
+    expect(menuItem(LANE)!.textContent).toContain('remote-crew')
+    fireEvent.click(menuItem(LANE)!)
+    expect(onSelectSlot).toHaveBeenCalledWith(LEAD)
+    typeSearch(utils.container, 'fargate')
+    openFolderMenu(LANE)
+    // The three matching rows are on screen, the root is not, and no item is
+    // offered on any of them.
+    expect(cardOf(utils.container, MID)).not.toBeNull()
+    expect(cardOf(utils.container, LEAD)).toBeNull()
+    expect(menuItem(LANE)).toBeNull()
+    await utils.findByText('Fargate task definition')
+  })
+
+  it('pins and tags nothing once the query hides it, with the preview flag on', async () => {
+    pinOn()
+    const { container, findByText } = renderSidebar(chainSlots)
+    await findByText('Remote crew rollout')
+    // The control in the same render: unfiltered, the real root IS pinned.
+    expect(pinnedOf(container, LANE)!.contains(cardOf(container, LEAD)!)).toBe(true)
+    typeSearch(container, 'fargate')
+    expect(pinnedOf(container, LANE)).toBeNull()
+    expect(container.querySelectorAll('[data-testid^="folder-conductor-tag-"]')).toHaveLength(0)
+    // And the row the filtered lane left on top is an ordinary card, sorted
+    // among its own workers rather than lifted above them.
+    expect(cardOf(container, MID)!.querySelector('[data-testid^="folder-conductor-tag-"]')).toBeNull()
+    await findByText('Fargate task definition')
+  })
+})
+
+describe('with the backend offline', () => {
+  it('switches no session when the item is chosen', async () => {
+    // The same gate every session-row click has. Selecting a slot nothing can
+    // load closes the menu onto an empty pane, with the row the click came from
+    // no longer on screen to go back to.
+    const onSelectSlot = vi.fn()
+    const utils = renderSidebar(slots, onSelectSlot, folders, { connected: false })
+    openFolderMenu(LANE)
+    fireEvent.click(menuItem(LANE)!)
+    expect(onSelectSlot).not.toHaveBeenCalled()
+    await settle(utils)
   })
 })

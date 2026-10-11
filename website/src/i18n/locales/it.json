@@ -12434,8 +12434,8 @@
       "crew_spaces_unavailable": "Impossibile caricare le cartelle di {{name}}. Le sue chat sono elencate senza di esse.",
       "crew_enable_failed": "Impossibile attivare {{name}}",
       "muted": "Silenziata: niente suono, avviso o badge",
-      "chat_with_session": "Chat con {{title}}",
-      "chat_with_session_desc": "La chat che ha avviato le altre chat di questa cartella",
+      "chat_with_folder": "Chat con la cartella {{folder}}",
+      "chat_with_folder_desc": "La chat che ha avviato le altre chat di questa cartella",
       "conductor_tag": "conductor"
     },
     "connectionsPage": {
@@ -13051,7 +13051,7 @@
         "dashboard": "Dashboard dinamica",
         "dashboard_desc": "Attiva la dashboard dinamica, ancora in sviluppo: una riga di stato sopra il compositore della chat, una vista Dashboard nel pannello laterale e nella pagina di un membro dell’equipaggio, e una pagina Tutte le dashboard. Il layout è ancora in fase di progettazione, quindi non viene mostrata finché non la attivi. Contiene anche l’interruttore delle schede automatiche.",
         "folder_conductor": "Conductor della cartella",
-        "folder_conductor_desc": "Porta in cima alla cartella la chat che ha avviato le altre chat di quella cartella: una barra colorata sul bordo sinistro e una piccola etichetta `conductor` accanto al nome dell'agente. Questo cambia l'ordine dell'elenco delle sessioni, quindi l'elenco resta com'è finché non la attivi. La voce di chat nel menu della cartella c'è sempre."
+        "folder_conductor_desc": "Porta in cima alla cartella la chat che ha avviato le altre chat di quella cartella: una barra colorata sul bordo sinistro e una piccola etichetta conductor accanto al nome dell'agente. Questo cambia l'ordine dell'elenco delle sessioni, quindi l'elenco resta com'è finché non la attivi. La voce di chat nel menu della cartella c'è sempre."
       },
       "kiroSignInCard": {
         "title": "Accesso a Kiro",

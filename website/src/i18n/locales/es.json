@@ -12434,8 +12434,8 @@
       "crew_spaces_unavailable": "No se pudieron cargar las carpetas de {{name}}. Sus chats se muestran sin ellas.",
       "crew_enable_failed": "No se pudo activar {{name}}",
       "muted": "Silenciada: sin sonido, aviso ni insignia",
-      "chat_with_session": "Chat con {{title}}",
-      "chat_with_session_desc": "El chat que inició los demás chats de esta carpeta",
+      "chat_with_folder": "Chat con la carpeta {{folder}}",
+      "chat_with_folder_desc": "El chat que inició los demás chats de esta carpeta",
       "conductor_tag": "conductor"
     },
     "connectionsPage": {
@@ -13051,7 +13051,7 @@
         "dashboard": "Panel dinámico",
         "dashboard_desc": "Activa el panel dinámico, aún en desarrollo: una fila de estado encima del cuadro de redacción del chat, una vista Panel en el panel lateral y en la página de un compañero de equipo, y una página Todos los paneles. Su diseño aún se está definiendo, así que no se muestra hasta que lo actives. También contiene el interruptor de las tarjetas automáticas.",
         "folder_conductor": "Conductor de la carpeta",
-        "folder_conductor_desc": "Sube al principio de la carpeta el chat que inició los demás chats de esa carpeta: una barra de color en su borde izquierdo y una pequeña etiqueta `conductor` junto al nombre del agente. Esto cambia el orden de la lista de sesiones, así que la lista se queda igual hasta que lo actives. El elemento de chat del menú de la carpeta está siempre."
+        "folder_conductor_desc": "Sube al principio de la carpeta el chat que inició los demás chats de esa carpeta: una barra de color en su borde izquierdo y una pequeña etiqueta conductor junto al nombre del agente. Esto cambia el orden de la lista de sesiones, así que la lista se queda igual hasta que lo actives. El elemento de chat del menú de la carpeta está siempre."
       },
       "kiroSignInCard": {
         "title": "Inicio de sesión en Kiro",

@@ -571,6 +571,24 @@ describe('the lanes and the folder tree', () => {
     expect(keys(rows.lanes.ungrouped)).toEqual(['loose'])
   })
 
+  it('keeps a filtered-out row in the folder\'s MEMBERSHIP, which is what `allRowsIn` answers', () => {
+    // `rowsIn` is what a folder draws, so a search narrows it. `allRowsIn` is what
+    // the folder holds, so it does not -- that is what a question about the folder
+    // itself (who opened whom inside it) has to read, because a query that conceals
+    // one row must not change the answer about the rest.
+    const also = local('also', { last_turn_ts: iso(30 * MINUTE) })
+    const rows = buildSidebarRows(inputs([filed, nested, loose, also], {
+      local: { folderOf: { ...folderOf, also: 'F1' } },
+      filters: { search: { text: 'also' } },
+    }))
+    expect(keys(rows.folderTree.rowsIn('F1'))).toEqual(['also'])
+    expect(keys(rows.folderTree.allRowsIn('F1')).sort()).toEqual(['also', 'filed'])
+    // And a folder the search emptied still reports its own members.
+    expect(rows.folderTree.rowsIn('F2')).toEqual([])
+    expect(keys(rows.folderTree.allRowsIn('F2'))).toEqual(['nested'])
+    expect(rows.folderTree.allRowsIn('nope')).toEqual([])
+  })
+
   it('counts each status chip over every row, peers included where the chip reads their own fields', () => {
     const rows = buildSidebarRows(inputs([
       local('u', { pinned: true }), local('r'), peer('u', { running: true, pinned: true }), peer('old', { last_turn_ts: iso(2 * DAY) }),

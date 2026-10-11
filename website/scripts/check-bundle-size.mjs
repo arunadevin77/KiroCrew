@@ -251,19 +251,11 @@ export const CHUNK_BUDGETS = {
   // of ordinary first-party growth added 102,811 B to the always-loaded shell and
   // chat route. The growth is spread across that shell rather than concentrated in
   // one surface, and the route-only pages are already behind React.lazy in their
-  // own chunks, so no lazy `import()` boundary is available to move it out.
-  //
-  // Folder-conductor sidebar layout (#18335) on top of this main adds first-party
-  // sidebar-shell code (the pinned conductor card, its detector and the preview
-  // flag, wired straight into the always-loaded chat-route shell ChatSidebar.tsx),
-  // the same no-lazy-boundary shape; there is no import() split to move it behind.
-  // Re-baselined on the rebased tree: pristine main @ 7bb9d57617 builds the chunk
-  // at 2,167,081 B and this branch on top of it builds 2,168,877 B, so the branch's
-  // own cost is 1,796 B. Back to the ~5% convention over that merged measurement
-  // (2,168,877 B * 1.05 = 2,277,321 B), rounded up to this table's whole-KB unit,
-  // which leaves 108,499 B (5.00%) of headroom, so ordinary first-party growth
-  // does not re-trip this on the next PR.
-  App: 2224 * KB, // measured 2,168,877 B on this branch (main @ 7bb9d57617: 2,167,081 B); ~5% headroom
+  // own chunks, so no lazy `import()` boundary is available to move it out. Back
+  // to the ~5% convention over the new measurement (2,144,668 B * 1.05 =
+  // 2,251,901 B), rounded up to this table's whole-KB unit, which leaves
+  // 108,132 B (5.04%) of headroom.
+  App: 2200 * KB, // measured 2,144,668 B on main @ f07162523a with route-only pages lazy (~5% headroom)
 
   // Markdown/math/syntax rendering stack (katex, highlight.js, remark/rehype)
   // -- one deliberate `codeSplitting` group, see vite.config.ts.

@@ -1788,7 +1788,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "id": "developer.folder-conductor",
     "label": "Folder conductor",
     "labelKey": "pages.developer.featurePreviewsTab.folder_conductor",
-    "description": "Lifts the chat that started a folder's other chats to the top of that folder: an accent bar down its left edge and a small `conductor` tag beside the agent name. This changes the order of the Sessions list, so the list stays as it is until you turn it on. The folder menu's chat item is always there.",
+    "description": "Lifts the chat that started a folder's other chats to the top of that folder: an accent bar down its left edge and a small conductor tag beside the agent name. This changes the order of the Sessions list, so the list stays as it is until you turn it on. The folder menu's chat item is always there.",
     "tab": "developer",
     "type": "toggle",
     "occurrence": 1

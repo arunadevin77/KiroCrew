@@ -12245,8 +12245,8 @@
       "crew_spaces_unavailable": "Ordner von {{name}} konnten nicht geladen werden. Die Chats werden ohne sie aufgelistet.",
       "crew_enable_failed": "{{name}} konnte nicht aktiviert werden",
       "muted": "Stumm: kein Ton, keine Meldung, kein Badge",
-      "chat_with_session": "Chat mit {{title}}",
-      "chat_with_session_desc": "Der Chat, der die anderen Chats in diesem Ordner gestartet hat",
+      "chat_with_folder": "Chat mit Ordner {{folder}}",
+      "chat_with_folder_desc": "Der Chat, der die anderen Chats in diesem Ordner gestartet hat",
       "conductor_tag": "Conductor"
     },
     "connectionsPage": {
@@ -12858,7 +12858,7 @@
         "dashboard": "Dynamisches Dashboard",
         "dashboard_desc": "Schaltet das in Entwicklung befindliche dynamische Dashboard ein: eine Statuszeile über dem Chat-Eingabefeld, eine Dashboard-Ansicht im Seitenbereich und auf der Seite eines Crewmitglieds sowie eine Seite „Alle Dashboards“. Das Layout wird noch gestaltet, daher wird es erst angezeigt, wenn du es einschaltest. Enthält auch den Schalter für automatische Karten.",
         "folder_conductor": "Ordner-Conductor",
-        "folder_conductor_desc": "Hebt den Chat, der die anderen Chats eines Ordners gestartet hat, an den Anfang dieses Ordners: ein farbiger Balken am linken Rand und ein kleines `conductor`-Label neben dem Agentennamen. Das ändert die Reihenfolge der Sitzungsliste, daher bleibt die Liste unverändert, bis du es einschaltest. Der Chat-Eintrag im Ordnermenü ist immer da."
+        "folder_conductor_desc": "Hebt den Chat, der die anderen Chats eines Ordners gestartet hat, an den Anfang dieses Ordners: ein farbiger Balken am linken Rand und ein kleines conductor-Label neben dem Agentennamen. Das ändert die Reihenfolge der Sitzungsliste, daher bleibt die Liste unverändert, bis du es einschaltest. Der Chat-Eintrag im Ordnermenü ist immer da."
       },
       "kiroSignInCard": {
         "title": "Kiro-Anmeldung",
