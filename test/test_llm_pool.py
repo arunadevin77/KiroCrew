@@ -1442,13 +1442,13 @@ class TestAcpWorkerEffort:
         assert "unsupported" in caplog.text
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("backend", [ACP_BACKEND_OPENCODE, ACP_BACKEND_GOOSE])
+    @pytest.mark.parametrize("backend", [ACP_BACKEND_OPENCODE])
     async def test_backend_with_no_effort_channel_sends_nothing_and_warns(
         self, backend, tmp_path, caplog
     ):
-        """opencode and goose implement neither ``session/set_config_option`` for
-        effort nor the kiro-native ``/effort`` command, so the pool says the
-        provider default applies instead of sending a command that cannot land."""
+        """opencode implements neither ``session/set_config_option`` for effort nor
+        the kiro-native ``/effort`` command, so the pool says the provider default
+        applies instead of sending a command that cannot land."""
         client = _mock_effort_client(["low", "medium", "high"], backend=backend)
         client.spec_zero_tools = True
         with (
@@ -1467,6 +1467,33 @@ class TestAcpWorkerEffort:
             and "using provider default" in r.getMessage()
             for r in caplog.records
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("levels", "written"),
+        [(["off", "low", "medium", "high", "max"], "high"), (["off"], None)],
+        ids=["thinking-model", "off-only"],
+    )
+    async def test_goose_writes_thinking_effort_only_where_a_level_is_offered(
+        self, levels, written, tmp_path
+    ):
+        """goose's option is per model: a thinking model takes the level under
+        ``thinking_effort``, and an option offering ``off`` alone takes nothing."""
+        client = _mock_effort_client(levels, backend=ACP_BACKEND_GOOSE)
+        client.spec_zero_tools = True
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch("kiro_crew.knowledge.llm_pool.AcpClient", return_value=client),
+        ):
+            worker = AcpWorker(effort="high", acp_backend=ACP_BACKEND_GOOSE)
+            await worker.start()
+
+        client.send_command.assert_not_awaited()
+        if written is None:
+            client.set_config_option.assert_not_awaited()
+        else:
+            client.set_config_option.assert_awaited_once_with("thinking_effort", written)
+        assert worker._effective_effort == written
 
     @pytest.mark.asyncio
     async def test_uses_provider_default_when_kiro_effort_command_fails(self, tmp_path, caplog):

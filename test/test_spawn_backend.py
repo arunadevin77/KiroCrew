@@ -480,13 +480,15 @@ class TestSuccessorsKeepTheBackend:
 
 
 class TestEffortVerdict:
-    def test_a_backend_that_advertises_its_effort_gets_no_verdict(self):
-        # Pi reports its levels at session/new; the registry cannot judge them,
-        # so neither line may be printed -- a "dropped" there was a false report.
+    @pytest.mark.parametrize("backend", ["pi", "goose"])
+    def test_a_backend_that_advertises_its_effort_gets_no_verdict(self, backend):
+        # These report their levels at session/new (goose per model); the registry
+        # cannot judge them, so neither line may be printed -- a "dropped" there
+        # would be a false report.
         from kiro_crew.subagent import effort_applied_note, effort_drop_reason
 
-        assert effort_drop_reason("pi-model", "high", backend="pi") == ""
-        assert effort_applied_note("pi-model", "high", backend="pi") == ""
+        assert effort_drop_reason("some-model", "high", backend=backend) == ""
+        assert effort_applied_note("some-model", "high", backend=backend) == ""
 
     def test_the_applied_note_names_the_channel_the_backend_uses(self, monkeypatch):
         # kiro-cli reads the level from cli.json; an adapter harness gets it as a
@@ -502,9 +504,9 @@ class TestEffortVerdict:
         assert kiro.endswith(".effort") and "config option" not in kiro
         assert subagent.effort_applied_note("gpt-5", "high") == kiro
 
-    @pytest.mark.parametrize("backend", ["opencode", "goose"])
+    @pytest.mark.parametrize("backend", ["opencode"])
     def test_a_backend_that_takes_no_effort_is_reported_dropped(self, monkeypatch, backend):
-        # Neither cli.json nor a config option reaches these harnesses: the level
+        # Neither cli.json nor a config option reaches this harness: the level
         # is never sent, so the receipt must say dropped, not applied.
         from kiro_crew import subagent
 

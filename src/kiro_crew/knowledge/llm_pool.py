@@ -308,8 +308,13 @@ def _select_effort_level(requested: str, supported: list[str]) -> Optional[str]:
         level for level in supported if isinstance(level, str) and is_valid_effort(level)
     }
     if not supported_levels:
-        # An advertised option without a usable level is treated like a lazy
-        # backend: attempt the requested value and let ACP confirm it.
+        # An option offering ``off`` alone is the harness saying the current model
+        # takes no level (goose, per model): a write there is accepted and reads
+        # back as ``off``, so nothing is sent.
+        if supported and all(level == "off" for level in supported):
+            return None
+        # Any other advertised option without a usable level is treated like a
+        # lazy backend: attempt the requested value and let ACP confirm it.
         return requested
     requested_index = EFFORT_LEVELS.index(requested)
     eligible = [
@@ -532,8 +537,9 @@ class AcpWorker(Worker):
         This pool's ``acp_backend`` is restricted by ``_get_acp_backend`` to a
         backend that answers both ``honors_zero_tool_ban`` and
         ``acp_client_spawnable`` True, and those do NOT all answer these capabilities
-        the same way -- kiro takes the slash command, opencode and goose take
-        neither -- which is exactly why they are asked here instead of an identity.
+        the same way -- kiro takes the slash command, goose takes the config option
+        (``thinking_effort``), opencode takes neither -- which is exactly why they
+        are asked here instead of an identity.
         ``test_agent_sdk_capabilities`` pins every member's answers, so a backend
         that later qualifies with different answers is caught there, not assumed to
         inherit an existing member's.

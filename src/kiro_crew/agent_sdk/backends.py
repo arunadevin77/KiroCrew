@@ -1809,13 +1809,19 @@ def model_refusal_phrase(backend: str) -> str:
 # for: the same ``session/new`` result that advertises its ``model`` select
 # advertises a ``mode`` select beside it and no ``effort`` option at all.
 #
-# goose is NOT a member, though it advertises an effort option: ``thinking_effort``
-# sits on its ``session/new`` result (``test/fixtures/acp_frames/goose/
-# handshake-live.jsonl``). goose 1.50.1 offers that option PER MODEL. Driven against a
-# local model with no extended thinking, it offered only ``off``, accepted a write of
-# ``high`` without error, and read the option back as ``off``. So a Crew write there is
-# a silent no-op, and no capture shows the levels a thinking model is offered. goose
-# waits for that capture rather than joining on the option's name.
+# goose IS a member, under its own spelling ``thinking_effort``, and the option is
+# PER MODEL. ``test/fixtures/acp_frames/goose/effort-live.jsonl`` carries both halves
+# off one live session. On a model goose treats as thinking-capable the select offers
+# off, low, medium, high and max, and a write of ``high`` reads back as ``high``. On a
+# model with no extended thinking the same select offers ``off`` alone, and a write of
+# ``high`` is accepted without error and reads back as ``off``. goose re-advertises the
+# select in a ``config_option_update`` after every write and every model switch, so the
+# client's stored copy follows the model. The levels it shares with Crew are spelled
+# identically; ``xhigh`` has no counterpart and is hidden, as on deepseek. Its
+# ``-32602`` was checked on the same build: a value it cannot parse, a request missing
+# ``configId`` and an unknown option id all answer ``-32602``. Crew's request shape is
+# fixed and the id is gated on ``supports_config_option``, so only the first can reach
+# ``_is_config_value_rejection``, which reads it correctly as a value refusal.
 #
 # pi IS a member, and joins under its OWN spelling rather than the default one: the
 # option beside its ``model`` select is ``thought_level``, offering off, minimal,
@@ -1847,6 +1853,7 @@ ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION = frozenset(
         ACP_BACKEND_CLAUDE,
         ACP_BACKEND_CODEX,
         ACP_BACKEND_DEEPSEEK,
+        ACP_BACKEND_GOOSE,
         ACP_BACKEND_KAS,
         ACP_BACKEND_PI,
     }
@@ -1867,7 +1874,8 @@ ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS = frozenset({ACP_BACKEND_CODEX})
 # The ``configId`` each backend spells its reasoning-effort option with. One home
 # for a fact that is per-harness vocabulary, not a constant: claude-agent-acp
 # advertises ``effort``, codex-acp advertises ``reasoning_effort``, KAS advertises
-# ``effortLevel`` and pi-acp advertises ``thought_level``, and a session that writes another one's spelling is
+# ``effortLevel``, pi-acp advertises ``thought_level`` and goose advertises
+# ``thinking_effort``, and a session that writes another one's spelling is
 # answered with "unknown config option" and silently keeps whatever effort it
 # already had.
 #
@@ -1882,6 +1890,7 @@ ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS = frozenset({ACP_BACKEND_CODEX})
 EFFORT_CONFIG_OPTION_IDS: Mapping[str, str] = {
     ACP_BACKEND_CODEX: "reasoning_effort",
     ACP_BACKEND_DEEPSEEK: "reasoning_effort",
+    ACP_BACKEND_GOOSE: "thinking_effort",
     ACP_BACKEND_KAS: "effortLevel",
     ACP_BACKEND_PI: "thought_level",
 }
@@ -1892,9 +1901,9 @@ DEFAULT_EFFORT_CONFIG_OPTION_ID = "effort"
 
 # Backends whose ADVERTISED effort option answers two questions Crew's model
 # registry answers everywhere else: whether this session takes an effort level at
-# all, and which levels may be written. A member advertises the option per
-# SESSION rather than per model, so the option served on ``session/new`` is the
-# authority and the registry cannot speak for it.
+# all, and which levels may be written. A member advertises the option itself --
+# per session, or per model where the harness rebuilds it (goose) -- so the option
+# it last served is the authority and the registry cannot speak for it.
 #
 # Membership is what makes the channel above REACHABLE, and the two are separate
 # claims rather than one: ``ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION`` says a change
@@ -1924,13 +1933,22 @@ DEFAULT_EFFORT_CONFIG_OPTION_ID = "effort"
 # advertised. The levels it does share with Crew are spelled identically, so
 # ``EFFORT_CONFIG_OPTION_VALUES`` carries no deepseek row.
 #
+# goose is a member because its select is the only thing that knows which of its
+# models think: goose decides that itself, per model, and serves the operator's own
+# provider ids. A select offering ``off`` alone is goose saying the current model
+# takes no level, and ``AcpProvider.supports_effort`` reads it that way rather than
+# offering a control whose every write reads back as ``off``. Like deepseek it omits
+# ``xhigh``, which is hidden the same way, so it needs no values row either.
+#
 # The kiro family and claude are NOT members, and that is the split this set
 # exists for: there the level rides the MODEL. kiro-cli refuses effort with
 # "Effort configuration is currently not available on <model>", and
 # claude-agent-acp rebuilds its effort options per model from
 # ``supportedEffortLevels`` -- so the registry, which knows which model families
 # take a level, is the right authority for them.
-ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION = frozenset({ACP_BACKEND_DEEPSEEK, ACP_BACKEND_PI})
+ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION = frozenset(
+    {ACP_BACKEND_DEEPSEEK, ACP_BACKEND_GOOSE, ACP_BACKEND_PI}
+)
 
 
 def effort_config_option_id(backend: str) -> str:

@@ -782,7 +782,7 @@ def test_the_knowledge_pool_client_takes_the_default_backend() -> None:
     )
     assert capabilities_for(ACP_BACKEND_KIRO).effort_via_config_option is False
     assert capabilities_for(ACP_BACKEND_OPENCODE).effort_via_config_option is False
-    assert capabilities_for(ACP_BACKEND_GOOSE).effort_via_config_option is False
+    assert capabilities_for(ACP_BACKEND_GOOSE).effort_via_config_option is True
     assert capabilities_for(ACP_BACKEND_KIRO).effort_via_slash_command is True
     assert capabilities_for(ACP_BACKEND_OPENCODE).effort_via_slash_command is False
     assert capabilities_for(ACP_BACKEND_GOOSE).effort_via_slash_command is False
