@@ -2017,6 +2017,118 @@ class TestSshTunnelArgvCompression:
         assert captured["compression"] is True
 
 
+class TestSshTunnelWindowsRefusal:
+    """On native Windows an ssh-tunnel spawn failure names the platform.
+
+    The surface is documented "not yet" supported on Windows, where the
+    ``ssh -N -L`` child needs the OpenSSH client on PATH (not guaranteed). When
+    that spawn fails, ``start()`` reports "SSH tunnel is not yet supported on
+    Windows" instead of a generic spawn error indistinguishable from "ssh is
+    missing", mirroring ``apps/lifecycle_scripts.py``. Crucially it does NOT
+    refuse before the spawn: a Windows host whose ``ssh`` IS on PATH still spawns
+    and connects, so a tunnel that works today is untouched. SSM/POSIX unchanged.
+    """
+
+    @pytest.mark.asyncio
+    async def test_ssh_spawn_failure_on_windows_names_the_platform(self, monkeypatch):
+        from kiro_crew import platform_compat
+        from kiro_crew.instances.ssh_tunnel_manager import (
+            _WINDOWS_SSH_TUNNEL_UNSUPPORTED,
+            TunnelState,
+            _SshTunnel,
+        )
+
+        monkeypatch.setattr(platform_compat, "IS_WINDOWS", True)
+
+        # ssh is not on PATH on this Windows host, so the spawn raises OSError —
+        # the exact generic-error case the issue reports.
+        async def _ssh_missing(*a, **k):
+            raise FileNotFoundError("[WinError 2] The system cannot find the file specified")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _ssh_missing)
+
+        tun = _SshTunnel("cd-1", "cd-1-alias", 53400, 7879, transport="ssh")
+        ok = await tun.start()
+
+        assert ok is False
+        assert tun.status.state == TunnelState.ERROR
+        # Names the platform constraint, not just "failed to spawn ssh tunnel".
+        assert tun.status.error.startswith(_WINDOWS_SSH_TUNNEL_UNSUPPORTED)
+        assert "not yet supported on Windows" in tun.status.error
+        assert not tun.status.error.startswith("failed to spawn")
+
+    @pytest.mark.asyncio
+    async def test_ssh_tunnel_is_not_refused_before_spawn_on_windows(self, monkeypatch):
+        # The fix must NOT close a path that may work: a Windows host whose ssh
+        # IS on PATH spawns successfully, so start() reaches the spawn rather than
+        # refusing up front. (The spawn is stubbed to raise AFTER being entered,
+        # so we only assert the spawn was reached, not the connect outcome.)
+        from kiro_crew import platform_compat
+        from kiro_crew.instances.ssh_tunnel_manager import _SshTunnel
+
+        monkeypatch.setattr(platform_compat, "IS_WINDOWS", True)
+
+        reached_spawn = False
+
+        async def _spawn(*a, **k):
+            nonlocal reached_spawn
+            reached_spawn = True
+            raise OSError("stop here, after entering the spawn")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn)
+
+        tun = _SshTunnel("cd-1", "cd-1-alias", 53400, 7879, transport="ssh")
+        await tun.start()
+
+        assert reached_spawn is True, "start() must reach the spawn, not refuse before it"
+
+    @pytest.mark.asyncio
+    async def test_ssm_spawn_failure_on_windows_keeps_the_generic_message(self, monkeypatch):
+        # The Windows wording is scoped to the ssh transport: an SSM spawn
+        # failure on Windows keeps the generic spawn-error message.
+        from kiro_crew import platform_compat
+        from kiro_crew.instances.ssh_tunnel_manager import TunnelState, _SshTunnel
+
+        monkeypatch.setattr(platform_compat, "IS_WINDOWS", True)
+
+        async def _fail(*a, **k):
+            raise OSError("boom")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fail)
+
+        tun = _SshTunnel(
+            "ssm-1", "", 53410, 7879, transport="ssm", ssm_target="i-0123456789abcdef0"
+        )
+        ok = await tun.start()
+
+        assert ok is False
+        assert tun.status.state == TunnelState.ERROR
+        assert tun.status.error.startswith("failed to spawn ssm tunnel")
+        assert "Windows" not in tun.status.error
+
+    @pytest.mark.asyncio
+    async def test_ssh_spawn_failure_on_posix_keeps_the_generic_message(self, monkeypatch):
+        # Control: on POSIX an ssh spawn failure keeps the generic message
+        # (behaviour unchanged off Windows).
+        from kiro_crew import platform_compat
+        from kiro_crew.instances.ssh_tunnel_manager import TunnelState, _SshTunnel
+
+        monkeypatch.setattr(platform_compat, "IS_WINDOWS", False)
+
+        async def _fail(*a, **k):
+            raise OSError("boom")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fail)
+
+        tun = _SshTunnel("cd-2", "cd-2-alias", 53420, 7879, transport="ssh")
+        ok = await tun.start()
+
+        assert ok is False
+        assert tun.status.state == TunnelState.ERROR
+        assert tun.status.error.startswith("failed to spawn ssh tunnel")
+        assert "Windows" not in tun.status.error
+
+
 requires_ssh = pytest.mark.skipif(shutil.which("ssh") is None, reason="ssh not available")
 
 #: Hang guard for a ``ssh -G`` config resolution, NOT a performance budget. The call does

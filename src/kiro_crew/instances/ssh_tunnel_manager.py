@@ -238,6 +238,16 @@ async def _upload_chunks(fh: Any, stall: asyncio.Timeout) -> Any:
 
 _LOOPBACK = "127.0.0.1"
 
+#: Stated-unsupported reason for the SSH tunnel transport on native Windows.
+#: The surface is documented "not yet" supported there (``docs/guides/
+#: windows-install.md``) and the argv builder notes it in a comment, but without
+#: a refusal at the point of use the ``ssh -N -L`` child is spawned anyway and a
+#: Windows host without ``ssh`` on PATH fails with a generic spawn error that
+#: reads as "ssh is missing" rather than "unsupported here". Refusing before the
+#: spawn with this reason mirrors the native-Windows refusal in
+#: ``apps/lifecycle_scripts.py``. The SSM/cloud transport is unaffected.
+_WINDOWS_SSH_TUNNEL_UNSUPPORTED = "SSH tunnel is not yet supported on Windows"
+
 #: The closed set of peer endpoints :meth:`SshTunnelManager.peer_capability` may
 #: read. Every one is a GET that reports what the peer gateway CAN do — its
 #: version, its agent roster, its model list, its effort levels, its workspaces —
@@ -959,6 +969,25 @@ class _SshTunnel:
             )
         except OSError as e:
             self.status.state = TunnelState.ERROR
+            # The ssh tunnel is documented "not yet" supported on native Windows
+            # (``docs/guides/windows-install.md``): the ``ssh -N -L`` child needs
+            # the OpenSSH client on PATH, which is not guaranteed there, so the
+            # spawn fails with a generic OSError that reads as "ssh is missing"
+            # and never says the surface is unsupported. When the spawn is the
+            # one that failed on Windows, name the platform constraint instead of
+            # the opaque spawn error — mirroring the native-Windows refusal in
+            # ``apps/lifecycle_scripts.py``. This does NOT pre-empt a Windows host
+            # whose ``ssh`` IS on PATH: that spawn succeeds and never reaches here,
+            # so a tunnel that works today is untouched. SSM/POSIX are unaffected.
+            if self._transport == "ssh" and platform_compat.IS_WINDOWS:
+                self.status.error = f"{_WINDOWS_SSH_TUNNEL_UNSUPPORTED} ({e})"
+                logger.warning(
+                    "SSH tunnel spawn failed for %s on Windows: %s (%s)",
+                    self._id,
+                    _WINDOWS_SSH_TUNNEL_UNSUPPORTED,
+                    e,
+                )
+                return False
             self.status.error = f"failed to spawn {self._transport} tunnel: {e}"
             logger.error("Tunnel spawn failed for %s: %s", self._id, e)
             return False
