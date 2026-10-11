@@ -14,6 +14,9 @@ import contextlib
 import json
 import logging
 import os
+import subprocess
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -41,7 +44,9 @@ from kiro_crew.github_runner import (
 from kiro_crew.github_runner import strict_provider_bins as _strict_provider_bins
 from kiro_crew.github_runner import validate_provider_executable as _validate_provider_executable
 from kiro_crew.sandbox import (
+    RLIMIT_PROFILE_TOOL,
     create_subprocess_limited,
+    popen_limited,
     sandboxed_spawn_argv,
     sandboxed_spawn_argv_async,
 )
@@ -281,6 +286,179 @@ async def _collect_process_output(
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _run_oneshot_off_loop(
+    wrapped_argv: "list[str]",
+    env: "dict[str, str]",
+    max_output_bytes: int,
+) -> "tuple[int, bytes, bytes]":
+    """Run one provider CLI off the event loop and return (rc, stdout, stderr).
+
+    Windows only. On the Proactor loop ``asyncio.create_subprocess_exec`` builds
+    the ``Popen`` -- and so runs ``CreateProcess`` -- SYNCHRONOUSLY on the loop
+    thread inside the subprocess transport's constructor, before its first
+    ``await``. When process creation on the host is slow (a large binary's first
+    launch, an endpoint-protection filter driver) that holds the gateway loop for
+    seconds and the loop-stall watchdog kills the gateway. A provider read is
+    one-shot -- spawn, read both pipes, wait for exit, nothing streamed -- so it
+    does not need a loop-bound ``Process``: it runs the whole bounded spawn-and-
+    drain on a worker thread via ``asyncio.to_thread``, so the ``CreateProcess``
+    happens off the gateway loop. POSIX keeps the async path, where a fork is
+    cheap and the loop was never held.
+
+    The guarantees match :func:`_collect_process_output`: the per-stream byte
+    caps are enforced WHILE the pipes drain (not after a full buffer), an overflow
+    or a run past ``_COMMAND_TIMEOUT_SECS`` kills and reaps the whole process tree,
+    and a cancellation of this await also kills and reaps it. All of that --
+    including the reap on cancellation -- happens on the worker thread, never on
+    the gateway loop: a worker ``to_thread`` cannot be cancelled, so instead this
+    coroutine sets a cancel flag and then awaits the SAME worker (shielded) to run
+    its own teardown. The worker checks that flag the instant the spawn returns,
+    so a cancellation landing during the multi-second ``CreateProcess`` -- the
+    window this change exists for -- still reaps the child rather than orphaning
+    it.
+    """
+    handle: dict[str, Any] = {"cancel": threading.Event()}
+    worker = asyncio.ensure_future(
+        asyncio.to_thread(_oneshot_drain_limited, wrapped_argv, env, max_output_bytes, handle)
+    )
+    try:
+        returncode, stdout, stderr = await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        # Signal the worker and let IT reap on its own thread; awaiting the
+        # shielded worker keeps the gateway loop free and guarantees the child
+        # is reaped (even if the spawn was still in flight) before we propagate.
+        handle["cancel"].set()
+        with contextlib.suppress(BaseException):
+            await asyncio.shield(worker)
+        raise
+    except _ProviderOutputTooLarge as exc:
+        raise SourceProviderError(str(exc)) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise SourceProviderError("provider timed out reading the pull request") from exc
+    except OSError as exc:
+        raise SourceProviderError("provider could not start") from exc
+    return returncode, stdout, stderr
+
+
+def _reap_oneshot_handle(handle: "dict[str, Any]") -> None:
+    """Kill and reap the worker's child tree, best effort. Safe to call twice.
+
+    Reaping goes through ``platform_compat.terminate_and_reap_sync`` -- the
+    sanctioned sync tree teardown -- rather than a bare kill primitive, so the
+    kill stays attributed and inside the primitive's own module. Only ever called
+    on the worker thread, so the kill-and-wait never runs on the gateway loop. The
+    reader threads keep draining the pipes, so a killed child blocked on a full
+    pipe cannot wedge the reap.
+    """
+    proc = handle.get("proc")
+    if proc is None or proc.returncode is not None:
+        return
+    with contextlib.suppress(Exception):
+        platform_compat.terminate_and_reap_sync(proc, grace=0.0)
+
+
+def _drain_stream_limited(stream: Any, limit: int, label: str) -> bytes:
+    """Read one subprocess pipe to EOF while enforcing a hard byte limit."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = stream.read(min(64 * 1024, limit - total + 1))
+        if not chunk:
+            return b"".join(chunks)
+        total += len(chunk)
+        if total > limit:
+            raise _ProviderOutputTooLarge(f"provider {label} was too large")
+        chunks.append(chunk)
+
+
+def _oneshot_drain_limited(
+    wrapped_argv: "list[str]",
+    env: "dict[str, str]",
+    max_output_bytes: int,
+    handle: "dict[str, Any]",
+) -> "tuple[int, bytes, bytes]":
+    """Blocking one-shot provider spawn + bounded drain, run on a worker thread.
+
+    ``wrapped_argv`` arrives already OS-isolated and env-scrubbed by its only
+    caller, :func:`_run_provider`; this adds only the resource-limit shim via
+    ``popen_limited`` (the sync, post-exec counterpart to
+    ``create_subprocess_limited``) and drains the pipes under the same per-stream
+    caps the async collector applies, killing and reaping the whole tree on
+    overflow or timeout. ``handle['proc']`` is published the instant the child
+    exists, and ``handle['cancel']`` is checked immediately after, so a
+    cancellation that lands during the spawn still reaps the child rather than
+    orphaning it. Listed in ``test_spawn_audit``'s pre-wrapped-spawn allowlist,
+    the same category as ``spawn_supervised_oneshot``.
+    """
+    cancel: threading.Event = handle["cancel"]
+    proc = popen_limited(
+        wrapped_argv,
+        profile=RLIMIT_PROFILE_TOOL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        creationflags=platform_compat.CREATE_NEW_PROCESS_GROUP,
+    )
+    handle["proc"] = proc
+    if cancel.is_set():
+        # Cancellation landed while the spawn was in flight: reap the child we
+        # just created rather than leaving it running unsupervised.
+        _reap_oneshot_handle(handle)
+        raise asyncio.CancelledError
+    stdout_box: dict[str, Any] = {}
+    stderr_box: dict[str, Any] = {}
+    deadline = time.monotonic() + _COMMAND_TIMEOUT_SECS
+
+    def _read(stream: Any, limit: int, label: str, box: "dict[str, Any]") -> None:
+        try:
+            box["data"] = _drain_stream_limited(stream, limit, label)
+        except BaseException as exc:  # noqa: BLE001 - surfaced to the caller below
+            box["error"] = exc
+            # Overflow (or a read error): kill the tree so a child still writing
+            # into a full pipe cannot wedge the other reader or ``wait`` below.
+            _reap_oneshot_handle(handle)
+
+    readers = [
+        threading.Thread(
+            target=_read, args=(proc.stdout, max_output_bytes, "response", stdout_box)
+        ),
+        threading.Thread(
+            target=_read, args=(proc.stderr, _MAX_ERROR_BYTES, "error output", stderr_box)
+        ),
+    ]
+    for reader in readers:
+        reader.start()
+    # Readers reach EOF when the child closes its pipes, i.e. when it exits (or
+    # when overflow above kills it), so joining them first cannot outlast the
+    # process. A cancel from the awaiting coroutine, or the timeout, both reap the
+    # tree -- which closes the pipes and ends the readers.
+    while any(reader.is_alive() for reader in readers):
+        if cancel.is_set():
+            _reap_oneshot_handle(handle)
+            for reader in readers:
+                reader.join(timeout=1)
+            raise asyncio.CancelledError
+        if time.monotonic() >= deadline:
+            _reap_oneshot_handle(handle)
+            for reader in readers:
+                reader.join(timeout=1)
+            raise subprocess.TimeoutExpired(wrapped_argv, _COMMAND_TIMEOUT_SECS)
+        for reader in readers:
+            reader.join(timeout=0.1)
+    if "error" in stdout_box:
+        raise stdout_box["error"]
+    if "error" in stderr_box:
+        raise stderr_box["error"]
+    try:
+        returncode = proc.wait(timeout=max(1.0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        # Pipes closed but the child has not exited within the budget: reap the
+        # tree, like every earlier exit path, before surfacing the timeout.
+        _reap_oneshot_handle(handle)
+        raise
+    return returncode, stdout_box.get("data", b""), stderr_box.get("data", b"")
 
 
 _AUTH_FAILURE_MARKERS = (
@@ -544,19 +722,28 @@ async def _run_provider(
             except Exception as exc:
                 raise SourceProviderError("provider audit unavailable") from exc
             invoked = True
-            try:
-                proc = await create_subprocess_limited(
-                    *wrapped_argv,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=env,
-                    start_new_session=platform_compat.IS_POSIX,
-                    creationflags=platform_compat.CREATE_NEW_PROCESS_GROUP,
+            if platform_compat.IS_WINDOWS:
+                # The async spawn would run CreateProcess on the gateway loop
+                # thread here; a provider read is one-shot, so run it off the loop
+                # instead. POSIX stays on the async streaming path below.
+                returncode, stdout, stderr = await _run_oneshot_off_loop(
+                    wrapped_argv, env, max_output_bytes
                 )
-            except OSError as exc:
-                raise SourceProviderError(f"{executable} could not start") from exc
-            stdout, stderr = await _collect_process_output(proc, executable, max_output_bytes)
-        result = parse(proc.returncode if proc.returncode is not None else -1, stdout, stderr)
+            else:
+                try:
+                    proc = await create_subprocess_limited(
+                        *wrapped_argv,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        env=env,
+                        start_new_session=platform_compat.IS_POSIX,
+                        creationflags=platform_compat.CREATE_NEW_PROCESS_GROUP,
+                    )
+                except OSError as exc:
+                    raise SourceProviderError(f"{executable} could not start") from exc
+                stdout, stderr = await _collect_process_output(proc, executable, max_output_bytes)
+                returncode = proc.returncode if proc.returncode is not None else -1
+        result = parse(returncode, stdout, stderr)
     except asyncio.CancelledError:
         if invoked:
             _audit_provider_cli(executable, "failed", "request_cancelled")

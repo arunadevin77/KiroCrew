@@ -252,6 +252,14 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # process-group supervisor and spawns through create_subprocess_limited
         # in a new session. Nothing agent-influenced reaches the argv here.
         "kiro_prerequisite.py::spawn_supervised_oneshot",
+        # The Windows off-loop one-shot for provider CLI reads. Its only caller,
+        # dashboard/source_providers/runner.py::_run_provider, has already
+        # OS-isolated and env-scrubbed the argv (through its own routed sandbox
+        # spawn-prep) before handing it over; this function only adds the
+        # resource-limit shim via popen_limited and drains the bounded spawn on a
+        # worker thread so CreateProcess leaves the gateway loop. Same pre-wrapped
+        # rationale as spawn_supervised_oneshot above.
+        "dashboard/source_providers/runner.py::_oneshot_drain_limited",
         # Eight pre-existing spawns in one app's own test module, invisible to this
         # audit until receivers were derived from each file's imports: they are
         # reached through a function-local ``import subprocess as sp``. Every one is

@@ -1798,19 +1798,14 @@ async def test_run_json_on_windows_proceeds_once_the_sandbox_gate_allows(monkeyp
     The companion to the test above: together they show Windows now has BOTH
     outcomes the gate defines, rather than one hard-coded refusal.
 
-    **The resolved path is POSIX-shaped on purpose — do not "correct" it to a
-    Windows one.** Only ``IS_WINDOWS`` is patched here; CI runs this on a POSIX
-    host where ``os.sep`` and ``shutil.which`` are real. A ``C:\\...`` value
-    would take ``create_subprocess_limited``'s PATH-search branch (the spawn shim
-    is non-empty on POSIX), ``shutil.which`` would return None, and the read
-    would die with ``gh could not start`` before reaching the mocked spawn — the
-    test would fail deterministically on CI while passing on a Windows dev box.
-    What this test pins is the sandbox gate, not path resolution, so it uses the
-    same absolute POSIX path every sibling test does.
+    On Windows the provider read runs off the gateway event loop: ``_run_provider``
+    wraps the argv through the sandbox gate as before, then spawns the one-shot via
+    ``_oneshot_drain_limited`` on a worker thread. It is stubbed because its real
+    ``popen_limited`` applies the POSIX spawn shim on this POSIX CI host; what this
+    test pins is the sandbox gate, not the spawn mechanics.
     """
 
-    class FakeProcess:
-        returncode = 0
+    from kiro_crew.dashboard.source_providers import runner as runner_module
 
     monkeypatch.setattr(source.platform_compat, "IS_WINDOWS", True)
     monkeypatch.setattr(
@@ -1822,9 +1817,8 @@ async def test_run_json_on_windows_proceeds_once_the_sandbox_gate_allows(monkeyp
         lambda argv, **kwargs: (argv, kwargs["env"], None),
     )
     monkeypatch.setattr(
-        source.asyncio, "create_subprocess_exec", AsyncMock(return_value=FakeProcess())
+        runner_module, "_oneshot_drain_limited", MagicMock(return_value=(0, b"{}", b""))
     )
-    monkeypatch.setattr(source, "_collect_process_output", AsyncMock(return_value=(b"{}", b"")))
 
     assert await source._run_json("gh", "api", "repos/acme/repo") == {}
 
