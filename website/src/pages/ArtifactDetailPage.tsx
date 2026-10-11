@@ -2656,11 +2656,12 @@ function UpstreamSyncBanner({ artifact, busy = false, onPulled, onBeforeMutate }
   const provLabel = providers.find((p) => p.name === pub?.provider)?.display_name
     || pub?.provider || 'the remote'
   // The publication's own link, scheme-checked before it becomes clickable so a
-  // provider cannot smuggle a javascript:/file: URL into it.
+  // provider cannot smuggle a javascript:/file: URL into it. Worded like the
+  // Publish panel's link to a public-web copy, since both open the published page.
   const publishedUrl = safeHttpUrl(pub?.view_url || '')
   const publishedLink = publishedUrl && (
     <a href={publishedUrl} target="_blank" rel="noopener noreferrer" className="underline hover:no-underline">
-      {i18nT('pages.artifactDetailPage.view_remote')}
+      {i18nT('pages.artifactDetailPage.open_published_page')}
     </a>
   )
 
@@ -2700,7 +2701,7 @@ function UpstreamSyncBanner({ artifact, busy = false, onPulled, onBeforeMutate }
       <div className={`mb-3 flex items-center gap-2 px-3 py-2 rounded-md border text-[13px] ${info.wrap}`}>
         <Globe size={14} className="lucide-inline shrink-0" />
         <span className="flex-1">
-          {i18nT('pages.artifactDetailPage.published_artifact')}{' · '}{publishedLink}
+          {i18nT('pages.artifactDetailPage.published_to_provider', { provider: provLabel })}{' · '}{publishedLink}
         </span>
       </div>
     )

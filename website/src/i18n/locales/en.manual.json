@@ -2965,11 +2965,21 @@
       "title": "This will create a publicly accessible website"
     },
     "publishHub": {
+      "existing_link_check_failed": "Could not check for an existing public link",
+      "existing_link_check_failed_hint": "If this artifact is already on the public web, publishing here may not update that page.",
+      "check_again": "Check again",
+      "update_reviewed_first": "You review and confirm before the published page changes.",
+      "update_ttl_applies_to_page": "The time limit applies to the published page from now on. With a limit, the page and its URL are deleted when it runs out.",
+      "updating_in_progress": "Updating…",
+      "ready_to_update": "Ready to update",
       "checking_for_existing_public_link": "Checking for an existing public link…",
-      "live_on_public_web": "Already live on the public web",
-      "open_live_page": "Open live page",
+      "published_on_public_web": "Already published to the public web",
+      "open_published_page": "Open published page",
       "update_same_url": "Update (same URL)",
-      "update_replaces_live_page": "This replaces the live page. Its URL stays the same.",
+      "update_replaces_published_page": "This replaces the published page. Its URL stays the same.",
+      "update_question_lead": "Update",
+      "review_update": "Review update",
+      "confirm_update": "Confirm & Update",
       "checking": "Checking…",
       "content_changed_since_preview_re_run_publish_to": "Content changed since preview — re-run publish to confirm with the current version.",
       "open_artifact_deploy": "Register an AWS profile",
@@ -4457,6 +4467,8 @@
       "col_expiry": "Expiry"
     },
     "artifactDetailPage": {
+      "published_to_provider": "Published to {{provider}}",
+      "open_published_page": "Open published page",
       "agent_chat": "Agent chat",
       "artifact_name": "Artifact name",
       "artifact_slug": "Artifact: {{slug}}",

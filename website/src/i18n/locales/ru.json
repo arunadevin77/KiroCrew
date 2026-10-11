@@ -8123,11 +8123,21 @@
       "title": "Будет создан общедоступный веб-сайт"
     },
     "publishHub": {
+      "existing_link_check_failed": "Не удалось проверить, есть ли уже публичная ссылка",
+      "existing_link_check_failed_hint": "Если этот артефакт уже опубликован в открытом интернете, публикация отсюда может не обновить ту страницу.",
+      "check_again": "Проверить снова",
+      "update_reviewed_first": "Перед изменением опубликованной страницы ты всё проверишь и подтвердишь.",
+      "update_ttl_applies_to_page": "Ограничение по времени теперь действует для опубликованной страницы. Если оно задано, страница и её URL удаляются, когда время истекает.",
+      "updating_in_progress": "Обновление…",
+      "ready_to_update": "Готово к обновлению",
       "checking_for_existing_public_link": "Проверка наличия публичной ссылки…",
-      "live_on_public_web": "Уже опубликовано в открытом интернете",
-      "open_live_page": "Открыть опубликованную страницу",
+      "published_on_public_web": "Уже опубликовано в открытом интернете",
+      "open_published_page": "Открыть опубликованную страницу",
       "update_same_url": "Обновить (тот же URL)",
-      "update_replaces_live_page": "Опубликованная страница будет заменена. Её URL не изменится.",
+      "update_replaces_published_page": "Опубликованная страница будет заменена. Её URL не изменится.",
+      "update_question_lead": "Обновить",
+      "review_update": "Проверить обновление",
+      "confirm_update": "Подтвердить и обновить",
       "back": "Назад",
       "cancel": "Отмена",
       "checking": "Проверка…",
@@ -10651,6 +10661,8 @@
       "col_expiry": "Срок"
     },
     "artifactDetailPage": {
+      "published_to_provider": "Опубликовано в {{provider}}",
+      "open_published_page": "Открыть опубликованную страницу",
       "a_newer_version_is_available_in_the_remote_copy": "· в удалённой копии доступна более новая версия",
       "activity": "Активность",
       "add_a_tag": "Добавить тег",

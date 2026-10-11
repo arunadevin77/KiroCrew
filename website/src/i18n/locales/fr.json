@@ -8007,11 +8007,21 @@
       "title": "Cela va créer un site web accessible publiquement"
     },
     "publishHub": {
+      "existing_link_check_failed": "Impossible de vérifier s'il existe déjà un lien public",
+      "existing_link_check_failed_hint": "Si cet artefact est déjà sur le web public, publier ici peut ne pas mettre à jour cette page.",
+      "check_again": "Vérifier à nouveau",
+      "update_reviewed_first": "Tu vérifies et confirmes avant que la page publiée ne change.",
+      "update_ttl_applies_to_page": "La durée limite s'applique désormais à la page publiée. Avec une limite, la page et son URL sont supprimées à l'expiration.",
+      "updating_in_progress": "Mise à jour…",
+      "ready_to_update": "Prêt à mettre à jour",
       "checking_for_existing_public_link": "Recherche d'un lien public existant…",
-      "live_on_public_web": "Déjà en ligne sur le web public",
-      "open_live_page": "Ouvrir la page en ligne",
+      "published_on_public_web": "Déjà publié sur le web public",
+      "open_published_page": "Ouvrir la page publiée",
       "update_same_url": "Mettre à jour (même URL)",
-      "update_replaces_live_page": "Cette action remplace la page en ligne. Son URL ne change pas.",
+      "update_replaces_published_page": "Cette action remplace la page publiée. Son URL ne change pas.",
+      "update_question_lead": "Mettre à jour",
+      "review_update": "Vérifier la mise à jour",
+      "confirm_update": "Confirmer et mettre à jour",
       "back": "Retour",
       "cancel": "Annuler",
       "checking": "Vérification…",
@@ -10508,6 +10518,8 @@
       "col_expiry": "Expiration"
     },
     "artifactDetailPage": {
+      "published_to_provider": "Publié sur {{provider}}",
+      "open_published_page": "Ouvrir la page publiée",
       "a_newer_version_is_available_in_the_remote_copy": "· une version plus récente est disponible dans la copie distante",
       "activity": "Activité",
       "add_a_tag": "Ajouter une étiquette",

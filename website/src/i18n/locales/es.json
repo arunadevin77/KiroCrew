@@ -8007,11 +8007,21 @@
       "title": "Esto creará un sitio web de acceso público"
     },
     "publishHub": {
+      "existing_link_check_failed": "No se pudo comprobar si ya hay un enlace público",
+      "existing_link_check_failed_hint": "Si este artefacto ya está en la web pública, publicar aquí puede no actualizar esa página.",
+      "check_again": "Volver a comprobar",
+      "update_reviewed_first": "Revisas y confirmas antes de que cambie la página publicada.",
+      "update_ttl_applies_to_page": "El límite de tiempo se aplica a la página publicada desde ahora. Con un límite, la página y la URL se eliminan cuando se agota.",
+      "updating_in_progress": "Actualizando…",
+      "ready_to_update": "Listo para actualizar",
       "checking_for_existing_public_link": "Comprobando si ya hay un enlace público…",
-      "live_on_public_web": "Ya está publicado en la web pública",
-      "open_live_page": "Abrir la página publicada",
+      "published_on_public_web": "Ya está publicado en la web pública",
+      "open_published_page": "Abrir la página publicada",
       "update_same_url": "Actualizar (misma URL)",
-      "update_replaces_live_page": "Esto reemplaza la página publicada. Su URL no cambia.",
+      "update_replaces_published_page": "Esto reemplaza la página publicada. La URL no cambia.",
+      "update_question_lead": "Actualizar",
+      "review_update": "Revisar la actualización",
+      "confirm_update": "Confirmar y actualizar",
       "back": "Atrás",
       "cancel": "Cancelar",
       "checking": "Comprobando…",
@@ -10508,6 +10518,8 @@
       "col_expiry": "Caducidad"
     },
     "artifactDetailPage": {
+      "published_to_provider": "Publicado en {{provider}}",
+      "open_published_page": "Abrir la página publicada",
       "a_newer_version_is_available_in_the_remote_copy": "· hay una versión más reciente en la copia remota",
       "activity": "Actividad",
       "add_a_tag": "Añadir una etiqueta",

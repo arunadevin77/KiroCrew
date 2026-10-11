@@ -7891,11 +7891,21 @@
       "title": "Dies erstellt eine öffentlich zugängliche Website"
     },
     "publishHub": {
+      "existing_link_check_failed": "Vorhandener öffentlicher Link konnte nicht geprüft werden",
+      "existing_link_check_failed_hint": "Ist dieses Artefakt bereits im öffentlichen Web, aktualisiert eine Veröffentlichung von hier diese Seite möglicherweise nicht.",
+      "check_again": "Erneut prüfen",
+      "update_reviewed_first": "Du prüfst und bestätigst, bevor sich die veröffentlichte Seite ändert.",
+      "update_ttl_applies_to_page": "Das Zeitlimit gilt ab jetzt für die veröffentlichte Seite. Mit einem Limit werden die Seite und die URL gelöscht, sobald es abläuft.",
+      "updating_in_progress": "Wird aktualisiert…",
+      "ready_to_update": "Bereit zum Aktualisieren",
       "checking_for_existing_public_link": "Es wird nach einem vorhandenen öffentlichen Link gesucht…",
-      "live_on_public_web": "Bereits im öffentlichen Web live",
-      "open_live_page": "Live-Seite öffnen",
+      "published_on_public_web": "Bereits im öffentlichen Web veröffentlicht",
+      "open_published_page": "Veröffentlichte Seite öffnen",
       "update_same_url": "Aktualisieren (gleiche URL)",
-      "update_replaces_live_page": "Damit wird die Live-Seite ersetzt. Ihre URL bleibt gleich.",
+      "update_replaces_published_page": "Damit wird die veröffentlichte Seite ersetzt. Die URL bleibt gleich.",
+      "update_question_lead": "Aktualisieren",
+      "review_update": "Aktualisierung prüfen",
+      "confirm_update": "Bestätigen & aktualisieren",
       "back": "Zurück",
       "cancel": "Abbrechen",
       "checking": "Wird geprüft…",
@@ -10365,6 +10375,8 @@
       "col_expiry": "Ablauf"
     },
     "artifactDetailPage": {
+      "published_to_provider": "Veröffentlicht in {{provider}}",
+      "open_published_page": "Veröffentlichte Seite öffnen",
       "a_newer_version_is_available_in_the_remote_copy": "· eine neuere Version ist in der Remote-Kopie verfügbar",
       "activity": "Aktivität",
       "add_a_tag": "Tag hinzufügen",

@@ -7775,11 +7775,21 @@
       "title": "即将创建一个可公开访问的网站"
     },
     "publishHub": {
+      "existing_link_check_failed": "无法检查是否已有公开链接",
+      "existing_link_check_failed_hint": "如果此产物已在公共网络上，在这里发布可能不会更新那个页面。",
+      "check_again": "重新检查",
+      "update_reviewed_first": "在已发布的页面更改之前，你会先查看并确认。",
+      "update_ttl_applies_to_page": "时间限制从现在起适用于已发布的页面。设置了限制时，到期后页面及其 URL 会被删除。",
+      "updating_in_progress": "正在更新…",
+      "ready_to_update": "准备更新",
       "checking_for_existing_public_link": "正在检查是否已有公开链接…",
-      "live_on_public_web": "已在公共网络上线",
-      "open_live_page": "打开线上页面",
+      "published_on_public_web": "已发布到公共网络",
+      "open_published_page": "打开已发布的页面",
       "update_same_url": "更新（URL 不变）",
-      "update_replaces_live_page": "这会替换线上页面，其 URL 保持不变。",
+      "update_replaces_published_page": "这会替换已发布的页面，其 URL 保持不变。",
+      "update_question_lead": "更新",
+      "review_update": "审阅更新",
+      "confirm_update": "确认并更新",
       "back": "返回",
       "cancel": "取消",
       "checking": "正在检查…",
@@ -10222,6 +10232,8 @@
       "col_expiry": "过期时间"
     },
     "artifactDetailPage": {
+      "published_to_provider": "已发布到 {{provider}}",
+      "open_published_page": "打开已发布的页面",
       "a_newer_version_is_available_in_the_remote_copy": "· 远端副本中有更新的版本",
       "activity": "动态",
       "add_a_tag": "添加标签",

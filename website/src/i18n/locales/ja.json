@@ -7775,11 +7775,21 @@
       "title": "一般公開されるウェブサイトが作成されます"
     },
     "publishHub": {
+      "existing_link_check_failed": "既存の公開リンクを確認できませんでした",
+      "existing_link_check_failed_hint": "このアーティファクトがすでに公開ウェブにある場合、ここからパブリッシュしてもそのページは更新されない可能性があります。",
+      "check_again": "再確認",
+      "update_reviewed_first": "公開済みのページが変わる前に、内容を確認して承認します。",
+      "update_ttl_applies_to_page": "時間制限はこれ以降、公開済みのページに適用されます。制限を設定すると、期限が来たときにページとURLが削除されます。",
+      "updating_in_progress": "更新中…",
+      "ready_to_update": "更新の準備完了",
       "checking_for_existing_public_link": "既存の公開リンクを確認中…",
-      "live_on_public_web": "すでに公開ウェブで公開中",
-      "open_live_page": "公開中のページを開く",
+      "published_on_public_web": "すでに公開ウェブで公開済み",
+      "open_published_page": "公開済みのページを開く",
       "update_same_url": "更新（同じURL）",
-      "update_replaces_live_page": "公開中のページを置き換えます。URLは変わりません。",
+      "update_replaces_published_page": "公開済みのページを置き換えます。URLは変わりません。",
+      "update_question_lead": "更新",
+      "review_update": "更新内容を確認",
+      "confirm_update": "確認して更新",
       "back": "戻る",
       "cancel": "キャンセル",
       "checking": "確認中…",
@@ -10222,6 +10232,8 @@
       "col_expiry": "期限"
     },
     "artifactDetailPage": {
+      "published_to_provider": "{{provider}} に公開済み",
+      "open_published_page": "公開済みのページを開く",
       "a_newer_version_is_available_in_the_remote_copy": "· リモートコピーでより新しいバージョンが利用可能です",
       "activity": "アクティビティ",
       "add_a_tag": "タグを追加",

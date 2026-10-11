@@ -10,6 +10,7 @@
  */
 
 import type { SessionDoc, PublishProviderDescriptor } from '../../types'
+import type { Site } from '../../hooks/useDirectDeploy'
 import { toApiError } from '../apiError'
 import type { ClientTransport } from './transport'
 
@@ -23,20 +24,17 @@ export interface AppPublishProvider {
   endpoint: string
 }
 
-/** One public-web site as `GET /api/deploy/list` reports it, read live from the
- *  AWS account's resource tags. `url` is empty while the distribution has no domain. */
-export interface DeploySite {
-  site_id: string
-  url?: string
-  status?: string
-  profile?: string
-}
-
-/** `configured: false` means no AWS profile is registered, so there is nothing to list. */
+/** What `GET /api/deploy/list` answers: every public-web site, read live from the
+ *  AWS accounts' resource tags. `configured: false` means no AWS profile is
+ *  registered, so there is nothing to list; `profile_errors` names the profiles
+ *  whose account could not be read. `error` is set when the listing could not
+ *  run on this host at all (deploy is unsupported on native Windows): the
+ *  answer is still HTTP 200, with no sites and `configured: false`. */
 export interface DeploySitesResponse {
-  sites: DeploySite[]
+  sites: Site[]
   configured: boolean
   profile_errors?: string[]
+  error?: string
 }
 
 export function createArtifactsEndpoints({ get, post, del, patch, j, jfetch: fetch, checkSessionExpired, removeAuthBanner }: ClientTransport) {

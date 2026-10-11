@@ -11,7 +11,8 @@ import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { AlertCircle, AlertTriangle, Check, ExternalLink, Globe, Settings, Upload, X } from 'lucide-react'
-import { api, type AppPublishProvider, type DeploySite, type DeploySitesResponse } from '../api/client'
+import { api, type AppPublishProvider, type DeploySitesResponse } from '../api/client'
+import type { Site } from '../hooks/useDirectDeploy'
 import { Card, Btn, ContentSkeleton } from './ui'
 import PublicPublishAckModal from './PublicPublishAckModal'
 import ErrorDetails from './ErrorDetails'
@@ -21,6 +22,7 @@ import type { Artifact, PublishProviderDescriptor } from '../types'
 import { safeHttpUrl } from '../lib/safeUrl'
 import { usePreviewFlag } from '../hooks/usePreviewFlag'
 import { PREVIEW_ARTIFACT_DEPLOY } from '../utils/previewFlags'
+import { errMessage } from '../utils/thunkError'
 
 import { i18nT } from '../i18n/t'
 interface UnifiedProvider {
@@ -95,7 +97,7 @@ export function deploySiteIdFor(slug: string): string {
 export function findLiveSite(
   resp: DeploySitesResponse | null | undefined,
   slug: string,
-): DeploySite | null {
+): Site | null {
   if (!resp || resp.configured === false || !Array.isArray(resp.sites)) return null
   const id = deploySiteIdFor(slug)
   if (!id) return null
@@ -377,7 +379,40 @@ export function PublishHub({
     retry: false,
   })
   const liveSite = lookupLiveSite ? findLiveSite(sitesQuery.data, artifact.slug) : null
+  // The listing comes from resource tags, which take a minute or two to show a
+  // site a deploy just created, so a publish writes its own result into the
+  // cached list (as the Artifact Deploy page's deploy does): the next open of the
+  // panel shows the link at once. A row the listing already has is left as is.
+  const seedPublishedSite = (url: string) => {
+    const siteId = deploySiteIdFor(artifact.slug)
+    if (!siteId) return
+    queryClient.setQueryData<DeploySitesResponse>(['deploy-web', 'sites'], prev => {
+      const sites = prev?.sites ?? []
+      if (sites.some(s => s.site_id === siteId)) return prev
+      const seeded: Site = {
+        site_id: siteId,
+        url,
+        profile: deployProfile || previewIdentity.profile,
+        // CloudFront may still be spreading the site, so it is not called live yet.
+        status: 'deploying',
+      }
+      return { ...(prev ?? { configured: true }), sites: [...sites, seeded] }
+    })
+  }
   const liveUrl = liveSite?.url ? safeHttpUrl(liveSite.url) : null
+  // A lookup that could not read every account says so, beside a link shown from
+  // an earlier read too: with no card on screen the panel otherwise looks like an
+  // unpublished artifact's, and a publish from it may not update a page that
+  // already exists in an account it could not read. A listing that could not run
+  // here at all answers HTTP 200 with its reason in `error`, so that reason
+  // counts as a failure as well.
+  const listingErrors = [sitesQuery.data?.error, ...(sitesQuery.data?.profile_errors ?? [])]
+    .filter((e): e is string => !!e)
+  const lookupFailure = !lookupLiveSite
+    ? ''
+    : sitesQuery.error
+      ? (errMessage(sitesQuery.error) || i18nT('components.errorBoundary.something_went_wrong'))
+      : listingErrors.join('; ')
 
   const [selectedId, setSelectedId] = useState<string>('')
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null)
@@ -408,6 +443,9 @@ export function PublishHub({
   // under a new URL instead of updating this one.
   const updatingLiveSite = !!liveSite && !!selected && selected.id === publicWebRow?.id
   const deployProfile = updatingLiveSite ? (liveSite?.profile ?? '') : ''
+  const busyPublishingLabel = updatingLiveSite
+    ? i18nT('components.publishHub.updating_in_progress')
+    : i18nT('components.publishHub.publishing_2')
   // Whether a TTL may be chosen for the CURRENT selection. One condition, read by
   // both the control's visibility and the value everything downstream uses, because
   // the bug here was those two disagreeing: `ttlHours` is a single piece of state
@@ -478,9 +516,7 @@ export function PublishHub({
         // Immediate success (already deployed / no confirm needed), or a
         // persisted push failure the route reported with a 200.
         setResult('error' in outcome ? { error: outcome.error } : { url: outcome.url, notice: outcome.notice, notice_code: outcome.notice_code })
-        if (!('error' in outcome) && isPublicWebDeploy(selected)) {
-          void queryClient.invalidateQueries({ queryKey: ['deploy-web', 'sites'] })
-        }
+        if (!('error' in outcome) && isPublicWebDeploy(selected)) seedPublishedSite(outcome.url)
       } else {
         setResult({ error: i18nT('components.publishHub.unexpected_response') })
       }
@@ -576,11 +612,7 @@ export function PublishHub({
         // generic warning -- the one case whose whole point is telling the user how to
         // re-enable. Every site that reads an outcome must copy BOTH fields.
         setResult('error' in outcome ? { error: outcome.error } : { url: outcome.url, notice: outcome.notice, notice_code: outcome.notice_code })
-        // The next open of this panel reads the site list again, so it shows the
-        // link this publish just made.
-        if (!('error' in outcome) && isPublicWebDeploy(selected)) {
-          void queryClient.invalidateQueries({ queryKey: ['deploy-web', 'sites'] })
-        }
+        if (!('error' in outcome) && isPublicWebDeploy(selected)) seedPublishedSite(outcome.url)
       } else {
         // An unrecognized shape is a failure we cannot describe — say so.
         // Reporting it as `{url: ''}` (the previous shape) rendered the error
@@ -651,19 +683,38 @@ export function PublishHub({
       {!selectedId && (
         <div className="space-y-2">
           {/* The lookup never holds the list back: the destinations stay usable
-              while it runs, and a failed lookup simply leaves them as they are. */}
+              while it runs, and a failed lookup leaves them as they are. */}
           {lookupLiveSite && sitesQuery.isLoading && (
             <p role="status" className="text-[12px] text-muted">
               {i18nT('components.publishHub.checking_for_existing_public_link')}
             </p>
           )}
-          {/* An artifact already live on the public web shows its link, and the
-              public-web row becomes an update of that same site. */}
+          {/* No hand-off: this panel sits on the artifact page beside an editable
+              buffer, and the hand-off navigates away from unsaved edits. Check
+              again re-reads the listing in place, and the destinations below
+              stay usable. */}
+          <ErrorNotice
+            title={i18nT('components.publishHub.existing_link_check_failed')}
+            message={lookupFailure || null}
+            messagePlacement="below"
+            footer={lookupFailure && (
+              <div className="space-y-2">
+                {/* With a link on screen the update already targets that page. */}
+                {!liveSite && <p>{i18nT('components.publishHub.existing_link_check_failed_hint')}</p>}
+                <Btn onClick={() => { void sitesQuery.refetch() }} disabled={sitesQuery.isFetching}>
+                  {i18nT('components.publishHub.check_again')}
+                </Btn>
+              </div>
+            )}
+          />
+          {/* An artifact already on the public web shows its link, and the
+              public-web row becomes an update of that same site. Same tone and
+              wording as the detail page's published-copy line. */}
           {liveSite && publicWebRow && (
-            <div className="px-3 py-2.5 rounded-md border border-ok/40 bg-ok-subtle space-y-2">
+            <div className="px-3 py-2.5 rounded-md border border-info/40 bg-info-subtle space-y-2">
               <div className="flex items-center gap-2 text-sm font-medium text-text">
-                <Globe size={16} className="text-ok shrink-0" />
-                {i18nT('components.publishHub.live_on_public_web')}
+                <Globe size={16} className="text-info shrink-0" />
+                {i18nT('components.publishHub.published_on_public_web')}
               </div>
               {liveUrl && (
                 <div className="text-[12px] font-mono text-text break-all">{liveUrl}</div>
@@ -676,13 +727,14 @@ export function PublishHub({
                     rel="noreferrer"
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border text-[13px] text-text hover:border-border-strong hover:bg-bg-hover"
                   >
-                    <ExternalLink size={12} /> {i18nT('components.publishHub.open_live_page')}
+                    <ExternalLink size={12} /> {i18nT('components.publishHub.open_published_page')}
                   </a>
                 )}
                 <Btn primary onClick={() => setSelectedId(publicWebRow.id)}>
                   <Upload size={12} /> {i18nT('components.publishHub.update_same_url')}
                 </Btn>
               </div>
+              <p className="text-[12px] text-muted">{i18nT('components.publishHub.update_reviewed_first')}</p>
             </div>
           )}
           {unified.filter(p => !(liveSite && p.id === publicWebRow?.id)).map(p => {
@@ -729,11 +781,17 @@ export function PublishHub({
       {selected && preview && !result && !scanBlocked && (
         <div className="space-y-3">
           <div className="text-sm text-muted">
-            {i18nT('components.publishHub.publishing')} <span className="font-mono font-semibold text-text">{artifact.slug}</span> {i18nT('components.publishHub.via')}{' '}
+            {updatingLiveSite
+              ? i18nT('components.publishHub.ready_to_update')
+              : i18nT('components.publishHub.publishing')} <span className="font-mono font-semibold text-text">{artifact.slug}</span> {i18nT('components.publishHub.via')}{' '}
             <span className="font-semibold text-text">{selected.label}</span>
           </div>
           <div className="text-[12px] text-muted space-y-1">
-            {typeof preview.message === 'string' && <p>{preview.message}</p>}
+            {/* The deploy's own preview line speaks of a first publish; an update
+                restates what it replaces instead. */}
+            {updatingLiveSite
+              ? <p className="text-text">{i18nT('components.publishHub.update_replaces_published_page')}</p>
+              : typeof preview.message === 'string' && <p>{preview.message}</p>}
             {typeof preview.bytes === 'number' && <p>{i18nT('components.publishHub.size')} {(preview.bytes / 1024).toFixed(1)} {i18nT('components.publishHub.kb')}</p>}
             {typeof preview.scan === 'string' && <p>{i18nT('components.publishHub.scan')} {preview.scan}</p>}
             {selected.core && (visibilityOptions.length > 0 || alreadyPublished) && selectedVisibility !== 'SHARED' && (
@@ -751,9 +809,11 @@ export function PublishHub({
           )}
           <div className="flex gap-2">
             <Btn primary onClick={() => commitPublish(false)} disabled={busy}>
-              {busy ? i18nT('components.publishHub.publishing_2') : <><Upload size={12} /> {selected.core && selectedVisibility === 'PRIVATE'
-                ? i18nT('components.publishHub.confirm_publish_private')
-                : i18nT('components.publishHub.confirm_publish')}</>}
+              {busy ? busyPublishingLabel : <><Upload size={12} /> {updatingLiveSite
+                ? i18nT('components.publishHub.confirm_update')
+                : selected.core && selectedVisibility === 'PRIVATE'
+                  ? i18nT('components.publishHub.confirm_publish_private')
+                  : i18nT('components.publishHub.confirm_publish')}</>}
             </Btn>
             <Btn onClick={() => { setPreview(null); setSelectedId('') }}>{i18nT('components.publishHub.back')}</Btn>
           </div>
@@ -791,7 +851,7 @@ export function PublishHub({
               )}
               <div className="flex gap-2">
                 <Btn danger onClick={() => commitPublish(true)} disabled={busy}>
-                  {busy ? i18nT('components.publishHub.publishing_2') : i18nT('components.publishHub.override_publish_anyway')}
+                  {busy ? busyPublishingLabel : i18nT('components.publishHub.override_publish_anyway')}
                 </Btn>
                 <Btn onClick={() => { setScanBlocked(null); setSelectedId('') }}>{i18nT('components.publishHub.cancel')}</Btn>
               </div>
@@ -804,11 +864,13 @@ export function PublishHub({
       {selected && !preview && !result && !scanBlocked && (
         <div className="space-y-3">
           <div className="text-sm text-muted">
-            {i18nT('components.publishHub.publish')} <span className="font-mono font-semibold text-text">{artifact.slug}</span> {i18nT('components.publishHub.via')}{' '}
+            {updatingLiveSite
+              ? i18nT('components.publishHub.update_question_lead')
+              : i18nT('components.publishHub.publish')} <span className="font-mono font-semibold text-text">{artifact.slug}</span> {i18nT('components.publishHub.via')}{' '}
             <span className="font-semibold text-text">{selected.label}</span>?
           </div>
           {updatingLiveSite && (
-            <p className="text-[12px] text-muted">{i18nT('components.publishHub.update_replaces_live_page')}</p>
+            <p className="text-[12px] text-text">{i18nT('components.publishHub.update_replaces_published_page')}</p>
           )}
           {/* Unconfigured core destination: no live Publish. Offering one here lets the
               user pass the acknowledgment and only THEN hit a failure. Show the remedy
@@ -866,11 +928,18 @@ export function PublishHub({
               onChange={onTtlChange}
               aria-label={i18nT('components.publishHub.ttl_time_to_live')}
             />
+            {/* An update re-arms the expiry for the page that already exists, so
+                a time limit chosen here can delete a page that is persistent today. */}
+            {updatingLiveSite && (
+              <p className="mt-1 text-[11px] text-muted">{i18nT('components.publishHub.update_ttl_applies_to_page')}</p>
+            )}
           </div>
           )}
           <div className="flex gap-2">
             <Btn primary onClick={requestPreview} disabled={busy}>
-              {busy ? i18nT('components.publishHub.checking') : <><Upload size={12} /> {i18nT('components.publishHub.publish')}</>}
+              {busy ? i18nT('components.publishHub.checking') : <><Upload size={12} /> {updatingLiveSite
+                ? i18nT('components.publishHub.review_update')
+                : i18nT('components.publishHub.publish')}</>}
             </Btn>
             <Btn onClick={() => setSelectedId('')}>{i18nT('components.publishHub.back')}</Btn>
           </div>

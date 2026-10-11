@@ -7775,11 +7775,21 @@
       "title": "누구나 접근할 수 있는 웹사이트가 만들어집니다"
     },
     "publishHub": {
+      "existing_link_check_failed": "기존 공개 링크를 확인할 수 없습니다",
+      "existing_link_check_failed_hint": "이 아티팩트가 이미 공개 웹에 있다면 여기서 게시해도 그 페이지가 업데이트되지 않을 수 있습니다.",
+      "check_again": "다시 확인",
+      "update_reviewed_first": "게시된 페이지가 바뀌기 전에 검토하고 확인합니다.",
+      "update_ttl_applies_to_page": "시간 제한은 이제부터 게시된 페이지에 적용됩니다. 제한을 두면 시간이 다 되었을 때 페이지와 URL이 삭제됩니다.",
+      "updating_in_progress": "업데이트 중…",
+      "ready_to_update": "업데이트 준비 완료",
       "checking_for_existing_public_link": "기존 공개 링크를 확인하는 중…",
-      "live_on_public_web": "이미 공개 웹에 게시됨",
-      "open_live_page": "게시된 페이지 열기",
+      "published_on_public_web": "이미 공개 웹에 게시됨",
+      "open_published_page": "게시된 페이지 열기",
       "update_same_url": "업데이트(같은 URL)",
-      "update_replaces_live_page": "게시된 페이지를 교체합니다. URL은 그대로 유지됩니다.",
+      "update_replaces_published_page": "게시된 페이지를 교체합니다. URL은 그대로 유지됩니다.",
+      "update_question_lead": "업데이트",
+      "review_update": "업데이트 검토",
+      "confirm_update": "확인 후 업데이트",
       "back": "뒤로",
       "cancel": "취소",
       "checking": "확인하는 중…",
@@ -10222,6 +10232,8 @@
       "col_expiry": "만료"
     },
     "artifactDetailPage": {
+      "published_to_provider": "{{provider}}에 게시됨",
+      "open_published_page": "게시된 페이지 열기",
       "a_newer_version_is_available_in_the_remote_copy": "· 원격 사본에 더 새로운 버전이 있습니다",
       "activity": "활동",
       "add_a_tag": "태그 추가",
