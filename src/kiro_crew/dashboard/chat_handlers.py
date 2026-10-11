@@ -8588,12 +8588,27 @@ async def api_chat_slot_project(request: web.Request) -> web.Response:
                     },
                     status=409,
                 )
-            slot._pending_reset_history_key = session_key
             # Speculatively re-create the session rooted at the new project so the
             # cwd change is paid during think-time. The eager task consumes the
             # deferred reset itself, but only when no turn is running — the
             # same killpg constraint that deferred the reset applies to it.
-            schedule_eager_spawn(state, slot, start_priority=owner_start_priority(request))
+            # Scheduled BEFORE the arm below so the arm can see whether a spawn
+            # is in flight (the model-pick guard in chat_runner reads the same
+            # _eager_spawn_task).
+            eager = schedule_eager_spawn(state, slot, start_priority=owner_start_priority(request))
+            # Arm the deferred reset only for a session that can still carry the
+            # OLD cwd into the next turn: one already registered, or an eager
+            # spawn in flight that may register one before get_or_create. With
+            # neither, get_or_create cold-starts the session already rooted at
+            # the new project, and an armed reset would tear that already-correct
+            # session down at turn end for nothing — the exact waste #17823
+            # reported, where the teardown costs a full tool_search replay. This
+            # mirrors verbatim the guard api_chat_slot_model's deferred reset
+            # already applies in chat_runner (apply_pending_model_pick).
+            if state.sessions.get_provider(session_key) is not None or (
+                eager is not None and not eager.done()
+            ):
+                slot._pending_reset_history_key = session_key
     state.push_slots_update()
     return web.json_response({"ok": True, "project": project})
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -149,9 +150,15 @@ class TestChatSlotProject:
     async def test_change_defers_session_reset(self, tmp_path):
         """Endpoint sets the deferred-reset flag instead of resetting inline,
         because an inline reset would killpg the MCP-core child that called it.
-        chat_runner consumes the flag so the next message picks up the new CWD."""
+        chat_runner consumes the flag so the next message picks up the new CWD.
+
+        A session is registered under the slot's key, so the reset is owed:
+        get_or_create would otherwise reuse that stale-CWD session for a turn."""
         slot = _ChatSlot("test")
         state = _mock_state(slot)
+        # A live session under the slot's key — it carries the old CWD, so the
+        # reset must arm.
+        state.sessions.get_provider = MagicMock(return_value=object())
         with patch("kiro_crew.dashboard.chat_handlers._save_recent_project"):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post(
@@ -163,6 +170,61 @@ class TestChatSlotProject:
         state.sessions.reset.assert_not_awaited()
         # Flag is set on the slot so chat_runner can consume it at the turn boundary.
         assert slot._pending_reset_history_key == "dashboard:test"
+
+    @pytest.mark.asyncio
+    async def test_change_with_no_live_session_does_not_arm_reset(self, tmp_path):
+        """#17823: setting the project on a slot with NO registered session and
+        no eager spawn in flight must NOT arm the deferred reset.
+
+        get_or_create cold-starts the session already rooted at the new project,
+        so an armed reset would tear that already-correct session down at the
+        first turn's end for nothing — and with tool_search on, the resume pays
+        a full chat-text replay that drops every tool result from turn 1. This
+        mirrors the guard api_chat_slot_model already applies to its own
+        deferred reset."""
+        slot = _ChatSlot("test")
+        state = _mock_state(slot)
+        # No session registered under the slot's key.
+        state.sessions.get_provider = MagicMock(return_value=None)
+        # Eager spawn disabled in tests (live.snapshot() is None), so
+        # schedule_eager_spawn returns None and no spawn is in flight.
+        with patch("kiro_crew.dashboard.chat_handlers._save_recent_project"):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat/slots/test/project",
+                    json={"project": str(tmp_path)},
+                )
+                assert resp.status == 200
+                assert slot.project == str(tmp_path)
+        # No teardown, and critically no armed flag to tear down the cold start.
+        state.sessions.reset.assert_not_awaited()
+        assert slot._pending_reset_history_key is None
+
+    @pytest.mark.asyncio
+    async def test_change_with_eager_spawn_in_flight_arms_reset(self, tmp_path):
+        """When no session is registered yet but an eager spawn is in flight,
+        that spawn may register a session carrying the old CWD before
+        get_or_create runs, so the reset is still owed."""
+        slot = _ChatSlot("test")
+        state = _mock_state(slot)
+        state.sessions.get_provider = MagicMock(return_value=None)
+        pending = asyncio.Future()  # a task that is not done()
+        with (
+            patch("kiro_crew.dashboard.chat_handlers._save_recent_project"),
+            patch(
+                "kiro_crew.dashboard.chat_handlers.schedule_eager_spawn",
+                return_value=pending,
+            ),
+        ):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat/slots/test/project",
+                    json={"project": str(tmp_path)},
+                )
+                assert resp.status == 200
+        state.sessions.reset.assert_not_awaited()
+        assert slot._pending_reset_history_key == "dashboard:test"
+        pending.cancel()
 
     @pytest.mark.asyncio
     async def test_unchanged_does_not_set_pending_reset(self, tmp_path):

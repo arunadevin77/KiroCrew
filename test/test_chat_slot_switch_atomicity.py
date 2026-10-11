@@ -1724,7 +1724,10 @@ class TestLinkedSlotSessionKey:
         slot = _ChatSlot("test")
         slot.project = "/workspace/old-ws"
         slot.linked_session_key = "slack:123.456"
-        state = _mock_state(slot)
+        # A live session under the linked key — the reset arms only for a
+        # session that can carry the old CWD (the #17823 guard), and this
+        # test's whole point is which KEY that teardown targets.
+        state = _mock_state(slot, provider=object())
         new_dir = os.path.realpath(str(tmp_path))
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.post("/api/chat/slots/test/project", json={"project": new_dir})
