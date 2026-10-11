@@ -485,7 +485,7 @@ function createWindowLifecycle(options) {
         view.webContents.insertCSS(`
           #electron-drag-bar {
             position: fixed;
-            top: 0; left: 0; right: ${IS_WIN ? "138px" : LINUX_FRAMELESS ? "108px" : "0"};
+            top: 0; left: 0; right: ${IS_WIN ? "var(--mc-win-drag-reserve, 138px)" : LINUX_FRAMELESS ? "108px" : "0"};
             height: 42px;
             -webkit-app-region: drag;
             z-index: 99999;

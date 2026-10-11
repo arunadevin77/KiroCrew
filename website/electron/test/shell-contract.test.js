@@ -290,9 +290,10 @@ test("the drag band keeps its height, its caption inset, and its focus-mode coll
   // the rule-body assertions above cannot see it.
   assert.match(
     dragBandCss(),
-    /right:\s*\$\{IS_WIN \? "138px" : LINUX_FRAMELESS \? "108px" : "0"\}/,
+    /right:\s*\$\{IS_WIN \? "var\(--mc-win-drag-reserve, 138px\)" : LINUX_FRAMELESS \? "108px" : "0"\}/,
     "the band must keep its per-platform right inset: full width on macOS, clear "
-      + "of the Windows caption overlay at 138px, and clear of the injected Linux "
+      + "of the Windows caption overlay (the zoom-aware --mc-win-drag-reserve var, "
+      + "138px fallback), and clear of the injected Linux "
       + "window controls at 108px",
   );
 });

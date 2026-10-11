@@ -26,7 +26,9 @@ const { registerCaptureSurface } = require("../capture-trust");
 const { setRemoteHostConfig } = require("../host-config");
 const {
   WIN_CAPTION_RESERVE_CSS_PX,
+  WIN_CAPTION_OVERLAY_CSS_PX,
   winCaptionReserveForZoom,
+  winDragReserveForZoom,
 } = require("../runtime/window/chrome");
 
 function validOptions(overrides = {}) {
@@ -1377,6 +1379,7 @@ describe("window chrome controls", () => {
     };
 
     const reserveFor = (z) => Math.round(WIN_CAPTION_RESERVE_CSS_PX / z);
+    const dragReserveFor = (z) => Math.round(WIN_CAPTION_OVERLAY_CSS_PX / z);
 
     const stepped = lifecycle.chrome.stepZoom(sender, 1);
     assert.ok(stepped > 1, "a step-in raises the zoom factor");
@@ -1388,6 +1391,13 @@ describe("window chrome controls", () => {
     assert.ok(
       injected.some((c) => c.includes(`'--mc-win-caption-reserve', '${reserveFor(zoom)}px'`)),
       "the zoom-aware reserve var is pushed at the stepped-in zoom",
+    );
+    // The drag-strip inset rides the same push: 138/zoom CSS px, painting to a
+    // constant 138 DIP so the injected #electron-drag-bar stays off the caption
+    // buttons at the new zoom.
+    assert.ok(
+      injected.some((c) => c.includes(`'--mc-win-drag-reserve', '${dragReserveFor(zoom)}px'`)),
+      "the zoom-aware drag-reserve var is pushed at the stepped-in zoom",
     );
 
     painted.length = 0;
@@ -1402,6 +1412,13 @@ describe("window chrome controls", () => {
     assert.ok(
       injected.some((c) => c.includes("'--mc-win-caption-reserve', '178px'")),
       "the reserve grows below 100% zoom so it still clears the fixed-DIP buttons",
+    );
+    // The drag inset grows the same way (138/0.8 = 173) so the drag strip still
+    // clips short of the fixed-DIP caption buttons below 100% zoom.
+    assert.equal(dragReserveFor(0.8), 173);
+    assert.ok(
+      injected.some((c) => c.includes("'--mc-win-drag-reserve', '173px'")),
+      "the drag inset grows below 100% zoom so the drag strip stays off the buttons",
     );
   });
 
@@ -1424,6 +1441,22 @@ describe("window chrome controls", () => {
       reload.some((e) => e.includes("'--mc-win-caption-reserve', '142px'")),
       "a reload re-pushes the zoom-correct reserve with no theme gate",
     );
+    assert.ok(
+      reload.some((e) => e.includes("'--mc-win-drag-reserve', '138px'")),
+      "a reload re-pushes the zoom-correct drag inset too (same relay)",
+    );
+  });
+
+  it("winDragReserveForZoom paints the drag inset to a constant native width at every zoom", () => {
+    // The CSS-px drag inset is 138/zoom, so inset*zoom === 138 DIP regardless of
+    // zoom; a non-finite or non-positive zoom falls back to 1x.
+    for (const z of [0.5, 0.67, 0.8, 1, 1.25, 2]) {
+      assert.equal(winDragReserveForZoom(z), Math.round(WIN_CAPTION_OVERLAY_CSS_PX / z));
+    }
+    assert.equal(winDragReserveForZoom(1), WIN_CAPTION_OVERLAY_CSS_PX);
+    for (const bad of [undefined, null, NaN, Infinity, 0, -1]) {
+      assert.equal(winDragReserveForZoom(bad), WIN_CAPTION_OVERLAY_CSS_PX);
+    }
   });
 
   it("winCaptionReserveForZoom paints to a constant native width at every zoom", () => {
