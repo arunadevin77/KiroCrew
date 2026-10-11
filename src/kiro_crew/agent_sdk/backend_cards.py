@@ -18,9 +18,8 @@ or out -- so nothing about a non-member is legible in the source data, and three
 reasons a reader wants told apart collapse into one absence: cannot do it, does it
 differently, and nobody has measured it. ``ACP_BACKENDS_MEMBER_DISPATCH`` shows the
 collapse: pi is a non-member because a mount there is INERT (the array is accepted
-and never forwarded), deepseek is a non-member on H6 -- it has the mount and, since
-Crew's gate plugin, an enforced routing, but no member-dispatch decision has been
-taken for that harness -- and KAS is a member on a captured mount.
+and never forwarded), kiro is a non-member because it has no per-session channel at
+all, and KAS is a member on a captured mount.
 
 The third level is NOT derived from the sets, because it is not in them. It is
 :data:`DECLARED_UNMEASURED`, a per-harness per-line table carrying a reason per
@@ -42,10 +41,9 @@ projection exists to remove:
   says the gap is evidence. ``test_backend_cards`` reads that comment and fails an
   entry the vocabulary does not support, so the table cannot drift away from the
   prose and the threshold is a gate rather than a convention to remember;
-* "a decision is missing" is not this state. deepseek has no member dispatch because
-  no decision has mounted Crew's control plane into it -- H6 carries nothing over
-  from codex's or opencode's -- so the feature does not work there today and
-  NOT AVAILABLE is the true mark. Unmeasured is
+* "a decision is missing" is not this state. A harness no decision has admitted to
+  a set does not have the feature -- H6 carries nothing over from another member --
+  so NOT AVAILABLE is the true mark. Unmeasured is
   for a line whose answer is unknown, never for one whose answer is no;
 * an entry may not contradict the projection. A member has demonstrated the
   capability, so :func:`_card_lines` applies an entry only to a line that is already

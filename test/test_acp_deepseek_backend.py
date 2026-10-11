@@ -46,6 +46,7 @@ from kiro_crew.acp_backends import (
     ACP_BACKENDS_KNOWN,
     ACP_BACKENDS_LOAD_WITHOUT_MODES,
     ACP_BACKENDS_MEMBER_DISPATCH,
+    ACP_BACKENDS_MEMBER_PANEL,
     ACP_BACKENDS_RESUME_WITHOUT_LOAD,
     ACP_BACKENDS_SESSION_MCP_ARRAY,
     ACP_BACKENDS_STEER,
@@ -106,7 +107,8 @@ def test_it_is_known_and_shipped_selectable() -> None:
         (ACP_BACKENDS_STEER, False),
         (ACP_BACKENDS_COMPACT, False),
         (ACP_BACKENDS_INTERNAL_SANDBOX, False),
-        (ACP_BACKENDS_MEMBER_DISPATCH, False),
+        (ACP_BACKENDS_MEMBER_DISPATCH, True),
+        (ACP_BACKENDS_MEMBER_PANEL, True),
     ],
 )
 def test_every_capability_is_an_explicit_decision(membership: frozenset, expected: bool) -> None:

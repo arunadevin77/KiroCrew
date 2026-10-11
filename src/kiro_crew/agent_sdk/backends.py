@@ -973,19 +973,38 @@ ACP_BACKENDS_MEMBER_CAPABILITIES = frozenset({ACP_BACKEND_KIRO})
 # pi is excluded on the evidence in ``ACP_BACKENDS_SESSION_MCP_ARRAY``: the array is
 # accepted and never forwarded to the agent, so a member dispatch mounted through it
 # would be inert.
-# deepseek is excluded, and since Crew's gate plugin was composed into it the ground
-# is H6 alone. It has the mount -- it is a member of ``ACP_BACKENDS_SESSION_MCP_ARRAY``
-# -- and its routing (``Routing.VERIFIED_GATE_EXTENSION``, read back from the
-# plugin's load marker before the first prompt) sits inside
-# ``tool_gate.ENFORCED_ROUTINGS``, so both of codex's preconditions now hold where
-# the second once failed. What it lacks is the DECISION for THIS harness: H6 is
-# explicit that supporting one harness establishes nothing about another, and no
-# member-dispatch round trip has been driven on it. A member session on it stays
-# plain chat -- the dispatch tools are not mounted, never mounted-and-refused.
+# deepseek is a member, and it holds the same two things goose does:
+#
+#   * the per-session mount exists, on a RECORDED ROUND TRIP --
+#     ``test/fixtures/acp_frames/deepseek/mcp-stdio-mount-live.jsonl`` carries one
+#     ``session/new`` element shaped as a broker stub, and the named child is asked
+#     ``initialize``, ``tools/list`` and ``tools/call`` with the tool's own result
+#     coming back. The harness reads no agent file of Crew's, so that array is the
+#     ONLY channel any tool set reaches it on;
+#   * the session is GATED -- its routing is ``VERIFIED_GATE_EXTENSION``, one of the
+#     mechanisms in ``tool_gate.ENFORCED_ROUTINGS``. Crew's plugin answers every tool
+#     call, MCP calls included, with ``ask``, and its load marker is READ BACK before
+#     the first prompt, so a session that cannot establish it is REFUSED rather than
+#     run.
+#
+# H6 again: goose's membership establishes nothing here, so both facts are held for
+# THIS harness. The decision is that a member DM thread on deepseek holds the
+# session-control tools.
+#
+# One thing is deepseek's ALONE: it has no mirror. The client's resolver answers a
+# mirror-less backend from ``AcpClient._mirrorless_member_mounts``, so its array is
+# only the member mounts, and the pooled broker stubs ride beside it unchanged.
+# With no mirror there is no per-tool deny channel either, so a narrowed dashboard
+# tool withholds the whole mount and the thread runs as plain chat. ``disabled``
+# binds as it does on every backend. And an element whose command cannot start
+# fails the WHOLE session here (``mcp-stdio-rollback-live.jsonl``), so an entry that
+# does not resolve is never placed (``member_dispatch_session_server`` answers
+# ``None``).
 #
 # WHERE the mount happens differs by backend, and opencode's is the client's.
 # ``AcpClient._append_member_dispatch_server`` serves the backends whose array the
-# CLIENT composes -- claude's and opencode's -- while codex and KAS are served by
+# CLIENT composes -- claude's, opencode's, goose's and deepseek's -- while codex and
+# KAS are served by
 # ``AcpRuntime``: their arrays come from ``AcpRuntime._mirrored_session_mcp`` and
 # ``create_session`` / ``load_session`` append the entry themselves, on a non-empty
 # ``member_session_key``. That key is where membership is read
@@ -1011,6 +1030,7 @@ ACP_BACKENDS_MEMBER_DISPATCH = frozenset(
         ACP_BACKEND_CODEX,
         ACP_BACKEND_OPENCODE,
         ACP_BACKEND_GOOSE,
+        ACP_BACKEND_DEEPSEEK,
     }
 )
 
@@ -1042,11 +1062,14 @@ ACP_BACKENDS_MEMBER_DISPATCH = frozenset(
 #   (claude's ``settings.local.json``), so a verb Crew did not grant is not
 #   silently pre-approved in a file Crew does not write.
 #
-# pi and deepseek are excluded for the reasons the dispatch set states and neither
-# reason is about session control specifically: pi accepts the array and never
-# forwards it, so a mounted panel server would be inert, and deepseek, though its
-# routing (``Routing.VERIFIED_GATE_EXTENSION``) is enforced, has had no member
-# round trip driven on it, so H6 gives no decision for this harness.
+# deepseek is a member on the two preconditions above, held for THIS harness: its
+# array is one this core composes (``AcpClient._mirrorless_member_mounts``), and its
+# routing (``Routing.VERIFIED_GATE_EXTENSION``) is enforced. The decision is that a
+# member session on deepseek gets a panel.
+#
+# pi is excluded for the reason the dispatch set states, and it is not about session
+# control specifically: pi accepts the array and never forwards it, so a mounted
+# panel server would be inert.
 #
 # kiro is excluded and cannot be added by this set alone: a member session's key is
 # what every mount reads, and ``providers/acp.py`` ``_member_session_key`` gates
@@ -1060,6 +1083,7 @@ ACP_BACKENDS_MEMBER_PANEL = frozenset(
         ACP_BACKEND_CODEX,
         ACP_BACKEND_OPENCODE,
         ACP_BACKEND_GOOSE,
+        ACP_BACKEND_DEEPSEEK,
     }
 )
 

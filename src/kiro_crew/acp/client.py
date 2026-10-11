@@ -2551,7 +2551,17 @@ class AcpClient:
         RAISES for a backend registered in neither map, and kiro's construction
         path must not gain a failure mode in service of an adapter (H13).
         """
-        return [] if self.backend in MIRRORS else self._pooled_broker_stubs()
+        if self.backend in MIRRORS:
+            return []
+        # A mirror-less member backend's own array (``_mirrorless_member_mounts``)
+        # sits beside these stubs on the wire. Its entry carries the member's
+        # identity, so a same-named stub is dropped rather than sent twice.
+        mounted = {
+            element.get("name")
+            for element in (getattr(self, "_session_mcp_cache", None) or [])
+            if isinstance(element, dict)
+        }
+        return [s for s in self._pooled_broker_stubs() if s.get("name") not in mounted]
 
     def _resolve_session_mcp_servers(self) -> list[dict[str, Any]]:
         """Translate the agent spec into this session's ``mcpServers`` array.
@@ -2598,7 +2608,7 @@ class AcpClient:
             stubbed = frozenset()
         mirror = mirror_for(self.backend)
         if mirror is None:
-            return []
+            return self._mirrorless_member_mounts(stubbed)
         # Recorded BEFORE the projection reads the governed flag, and beside the
         # array it authorizes: the session/new envelope reads this record, so an
         # array delivered under the exclusion always ships with it.
@@ -2653,6 +2663,51 @@ class AcpClient:
             ),
             projection.restricted_servers,
             projection.disabled_servers,
+        )
+
+    def _mirrorless_member_mounts(self, stubbed: Collection[str]) -> list[dict[str, Any]]:
+        """The member mounts of a backend with no mirror, which are its whole array.
+
+        A mirror-less backend translates no spec, so the array Crew composes for it
+        carries only what Crew adds on its own: the member session-control and panel
+        entries. Empty for every backend outside both member sets, and for every
+        non-member session, so an ordinary session's array is unchanged.
+
+        The two switch-offs still bind, read from one parse of the spec and the
+        global settings file. ``disabled`` reaches the appends as it does on a
+        mirrored backend. A per-tool narrowing is recorded as UNHONOURED, so the
+        whole server is withheld: no mirror translates the spec's deny set here, so
+        nothing could refuse the narrowed tool once the server was mounted.
+
+        Fail-closed: a spec that cannot be read mounts nothing, and the thread runs
+        as plain chat.
+        """
+        if (
+            self.backend not in ACP_BACKENDS_MEMBER_DISPATCH
+            and self.backend not in ACP_BACKENDS_MEMBER_PANEL
+        ):
+            return []
+        try:
+            from kiro_crew.acp.session_mcp import session_mcp_projection
+
+            projection = session_mcp_projection(
+                self._agent, stub_server_names=stubbed, work_dir=self._work_dir
+            )
+        except Exception:
+            logger.warning(
+                "member session %s: agent spec unreadable, so no member tools are "
+                "mounted -- the DM thread runs as plain chat this session",
+                self._session_key,
+                exc_info=True,
+            )
+            return []
+        narrowed = frozenset(server for server, _tool in projection.disabled_tools)
+        self._session_mcp_unhonoured = narrowed
+        disabled = projection.disabled_servers
+        return self._append_member_panel_server(
+            self._append_member_dispatch_server([], narrowed, disabled),
+            narrowed,
+            disabled,
         )
 
     def _pooled_broker_stubs(self) -> list[dict[str, Any]]:
@@ -3123,6 +3178,16 @@ class AcpClient:
         In-memory only. The spawn path warms ``_session_mcp_cache`` off the loop, so
         this accessor adds no scheduling or failure point to a call site shared with
         kiro-cli (harness-parity H13).
+        """
+        return self._session_mcp_servers()
+
+    def _deepseek_session_mcp_servers(self) -> list:
+        """MCP server array passed to a deepseek ``session/new`` / ``session/resume``.
+
+        Only the member mounts: deepseek has no mirror, so its spec is not
+        translated and Crew's pooled tools reach it through the shared broker
+        append. Empty on every non-member session. In-memory only: the launch
+        warms the cache off the loop.
         """
         return self._session_mcp_servers()
 
@@ -7001,6 +7066,7 @@ class AcpClient:
                 *(self._claude_session_mcp_servers() if self._is_claude else []),
                 *(self._opencode_session_mcp_servers() if self._is_opencode else []),
                 *(self._goose_session_mcp_servers() if self._is_goose else []),
+                *(self._deepseek_session_mcp_servers() if self._is_deepseek else []),
                 *(await asyncio.to_thread(self._pooled_mcp_servers)),
             ],
         }
@@ -7069,6 +7135,7 @@ class AcpClient:
                 *(self._claude_session_mcp_servers() if self._is_claude else []),
                 *(self._opencode_session_mcp_servers() if self._is_opencode else []),
                 *(self._goose_session_mcp_servers() if self._is_goose else []),
+                *(self._deepseek_session_mcp_servers() if self._is_deepseek else []),
                 *(await asyncio.to_thread(self._pooled_mcp_servers)),
             ]
             # Rebuilt AFTER the array, from the same re-seed: the envelope carries
@@ -7222,6 +7289,7 @@ class AcpClient:
                             *(self._claude_session_mcp_servers() if self._is_claude else []),
                             *(self._opencode_session_mcp_servers() if self._is_opencode else []),
                             *(self._goose_session_mcp_servers() if self._is_goose else []),
+                            *(self._deepseek_session_mcp_servers() if self._is_deepseek else []),
                             *(await asyncio.to_thread(self._pooled_mcp_servers)),
                         ],
                     }
