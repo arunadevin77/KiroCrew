@@ -5268,9 +5268,14 @@ Build it from theme variables, readable at 320px wide, with motion off under
 `prefers-reduced-motion`, and give every link
 `target="_blank" rel="noopener noreferrer"`. Put the answers you need from them
 in an `[OPTIONS: ...]` line or `ask_question` under the widget, never as buttons
-drawn in HTML, and keep each answer a few words long so it is read in full. For a goal that runs more than one round, also keep one
-`task-dashboard` artifact and update that same slug at each milestone: the
-widget is the summary, the artifact is the full board.
+drawn in HTML, and keep each answer a few words long so it is read in full. For
+a goal that runs more than one round, where the full board lives depends on your
+surface. When the `[DASHBOARD]` block names a board page (`goal-board` or
+`work-kanban`), that page is the full board: load the `dashboard` skill, and keep
+this widget the milestone summary beside it. With no board page named there is
+nothing for a reader to open, so also keep one `task-dashboard` artifact and
+update that same slug at each milestone: the widget is the summary, the artifact
+is the full board.
 
 ## If a conductor dispatched you
 

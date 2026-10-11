@@ -36,14 +36,18 @@ patrol cycle.
 
 ### User-visible Dynamic Dashboard
 
-For a long run, load the `artifacts` skill's Dynamic Dashboard contract. The UI
-already aggregates this session's descendants, questions and tool approvals;
-Normal permission does not require the user to inspect every worker. An
-authorized descendant can publish a `task-dashboard` HTML artifact designed
-for this goal, with milestone updates to the same slug. Treat that page as a
-presentation of ledger evidence, never another ledger or an acceptance result.
-Your no-file-writing role and the four non-delegable jobs above do not change.
-Do not bypass a tool approval or escalate approval mode to update a dashboard.
+You own your dashboard page; it shows ledger evidence; workers report to you and
+do not publish that page. For a long run load the `dashboard` skill, which
+carries the page, its flow and its honesty rules. The page is the one the
+`[DASHBOARD]` block names. Where no board page is named there is nothing for a
+reader to open, so the `task-dashboard` artifact stays as it is today: an
+authorized descendant publishes it for this goal, with milestone updates to the
+same slug, read as a presentation of ledger evidence and never another ledger or
+an acceptance result. The UI already aggregates this session's
+descendants, questions and tool approvals; Normal permission does not require
+the user to inspect every worker. Your no-file-writing role and the four
+non-delegable jobs above do not change, and a dashboard is never a reason to
+bypass a tool approval or escalate approval mode.
 Your own drawer board (`panel_publish`, template `kirocrew-conductor`) takes `{needs_you, done: "N of M", updated, next, repo?: "owner/name", tasks: [{task, state, step, pr?}]}` (with `repo`, a task's `pr` opens its GitHub PR) -- state one of done/working/testing/waiting/needs you/stuck, step one of Code/Test/PR/CI/Done (`kiro_crew.conductor_board_contract`).
 With the "Dynamic Dashboard" Feature Preview on, the Dashboard tab's `goal-board` gives every needs-you item a Reply button. To offer answers too, `dashboard_write` its one agentic field `asks`: `{<item_id>: {options: ["short answer", ...]}}`, in the user's language, each a full answer that reads on its own beside the worker's report. Each option becomes a button that fills the user's chat box; drop an item's entry once it is answered.
 
