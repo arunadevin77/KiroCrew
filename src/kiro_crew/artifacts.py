@@ -416,6 +416,29 @@ def _owner_only_tmp_opener(path: str, flags: int) -> int:
     return fd
 
 
+def _sync_before_publish(fh: Any) -> None:
+    """Flush *fh* to the device before its temp file is renamed into place.
+
+    A temp file plus a rename makes the SWAP atomic; it does not make the bytes
+    durable. The rename can land while the content is still only in the page
+    cache, so a crash leaves the artifact's name pointing at a file the kernel
+    never finished writing -- a torn read that the atomic rename was supposed to
+    rule out. Flushing the Python buffer and then ``fsync`` is what makes "the
+    rename published real bytes" true rather than likely.
+
+    A platform that cannot sync a descriptor is not a reason to refuse the write:
+    the write is still atomic in the sense the rename gives it, and refusing here
+    would make the store unusable where ``fsync`` is unsupported. So an
+    ``OSError`` is logged and swallowed -- the durability is best-effort, the
+    atomicity is not.
+    """
+    fh.flush()
+    try:
+        os.fsync(fh.fileno())
+    except OSError as exc:  # pragma: no cover - platform dependent
+        logger.debug("fsync before publish failed for fd %s: %s", fh.fileno(), exc)
+
+
 def _prepare_store_write(resolved: Path, *, owner_only: bool) -> Callable[[str, int], int] | None:
     """Create *resolved*'s parent and return the opener for its tmp file."""
     if owner_only:
@@ -2718,6 +2741,7 @@ class ArtifactStore:
         resolved = Path(os.path.realpath(path))
         if reason := _fence_refusal(resolved, "write"):
             raise ArtifactError(reason)
+        self._refuse_write_outside_root(path, resolved)
         # Atomic write: tmp file + rename. Inside the data home the tmp is 0600
         # before the first byte is written (created so, or narrowed when a crash
         # left one behind), so the published file is never readable by others.
@@ -2725,6 +2749,7 @@ class ArtifactStore:
         tmp = resolved.with_suffix(resolved.suffix + ".tmp")
         with open(tmp, "w", encoding="utf-8", opener=opener) as fh:
             fh.write(text)
+            _sync_before_publish(fh)
         tmp.replace(resolved)
 
     def _read_bytes(self, path: Path) -> bytes:
@@ -2771,6 +2796,39 @@ class ArtifactStore:
             raise ArtifactNotFoundError(f"image asset is not readable: {path.name}")
         return data
 
+    def _refuse_write_outside_root(self, asked: Path, resolved: Path) -> None:
+        """Refuse a write whose RESOLVED path has left the store.
+
+        Both writers resolve the path before opening it, which is what keeps the
+        sensitive-path fence honest -- but resolving is also what follows a link.
+        A symlink planted at a store file (``current.html``, a version, a
+        ``meta.json``) resolves to the link's target, and the fence only refuses a
+        target it considers sensitive: anywhere else, the write lands outside the
+        store at a path the artifact's own name does not point to.
+
+        The claim is scoped to what the CALLER asked for, which is what keeps
+        these two general-purpose helpers general: a path that never pointed into
+        the store makes no containment promise and is left to the fence alone
+        (``test_artifacts_pathres`` exercises them exactly that way). A path that
+        DID point into the store must still be in it once resolved -- so the only
+        thing refused here is a link that moved a store file out of the store.
+
+        The root's own realpath is the comparison, because a store rooted at a
+        symlinked data home is an ordinary setup and must keep working.
+        """
+        root = Path(os.path.realpath(self._root))
+        asked_abs = Path(os.path.abspath(asked))
+        if root not in asked_abs.parents:
+            return
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            raise ArtifactError(
+                f"refusing to write {asked}: it resolves to {resolved}, outside the "
+                f"artifact store at {root}. A link at that name would send the write "
+                f"somewhere the path does not name"
+            ) from None
+
     def _write_bytes(self, path: Path, data: bytes) -> None:
         """Binary sibling of :meth:`_write_text` (image asset writes).
 
@@ -2780,10 +2838,12 @@ class ArtifactStore:
         resolved = Path(os.path.realpath(path))
         if reason := _fence_refusal(resolved, "write"):
             raise ArtifactError(reason)
+        self._refuse_write_outside_root(path, resolved)
         opener = _prepare_store_write(resolved, owner_only=self._owner_only)
         tmp = resolved.with_suffix(resolved.suffix + ".tmp")
         with open(tmp, "wb", opener=opener) as fh:
             fh.write(data)
+            _sync_before_publish(fh)
         tmp.replace(resolved)
 
     def _prune_versions(self, slug: str) -> None:
