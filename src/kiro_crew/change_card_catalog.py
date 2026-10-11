@@ -1170,7 +1170,10 @@ def build_preview(
         out["changes"] = rows
         members = list(context.get("members") or [])
         out["scope"] = {"members": members, "count": len(members)}
-        out["risk"] = RISK_WIDEN if widen else (RISK_TIGHTEN if tighten else RISK_NORMAL)
+        if widen:
+            out["risk"] = RISK_WIDEN
+        elif tighten:
+            out["risk"] = RISK_TIGHTEN
         out["apply"] = [step("PATCH", f"/api/agents/detail/{_q(p['template'])}", changed)]
     elif kind == KIND_MCP_INSTALL:
         if snapshot.get("exists"):
@@ -1355,7 +1358,12 @@ def _impact_rows(impact: list[dict[str, Any]]) -> list[dict[str, Any]]:
         section = str(item.get("section") or "")
         bucket = grouped.setdefault(section, {"add": [], "remove": [], "changed": []})
         change = item.get("change")
-        key = "add" if change == "added" else "remove" if change == "removed" else "changed"
+        if change == "added":
+            key = "add"
+        elif change == "removed":
+            key = "remove"
+        else:
+            key = "changed"
         bucket[key].append(str(item.get("id") or ""))
     rows = []
     for section, bucket in grouped.items():
@@ -1534,10 +1542,12 @@ def _build_undo(
         return _capability_plan(p["member"], revision, {"operations": ops}), None
     if kind == KIND_TEMPLATE_UPDATE:
         fields = before.get("fields") or {}
-        old = {
-            k: fields.get(k) if fields.get(k) is not None else ([] if k != "model" else "")
-            for k in p["fields"]
-        }
+        old = {}
+        for k in p["fields"]:
+            value = fields.get(k)
+            if value is None:
+                value = [] if k != "model" else ""
+            old[k] = value
         return [step("PATCH", f"/api/agents/detail/{_q(p['template'])}", old)], None
     if kind == KIND_MCP_TOGGLE:
         return [_toggle_step(p, bool(before.get("enabled")))], None
@@ -1617,14 +1627,14 @@ def describe_manual_change(
         return f"changed config {s(path)} {s(before)}→{s(b.get('value'))}"
     if route == ("PUT", "/api/dashboard/config"):
         prior = before if isinstance(before, dict) else {}
-        parts = [
-            (
-                f"{s(k)} {s(prior.get(k))}→{s(v)}"
-                if k in DASHBOARD_KEYS
-                else f"{s(k)} {s(v)}" if k in DASHBOARD_LIST_OP_KEYS else s(k)
-            )
-            for k, v in sorted(b.items())
-        ]
+        parts = []
+        for k, v in sorted(b.items()):
+            if k in DASHBOARD_KEYS:
+                parts.append(f"{s(k)} {s(prior.get(k))}→{s(v)}")
+            elif k in DASHBOARD_LIST_OP_KEYS:
+                parts.append(f"{s(k)} {s(v)}")
+            else:
+                parts.append(s(k))
         return f"changed dashboard setting {', '.join(parts[:6])}" if parts else None
     if route == ("POST", "/api/crons"):
         when = b.get("cron") or b.get("every") or ("once" if b.get("at") else "")
