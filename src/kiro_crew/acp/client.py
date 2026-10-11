@@ -67,6 +67,7 @@ from kiro_crew.acp import client_lifecycle as _client_lifecycle
 from kiro_crew.acp import client_mcp_array as _client_mcp_array
 from kiro_crew.acp import client_model_selection as _client_model_selection
 from kiro_crew.acp import client_permissions as _client_permissions
+from kiro_crew.acp import client_qoder as _client_qoder
 from kiro_crew.acp import client_seed_ownership as _client_seed_ownership
 from kiro_crew.acp import client_spawn_env as _client_spawn_env
 from kiro_crew.acp import client_tool_events as _client_tool_events
@@ -82,6 +83,7 @@ from kiro_crew.acp import (  # noqa: F401
     transport_framing,
 )
 from kiro_crew.acp._dispatch import (  # noqa: F401
+    _MAX_HARNESS_TOOL_ID_LEN,
     ACP_BACKENDS_META_IDENTITY,
     DRAIN_YIELD_AFTER_S,
     MAX_ACTIVE_TOOL_CALLS,
@@ -153,6 +155,10 @@ from kiro_crew.acp.client_permissions import PI_ACP_VERIFIED_VERSION  # noqa: F4
 from kiro_crew.acp.client_permissions import _goose_versions_noted  # noqa: F401
 from kiro_crew.acp.client_permissions import _pi_adapter_versions_noted  # noqa: F401
 from kiro_crew.acp.client_permissions import _scrub_observed  # noqa: F401
+from kiro_crew.acp.client_qoder import _JSONRPC_AUTH_REQUIRED  # noqa: F401
+from kiro_crew.acp.client_qoder import _QODER_TOOL_CALL_ID_MAX_CHARS  # noqa: F401
+from kiro_crew.acp.client_qoder import _qoder_config_mode  # noqa: F401
+from kiro_crew.acp.client_qoder import refresh_exclusive_catalog  # noqa: F401
 from kiro_crew.acp.client_spawn_env import _CODEX_ACP_DEP_MARKER  # noqa: F401
 from kiro_crew.acp.client_spawn_env import _CODEX_ACP_PKG_ENTRY  # noqa: F401
 from kiro_crew.acp.client_spawn_env import _ENV_CODEX_ACP_BIN  # noqa: F401
@@ -286,6 +292,8 @@ from kiro_crew.acp.types import (  # noqa: F401
     ACP_BACKEND_KIRO,
     ACP_BACKEND_OPENCODE,
     ACP_BACKEND_PI,
+    ACP_BACKEND_QODER,
+    ACP_BACKENDS_ADVERTISED_MODEL_EXCLUSIVE,
     ACP_BACKENDS_ADVERTISED_MODEL_SELECTION,
     ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION,
     ACP_BACKENDS_FORK_AT_MESSAGE,
@@ -355,6 +363,9 @@ from kiro_crew.acp.types import (  # noqa: F401
     OPTION_ALLOW_ONCE,
     OUTCOME_CANCELLED,
     OUTCOME_SELECTED,
+    QODER_ALLOW_ALWAYS_OPTION_ID,
+    QODER_REQUIRED_MODE,
+    QODER_SUPPORTED_VERSION,
     STEERING_ANSWER_WAIT_SECS,
     STEERING_INJECTED,
     STOP_REASON_COMPACTION_FAILED,
@@ -366,6 +377,7 @@ from kiro_crew.acp.types import (  # noqa: F401
     UPDATE_CURRENT_MODE,
     UPDATE_SESSION_INFO,
     UPDATE_TOOL_CALL,
+    UPDATE_TOOL_CALL_UPDATE,
     UPDATE_USAGE,
     UPDATE_USER_MESSAGE_CHUNK,
     AcpEvent,
@@ -511,6 +523,10 @@ PROTOCOL_VERSION_GOOSE = launch_for(ACP_BACKEND_GOOSE).protocol_version
 # so it speaks the SPEC dialect too. Verified off its own wire, and its own literal
 # for the same reason the two above have one (harness-parity H10).
 PROTOCOL_VERSION_DEEPSEEK = launch_for(ACP_BACKEND_DEEPSEEK).protocol_version
+# qodercli answers ``initialize`` with an integer ``protocolVersion`` of 1 (captured off
+# 1.1.17's own wire), so it speaks the SPEC dialect; its own literal for the same H10
+# reason as the rows above.
+PROTOCOL_VERSION_QODER = launch_for(ACP_BACKEND_QODER).protocol_version
 #: Handshake dialect per harness. A TABLE, not an if-chain: the handshake runs on
 #: the construction path kiro-cli shares with every adapter, and harness-parity H13
 #: keeps that path free of conditionals added in service of one. A harness added
@@ -857,6 +873,18 @@ class AcpClient:
         # of denied calls, which must never reach ``completed``.
         self._pi_gate_request_tool: dict[str, str] = {}
         self._pi_gate_denied_ids: set[str] = set()
+        # Qoder's per-call route witnesses. A permission frame must name the call
+        # before it executes; no response may select allow_always; and a later
+        # call reusing an id gets a fresh verdict, like the DeepSeek ids that reuse
+        # call_0.
+        self._qoder_asked_ids: set[str] = set()
+        self._qoder_request_tool: dict[str, str] = {}
+        self._qoder_denied_ids: set[str] = set()
+        self._qoder_executed_ids: set[str] = set()
+        self._qoder_approved_ids: set[str] = set()
+        self._qoder_bookkeeping_overflow = False
+        self._qoder_default_model_id = ""
+        self._qoder_live_prompt_seen = False
         self._session_key = session_key
         # When set, this client emits a per-tool-call SEL audit from the ACP
         # dispatch loop. Used by app/worker-pool clients (e.g. code-review-sage,
@@ -1336,6 +1364,10 @@ class AcpClient:
         return self.backend == ACP_BACKEND_DEEPSEEK
 
     @property
+    def _is_qoder(self) -> bool:
+        return self.backend == ACP_BACKEND_QODER
+
+    @property
     def _model_registry_namespace(self) -> str:
         """The model_registry namespace key for this backend (``claude_code`` /
         ``acp``). A registry index selector, NOT a provider-identity check — see
@@ -1699,6 +1731,21 @@ class AcpClient:
     _reject_unknown_server_request = _client_permissions._reject_unknown_server_request
     _note_pi_gate_asked = _client_permissions._note_pi_gate_asked
     _build_permission_event = _client_permissions._build_permission_event
+    # Qoder's runtime route witnesses: ``kiro_crew.acp.client_qoder``.
+    _resolve_qoder_model_id = _client_qoder._resolve_qoder_model_id
+    _withhold_qoder_startup_model = _client_qoder._withhold_qoder_startup_model
+    _verify_qoder_version = _client_qoder._verify_qoder_version
+    _verify_qoder_routing = _client_qoder._verify_qoder_routing
+    _note_qoder_denied = _client_qoder._note_qoder_denied
+    _retire_qoder_request_tool = _client_qoder._retire_qoder_request_tool
+    _make_room_for_qoder_request = _client_qoder._make_room_for_qoder_request
+    _stop_qoder_on_bookkeeping_overflow = _client_qoder._stop_qoder_on_bookkeeping_overflow
+    _note_qoder_asked = _client_qoder._note_qoder_asked
+    _tripwire_qoder_mode = _client_qoder._tripwire_qoder_mode
+    _stop_qoder_on_mode_issue = _client_qoder._stop_qoder_on_mode_issue
+    _tripwire_qoder_unasked = _client_qoder._tripwire_qoder_unasked
+    _stop_qoder_unasked = _client_qoder._stop_qoder_unasked
+    _is_qoder_signed_out_error = staticmethod(_client_qoder._is_qoder_signed_out_error)
 
     @property
     def acp_config_options(self) -> list[dict]:
@@ -2381,6 +2428,7 @@ class AcpClient:
         self._steering_advertised = steering_advertised(init_resp)
         self._note_pi_adapter_version()
         self._note_goose_version()
+        self._verify_qoder_version()
 
         # The subprocess has now read its agent spec, which closes the window the
         # pre-spawn snapshot opened: a write landing before this point is caught here,
@@ -2413,6 +2461,11 @@ class AcpClient:
         if fork_request and not resume_sid and self._can_load_session:
             # A successful fork is then restored like any resume.
             resume_sid = await self._fork_session(*fork_request, capabilities)
+        if self._is_qoder:
+            # Load and new replay transcript notifications before their response.
+            # Those are history, not this session's execution, and the tripwire
+            # stays disarmed until Crew sends the first live prompt.
+            self._qoder_live_prompt_seen = False
         sent_snapshot: DerivedSpecSnapshot | None = None
 
         if resume_sid and self._can_load_session:
@@ -2543,6 +2596,8 @@ class AcpClient:
                     # own read-back on the response that replaces this one.
                     if self._is_goose and self._resumed:
                         self._verify_goose_routing(load_resp)
+                    if self._is_qoder and self._resumed:
+                        self._verify_qoder_routing(load_resp)
                     if self._is_claude and self._resumed:
                         await self._pin_claude_starting_mode(load_resp)
             else:
@@ -2573,6 +2628,8 @@ class AcpClient:
             # an adapter (harness-parity H13).
             if self._is_goose:
                 self._verify_goose_routing(session_resp)
+            if self._is_qoder:
+                self._verify_qoder_routing(session_resp)
             if not self._session_id:
                 # Both the initial attempt and the substitution retry failed to
                 # yield a session. Raise a clear, actionable error instead of
@@ -3447,6 +3504,8 @@ class AcpClient:
                     # permission frames, this text-only one included.
                     await self._tripwire_pi_gate(msg)
                     await self._tripwire_goose_mode(msg)
+                    await self._tripwire_qoder_mode(msg)
+                    await self._tripwire_qoder_unasked(msg)
                     chunk, is_thinking = self._extract_text_chunk(msg)
                     if chunk and not is_thinking:
                         # A claude compaction notice is a control frame wearing
@@ -3657,6 +3716,8 @@ class AcpClient:
                 _raise_acp_error(msg.error, self._advertised_model_ids(), backend=self.backend)
             if action == "permission":
                 permission_event = self._build_permission_event(msg)
+                if self._is_qoder and self._qoder_bookkeeping_overflow:
+                    await self._stop_qoder_on_bookkeeping_overflow(msg.id)
                 if permission_event is None:
                     if msg.id is not None:
                         await self._send_error(msg.id, -32600, "invalid request id")
@@ -3779,6 +3840,8 @@ class AcpClient:
                 # (content blocks vs rawOutput) details.
                 await self._tripwire_pi_gate(msg)
                 await self._tripwire_goose_mode(msg)
+                await self._tripwire_qoder_mode(msg)
+                await self._tripwire_qoder_unasked(msg)
                 tool_result_event = self._extract_tool_call_update(msg)
                 if tool_result_event:
                     if tool_result_event.tool_status in TERMINAL_TOOL_STATUSES:
@@ -4121,7 +4184,7 @@ class AcpClient:
         await self._settle_orphan_steers()
         # Shared with AcpSessionHandle.prompt via prompt_blocks so the two paths
         # cannot drift.
-        return await self._send_request(
+        request_id = await self._send_request(
             METHOD_PROMPT,
             {
                 "sessionId": self._session_id,
@@ -4132,6 +4195,11 @@ class AcpClient:
                 ),
             },
         )
+        if self._is_qoder:
+            # The request is now on the wire. Everything Qoder emits after this
+            # belongs to a Crew-driven turn; everything before it may be replay.
+            self._qoder_live_prompt_seen = True
+        return request_id
 
     async def _read_prompt_response(self, req_id: int, timeout: float) -> str:
         output: list[str] = []
@@ -4213,6 +4281,8 @@ class AcpClient:
                     await self._maybe_fire_pre_tool_hooks(tool_event)
                 await self._tripwire_pi_gate(msg)
                 await self._tripwire_goose_mode(msg)
+                await self._tripwire_qoder_mode(msg)
+                await self._tripwire_qoder_unasked(msg)
                 tool_result_event = self._extract_tool_call_update(msg)
                 if tool_result_event:
                     self._skill_reads.credit(tool_result_event)
@@ -4584,8 +4654,13 @@ _CLIENT_OWNERS: tuple[str, ...] = (
     "kiro_crew.acp.client_usage",
     "kiro_crew.acp.client_transport",
     "kiro_crew.acp.client_lifecycle",
+    "kiro_crew.acp.client_qoder",
     "kiro_crew.acp.client_turn_control",
 )
+# The catalog owner cannot import the facade at run time (owner rule), so the
+# concrete class is handed to it after the class is complete and before the mirror
+# indexes the owners, so the mirror sees ``AcpClient`` bound in ``client_qoder``.
+setattr(_client_qoder, "AcpClient", AcpClient)  # mypy rejects a plain assignment here
 _MIRROR = _facade_mirror.install(
     sys.modules[__name__],
     _CLIENT_OWNERS,

@@ -32,6 +32,7 @@ import { agentOrDefaultLabel } from '../utils/agentLabel'
 import { SlotProvider } from '../providers/SlotContext'
 import { useProvider } from '../providers'
 import { useConnectionsUiEnabled } from '../hooks/useConnectionsUi'
+import { labelFor, useAvailableModels } from '../hooks/useAvailableModels'
 import { legacyCodexEffort } from '../hooks/useInteractiveModels'
 import { selectionCapabilitiesFailed } from '../lib/effort'
 import { isUnpinnedModel } from '../lib/jevRoute'
@@ -405,6 +406,8 @@ export default function ChatPane({
     jevRouteOn, modelDD, anchorAgentBtn, anchorModelBtn, shownModel, effortSupported, defaultEffort, effectiveEffort,
     chipDefault, modelMarker,
   } = pickerModels
+  // The picker hook reads the same list; the chip only needs it for the label.
+  const availableModels = useAvailableModels()
 
   // One-time hydrate of this slot's message history via React Query + the api
   // client (caching + cross-pane dedup; staleTime Infinity keeps it one-shot —
@@ -970,7 +973,7 @@ export default function ChatPane({
           agentLabel={agentOrDefaultLabel(paneSlot?.agent, defaultAgent)}
           agentIsInheritedDefault={!paneSlot?.agent && !!defaultAgent}
           agentSource={installedAgents.find((a) => a.name === paneAgentName)?.source}
-          modelName={shownModel}
+          modelName={labelFor(availableModels, shownModel)}
           reasoningEffort={effectiveEffort}
           effortIsDefault={!paneSlot?.reasoning_effort && !legacyCodexEffort(paneSlot?.model || '', '', codexPairModels) && !!defaultEffort}
           // Effort is edited inside the model picker below; the chip only
