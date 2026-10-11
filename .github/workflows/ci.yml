@@ -3268,6 +3268,22 @@ jobs:
             exit 1
           }
 
+      - name: Transcript rows hold the 4px grid floor (asserting harness)
+        # Renders every transcript row kind through the real ChatMessageList and
+        # fails when a frame matches ZERO rows (the selector drifted and every
+        # check below it would pass vacuously), when a row's card padding is off
+        # the 4px grid, when a row leaves the column text edge, or on a page
+        # error. Pitch and internal edges are printed, not enforced; the floor's
+        # module (website/scripts/lib/transcript-grid-floor.mjs) says why. The
+        # capture page is not part of the production build, so the script serves
+        # it from an in-process Vite dev server on loopback: no gateway, no token,
+        # no network. Here for the Chromium install above; runs in seconds. Not
+        # path-filtered: the grid also moves with the shared CSS (theme tokens,
+        # index.css, the Tailwind config), not only with transcript components.
+        timeout-minutes: 5
+        working-directory: website
+        run: node scripts/capture-transcript-row-style.mjs --serve "$RUNNER_TEMP/transcript-row-style"
+
       - name: Run E2E and dedicated memory UI evidence in parallel
         # Smoke and UI read the staged production bundle; i18n builds a separate
         # dist-dev and a temporary base tree. All three share only read-only
