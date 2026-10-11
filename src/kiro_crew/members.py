@@ -31,7 +31,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from kiro_crew import platform_compat
+from kiro_crew import context_omissions, platform_compat
 from kiro_crew.artifacts import slugify
 from kiro_crew.atomic_write import atomic_write, fsync_dir, read_bytes_with_retry
 from kiro_crew.config.paths import data_home
@@ -1608,7 +1608,12 @@ def read_member_briefing(slug: str) -> str:
     Blocking file IO: call via ``asyncio.to_thread`` from async code.
     """
     text, _mtime, read_bounded = read_member_briefing_bounded(slug)
-    return cap_member_briefing(text, read_bounded)[0]
+    capped, truncated = cap_member_briefing(text, read_bounded)
+    if truncated:
+        context_omissions.record(
+            context_omissions.MEMBER_BRIEFING, "cap", budget_chars=MEMBER_BRIEFING_MAX_CHARS
+        )
+    return capped
 
 
 def record_activity(

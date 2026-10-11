@@ -448,6 +448,10 @@ def test_only_a_vocabulary_the_writer_clamps_is_enforced():
         # vocabulary from the declaration beside the type, so the closed enum and the
         # writer's set are one tuple.
         ("dashboard/instance_changed", "action"),
+        # A budget cut's reason: ``context_omissions.record`` refuses any other value
+        # and ``as_record`` drops one before the write, and the declaration imports
+        # the same tuple, so the closed enum and the writer's set are one set.
+        ("context/composed", "reason"),
         # The card and guide stores' own finished statuses: the emitter refuses any
         # other value before it builds the entry.
         ("card/finished", "status"),

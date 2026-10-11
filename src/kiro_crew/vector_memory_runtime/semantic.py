@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any
 
+from kiro_crew import context_omissions
 from kiro_crew import memory_record_metadata as record_meta
 from kiro_crew import memory_schema, memory_v2
 from kiro_crew.embeddings import PRIORITY_BULK, PRIORITY_INTERACTIVE
@@ -889,6 +890,13 @@ def get_preferences_context(store: VectorMemoryStore, query_text: str = "", cap:
         spent += cost
     omitted = total - len(kept)
     notice = _PREFS_OMISSION_NOTICE.format(count=omitted, total=total, limit=cap)
+    context_omissions.record(
+        context_omissions.PREFERENCE_FACTS,
+        "budget",
+        omitted=omitted,
+        total=total,
+        budget_chars=cap,
+    )
     body = "\n".join(kept)
     return header + body + ("\n" if kept else "") + notice + footer
 

@@ -98,6 +98,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final
 
+from kiro_crew import context_omissions
 from kiro_crew.constants import CREW_LOG_ENV, crew_log_enabled
 from kiro_crew.executors import crew_log_executor
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
@@ -2961,6 +2962,7 @@ def on_context_composed(
     blocks: "dict[str, int] | None" = None,
     total_chars: int = 0,
     phase: str = "",
+    omitted: "dict[str, dict[str, Any]] | None" = None,
 ) -> None:
     """Record what the gateway put in front of the model, block by block.
 
@@ -2987,6 +2989,12 @@ def on_context_composed(
     knows which it built, so the field is recorded here and DERIVED nowhere: an
     unstated phase is left absent, because the nearest available guess -- the first
     composition in a unit -- is wrong for the rebuild a replay triggers mid-session.
+
+    ``omitted`` is what the composer's budgets CUT from this composition, keyed by
+    block kind, as :func:`kiro_crew.context_omissions.collect` gathered it from the
+    decisions that wrote the prompt's omission notices: counts, budgets and a reason,
+    never omitted content. It is written only when something was cut, so a reader
+    treats an absent field as "nothing omitted".
     """
     if not session_id or not enabled() or not blocks:
         return
@@ -3018,6 +3026,9 @@ def on_context_composed(
         data["step"] = int(step)
     if phase:
         data["phase"] = str(phase)
+    cut = context_omissions.as_record(omitted)
+    if cut:
+        data["omitted"] = cut
     _write(session_id, "context/composed", data, src=_SRC_GATEWAY)
 
 

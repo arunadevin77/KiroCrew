@@ -252,6 +252,15 @@ def session_memory_parts(
                         len(memory_ctx),
                         room,
                     )
+                    # Imported at call time, like every Kiro Crew name an owner reads.
+                    from kiro_crew import context_omissions
+
+                    context_omissions.record(
+                        context_omissions.PREFERENCES_FILE,
+                        "cap",
+                        omitted_chars=omitted_chars,
+                        budget_chars=max(0, room),
+                    )
                     memory_ctx = memory_ctx[: max(0, room - len(notice))] + notice
                 append_required(memory_ctx)
             activity = memory.activity_index()

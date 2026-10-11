@@ -942,6 +942,26 @@ bucket, it
 folds into the PRECEDING recognised block and mislabels those bytes, so the set
 must stay complete.
 
+**Budget cuts beside the breakdown (`context/composed.omitted`).** Block sizes say how
+big each block was, not whether a budget dropped anything to reach that size, and the
+omission notice inside the prompt is read by the model alone. Each budget decision
+that writes such a notice also calls `context_omissions.record` with the numbers the
+notice states: the lesson rule and findings tiers (`render_lesson_tier`, and
+`render_withheld_tier` for findings withheld as off-topic), the `pref.*` preference
+facts, the preferences file past the protected-content ceiling, the background
+admission pool (`admit_background`) and a member briefing at its character cap.
+`_run_chat` opens `context_omissions.collect()` around `build_message` and writes the
+collected record as `omitted` on that turn's `context/composed`, and appends a short
+"budget omitted …" summary to the live context activity line. The collector is a
+`ContextVar`, so two sessions composing against one store never see each other's
+numbers, and the composer's worker thread inherits it through `copy_context`. Outside
+a collection `record` is a no-op. The record is bounded by construction: one entry per
+kind in `context_omissions.KINDS`, each a reason from `REASONS` and at most four
+integers or the closed set of background section names; `as_record` drops anything
+else before the write, because the crew log refuses an undeclared member and that
+refusal would also lose the block sizes. Omitted text, keys and rules are never
+recorded.
+
 **Current-request recency boundary.** Injected blocks are not the only proof that a
 turn is contextual. A keyed warm provider session (`is_new_session=False`) carries
 native conversation history even when this turn emits no Kiro Crew context block,

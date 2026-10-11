@@ -28,6 +28,7 @@ from typing import (  # noqa: F401
 )
 
 from kiro_crew import (  # noqa: F401
+    context_omissions,
     mcp_apps_render,
     model_registry,
     resource_status,
@@ -8441,6 +8442,7 @@ async def _run_chat(
     _stop_reason = ""
     slot_ctx_blocks: dict[str, int] = {}
     slot_ctx_phase = ""
+    slot_ctx_omitted: dict[str, dict[str, Any]] = {}
     # The per-turn billing stats observed BEFORE this turn's cancellable work, so
     # the abnormal seam can tell a turn that installed fresh stats from one that
     # died before doing so and still carries the PREVIOUS turn's object. Snapshot
@@ -11177,6 +11179,7 @@ async def _run_chat(
         # Annotated at the hoisted init above; a plain reassignment here.
         slot_ctx_blocks = {}
         slot_ctx_phase = ""
+        slot_ctx_omitted = {}
         # Chars this turn prepends between the request header and the user's
         # text; set in the context_builder branch, 0 elsewhere.
         _user_prepend_offset = 0
@@ -11480,43 +11483,49 @@ async def _run_chat(
                         raise
                     # The builder keeps essentials and reports unavailable learned memory.
                     logger.info("Member learned memory unavailable for context preparation")
-            full_message, _ = await run_in_embed_pool(
-                state.context_builder.build_message,
-                message,
-                _context_is_new,
-                session_key,
-                agent=kiro_agent or slot.agent or None,
-                resumed=_provider_has_history,
-                workspace=slot.workspace or None,
-                project=slot.project or None,
-                memory_store=memory_store,
-                compressed_history=compressed,
-                mode=slot.mode,
-                blocks_reads=slot.blocks_reads,
-                provider_type=cfg.agent.provider,
-                runtime_source="dashboard",
-                request_prefix_context=_request_prefix_context or None,
-                exclude_last_n=1,
-                folder_path=folder_path,
-                board_tags=board_tags,
-                model_window=model_window,
-                # Member DM threads get the four-layer member identity block.
-                # `slot.agent` is the member the human picked (the crew name);
-                # the `agent=` above is the TEMPLATE it resolved to, which is
-                # why the member identity travels separately.
-                member=slot.agent if slot.mode == "member" and slot.agent else "",
-                execution_context=execution_context,
-                user_text_range=user_text_span(
-                    _user_prepend_offset,
-                    user_typed_len,
-                    quick_prompt=_is_quick_prompt,
-                    prompt_expanded=prompt_expanded,
-                ),
-                user_span_out=_user_span,
-                needs_reinjection=_needs_reinjection,
-                steering_dirs=_folder_steering_dirs,
-                context_provider=client,
-            )
+            # The budgets that cut a block record the cut as they write its notice;
+            # the collection gathers them for the ``context/composed`` written below.
+            # It opens around the build alone, so only THIS turn's composition lands in
+            # it, and the worker thread sees it through the context the pool copies.
+            with context_omissions.collect() as _ctx_omitted:
+                full_message, _ = await run_in_embed_pool(
+                    state.context_builder.build_message,
+                    message,
+                    _context_is_new,
+                    session_key,
+                    agent=kiro_agent or slot.agent or None,
+                    resumed=_provider_has_history,
+                    workspace=slot.workspace or None,
+                    project=slot.project or None,
+                    memory_store=memory_store,
+                    compressed_history=compressed,
+                    mode=slot.mode,
+                    blocks_reads=slot.blocks_reads,
+                    provider_type=cfg.agent.provider,
+                    runtime_source="dashboard",
+                    request_prefix_context=_request_prefix_context or None,
+                    exclude_last_n=1,
+                    folder_path=folder_path,
+                    board_tags=board_tags,
+                    model_window=model_window,
+                    # Member DM threads get the four-layer member identity block.
+                    # `slot.agent` is the member the human picked (the crew name);
+                    # the `agent=` above is the TEMPLATE it resolved to, which is
+                    # why the member identity travels separately.
+                    member=slot.agent if slot.mode == "member" and slot.agent else "",
+                    execution_context=execution_context,
+                    user_text_range=user_text_span(
+                        _user_prepend_offset,
+                        user_typed_len,
+                        quick_prompt=_is_quick_prompt,
+                        prompt_expanded=prompt_expanded,
+                    ),
+                    user_span_out=_user_span,
+                    needs_reinjection=_needs_reinjection,
+                    steering_dirs=_folder_steering_dirs,
+                    context_provider=client,
+                )
+            slot_ctx_omitted = dict(_ctx_omitted)
             # The reported span is valid for the message as build_message
             # returned it. Several later steps PREPEND to the finished prompt
             # (incognito/temporary notice, re-injected history, hook context, a
@@ -11648,15 +11657,19 @@ async def _run_chat(
                 for label, _ in sorted(slot_ctx_blocks.items(), key=lambda kv: -kv[1])
                 if label != USER_LABEL
             )
+            # The cuts the budgets made, so the activity feed shows what did NOT reach
+            # the model as well as what did. Empty when nothing was cut.
+            _cut = context_omissions.summary(slot_ctx_omitted)
+            _cut_note = f"; budget omitted {_cut}" if _cut else ""
             state.broadcast_ws(
                 "activity_event",
                 {
                     "slot": slot.key,
                     "kind": "context",
                     "text": (
-                        f"Injected {ctx_len:,} chars of context ({_named})"
+                        f"Injected {ctx_len:,} chars of context ({_named}){_cut_note}"
                         if _named
-                        else f"Injected {ctx_len:,} chars of context"
+                        else f"Injected {ctx_len:,} chars of context{_cut_note}"
                     ),
                 },
             )
@@ -12169,6 +12182,7 @@ async def _run_chat(
             _crew_log_turn_no,
             blocks=slot_ctx_blocks,
             phase=slot_ctx_phase,
+            omitted=slot_ctx_omitted,
         )
         crew_log_emit.on_turn_started(
             _crew_log_sid,

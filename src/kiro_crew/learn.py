@@ -15,6 +15,7 @@ import threading
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
+from kiro_crew import context_omissions
 from kiro_crew.atomic_write import atomic_write
 from kiro_crew.lesson_validation import (
     LESSON_APPLIES_ALWAYS,
@@ -727,6 +728,7 @@ class LessonStore:
         directive_block, _ = render_lesson_tier(
             ranked_directives,
             directive_room,
+            omission_kind=context_omissions.LESSON_RULES,
             header=(
                 "[Learned corrections — user-taught rules from past mistakes.\n"
                 "ALWAYS follow these. They override default behavior.]"
@@ -762,6 +764,7 @@ class LessonStore:
             # the next turn can act on rather than an absence it cannot see.
             experience_block = render_withheld_tier(
                 len(experience_entries),
+                omission_kind=context_omissions.LESSON_FINDINGS,
                 header="[Learned experience — past findings]",
                 footer="[End of learned experience]",
                 notice=(
@@ -776,6 +779,7 @@ class LessonStore:
             experience_block, _ = render_lesson_tier(
                 experiences,
                 experience_room,
+                omission_kind=context_omissions.LESSON_FINDINGS,
                 header=(
                     # "relevant ones first", matching the vector tier's wording, because
                     # ``order_by_request_relevance`` runs above: claiming "newest first"

@@ -66,6 +66,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from kiro_crew import context_omissions as _omissions
 from kiro_crew.crew_log.errors import CODE_BAD_DATA_FIELD, CrewLogError
 from kiro_crew.crew_log.schema import KIND_CREW, KIND_SESSION
 
@@ -158,6 +159,42 @@ class EntryType:
 
 def _turn(note: str = "Turn ordinal.") -> Field:
     return Field("turn", JSON_INT, required=True, note=note)
+
+
+#: One ``context/composed`` omission entry's members, shared by every block kind:
+#: a reason from a closed set, then whichever counts that block's decision has.
+_OMISSION_MEMBERS: tuple[Field, ...] = (
+    Field(
+        "reason",
+        JSON_STRING,
+        required=True,
+        enum=_omissions.REASONS,
+        enum_closed=True,
+        note="budget (a character budget), cap (a hard ceiling) or relevance (withheld).",
+    ),
+    Field("omitted", JSON_INT, note="Items left out."),
+    Field("total", JSON_INT, note="Items the block held before the cut."),
+    Field("budget_chars", JSON_INT, note="The budget or ceiling, in characters."),
+    Field("omitted_chars", JSON_INT, note="Characters left out, for a block cut by length."),
+    Field(
+        "sections",
+        JSON_ARRAY,
+        item_type=JSON_STRING,
+        note="Background sections left out: background_context, older_thread_history, skills.",
+    ),
+)
+
+_OMISSION_NOTES: dict[str, str] = {
+    _omissions.LESSON_RULES: "Standing lessons past the rule budget.",
+    _omissions.LESSON_FINDINGS: "Past findings past their budget, or withheld as off-topic.",
+    _omissions.PREFERENCE_FACTS: "pref.* memory rows past the startup budget.",
+    _omissions.PREFERENCES_FILE: "Preferences text past the protected-content ceiling.",
+    _omissions.BACKGROUND: "Background sections the admission pool had no room for.",
+    _omissions.MEMBER_BRIEFING: "A member briefing cut at its character cap.",
+}
+_OMISSION_KINDS: tuple[tuple[str, str], ...] = tuple(
+    (kind, _OMISSION_NOTES[kind]) for kind in _omissions.KINDS
+)
 
 
 #: The four billed token dimensions, each required INSIDE the mapping.
@@ -1112,6 +1149,19 @@ _SESSION_TYPES: tuple[EntryType, ...] = (
                     "describes neither. Absent on a log written before it was "
                     "recorded, and absent rather than guessed when the composer "
                     "does not state it."
+                ),
+            ),
+            Field(
+                "omitted",
+                JSON_OBJECT,
+                fields=tuple(
+                    Field(kind, JSON_OBJECT, fields=_OMISSION_MEMBERS, note=note)
+                    for kind, note in _OMISSION_KINDS
+                ),
+                note=(
+                    "What the composer's budgets cut, by block: counts, budgets and a "
+                    "reason, never the omitted content. Written only when something "
+                    "was cut, so an absent field means nothing was omitted."
                 ),
             ),
         ),
