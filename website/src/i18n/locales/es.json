@@ -6449,8 +6449,8 @@
       "split_right": "Dividir a la derecha",
       "split_right_d": "Dividir a la derecha (⌘D)",
       "type_to_filter": "Escribe para filtrar…",
-      "earlier_conversation_show": "Empezaste de cero a las {{time}} · Mostrar mensajes anteriores ({{count}})",
-      "earlier_conversation_hide": "Empezaste de cero a las {{time}} · Ocultar mensajes anteriores (ya no los recuerda)"
+      "earlier_conversation_show": "Empezar de cero a las {{time}} · Mostrar mensajes anteriores ({{count}})",
+      "earlier_conversation_hide": "Empezar de cero a las {{time}} · Ocultar mensajes anteriores (ya no los recuerda)"
     },
     "cliPanel": {
       "copied": "Copiado",
@@ -18202,14 +18202,14 @@
       "dashboard_frame_title": "Panel de {{crew}}",
       "dashboard_rendering": "Dibujando el panel…",
       "back_to_roster": "Volver a los compañeros",
-      "fresh_start": "Empezar de cero…",
+      "fresh_start": "Empezar de cero",
       "fresh_start_failed": "No se pudo empezar de cero. La conversación sigue igual.",
       "fresh_start_confirm_title": "¿Que este compañero empiece de cero?",
       "fresh_start_confirm_body": "Lo que esté haciendo se detiene y olvida esta conversación. Los mensajes se quedan aquí, plegados.",
       "fresh_start_confirm_action": "Empezar de cero",
-      "fresh_start_hint": "Empieza una conversación nueva con este compañero. Los mensajes anteriores siguen visibles.",
       "fresh_start_failed_queued": "Aún hay mensajes en cola. Espera a que terminen y vuelve a intentar Empezar de cero.",
-      "fresh_start_failed_busy": "El compañero sigue trabajando y no se detuvo. Detenlo primero y vuelve a intentarlo."
+      "fresh_start_failed_busy": "El compañero sigue trabajando y no se detuvo. Detenlo primero y vuelve a intentarlo.",
+      "fresh_start_unsaved_fold": "Olvidó esta conversación y los mensajes quedaron plegados, pero no se guardó la hora en que se plegaron. Al recargar, vuelven a desplegarse."
     },
     "tasksCapacityCard": {
       "title": "Tareas y capacidad",

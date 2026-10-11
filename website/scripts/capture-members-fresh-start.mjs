@@ -6,7 +6,11 @@
  * conversation and reads idle (the `idle` capture frame); the fresh-start
  * route answers a reset time after all of it. Every frame asserts its state
  * before it is written, at 1280px and 320px: the header has no button and
- * the Profile card carries the labelled action on both.
+ * the quiet link sits under the crewmate's name in the Profile card's head.
+ * A last frame reloads the page from a roster whose row already carries
+ * `reset_at` (what the member event log folds a cleared reset into) and
+ * asserts the fold is drawn from that alone, with no fresh-start call in
+ * the session.
  *
  * Usage (two shells, from website/):
  *   npx vite --host 127.0.0.1 --port 6835 --strictPort
@@ -46,7 +50,7 @@ async function openDm(theme, width, lang = 'en') {
   await routeMembersApi(page, { messages: MESSAGES, running: false, has_more: false, total: MESSAGES.length }, { members: IDLE })
   await page.route(u => new URL(u).pathname === '/api/teams', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{"teams":[]}' }))
   await page.route(u => new URL(u).pathname === '/api/members/radar/fresh-start', route => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({ slot: 'member-radar', reset_at: RESET_AT, outcome: 'cleared' }),
+    status: 200, contentType: 'application/json', body: JSON.stringify({ slot: 'member-radar', reset_at: RESET_AT, outcome: 'cleared', reset_persisted: true }),
   }))
   await page.goto(`${BASE}/capture/members-page.html?theme=${theme}&route=${encodeURIComponent('/members?member=radar')}`)
   await page.waitForSelector('[data-capture-root]')
@@ -56,12 +60,13 @@ async function openDm(theme, width, lang = 'en') {
   return page
 }
 
-/** Open the Profile card's Profile tab; return the Fresh start row. */
+/** Open the Profile card; return the Fresh start link under the crewmate's
+ *  name. It lives in the card's head, so it is there on every tab -- no need
+ *  to switch to Profile first. */
 async function openCardRow(page) {
   await page.getByTestId('member-identity-pill').click()
   const card = page.getByTestId('crew-profile-panel')
   await card.waitFor()
-  await card.getByRole('tab', { name: 'Profile' }).click()
   const row = page.getByTestId('crew-profile-fresh-start')
   await row.waitFor()
   await row.scrollIntoViewIfNeeded()
@@ -78,7 +83,13 @@ async function run(theme, width, tag) {
   await page.screenshot({ path: `${OUT}/${tag}-01-header.png` })
   const row = await openCardRow(page)
   const text = (await row.innerText()).replace(/\s+/g, ' ')
-  check(`${tag}: labelled row in the Profile card`, text.includes('Fresh start…') && /earlier messages stay visible/i.test(text), JSON.stringify(text))
+  const underName = await page.evaluate(() => {
+    const name = document.querySelector('[data-testid="crew-profile-name"]')
+    const link = document.querySelector('[data-testid="crew-profile-fresh-start"]')
+    return !!(name && link && name.parentElement.contains(link))
+  })
+  check(`${tag}: button-shaped link under the crewmate's name, label is the action alone`,
+    text.trim() === 'Fresh start' && underName, JSON.stringify(text))
   await page.screenshot({ path: `${OUT}/${tag}-02-card.png` })
   await row.click()
   const dialog = page.getByRole('dialog').filter({ hasText: 'Give this crewmate a fresh start?' })
@@ -86,13 +97,19 @@ async function run(theme, width, tag) {
   await page.waitForTimeout(400)
   check(`${tag}: themed confirm names what stays`, (await dialog.innerText()).includes('messages stay here'))
   await page.screenshot({ path: `${OUT}/${tag}-03-confirm.png` })
-  await dialog.getByRole('button', { name: 'Start fresh' }).click()
+  await dialog.getByRole('button', { name: 'Fresh start' }).click()
   await page.getByTestId('earlier-conversation').waitFor()
   await page.waitForTimeout(500)
   const toggle = page.getByTestId('earlier-conversation-toggle')
   const closed = await toggle.innerText()
   check(`${tag}: card closed, rows folded with time and count`, (await page.getByTestId('crew-profile-panel').count()) === 0
     && (await page.getByText(OLD_TEXT).count()) === 0 && closed.includes('Show earlier messages (4)'), JSON.stringify(closed))
+  // The pill, the confirm button and this divider are one action, so they
+  // carry one name. Asserted on the rendered text because the drift that
+  // produced "Fresh start" / "Start fresh" / "Started fresh" was three
+  // separate catalog strings, each correct on its own.
+  check(`${tag}: the divider names the action the same way the pill does`,
+    closed.startsWith('Fresh start at '), JSON.stringify(closed))
   await page.mouse.move(5, 5)
   await page.screenshot({ path: `${OUT}/${tag}-04-folded.png` })
   await toggle.click()
@@ -117,13 +134,89 @@ await run('dark', 320, 'narrow-dark')
   await (await openCardRow(page)).click()
   const dialog = page.getByRole('dialog').filter({ hasText: 'Give this crewmate a fresh start?' })
   await dialog.waitFor()
-  await dialog.getByRole('button', { name: 'Start fresh' }).click()
+  await dialog.getByRole('button', { name: 'Fresh start' }).click()
   const notice = page.getByTestId('member-fresh-start-error')
   await notice.waitFor()
   await page.waitForTimeout(400)
   check('refused: notice says to wait, nothing folded', /still queued/i.test(await notice.innerText())
     && (await page.getByTestId('earlier-conversation').count()) === 0)
   await page.screenshot({ path: `${OUT}/desktop-dark-06-refused.png` })
+  await page.close()
+}
+
+// A clear that WORKED whose fold boundary was not saved: the conversation is
+// gone and the pane folds, but the boundary never reached the member's event
+// log, so the fold is only for this session. Both halves have to be in one
+// frame -- the divider AND the notice -- because either alone misreads.
+{
+  const page = await openDm('dark', 1280)
+  await page.route(u => new URL(u).pathname === '/api/members/radar/fresh-start', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ slot: 'member-radar', reset_at: RESET_AT, outcome: 'cleared', reset_persisted: false }),
+  }))
+  await (await openCardRow(page)).click()
+  const dialog = page.getByRole('dialog').filter({ hasText: 'Give this crewmate a fresh start?' })
+  await dialog.waitFor()
+  await dialog.getByRole('button', { name: 'Fresh start' }).click()
+  const notice = page.getByTestId('member-fresh-start-error')
+  await notice.waitFor()
+  await page.getByTestId('earlier-conversation').waitFor()
+  await page.waitForTimeout(400)
+  const toggle = await page.getByTestId('earlier-conversation-toggle').innerText()
+  check('unsaved fold: the pane folds and the notice names the reload',
+    /after a reload/i.test(await notice.innerText()) && toggle.includes('Show earlier messages (4)'),
+    JSON.stringify(toggle))
+  await page.mouse.move(5, 5)
+  await page.screenshot({ path: `${OUT}/desktop-dark-08-unsaved-fold.png` })
+  await page.close()
+}
+
+// A fresh LOAD, no press this session: the roster row already carries
+// `reset_at` (what a prior Fresh start folded into the member event log), and
+// the pane must fold from that alone -- proving the boundary survives a
+// reload instead of living only in the page's React state.
+{
+  // From IDLE, not MEMBERS: a crewmate drawn mid-turn puts a "Working" line
+  // under the divider, and that line is the only moving part in the frame --
+  // a reader cannot then tell the fold apart from activity they did not see.
+  const RESET_ROSTER = IDLE.map(m => (m.slug === 'radar'
+    ? { ...m, projections: { asOfSeq: 1, values: { roster: { name: 'radar', slug: 'radar', reset_at: RESET_AT } } } }
+    : m))
+  const page = await browser.newPage({ viewport: { width: 1280, height: 760 }, deviceScaleFactor: 1 })
+  await routeMembersApi(page, { messages: MESSAGES, running: false, has_more: false, total: MESSAGES.length }, { members: RESET_ROSTER })
+  await page.route(u => new URL(u).pathname === '/api/teams', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{"teams":[]}' }))
+  await page.goto(`${BASE}/capture/members-page.html?theme=dark&route=${encodeURIComponent('/members?member=radar')}`)
+  await page.waitForSelector('[data-capture-root]')
+  await page.getByTestId('earlier-conversation').waitFor()
+  // Then the same idle frame the other captures use. It comes AFTER the fold
+  // is drawn, because the harness re-seeds the slot on this event and the
+  // pane would be waiting on its thread again. Without it the slot stays
+  // working, and that "Working" line is the only moving part in a frame whose
+  // whole claim is the fold.
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('capture:frame', { detail: { kind: 'idle', slot: 'member-radar' } })))
+  // WAIT for the waiting state to end, rather than sleeping past it: the
+  // frame's whole claim is the fold, and a "Working" line in it reads as
+  // activity the viewer did not see. Exact match, because the Dashboard tab's
+  // own empty-state copy says "what you're working on".
+  await page.getByText('Working', { exact: true }).waitFor({ state: 'detached' })
+  const toggle = page.getByTestId('earlier-conversation-toggle')
+  await toggle.waitFor({ state: 'visible' })
+  await page.waitForTimeout(300)
+  const closed = await toggle.innerText()
+  check('reload: the roster\'s reset_at alone folds the pane', (await page.getByText(OLD_TEXT).count()) === 0
+    && closed.includes('Show earlier messages (4)'), JSON.stringify(closed))
+  check('reload: nothing but the fold is in the frame',
+    (await page.getByText('Working', { exact: true }).count()) === 0)
+  // The divider has to be IN the shot, not merely in the DOM: this frame is
+  // the only evidence that the fold came back on its own after a load.
+  const box = await toggle.boundingBox()
+  const port = page.viewportSize()
+  check('reload: the fold divider is inside the captured frame',
+    !!box && box.y >= 0 && box.y + box.height <= port.height && box.width > 0,
+    JSON.stringify(box))
+  await page.mouse.move(5, 5)
+  await page.screenshot({ path: `${OUT}/desktop-dark-07-reload-persists.png` })
   await page.close()
 }
 await browser.close()

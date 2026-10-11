@@ -852,6 +852,11 @@ async def api_members(request: web.Request) -> web.Response:
 
     for row in rows:
         block = projections.get(row["slug"], {"asOfSeq": _SEQ_UNATTRIBUTABLE, "values": {}})
+        # Fresh start's fold boundary rides in here already: `reset_at` folds
+        # into the roster projection below, and `_roster_only` ships the whole
+        # roster view, so the client reads it off `row["projections"]` (and the
+        # same value arrives live over the `member_projection` WS frame) --
+        # no second, top-level copy of the field on the row.
         row["projections"] = _redact_projection_value(_roster_only(block))
         row["last_active_ts"] = _recency_for_row(block, row.get("last_active_ts"))
 
@@ -1813,11 +1818,45 @@ async def api_member_fresh_start(request: web.Request) -> web.Response:
     # keeps it queued for its next turn boundary, as /clear does.
     reset_at = datetime.now(timezone.utc).isoformat()
     outcome = await runner._answer_slash_without_channel(state, slot, key, "/clear")
+    cleared = outcome == "discarded"
+    # Whether the fold boundary landed in the member's own log, so the client
+    # can tell "durable, survives a reload" from "this session's own fold
+    # only" instead of assuming the write always lands. The CLEAR itself is
+    # never retried on a write failure here: it already happened (the agent
+    # process is gone, the transcript already carries its line), and asking
+    # the client to redo it would discard a second turn's history for a
+    # boundary-recording fault that has nothing to do with the conversation.
+    reset_persisted = False
+    if cleared:
+        # Durable fold so the "earlier conversation" boundary survives a reload:
+        # the roster projection carries `reset_at`, which `GET /api/members`
+        # serves back to the page that otherwise only holds it in React state.
+        # Off-loop; a logging fault never turns a cleared conversation into an
+        # error response, since the clear itself already landed -- but the
+        # outcome IS inspected, so a failed append is reported rather than
+        # silently claimed as durable (the client still folds for this
+        # session from its own optimistic state either way).
+        member_name = binding.get("member") if binding else None
+
+        def _emit_reset() -> bool:
+            from kiro_crew import eventlog_hooks
+            from kiro_crew.eventlog.types import MEMBER_RESET
+
+            return eventlog_hooks.emit(slug, member_name, MEMBER_RESET, {"reset_at": reset_at})
+
+        reset_persisted = await asyncio.to_thread(_emit_reset)
+        if not reset_persisted:
+            logger.warning(
+                "fresh-start reset_at for %r did not persist to the member log; "
+                "the fold holds only for this client's current session",
+                slug,
+            )
     return web.json_response(
         {
             "slot": name,
             "reset_at": reset_at,
-            "outcome": "cleared" if outcome == "discarded" else "queued",
+            "outcome": "cleared" if cleared else "queued",
+            "reset_persisted": reset_persisted,
         }
     )
 

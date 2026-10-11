@@ -2090,7 +2090,12 @@ export default function MembersPage() {
   const activeSlot = active ? threadOutcome?.slot_key ?? '' : ''
   // Fresh start: the server stops any turn and drops the conversation; the
   // slot key and its transcript stay. Each slot's reset time folds the rows
-  // before it in the pane. Page state only: the rows are still on disk.
+  // before it in the pane. The server folds `reset_at` into the member's own
+  // event log (member/reset -> the roster projection), which is what makes the
+  // fold survive a reload -- `activeRoster.reset_at` below reads it back off
+  // the SAME roster projection block the row already carries (no second copy
+  // of the field). This map is only the IN-SESSION override for the moment
+  // between a successful clear and the next projection read catching up to it.
   const [freshStarts, setFreshStarts] = useState<Record<string, string>>({})
   const [freshStartError, setFreshStartError] = useState<{ slot: string; message: string; report?: ErrorReport } | null>(null)
   const freshStart = useMutation({
@@ -2098,7 +2103,18 @@ export default function MembersPage() {
     onMutate: () => setFreshStartError(null),
     // Fold only once the conversation is gone. A queued clear (the session was
     // still busy) says so in the transcript line the clear path writes.
-    onSuccess: (res, { slot }) => { if (res.outcome === 'cleared') setFreshStarts((prev) => ({ ...prev, [slot]: res.reset_at })) },
+    //
+    // `reset_persisted: false` is a cleared conversation whose fold BOUNDARY
+    // never reached the member's event log, so the fold holds for this session
+    // and is gone after a reload. That is a backend failure the user has to
+    // see, and the notice below is where this page shows one; the clear itself
+    // is not retried, since the conversation is already gone and only the
+    // record is missing.
+    onSuccess: (res, { slot }) => {
+      if (res.outcome !== 'cleared') return
+      setFreshStarts((prev) => ({ ...prev, [slot]: res.reset_at }))
+      if (!res.reset_persisted) setFreshStartError({ slot, message: t('pages.membersPage.fresh_start_unsaved_fold') })
+    },
     onError: (err: unknown, { slot }) => setFreshStartError({
       slot,
       message: t(freshStartFailureKey(err)),
@@ -4759,7 +4775,7 @@ export default function MembersPage() {
                     // ready" would contradict it one line down.
                     // The crewmate's greeting already speaks for the empty chat.
                     hideEmptyHint={activeThreadFailed || !!mateGreeting}
-                    foldBefore={freshStarts[activeSlot]}
+                    foldBefore={freshStarts[activeSlot] ?? activeRoster?.reset_at}
                     // Under the floating header only when nothing sits between
                     // them (see the block above); a card between already paid.
                     topInset={betweenHeaderH > 0 ? 0 : threadHeaderH}

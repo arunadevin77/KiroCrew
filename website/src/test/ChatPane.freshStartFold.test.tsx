@@ -150,7 +150,7 @@ describe('ChatPane fresh-start fold', () => {
     const toggle = screen.getByTestId('earlier-conversation-toggle')
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
     expect(toggle.textContent).toContain('Show earlier messages (2)')
-    expect(toggle.textContent).toContain('Started fresh')
+    expect(toggle.textContent).toContain('Fresh start')
 
     fireEvent.click(toggle)
     expect(screen.getByText('old answer')).toBeTruthy()

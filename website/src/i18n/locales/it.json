@@ -6449,8 +6449,8 @@
       "split_right": "Dividi a destra",
       "split_right_d": "Dividi a destra (⌘D)",
       "type_to_filter": "Digita per filtrare…",
-      "earlier_conversation_show": "Ricominciato da capo alle {{time}} · Mostra i messaggi precedenti ({{count}})",
-      "earlier_conversation_hide": "Ricominciato da capo alle {{time}} · Nascondi i messaggi precedenti (non più ricordati)"
+      "earlier_conversation_show": "Ricomincia da capo alle {{time}} · Mostra i messaggi precedenti ({{count}})",
+      "earlier_conversation_hide": "Ricomincia da capo alle {{time}} · Nascondi i messaggi precedenti (non più ricordati)"
     },
     "cliPanel": {
       "copied": "Copiato",
@@ -18202,14 +18202,14 @@
       "dashboard_frame_title": "Dashboard di {{crew}}",
       "dashboard_rendering": "Disegno della dashboard…",
       "back_to_roster": "Torna ai compagni",
-      "fresh_start": "Ricomincia da capo…",
+      "fresh_start": "Ricomincia da capo",
       "fresh_start_failed": "Non è stato possibile ricominciare da capo. La conversazione è rimasta.",
       "fresh_start_confirm_title": "Far ricominciare questo compagno da capo?",
       "fresh_start_confirm_body": "Quello che sta facendo si ferma e dimentica questa conversazione. I messaggi restano qui, ripiegati.",
       "fresh_start_confirm_action": "Ricomincia da capo",
-      "fresh_start_hint": "Avvia una nuova conversazione con questo compagno. I messaggi precedenti restano visibili.",
       "fresh_start_failed_queued": "Ci sono ancora messaggi in coda. Aspetta che finiscano, poi riprova Ricomincia da capo.",
-      "fresh_start_failed_busy": "Il compagno sta ancora lavorando e non si è fermato. Fermalo prima, poi riprova."
+      "fresh_start_failed_busy": "Il compagno sta ancora lavorando e non si è fermato. Fermalo prima, poi riprova.",
+      "fresh_start_unsaved_fold": "Ha dimenticato questa conversazione e i messaggi sono ripiegati, ma il momento in cui sono stati ripiegati non è stato salvato. Dopo un ricaricamento tornano a dispiegarsi."
     },
     "tasksCapacityCard": {
       "title": "Attività e capacità",
