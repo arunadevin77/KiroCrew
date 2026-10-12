@@ -93,8 +93,8 @@ if TYPE_CHECKING:
         _timeout_context,
         _validate_agent,
         _vet_spawn_governance,
-        acp_error_is_session_not_found,
         acp_error_is_transient,
+        acp_error_needs_fresh_backend,
         advance_fallback_candidate,
         agent_dir_for_display,
         annotate_model_fallback,
@@ -1105,7 +1105,7 @@ class RunEventCoordinator(ManagerComponent):
                     Stats().inc_subagent_failed()
                     self._manager._write_tombstone(info, "error")
                     logger.warning("Subagent %s context overflow: %s", info.id, exc)
-            elif acp_error_is_session_not_found(exc) and not info._reap_started:
+            elif acp_error_needs_fresh_backend(exc) and not info._reap_started:
                 # A live backend holds no session under this run's id. The
                 # teardown in ``finally`` resets the session and keeps its
                 # durable pointer, so a respawned run's claim re-loads the SAME

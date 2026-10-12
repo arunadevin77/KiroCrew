@@ -158,6 +158,22 @@ never drift. Notable terminal (non-retryable) classes:
   already resolved suppresses it; the drain and consume seams veto it on a later
   Stop, a queued follow-up or steer, or a rebind (with a cancel notice), refunding
   the one-shot. A second loss on the same turn ends with the give-up text.
+- **Backend that can no longer load cloud credentials**: a backend whose
+  in-process credential chain has gone stale answers every prompt with a frame
+  whose `data` is a dict carrying `errorKind == "cloud_credential_error"`, while a
+  newly started process loads credentials fine. `_raise_acp_error` sets
+  `credential_reload` on the `AcpError` from that structured field only, never
+  from message text. `acp_error_is_credential_reload` reads the tag, with a text
+  fallback for an error that was re-wrapped. Every surface that recovers a lost
+  session decides through `acp_error_needs_fresh_backend`, which matches either
+  cause, so this error gets the same one reset onto a fresh runtime, the same
+  one-retry budget and the same no-replay-after-tool rule. Dashboard chat and
+  Slack threads show credential-specific retry and give-up text, and the give-up
+  tells the user to refresh their credentials, since a retry cannot fix an
+  expired or missing credential. Subagent runs, cron, cron-sequence steps and
+  subagent completion injection keep the session wording and append the
+  backend's own error, which names the credential failure. Channel turns keep
+  the session wording only.
 - **Unsupported image history**: Kiro's `IMAGE_FORMAT_UNSUPPORTED` /
   `ImageValidationError` is terminal and structural. The exception also carries
   the narrower `image_format_unsupported` tag. A current attachment is left in

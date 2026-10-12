@@ -41,7 +41,7 @@ from kiro_crew.llm_helpers import (
     SESSION_NOT_FOUND_NOT_REPLAYED_TEXT,
     SESSION_NOT_FOUND_RETRY_NOTICE,
     _steer_host_deny,
-    acp_error_is_session_not_found,
+    acp_error_needs_fresh_backend,
     is_prompt_busy,
     unfinished_turn_error,
 )
@@ -1800,7 +1800,7 @@ async def _stream_task(
             # caller can do that. Report the wedge upward instead.
             logger.warning("Prompt busy for channel agent %s (%s): %s", agent.id, agent.role, exc)
             return _STREAM_BUSY
-        if acp_error_is_session_not_found(exc):
+        if acp_error_needs_fresh_backend(exc):
             # Same dead end as the wedge: every later prompt on this binding
             # draws the same answer until the session is replaced.
             logger.warning(

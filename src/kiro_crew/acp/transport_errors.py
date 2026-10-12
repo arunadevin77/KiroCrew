@@ -279,6 +279,7 @@ class AcpError(Exception):
         # current attachment from an unsupported image retained in native
         # history. Set only from the raw provider data field.
         self.image_format_unsupported: bool = False
+        self.credential_reload: bool = False
         # Whether a TRANSIENT failure is the network path to the provider
         # (dispatch failure, connection reset or refused, DNS, TLS, connect
         # timeout) rather than a provider answer such as a 5xx or a throttle.
@@ -1778,6 +1779,9 @@ def _rejected_model_from_error(error: object) -> str | None:
     return m.group(1) if m else None
 
 
+_CLOUD_CREDENTIAL_ERROR_KIND = "cloud_credential_error"
+
+
 def _raise_acp_error(
     error: object,
     available_models: Sequence[str] | None = None,
@@ -1842,6 +1846,12 @@ def _raise_acp_error(
         err.context_overflow = True
     if _image_format_unsupported:
         err.image_format_unsupported = True
+    raw_data_value = error.get("data") if isinstance(error, dict) else None
+    if (
+        isinstance(raw_data_value, dict)
+        and raw_data_value.get("errorKind") == _CLOUD_CREDENTIAL_ERROR_KIND
+    ):
+        err.credential_reload = True
     # Tag a model-rejection so the SUBSTITUTE (background) retry layer can pick a
     # served model; harmless on every other error (attributes just stay unset).
     rejected = _rejected_model_from_error(error)

@@ -245,6 +245,7 @@ from kiro_crew.llm_helpers import (  # noqa: F401
     acp_error_after_tool_activity,
     acp_error_is_session_not_found,
     acp_error_is_transient,
+    acp_error_needs_fresh_backend,
     annotate_model_fallback,
     append_fallback_story,
     configured_fallback_chain,
@@ -5181,7 +5182,7 @@ class GatewayOrchestrator:
                             except Exception:
                                 logger.debug("usage row (cron seq) persist failed", exc_info=True)
                         except Exception as _seq_exc:
-                            if not acp_error_is_session_not_found(_seq_exc):
+                            if not acp_error_needs_fresh_backend(_seq_exc):
                                 raise
                             # Re-running the step re-sends its prompt, which
                             # could repeat a tool the lost turn already ran.
@@ -5932,7 +5933,7 @@ class GatewayOrchestrator:
                         # retry's claim re-loads the SAME id on a fresh runtime.
                         # Not after a tool ran: the retry re-sends the prompt.
                         or (
-                            acp_error_is_session_not_found(exc)
+                            acp_error_needs_fresh_backend(exc)
                             and not acp_error_after_tool_activity(exc)
                         )
                     )
@@ -5945,7 +5946,11 @@ class GatewayOrchestrator:
                         (
                             "backend lost the session"
                             if acp_error_is_session_not_found(exc)
-                            else "ACP process died"
+                            else (
+                                "backend could not load its credentials"
+                                if acp_error_needs_fresh_backend(exc)
+                                else "ACP process died"
+                            )
                         ),
                     )
                     job._acp_retried = True  # type: ignore[attr-defined]
@@ -6166,7 +6171,7 @@ class GatewayOrchestrator:
                 _exc_text = f"{type(exc).__name__}: {exc}"
                 _snf_text = str(exc)
                 if (
-                    acp_error_is_session_not_found(exc)
+                    acp_error_needs_fresh_backend(exc)
                     and SESSION_NOT_FOUND_GIVE_UP_TEXT not in _snf_text
                     and SESSION_NOT_FOUND_NOT_REPLAYED_TEXT not in _snf_text
                 ):
@@ -9832,7 +9837,7 @@ class GatewayOrchestrator:
                             )
                         return None
                     except AcpError as exc:
-                        if acp_error_is_session_not_found(exc):
+                        if acp_error_needs_fresh_backend(exc):
                             if acp_error_after_tool_activity(exc):
                                 raise AcpError(
                                     f"{SESSION_NOT_FOUND_NOT_REPLAYED_TEXT} {exc}"

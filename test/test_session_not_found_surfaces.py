@@ -26,11 +26,36 @@ import pytest
 from test_cron_acp_retry import gw_and_cb  # noqa: F401  (fixture)
 
 from kiro_crew.acp.client import AcpError
-from kiro_crew.llm_helpers import SESSION_NOT_FOUND_GIVE_UP_TEXT, SESSION_NOT_FOUND_RETRY_NOTICE
+from kiro_crew.acp.transport_errors import _raise_acp_error
+from kiro_crew.llm_helpers import (
+    CREDENTIAL_RELOAD_GIVE_UP_TEXT,
+    CREDENTIAL_RELOAD_RETRY_NOTICE,
+    SESSION_NOT_FOUND_GIVE_UP_TEXT,
+    SESSION_NOT_FOUND_RETRY_NOTICE,
+)
 from kiro_crew.providers.base import EVENT_TOOL_CALL, LLMEvent
+
+_LOSS_KIND = "session_not_found"
+
+
+@pytest.fixture(autouse=True, params=["session_not_found", "cloud_credential"])
+def _loss_kind(request, _floor_monkeypatch):
+    _floor_monkeypatch.setattr(f"{__name__}._LOSS_KIND", request.param)
 
 
 def _lost() -> AcpError:
+    if _LOSS_KIND == "cloud_credential":
+        try:
+            _raise_acp_error(
+                {
+                    "code": -32603,
+                    "message": "Internal error: API Error: Could not load AWS credentials",
+                    "data": {"errorKind": "cloud_credential_error"},
+                },
+                backend="claude",
+            )
+        except AcpError as exc:
+            return exc
     return AcpError("Session not found: 3f2a-backend-sid")
 
 
@@ -82,7 +107,12 @@ async def test_slack_lost_session_resets_and_replays_once():
     assert provider.turns == 2
     assert "reset:thread1" in sessions.removed
     texts = _visible_texts(slack)
-    assert any(SESSION_NOT_FOUND_RETRY_NOTICE in t for t in texts), texts
+    notice = (
+        CREDENTIAL_RELOAD_RETRY_NOTICE
+        if _LOSS_KIND == "cloud_credential"
+        else SESSION_NOT_FOUND_RETRY_NOTICE
+    )
+    assert any(notice in t for t in texts), texts
     assert any("The answer is 42" in t for t in texts), texts
     assert sessions.replay_gaps == [("open", "thread1"), ("close", "thread1")]
 
@@ -101,7 +131,12 @@ async def test_slack_second_loss_ends_on_a_clear_error():
 
     assert provider.turns == 2, "one replay, never a loop"
     texts = _visible_texts(slack)
-    assert any(SESSION_NOT_FOUND_GIVE_UP_TEXT in t for t in texts), texts
+    give_up = (
+        CREDENTIAL_RELOAD_GIVE_UP_TEXT
+        if _LOSS_KIND == "cloud_credential"
+        else SESSION_NOT_FOUND_GIVE_UP_TEXT
+    )
+    assert any(give_up in t for t in texts), texts
     assert sessions.replay_gaps[0] == ("open", "thread1")
     assert sessions.replay_gaps[-1] == ("close", "thread1"), "no gap left open"
 

@@ -483,6 +483,8 @@ from kiro_crew.hooks import (  # noqa: F401
 from kiro_crew.image_artifacts import register_images_off_loop
 from kiro_crew.llm_helpers import (  # noqa: F401
     _NO_PRIOR_STATS,
+    CREDENTIAL_RELOAD_GIVE_UP_TEXT,
+    CREDENTIAL_RELOAD_RETRY_NOTICE,
     ROUTE_BASELINE_ATTR,
     TRANSIENT_RETRIES,
     TURN_FALLBACK_ATTR,
@@ -490,8 +492,10 @@ from kiro_crew.llm_helpers import (  # noqa: F401
     PromptBusyExhaustedError,
     _billing_stats,
     acp_error_is_connection_failure,
+    acp_error_is_credential_reload,
     acp_error_is_session_not_found,
     acp_error_is_transient,
+    acp_error_needs_fresh_backend,
     advance_fallback_candidate,
     configured_fallback_chain,
     connection_recovery_open,
@@ -658,6 +662,7 @@ SESSION_NOT_FOUND_GIVE_UP_TEXT = (
     "❌ Could not reconnect this chat's session. Send your message again, "
     "or start a new chat if this keeps happening."
 )
+
 
 # The synthetic recovery message constants live in chat_utils (single source
 # of truth shared with the queue/merge predicates — is_system_injection must
@@ -18594,7 +18599,7 @@ async def _run_chat(
                     else "⟳ Session busy — please retry."
                 )
                 slot.append("error", _retry_msg, "msg msg-err")
-        elif acp_error_is_session_not_found(exc):
+        elif acp_error_needs_fresh_backend(exc):
             # The backend process is alive but holds no session under the id this
             # chat is bound to, so the dead-provider eviction never fires and a
             # plain retry draws the same answer. Reset drops the live binding and
@@ -18602,12 +18607,16 @@ async def _run_chat(
             # process that session/loads the SAME backend id (falling back to a
             # new session plus history replay only when that load fails). ONE
             # retry per landed turn: a backend that loses it again ends here.
+            _credential_reload = acp_error_is_credential_reload(exc)
             logger.warning(
-                "Backend lost the session for slot %s — re-loading on a fresh runtime",
+                "Backend %s for slot %s — re-loading on a fresh runtime",
+                "could not load its credentials" if _credential_reload else "lost the session",
                 slot.key,
             )
             needs_session_reset = True  # checked in finally block
-            await _persist_partial_reply("error: session not found")
+            await _persist_partial_reply(
+                "error: cloud credentials" if _credential_reload else "error: session not found"
+            )
             # A Stop that already resolved to idle is invisible to the suppress
             # check; the replay snapshots below are post-Stop, so only this gate
             # can see it.
@@ -18617,7 +18626,11 @@ async def _run_chat(
                 slot._session_not_found_retry_used = True
                 slot.append(
                     "error",
-                    SESSION_NOT_FOUND_RETRY_TEXT,
+                    (
+                        CREDENTIAL_RELOAD_RETRY_NOTICE
+                        if _credential_reload
+                        else SESSION_NOT_FOUND_RETRY_TEXT
+                    ),
                     "msg msg-err",
                     meta={"kind": TRANSIENT_RETRY_KIND},
                 )
@@ -18645,7 +18658,15 @@ async def _run_chat(
                     session_stop_gen=_snf_session_stop_gen,
                 )
             else:
-                slot.append("error", SESSION_NOT_FOUND_GIVE_UP_TEXT, "msg msg-err")
+                slot.append(
+                    "error",
+                    (
+                        f"❌ {CREDENTIAL_RELOAD_GIVE_UP_TEXT}"
+                        if _credential_reload
+                        else SESSION_NOT_FOUND_GIVE_UP_TEXT
+                    ),
+                    "msg msg-err",
+                )
         elif (
             getattr(exc, "image_format_unsupported", False)
             and not _attachments

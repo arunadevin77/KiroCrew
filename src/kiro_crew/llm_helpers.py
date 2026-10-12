@@ -338,6 +338,16 @@ def acp_error_is_session_not_found(exc: BaseException) -> bool:
     return isinstance(exc, AcpError) and "session not found" in str(exc).lower()
 
 
+def acp_error_is_credential_reload(exc: BaseException) -> bool:
+    if not isinstance(exc, AcpError):
+        return False
+    return exc.credential_reload is True or "cloud_credential_error" in str(exc)
+
+
+def acp_error_needs_fresh_backend(exc: BaseException) -> bool:
+    return acp_error_is_session_not_found(exc) or acp_error_is_credential_reload(exc)
+
+
 #: Set by :func:`stream_and_collect` on an ``AcpError`` it propagates: True when a
 #: tool call fired during the turn, so re-sending the prompt could repeat it.
 TOOL_ACTIVITY_ATTR = "turn_tool_activity"
@@ -352,6 +362,11 @@ def acp_error_after_tool_activity(exc: BaseException) -> bool:
 SESSION_NOT_FOUND_RETRY_NOTICE = "⟳ The agent lost its session — reconnecting…"
 #: The error a surface ends on when the one reconnect did not give it a usable session.
 SESSION_NOT_FOUND_GIVE_UP_TEXT = "Could not reconnect the agent's session."
+CREDENTIAL_RELOAD_RETRY_NOTICE = "⟳ The agent could not load its cloud credentials. Restarting it…"
+CREDENTIAL_RELOAD_GIVE_UP_TEXT = (
+    "The agent still could not load its cloud credentials after a restart. "
+    "Refresh your credentials, then send your message again."
+)
 #: A session lost after the turn started working: replaced, but not replayed,
 #: since a tool may already have run.
 SESSION_NOT_FOUND_NOT_REPLAYED_TEXT = (

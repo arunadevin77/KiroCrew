@@ -111,10 +111,13 @@ from kiro_crew.hooks import (
     safe_read_file_bytes,
 )
 from kiro_crew.llm_helpers import (
+    CREDENTIAL_RELOAD_GIVE_UP_TEXT,
+    CREDENTIAL_RELOAD_RETRY_NOTICE,
     SESSION_NOT_FOUND_GIVE_UP_TEXT,
     SESSION_NOT_FOUND_NOT_REPLAYED_TEXT,
     SESSION_NOT_FOUND_RETRY_NOTICE,
-    acp_error_is_session_not_found,
+    acp_error_is_credential_reload,
+    acp_error_needs_fresh_backend,
     record_interaction_event,
     save_conversation_turn_off_loop,
 )
@@ -2416,7 +2419,7 @@ async def handle_message(
         _had_error = True
         # Only once this attempt holds a claim: the binding to reset is the one
         # it claimed, and the Stop count the replay checks was read with it.
-        _session_lost = acp_error_is_session_not_found(e) and _acquired
+        _session_lost = acp_error_needs_fresh_backend(e) and _acquired
         _reset_ok = False
         if _session_lost:
             # A live backend holds no session under the mapped id, so every later
@@ -2452,7 +2455,11 @@ async def handle_message(
             _had_error = False
             task.complete()
             await _replay_abandoned(
-                SESSION_NOT_FOUND_RETRY_NOTICE,
+                (
+                    CREDENTIAL_RELOAD_RETRY_NOTICE
+                    if acp_error_is_credential_reload(e)
+                    else SESSION_NOT_FOUND_RETRY_NOTICE
+                ),
                 _CompactionReplay(
                     attempt=_compaction_replay.attempt if _compaction_replay is not None else 0,
                     stop_gen_at_entry=_stop_gen_at_entry,
@@ -2464,6 +2471,8 @@ async def handle_message(
                 sessions.close_replay_gap(session_key)
             if _session_lost and (answer.accumulated or answer.task_counter):
                 answer.accumulated = f"⟳ {SESSION_NOT_FOUND_NOT_REPLAYED_TEXT}"
+            elif _session_lost and acp_error_is_credential_reload(e):
+                answer.accumulated = f"❌ {CREDENTIAL_RELOAD_GIVE_UP_TEXT}"
             elif _session_lost:
                 answer.accumulated = (
                     f"❌ {SESSION_NOT_FOUND_GIVE_UP_TEXT} Send your message again, "
