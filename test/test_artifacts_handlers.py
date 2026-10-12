@@ -2801,3 +2801,334 @@ class TestCurrentReadsOffTheLoop:
         resp = await handler(_request(match={"slug": "x"}))
         assert resp.status == 200
         assert threads and threading.get_ident() not in threads
+
+
+# ── dashboard package bindings ──────────────────────────────────────────────
+#
+# A ``bound_to`` the write path accepts and no reader can ever resolve. The three
+# refusals below were all 200s, found by an exploratory click-through run; the two
+# acceptances beside them are what must keep working, and the layout-edit case is the
+# rule for a target that dies after its binding was written.
+
+
+def _package(bound_to: str) -> str:
+    """The smallest valid dashboard package, bound where the caller says."""
+    return json.dumps(
+        {
+            "kind": "dashboard",
+            "bound_to": bound_to,
+            "model": {
+                "types": {
+                    "open_prs": {
+                        "type": "number",
+                        "source": {"fold": "work", "path": "summary.open"},
+                    }
+                }
+            },
+            "view": {"blocks": [{"id": "board", "type": "stat", "fields": ["open_prs"]}]},
+            "theme": {"tokens": {}},
+        }
+    )
+
+
+@pytest.fixture
+def roster(monkeypatch):
+    """A roster holding exactly one crewmate, ``Atlas`` -> slug ``atlas``.
+
+    Only config LOADING is stubbed. ``_member_names_for_slug`` -- the same helper the
+    serve path asks -- runs for real, so what these tests exercise is the real
+    resolution and not a stand-in for it.
+    """
+    from types import SimpleNamespace
+
+    from kiro_crew.config import loader as loader_mod
+
+    cfg = SimpleNamespace(agents={"Atlas": SimpleNamespace(member_id="")})
+    monkeypatch.setattr(loader_mod.KiroCrewConfig, "load", staticmethod(lambda: cfg))
+    return cfg
+
+
+def _bound_request(slug: str, bound_to: str, *, slot: object = None) -> MagicMock:
+    req = _request(body={"content": _package(bound_to)}, match={"slug": slug})
+    req.app["state"].get_slot.return_value = slot
+    return req
+
+
+@pytest.mark.usefixtures("patch_restricted", "roster")
+class TestDashboardBindingTargets:
+    @pytest.fixture
+    def bound(self, isolated_store) -> str:
+        """A stored package bound to the one crewmate the roster holds."""
+        isolated_store.create(
+            name="Atlas board",
+            slug="board",
+            kind="dashboard",
+            content=_package("crewmate:atlas"),
+        )
+        return "board"
+
+    @pytest.mark.asyncio
+    async def test_a_rebind_to_a_crewmate_that_does_not_exist_is_refused(
+        self, isolated_store, bound
+    ) -> None:
+        resp = await api_artifact_update(_bound_request(bound, "crewmate:someone-else"))
+        assert resp.status == 400
+        assert b"names no crew member" in resp.body
+        # And the stored binding is untouched: a refused write stores nothing.
+        content = isolated_store.get(bound).content or ""
+        assert json.loads(content)["bound_to"] == "crewmate:atlas"
+
+    @pytest.mark.asyncio
+    async def test_a_rebind_to_a_session_this_gateway_does_not_know_is_refused(
+        self, isolated_store, bound
+    ) -> None:
+        # ``get_slot`` answers None, which is the live state's own "no such session".
+        resp = await api_artifact_update(_bound_request(bound, "session:does-not-exist"))
+        assert resp.status == 400
+        assert b"names no live session" in resp.body
+
+    @pytest.mark.asyncio
+    async def test_a_rebind_to_a_dispatched_session_is_refused(
+        self, isolated_store, bound, monkeypatch
+    ) -> None:
+        from kiro_crew.dashboard import card_lifecycle
+
+        monkeypatch.setattr(card_lifecycle, "is_root_session", lambda slot: False)
+        resp = await api_artifact_update(
+            _bound_request(bound, "session:chat-9-1791", slot=MagicMock())
+        )
+        assert resp.status == 400
+        assert b"dispatched or adopted" in resp.body
+
+    @pytest.mark.asyncio
+    async def test_a_slug_two_crew_members_share_is_refused_rather_than_picked(
+        self, isolated_store, bound, monkeypatch
+    ) -> None:
+        # Slugification is lossy, so a hand-edited roster holding both spellings
+        # derives ONE slug from TWO names. Accepting the binding because something
+        # matched stores a page every read refuses with 409 dashboard_slug_ambiguous,
+        # and picking one of the two hands a crewmate the other's page.
+        from types import SimpleNamespace
+
+        from kiro_crew.config import loader as loader_mod
+
+        cfg = SimpleNamespace(
+            agents={
+                "Atlas": SimpleNamespace(member_id=""),
+                "atlas": SimpleNamespace(member_id=""),
+            }
+        )
+        monkeypatch.setattr(loader_mod.KiroCrewConfig, "load", staticmethod(lambda: cfg))
+        # Stored bound ELSEWHERE, so this write really changes the binding: a write
+        # that keeps the binding it had is deliberately never re-asked.
+        isolated_store.create(
+            name="Shared", slug="shared", kind="dashboard", content=_package("crewmate:nyx")
+        )
+        resp = await api_artifact_update(_bound_request("shared", "crewmate:atlas"))
+        assert resp.status == 400
+        assert b"ambiguous" in resp.body
+        assert b"dashboard_slug_ambiguous" in resp.body
+
+    @pytest.mark.asyncio
+    async def test_a_rebind_to_the_crewmate_on_the_roster_is_accepted(
+        self, isolated_store, bound
+    ) -> None:
+        isolated_store.create(
+            name="Second", slug="second", kind="dashboard", content=_package("crewmate:atlas")
+        )
+        resp = await api_artifact_update(_bound_request("second", "crewmate:atlas"))
+        assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_a_rebind_to_a_root_session_is_accepted(
+        self, isolated_store, bound, monkeypatch
+    ) -> None:
+        from kiro_crew.dashboard import card_lifecycle
+
+        monkeypatch.setattr(card_lifecycle, "is_root_session", lambda slot: True)
+        resp = await api_artifact_update(
+            _bound_request(bound, "session:chat-9-1791", slot=MagicMock())
+        )
+        assert resp.status == 200
+        content = isolated_store.get(bound).content or ""
+        assert json.loads(content)["bound_to"] == "session:chat-9-1791"
+
+    @pytest.mark.asyncio
+    async def test_a_layout_edit_still_lands_when_the_binding_is_already_dead(
+        self, isolated_store
+    ) -> None:
+        # The ordering rule. This record was written before the check existed and names
+        # a crewmate the roster does not hold -- as one whose crewmate was renamed or
+        # deleted would. A write that does not CHANGE the binding is not re-asked, so
+        # the page can still be re-themed and re-versioned rather than frozen.
+        isolated_store.create(
+            name="Orphan", slug="orphan", kind="dashboard", content=_package("crewmate:departed")
+        )
+        payload = json.loads(_package("crewmate:departed"))
+        payload["theme"]["tokens"] = {"--panel-bg": "black"}
+        resp = await api_artifact_update(
+            _request(body={"content": json.dumps(payload)}, match={"slug": "orphan"})
+        )
+        assert resp.status == 200
+        stored = json.loads(isolated_store.get("orphan").content or "")
+        assert stored["theme"]["tokens"] == {"--panel-bg": "black"}
+        assert stored["bound_to"] == "crewmate:departed"
+
+    @pytest.mark.asyncio
+    async def test_a_json_document_carrying_a_bound_to_field_is_not_a_binding(
+        self, isolated_store
+    ) -> None:
+        # The check is gated on the artifact's KIND, which is also what makes the store
+        # read the content as a package. A plain JSON document is nobody's dashboard.
+        isolated_store.create(name="Notes", slug="notes", kind="json", content='{"a": 1}')
+        resp = await api_artifact_update(
+            _request(
+                body={"content": json.dumps({"bound_to": "crewmate:someone-else"})},
+                match={"slug": "notes"},
+            )
+        )
+        assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_a_create_naming_a_crewmate_that_does_not_exist_is_refused(
+        self, isolated_store
+    ) -> None:
+        # A create declares a binding for the first time, so there is no previous one
+        # to compare against and it is always checked.
+        resp = await api_artifacts_create(
+            _request(
+                body={
+                    "name": "New board",
+                    "kind": "dashboard",
+                    "content": _package("crewmate:someone-else"),
+                }
+            )
+        )
+        assert resp.status == 400
+        assert b"names no crew member" in resp.body
+
+    @pytest.mark.asyncio
+    async def test_a_create_naming_the_crewmate_on_the_roster_is_accepted(
+        self, isolated_store
+    ) -> None:
+        resp = await api_artifacts_create(
+            _request(
+                body={
+                    "name": "Atlas board",
+                    "kind": "dashboard",
+                    "content": _package("crewmate:atlas"),
+                }
+            )
+        )
+        assert resp.status in (200, 201)
+
+    @pytest.mark.asyncio
+    async def test_a_revert_past_a_rebind_is_not_read_as_a_rebind(
+        self, isolated_store, bound
+    ) -> None:
+        # The revert flow submits a PAST version's whole package, and
+        # ``revert_package`` discards the binding in it and keeps the live one -- so a
+        # rollback whose old version names a dead target must still land. Reading the
+        # submitted value as a rebind would refuse a rollback over a binding the store
+        # was never going to store.
+        isolated_store.update(bound, content=_package("crewmate:atlas"), snapshot=True)
+        resp = await api_artifact_update(
+            _request(
+                body={
+                    "content": _package("crewmate:departed"),
+                    "event_type": "reverted",
+                    "from_version": 1,
+                },
+                match={"slug": bound},
+            )
+        )
+        assert resp.status == 200
+        # And the LIVE binding is what survived, which is the store's own rule.
+        stored = json.loads(isolated_store.get(bound).content or "")
+        assert stored["bound_to"] == "crewmate:atlas"
+
+    @pytest.mark.asyncio
+    async def test_deeply_nested_json_in_an_opaque_text_write_does_not_crash_the_probe(
+        self, isolated_store
+    ) -> None:
+        # The binding probe runs on EVERY update carrying content, before the record's
+        # kind is known. Content that is valid JSON nested past the interpreter's limit
+        # raises RecursionError out of json.loads, and RecursionError is a RuntimeError
+        # rather than a ValueError -- so letting it out turned a perfectly good
+        # plain-text write into an HTTP 500. The write must simply land.
+        isolated_store.create(name="Opaque", slug="opaque", kind="text", content="v1")
+        payload = "[" * 10000 + "0" + "]" * 10000
+        resp = await api_artifact_update(
+            _request(body={"content": payload}, match={"slug": "opaque"})
+        )
+        assert resp.status == 200
+        assert isolated_store.get("opaque").content == payload
+
+    @pytest.mark.asyncio
+    async def test_the_probe_reads_no_binding_out_of_unparseable_depth(self) -> None:
+        # The unit behind the route case above, so the regression is pinned at the
+        # function too: the answer is "no binding here", not an exception.
+        from kiro_crew.dashboard.handlers.artifacts import _package_binding
+
+        assert _package_binding("[" * 10000 + "0" + "]" * 10000) is None
+
+    @pytest.mark.asyncio
+    async def test_a_credential_shaped_binding_is_not_echoed_back_in_the_refusal(
+        self, isolated_store, bound
+    ) -> None:
+        # The refusal names the target so the author can see which binding was wrong,
+        # and an agent can put anything in a bound_to slug. A credential-shaped one
+        # must not come back verbatim in the 400 body.
+        resp = await api_artifact_update(_bound_request(bound, "crewmate:AKIAIOSFODNN7EXAMPLE"))
+        assert resp.status == 400
+        assert b"AKIAIOSFODNN7EXAMPLE" not in resp.body
+        assert b"REDACTED" in resp.body
+
+    @pytest.mark.asyncio
+    async def test_the_session_scope_refusal_is_redacted_too(
+        self, isolated_store, bound
+    ) -> None:
+        # Both scopes build their sentences through the same helper, so neither can
+        # return one that was never redacted.
+        resp = await api_artifact_update(_bound_request(bound, "session:AKIAIOSFODNN7EXAMPLE"))
+        assert resp.status == 400
+        assert b"AKIAIOSFODNN7EXAMPLE" not in resp.body
+        assert b"REDACTED" in resp.body
+
+    @pytest.mark.asyncio
+    async def test_an_ordinary_slug_still_reads_back_so_the_author_sees_the_typo(
+        self, isolated_store, bound
+    ) -> None:
+        # The control beside the two above. Redaction rewrites credential-shaped spans,
+        # not identifiers, so a refusal that named no slug at all would mean the
+        # redaction had eaten the message rather than the credential.
+        resp = await api_artifact_update(_bound_request(bound, "crewmate:someone-else"))
+        assert resp.status == 400
+        assert b"someone-else" in resp.body
+        assert b"REDACTED" not in resp.body
+
+    @pytest.mark.asyncio
+    async def test_converting_a_record_into_a_dashboard_is_not_a_reachable_write(
+        self, isolated_store
+    ) -> None:
+        # The update path checks the binding only while the record STAYS a package, so
+        # a markdown->dashboard PATCH would declare a binding for the first time and
+        # skip the check -- if the route allowed that conversion. It does not:
+        # `dashboard` is deliberately absent from USER_SELECTABLE_KINDS, so the kind
+        # gate refuses it before the store is reached. Pinned here rather than argued,
+        # so adding `dashboard` to that set turns THIS test red and whoever does it
+        # sees that the binding check needs the no-prior-binding case first.
+        from kiro_crew.artifacts import USER_SELECTABLE_KINDS
+
+        assert "dashboard" not in USER_SELECTABLE_KINDS
+        isolated_store.create(name="Prose", slug="prose", kind="markdown", content="# notes")
+        resp = await api_artifact_update(
+            _request(
+                body={"kind": "dashboard", "content": _package("crewmate:someone-else")},
+                match={"slug": "prose"},
+            )
+        )
+        assert resp.status == 400
+        assert b"kind must be one of" in resp.body
+        # And the record is still prose, so no unchecked package was stored.
+        assert isolated_store.get("prose").kind == "markdown"

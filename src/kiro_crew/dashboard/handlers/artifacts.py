@@ -45,6 +45,7 @@ from aiohttp import web
 from kiro_crew import hooks, publish_sync
 from kiro_crew import sel as _sel_mod
 from kiro_crew.artifact_source import LINK, classify_source
+from kiro_crew.artifact_store.dashboard_package import DASHBOARD_KIND
 from kiro_crew.artifacts import (
     EXPECT_ABSENT,
     MAX_CONTENT_BYTES,
@@ -1335,6 +1336,176 @@ async def _promote_verdict(
     return canonical_path, "", True, None
 
 
+# ── Dashboard package bindings ──────────────────────────────────────────────
+#
+# ``bound_to`` says WHOSE dashboard a ``kind="dashboard"`` package is. The store's
+# validator (``artifact_store.dashboard_package.validate_bound_to``) checks its SHAPE
+# and can check nothing else: it runs inside :class:`ArtifactStore`, a library the CLI
+# and cron use with no roster loaded and no gateway running. So "is there anything at
+# the other end of this binding" is asked HERE, on the one write path both doors reach
+# -- the browser's PATCH and MCP's ``artifact_save`` / ``artifact_update`` all arrive at
+# :func:`api_artifacts_create` / :func:`api_artifact_update`.
+#
+# ASKED ONLY WHEN THE WRITE CHANGES THE BINDING, and that single rule is the whole
+# answer for a target that dies later. A session closes, a crewmate is renamed, and the
+# package left behind stays exactly as servable as it was: the serve path refuses it
+# (``member_dashboard._resolve``'s ``member_not_found`` / ``dashboard_slug_ambiguous``,
+# ``api_session_dashboard``'s ``not_root_session``), and that is where the refusal
+# belongs, because the fact expires and a stored record cannot be re-asked. What a
+# write-time check CAN do is catch the author at the one moment the binding is still a
+# typo rather than history. So an edit carrying the binding it already had is never
+# re-litigated: a package whose target is gone can still be re-themed, re-versioned and
+# REBOUND to a live target, and no record written before this check can be stranded by
+# it.
+#
+# Neither half replaces the other, and the eligibility questions are the serve path's
+# own: ``_member_names_for_slug`` for a crewmate, ``is_root_session`` for a session. A
+# binding is accepted here exactly when the serve path would serve it.
+
+
+def _package_binding(content: Any) -> str | None:
+    """The ``bound_to`` a dashboard write would store, or ``None`` when it names none.
+
+    A non-string ``bound_to`` reads as none: its shape is the store validator's
+    question, and answering it here would give the caller two different 400s for one
+    malformed value.
+
+    Asked of EVERY update carrying content, before the record's kind is known, so it
+    must answer "not a binding" for arbitrary text rather than raise.
+
+    Decoded through the package module's OWN ``_decode_package`` rather than a
+    ``json.loads`` here, which is what makes that true. That function is the half of
+    ``parse_package`` that runs before any validator, and it already carries the three
+    guards a decoder of submitted text needs: the surrogate scan, the byte cap, and a
+    ``RecursionError`` branch for the case the byte cap does not cover (depth and size
+    come apart -- a quarter-megabyte of ``[`` is small and still exhausts the stack).
+    A second decoder spelled here would have to re-earn all three, and the first
+    revision of this function proved it: it caught only ``ValueError``, so content that
+    was valid JSON nested past the interpreter's limit turned a perfectly good
+    opaque-text write into a 500.
+
+    Every refusal it raises reads as "no binding here", which is the right answer for
+    all of them: arbitrary text, a package over the cap, and one carrying a lone
+    surrogate are each content the store refuses on its own terms a moment later.
+    """
+    from kiro_crew.artifact_store.dashboard_package import _decode_package
+
+    try:
+        parsed = _decode_package(content)
+    except ArtifactValidationError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    raw = parsed.get("bound_to")
+    return raw if isinstance(raw, str) else None
+
+
+def _refuse_binding(reason: str) -> str:
+    """One refusal sentence, with the caller's own text redacted.
+
+    EVERY binding refusal is built through here, which is the point of it being a
+    function rather than a wrap at the two returns. A refusal names the target the
+    caller submitted, so that it can say which binding was wrong -- and an agent can
+    put anything in a `bound_to` slug, including a credential-shaped string. Redacting
+    where the sentence is BUILT means no route, and no scope branch added later, can
+    return one that was never redacted, and it is the same text ``_audit`` records
+    rather than a second copy that happens to agree.
+
+    An ordinary target survives this unchanged: ``redact_credentials`` rewrites
+    credential-shaped spans, not identifiers, so a slug (``someone-else``) and a slot
+    key (``slack_1785370133.085469``) read back verbatim and the author can still see
+    their typo. Only an `AKIA...`-shaped target becomes ``[REDACTED: credential]``.
+    """
+    return _redact_text(reason)
+
+
+def _crewmate_binding_refusal(cfg: Any, slug: str) -> str | None:
+    """Why no crewmate can resolve to *slug*, or ``None`` when EXACTLY ONE does.
+
+    Takes the config the caller loaded, so the roster this answers from is the same one
+    a sibling check in the same request read.
+
+    EXACTLY one, which is the same count ``member_dashboard._resolve`` requires of this
+    same helper (``!= [member]``). Slugification is lossy, so a hand-edited roster
+    holding both ``Atlas`` and ``atlas`` derives one slug from two names: accepting that
+    binding because SOMETHING matched would store a page every read then refuses with
+    409 ``dashboard_slug_ambiguous``. Ambiguity refuses and never picks -- one of the
+    two crewmates would otherwise be handed the other's page -- and the remedy is a
+    person renaming one of them, which is what the serve-time refusal already says.
+
+    The RAW slug does the lookup and only the message is redacted: redacting first
+    would send ``[REDACTED: credential]`` to the roster and answer a different question
+    than the caller asked.
+    """
+    from kiro_crew.dashboard.handlers.members import _member_names_for_slug
+
+    owners = _member_names_for_slug(cfg, slug)
+    if not owners:
+        return _refuse_binding(
+            f"bound_to 'crewmate:{slug}' names no crew member, so nothing can ever "
+            "render this package: a crewmate's dashboard is resolved from the roster "
+            "by that slug. Create the crewmate first, or bind to an existing one"
+        )
+    if len(owners) > 1:
+        return _refuse_binding(
+            f"bound_to 'crewmate:{slug}' is ambiguous: {len(owners)} crew members "
+            "resolve to that slug, so this page would belong to none of them and every "
+            "read of it is refused 'dashboard_slug_ambiguous'. Ask the human to rename "
+            "one of them"
+        )
+    return None
+
+
+def _session_binding_refusal(state: Any, key: str) -> str | None:
+    """Why no session can be served *key*'s package, or ``None`` when one can.
+
+    ``is_root_session`` is the test :func:`api_session_dashboard` applies on every
+    read, and it is asked here for that reason rather than re-derived: a dispatched or
+    adopted session has no dashboard at all, by the product rule that a worker's
+    records belong to the board of whoever dispatched it.
+    """
+    from kiro_crew.dashboard.card_lifecycle import is_root_session
+
+    slot = state.get_slot(_normalize_slot_key(key))
+    if slot is None:
+        return _refuse_binding(
+            f"bound_to 'session:{key}' names no live session, so nothing can render "
+            "this package: a session's dashboard reads the folds of that session's own "
+            "slot. Bind to a session this gateway knows"
+        )
+    if not is_root_session(slot):
+        return _refuse_binding(
+            f"bound_to 'session:{key}' is a dispatched or adopted session, which has "
+            "no dashboard of its own -- its records belong to the board of whoever "
+            "dispatched it, and this page would be refused 'not_root_session' on every "
+            "read. Bind to the root session instead"
+        )
+    return None
+
+
+async def _binding_refusal(state: Any, bound_to: str) -> str | None:
+    """Why *bound_to* can never be served, or ``None`` when it can.
+
+    Takes a binding the store validator has NOT seen yet, so an unknown scope reads as
+    "not this function's question" rather than as an accepted one: the shape check
+    behind it admits exactly two scopes and refuses everything else, and a scope this
+    rejected would be answered twice.
+
+    The roster read is offloaded and the slot read is not, matching the two serve-time
+    checks this mirrors: ``member_dashboard._resolve`` loads the config in a thread,
+    ``api_session_dashboard`` asks the live state inline.
+    """
+    scope, _, target = bound_to.partition(":")
+    if scope == "crewmate":
+        from kiro_crew.config.loader import KiroCrewConfig
+
+        cfg = await asyncio.to_thread(KiroCrewConfig.load)
+        return _crewmate_binding_refusal(cfg, target)
+    if scope == "session":
+        return _session_binding_refusal(state, target)
+    return None
+
+
 async def api_artifacts_create(request: web.Request) -> web.Response:
     owner_denied = await _non_owner_refusal(request, "artifacts.artifacts_create")
     if owner_denied is not None:
@@ -1513,6 +1684,20 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     if ferr:
         _audit(tool="artifact_save", request=request, outcome="denied", error=ferr)
         return _err(ferr)
+    # A new package always declares a binding for the first time, so there is no
+    # previous one to compare against and every create is checked. Gated on the
+    # DECLARED kind, which is also what makes the store validate the content as a
+    # package at all: an inferred kind never comes back ``dashboard``, so a plain JSON
+    # document that happens to carry a ``bound_to`` field is left alone.
+    if body.get("kind") == DASHBOARD_KIND:
+        new_binding = _package_binding(
+            promoted_content if promoted_content is not None else body.get("content", "")
+        )
+        if new_binding is not None:
+            berr = await _binding_refusal(state, new_binding)
+            if berr:
+                _audit(tool="artifact_save", request=request, outcome="denied", error=berr)
+                return _err(berr)
     # Copy-vs-link: a disposable file (temp dir / Downloads / Desktop, or
     # anything with no project claim) is SNAPSHOTTED — we store no pointer at
     # all. A file inside a real project is LINKED, and the project root that
@@ -1815,6 +2000,39 @@ async def api_artifact_update(request: web.Request) -> web.Response:
                     extra={"slug": slug, "kind": str(raw_kind)[:32]},
                 )
                 return _err(msg)
+        # A REBIND is checked; a layout edit is not. The stored record answers both
+        # halves -- whether this is a package at all, and what it is bound to now -- so
+        # it is read only once a submitted ``bound_to`` makes the question live, which
+        # keeps every ordinary PATCH at the single write it already was. See the
+        # binding section above for why an unchanged binding is never re-asked.
+        #
+        # A REVERT is not a rebind, however different its binding looks. It submits a
+        # past version's whole package, and ``revert_package`` THROWS THAT BINDING AWAY
+        # and keeps the live one -- precisely so a rollback past a rebind cannot hand
+        # this page to whoever the stale binding names. Checking the submitted value
+        # would refuse the rollback for naming a target the store was never going to
+        # store, and the binding that does land was already checked when it was written.
+        submitted_binding = _package_binding(body.get("content"))
+        if submitted_binding is not None and event_type != "reverted":
+            stored = await _run_off_loop(lambda: get_default_store().get(slug))
+            # ``raw_kind`` is the kind this write SETTLES on, and a write converting the
+            # record away from ``dashboard`` stores no package at all -- the store stops
+            # reading the content as one, so there is no binding to be wrong.
+            stays_a_package = stored.kind == DASHBOARD_KIND and raw_kind in (
+                None,
+                DASHBOARD_KIND,
+            )
+            if stays_a_package and submitted_binding != _package_binding(stored.content):
+                berr = await _binding_refusal(state, submitted_binding)
+                if berr:
+                    _audit(
+                        tool="artifact_update",
+                        request=request,
+                        outcome="denied",
+                        error=berr,
+                        extra={"slug": slug},
+                    )
+                    return _err(berr)
         # OFF the event loop: update() writes current.html, a version snapshot
         # and -- for a linked artifact -- the source file itself, so running it
         # inline stalls the gateway for every other session on a large file or a
