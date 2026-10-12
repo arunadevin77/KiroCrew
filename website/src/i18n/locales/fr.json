@@ -10762,7 +10762,9 @@
       "preview_relative_path_body": "L’emplacement de ce document a été enregistré par rapport à son projet d’origine ; il ne peut donc pas être ouvert en toute sécurité depuis ici. Ouvrez-le depuis la session qui l’a créé.",
       "preview_binary_body": "Ce document n’est pas lisible en tant que texte, il n’y a donc rien à prévisualiser ici.",
       "save_to_artifacts": "Enregistrer dans les artefacts",
-      "saved_to_library_notice": "« {{name}} » a été enregistré dans vos artefacts."
+      "saved_to_library_notice": "« {{name}} » a été enregistré dans vos artefacts.",
+      "open_doc_in_editor": "Ouvrir {{path}} dans l’éditeur",
+      "open_doc_in_editor_failed": "Impossible d’ouvrir ce fichier dans ton éditeur : {{reason}}. Clique sur son nom pour afficher un aperçu."
     },
     "capabilitiesPage": {
       "agent_capabilities": "Personnaliser",

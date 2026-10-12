@@ -38,7 +38,7 @@ import { markJustCreatedBlank } from '../lib/blankHandoff'
 import { IMPORT_ACCEPT, IMPORTABLE_EXT_LIST, MAX_IMPORT_BYTES, planFileImport, wasContentRedacted, type ImportPlan, type ImportRejection } from '../lib/artifactImport'
 import { haptic } from '../lib/haptic'
 import type { Artifact, ArtifactFolder, PublishProviderDescriptor, RemoteArtifact, SessionDoc } from '../types'
-import { KIND_BADGE, isoToTs, docFileType, FolderColorSwatches, FolderGlyph, FolderNameInput, FolderMenu, SessionDocStar, LibraryTable, LibraryTree } from '../components/library/LibraryTable'
+import { KIND_BADGE, isoToTs, docFileType, FolderColorSwatches, FolderGlyph, FolderNameInput, FolderMenu, SessionDocStar, SessionDocPath, LibraryTable, LibraryTree } from '../components/library/LibraryTable'
 import SessionDocPreview from '../components/library/SessionDocPreview'
 import type { SortKey, SortState, LibraryDrag, FolderActions } from '../components/library/LibraryTable'
 import { WidgetThumb, ContentThumb, ImageThumb, WebAppThumb } from '../components/library/ArtifactThumbs'
@@ -817,7 +817,12 @@ function SessionDocsGallery({ docs, pending, onMaterialize, materializingPath, o
             <SessionDocStar d={d} busy={materializingPath === d.path} onMaterialize={handleMaterialize} />
             <FileText size={13} className="text-ok shrink-0" />
             <span className="text-sm text-text-strong font-medium truncate min-w-0 max-w-[280px]">{d.name}</span>
-            <span className="text-[11px] text-muted truncate min-w-0 flex-1">{d.path}</span>
+            {/* The path control is as wide as its text, so the free space after
+              * it keeps the row's preview click. Wrapping puts a launch
+              * refusal on its own line under the path. */}
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0 flex-1">
+              <SessionDocPath path={d.path} className="text-[11px] text-muted truncate min-w-0" />
+            </span>
             <span className="text-[12px] text-muted truncate min-w-0 max-w-[180px]" title={d.session_title}>{d.session_title}</span>
             <span className="text-[12px] text-muted whitespace-nowrap shrink-0">{_timeAgo(isoToTs(d.updated_at))}</span>
           </Clickable>

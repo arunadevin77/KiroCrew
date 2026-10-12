@@ -10762,7 +10762,9 @@
       "preview_relative_path_body": "A localização deste documento foi registrada em relação ao seu projeto original, então ele não pode ser aberto com segurança daqui. Abra-o na sessão que o criou.",
       "preview_binary_body": "Este documento não é legível como texto, então não há nada para pré-visualizar aqui.",
       "save_to_artifacts": "Salvar nos artefatos",
-      "saved_to_library_notice": "“{{name}}” foi salvo nos seus artefatos."
+      "saved_to_library_notice": "“{{name}}” foi salvo nos seus artefatos.",
+      "open_doc_in_editor": "Abrir {{path}} no editor",
+      "open_doc_in_editor_failed": "Não foi possível abrir este arquivo no seu editor: {{reason}}. Clique no nome para ver a prévia."
     },
     "capabilitiesPage": {
       "agent_capabilities": "Personalizar",

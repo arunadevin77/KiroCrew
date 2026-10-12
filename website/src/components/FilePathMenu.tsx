@@ -169,6 +169,36 @@ export function useCanOpenFile(kind?: FilePathKind): boolean {
   return !!directLocal && kind !== 'dir' && gatewayPlatform !== 'windows'
 }
 
+/**
+ * The ONE owner of the desktop shell's "Open in editor" launch for a path.
+ *
+ * It hands the PATH to the shell's shell.openPath bridge so the file opens in
+ * the user's own OS default handler — the one place the built-in viewer and the
+ * gateway-host reveal cannot reach. `canOpenInEditor` is true only when the
+ * fileOpenAPI preload bridge exists (desktop shell, not a browser tab or the
+ * PWA) and the target is not a directory. A failed launch is held as
+ * `editorError` for the caller to render in place through the shared
+ * `ErrorNotice`; it is separate from a gateway reveal's error, since this launch
+ * happens entirely in the shell and never touches /api/reveal.
+ *
+ * Shared by this menu's row and the artifacts list's session-document paths, so
+ * both surfaces gate, launch and report a refusal identically.
+ */
+export function useOpenInEditor(filePath: string, kind?: FilePathKind) {
+  const canOpenInEditor = kind !== 'dir' && canOpenFileInEditor()
+  const [editorError, setEditorError] = useState<string | null>(null)
+  useEffect(() => { setEditorError(null) }, [filePath])
+  const openInEditor = async () => {
+    setEditorError(null)
+    const r = await openFileInEditor(filePath)
+    // The bridge always names a reason on failure (bad path, unsupported type,
+    // or the OS refusal string), so there is no English fallback to translate.
+    if (!r.ok) setEditorError(r.error || 'error')
+  }
+  const clearEditorError = useCallback(() => setEditorError(null), [])
+  return { canOpenInEditor, openInEditor, editorError, clearEditorError }
+}
+
 // ── Menu-item building blocks ────────────────────────────────────────────────
 
 interface FilePathMenuItemsProps {
@@ -283,24 +313,10 @@ function FilePathMenuItems({ filePath, kind }: FilePathMenuItemsProps) {
       ? i18nT('components.filePathMenu.copy_failed')
       : i18nT('components.filePathMenu.copy_path')
 
-  // "Open in editor" hands the PATH to the desktop shell's shell.openPath bridge
-  // so the file opens in the user's own OS default handler — the one place the
-  // built-in viewer and the gateway-host reveal cannot reach. Shown only when
-  // the fileOpenAPI preload bridge exists (desktop shell, not a browser tab or
-  // the PWA) and the target is a file, not a directory. Its own error line,
-  // separate from the gateway reveal's, since this launch happens entirely in
-  // the shell and never touches /api/reveal.
-  const canOpenInEditor = kind !== 'dir' && canOpenFileInEditor()
+  // "Open in editor" through the shell bridge (see useOpenInEditor), with its
+  // own error line separate from the gateway reveal's.
+  const { canOpenInEditor, openInEditor, editorError, clearEditorError } = useOpenInEditor(filePath, kind)
   const openInEditorLabel = i18nT('components.markdownPanel.open_in_editor')
-  const [editorError, setEditorError] = useState<string | null>(null)
-  useEffect(() => { setEditorError(null) }, [filePath])
-  const openInEditor = async () => {
-    setEditorError(null)
-    const r = await openFileInEditor(filePath)
-    // The bridge always names a reason on failure (bad path, unsupported type,
-    // or the OS refusal string), so there is no English fallback to translate.
-    if (!r.ok) setEditorError(r.error || 'error')
-  }
 
   return (
     <>
@@ -327,7 +343,7 @@ function FilePathMenuItems({ filePath, kind }: FilePathMenuItemsProps) {
             variant="inline"
             className="whitespace-normal"
             message={editorError}
-            onDismiss={() => setEditorError(null)}
+            onDismiss={clearEditorError}
             testId="file-path-menu-editor-error"
           />
         </div>

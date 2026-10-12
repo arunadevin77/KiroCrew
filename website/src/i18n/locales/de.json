@@ -10617,7 +10617,9 @@
       "preview_relative_path_body": "Der Speicherort dieses Dokuments wurde relativ zu seinem ursprünglichen Projekt aufgezeichnet, daher kann es von hier aus nicht sicher geöffnet werden. Öffnen Sie es aus der Sitzung, die es erstellt hat.",
       "preview_binary_body": "Dieses Dokument ist nicht als Text lesbar, daher gibt es hier nichts anzuzeigen.",
       "save_to_artifacts": "In den Artefakten speichern",
-      "saved_to_library_notice": "„{{name}}“ wurde in Ihren Artefakten gespeichert."
+      "saved_to_library_notice": "„{{name}}“ wurde in Ihren Artefakten gespeichert.",
+      "open_doc_in_editor": "{{path}} im Editor öffnen",
+      "open_doc_in_editor_failed": "Diese Datei konnte nicht im Editor geöffnet werden: {{reason}}. Klicke stattdessen auf den Namen, um eine Vorschau zu sehen."
     },
     "capabilitiesPage": {
       "agent_capabilities": "Anpassen",

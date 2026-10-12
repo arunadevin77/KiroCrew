@@ -10472,7 +10472,9 @@
       "preview_relative_path_body": "此文档的位置是相对于其原始项目记录的，无法从此处安全打开。请在创建它的会话中打开。",
       "preview_binary_body": "此文档无法按文本读取，因此这里没有可预览的内容。",
       "save_to_artifacts": "保存到产物",
-      "saved_to_library_notice": "已将“{{name}}”保存到你的产物中。"
+      "saved_to_library_notice": "已将“{{name}}”保存到你的产物中。",
+      "open_doc_in_editor": "在编辑器中打开 {{path}}",
+      "open_doc_in_editor_failed": "无法在编辑器中打开此文件：{{reason}}。点击文件名即可预览。"
     },
     "capabilitiesPage": {
       "agent_capabilities": "自定义",

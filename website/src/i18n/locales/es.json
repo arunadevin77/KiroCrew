@@ -10762,7 +10762,9 @@
       "preview_relative_path_body": "La ubicación de este documento se registró en relación con su proyecto original, así que no se puede abrir de forma segura desde aquí. Ábrelo desde la sesión que lo creó.",
       "preview_binary_body": "Este documento no se puede leer como texto, así que no hay nada que previsualizar aquí.",
       "save_to_artifacts": "Guardar en los artefactos",
-      "saved_to_library_notice": "Se guardó “{{name}}” en tus artefactos."
+      "saved_to_library_notice": "Se guardó “{{name}}” en tus artefactos.",
+      "open_doc_in_editor": "Abrir {{path}} en el editor",
+      "open_doc_in_editor_failed": "No se pudo abrir este archivo en tu editor: {{reason}}. Haz clic en su nombre para ver una vista previa."
     },
     "capabilitiesPage": {
       "agent_capabilities": "Personalizar",

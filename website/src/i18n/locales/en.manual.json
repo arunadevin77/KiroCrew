@@ -4578,7 +4578,9 @@
       "preview_relative_path_body": "This document's location was recorded relative to its original project, so it can't be opened safely from here. Open it from the session that created it.",
       "preview_binary_body": "This document isn't readable as text, so there's nothing to preview here.",
       "save_to_artifacts": "Save to artifacts",
-      "saved_to_library_notice": "Saved “{{name}}” to your artifacts."
+      "saved_to_library_notice": "Saved “{{name}}” to your artifacts.",
+      "open_doc_in_editor": "Open {{path}} in editor",
+      "open_doc_in_editor_failed": "Couldn't open this file in your editor: {{reason}}. Click its name to preview it instead."
     },
     "capabilitiesPage": {
       "crews_label": "Crewmates",

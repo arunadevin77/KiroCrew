@@ -1,6 +1,6 @@
 import type * as React from 'react'
 import { useId, useState, useRef } from 'react'
-import { ChevronRight, ChevronDown, ChevronUp, MoreVertical, Pencil, Trash2, Star, ExternalLink, Loader2, X, Share2, FileText, FolderOpen, Folder as FolderIcon } from 'lucide-react'
+import { ChevronRight, ChevronDown, ChevronUp, MoreVertical, Pencil, PenLine, Trash2, Star, ExternalLink, Loader2, X, Share2, FileText, FolderOpen, Folder as FolderIcon } from 'lucide-react'
 import { openPopout } from '../../utils/artifactPopout'
 import { Badge, Btn, Input, IconButton } from '../ui'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../ui/dropdown-menu'
@@ -13,6 +13,11 @@ import { useScrollEdges } from '../../hooks/useScrollEdges'
 import { FOLDER_COLOR_PALETTE } from '../folderColorCatalog'
 import { i18nT } from '../../i18n/t'
 import { publishNoticeKey } from '../PublishHub'
+import ErrorNotice from '../ErrorNotice'
+import { useOpenInEditor } from '../FilePathMenu'
+import { canOpenFileInEditor, editorAcceptsPath } from '../../lib/electron'
+import { usePathKind } from '../../hooks/usePathKind'
+import { useBranding } from '../../hooks/useBranding'
 import type { Artifact, ArtifactFolder, SessionDoc } from '../../types'
 
 export type SortKey = 'name' | 'slug' | 'kind' | 'source' | 'version' | 'tags' | 'updated'
@@ -491,6 +496,67 @@ export function SessionDocStar({ d, busy, onMaterialize }: { d: SessionDoc; busy
   )
 }
 
+/**
+ * A session document's path, shared by the table/tree rows and the gallery
+ * section for the same reason as `SessionDocStar`.
+ *
+ * In the desktop shell, once the gateway's path probe confirms a regular file,
+ * the path is a button that opens the file in the user's editor through the
+ * same shell bridge the file-path menu's "Open in editor" row uses
+ * (`useOpenInEditor`). The probe is the gate that bridge relies on: it answers
+ * `missing` for a sensitive or absent path, so a path the gateway would refuse
+ * to read never becomes a launch. Only an absolute path of a type the shell
+ * opens is probed (`editorAcceptsPath`), so a PDF, a spreadsheet or a relative
+ * path is never offered a launch the shell would refuse. A plain browser tab
+ * has no bridge, and a desktop window on a remote or tunnelled gateway is not
+ * `directLocal` (the shell refuses to launch for a non-local dashboard, and the
+ * probe describes the gateway's disk, not this machine's); neither probes, and
+ * the path stays the static text it is everywhere else.
+ *
+ * A launch the shell still refuses (no handler app, file gone) renders in place
+ * through the shared `ErrorNotice`, naming the shell's reason and pointing at
+ * the preview. Both the button and the notice stop propagation: they sit inside
+ * rows whose click opens the preview.
+ */
+export function SessionDocPath({ path, className = '' }: { path: string; className?: string }) {
+  const errorId = useId()
+  const { directLocal } = useBranding()
+  const launchable = directLocal && canOpenFileInEditor() && editorAcceptsPath(path)
+  const kind = usePathKind(launchable ? path : null)
+  const { openInEditor, editorError, clearEditorError } = useOpenInEditor(path, 'file')
+  if (!launchable || kind !== 'file') return <span className={className}>{path}</span>
+  const label = i18nT('pages.artifactsPage.open_doc_in_editor', { path })
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); void openInEditor() }}
+        title={label}
+        aria-label={label}
+        aria-describedby={editorError ? errorId : undefined}
+        className={`${className} text-left bg-transparent border-none p-0 cursor-pointer rounded-sm hover:underline hover:text-text-strong focus-ring-accent`}
+      >
+        <PenLine size={11} className="lucide-inline mr-1" aria-hidden="true" />
+        {path}
+      </button>
+      {editorError && (
+        <span role="presentation" className="block basis-full min-w-0" onClick={(e) => e.stopPropagation()}>
+          {/* The hand-off is on: this list holds no unsaved input. */}
+          <ErrorNotice
+            id={errorId}
+            variant="inline"
+            className="whitespace-normal"
+            message={i18nT('pages.artifactsPage.open_doc_in_editor_failed', { reason: editorError })}
+            onDismiss={clearEditorError}
+            askAgent
+            testId="session-doc-editor-error"
+          />
+        </span>
+      )}
+    </>
+  )
+}
+
 /** A single unsaved session-document row (from "your chats"). Leading star
  * materializes it into a real, starred artifact; clicking the row opens the
  * read-only preview (same gesture as ArtifactRow's click-to-open). Shares the
@@ -519,7 +585,7 @@ export function SessionDocRow({ d, busy, onMaterialize, onPreview, edgeRight = f
           <FileText size={13} className="text-ok shrink-0" />
           <span className="text-sm text-text-strong font-medium truncate">{d.name}</span>
         </div>
-        <div className="text-[11px] text-muted truncate max-w-[420px]">{d.path}</div>
+        <SessionDocPath path={d.path} className="block text-[11px] text-muted truncate max-w-[420px]" />
       </td>
       <td className="px-2.5 py-2 border-b border-border"><code className="text-[12px] text-muted">—</code></td>
       <td className="px-2.5 py-2 border-b border-border text-[12px] text-muted">{ftype}</td>
