@@ -30,6 +30,7 @@ from kiro_crew.dashboard.chat import (
 )
 from kiro_crew.dashboard.chat_handlers import _slot_switch_session_lock
 from kiro_crew.dashboard.state import DashboardState, _ChatSlot
+from kiro_crew.testing.wait import await_until
 
 MOD = "kiro_crew.dashboard.chat_handlers"
 
@@ -1885,10 +1886,13 @@ class TestLinkedSlotSessionKey:
                     json={"agent": "new-agent", "agent_kind": "template"},
                 )
             )
-            await asyncio.wait_for(entered_resolution.wait(), timeout=1)
+            # Lost-run bounds only: before the warm-up the handler does real
+            # off-loop session-record reads, which a Windows runner can stretch
+            # past any fixed second.
+            await await_until(entered_resolution, what="the agent resolution warm-up")
             observed = (slot.agent, slot.agent_kind)
             release_resolution.set()
-            response = await asyncio.wait_for(request, timeout=1)
+            response = await await_until(request, what="the agent switch response")
 
         assert response.status == 200, await response.text()
         assert observed == ("old-agent", "member")
