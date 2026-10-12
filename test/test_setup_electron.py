@@ -182,3 +182,59 @@ class TestSetupElectronOnly:
         with patch("kiro_crew.agent.install_agent") as mock_agent:
             _setup(electron_only=True)
         mock_agent.assert_not_called()
+
+
+class TestSetupDesktopPrompt:
+    def _run_setup(self, monkeypatch, tmp_path, *, electron_dir, answer="n"):
+        import kiro_crew.cli_setup as cs
+
+        prompts: list[str] = []
+        installs: list[int] = []
+        monkeypatch.delenv("KIROCREW_PROJECT_DIR", raising=False)
+        monkeypatch.setattr(
+            "kiro_crew.agent.install_agent", lambda clean=False: tmp_path / "agent.json"
+        )
+        monkeypatch.setattr("kiro_crew.agent.ensure_kirocrew_on_path", lambda *a, **k: None)
+        monkeypatch.setattr("kiro_crew.mcp_cleanup.clean_stale_managed_mcp", lambda: [])
+        for name in (
+            "_ensure_prerequisites",
+            "_setup_workspace_dir",
+            "_setup_sandbox_consent",
+            "_setup_timezone",
+            "_maybe_setup_dashboard_url",
+            "_maybe_setup_custom_domain",
+            "_maybe_setup_cloud",
+            "_ensure_default_agent_in_config",
+            "_remove_retired_conductor_skill",
+        ):
+            monkeypatch.setattr(cs, name, lambda *a, **k: None)
+        monkeypatch.setattr(cs.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(cs, "_find_electron_dir", lambda: electron_dir)
+        monkeypatch.setattr(cs, "_setup_electron", lambda: installs.append(1))
+
+        def _input(prompt=""):
+            prompts.append(prompt)
+            return answer
+
+        monkeypatch.setattr("builtins.input", _input)
+        cs._setup_impl()
+        return prompts, installs
+
+    def test_a_packaged_install_is_not_asked_to_install_the_desktop_app(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        prompts, installs = self._run_setup(monkeypatch, tmp_path, electron_dir=None)
+
+        assert not [p for p in prompts if "desktop app" in p]
+        assert installs == []
+        out = capsys.readouterr().out
+        assert "Desktop app sources not found" in out
+        assert "make desktop" in out
+
+    def test_a_source_checkout_is_still_asked_and_installs_on_yes(self, monkeypatch, tmp_path):
+        prompts, installs = self._run_setup(
+            monkeypatch, tmp_path, electron_dir=tmp_path, answer="y"
+        )
+
+        assert prompts == ["  Install Kiro Crew desktop app to ~/Applications? [Y/n]: "]
+        assert installs == [1]

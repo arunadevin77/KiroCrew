@@ -195,6 +195,15 @@ def _find_electron_dir() -> Path | None:
     return None
 
 
+def _print_no_desktop_sources() -> None:
+    print("  ⚠️  Desktop app sources not found, so there is nothing to build.")
+    print("     If you are running the packaged desktop app, you already have it.")
+    print(
+        "     To build it from source, run setup from a source checkout "
+        "or run `make desktop` there."
+    )
+
+
 def _setup_electron() -> None:
     """Build and install the KiroCrew desktop app (macOS only)."""
     if platform.system() != "Darwin":
@@ -203,12 +212,7 @@ def _setup_electron() -> None:
 
     electron_dir = _find_electron_dir()
     if electron_dir is None:
-        print("  ⚠️  Desktop app sources not found, so there is nothing to build.")
-        print("     If you are running the packaged desktop app, you already have it.")
-        print(
-            "     To build it from source, run setup from a source checkout "
-            "or run `make desktop` there."
-        )
+        _print_no_desktop_sources()
         return
 
     if not shutil.which("node"):
@@ -400,11 +404,17 @@ def _setup_impl(
     # 6. Desktop app (macOS only)
     if platform.system() == "Darwin":
         print("── Desktop App ──\n")
-        answer = input("  Install KiroCrew desktop app to ~/Applications? [Y/n]: ").strip().lower()
-        if answer in ("", "y", "yes"):
-            _setup_electron()
+        if _find_electron_dir() is None:
+            _print_no_desktop_sources()
+            print()
         else:
-            print("  ⏭  Skipped. Install later: kirocrew setup --electron-only\n")
+            answer = (
+                input("  Install Kiro Crew desktop app to ~/Applications? [Y/n]: ").strip().lower()
+            )
+            if answer in ("", "y", "yes"):
+                _setup_electron()
+            else:
+                print("  ⏭  Skipped. Install later: kirocrew setup --electron-only\n")
 
     # 7. Cloud (run KiroCrew on the user's own AWS EC2) — optional, delegated.
     _maybe_setup_cloud()
