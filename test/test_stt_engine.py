@@ -26,6 +26,7 @@ import pytest
 from conftest import requires_symlinks
 from kiro_crew.stt import engine as engine_mod
 from kiro_crew.stt import models
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 # ── Test doubles ──
 
@@ -1516,12 +1517,13 @@ async def test_real_audio_supersedes_an_inflight_cold_prewarm(fake_engine, monke
     monkeypatch.setattr(fake, "transcribe", transcribe)
     prewarm = asyncio.create_task(eng.prewarm("base", "en"))
     try:
-        await asyncio.wait_for(warming.wait(), timeout=5)
-        transcript = await asyncio.wait_for(
-            eng.decode(np.ones(engine_mod.SAMPLE_RATE_HZ, dtype=np.float32)), timeout=5
+        await await_until(warming, what="the prewarm decode starting")
+        transcript = await await_until(
+            asyncio.ensure_future(eng.decode(np.ones(engine_mod.SAMPLE_RATE_HZ, dtype=np.float32))),
+            what="the real decode",
         )
         assert transcript == "hello world"
-        assert (await asyncio.wait_for(prewarm, timeout=5)).ok
+        assert (await await_until(prewarm, what="the prewarm")).ok
         assert order == ["warm", "warm aborted", "real audio"]
     finally:
         release.set()
@@ -1585,10 +1587,9 @@ async def test_the_idle_sweep_releases_a_model_the_decode_paths_never_could(
 
     task = asyncio.create_task(engine_mod.idle_sweep_loop())
     try:
-        for _ in range(200):
-            await asyncio.sleep(0.01)
-            if not eng.loaded:
-                break
+        await async_wait_until(
+            lambda: not eng.loaded, describe=lambda: "the idle sweep never released the model"
+        )
     finally:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -1701,14 +1702,14 @@ async def test_cancelling_a_decode_aborts_native_work_before_releasing_the_conte
     monkeypatch.setattr(fake, "transcribe", transcribe)
     task = asyncio.create_task(eng.decode(np.zeros(engine_mod.SAMPLE_RATE_HZ, dtype=np.float32)))
     try:
-        await asyncio.wait_for(entered.wait(), timeout=5)
+        await await_until(entered, what="the native call starting")
         task.cancel()
-        await asyncio.wait_for(cancellation_seen.wait(), timeout=5)
+        await await_until(cancellation_seen, what="the worker seeing the abort")
         assert not task.done(), "the native context was released before its worker finished"
         assert eng._decode_lock.locked()
         release.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=5)
+            await await_until(task, what="the cancelled decode ending")
         assert done.is_set()
         assert eng.loaded
     finally:
@@ -1741,16 +1742,18 @@ async def test_a_cancelled_worker_cannot_trigger_a_second_model_allocation(
     monkeypatch.setattr(fake, "transcribe", transcribe)
     task = asyncio.create_task(eng.decode(np.zeros(engine_mod.SAMPLE_RATE_HZ, dtype=np.float32)))
     try:
-        await asyncio.wait_for(entered.wait(), timeout=5)
+        await await_until(entered, what="the native call starting")
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=5)
+            await await_until(task, what="the cancelled decode ending")
         assert not done.is_set(), "the fake must still be holding its native context"
         assert not eng.loaded
-        refused = await asyncio.wait_for(eng.ensure_loaded("base", "en"), timeout=5)
+        refused = await await_until(
+            asyncio.ensure_future(eng.ensure_loaded("base", "en")), what="the refused reload"
+        )
         assert refused.code == engine_mod.CODE_DECODE_FAILED
         release.set()
-        await asyncio.wait_for(asyncio.shield(eng._retired_decode), timeout=5)
+        await await_until(asyncio.shield(eng._retired_decode), what="the retired decode finishing")
         assert (await eng.ensure_loaded("base", "en")).ok
     finally:
         release.set()
@@ -1802,11 +1805,7 @@ async def test_a_timed_out_decode_waits_for_the_native_call_before_releasing(mon
     eng._timeout_secs = 0  # the caller's wait expires immediately
 
     task = asyncio.create_task(eng.decode(np.zeros(engine_mod.SAMPLE_RATE_HZ, dtype=np.float32)))
-    for _ in range(200):
-        await asyncio.sleep(0.01)
-        if entered.is_set():
-            break
-    assert entered.is_set(), "the native call never started"
+    await async_wait_until(entered.is_set, describe=lambda: "the native call never started")
     await asyncio.sleep(0.2)
     assert not task.done(), "decode() returned while the native call was still running"
 
@@ -2003,11 +2002,7 @@ async def test_idle_eviction_cannot_retire_a_context_a_decode_is_using(monkeypat
 
     eng._model = _SlowModel()
     decode = asyncio.create_task(eng.decode(np.zeros(engine_mod.SAMPLE_RATE_HZ, dtype=np.float32)))
-    for _ in range(200):
-        await asyncio.sleep(0.01)
-        if in_decode.is_set():
-            break
-    assert in_decode.is_set(), "the decode never started"
+    await async_wait_until(in_decode.is_set, describe=lambda: "the decode never started")
 
     evict = asyncio.create_task(eng.maybe_evict())
     await asyncio.sleep(0.15)
@@ -2044,11 +2039,7 @@ async def test_replacing_the_model_waits_for_an_active_decode(monkeypatch, fake_
 
     eng._model = _SlowModel()
     decode = asyncio.create_task(eng.decode(np.zeros(engine_mod.SAMPLE_RATE_HZ, dtype=np.float32)))
-    for _ in range(200):
-        await asyncio.sleep(0.01)
-        if in_decode.is_set():
-            break
-    assert in_decode.is_set(), "the decode never started"
+    await async_wait_until(in_decode.is_set, describe=lambda: "the decode never started")
 
     # A different LANGUAGE is enough to change the key, so this is a real replacement.
     swap = asyncio.create_task(eng.ensure_loaded("base", "fr"))
@@ -2104,18 +2095,20 @@ async def test_a_download_does_not_hold_the_decode_lock(monkeypatch, tmp_path):
     # A second session naming a model that is not on disk yet: the only path that
     # reaches a real transfer.
     fetch = asyncio.create_task(eng.ensure_loaded("small", "en"))
-    await asyncio.wait_for(fetching.wait(), timeout=10.0)
+    await await_until(fetching, what="the transfer starting")
 
     _, decode_lock = eng._locks()
     assert not decode_lock.locked(), "the decode lock is held for the length of a download"
     # And the observable consequence, so this does not reduce to an assertion about an
     # internal: the session that was already streaming still gets its transcript.
-    text = await asyncio.wait_for(
-        eng.decode(np.zeros(engine_mod.SAMPLE_RATE_HZ, dtype=np.float32), expect=resident),
-        timeout=10.0,
+    text = await await_until(
+        asyncio.ensure_future(
+            eng.decode(np.zeros(engine_mod.SAMPLE_RATE_HZ, dtype=np.float32), expect=resident)
+        ),
+        what="the resident session's transcript",
     )
     assert text == "hello world"
 
     finish_fetch.set()
-    assert (await asyncio.wait_for(fetch, timeout=10.0)).ok
+    assert (await await_until(fetch, what="the fetch")).ok
     await eng.close()

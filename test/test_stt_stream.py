@@ -14,16 +14,17 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from kiro_crew import stt
 from kiro_crew.config.loader import KiroCrewConfig, SttConfig
-
-# Upper bound for _wait_for_operation. Generous because it only ever elapses on
-# a genuine regression (the audit never fires); the happy path returns as soon
-# as the handler's next step runs, so a large bound costs nothing in wall clock.
-_AUDIT_WAIT_TIMEOUT_SECS = 5.0
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 
 async def _recv_json(ws):
-    """One JSON frame, bounded: a server that never answers is a failed test, not a lost run."""
-    return await asyncio.wait_for(ws.receive_json(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
+    """One JSON frame, under the lost-run bound: a server that never answers fails by name."""
+    return await await_until(asyncio.ensure_future(ws.receive_json()), what="the next JSON frame")
+
+
+async def _recv(ws):
+    """One frame of any type, under the same bound as ``_recv_json``."""
+    return await await_until(asyncio.ensure_future(ws.receive()), what="the next frame")
 
 
 async def _wait_for_operation(calls: list[dict], operation: str) -> None:
@@ -39,25 +40,27 @@ async def _wait_for_operation(calls: list[dict], operation: str) -> None:
     race that fails whenever the event loop happens not to resume the handler
     first — reproduced at roughly 1-in-8 locally and seen intermittently on CI.
 
-    Polling the real condition removes the guesswork: it returns the instant the
-    audit lands and fails with a useful message if it never does.
+    Waiting on the real condition removes the guesswork: it returns the instant the
+    audit lands and fails naming what did arrive if it never does.
     """
 
-    async def _poll() -> None:
-        while operation not in [c["operation"] for c in calls]:
-            # sleep(0) yields to the loop so the pending handler continues; the
-            # loop is single-threaded, so a busy-wait without it would hang.
-            await asyncio.sleep(0)
+    def audited() -> bool:
+        return operation in [c["operation"] for c in calls]
 
-    # asyncio.wait_for, not asyncio.timeout: the latter is 3.11+ and this project
-    # supports 3.10 (CI runs a 3.10 shard).
-    try:
-        await asyncio.wait_for(_poll(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
-    except asyncio.TimeoutError:
-        raise AssertionError(
-            f"{operation!r} audit never emitted within {_AUDIT_WAIT_TIMEOUT_SECS}s; "
-            f"got {[c['operation'] for c in calls]}"
-        ) from None
+    await async_wait_until(
+        audited,
+        describe=lambda: f"{operation!r} not audited; got {[c['operation'] for c in calls]}",
+    )
+
+
+async def _await_end_audit(outcomes: list[str]) -> None:
+    """Wait for the end audit the handler emits after the client has left.
+
+    Neither receiving the last frame nor leaving ``TestClient`` orders the test after
+    the handler's remaining steps (see ``_wait_for_operation``), so a test reads
+    ``outcomes`` only once it holds something.
+    """
+    await async_wait_until(lambda: outcomes, describe=lambda: f"outcomes={outcomes!r}")
 
 
 def _make_app() -> web.Application:
@@ -232,7 +235,7 @@ def _arm_cap(monkeypatch) -> asyncio.Event:
 
     async def controlled_sleep(delay, result=None):
         if delay == sentinel:
-            await asyncio.wait_for(fire.wait(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
+            await await_until(fire, what="the test firing the cap")
             return result
         return await original_sleep(delay, result)
 
@@ -273,13 +276,14 @@ async def test_receive_until_takes_its_pending_read_down_with_an_outer_cancellat
             pass
 
     task = asyncio.create_task(consume())
-    await asyncio.wait_for(started.wait(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
+    await await_until(started, what="the reader starting")
     task.cancel()
-    # Bounded without awaiting the task itself: a reader that swallowed the
-    # cancellation would never finish, and this join must fail here rather
-    # than hang until the suite's global timeout.
-    done, _ = await asyncio.wait({task}, timeout=_AUDIT_WAIT_TIMEOUT_SECS)
-    assert task in done, "the cancelled reader never finished"
+    # Joined under the lost-run bound without awaiting the task itself: a reader
+    # that swallowed the cancellation would never finish, and this join must fail
+    # here by name rather than hang until the suite's global timeout.
+    await await_until(
+        asyncio.gather(task, return_exceptions=True), what="the cancelled reader finishing"
+    )
     assert seen == ["read cancelled"]
 
 
@@ -431,7 +435,7 @@ class TestAppleStreamingSession:
         class SlowFeed(apple_speech.StreamingSession):
             async def feed(self, pcm):
                 feeding.set()
-                await asyncio.wait_for(release.wait(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
+                await await_until(release, what="the test releasing the feed")
                 order.append("fed")
                 return await super().feed(pcm)
 
@@ -445,7 +449,7 @@ class TestAppleStreamingSession:
             ws = await client.ws_connect("/api/ws/stt")
             assert (await _recv_json(ws))["type"] == "ready"
             await ws.send_bytes(b"\x00\x01" * 16)
-            await asyncio.wait_for(feeding.wait(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
+            await await_until(feeding, what="the frame reaching feed()")
             fire.set()  # the cap lands while that frame is still being fed
             release.set()
             assert await _recv_json(ws) == {
@@ -485,7 +489,7 @@ class TestAppleStreamingSession:
             ws = await client.ws_connect("/api/ws/stt")
             assert (await _recv_json(ws))["type"] == "ready"
             await ws.send_bytes(b"\x00\x01" * 16)
-            await asyncio.wait_for(feeding.wait(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
+            await await_until(feeding, what="the frame reaching feed()")
             fire.set()
             assert (await _recv_json(ws))["code"] == "stt_max_duration_exceeded"
             await ws.close()
@@ -504,7 +508,7 @@ class TestAppleStreamingSession:
         monkeypatch.setattr(apple_speech, "StreamingSession", factory)
         async with TestClient(TestServer(_make_app())) as client:
             ws = await client.ws_connect("/api/ws/stt")
-            assert (await asyncio.wait_for(ws.receive_json(), timeout=5))["type"] == "ready"
+            assert (await _recv_json(ws))["type"] == "ready"
             await ws.send_json({"type": "stop"})
             await ws.close()
         assert factory.call_args.kwargs["locale"] == expected_locale
@@ -556,10 +560,7 @@ class TestAppleStreamingSession:
             assert (await ws.receive_json())["type"] == "ready"
             await ws.receive_json()  # the cap's error frame
             await ws.close()
-        for _ in range(int(_AUDIT_WAIT_TIMEOUT_SECS / 0.02)):
-            if outcomes:
-                break
-            await asyncio.sleep(0.02)
+        await _await_end_audit(outcomes)
         assert outcomes == ["timeout"], outcomes
 
     @pytest.mark.asyncio
@@ -576,10 +577,7 @@ class TestAppleStreamingSession:
             assert (await ws.receive_json())["type"] == "ready"
             await ws.send_str('{"type":"stop"}')
             await ws.close()
-        for _ in range(int(_AUDIT_WAIT_TIMEOUT_SECS / 0.02)):
-            if outcomes:
-                break
-            await asyncio.sleep(0.02)
+        await _await_end_audit(outcomes)
         assert outcomes == ["ok"], outcomes
 
     @pytest.mark.asyncio
@@ -966,10 +964,7 @@ class TestStreamLifecycle:
             assert msg["type"] == "error"
             assert msg["code"] == expected_code
             await ws.close()
-        for _ in range(int(_AUDIT_WAIT_TIMEOUT_SECS / 0.02)):
-            if outcomes:
-                break
-            await asyncio.sleep(0.02)
+        await _await_end_audit(outcomes)
         assert outcomes == ["error"]
 
     def test_only_the_service_refusal_counts_as_a_vocabulary_rejection(self):
@@ -1296,10 +1291,7 @@ class TestStreamLifecycle:
             assert (await ws.receive_json())["type"] == "ready"
             await ws.receive_json()
             await ws.close()
-        for _ in range(int(_AUDIT_WAIT_TIMEOUT_SECS / 0.02)):
-            if outcomes:
-                break
-            await asyncio.sleep(0.02)
+        await _await_end_audit(outcomes)
         assert outcomes == ["timeout"], outcomes
 
     @pytest.mark.asyncio
@@ -1948,7 +1940,7 @@ class TestLocalStreamingSession:
             assert (await _recv_json(ws))["type"] == "ready"
             await ws.send_bytes(b"\x00\x01" * 16)
             # The cap fires with that audio accepted and no final yet.
-            await asyncio.wait_for(fed.wait(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
+            await await_until(fed, what="the audio being fed")
             fire.set()
             assert (await _recv_json(ws)) == {"type": "final", "text": "what was being said"}
             assert (await _recv_json(ws)) == {
@@ -1956,7 +1948,7 @@ class TestLocalStreamingSession:
                 "message": "max stream duration exceeded",
                 "code": "stt_max_duration_exceeded",
             }
-            closing = await asyncio.wait_for(ws.receive(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
+            closing = await _recv(ws)
             assert closing.type in (
                 web.WSMsgType.CLOSE,
                 web.WSMsgType.CLOSING,
@@ -1964,10 +1956,7 @@ class TestLocalStreamingSession:
             )
         assert session.finished is True
         assert session.cancelled is False
-        for _ in range(int(_AUDIT_WAIT_TIMEOUT_SECS / 0.02)):
-            if outcomes:
-                break
-            await asyncio.sleep(0.02)
+        await _await_end_audit(outcomes)
         assert outcomes == ["timeout"], outcomes
 
     @pytest.mark.asyncio
@@ -1988,11 +1977,11 @@ class TestLocalStreamingSession:
             assert (await _recv_json(ws))["type"] == "ready"
             await ws.send_bytes(b"\x00\x01" * 16)
             await ws.send_str('{"type":"stop"}')
-            await asyncio.wait_for(fed.wait(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
+            await await_until(fed, what="the audio being fed")
             fire.set()
             frames = []
             while True:
-                msg = await asyncio.wait_for(ws.receive(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
+                msg = await _recv(ws)
                 if msg.type != web.WSMsgType.TEXT:
                     break
                 frames.append(json.loads(msg.data))
@@ -2001,10 +1990,7 @@ class TestLocalStreamingSession:
         ]
         assert len([f for f in frames if f["type"] == "error"]) <= 1
         assert session.finished is True
-        for _ in range(int(_AUDIT_WAIT_TIMEOUT_SECS / 0.02)):
-            if outcomes:
-                break
-            await asyncio.sleep(0.02)
+        await _await_end_audit(outcomes)
         assert outcomes in (["ok"], ["timeout"]), outcomes
 
     @pytest.mark.asyncio
@@ -2036,20 +2022,17 @@ class TestLocalStreamingSession:
             ws = await client.ws_connect("/api/ws/stt")
             assert (await _recv_json(ws))["type"] == "ready"
             await ws.send_bytes(b"\x00\x01" * 16)
-            await asyncio.wait_for(fed.wait(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
+            await await_until(fed, what="the audio being fed")
             fire.set()
             frames = []
             while True:
-                msg = await asyncio.wait_for(ws.receive(), timeout=_AUDIT_WAIT_TIMEOUT_SECS)
+                msg = await _recv(ws)
                 if msg.type != web.WSMsgType.TEXT:
                     break
                 frames.append(json.loads(msg.data))
         assert [f["type"] for f in frames] == ["error"], frames
         assert frames[0]["code"] == "stt_session_failed", frames
-        for _ in range(int(_AUDIT_WAIT_TIMEOUT_SECS / 0.02)):
-            if outcomes:
-                break
-            await asyncio.sleep(0.02)
+        await _await_end_audit(outcomes)
         assert outcomes == ["timeout"], outcomes
 
     @pytest.mark.asyncio
@@ -2066,13 +2049,13 @@ class TestLocalStreamingSession:
                 allow_partials.append(allow_partial)
                 if not self.fed:
                     decoding.set()
-                    await asyncio.wait_for(stopped.wait(), timeout=5)
+                    await await_until(stopped, what="the stop frame being queued")
                 return await super().feed(raw_int16, allow_partial=allow_partial)
 
         class BufferedWS(_RecordingWS):
             async def __aiter__(self):
                 yield SimpleNamespace(type=web.WSMsgType.BINARY, data=frames[0])
-                await asyncio.wait_for(decoding.wait(), timeout=5)
+                await await_until(decoding, what="the decode starting")
                 for frame in frames[1:]:
                     yield SimpleNamespace(type=web.WSMsgType.BINARY, data=frame)
                 stopped.set()
@@ -2082,9 +2065,11 @@ class TestLocalStreamingSession:
         session = self._install(monkeypatch, SlowSession(final_text="all four frames"))
         outcomes = self._record_end_audits(monkeypatch)
         ws = BufferedWS()
-        await asyncio.wait_for(
-            stt_stream._run_local_session(ws, _cfg(provider="local"), MagicMock(), "test"),
-            timeout=10,
+        await await_until(
+            asyncio.ensure_future(
+                stt_stream._run_local_session(ws, _cfg(provider="local"), MagicMock(), "test")
+            ),
+            what="the local session ending",
         )
         assert session.fed == frames, "stop discarded buffered audio"
         assert allow_partials == [True, False, False, False]
@@ -2104,9 +2089,11 @@ class TestLocalStreamingSession:
                 yield SimpleNamespace(type=web.WSMsgType.BINARY, data=b"\x00\x01" * 2)
 
         ws = OverflowWS()
-        await asyncio.wait_for(
-            stt_stream._run_local_session(ws, _cfg(provider="local"), MagicMock(), "test"),
-            timeout=5,
+        await await_until(
+            asyncio.ensure_future(
+                stt_stream._run_local_session(ws, _cfg(provider="local"), MagicMock(), "test")
+            ),
+            what="the local session ending",
         )
         assert [frame["type"] for frame in ws.sent] == ["ready", "error"]
         assert ws.sent[-1]["code"] == stt_stream._CODE_SESSION_FAILED
@@ -2124,13 +2111,13 @@ class TestLocalStreamingSession:
             async def feed(self, raw_int16, *, allow_partial=True):
                 self._pending_audio = True
                 decoding.set()
-                await asyncio.wait_for(release.wait(), timeout=5)
+                await await_until(release, what="the test releasing it")
                 return []
 
         class OpenWS(_RecordingWS):
             async def __aiter__(self):
                 yield SimpleNamespace(type=web.WSMsgType.BINARY, data=b"\x00\x01")
-                await asyncio.wait_for(release.wait(), timeout=5)
+                await await_until(release, what="the test releasing it")
 
         session = self._install(monkeypatch, SlowSession())
         outcomes = self._record_end_audits(monkeypatch)
@@ -2139,10 +2126,10 @@ class TestLocalStreamingSession:
             stt_stream._run_local_session(ws, _cfg(provider="local"), MagicMock(), "test")
         )
         try:
-            await asyncio.wait_for(decoding.wait(), timeout=5)
+            await await_until(decoding, what="the decode starting")
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(task, timeout=5)
+                await await_until(task, what="the cancelled session task ending")
             assert session.cancelled and not session.finished
             assert ws.closed and outcomes == ["error"]
         finally:
@@ -2169,9 +2156,11 @@ class TestLocalStreamingSession:
                 yield SimpleNamespace(type=web.WSMsgType.TEXT, data='{"type":"stop"}')
 
         ws = BurstWS()
-        await asyncio.wait_for(
-            stt_stream._run_local_session(ws, _cfg(provider="local"), MagicMock(), "test"),
-            timeout=5,
+        await await_until(
+            asyncio.ensure_future(
+                stt_stream._run_local_session(ws, _cfg(provider="local"), MagicMock(), "test")
+            ),
+            what="the local session ending",
         )
         assert session.fed == frames
         assert session.finished
@@ -2195,7 +2184,7 @@ class TestLocalStreamingSession:
         async def controlled_sleep(delay):
             if delay == cfg.stt.timeout_secs:
                 budget_started.set()
-                await asyncio.wait_for(budget_expired.wait(), timeout=5)
+                await await_until(budget_expired, what="the test expiring the budget")
             else:
                 await original_sleep(delay)
 
@@ -2204,7 +2193,7 @@ class TestLocalStreamingSession:
         async def blocked_decode():
             decoding.set()
             try:
-                await asyncio.wait_for(release.wait(), timeout=5)
+                await await_until(release, what="the test releasing it")
             finally:
                 interrupted.set()
 
@@ -2224,7 +2213,7 @@ class TestLocalStreamingSession:
             async def __aiter__(self):
                 yield SimpleNamespace(type=web.WSMsgType.BINARY, data=b"\x00\x01")
                 if phase == "partial":
-                    await asyncio.wait_for(decoding.wait(), timeout=5)
+                    await await_until(decoding, what="the decode starting")
                 yield SimpleNamespace(type=web.WSMsgType.TEXT, data='{"type":"stop"}')
 
         session = self._install(monkeypatch, SlowSession())
@@ -2232,10 +2221,10 @@ class TestLocalStreamingSession:
         ws = StopWS()
         task = asyncio.create_task(stt_stream._run_local_session(ws, cfg, MagicMock(), "test"))
         try:
-            await asyncio.wait_for(budget_started.wait(), timeout=5)
-            await asyncio.wait_for(decoding.wait(), timeout=5)
+            await await_until(budget_started, what="the stop budget starting")
+            await await_until(decoding, what="the decode starting")
             budget_expired.set()
-            await asyncio.wait_for(task, timeout=5)
+            await await_until(task, what="the session task ending")
             assert interrupted.is_set() and session.cancelled
             assert session.finished is (phase == "final")
             assert ws.sent[0] == {
@@ -2278,9 +2267,9 @@ class TestLocalStreamingSession:
             ws = await client.ws_connect("/api/ws/stt")
             assert (await ws.receive_json())["type"] == "ready"
             await ws.send_bytes(b"\x00\x01")
-            assert (await asyncio.wait_for(ws.receive_json(), timeout=5))["type"] == "partial"
+            assert (await _recv_json(ws))["type"] == "partial"
             await ws.send_bytes(b"\x00\x01")
-            assert await asyncio.wait_for(ws.receive_json(), timeout=5) == {
+            assert await _recv_json(ws) == {
                 "type": "final",
                 "text": "",
             }
@@ -2382,13 +2371,7 @@ class TestLocalStreamingSession:
             }
             await ws.close()
         assert session.finished is True
-        # Waited on rather than asserted straight after the context exits: neither
-        # receiving the frame nor leaving `TestClient` orders this after the handler's
-        # remaining steps.
-        for _ in range(200):
-            if outcomes:
-                break
-            await asyncio.sleep(0.01)
+        await _await_end_audit(outcomes)
         assert outcomes == ["error"]
 
     @pytest.mark.asyncio
@@ -2572,19 +2555,18 @@ class TestLocalStreamingSession:
             return []
 
         task = asyncio.create_task(_prepare())
-        # Bounded, because the regression this guards against does not fail, it
-        # STOPS: a loop that publishes once and then waits leaves prepare() gated
-        # forever, and an unbounded await would report that as a hung suite rather
-        # than as this assertion. Only ever elapses on that regression.
+        # Under the lost-run bound, because the regression this guards against does
+        # not fail, it STOPS: a loop that publishes once and then waits leaves
+        # prepare() gated forever, and an unbounded await would report that as a
+        # hung suite rather than as this assertion. Only ever elapses on that
+        # regression.
+        relay = asyncio.ensure_future(stt_stream._relay_download_progress(task, _send))
         try:
-            relayed = await asyncio.wait_for(
-                stt_stream._relay_download_progress(task, _send),
-                timeout=_AUDIT_WAIT_TIMEOUT_SECS,
-            )
-        except asyncio.TimeoutError:
+            relayed = await await_until(relay, what="the relay returning")
+        except AssertionError as stalled:
             raise AssertionError(
                 f"progress stopped being republished after {len(sent)} frame(s)"
-            ) from None
+            ) from stalled
         assert relayed == []
 
         assert len(sent) >= 2, sent
@@ -2659,9 +2641,11 @@ class TestLocalStreamingSession:
 
         assert _pending_load() is False, "pre-check must see the model resident"
         task = asyncio.create_task(_prepare())
-        relayed = await asyncio.wait_for(
-            stt_stream._relay_download_progress(task, _send, _pending_load, False),
-            timeout=_AUDIT_WAIT_TIMEOUT_SECS,
+        relayed = await await_until(
+            asyncio.ensure_future(
+                stt_stream._relay_download_progress(task, _send, _pending_load, False)
+            ),
+            what="the relay returning",
         )
         assert relayed == []
 
@@ -2710,9 +2694,11 @@ class TestLocalStreamingSession:
             return []
 
         task = asyncio.create_task(_prepare())
-        relayed = await asyncio.wait_for(
-            stt_stream._relay_download_progress(task, _send, lambda: False, False),
-            timeout=_AUDIT_WAIT_TIMEOUT_SECS,
+        relayed = await await_until(
+            asyncio.ensure_future(
+                stt_stream._relay_download_progress(task, _send, lambda: False, False)
+            ),
+            what="the relay returning",
         )
         assert relayed == []
         # Several spins really happened, so "nothing was sent" is an observation

@@ -324,7 +324,6 @@
   1 test_papyrus_latex.py
   6 test_pathres_loop_starvation.py
  14 test_pid_lifecycle.py
- 22 test_piper_runtime.py
   2 test_plan_mode.py
  11 test_platform_compat.py
   3 test_platform_log_append.py
@@ -435,9 +434,7 @@
   1 test_stop_kill_cancel.py
   1 test_stt_config_field_types.py
  14 test_stt_endpointing.py
- 17 test_stt_engine.py
   3 test_stt_session.py
- 42 test_stt_stream.py
   4 test_stub_bridge_liveness.py
   4 test_stub_broker_reconnect.py
   7 test_stub_reconnect_queued_calls.py
@@ -486,7 +483,6 @@
   6 test_telegram_sessions.py
   1 test_terminal_commands.py
   1 test_terminal_ctty_shim.py
- 58 test_terminal_handler.py
   1 test_theme_install.py
   1 test_todo_pill_resync.py
   4 test_tool_gate_queue_bound.py
