@@ -175,17 +175,24 @@ locale edit: labels are written once per CAPABILITY and reused by every harness.
 never heard of" holds the panel half — a projection nothing renders is not a
 feature, so both halves are asserted.
 
-Each set reaches one of four buckets, and a new set must be put in one of them or
+Each set reaches one of five buckets, and a new set must be put in one of them or
 `test_backend_cards` fails — the same forcing function the disposition table applies
 to a set's consumers:
 
 | Bucket | What it means | Where |
 |---|---|---|
-| user-facing | Switching harness changes what the user can DO, and the absence is a LOSS: a control disappears, a command is refused, tools are missing from a session. | `USER_FACING_LINES`, rendered available / not available / not measured |
+| user-facing | Switching harness changes what the user can DO, and the absence is a LOSS: a control disappears, a command is refused, tools are missing from a session. | `USER_FACING_LINES`, the CURATED core of seven, rendered available / not available / not measured and the only lines "supports N of M" counts |
+| detail | A real capability whose absence is a loss, but not one a user picks a harness by: how a saved spec loads, an agent-side orchestration verb, an agent-file format. | `DETAIL_LINES`, sent as `details`, folded behind a disclosure under the core list and outside its count |
 | security | It moves a confinement or credential boundary: which layer confines the agent, whether Crew hands its own credential to the child, how an unclassifiable approval is answered. | `SECURITY_LINES`, stated only when it HOLDS, rendered OUTSIDE every disclosure |
 | operator | It says where something LIVES: whose disk holds the transcript, which side supplies the model list, which channel carries a command. | `OPERATOR_LINES`, stated only when it HOLDS |
 | off-card | The only difference is which code path runs, OR the card cannot honestly project the membership. Two tests: if the membership were wrong, would the user see a missing feature or a BUG? A defect is not a capability. And can this card establish the fact at all? A version-gated membership cannot be marked available by a projection that holds no version. | `OFF_CARD_SETS`, with the reason per set |
 
+### The complete capability list
+
+The card is curated, so it is the wrong place to compare two harnesses across their WHOLE range. For a full-range comparison (every tracked capability, every known harness), read the buckets directly: `USER_FACING_LINES`, `DETAIL_LINES`, `SECURITY_LINES`, `OPERATOR_LINES`, and `OFF_CARD_SETS` in `backend_cards.py`, all keyed on the same `frozenset` constants as the card.
+
+
+**What makes a line core.** A line is core when all three conditions hold: (1) its absence is a loss, not an alternative — both states are not both correct behaviours; (2) the user asks it when choosing or using the harness, not while configuring a per-session detail; (3) it answers "does Crew work here?" or "can I do X here?" rather than "how does X work here?" A real capability that answers "how" — how a saved spec loads, a verb the agent calls, an agent-file format — is a detail line. The decision record `docs/decisions/2026-10-12-harness-card-has-seven-core-lines.md` names the seven current lines and applies the test to each. The count `test_core_counts_per_harness_are_pinned` pins every harness's count so that any move is a deliberate edit.
 Two rules decide the bucket, and both are about what a mark on a card MEANS.
 
 **A membership whose two states are both correct behaviour is a note, never a

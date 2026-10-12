@@ -32,9 +32,7 @@ mkdirSync(OUT, { recursive: true })
 const PI_CAPABILITIES = [
   { id: 'crew_tools', available: false, measured: true, unmeasured_reason: '' },
   { id: 'member_thread_tools', available: false, measured: true, unmeasured_reason: '' },
-  { id: 'member_saved_agent', available: false, measured: true, unmeasured_reason: '' },
   { id: 'side_chat_tools', available: false, measured: true, unmeasured_reason: '' },
-  { id: 'subagent_continuation', available: false, measured: true, unmeasured_reason: '' },
   { id: 'mid_turn_steer', available: false, measured: true, unmeasured_reason: '' },
   {
     id: 'manual_compact',
@@ -44,7 +42,6 @@ const PI_CAPABILITIES = [
   },
   { id: 'reasoning_effort', available: false, measured: true, unmeasured_reason: '' },
   { id: 'model_switch', available: true, measured: true, unmeasured_reason: '' },
-  { id: 'markdown_agents', available: false, measured: true, unmeasured_reason: '' },
 ]
 
 /** `card_payload("goose")` before its `/compact` capture: pi's unmeasured cell, more available. */
@@ -55,7 +52,7 @@ const GOOSE_CAPABILITIES = PI_CAPABILITIES.map(line =>
 /** `card_payload("")` — kiro-cli, measured on every line. */
 const KIRO_CAPABILITIES = PI_CAPABILITIES.map(line => ({
   ...line,
-  available: !['member_thread_tools', 'markdown_agents'].includes(line.id),
+  available: line.id !== 'member_thread_tools',
   measured: true,
   unmeasured_reason: '',
 }))
@@ -194,7 +191,7 @@ await shoot('agent-backend-unmeasured-goose.png')
 // The comparison frame: a harness measured on every line, so the reader can see that
 // the third mark is a third mark rather than a restyled cross.
 await highlight('Kiro CLI')
-await page.getByText('supports 8 of 10 features', { exact: false }).first().waitFor({
+await page.getByText('supports 6 of 7 features', { exact: false }).first().waitFor({
   timeout: 20000,
 })
 await shoot('agent-backend-unmeasured-kiro-comparison.png')

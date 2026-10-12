@@ -882,6 +882,7 @@ class TestEndpointPayloadShape:
                 # line MEANS is pinned in ``test_backend_cards``; this file pins
                 # that the row carries them.
                 "capabilities",
+                "details",
                 "security_notes",
                 "operator_notes",
                 "tool_approval",
@@ -908,6 +909,9 @@ class TestEndpointPayloadShape:
             # the two incomparable with nothing to say so.
             assert [entry["id"] for entry in row["capabilities"]] == [
                 spec.id for spec in backend_cards.USER_FACING_LINES
+            ]
+            assert [entry["id"] for entry in row["details"]] == [
+                spec.id for spec in backend_cards.DETAIL_LINES
             ]
             assert isinstance(row["tool_approval"], str) and row["tool_approval"]
 

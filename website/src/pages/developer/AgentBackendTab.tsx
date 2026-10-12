@@ -789,7 +789,6 @@ export function AgentBackendTab() {
     crew_tools: i18nT('pages.developer.agentBackendTab.card_crew_tools'),
     member_thread_tools: i18nT('pages.developer.agentBackendTab.card_member_thread_tools'),
     member_saved_agent: i18nT('pages.developer.agentBackendTab.card_member_saved_agent'),
-    private_member_sessions: i18nT('pages.developer.agentBackendTab.card_private_member_sessions'),
     side_chat_tools: i18nT('pages.developer.agentBackendTab.card_side_chat_tools'),
     subagent_continuation: i18nT('pages.developer.agentBackendTab.card_subagent_continuation'),
     mid_turn_steer: i18nT('pages.developer.agentBackendTab.card_mid_turn_steer'),
@@ -966,6 +965,68 @@ export function AgentBackendTab() {
     (probe(value)?.capabilities ?? []).filter(line => CAPABILITY_LABEL[line.id])
 
   /**
+   * The card's DETAIL lines for one agent: real differences outside the curated
+   * core, folded behind a disclosure and never in the "supports N of M" count.
+   * Empty from a gateway that sends no `details`, and the disclosure is then absent.
+   */
+  const detailLines = (value: string) =>
+    (probe(value)?.details ?? []).filter(line => CAPABILITY_LABEL[line.id])
+
+  /** One card line: its glyph, its state for a screen reader, its label. */
+  const cardLine = (line: NonNullable<AcpBackendProbe['capabilities']>[number]) => (
+    <li key={line.id} className="flex items-start gap-1.5">
+      {/* The icon is decorative and the STATE is text: a mark that
+          only differs by shape and colour is unreadable to a screen
+          reader and to anyone who cannot tell the two colours apart. */}
+      {/* Three answers, three glyphs, and the unmeasured one borrows
+          neither of the others: a tick would promise what nobody has
+          driven, and the cross a real absence wears is what hides the
+          cell a measurement would pay for. Tested `=== false` rather
+          than for falsiness, so a gateway that sends no flag reads as
+          measured and the card it serves is the card it served. */}
+      {line.measured === false ? (
+        /* 11 and not 12: a ring encloses its ink where a tick and a
+           cross are two strokes, so the same nominal size renders a
+           heavier mark and the third state reads as a badge among ten
+           line glyphs. */
+        <CircleHelp
+          size={11}
+          strokeWidth={1.75}
+          aria-hidden
+          className="mt-1 shrink-0 text-warn"
+        />
+      ) : line.available ? (
+        <Check size={12} aria-hidden className="mt-1 shrink-0 text-ok" />
+      ) : (
+        <X size={12} aria-hidden className="mt-1 shrink-0 text-muted" />
+      )}
+      <span className={line.available ? 'text-text-strong' : 'text-muted'}>
+        <span className="sr-only">
+          {line.measured === false
+            ? i18nT('pages.developer.agentBackendTab.card_not_measured')
+            : line.available
+              ? i18nT('pages.developer.agentBackendTab.card_available')
+              : i18nT('pages.developer.agentBackendTab.card_not_available')}
+        </span>
+        {CAPABILITY_LABEL[line.id]}
+        {line.measured === false && unmeasuredReason(line.unmeasured_reason) && (
+          /* Its OWN line, dimmer and smaller, indented to the label
+             column by sitting inside the label's span. Inline it fused
+             with the label instead -- two blind readers of the rendered
+             card both read "The /compact command works No live run has
+             measured this yet" as one clause, which states the opposite
+             of what the row means. A block also gives the longest text
+             on the card somewhere to wrap to that is not the glyph
+             column. */
+          <span className="mb-0.5 block max-w-[44ch] text-[11px] leading-snug opacity-80">
+            {unmeasuredReason(line.unmeasured_reason)}
+          </span>
+        )}
+      </span>
+    </li>
+  )
+
+  /**
    * The SECURITY notes that hold for one agent: which layer confines it, whether
    * Crew hands over its own credential, how an unclassifiable approval is
    * answered. Rendered outside the disclosure, so a confinement boundary is
@@ -1059,7 +1120,7 @@ export function AgentBackendTab() {
       return i18nT('components.kiroPrerequisiteGate.agent_restart_required_detail', {
         name: nameOf(value),
       })
-    if (value === KIRO) return i18nT('pages.developer.agentBackendTab.default_all_features_supported')
+    if (value === KIRO) return i18nT('pages.developer.agentBackendTab.default_harness')
     return i18nT('pages.developer.agentBackendTab.experimental')
   }
 
@@ -1140,7 +1201,7 @@ export function AgentBackendTab() {
     if (value === KIRO)
       return (
         <p className="text-[13px] leading-relaxed text-text">
-          {i18nT('pages.developer.agentBackendTab.default_all_features_supported')}
+          {i18nT('pages.developer.agentBackendTab.default_harness')}
         </p>
       )
     if (row?.installed === 'installed')
@@ -1245,59 +1306,21 @@ export function AgentBackendTab() {
               )}
             </div>
             <ul className="mt-1 mb-0 list-none pl-0 space-y-0.5 text-[12px] leading-relaxed">
-              {capabilityLines(value).map(line => (
-                <li key={line.id} className="flex items-start gap-1.5">
-                  {/* The icon is decorative and the STATE is text: a mark that
-                      only differs by shape and colour is unreadable to a screen
-                      reader and to anyone who cannot tell the two colours apart. */}
-                  {/* Three answers, three glyphs, and the unmeasured one borrows
-                      neither of the others: a tick would promise what nobody has
-                      driven, and the cross a real absence wears is what hides the
-                      cell a measurement would pay for. Tested `=== false` rather
-                      than for falsiness, so a gateway that sends no flag reads as
-                      measured and the card it serves is the card it served. */}
-                  {line.measured === false ? (
-                    /* 11 and not 12: a ring encloses its ink where a tick and a
-                       cross are two strokes, so the same nominal size renders a
-                       heavier mark and the third state reads as a badge among ten
-                       line glyphs. */
-                    <CircleHelp
-                      size={11}
-                      strokeWidth={1.75}
-                      aria-hidden
-                      className="mt-1 shrink-0 text-warn"
-                    />
-                  ) : line.available ? (
-                    <Check size={12} aria-hidden className="mt-1 shrink-0 text-ok" />
-                  ) : (
-                    <X size={12} aria-hidden className="mt-1 shrink-0 text-muted" />
-                  )}
-                  <span className={line.available ? 'text-text-strong' : 'text-muted'}>
-                    <span className="sr-only">
-                      {line.measured === false
-                        ? i18nT('pages.developer.agentBackendTab.card_not_measured')
-                        : line.available
-                          ? i18nT('pages.developer.agentBackendTab.card_available')
-                          : i18nT('pages.developer.agentBackendTab.card_not_available')}
-                    </span>
-                    {CAPABILITY_LABEL[line.id]}
-                    {line.measured === false && unmeasuredReason(line.unmeasured_reason) && (
-                      /* Its OWN line, dimmer and smaller, indented to the label
-                         column by sitting inside the label's span. Inline it fused
-                         with the label instead -- two blind readers of the rendered
-                         card both read "The /compact command works No live run has
-                         measured this yet" as one clause, which states the opposite
-                         of what the row means. A block also gives the longest text
-                         on the card somewhere to wrap to that is not the glyph
-                         column. */
-                      <span className="mb-0.5 block max-w-[44ch] text-[11px] leading-snug opacity-80">
-                        {unmeasuredReason(line.unmeasured_reason)}
-                      </span>
-                    )}
-                  </span>
-                </li>
-              ))}
+              {capabilityLines(value).map(cardLine)}
             </ul>
+            {detailLines(value).length > 0 && (
+              /* Folded, and outside the count above: each of these is a real
+                 difference, but not one a reader picks an agent by, so it is one
+                 click away rather than competing with the core list. */
+              <details className="mt-2">
+                <summary className="cursor-pointer text-[12px] font-semibold text-muted">
+                  {i18nT('pages.developer.agentBackendTab.card_more_details')}
+                </summary>
+                <ul className="mt-1 mb-0 list-none pl-0 space-y-0.5 text-[12px] leading-relaxed">
+                  {detailLines(value).map(cardLine)}
+                </ul>
+              </details>
+            )}
           </div>
         )}
 

@@ -80,6 +80,7 @@ function card(
       measured?: boolean
       unmeasured_reason?: string
     }[]
+    details: { id: string; available: boolean; measured?: boolean }[]
     security_notes: string[]
     operator_notes: string[]
     tool_approval: string
@@ -879,7 +880,7 @@ describe('AgentBackendTab status strip', () => {
     // supported. Those claims were not measured anywhere and were wrong.
     wrap()
     await waitFor(() => expect(row('Kiro CLI')).toBeInTheDocument())
-    expect(detail().textContent).toContain('Default. All features supported.')
+    expect(detail().textContent).toContain('Default.')
     highlight('KAS (kiro-agent)')
     expect(detail().textContent).toContain('Experimental')
     expect(screen.queryByText(/OS sandbox|Anthropic|steered mid-turn/)).toBeNull()
@@ -1151,7 +1152,7 @@ describe('AgentBackendTab check again', () => {
     expect(acpBackendsMock.mock.calls.length).toBe(listCalls)
     // The untouched row kept its own answer.
     highlight('Kiro CLI')
-    expect(detail().textContent).toContain('Default. All features supported.')
+    expect(detail().textContent).toContain('Default.')
   })
 
   it('cancels the in-flight poll so it cannot land on top of the fresh row', async () => {
@@ -1348,7 +1349,7 @@ describe('AgentBackendTab check again', () => {
     wrap()
     await waitFor(() => expect(row('Kiro CLI')).toBeInTheDocument())
     await waitFor(() =>
-      expect(detail().textContent).toContain('Default. All features supported.'),
+      expect(detail().textContent).toContain('Default.'),
     )
     expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull()
   })
@@ -1423,6 +1424,51 @@ describe('AgentBackendTab detail card', () => {
       expect(screen.getByText('Kiro Crew tools work in the chat')).toBeInTheDocument(),
     )
     expect(screen.getByText('Kiro Crew tools work in the chat').closest('details')).toBeNull()
+  })
+
+  it('folds the detail lines behind a disclosure and keeps them out of the count', async () => {
+    // The card counts the curated core only. A detail line is a real difference,
+    // so it is shown -- one click away, and never in "supports N of M".
+    acpBackendsMock.mockResolvedValue({
+      backends: [
+        probeRow(
+          '',
+          card({
+            capabilities: [{ id: 'crew_tools', available: true }],
+            details: [
+              { id: 'member_saved_agent', available: true },
+              { id: 'markdown_agents', available: false },
+            ],
+          }),
+        ),
+      ],
+    })
+    schemaMock.mockReturnValue(schemaWith(['']))
+    wrap()
+    await waitFor(() =>
+      expect(screen.getByText('Kiro CLI supports 1 of 1 features')).toBeInTheDocument(),
+    )
+    const saved = screen.getByText('Crewmates load their whole saved agent')
+    const folded = saved.closest('details')
+    expect(folded).not.toBeNull()
+    expect(folded?.open).toBe(false)
+    expect(folded?.querySelector('summary')?.textContent).toBe(
+      'Other differences (not counted)',
+    )
+    expect(saved.parentElement?.textContent).toContain('Available.')
+    const markdown = screen.getByText('Loads custom agents you define in a markdown file')
+    expect(markdown.parentElement?.textContent).toContain('Not available.')
+    expect(screen.getByText('Kiro Crew tools work in the chat').closest('details')).toBeNull()
+  })
+
+  it('renders no disclosure when the gateway sends no detail lines', async () => {
+    acpBackendsMock.mockResolvedValue({ backends: [probeRow('', card())] })
+    schemaMock.mockReturnValue(schemaWith(['']))
+    wrap()
+    await waitFor(() =>
+      expect(screen.getByText('Kiro Crew tools work in the chat')).toBeInTheDocument(),
+    )
+    expect(screen.queryByText('Other differences (not counted)')).toBeNull()
   })
 
   it('skips a capability id this frontend has no label for', async () => {
@@ -1664,7 +1710,7 @@ describe('AgentBackendTab detail card', () => {
     schemaMock.mockReturnValue(schemaWith(['']))
     wrap()
     await waitFor(() =>
-      expect(detail().textContent).toContain('Default. All features supported.'),
+      expect(detail().textContent).toContain('Default.'),
     )
     expect(screen.queryByText(/supports \d+ of/)).toBeNull()
     expect(screen.queryByText('Good to know')).toBeNull()

@@ -90,6 +90,17 @@ export interface AcpBackendProbe {
     unmeasured_reason?: string
   }[]
   /**
+   * The card's DETAIL lines: same entry shape as `capabilities`, real differences
+   * outside the curated core. The panel folds them behind a disclosure and keeps
+   * them out of the "supports N of M" count. OPTIONAL: an older gateway sends none.
+   */
+  details?: {
+    id: string
+    available: boolean
+    measured?: boolean
+    unmeasured_reason?: string
+  }[]
+  /**
    * Ids of the SECURITY notes that hold for this harness: which layer confines
    * the agent, whether Crew hands its own credential to the child, how an
    * unclassifiable approval is answered.

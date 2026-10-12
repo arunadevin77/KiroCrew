@@ -69,7 +69,7 @@ boolean.
 
 Which memberships reach a card, and how
 --------------------------------------
-Four buckets, and every ``ACP_BACKENDS_*`` set in the vocabulary module reaches at
+Five buckets, and every ``ACP_BACKENDS_*`` set in the vocabulary module reaches at
 least one of them (``test_backend_cards`` fails when a new set reaches none, so
 adding a set forces the decision rather than defaulting it):
 
@@ -77,7 +77,13 @@ adding a set forces the decision rather than defaulting it):
   appears or disappears, a command is refused, tools are absent from a session, a
   chat cannot be continued. These are :data:`USER_FACING_LINES`, and each is a
   capability whose ABSENCE is a loss, because that is what an available /
-  not-available mark means to a reader.
+  not-available mark means to a reader. It is a CURATED core of seven, the only
+  lines the card's "supports N of M" counts, so the set stays small enough to
+  hold in one's head and a count compares like with like.
+* **detail** -- a real capability whose absence is a loss, but not one a user
+  picks a harness by: how a saved spec loads, an agent-side orchestration verb,
+  an agent-file format. These are :data:`DETAIL_LINES`, carried on the wire as
+  ``details``, folded behind a disclosure on the panel and outside the count.
 * **security** -- it changes which layer confines the agent, whether Crew hands
   its own credential to the child, or how an unclassifiable approval is answered.
   These are :data:`SECURITY_LINES`. They are stated only when they HOLD and are
@@ -245,11 +251,15 @@ class _LineSpec:
     sets: Tuple[str, ...]
 
 
-#: The lines an operator choosing a harness reads, in the order the card renders.
+#: The CORE lines: the curated set an operator choosing a harness reads, in the
+#: order the card renders, and the only lines its "supports N of M" counts.
 #:
-#: Server-owned order, so a new line appears in the right place with no frontend
-#: edit. Grouped: what reaches a session, then what a crew member's session gets,
-#: then what a turn can do, then what can be tuned.
+#: Small on purpose, so a reader can hold the whole set in their head: does Crew
+#: work here (its tools, a crewmate's chat), what can a chat do (Side Chat tools,
+#: steer a running turn, /compact), and what can be tuned (effort, model). A
+#: capability that is real but not one a user picks a harness by belongs in
+#: :data:`DETAIL_LINES` instead. Server-owned order, so a new line appears in the
+#: right place with no frontend edit.
 USER_FACING_LINES: Tuple[_LineSpec, ...] = (
     # Two channels carry Crew's tools, and a harness needs only one of them.
     # Members of the per-session array receive the server list on ``session/new``;
@@ -266,9 +276,7 @@ USER_FACING_LINES: Tuple[_LineSpec, ...] = (
         LINE_CREW_TOOLS, ("ACP_BACKENDS_SESSION_MCP_ARRAY", "ACP_BACKENDS_KIRO_SLASH_COMMANDS")
     ),
     _LineSpec(LINE_MEMBER_THREAD_TOOLS, ("ACP_BACKENDS_MEMBER_DISPATCH",)),
-    _LineSpec(LINE_MEMBER_SAVED_AGENT, ("ACP_BACKENDS_MEMBER_CAPABILITIES",)),
     _LineSpec(LINE_SIDE_CHAT_TOOLS, ("ACP_BACKENDS_SIDE_READONLY",)),
-    _LineSpec(LINE_SUBAGENT_CONTINUATION, ("ACP_BACKENDS_SESSION_SHARING",)),
     # Two verbs carry a user's mid-turn message: kiro-cli's ``_session/steer`` and
     # codex-acp's ``_session/steering``. A user asks "can I add to a running turn?",
     # and either verb answers yes, so the line is their union.
@@ -291,6 +299,26 @@ USER_FACING_LINES: Tuple[_LineSpec, ...] = (
         LINE_MODEL_SWITCH,
         ("ACP_BACKENDS_MODEL_VIA_CONFIG_OPTION", "ACP_BACKENDS_KIRO_SLASH_COMMANDS"),
     ),
+)
+
+#: Capabilities a harness may differ on that are NOT on the curated card.
+#:
+#: Each is a real capability -- a membership whose absence is a loss -- but not one a
+#: user weighs when picking a harness: it is a detail of how a saved spec loads, an
+#: agent-side orchestration verb, or an agent-file format. Kept as lines so the
+#: complete list scores them per harness and the panel can show them behind a
+#: folded disclosure, and kept OUT of the card's count so "supports N of M" is a
+#: number over the core set alone.
+DETAIL_LINES: Tuple[_LineSpec, ...] = (
+    # Only kiro-cli loads an enrolled member's whole saved spec at spawn. The
+    # question a user asks -- does a crewmate get Crew's tools here? -- is the
+    # member-thread line on the card; this one says how the spec arrives.
+    _LineSpec(LINE_MEMBER_SAVED_AGENT, ("ACP_BACKENDS_MEMBER_CAPABILITIES",)),
+    # ``spawn_continue`` is a verb the AGENT calls, not a control the user
+    # presses, and a non-member's subagents get dedicated sessions, which the
+    # set's own comment calls working behaviour rather than a degraded one.
+    _LineSpec(LINE_SUBAGENT_CONTINUATION, ("ACP_BACKENDS_SESSION_SHARING",)),
+    # An agent-file FORMAT: every harness loads the JSON spec Crew writes.
     _LineSpec(LINE_MARKDOWN_AGENTS, ("ACP_BACKENDS_MARKDOWN_AGENT_SPECS",)),
 )
 
@@ -645,9 +673,12 @@ class BackendCard:
     #: The policy-facing spelling, which is also the panel's name fallback.
     policy_id: str
 
-    #: Every user-facing line, in server order, available or not -- or, for the
+    #: Every core line, in server order, available or not -- or, for the
     #: cells :data:`DECLARED_UNMEASURED` names, not measured.
     capabilities: Tuple[CardLine, ...]
+
+    #: Every :data:`DETAIL_LINES` line, same three states, never in the count.
+    details: Tuple[CardLine, ...]
 
     #: The ids of the SECURITY notes that hold, in server order. Rendered beside
     #: :attr:`tool_approval` rather than behind a disclosure.
@@ -748,8 +779,8 @@ def _unmeasured_lines(backend: str) -> Dict[str, UnmeasuredLine]:
     return by_backend.get(backend, {})
 
 
-def _card_lines(backend: str) -> Tuple[CardLine, ...]:
-    """Every user-facing line for *backend*, in server order.
+def _card_lines(backend: str, specs: Tuple[_LineSpec, ...]) -> Tuple[CardLine, ...]:
+    """Every line of *specs* for *backend*, in server order.
 
     Membership decides first and the declared table only ever SOFTENS a negative:
     an entry reaches a line that is already not available, so a harness that has
@@ -759,7 +790,7 @@ def _card_lines(backend: str) -> Tuple[CardLine, ...]:
     """
     declared = _unmeasured_lines(backend)
     produced = []
-    for spec in USER_FACING_LINES:
+    for spec in specs:
         available = _holds(backend, spec)
         entry = None if available else declared.get(spec.id)
         produced.append(
@@ -792,12 +823,27 @@ def card_for(backend: str) -> BackendCard:
     return BackendCard(
         backend=backend,
         policy_id=_policy_id(backend),
-        capabilities=_card_lines(backend),
+        capabilities=_card_lines(backend, USER_FACING_LINES),
+        details=_card_lines(backend, DETAIL_LINES),
         security_notes=tuple(spec.id for spec in SECURITY_LINES if _holds(backend, spec)),
         operator_notes=tuple(spec.id for spec in OPERATOR_LINES if _holds(backend, spec)),
         tool_approval=backends.routing_for(backend).value,
         offered_by_build=backend in backends.registered_backends(),
     )
+
+
+def _line_payload(line: CardLine) -> Dict[str, object]:
+    """One card line as JSON."""
+    return {
+        "id": line.id,
+        # Still a BOOL, and still first. An unmeasured line answers False here,
+        # so a reader that predates the two fields beside it -- an older panel
+        # against a newer gateway -- gets the fail-closed not-available answer
+        # rather than inheriting a third state it has no way to render.
+        "available": line.available,
+        "measured": line.measured,
+        "unmeasured_reason": line.unmeasured_reason,
+    }
 
 
 def card_payload(backend: str) -> Dict[str, object]:
@@ -812,20 +858,10 @@ def card_payload(backend: str) -> Dict[str, object]:
     """
     card = card_for(backend)
     return {
-        "capabilities": [
-            {
-                "id": line.id,
-                # Still a BOOL, and still first. An unmeasured line answers False
-                # here, so a reader that predates the two fields beside it -- an
-                # older panel against a newer gateway -- gets the fail-closed
-                # not-available answer rather than inheriting a third state it has
-                # no way to render.
-                "available": line.available,
-                "measured": line.measured,
-                "unmeasured_reason": line.unmeasured_reason,
-            }
-            for line in card.capabilities
-        ],
+        "capabilities": [_line_payload(line) for line in card.capabilities],
+        # Same shape as ``capabilities`` and outside its count: the panel folds
+        # these behind a disclosure, and a gateway that predates them sends none.
+        "details": [_line_payload(line) for line in card.details],
         "security_notes": list(card.security_notes),
         "operator_notes": list(card.operator_notes),
         # The routing value itself, not a record around it. A second reading of the
