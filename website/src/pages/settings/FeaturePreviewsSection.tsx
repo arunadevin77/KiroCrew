@@ -291,12 +291,14 @@ export function FeaturePreviewsSection() {
           onChange={v => setPreviewFlag(PREVIEW_LAYOUT_HARNESS, v)}
         />
       </SettingsCard>
-      {/* The Dynamic Dashboard: the dock above the composer, the side panel's
-          Dashboard view, the Crewmates Dashboard tab and the All dashboards
-          page. Still being designed, so held here until it is.
+      {/* The Dynamic Dashboard: the side panel's Dashboard view, the Crewmates
+          Dashboard tab and the All dashboards page. Still being designed, so
+          held here until it is. The dock above the composer was part of this
+          preview and is retired (`commandCenterRetired.test.ts`), so neither
+          this comment nor the card's description may name it again.
 
-          NO ingress button: turning it on puts the dock, the + menu entry and
-          the sidebar's "All dashboards" item back in the same tick, so a link
+          NO ingress button: turning it on puts the + menu entry and the
+          sidebar's "All dashboards" item back in the same tick, so a link
           here would be a second door beside ones already on screen. NO "See
           what it looks like" either, for the capture rule: the surface is
           changing shape and a capture would be stale by the next change.

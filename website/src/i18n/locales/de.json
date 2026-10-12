@@ -12858,7 +12858,7 @@
         "decisions_runtime_error": "Das Modell konnte nicht gestartet werden.",
         "decisions_runtime_retry": "Erneut versuchen",
         "dashboard": "Dynamisches Dashboard",
-        "dashboard_desc": "Schaltet das in Entwicklung befindliche dynamische Dashboard ein: eine Statuszeile über dem Chat-Eingabefeld, eine Dashboard-Ansicht im Seitenbereich und auf der Seite eines Crewmitglieds sowie eine Seite „Alle Dashboards“. Das Layout wird noch gestaltet, daher wird es erst angezeigt, wenn du es einschaltest. Enthält auch den Schalter für automatische Karten.",
+        "dashboard_desc": "Schaltet das in Entwicklung befindliche dynamische Dashboard ein: eine Dashboard-Ansicht im Seitenbereich und auf der Seite eines Crewmitglieds sowie eine Seite „Alle Dashboards“. Das Layout wird noch gestaltet, daher wird es erst angezeigt, wenn du es einschaltest. Enthält auch den Schalter für automatische Karten.",
         "folder_conductor": "Ordner-Conductor",
         "folder_conductor_desc": "Hebt den Chat, der die anderen Chats eines Ordners gestartet hat, an den Anfang dieses Ordners: ein farbiger Balken am linken Rand und ein kleines conductor-Label neben dem Agentennamen. Das ändert die Reihenfolge der Sitzungsliste, daher bleibt die Liste unverändert, bis du es einschaltest. Der Chat-Eintrag im Ordnermenü ist immer da."
       },

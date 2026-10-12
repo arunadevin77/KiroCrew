@@ -1032,7 +1032,7 @@
       "label": "Dynamic Dashboard",
       "tab": "developer",
       "route": "/settings/developer?highlight=developer.dynamic-dashboard",
-      "description": "Turns on the in-development Dynamic Dashboard: a status row above the chat composer, a Dashboard view in the side panel and on a crewmate’s page, and an All Dashboards page. Its layout is still being designed, so it is not shown until you turn it on. Also holds the switch for automatic cards."
+      "description": "Turns on the in-development Dynamic Dashboard: a Dashboard view in the side panel and on a crewmate’s page, and an All Dashboards page. Its layout is still being designed, so it is not shown until you turn it on. Also holds the switch for automatic cards."
     },
     {
       "id": "developer.earlier-conversation-one-decision-may-carry-in-characters",

@@ -13051,7 +13051,7 @@
         "decisions_runtime_error": "Não foi possível iniciar o modelo.",
         "decisions_runtime_retry": "Tentar de novo",
         "dashboard": "Painel dinâmico",
-        "dashboard_desc": "Ativa o painel dinâmico, ainda em desenvolvimento: uma linha de status acima do compositor do chat, uma visualização Painel no painel lateral e na página de um membro da equipe, e uma página Todos os painéis. O layout ainda está sendo definido, por isso só aparece quando você o ativa. Também contém o interruptor dos cartões automáticos.",
+        "dashboard_desc": "Ativa o painel dinâmico, ainda em desenvolvimento: uma visualização Painel no painel lateral e na página de um membro da equipe, e uma página Todos os painéis. O layout ainda está sendo definido, por isso só aparece quando você o ativa. Também contém o interruptor dos cartões automáticos.",
         "folder_conductor": "Conductor da pasta",
         "folder_conductor_desc": "Leva para o topo da pasta o chat que iniciou os outros chats dessa pasta: uma barra de destaque na borda esquerda e uma pequena etiqueta conductor ao lado do nome do agente. Isso muda a ordem da lista de sessões, por isso a lista fica como está até você ativar. O item de chat no menu da pasta está sempre lá."
       },
