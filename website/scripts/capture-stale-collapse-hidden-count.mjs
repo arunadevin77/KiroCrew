@@ -86,7 +86,7 @@ async function main() {
       const label = (await expander.innerText()).trim()
       if (!label.startsWith('1 dormant session hidden')) throw new Error(`unexpected expander text: ${JSON.stringify(label)}`)
       const title = await expander.getAttribute('title')
-      if (title !== 'Not used in over 7d. Click to show.') throw new Error(`unexpected title: ${JSON.stringify(title)}`)
+      if (title !== 'Dormant: not used in over 7d. Click to show.') throw new Error(`unexpected title: ${JSON.stringify(title)}`)
 
       await shoot(page, header, `01-${theme}-collapsed`)
 

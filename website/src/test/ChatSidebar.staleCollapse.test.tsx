@@ -64,6 +64,7 @@ Object.defineProperty(window, 'matchMedia', {
 })
 
 import ChatSidebar from '../pages/ChatSidebar'
+import { STALE_COLLAPSE_TICK_MS } from '../pages/staleCollapse'
 
 const DAY = 24 * 60 * 60 * 1000
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString()
@@ -247,10 +248,10 @@ describe('chat sidebar — stale-session collapse', () => {
       slot('old-1', 'old session one', 10 * 24),
     ])
     // Default window is 7 days; the same compact label the sort/filter menu shows.
-    expect(getByTestId('stale-expander-root')).toHaveAttribute('title', 'Not used in over 7d. Click to show.')
+    expect(getByTestId('stale-expander-root')).toHaveAttribute('title', 'Dormant: not used in over 7d. Click to show.')
     fireEvent.click(getByTestId('stale-expander-root'))
     expect(getByTestId('stale-expander-root')).toHaveTextContent('1 dormant session shown')
-    expect(getByTestId('stale-expander-root')).toHaveAttribute('title', 'Not used in over 7d. Click to hide.')
+    expect(getByTestId('stale-expander-root')).toHaveAttribute('title', 'Dormant: not used in over 7d. Click to hide.')
   })
 
   it('tooltip follows a persisted custom threshold', () => {
@@ -259,7 +260,7 @@ describe('chat sidebar — stale-session collapse', () => {
       slot('fresh', 'fresh session', 2),
       slot('old-1', 'old session one', 5 * 24),
     ])
-    expect(getByTestId('stale-expander-root')).toHaveAttribute('title', 'Not used in over 3d. Click to show.')
+    expect(getByTestId('stale-expander-root')).toHaveAttribute('title', 'Dormant: not used in over 3d. Click to show.')
   })
 
   it('a persisted "0" turns the feature off and shows every session', () => {
@@ -327,6 +328,67 @@ describe('chat sidebar — stale-session collapse', () => {
     // The moved row stays visible; its equally-old neighbor stays collapsed.
     expect(view.getByText('freshly moved old')).toBeInTheDocument()
     expect(view.queryByText('foldered old')).toBeNull()
+  })
+
+  it('keeps the session the user just left visible, so switching never collapses it', () => {
+    const slots = [
+      slot('left-old', 'just left old', 10 * 24),
+      slot('next-old', 'next old', 10 * 24),
+      slot('other-old', 'other old', 10 * 24),
+    ]
+    const view = renderSidebar(slots, { activeSlot: 'left-old' })
+    expect(view.getByText('just left old')).toBeInTheDocument()
+    const rerender = (activeSlot: string | null) => view.rerender(
+      <QueryClientProvider client={view.qc}>
+        <Provider store={view.store}>
+          <ThemeProvider>
+            <MemoryRouter>
+              <ChatSidebar
+                slots={slots as never} activeSlot={activeSlot} unreadSlots={[]}
+                history={[]} historyHasMore={false} defaultAgent="" installedAgents={[]}
+              />
+            </MemoryRouter>
+          </ThemeProvider>
+        </Provider>
+      </QueryClientProvider>,
+    )
+    // The user clicks a different session: the one they left stays in place.
+    rerender('next-old')
+    expect(view.getByText('just left old')).toBeInTheDocument()
+    expect(view.getByText('next old')).toBeInTheDocument()
+    // An equally old session the user never opened still collapses.
+    expect(view.queryByText('other old')).toBeNull()
+    expect(view.getByTestId('stale-expander-root')).toHaveTextContent('1 dormant session hidden')
+  })
+
+  it('lets a just-left session collapse once a heartbeat interval passes', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    try {
+      const slots = [
+        slot('left-old', 'just left old', 10 * 24),
+        slot('next-old', 'next old', 10 * 24),
+      ]
+      const view = renderSidebar(slots, { activeSlot: 'left-old' })
+      view.rerender(
+        <QueryClientProvider client={view.qc}>
+          <Provider store={view.store}>
+            <ThemeProvider>
+              <MemoryRouter>
+                <ChatSidebar
+                  slots={slots as never} activeSlot="next-old" unreadSlots={[]}
+                  history={[]} historyHasMore={false} defaultAgent="" installedAgents={[]}
+                />
+              </MemoryRouter>
+            </ThemeProvider>
+          </Provider>
+        </QueryClientProvider>,
+      )
+      expect(view.getByText('just left old')).toBeInTheDocument()
+      act(() => { vi.advanceTimersByTime(STALE_COLLAPSE_TICK_MS + 1000) })
+      expect(view.queryByText('just left old')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not mistake cold-load folder hydration for user movement', async () => {
