@@ -7777,24 +7777,19 @@ def _model_scope_filter(config: KiroCrewConfig) -> Callable[[str], str]:
 def resolve_app_spawn_model(config: KiroCrewConfig, app_name: str, agent_name: str) -> str:
     """The model an app's background spawn of *agent_name* runs on, or ``""``.
 
-    The app's own ``apps.<name>.model`` when the user set one, unless the agent
-    itself pins a model, which wins as it does for an app session. The agent tier
-    is the one the spawn's session resolves (``session._session_model``): the crew
-    of that name, when there is one, then the template's own pin. ``""`` leaves the
-    spawn exactly as it is without the setting.
+    The app's own ``apps.<name>.model`` when the user set one, unless the spawned
+    template itself pins a model, which wins as it does for an app session. That
+    pin is the spawn's whole agent tier: an app spawn is a template spawn, which
+    allocates with ``crew_agent=""``, so its session (``session._session_model``)
+    never reads a crew's pin, not even one of a crew that shares the template's
+    name. ``""`` leaves the spawn exactly as it is without the setting.
     """
     in_scope = _model_scope_filter(config)
     app_pin = in_scope(app_model_pin(config, app_name))
     if not app_pin:
         return ""
-    template = agent_name
-    crew = config.agents.get(agent_name) if agent_name else None
-    if crew is not None:
-        if in_scope(normalize_agent_model(crew.model)):
-            return ""
-        template = crew.kiro_agent or agent_name
-    if template and template != "kirocrew":
-        if in_scope(normalize_agent_model(config._resolve_named_agent_model(template))):
+    if agent_name and agent_name != "kirocrew":
+        if in_scope(normalize_agent_model(config._resolve_named_agent_model(agent_name))):
             return ""
     return app_pin
 

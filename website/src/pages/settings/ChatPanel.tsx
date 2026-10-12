@@ -18,6 +18,7 @@ import { api, type FeatureVideoStatus } from '../../api/client'
 import { useAppSelector } from '../../store'
 import { serializeDefaultMemoryModeUpdate } from '../../api/queryClient'
 import { useOptimisticConfigPaths, setConfigPathValue } from './useOptimisticConfigPaths'
+import { AppModelsSection } from './AppModelsSection'
 import { useAvailableModelsQuery } from '../../hooks/useAvailableModels'
 import { usePlainDiff } from '../../hooks/usePlainDiff'
 import { useDiffSplit } from '../../hooks/useDiffSplit'
@@ -1609,6 +1610,7 @@ export function ChatPanel({ basePath }: { basePath?: string } = {}) {
           />
         </SettingsCard>
         </div>
+        <AppModelsSection index={5} />
       </>
           )
 

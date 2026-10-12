@@ -395,7 +395,8 @@ its own once the cache refreshes with a list that carries it.
   hides the ones it can.
 - **A pin's save gate accepts every id its picker offers.** The config PATCH gives
   every validated model pin (`agent.role_models.*`, `agent.fallback_model`,
-  `agent.refusal_fallback_model` and the `decisions.model_route` tiers) one
+  `agent.refusal_fallback_model`, the per-app `apps.<name>.model` and the
+  `decisions.model_route` tiers) one
   grammar, `_MODEL_PIN_PATTERN` in `dashboard/handlers/core.py`: a bare id, or the
   provider-qualified `provider/model` form OpenCode advertises, built from the
   same `QUALIFIED_MODEL_PATTERN` the spawn and cron model-name check uses (so
@@ -479,6 +480,22 @@ its own once the cache refreshes with a list that carries it.
   nobody declared and no registry tier lists stays unknown and keeps the 1,000,000-token
   reference. See [memory-skills-hooks](../modules/memory-skills-hooks.md) "Model-window
   metadata" for the resolution order.
+- **Pin a model for one app** only through `apps.<name>.model` (Settings → Chat →
+  Model → Apps, one row per enabled app). Empty inherits, so an app nobody picked
+  for resolves exactly as it would without the setting. It applies to the sessions
+  the app owns (`slot._app`) and to the app's background spawns that pass no
+  `model`, and nowhere else. It sits below the session's own pick, the app's own
+  pick (a Research campaign's model and the Spec Builder default ride the slot's
+  model) and a model pinned on the agent or crew, and above the global default:
+  tier 3 of `config.loader.resolve_effective_model(..., app_name=)` for a session,
+  `config.loader.resolve_app_spawn_model` for a spawn, which leaves `model` empty
+  when the spawned agent pins its own. Because it fills the spawn's `model`, a set
+  value also outranks `agent.role_models.subagent` for that app's spawns. The
+  config PATCH matches the path by the manifest's kebab-case name grammar, since
+  apps install at runtime, and validates the value like every pin above; a value
+  the account later stops serving is withheld at session start like any inherited
+  default. It never re-purposes `decisions.model_route`, whose tiers are the Auto
+  router's.
 - **Entitlement checks** always use the shared predicate
   `acp.client.model_is_unusable(id, advertised)` together with
   `advertised_model_ids(...)`. It is one predicate on purpose: two spellings of "can

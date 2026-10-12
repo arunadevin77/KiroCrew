@@ -17777,6 +17777,16 @@
         "remove_confirm": "Supprimer l’app OAuth {{provider}} ? L’ID client et le secret enregistré sont effacés, et {{provider}} ne pourra plus se connecter tant que vous ne les aurez pas saisis à nouveau.",
         "remove_confirm_action": "Supprimer l’app OAuth",
         "cancel": "Annuler"
+      },
+      "appModels": {
+        "title": "Applications",
+        "description": "Le modèle sur lequel démarrent les sessions et les agents en arrière-plan de chaque application.",
+        "row_hint": "« Hériter » utilise le Modèle par défaut ci-dessus. Un modèle choisi pour la session, le choix propre de l’application (une campagne Research Lab, le modèle par défaut de Spec Builder) et un modèle épinglé sur l’agent ou le crew de l’application restent prioritaires.",
+        "inherit_named": "Hériter ({{model}})",
+        "inherit_auto": "Hériter (automatique)",
+        "none_enabled": "Aucune application n’est activée.",
+        "load_failed": "Impossible de charger tes applications.",
+        "failed_to_save": "Impossible d’enregistrer le modèle pour {{app}}."
       }
     },
     "settingsPage": {

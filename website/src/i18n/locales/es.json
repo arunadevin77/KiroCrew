@@ -17777,6 +17777,16 @@
         "remove_confirm": "¿Eliminar la app OAuth de {{provider}}? Se borran el ID de cliente y el secreto guardado, y {{provider}} no podrá conectarse hasta que los introduzcas de nuevo.",
         "remove_confirm_action": "Eliminar app OAuth",
         "cancel": "Cancelar"
+      },
+      "appModels": {
+        "title": "Apps",
+        "description": "El modelo con el que se inician las sesiones y los agentes en segundo plano de cada app.",
+        "row_hint": "«Heredar» usa el Modelo predeterminado de arriba. Un modelo elegido para la sesión, la elección propia de la app (una campaña de Research Lab, el valor predeterminado de Spec Builder) y un modelo fijado en el agente o el crew de la app siguen teniendo prioridad.",
+        "inherit_named": "Heredar ({{model}})",
+        "inherit_auto": "Heredar (automático)",
+        "none_enabled": "No hay apps habilitadas.",
+        "load_failed": "No se pudieron cargar tus apps.",
+        "failed_to_save": "No se pudo guardar el modelo de {{app}}."
       }
     },
     "settingsPage": {

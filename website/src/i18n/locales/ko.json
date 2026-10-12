@@ -17287,6 +17287,16 @@
         "remove_confirm": "{{provider}} OAuth 앱을 제거하시겠습니까? 클라이언트 ID와 저장된 시크릿이 삭제되며, 다시 입력하기 전까지 {{provider}}은(는) 연결할 수 없습니다.",
         "remove_confirm_action": "OAuth 앱 제거",
         "cancel": "취소"
+      },
+      "appModels": {
+        "title": "앱",
+        "description": "각 앱의 세션과 백그라운드 에이전트가 시작할 때 사용하는 모델입니다.",
+        "row_hint": "'상속'은 위의 기본 모델을 사용합니다. 세션에서 선택한 모델, 앱 자체의 선택(Research Lab 캠페인, Spec Builder 기본값), 앱의 에이전트나 크루에 고정한 모델이 여전히 우선합니다.",
+        "inherit_named": "상속({{model}})",
+        "inherit_auto": "상속(자동)",
+        "none_enabled": "활성화된 앱이 없습니다.",
+        "load_failed": "앱을 불러오지 못했습니다.",
+        "failed_to_save": "{{app}}의 모델을 저장하지 못했습니다."
       }
     },
     "settingsPage": {

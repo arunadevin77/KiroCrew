@@ -198,6 +198,11 @@ export const PANEL_TAB_MAP: Record<string, PanelTarget> = {
   // automatic-cards switch.
   'PortabilityTab.tsx': 'imports',
   'AutomaticCardSetting.tsx': 'developer',
+  // The per-app model rows ChatPanel's Model page mounts. Each row is labelled
+  // with the app's own name, a dynamic label the extractor skips, so the file
+  // yields no entry today; mapped so a static control added to it lands on the
+  // Model page's deep link.
+  'AppModelsSection.tsx': { tab: 'chat', params: { sub: 'models' } },
 }
 
 /** Panels whose controls sit in `case '<sub>':` pages of a SettingsSubNav;

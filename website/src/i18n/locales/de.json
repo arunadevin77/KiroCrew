@@ -17532,6 +17532,16 @@
         "remove_confirm": "{{provider}}-OAuth-App entfernen? Client ID und gespeichertes Secret werden gelöscht, und {{provider}} kann sich erst wieder verbinden, wenn du sie erneut einträgst.",
         "remove_confirm_action": "OAuth-App entfernen",
         "cancel": "Abbrechen"
+      },
+      "appModels": {
+        "title": "Apps",
+        "description": "Das Modell, mit dem die Sitzungen und Hintergrund-Agenten jeder App starten.",
+        "row_hint": "„Übernehmen“ nutzt das Standardmodell oben. Ein für die Sitzung gewähltes Modell, die eigene Auswahl der App (eine Research Lab-Kampagne, der Spec Builder-Standard) und ein am Agenten oder an der Crew der App angeheftetes Modell haben weiterhin Vorrang.",
+        "inherit_named": "Übernehmen ({{model}})",
+        "inherit_auto": "Übernehmen (automatisch)",
+        "none_enabled": "Keine Apps aktiviert.",
+        "load_failed": "Deine Apps konnten nicht geladen werden.",
+        "failed_to_save": "Das Modell für {{app}} konnte nicht gespeichert werden."
       }
     },
     "settingsPage": {

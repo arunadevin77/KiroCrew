@@ -162,9 +162,11 @@ export function createAgentsEndpoints({ post, put, del, j, jfetch: fetch, sessio
         headers: sessionKey ? { 'X-Session-Key': sessionKey } : { ..._sk },
       }).then(j),
     /** The model a new session on this Kiro Crew agent would run on. Empty
-     *  `agent` resolves the configured default agent. */
-    agentResolvedModel: (agent: string) =>
-      fetch('/api/agents/resolved-model?agent=' + encodeURIComponent(agent)).then(j),
+     *  `agent` resolves the configured default agent; `app` adds the owning
+     *  app's own model setting. */
+    agentResolvedModel: (agent: string, app?: string) =>
+      fetch('/api/agents/resolved-model?agent=' + encodeURIComponent(agent)
+        + (app ? '&app=' + encodeURIComponent(app) : '')).then(j),
     /** Execution choices for a chat: configured members AND installed shared
      *  templates, each row tagged with its `selection_kind`. Read-only -- unlike
      *  the sync route it enrols nothing and allocates no member memory, so

@@ -340,6 +340,13 @@ describe('settings coverage gate — bare controls', () => {
  * skipped"; this pins each one so a new silent skip fails the build.
  */
 const EXPECTED_DYNAMIC_SKIPS: Record<string, { count: number; reason: string }> = {
+  'AppModelsSection.tsx': {
+    count: 1,
+    reason:
+      'one model row per enabled app, labelled with that app\'s own display name; the ' +
+      'set of apps is whatever is installed, so there is no fixed label to index. The ' +
+      'rows sit on the Model page every chat.* model entry already deep-links to',
+  },
   'BotChannelPanel.tsx': {
     count: 16,
     reason:

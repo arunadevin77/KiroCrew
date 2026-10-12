@@ -1250,6 +1250,9 @@ export interface ChatSlot extends TurnIdentityFields {
    * task-runner slot, or an app/cron-minted session (which can share the
    * `chat-<n>-<ts>` key shape) never triggers it. */
   origin?: string
+  /** The installed app that owns this session, or null/absent for a person's own
+   *  chat. Lets the model chip ask for that app's own model setting. */
+  app?: string | null
   /** Slot key of the session that asked for this one via the session-control
    * create verb; "" / absent for a person's own tab, a fork, a restore. Durable
    * (written at birth, rehydrated), so it is the one link from a crew member's

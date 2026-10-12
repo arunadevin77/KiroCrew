@@ -17777,6 +17777,16 @@
         "remove_confirm": "Rimuovere l’app OAuth di {{provider}}? Client ID e secret salvato vengono eliminati e {{provider}} non potrà connettersi finché non li inserisci di nuovo.",
         "remove_confirm_action": "Rimuovi app OAuth",
         "cancel": "Annulla"
+      },
+      "appModels": {
+        "title": "App",
+        "description": "Il modello con cui partono le sessioni e gli agenti in background di ogni app.",
+        "row_hint": "«Eredita» usa il Modello predefinito qui sopra. Un modello scelto per la sessione, la scelta propria dell’app (una campagna di Research Lab, il predefinito di Spec Builder) e un modello fissato sull’agente o sulla crew dell’app hanno ancora la precedenza.",
+        "inherit_named": "Eredita ({{model}})",
+        "inherit_auto": "Eredita (automatico)",
+        "none_enabled": "Nessuna app è attiva.",
+        "load_failed": "Impossibile caricare le tue app.",
+        "failed_to_save": "Impossibile salvare il modello per {{app}}."
       }
     },
     "settingsPage": {

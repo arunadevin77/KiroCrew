@@ -159,7 +159,9 @@ class TestResolveEffectiveModel:
 
     def test_a_crew_pin_wins_over_the_setting(self, tmp_path, _no_template_pin):
         cfg = _config(tmp_path, default_crew_model=CREW_PIN)
-        assert resolve_effective_model(cfg, None, app_name=APP) == CREW_PIN
+        assert resolve_effective_model(cfg, "default", app_name=APP) == CREW_PIN
+        # A session on no named agent is a template session, not that crewmate.
+        assert resolve_effective_model(cfg, None, app_name=APP) == APP_PIN
 
     def test_a_template_pin_wins_over_the_setting(self, tmp_path, _no_template_pin, monkeypatch):
         cfg = _config(tmp_path)
@@ -191,13 +193,56 @@ class TestResolveAppSpawnModel:
         _no_template_pin["worker"] = TEMPLATE_PIN
         assert resolve_app_spawn_model(cfg, APP, "worker") == ""
 
-    def test_a_crew_pin_wins(self, tmp_path, _no_template_pin):
+    def test_a_same_named_crews_pin_does_not_win(self, tmp_path, _no_template_pin):
+        """A crew that shares the spawned template's name does not hide the setting.
+
+        An app spawn is a template spawn (``crew_agent=""``), so its session never
+        reads that crew's pin. The setting is the model the user chose for the app.
+        """
         cfg = _config(tmp_path, default_crew_model=CREW_PIN)
-        assert resolve_app_spawn_model(cfg, APP, "default") == ""
+        assert resolve_app_spawn_model(cfg, APP, "default") == APP_PIN
+
+    def test_the_spawn_runs_on_the_apps_model(self, tmp_path, _no_template_pin, monkeypatch):
+        """Drive the spawn's own model verdict, as the spawn path allocates it.
+
+        A crew named like the template pins a model. The spawn allocates the
+        template with ``crew_agent=""``, so without a model it runs on the global
+        default, not on that crew's pin, and with the setting it runs on the app's
+        model.
+        """
+        from kiro_crew.subagent import _spawn_effective_model
+
+        cfg = _config(tmp_path, default_crew_model=CREW_PIN)
+        monkeypatch.setattr(KiroCrewConfig, "load", classmethod(lambda cls, *a, **k: cfg))
+        on_app_pin = cfg.acp_effective_model(None, APP_PIN)
+        on_global = cfg.acp_effective_model(None, GLOBAL_DEFAULT)
+        assert on_app_pin and on_app_pin != on_global
+
+        assert _spawn_effective_model("", "default", crew_agent="") == on_global
+        model = resolve_app_spawn_model(cfg, APP, "default")
+        assert _spawn_effective_model(model, "default", crew_agent="") == on_app_pin
 
     def test_another_apps_setting_does_not_apply(self, tmp_path, _no_template_pin):
         cfg = _config(tmp_path)
         assert resolve_app_spawn_model(cfg, "other-app", "worker") == ""
+
+    def test_the_default_crews_pin_does_not_block_a_spawn(self, tmp_path, _no_template_pin):
+        """The spawn's agent tier is the spawn session's, and a pinned crew is not it.
+
+        The ``default`` crewmate pins a model, which is its agent tier when a
+        session names it. A spawn of the app's own template is not that crew: its
+        session ignores the default crew's pin and starts on the global default.
+        Judging the spawn by the crew's tier would therefore drop the per-app
+        setting for a spawn that never runs on the crew's model.
+        """
+        from kiro_crew.config.loader import _agent_tier_model, _model_scope_filter
+        from kiro_crew.session import _session_model
+
+        cfg = _config(tmp_path, default_crew_model=CREW_PIN)
+        assert _agent_tier_model(cfg, "default", _model_scope_filter(cfg)) == CREW_PIN
+        assert _agent_tier_model(cfg, "worker", _model_scope_filter(cfg)) == ""
+        assert _session_model(cfg, "worker") == GLOBAL_DEFAULT
+        assert resolve_app_spawn_model(cfg, APP, "worker") == APP_PIN
 
 
 # ── A real turn on an app-owned slot ────────────────────────────────────────
@@ -308,6 +353,7 @@ class TestAppSlotTurn:
         _runner_config(_config(tmp_path, default_crew_model=CREW_PIN))
         state, _client = _turn_state(tmp_path)
         slot = _app_slot()
+        slot.agent = "default"
 
         await _drive(state, slot)
 
@@ -354,10 +400,10 @@ class _FakeManager:
 
 class TestAppSpawn:
     @pytest.fixture(autouse=True)
-    def _known_agent(self, monkeypatch):
+    def _known_agent(self, _floor_monkeypatch):
         import kiro_crew.apps.spawn_sdk as spawn_sdk
 
-        monkeypatch.setattr(
+        _floor_monkeypatch.setattr(
             spawn_sdk,
             "list_agents",
             lambda: [types.SimpleNamespace(name="worker", filename=f"{APP}--worker.json")],
@@ -463,6 +509,8 @@ class TestSettingsWrite:
             "apps.demo-app",
             "apps.demo-app.model.x",
             "apps.-demo.model",
+            "apps.demo\n.model",
+            "apps.demo-app.model\n",
             ["apps"],
             None,
         ],
@@ -471,6 +519,15 @@ class TestSettingsWrite:
         from kiro_crew.dashboard.handlers import core
 
         assert core._editable_config_spec(path) is None
+
+    def test_the_app_name_grammar_is_the_manifests(self):
+        # One spelling of the app-name grammar: the PATCH allowlist reads the
+        # manifest's ``KEBAB_RE`` rather than restating it, so the two cannot drift.
+        from kiro_crew.apps import manifest
+        from kiro_crew.dashboard.handlers import core
+
+        assert core.KEBAB_RE is manifest.KEBAB_RE
+        assert not hasattr(core, "_APP_MODEL_PATH_RE")
 
     @pytest.mark.asyncio
     async def test_a_pick_is_written_under_the_app(self, _cfg_file, _advertised):
@@ -510,3 +567,40 @@ class TestSettingsWrite:
                 json={"path": f"apps.{APP}.model", "value": "bad; rm -rf /"},
             )
             assert resp.status == 400
+
+
+# ── The model chip's resolver ───────────────────────────────────────────────
+
+
+class TestResolvedModelEndpoint:
+    """The composer chip reads this endpoint, so it must name the app's model too."""
+
+    async def _get(self, cfg: KiroCrewConfig, params: dict) -> dict:
+        from kiro_crew.dashboard.handlers import api_kirocrew_agent_resolved_model
+
+        app = web.Application()
+        app.router.add_get("/api/agents/resolved-model", api_kirocrew_agent_resolved_model)
+        with unittest.mock.patch.object(KiroCrewConfig, "load", return_value=cfg):
+            async with TestClient(TestServer(app)) as client:
+                return await (await client.get("/api/agents/resolved-model", params=params)).json()
+
+    @pytest.mark.asyncio
+    async def test_the_owning_app_is_part_of_the_answer(self, tmp_path, _no_template_pin):
+        body = await self._get(_config(tmp_path), {"agent": "", "app": APP})
+        assert body["model"] == APP_PIN
+
+    @pytest.mark.asyncio
+    async def test_without_an_app_the_answer_is_unchanged(self, tmp_path, _no_template_pin):
+        body = await self._get(_config(tmp_path), {"agent": ""})
+        assert body["model"] == GLOBAL_DEFAULT
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("app", ["Demo", "../x", "demo_app", ""])
+    async def test_a_value_that_is_not_an_app_name_is_ignored(
+        self, tmp_path, _no_template_pin, app
+    ):
+        cfg = _load_config(
+            tmp_path, {"agent": {"model": GLOBAL_DEFAULT}, "apps": {app or "x": {"model": APP_PIN}}}
+        )
+        body = await self._get(cfg, {"agent": "", "app": app})
+        assert body["model"] == GLOBAL_DEFAULT

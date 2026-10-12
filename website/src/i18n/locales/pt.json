@@ -17777,6 +17777,16 @@
         "remove_confirm": "Remover o app OAuth do {{provider}}? O client ID e o secret salvo são apagados, e o {{provider}} não consegue conectar até você inseri-los de novo.",
         "remove_confirm_action": "Remover app OAuth",
         "cancel": "Cancelar"
+      },
+      "appModels": {
+        "title": "Apps",
+        "description": "O modelo com que as sessões e os agentes em segundo plano de cada app começam.",
+        "row_hint": "\"Herdar\" usa o Modelo padrão acima. Um modelo escolhido para a sessão, a escolha do próprio app (uma campanha do Research Lab, o padrão do Spec Builder) e um modelo fixado no agente ou na crew do app continuam tendo prioridade.",
+        "inherit_named": "Herdar ({{model}})",
+        "inherit_auto": "Herdar (automático)",
+        "none_enabled": "Nenhum app está ativado.",
+        "load_failed": "Não foi possível carregar seus apps.",
+        "failed_to_save": "Não foi possível salvar o modelo de {{app}}."
       }
     },
     "settingsPage": {

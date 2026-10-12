@@ -17287,6 +17287,16 @@
         "remove_confirm": "移除 {{provider}} 的 OAuth 应用？客户端 ID 和已保存的密钥会被删除，重新填写之前 {{provider}} 无法连接。",
         "remove_confirm_action": "移除 OAuth 应用",
         "cancel": "取消"
+      },
+      "appModels": {
+        "title": "应用",
+        "description": "每个应用的会话和后台代理启动时使用的模型。",
+        "row_hint": "“继承”使用上方的默认模型。为会话选择的模型、应用自身选择（Research Lab 活动、Spec Builder 默认值）以及应用代理或团队上置顶的模型仍然优先。",
+        "inherit_named": "继承（{{model}}）",
+        "inherit_auto": "继承（自动）",
+        "none_enabled": "没有已启用的应用。",
+        "load_failed": "无法加载你的应用。",
+        "failed_to_save": "无法保存 {{app}} 的模型。"
       }
     },
     "settingsPage": {

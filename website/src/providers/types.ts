@@ -176,8 +176,9 @@ export interface ProviderAdapter {
   /** The model a NEW session on this KiroCrew agent would run on ('' = the
    *  backend picks). Takes a KiroCrew agent name, not a kiro agent template:
    *  the per-agent default is stored per agent, and several agents can share
-   *  one template. */
-  resolveModel(agentName: string): Promise<string>
+   *  one template. `app` is the app that owns the session, when one does: its
+   *  own model setting is then part of the answer. */
+  resolveModel(agentName: string, app?: string): Promise<string>
   /** The provider-level default model for NEW sessions ('' when none is set).
    *  Distinct from resolveModel, which resolves a specific agent template. */
   resolveDefaultModel(): Promise<string>

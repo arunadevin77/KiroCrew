@@ -8396,6 +8396,16 @@
         "remove_confirm": "Remove the {{provider}} OAuth app? The client ID and the stored secret are deleted, and {{provider}} cannot connect until you enter them again.",
         "remove_confirm_action": "Remove OAuth app",
         "cancel": "Cancel"
+      },
+      "appModels": {
+        "title": "Apps",
+        "description": "The model each app's sessions and background agents start on.",
+        "row_hint": "Inherit uses the Default Model above. A model picked for the session, the app's own pick (a Research Lab campaign, the Spec Builder default) and a model pinned on the app's agent or crew still win.",
+        "inherit_named": "Inherit ({{model}})",
+        "inherit_auto": "Inherit (auto)",
+        "none_enabled": "No apps are enabled.",
+        "load_failed": "Couldn't load your apps.",
+        "failed_to_save": "Couldn't save the model for {{app}}."
       }
     },
     "worldsPage": {

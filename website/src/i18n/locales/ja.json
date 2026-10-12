@@ -17287,6 +17287,16 @@
         "remove_confirm": "{{provider}} の OAuth アプリを削除しますか？クライアント ID と保存済みのシークレットが削除され、再入力するまで {{provider}} は接続できません。",
         "remove_confirm_action": "OAuth アプリを削除",
         "cancel": "キャンセル"
+      },
+      "appModels": {
+        "title": "アプリ",
+        "description": "各アプリのセッションとバックグラウンドエージェントが開始時に使うモデルです。",
+        "row_hint": "「継承」は上のデフォルトモデルを使います。セッションで選んだモデル、アプリ自身の選択（Research Lab のキャンペーン、Spec Builder のデフォルト）、アプリのエージェントやクルーに固定したモデルが引き続き優先されます。",
+        "inherit_named": "継承（{{model}}）",
+        "inherit_auto": "継承（自動）",
+        "none_enabled": "有効なアプリはありません。",
+        "load_failed": "アプリを読み込めませんでした。",
+        "failed_to_save": "{{app}} のモデルを保存できませんでした。"
       }
     },
     "settingsPage": {
