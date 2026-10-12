@@ -145,7 +145,7 @@ and the full operate verbs. It must be on `PATH`; install via **Settings → Bro
 | `playwright-cli click <ref>` / `fill <ref> <text>` | Act on an element from a snapshot |
 | `playwright-cli screenshot [ref]` | Write a PNG, print its path. `[ref]` is an ELEMENT, not a path; do not pass `--filename` (it resolves against the CWD and is not auto-approved) |
 | `playwright-cli state-save` / `state-load <file>` | Save or restore a logged-in session. Bare `state-save` writes into the service's own directory; both a name and `state-load` prompt for approval, because each names a local path |
-| `playwright-cli attach --extension` | Drive the user's own running Chrome, with their logins |
+| `PLAYWRIGHT_MCP_ISOLATED=false playwright-cli attach --extension=chrome` | Drive the user's own running Chrome, with their logins |
 | `playwright-cli show --port <n> --host 127.0.0.1` | Serve the CLI's dashboard for the Browser panel |
 
 **Browsing workflow:** load the `web-browse`, `web-verify`, or `browser-auth`

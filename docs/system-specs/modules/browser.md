@@ -473,6 +473,45 @@ which already holds their logins, so no state file is involved. This is the
 stronger capability of the two: the sessions are the operator's real ones, which
 is why the [approval boundary](#approval-boundary) above is mandatory.
 
+**Which browser the agent drives.** The user's own Chrome comes first, headless
+last. Neither the Browser panel nor `open` is the user's Chrome — both carry none
+of their logins, and `open` is headless — so a task that needs their login, or a
+request for "my Chrome", attaches. `browser_cli/own_browser.py` turns three host
+facts into the one instruction the `browser` tool appends to both of its
+`playwright-cli` fallback texts:
+
+| Host | Instruction |
+|---|---|
+| no Google Chrome installed | headless `open`, which has none of the user's logins |
+| Chrome, but no profile has the extension | ask the user to add it, then attach; headless until then |
+| a profile has the extension, no token in the environment | attach; the user approves in Chrome or pastes the token in Settings → Browser |
+| a profile has the extension and a token | attach |
+
+The probes are `stat`s and directory listings only (`<profile>/Extensions/<id>`
+under Chrome's user data dir), and a probe that fails reads as "not found". The
+token is judged from the environment the attach will inherit, never from the
+stored file, which a sandboxed caller may not see. A user who asks for headless,
+and a gateway reached from another machine, override the table; no host fact sees
+either, so the appended instruction, the prompt and the `browser-auth` skill name
+both in prose.
+
+**Every agent-facing attach command is
+`PLAYWRIGHT_MCP_ISOLATED=false playwright-cli attach --extension=chrome`.** An
+operator config named by `PLAYWRIGHT_MCP_CONFIG` (honoured untouched, see
+[Launch config](#launch-config)) may set `browser.isolated: true`, and
+playwright-core checks `isolated` before `extension` when it creates the browser.
+The attach then prints `attached to chrome` while it launched a throwaway
+in-memory browser on `about:blank`, and only a later `detach` admits
+`was not attached`. The CLI applies environment overrides after the config file,
+so the variable restores the real attach for that one command; without such a
+config it is a no-op, because extension mode already defaults `isolated` to false.
+It stays off the follow-up commands, since the same file may need `isolated` for
+`open`. A leading `NAME=value` is POSIX syntax, so on a Windows host the appended
+instruction gives the PowerShell form (`WINDOWS_ATTACH_COMMAND`), which sets the
+variable for the attach and removes it after. `test_own_browser.py` pins every attach line in the prompt and the bundled
+skills to it. After attaching, the agent checks `tab-list`: a lone `about:blank`
+means it did not reach the user's Chrome and must say so.
+
 State files hold live session credentials and are written with owner-only
 permissions.
 

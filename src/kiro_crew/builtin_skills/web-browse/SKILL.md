@@ -37,11 +37,18 @@ prompt, and the user is watching the built-in panel, not that window.
 ## Fallback (and attach / logged-in sessions): `playwright-cli`
 
 The dashboard's right-side **Browser** panel also shows a live `playwright-cli`
-session. When the `browser` tool reports no native panel — or you need an
-**attached** browser carrying the user's real logins — open a page with:
+session. When the `browser` tool reports no native panel, open a page with:
 
 ```bash
 playwright-cli open https://example.com
+```
+
+`open` is a fresh headless browser with none of the user's logins. For a page that
+needs their login, or when they ask for their own Chrome, attach it instead — the
+**browser-auth** skill has the steps:
+
+```bash
+PLAYWRIGHT_MCP_ISOLATED=false playwright-cli attach --extension=chrome
 ```
 
 The page loads in the session, the panel surfaces it, and the command prints the
@@ -128,7 +135,8 @@ mutating verbs — lands on the PARENT session's panel. If you are a subagent an
 your parent may be browsing, use `playwright-cli` under your own `-s=<name>`
 instead of the tool.
 
-`playwright-cli attach --extension=chrome` binds that session name, not `chrome`.
+`PLAYWRIGHT_MCP_ISOLATED=false playwright-cli attach --extension=chrome` binds that
+session name, not `chrome`.
 Keep the same command form afterwards (bare `playwright-cli tab-list`, or your
 chosen `-s=<name>`). Adding `--s=chrome` instead produces:
 

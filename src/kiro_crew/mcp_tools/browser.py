@@ -46,7 +46,7 @@ from typing import Any
 from urllib.parse import unquote_to_bytes, urlsplit
 
 from kiro_crew import mcp_core
-from kiro_crew.browser_cli import install
+from kiro_crew.browser_cli import install, own_browser
 from kiro_crew.config.loader import KiroCrewConfig
 from kiro_crew.security import canonicalize_ip, redact_credentials, redact_exfiltration_urls
 
@@ -293,9 +293,13 @@ def schemas() -> list[dict[str, Any]]:
                 "op='navigate' args={'url': 'https://…'}, op='click' "
                 "args={'ref': '<snapshot-ref>'}, op='type' args={'ref': '…', "
                 "'text': '…', 'submit': true}. Call op='snapshot' first to get "
-                "element refs. When no native panel is serving this session "
-                "(remote gateway / plain-browser dashboard) the tool tells you to "
-                "use the playwright-cli browser verbs directly instead."
+                "element refs. The panel is NOT the user's own Chrome and carries "
+                "none of their logins: for a page that needs their login, or when "
+                "they ask for their Chrome, attach it with "
+                f"`{own_browser.attach_command()}` (the browser-auth skill) instead. "
+                "When no native panel is serving this session (remote gateway / "
+                "plain-browser dashboard) the tool tells you to use the "
+                "playwright-cli browser verbs directly instead."
             ),
             "inputSchema": {
                 "type": "object",
@@ -409,6 +413,16 @@ def _use_builtin_browser() -> bool:
         return True
 
 
+def _with_own_browser_step(text: str) -> str:
+    """*text* plus which browser to drive when the page needs the user's logins.
+
+    Both fallback texts name the headless ``playwright-cli open``, which is the
+    wrong browser for a task that needs the user's own session; without the
+    second sentence the agent answers "use my Chrome" with a sign-in page.
+    """
+    return f"{text} {own_browser.next_step()}"
+
+
 def browser(name: str, args: dict[str, Any]) -> str:
     # Re-checked here as well as in ``schemas()``: kiro-cli caches the tool list
     # for a session's life, so a session that started with the CLI installed
@@ -435,7 +449,7 @@ def browser(name: str, args: dict[str, Any]) -> str:
         logger.debug(
             "browser-cmdbus/tool: built-in browser disabled by setting -> playwright-cli fallback"
         )
-        return _DISABLED_TEXT
+        return _with_own_browser_step(_DISABLED_TEXT)
     op = args.get("op")
     if not isinstance(op, str) or op not in BROWSER_OPS:
         return f"Error: op must be one of: {', '.join(BROWSER_OPS)}"
@@ -511,7 +525,7 @@ def browser(name: str, args: dict[str, Any]) -> str:
         # route's peer check with a hard 403, masking the clean fallback. Route
         # to playwright-cli instead, exactly like the no-panel (503) case below.
         logger.debug("browser-cmdbus/tool: unresolved session -> playwright-cli fallback")
-        return _FALLBACK_TEXT
+        return _with_own_browser_step(_FALLBACK_TEXT)
     header_err = mcp_core._session_key_header_error(session_key)
     if header_err:
         return f"Error: {header_err}"
@@ -539,7 +553,7 @@ def browser(name: str, args: dict[str, Any]) -> str:
         logger.debug(
             "browser-cmdbus/tool: no native panel (status=%s) -> playwright-cli fallback", status
         )
-        return _FALLBACK_TEXT
+        return _with_own_browser_step(_FALLBACK_TEXT)
     code = payload.get("code") if isinstance(payload, dict) else None
     err = payload.get("error") if isinstance(payload, dict) else None
     return f"Error: browser command failed (HTTP {status}{f', {code}' if code else ''}): {err or 'no detail'}"
