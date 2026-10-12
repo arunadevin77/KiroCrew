@@ -6066,6 +6066,7 @@
       "done_subject_ended": "已完成 · 所监视的对象未完成即结束",
       "clear_finished_goal": "清除已完成的目标",
       "pause_loop": "暂停循环",
+      "goal_stale_baseline": "未保存：打开后目标已被修改或重新加载，你的文字已保留。再按一次“{{action}}”，即可用你的文字替换已存的目标。",
       "resume_loop": "恢复循环并立即推动",
       "save_edits_and_resume": "保存修改、恢复循环并立即推动",
       "loop_paused": "已暂停",

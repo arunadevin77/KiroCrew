@@ -18,6 +18,7 @@ from kiro_crew.autonudge import is_structured_monitor_loop
 # docstring); re-exported here so existing importers keep working. This file
 # is intentionally a THIN HTTP mapping over it.
 from kiro_crew.autonudge_authz import (  # noqa: F401 - re-exported
+    STALE_GOAL_BASELINE_ERROR,
     authorize_and_add_nudge,
     authorize_and_clear_monitor,
     authorize_and_stop_monitor,
@@ -1085,6 +1086,17 @@ async def api_autonudge_update(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+    # The goal baseline the popover read when it opened (``goal_token``). Absent skips
+    # the store's stale check; a present one is compared under the store's
+    # lock, so a goal another writer saved meanwhile is refused instead of overwritten.
+    # A non-string is refused rather than coerced: ``str(123)`` would always mismatch
+    # and read as a concurrent edit that never happened.
+    expect_fingerprint = body.get("expect_fingerprint")
+    if expect_fingerprint is not None and not isinstance(expect_fingerprint, str):
+        return web.json_response(
+            {"error": "expect_fingerprint must be a string", "code": "not_a_string"},
+            status=400,
+        )
     loop, error, status = await authorize_and_update_nudge(
         svc=svc,
         loop_id=loop_id,
@@ -1102,10 +1114,15 @@ async def api_autonudge_update(request: web.Request) -> web.Response:
         fresh_run=True,
         max_runtime_secs=body.get("max_runtime_secs"),
         banner=body.get("banner"),
+        expect_fingerprint=expect_fingerprint,
         source="dashboard",
         caller=request.remote or "",
     )
     if error is not None:
+        if status == 409 and error == STALE_GOAL_BASELINE_ERROR:
+            # Coded so the popover can tell this refusal from every other 409, re-read
+            # the baseline and word it in the reader's language.
+            return web.json_response({"error": error, "code": "goal_stale_baseline"}, status=status)
         return web.json_response({"error": error}, status=status)
     return web.json_response({"ok": True, "loop": _serialize(loop)})
 

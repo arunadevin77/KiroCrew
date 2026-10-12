@@ -55,6 +55,16 @@ from kiro_crew.sel import sel
 
 logger = logging.getLogger(__name__)
 
+#: The refusal ``authorize_and_update_nudge`` answers when the caller's goal baseline
+#: differs from the stored one. Named so the HTTP route can attach a machine code
+#: to exactly this 409. It must not claim another window: the token is re-minted on
+#: every load, so the first save after a gateway restart is refused with no other
+#: writer anywhere.
+STALE_GOAL_BASELINE_ERROR = (
+    "Not saved: the goal was changed or reloaded since you opened it. Your text is kept. "
+    "Send the same save again to replace the stored goal with your text."
+)
+
 # Dashboard slot modes that refuse automation turns armed from OUTSIDE the
 # session. A crew-mode slot is driven by its orchestrator and a member-mode
 # slot is a named member's own thread; neither may have work injected by a
@@ -794,12 +804,7 @@ async def authorize_and_update_nudge(
         # Refused under the store's own lock, so the newer goal is still there. 409 rather
         # than a silent success: last-write-wins would destroy a change never seen.
         _audit("denied", "stale baseline — nudge loop not updated")
-        return (
-            None,
-            "The goal changed in another window. Your text is kept — save again to compare "
-            "and choose.",
-            409,
-        )
+        return None, STALE_GOAL_BASELINE_ERROR, 409
     except ValueError as exc:
         return _deny(str(exc), 400)
     except Exception as exc:  # noqa: BLE001 - audit the failure, then propagate

@@ -1986,6 +1986,7 @@
       "done_subject_ended": "Done · the watched subject ended without finishing",
       "clear_finished_goal": "Clear finished goal",
       "pause_loop": "Pause loop",
+      "goal_stale_baseline": "Not saved: the goal was changed or reloaded since you opened this, and your text is kept. Press “{{action}}” again to replace the stored goal with your text.",
       "resume_loop": "Resume loop and nudge now",
       "save_edits_and_resume": "Save edits, resume loop and nudge now",
       "loop_paused": "Paused",

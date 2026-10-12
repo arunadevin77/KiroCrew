@@ -6262,6 +6262,7 @@
       "done_subject_ended": "Concluído · o item observado terminou sem ser concluído",
       "clear_finished_goal": "Excluir objetivo concluído",
       "pause_loop": "Pausar o loop",
+      "goal_stale_baseline": "Não foi salvo: o objetivo foi alterado ou recarregado desde que você abriu isto, e seu texto foi mantido. Pressione “{{action}}” de novo para substituir o objetivo salvo pelo seu texto.",
       "resume_loop": "Retomar o loop e empurrar agora",
       "save_edits_and_resume": "Salvar edições, retomar o loop e empurrar agora",
       "loop_paused": "Pausado",

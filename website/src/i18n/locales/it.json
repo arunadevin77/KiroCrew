@@ -6262,6 +6262,7 @@
       "done_subject_ended": "Completato · l’elemento osservato si è concluso senza essere completato",
       "clear_finished_goal": "Elimina obiettivo completato",
       "pause_loop": "Sospendi il ciclo",
+      "goal_stale_baseline": "Non salvato: l’obiettivo è stato modificato o ricaricato da quando hai aperto questa finestra, e il tuo testo è conservato. Premi di nuovo «{{action}}» per sostituire l’obiettivo salvato con il tuo testo.",
       "resume_loop": "Riprendi il ciclo e sollecita ora",
       "save_edits_and_resume": "Salva le modifiche, riprendi il ciclo e sollecita ora",
       "loop_paused": "In pausa",

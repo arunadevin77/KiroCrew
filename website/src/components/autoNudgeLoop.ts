@@ -69,6 +69,12 @@ export interface AutoNudgeLoop {
    *  per-answer probability; those live in the decisions log, which is where the
    *  thresholds are meant to be tuned from. */
   judge_last_verdict?: { outcome?: string; evidence_items?: number; at?: number }
+  /** The opaque identity of the stored goal text, re-minted on every goal write
+   *  and on every gateway load. Carried by the REST reads and the arm/update
+   *  responses, NOT by the websocket frame, so a record that came through a frame
+   *  has none. The goal popover sends the value it read back as
+   *  `expect_fingerprint`, which makes a save over a goal saved elsewhere a 409. */
+  goal_token?: string
 }
 
 /** `GET /api/autonudge`: every loop record the service holds, active or stopped.

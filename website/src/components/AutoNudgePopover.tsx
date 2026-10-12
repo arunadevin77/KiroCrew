@@ -81,6 +81,10 @@ const PAUSED_STATUS_KEY: Record<string, string> = {
 /** The three editable fields, as every write of the form sends them. */
 type LoopFields = { message: string; idle_secs: number; max_cycles: number }
 
+/** A save the store refused because the goal changed (or the gateway reloaded it)
+ *  since the form read its baseline: the 409 `goal_stale_baseline`. */
+class StaleGoalBaseline extends Error {}
+
 /** One armed script cron owned by this chat slot. */
 interface SlotWatch {
   id: string
@@ -170,6 +174,54 @@ export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, on
     loop ? { message: loop.message || defaultMsg(), idle_secs: loop.idle_secs || 60, max_cycles: loop.max_cycles || 0 } : null,
   )
 
+  /* The goal baseline: the `goal_token` of the stored goal the form's text
+     was seeded from, sent back as `expect_fingerprint` on a save that carries the
+     goal, so the store refuses (409) a save over a goal another writer saved
+     meanwhile. Read at open from the slot route rather than off `loop`: the
+     record here is often a websocket frame, which carries no token. A read that
+     finds the stored goal already different from the seeded text records ''
+     (a baseline that never matches), because the form then shows a goal that is
+     not the stored one and a save from it must be refused, not land. No token at
+     all (an older gateway, a failed read) leaves the save unfenced.
+     `baselineGen` drops a read that a newer read or a landed write overtook. */
+  const goalBaseline = useRef<{ loopId: string, token: string } | null>(null)
+  const baselineGen = useRef(0)
+
+  /** Read the stored goal's token for `loopId`. `expectedMessage` is the text the
+   *  form was seeded from; `null` adopts whatever is stored, which is what a 409
+   *  wants: the reader has been told, so their next save replaces it. */
+  function readGoalBaseline(loopId: string, expectedMessage: string | null): void {
+    const gen = ++baselineGen.current
+    goalBaseline.current = null
+    void (async () => {
+      try {
+        const resp = await fetch(`/api/autonudge/slot/${encodeURIComponent(slotKey)}`)
+        if (!resp?.ok) return
+        const data = await resp.json().catch(() => ({}))
+        const stored = data?.loop
+        if (gen !== baselineGen.current) return
+        if (!stored || stored.id !== loopId || typeof stored.goal_token !== 'string' || !stored.goal_token) return
+        goalBaseline.current = {
+          loopId,
+          token: expectedMessage === null || stored.message === expectedMessage ? stored.goal_token : '',
+        }
+      } catch {
+        // No baseline: the save goes out unfenced.
+      }
+    })()
+  }
+
+  /** A write landed: its answer names the goal the form now holds. Only a write
+   *  that carried the goal moves the baseline; adopting the token on a cadence-only
+   *  save would bless a goal another writer stored that the form never showed. */
+  function adoptBaseline(written: AutoNudgeLoop | null | undefined, fieldsSent: Partial<LoopFields> | null) {
+    if (!fieldsSent || !('message' in fieldsSent)) return
+    baselineGen.current++
+    goalBaseline.current = written?.id && typeof written.goal_token === 'string' && written.goal_token
+      ? { loopId: written.id, token: written.goal_token }
+      : null
+  }
+
   // Compute the draft to persist for the current field state, or null to drop
   // the slot: the blank / pristine-default case stores nothing so an emptied or
   // untouched popover never pins the template. (Only reached when no loop is
@@ -215,7 +267,16 @@ export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, on
       setIdleInput(String(loop.idle_secs || 60))
       setMaxCyclesInput(String(loop.max_cycles || 0))
       seeded.current = { message: loop.message || defaultMsg(), idle_secs: loop.idle_secs || 60, max_cycles: loop.max_cycles || 0 }
+      // A popover that cannot write (crew/member mode) has nothing to fence.
+      if (writeDisabled) {
+        baselineGen.current++
+        goalBaseline.current = null
+      } else {
+        readGoalBaseline(loop.id, loop.message)
+      }
     } else {
+      baselineGen.current++
+      goalBaseline.current = null
       const remembered = loadGoalDraft(slotKey)
       setMessage(remembered ? remembered.message : defaultMsg())
       setIdleInput(String(remembered ? remembered.idleSecs : 60))
@@ -319,7 +380,15 @@ export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, on
         ? { method }
         : { method, headers: JSON_HEADERS, body: JSON.stringify(body) })
       const data = await resp.json().catch(() => ({}))
-      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`)
+      if (!resp.ok) {
+        // Worded here, not by the server's English: this is the one refusal the
+        // reader is meant to act on in place, so it names the control that saves
+        // (whose name also says it nudges) in the reader's language.
+        if (resp.status === 409 && data.code === 'goal_stale_baseline') {
+          throw new StaleGoalBaseline(i18nT('components.autoNudgePopover.goal_stale_baseline', { action: playName }))
+        }
+        throw new Error(data.error || `HTTP ${resp.status}`)
+      }
       return data.loop
     },
     onSuccess: () => {
@@ -395,6 +464,7 @@ export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, on
    *  their baseline, since the record may hold another writer's value for them. */
   async function writeLoop(write: { url: string, method: 'PATCH' | 'POST', body: unknown }, fieldsSent: Partial<LoopFields> | null): Promise<AutoNudgeLoop> {
     const written = await loopWrite.mutateAsync(write)
+    adoptBaseline(written, fieldsSent)
     if (fieldsSent) adoptStored(written, fieldsSent)
     onChange(written)
     return written
@@ -441,9 +511,24 @@ export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, on
   function play() {
     if (!loop) return
     const fields = editedFields()
-    const body = loop.active ? fields : { ...fields, active: true }
+    const edits = loop.active ? fields : { ...fields, active: true }
     return runControl(async () => {
-      const written = body ? await writeLoop({ url: `/api/autonudge/${loop.id}`, method: 'PATCH', body }, fields) : null
+      let body: Record<string, unknown> | null = edits
+      // Not awaited: a press that beats the open read (or a read that never
+      // answers) saves unfenced rather than hanging.
+      const baseline = goalBaseline.current
+      if (body && 'message' in body && baseline && baseline.loopId === loop.id) {
+        body = { ...body, expect_fingerprint: baseline.token }
+      }
+      let written: AutoNudgeLoop | null = null
+      try {
+        written = body ? await writeLoop({ url: `/api/autonudge/${loop.id}`, method: 'PATCH', body }, fields) : null
+      } catch (e: unknown) {
+        // The text stays in the form. Re-read what is stored now, so the
+        // reader's next press replaces it, as the refusal tells them.
+        if (e instanceof StaleGoalBaseline) readGoalBaseline(loop.id, null)
+        throw e
+      }
       // A legacy stub without the record's id has nothing to fire on.
       await fireNow(written?.id ? written : loop)
     })

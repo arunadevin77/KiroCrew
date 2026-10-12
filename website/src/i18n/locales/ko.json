@@ -6066,6 +6066,7 @@
       "done_subject_ended": "완료 · 감시 중이던 대상이 완료되지 못하고 끝났습니다",
       "clear_finished_goal": "완료된 목표 삭제",
       "pause_loop": "루프 일시중지",
+      "goal_stale_baseline": "저장되지 않았습니다. 연 이후에 목표가 변경되었거나 다시 로드되었으며, 입력한 텍스트는 유지됩니다. ‘{{action}}’을(를) 다시 누르면 저장된 목표가 입력한 텍스트로 대체됩니다.",
       "resume_loop": "루프 재개 후 지금 넛지",
       "save_edits_and_resume": "편집 저장 후 루프 재개, 지금 넛지",
       "loop_paused": "일시중지됨",

@@ -6262,6 +6262,7 @@
       "done_subject_ended": "Terminado · el elemento vigilado acabó sin finalizar",
       "clear_finished_goal": "Borrar objetivo terminado",
       "pause_loop": "Pausar el bucle",
+      "goal_stale_baseline": "No se guardó: el objetivo se cambió o se volvió a cargar desde que abriste esto, y tu texto se conserva. Pulsa otra vez “{{action}}” para reemplazar el objetivo guardado por tu texto.",
       "resume_loop": "Reanudar el bucle y empujar ahora",
       "save_edits_and_resume": "Guardar los cambios, reanudar el bucle y empujar ahora",
       "loop_paused": "En pausa",
