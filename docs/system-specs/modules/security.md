@@ -3110,9 +3110,16 @@ output through a redirect to a real target (`> file`, `>> file`, `&> file`,
 spells a write redirect — the exact-command grant for that line, or a pattern
 written with one — or the broad `*` grant matches. `gh *` therefore covers
 `gh pr view 42` and `gh pr view 42 2>/dev/null` but not `gh pr view 42 > /tmp/x`.
-The tier declines: the command goes to the approval card with a one-line notice,
-and the decline is SEL-audited as `auto_approve_declined` with
+The tier declines: the command falls through to the later rungs, and the
+decline is SEL-audited as `auto_approve_declined` with
 `reason=redirect_outside_grant`, `tier=trusted_pattern`. It is never blocked.
+The dashboard's one-line "not applied — approve this command explicitly" notice
+for a declined grant (this one, and a name-grant refusal on the hook or
+trusted-pattern rung) is posted only beside an approval card someone can still
+answer: not when session trust, YOLO or native-crew auto-approve takes the
+request, a batch rejection cascades over it, or the card is born declined for
+want of turn budget. Nobody is asked then, so the audit row is the record. Two
+rungs refusing one name with the same detail post the notice once.
 `redirect_outside_grant` (`trust_patterns.py`) judges each segment, and what
 counts as a write is the read-only classifier's own rule
 (`readonly_bash.writes_through_redirect`), so the trust-reads and trusted-pattern

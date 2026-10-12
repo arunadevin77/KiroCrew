@@ -268,6 +268,13 @@ async def _drive(state, slot, message: str = "hello", *, _turn_actor: str = "") 
     await _settle(slot)
 
 
+def _answer_card(slot, outcome: str) -> None:
+    """Answer the pending approval card, as a person clicking it would."""
+    future = slot._approval_futures.get("req-cov-1")
+    if future is not None and not future.done():
+        future.set_result(outcome)
+
+
 async def _settle(slot) -> None:
     """Await (or cancel) any follow-up turn the finally block dispatched."""
     task = slot.task
@@ -5245,11 +5252,11 @@ class TestRunChatAutoApproveRungs:
                 _complete(),
             ],
         )
+        # The notice is posted only beside a card someone can answer, so the
+        # card is answered (rejected) rather than born declined by a zero budget.
+        state.push_slots_update.side_effect = lambda: _answer_card(slot, "rejected")
         slot._empty_response_retries = 2
-        with (
-            patch.object(chat_runner, "sel") as mock_sel,
-            patch.object(chat_runner, "tool_approval_timeout_secs", return_value=0.0),
-        ):
+        with patch.object(chat_runner, "sel") as mock_sel:
             audit = MagicMock()
             mock_sel.return_value = audit
             await chat_runner._run_chat(state, slot, "hello")
@@ -5280,6 +5287,97 @@ class TestRunChatAutoApproveRungs:
         assert notices, slot.messages
         assert "may write through a redirect, which the grant does not cover" in notices[0]
         assert "writes to a file" not in notices[0]
+
+    @pytest.mark.asyncio
+    async def test_a_card_born_declined_gets_no_declined_grant_notice(self, tmp_path):
+        """No turn budget left: the card is created rejected, so nobody is asked."""
+        state, client = _runner_state(tmp_path)
+        slot = _slot()
+        slot._trusted_patterns = {"ls*"}
+        _set_stream(
+            client,
+            [_permission(title="Running: ls -la", tool_input='{"command": "ls -la"}'), _complete()],
+        )
+        refusal = name_grant.Refusal(name_grant.SHADOWED, "ls resolves to /writable/ls")
+        with (
+            patch.object(
+                chat_runner, "_name_grant_refusal_off_loop", new=AsyncMock(return_value=refusal)
+            ) as pattern_check,
+            patch.object(chat_runner, "tool_approval_timeout_secs", return_value=0.0),
+        ):
+            await _drive(state, slot)
+
+        # The pattern rung really declined; otherwise no notice proves nothing.
+        pattern_check.assert_awaited_once()
+        client.approve_tool.assert_not_awaited()
+        (card,) = [m for m in slot.messages if m.get("role") == "permission"]
+        assert json.loads(card["cls"]).get("resolved") == "rejected"
+        assert not any("not applied" in m.get("content", "") for m in slot.messages)
+
+    @pytest.mark.asyncio
+    async def test_one_shadowed_name_refused_by_two_rungs_is_one_notice(self, tmp_path):
+        from kiro_crew.hooks import TOOL_AUTO_APPROVE, ToolHookResult
+
+        context_builder = MagicMock()
+        context_builder.hooks.on_tool_call.return_value = ToolHookResult(action=TOOL_AUTO_APPROVE)
+        context_builder.build_message.return_value = ("hello", None)
+        state, client = _runner_state(tmp_path, context_builder=context_builder)
+        slot = _slot()
+        slot._trusted_patterns = {"python3*"}
+        state.push_slots_update.side_effect = lambda: _answer_card(slot, "rejected")
+        _set_stream(
+            client,
+            [
+                _permission(title="Running: python3 -V", tool_input='{"command": "python3 -V"}'),
+                _complete(),
+            ],
+        )
+        refusal = name_grant.Refusal(name_grant.SHADOWED, "python3 resolves to /shims/python3")
+        with (
+            patch.object(
+                chat_runner, "_name_grant_refusal_for", new=AsyncMock(return_value=refusal)
+            ) as hook_check,
+            patch.object(
+                chat_runner, "_name_grant_refusal_off_loop", new=AsyncMock(return_value=refusal)
+            ) as pattern_check,
+        ):
+            await _drive(state, slot)
+
+        # Both rungs really declined; otherwise one notice proves nothing.
+        hook_check.assert_awaited_once()
+        pattern_check.assert_awaited_once()
+        shown = [
+            m.get("role")
+            for m in slot.messages
+            if m.get("role") == "permission" or "not applied" in m.get("content", "")
+        ]
+        assert shown == ["system", "permission"], slot.messages
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("grant", ["trust", "yolo"])
+    async def test_a_declined_pattern_approved_by_a_later_rung_asks_nothing(self, tmp_path, grant):
+        """No "approve explicitly" notice when session trust or YOLO approves anyway."""
+        state, client = _runner_state(tmp_path)
+        slot = _slot()
+        slot._trusted_patterns = {"ls*"}
+        if grant == "trust":
+            slot._trust = True
+        else:
+            state.enable_yolo()
+        _set_stream(
+            client,
+            [_permission(title="Running: ls -la", tool_input='{"command": "ls -la"}'), _complete()],
+        )
+        refusal = name_grant.Refusal(name_grant.SHADOWED, "ls resolves to /writable/ls")
+        with patch.object(
+            chat_runner, "_name_grant_refusal_off_loop", new=AsyncMock(return_value=refusal)
+        ) as pattern_check:
+            await _drive(state, slot)
+
+        # The pattern rung really declined; otherwise no notice proves nothing.
+        pattern_check.assert_awaited_once()
+        client.approve_tool.assert_awaited_once_with("req-cov-1")
+        assert not any("not applied" in m.get("content", "") for m in slot.messages)
 
     @pytest.mark.asyncio
     async def test_a_base_grant_still_covers_a_discard_redirect(self, tmp_path):

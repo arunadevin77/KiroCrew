@@ -27,7 +27,13 @@ from kiro_crew.dashboard.state import (
 )
 from kiro_crew.dashboard.turn_dispatch import format_approval_no_budget_card
 from kiro_crew.history import ConversationLog
-from kiro_crew.hooks import HOOK_EVENT_PRE_TOOL_USE, ScriptHookResult, ToolHookResult
+from kiro_crew.hooks import (
+    HOOK_EVENT_PRE_TOOL_USE,
+    TOOL_AUTO_APPROVE,
+    ScriptHookResult,
+    ToolHookResult,
+)
+from kiro_crew.name_grant import SHADOWED, Refusal
 from kiro_crew.providers.base import (
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
@@ -790,6 +796,56 @@ class TestApprovalModes:
         assert not any(
             "no hooks" in m.get("content", "") for m in msgs
         ), f"Empty hook results should not reject: {msgs}"
+        client.approve_tool.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "mode, expect_note", [("normal", True), ("trust", False), ("yolo", False)]
+    )
+    async def test_shadow_note_shown_only_when_a_card_asks(self, tmp_path, mode, expect_note):
+        """A refused hook grant's "Approve this command explicitly" note needs a card.
+
+        Under session trust or YOLO the unconditional rung approves with no card,
+        so the note would ask for an approval nobody is asked for. Normal mode
+        reaches the card and still shows it, ahead of the card.
+        """
+        cb = _context_builder(ToolHookResult(action=TOOL_AUTO_APPROVE))
+        state, client = _make_state(tmp_path, context_builder=cb)
+        if mode == "yolo":
+            state.enable_yolo()
+        slot = _make_slot(trust=(mode == "trust"))
+        _set_stream(client, [_permission_event(), _complete_event()])
+
+        # Only normal mode parks on an approval future; an answerer started for
+        # trust/YOLO would wait on a future that never registers.
+        approver = None
+        if mode == "normal":
+
+            async def _approve() -> None:
+                await _answer_approval(slot, "req-1", "approved")
+
+            approver = asyncio.get_running_loop().create_task(_approve())
+
+        shadow = Refusal(code=SHADOWED, detail="python3 resolves to /shims/python3")
+        refusal_check = AsyncMock(return_value=shadow)
+        try:
+            with (
+                _patch_stats(),
+                patch.object(chat_runner, "_name_grant_refusal_for", refusal_check),
+            ):
+                await _run_chat(state, slot, "hello")
+        finally:
+            if approver is not None:
+                await _drain(approver)
+
+        # The hook rung really declined; otherwise a missing note proves nothing.
+        refusal_check.assert_awaited_once()
+        shown = [
+            m.get("role")
+            for m in slot.messages
+            if m.get("role") == "permission" or "Auto-approve not applied" in m.get("content", "")
+        ]
+        assert shown == (["system", "permission"] if expect_note else []), slot.messages
         client.approve_tool.assert_called_once()
 
 

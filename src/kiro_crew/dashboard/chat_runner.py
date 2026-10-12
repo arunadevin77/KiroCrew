@@ -14086,6 +14086,15 @@ async def _run_chat(
                     assistant_text = ""
                     _turn_flushed_visible_text = True
                 _pre_tool_hooks_fired = False
+                # "Not applied — approve this command explicitly" notices from a
+                # rung that declined its grant. Held until the request actually
+                # reaches the interactive card: a later unconditional rung
+                # (native crew, session trust, YOLO) may still approve it, and
+                # then the notice asks for an approval nobody is asked for. Keyed
+                # by the refusal's detail: the hook and trusted-pattern rungs
+                # refuse one shadowed name with the same detail, and one card
+                # needs that sentence once.
+                _declined_grant_notices: dict[str, str] = {}
                 # Backend-subagent request whose SECURITY context is absent
                 # (structured params missing, or shell with no recoverable
                 # command — see AcpEvent.child_low_fidelity): every
@@ -14278,12 +14287,11 @@ async def _run_chat(
                                 refusal=_hook_shim,
                                 tier="hook_auto_approve",
                             )
-                            slot.append(
-                                "system",
+                            _declined_grant_notices.setdefault(
+                                _hook_shim.detail,
                                 "🛡️ Auto-approve not applied — "
                                 f"{_redact_display_text(_hook_shim.detail)}. "
                                 "Approve this command explicitly.",
-                                "msg msg-info",
                             )
                             tool_result = ToolHookResult(action=TOOL_ALLOW)
                     if tool_result.action == TOOL_AUTO_APPROVE:
@@ -14567,12 +14575,11 @@ async def _run_chat(
                                 "tier": "trusted_pattern",
                             },
                         )
-                        slot.append(
-                            "system",
+                        _declined_grant_notices.setdefault(
+                            "redirect_outside_grant",
                             "🛡️ Trusted pattern not applied — the command may write through "
                             "a redirect, which the grant does not cover. "
                             "Approve this command explicitly.",
-                            "msg msg-info",
                         )
                         matched = None
                     if matched and event.is_shell and _tp_command:
@@ -14602,12 +14609,11 @@ async def _run_chat(
                                 refusal=_tp_shim,
                                 tier="trusted_pattern",
                             )
-                            slot.append(
-                                "system",
+                            _declined_grant_notices.setdefault(
+                                _tp_shim.detail,
                                 "🛡️ Trusted pattern not applied — "
                                 f"{_redact_display_text(_tp_shim.detail)}. "
                                 "Approve this command explicitly.",
-                                "msg msg-info",
                             )
                             matched = None
                     # The program-name check above and the transport's own floor
@@ -15066,6 +15072,10 @@ async def _run_chat(
                 # docs/system-specs/modules/app-notifications.md, "Sound events" (permission row).
                 if tool_approval_timeout_secs() <= 0:
                     perm_meta["resolved"] = "rejected"
+                else:
+                    # Only a card someone can still answer gets the held notices.
+                    for _notice in _declined_grant_notices.values():
+                        slot.append("system", _notice, "msg msg-info")
                 permission_row = slot.append(
                     "permission",
                     f"{_child_lf_warning}{_safe_title}" if _child_lf_warning else _safe_title,
