@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -56,10 +55,10 @@ async def test_registry_workspace_removal_runs_off_the_loop_thread(tmp_path: Pat
     request.json = AsyncMock(return_value={})
     result = MagicMock(ok=True, to_dict=lambda: {"ok": True})
 
-    # The double goes on the module attribute, never the global ``shutil``: a global
-    # patch is inherited by pytest's own ``tmp_path`` teardown.
+    # The double goes on ``platform_compat.rmtree_force``, the helper the handler calls; the
+    # global ``shutil`` stays untouched so pytest's own ``tmp_path`` teardown is not affected.
     with (
-        patch.object(routes_mod, "shutil", SimpleNamespace(rmtree=_recording_rmtree)),
+        patch.object(routes_mod.platform_compat, "rmtree_force", _recording_rmtree),
         patch.object(routes_mod, "get_app", return_value=_FAKE_APP),
         patch.object(routes_mod, "is_registry_source", return_value=True),
         patch.object(routes_mod, "registry_name_from_source", return_value="demo"),
@@ -76,7 +75,7 @@ async def test_registry_workspace_removal_runs_off_the_loop_thread(tmp_path: Pat
 
     assert resp.status < 500, f"uninstall returned {resp.status}"
     assert removed == [ws_dir], f"workspace not removed: {removed}"
-    assert seen_kwargs == [{"ignore_errors": True}], seen_kwargs
+    assert seen_kwargs == [{}], seen_kwargs
     assert len(threads) == 1, threads
     assert (
         threads[0] is not threading.current_thread()

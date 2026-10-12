@@ -159,15 +159,6 @@ test/test_voice_reply.py::TestResolvePiperBinary::test_configured_path_not_execu
 test/test_voice_reply.py::TestResolvePiperBinary::test_falls_back_to_venv
 test/test_wecom_config_handlers.py::test_save_persists_credentials_and_config
 test/test_write_secret_file.py::TestWriteSecretFile::test_happy_path
-# auto-improvement builtin (PR #1013): the remaining entries exercise real `git`
-# behaviour over a throwaway repo and assume POSIX. On Windows they fail on line-ending
-# handling (`git apply` rejects an LF diff against a CRLF-checked-out tree: "patch failed:
-# app.py:1") and `\`-vs-`/` in git output. The Windows shard collects these
-# files, so they are burned down here. Porting these to
-# Windows (a synthetic-diff line-ending shim + separator-agnostic git parsing) is
-# its own change, not smuggled into the feature PR.
-src/kiro_crew/apps/builtins/auto_improvement/tests/test_dogfood_learnings.py::TestAFailedHeadCheckoutRefusesTheClone::test_a_missing_head_branch_is_an_error_not_a_silent_base_checkout
-src/kiro_crew/apps/builtins/auto_improvement/tests/test_pr_watchers.py::TestCloneLifecycleAndExport::test_the_pass_fix_is_exported_to_the_pr_queue
 # Added when the CI deselect of this file was removed, so Windows collects it for the
 # first time. `PermissionError [Errno 13]` from `pathlib` writing the linked worktree's
 # `.git` pointer file: Windows refuses the write where POSIX allows it. The security
