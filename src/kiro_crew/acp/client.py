@@ -8259,9 +8259,9 @@ class AcpClient:
         response condition a closed pipe reports as an error, so it is mapped to
         the same exception: ``AcpProcessDied`` sends the caller down the existing
         session-reset + bounded-requeue recovery instead of hanging. The request
-        id appears only through ``_loggable_request_id``. ``before_write`` runs
+        id appears only through ``_loggable_request_id``. *before_write* runs
         under the lock right before the frame is written and may raise to abort
-        it with nothing written.
+        the write: no byte of the frame is written then.
         """
         assert self._process is not None and self._process.stdin is not None
         if await write_response_frame_bounded(
@@ -9927,6 +9927,7 @@ class AcpClient:
         *,
         always: bool = False,
         deadline: GrantDeadline | None = None,
+        withdraw_if: Callable[[], bool] | None = None,
     ) -> bool:
         """Approve a pending session/request_permission.
 
@@ -9946,6 +9947,12 @@ class AcpClient:
         has passed, nothing is written, the request stays pending as it was, and
         :class:`~kiro_crew.trust_patterns.GrantEnded` tells the caller to ask
         the person instead. Without it the approval is sent as before.
+
+        *withdraw_if* is read after the floor's thread hop and under the write
+        lock right before the answer is written; once it holds, nothing is
+        written, the request's records are put back, and
+        :class:`~kiro_crew.permission_floor.ApprovalWithdrawn` is raised. Under
+        the lock it is read before ``deadline``.
         """
         # An instance allocated without ``__init__`` may keep no event map until
         # the builder creates it; read it as empty, so it is judged like any
@@ -9969,6 +9976,11 @@ class AcpClient:
             )
             await self.reject_tool(request_id)
             return False
+        if withdraw_if is not None and withdraw_if():
+            # The floor's thread hop is an await: read again before anything else
+            # is taken from the request's records.
+            self._restore_withdrawn(request_id, gate_event, None, None)
+            raise permission_floor.ApprovalWithdrawn
         # An approved call may complete; forget the envelope mapping so the map
         # stays bounded by the calls still awaiting an answer.
         pi_gate_tool = getattr(self, "_pi_gate_request_tool", {}).pop(str(request_id), None)
@@ -9982,17 +9994,25 @@ class AcpClient:
             resolved_id = (recorded or {}).get("always" if always else "once")
             if resolved_id is None:
                 resolved_id = OPTION_ALLOW_ALWAYS if always else OPTION_ALLOW_ONCE
-        if deadline is None:
-            await self._send_response(
-                request_id,
-                {"outcome": {"outcome": OUTCOME_SELECTED, "optionId": resolved_id}},
-            )
-            return True
+        # The wait for the write lock is the last await before the answer goes
+        # out, so the withdrawal is read again under that lock.
+        recheck: dict[str, Callable[[], None]] = {}
+        if withdraw_if is not None:
+            recheck["before_write"] = lambda: permission_floor.raise_if_withdrawn(withdraw_if)
+        if deadline is not None:
+            grant_check = grant_deadline_guard(deadline, request_id)
+
+            def before_write() -> None:
+                # The withdrawal first (no-op without one), then the grant.
+                permission_floor.raise_if_withdrawn(withdraw_if)
+                grant_check()
+
+            recheck["before_write"] = before_write
         try:
             await self._send_response(
                 request_id,
                 {"outcome": {"outcome": OUTCOME_SELECTED, "optionId": resolved_id}},
-                before_write=grant_deadline_guard(deadline, request_id),
+                **recheck,
             )
         except GrantEnded:
             # Nothing was written: put the request back exactly as it was.
@@ -10003,7 +10023,25 @@ class AcpClient:
             if pi_gate_tool is not None:
                 self._pi_gate_request_tool[str(request_id)] = pi_gate_tool
             raise
+        except permission_floor.ApprovalWithdrawn:
+            self._restore_withdrawn(request_id, gate_event, recorded, pi_gate_tool)
+            raise
         return True
+
+    def _restore_withdrawn(
+        self,
+        request_id: str | int,
+        gate_event: AcpEvent | None,
+        recorded: dict[str, str] | None,
+        pi_tool: str | None,
+    ) -> None:
+        """Put back what a withdrawn approval took, so the request is pending as before."""
+        if gate_event is not None:
+            self._permission_gate_events[request_id] = gate_event
+        if recorded is not None:
+            self._permission_options[request_id] = recorded
+        if pi_tool is not None:
+            self._pi_gate_request_tool[str(request_id)] = pi_tool
 
     def _note_pi_gate_denied(self, request_id: str | int) -> None:
         """Remember that the host DENIED the gate-extension dialog for this request.

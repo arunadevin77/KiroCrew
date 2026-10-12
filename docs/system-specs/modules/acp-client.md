@@ -968,6 +968,22 @@ automatic helper resolves a request, it calls the shared identity-aware
 `refusal_for` body off the event loop. Provider adapters only forward an approval
 from a consumer that has completed that consultation.
 
+A caller may also pass `withdraw_if`, a predicate both `approve_tool` methods read
+after the floor's thread hop and again under the stdin write lock right before the
+allow frame is written. `AcpClient._send_response` takes it in its `before_write`
+check, ahead of a timed grant's deadline. `AcpRuntime.send_response` takes it as
+`withdrawal_check`, which runs ahead of the runtime's own liveness check
+(`_refuse_write_if_dead`), while the deadline stays in `before_write`, which runs
+after that check: a runtime that died during the lock wait raises `AcpRuntimeDead`,
+so the caller takes the session-reset recovery instead of asking a person about an
+ended grant. Once `withdraw_if` holds, no byte of the allow is written, the request's
+records (`_permission_gate_events`, `_permission_options`, and the client's
+gate-extension mapping) are put back, and `permission_floor.ApprovalWithdrawn` is
+raised: the request is still pending, and the caller answers it once. Both
+providers declare the keyword with the class attribute `approval_withdrawable`;
+`tool_permission.AcpWire` passes a sub-agent's stop predicate (`Policy.stopping`)
+only to a provider type that declares it.
+
 The rendered tool-input cache is consumed by the first permission event, but
 structured raw params remain keyed by `toolCallId` for the whole turn. A repeated
 permission for the same call therefore retains the fact that a non-shell MCP tool

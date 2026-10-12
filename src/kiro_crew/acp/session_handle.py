@@ -1055,6 +1055,7 @@ class AcpRuntimeProtocol(Protocol):
         result: dict[str, Any],
         *,
         before_write: Callable[[], None] | None = None,
+        withdrawal_check: Callable[[], None] | None = None,
     ) -> None: ...
 
     async def send_error(self, request_id: str | int, code: int, message: str) -> None: ...
@@ -2468,6 +2469,7 @@ class AcpSessionHandle:
         option_id: str | None = None,
         *,
         deadline: GrantDeadline | None = None,
+        withdraw_if: Callable[[], bool] | None = None,
     ) -> bool:
         """Approve a pending permission request.
 
@@ -2489,6 +2491,13 @@ class AcpSessionHandle:
         has passed, nothing is written, the request stays pending as it was, and
         :class:`~kiro_crew.trust_patterns.GrantEnded` tells the caller to ask
         the person instead. Without it the approval is sent as before.
+
+        *withdraw_if* is read after the floor's thread hop and under the write
+        lock right before the answer is written; once it holds, nothing is
+        written, the request's records are put back, and
+        :class:`~kiro_crew.permission_floor.ApprovalWithdrawn` is raised. Under
+        the lock it is read ahead of the runtime's liveness check, which
+        ``deadline`` follows.
         """
         gate_event = self._permission_gate_events.pop(request_id, None)
         # No recorded event means no request this transport built, so there is
@@ -2508,6 +2517,11 @@ class AcpSessionHandle:
             )
             await self.reject_tool(request_id)
             return False
+        if withdraw_if is not None and withdraw_if():
+            # The floor's thread hop is an await: read again before anything else
+            # is taken from the request's records.
+            self._restore_withdrawn(request_id, gate_event, None)
+            raise permission_floor.ApprovalWithdrawn
         resolved_id = option_id
         recorded = self._permission_options.pop(request_id, None)
         if deadline is None:
@@ -2524,17 +2538,20 @@ class AcpSessionHandle:
                 resolved_id = recorded.get("once") or resolved_id
         if resolved_id is None:
             resolved_id = OPTION_ALLOW_ONCE
-        if deadline is None:
-            await self._runtime.send_response(
-                request_id,
-                {"outcome": {"outcome": OUTCOME_SELECTED, "optionId": resolved_id}},
-            )
-            return True
+        # The wait for the write lock is the last await before the answer goes
+        # out, so the runtime reads the withdrawal again under that lock, ahead
+        # of its own liveness check, and the grant's deadline after it: a runtime
+        # that died during the wait reports the death, not an ended grant.
+        recheck: dict[str, Callable[[], None]] = {}
+        if withdraw_if is not None:
+            recheck["withdrawal_check"] = lambda: permission_floor.raise_if_withdrawn(withdraw_if)
+        if deadline is not None:
+            recheck["before_write"] = grant_deadline_guard(deadline, request_id)
         try:
             await self._runtime.send_response(
                 request_id,
                 {"outcome": {"outcome": OUTCOME_SELECTED, "optionId": resolved_id}},
-                before_write=grant_deadline_guard(deadline, request_id),
+                **recheck,
             )
         except GrantEnded:
             # Nothing was written: put the request back exactly as it was.
@@ -2543,9 +2560,25 @@ class AcpSessionHandle:
             if recorded is not None:
                 self._permission_options[request_id] = recorded
             raise
-        # Answered only now: until the write the request was still pending.
-        self._end_human_wait()
+        except permission_floor.ApprovalWithdrawn:
+            self._restore_withdrawn(request_id, gate_event, recorded)
+            raise
+        if deadline is not None:
+            # Answered only now: until the write the request was still pending.
+            self._end_human_wait()
         return True
+
+    def _restore_withdrawn(
+        self,
+        request_id: str | int,
+        gate_event: AcpEvent | None,
+        recorded: dict[str, str] | None,
+    ) -> None:
+        """Put back what a withdrawn approval took, so the request is pending as before."""
+        if gate_event is not None:
+            self._permission_gate_events[request_id] = gate_event
+        if recorded is not None:
+            self._permission_options[request_id] = recorded
 
     async def reject_tool(self, request_id: str | int) -> None:
         """Reject a pending permission request.

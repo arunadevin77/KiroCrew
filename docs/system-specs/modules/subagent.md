@@ -1514,8 +1514,21 @@ spec hooks, a hook deny, the fail-closed child answer, deny by default) steers
 the in-band deny notice before the reject; an approver's no, and the reject that
 precedes a `turn_limit` / `child_escalation_limit` / `stopped` bail, stay bare. A
 run that is being stopped (`_reap_started`, `user_stopped` or `reaped`) bails
-every request as `stopped` before the ladder runs, so no grant or person can
-approve a tool after a Stop. A refusal row
+every request as `stopped`, so no grant, gate hit or person can approve a tool
+after a Stop: the run reads the stop when it reads the request, and the ladder
+reads the same predicate (`Policy.stopping`) live before its first stage, before
+it asks a person, and at the commit point of an approval, with no await between
+that read and the wire. A stop that lands in any await on the way (the
+diagnostics write, the `subagent_tool` event, the spec hooks, the gate, a
+person's wait) is caught at the next read. The approval hands the same predicate
+to the ACP transport (`withdraw_if`), which reads it again after the security
+floor's thread hop and under the stdin write lock right before the allow is
+written, so a stop that lands in the transport's own awaits writes no allow and
+the request is bailed as `stopped` too. The stop bail ends the run there, as
+the limit bails do: the loop breaks, and the stream's own ending arms record the
+stop (the reap's ending under a reap in flight, the neutral stop otherwise). A
+person's no that a stop's cancel caused reads on, so a stream the stop tore down
+still ends at its next read, as before. A refusal row
 the audit cannot write is logged and the request is still answered; an approver
 that raises outside the fidelity gate, or a cancelled wait, leaves the request to
 the run's teardown. An approved

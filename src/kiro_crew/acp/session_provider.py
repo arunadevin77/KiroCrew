@@ -18,7 +18,7 @@ import asyncio
 import functools
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from pathlib import Path
 from typing import Any
@@ -90,6 +90,8 @@ class AcpSessionProvider(LLMProvider):
     - For parent sessions (unified path): created by AcpProvider, shutdown()
       kills the runtime (entire session group dies together).
     """
+
+    approval_withdrawable = True
 
     def __init__(
         self,
@@ -769,16 +771,25 @@ class AcpSessionProvider(LLMProvider):
         *,
         always: bool = False,
         deadline: GrantDeadline | None = None,
+        withdraw_if: Callable[[], bool] | None = None,
     ) -> bool:
         """Approve a pending tool permission request. Accepts an explicit
         option_id (signature parity with AcpClient.approve_tool); falls back to
         allow_always/allow_once from `always`. A ``deadline`` is passed on to
-        the handle, which raises ``GrantEnded`` rather than send once it passes."""
+        the handle, which raises ``GrantEnded`` rather than send once it passes.
+        *withdraw_if* is the handle's (see AcpSessionHandle.approve_tool)."""
         resolved = option_id or ("allow_always" if always else "allow_once")
+        withdrawal: dict[str, Any] = {}
+        if withdraw_if is not None:
+            withdrawal["withdraw_if"] = withdraw_if
         if deadline is None:
-            return await self._guarded(self._handle.approve_tool(request_id, option_id=resolved))
+            return await self._guarded(
+                self._handle.approve_tool(request_id, option_id=resolved, **withdrawal)
+            )
         return await self._guarded(
-            self._handle.approve_tool(request_id, option_id=resolved, deadline=deadline)
+            self._handle.approve_tool(
+                request_id, option_id=resolved, deadline=deadline, **withdrawal
+            )
         )
 
     async def reject_tool(self, request_id: str | int) -> None:

@@ -1102,6 +1102,54 @@ async def test_grant_ending_while_the_answer_waits_for_the_write_lock_writes_not
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dies", "withdrawn", "raised"),
+    [
+        pytest.param(True, False, "AcpRuntimeDead", id="died"),
+        pytest.param(False, False, "GrantEnded", id="alive"),
+        pytest.param(True, True, "ApprovalWithdrawn", id="died-and-withdrawn"),
+    ],
+)
+async def test_what_the_shared_runtime_reports_when_the_grant_ends_during_the_lock_wait(
+    monkeypatch, tmp_path, dies, withdrawn, raised
+):
+    """The grant ends while the answer waits for the shared runtime's write lock,
+    and a sibling's stall may mark the runtime dead in the same wait. A runtime
+    that died reports its death, so the caller takes the session-reset recovery
+    instead of asking a person to approve into a dead pipe; only a live runtime
+    reports the ended grant. A withdrawal is read ahead of both: a withdrawn
+    approval is withdrawn whatever the pipe's state."""
+    from kiro_crew.acp.session_handle import AcpRuntimeDead
+    from kiro_crew.permission_floor import ApprovalWithdrawn
+    from kiro_crew.trust_patterns import GrantEnded
+
+    expected = {
+        "AcpRuntimeDead": AcpRuntimeDead,
+        "GrantEnded": GrantEnded,
+        "ApprovalWithdrawn": ApprovalWithdrawn,
+    }[raised]
+    clock = _floor_that_lasts(monkeypatch, 0)
+    handle, lock, write = _transport_on_a_pipe("handle", tmp_path)
+    _record(handle, _shell_event(52, "ls -la"))
+    stop = SimpleNamespace(on=False)
+
+    await lock.acquire()  # a sibling's frame holds the pipe
+    pending = asyncio.ensure_future(
+        handle.approve_tool(52, deadline=_deadline_in(600), withdraw_if=lambda: stop.on)
+    )
+    await until_parked(lock)
+    clock.offset += 3600  # the grant ends while the answer waits
+    if dies:
+        handle._runtime._mark_dead("sibling stall")
+    stop.on = withdrawn
+    lock.release()
+
+    with pytest.raises(expected):
+        await pending
+    write.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_providers_pass_a_deadline_only_when_one_is_given():
     from kiro_crew.acp.session_provider import AcpSessionProvider
     from kiro_crew.providers.acp import AcpProvider

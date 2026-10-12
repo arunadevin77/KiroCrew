@@ -276,11 +276,25 @@ class _SubagentNarrator(Narrator):
             self._info.tool_count += 1
 
 
+def _stop_in_progress(info: SubagentInfo) -> bool:
+    """Whether *info* is being stopped: a Stop, a parent end or a reap has begun.
+
+    Read live by the run loop and by its permission ladder (``Policy.stopping``).
+    The stop cancels the run task only after its session teardown, and the
+    approval wait turns that cancel into a denial, so a run can still be reading
+    its stream while this holds.
+    """
+    return bool(info._reap_started or info.user_stopped or info.reaped)
+
+
 class RunEventCoordinator(ManagerComponent):
     """Own run transitions while state remains facade-owned."""
 
     _publish_identity = staticmethod(publish_live_cleanup_identity)
     _remember_identity = staticmethod(remember_live_cleanup_identity)
+    # Reached as an attribute: an ``_impl`` method resolves its globals in the
+    # facade module, which does not hold this module's helpers.
+    _stop_in_progress = staticmethod(_stop_in_progress)
     _write_run_agent = staticmethod(write_run_agent)
     __slots__ = ()
 
@@ -2062,6 +2076,7 @@ class RunEventCoordinator(ManagerComponent):
                 annotate=_unverified_title,
             ),
             narrator=_SubagentNarrator(info, rows, log),
+            stopping=lambda: self._stop_in_progress(info),
         )
 
     async def _run_inner_impl(
@@ -3235,11 +3250,12 @@ class RunEventCoordinator(ManagerComponent):
                 # A run that is being stopped bails every request as ``stopped``
                 # before any grant or person is consulted: audited, and rejected
                 # bare on the wire. The stop cancels this task only after its
-                # session teardown, and the approval wait turns that cancel into
-                # a denial; when the teardown and its kill both fail, the stream
-                # keeps going, and a request read here would otherwise be settled
-                # for a run the user stopped.
-                if info._reap_started or info.user_stopped or info.reaped:
+                # session teardown; when the teardown and its kill both fail, the
+                # stream keeps going, and a request read here would otherwise be
+                # settled for a run the user stopped. The request is answered
+                # (it is already dequeued) and the run ends here, as at the limit
+                # bails below; the stream's own ending arms record the stop.
+                if self._stop_in_progress(info):
                     logger.warning(
                         "Subagent %s: rejecting a tool request, a stop is in progress",
                         info.id,
@@ -3248,7 +3264,7 @@ class RunEventCoordinator(ManagerComponent):
                         await tool_permission.bail(_ask, _policy, "stopped")
                     except Exception:
                         logger.exception("failed to reject a request after a stop")
-                    continue
+                    break
                 if not event.sub_session_id:
                     turns += 1
                     info.turns = turns
@@ -3336,7 +3352,14 @@ class RunEventCoordinator(ManagerComponent):
                     usage.settle()
                     self._manager._write_tombstone(info, "turn_limit")
                     return
-                await tool_permission.settle(_ask, _policy)
+                settled = await tool_permission.settle(_ask, _policy)
+                if settled.rung == "stopped":
+                    # The ladder bailed this request for a stop that landed
+                    # while it was being settled: the run ends here, as at the
+                    # bail above. A person's no (a stop's cancel the approval
+                    # wait turned into a denial) reads on: a stream the stop tore
+                    # down raises at the next read, a live one meets the bail.
+                    break
             elif event.kind == EVENT_AGENT_SWITCHED:
                 # A mid-run mode switch runs a different agent, so ITS spec hooks gate
                 # the permission requests that follow, not the previous agent's. An

@@ -449,6 +449,7 @@ class AcpProvider(LLMProvider):
     """LLMProvider backed by ACP JSON-RPC over stdio (kiro-cli or claude-agent-acp)."""
 
     reports_effort_support = True
+    approval_withdrawable = True
 
     def __init__(
         self,
@@ -2790,10 +2791,18 @@ class AcpProvider(LLMProvider):
         *,
         always: bool = False,
         deadline: GrantDeadline | None = None,
+        withdraw_if: Callable[[], bool] | None = None,
     ) -> bool:
+        # Passed on only when given, so a call without it reaches the client
+        # exactly as before.
+        withdrawal: dict[str, Any] = {}
+        if withdraw_if is not None:
+            withdrawal["withdraw_if"] = withdraw_if
         if deadline is None:
-            return await self._client.approve_tool(request_id, always=always)
-        return await self._client.approve_tool(request_id, always=always, deadline=deadline)
+            return await self._client.approve_tool(request_id, always=always, **withdrawal)
+        return await self._client.approve_tool(
+            request_id, always=always, deadline=deadline, **withdrawal
+        )
 
     async def reject_tool(self, request_id: str | int) -> None:
         await self._client.reject_tool(request_id)

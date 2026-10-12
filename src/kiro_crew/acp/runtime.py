@@ -5419,6 +5419,7 @@ class AcpRuntime:
         request_id: str | int,
         *,
         before_write: Callable[[], None] | None = None,
+        withdrawal_check: Callable[[], None] | None = None,
     ) -> None:
         """Write a response/error frame under the write lock and a no-progress bound.
 
@@ -5434,24 +5435,27 @@ class AcpRuntime:
         ``AcpProcessDied`` so the caller takes the same session-reset +
         bounded-requeue recovery the broken-pipe case uses. The request id
         appears only through ``_loggable_request_id``. A caller's
-        ``before_write`` runs under the lock after the dead-runtime check.
+        ``before_write`` runs under the lock after the dead-runtime check, and
+        its ``withdrawal_check`` ahead of it (see :meth:`send_response`).
         """
         assert self._process is not None and self._process.stdin is not None
-        if before_write is None:
-            under_lock: Callable[[], None] = self._refuse_write_if_dead
-        else:
-            caller_check = before_write
 
-            def under_lock() -> None:
-                self._refuse_write_if_dead()
-                caller_check()
+        def checks() -> None:
+            # A frame its caller withdrew is not written, whatever the pipe's
+            # state; the caller's other check is read on a live runtime only, so
+            # a runtime that died while this writer waited reports the death.
+            if withdrawal_check is not None:
+                withdrawal_check()
+            self._refuse_write_if_dead()
+            if before_write is not None:
+                before_write()
 
         if await write_response_frame_bounded(
             self._process.stdin,
             self._stdin_write_lock(),
             data,
             bound_secs=_RESPONSE_WRITE_BOUND_SECS,
-            before_write=under_lock,
+            before_write=checks,
         ):
             return
         safe_id = _loggable_request_id(request_id)
@@ -5652,12 +5656,15 @@ class AcpRuntime:
         result: dict[str, Any],
         *,
         before_write: Callable[[], None] | None = None,
+        withdrawal_check: Callable[[], None] | None = None,
     ) -> None:
         """Send a JSON-RPC response (for server→client requests like permission).
 
         ``before_write`` runs under the write lock right before the frame is
         written, after the dead-runtime check, and may raise to abort the write
-        with nothing written.
+        with nothing written. ``withdrawal_check`` runs under the same lock ahead
+        of the dead-runtime check and may raise the same way: a frame its caller
+        withdrew is not written, whatever the pipe's state.
         """
         if not self._process or not self._process.stdin:
             raise AcpRuntimeDead("process not running")
@@ -5668,12 +5675,12 @@ class AcpRuntime:
         data = json.dumps(msg) + "\n"
 
         try:
-            if before_write is None:
-                await self._write_response_bounded(data.encode(), request_id)
-            else:
-                await self._write_response_bounded(
-                    data.encode(), request_id, before_write=before_write
-                )
+            await self._write_response_bounded(
+                data.encode(),
+                request_id,
+                before_write=before_write,
+                withdrawal_check=withdrawal_check,
+            )
         except (BrokenPipeError, ConnectionResetError) as exc:
             self._mark_dead(f"pipe broken: {exc}")
             raise AcpRuntimeDead(f"pipe broken: {exc}") from exc
