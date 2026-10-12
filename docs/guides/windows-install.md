@@ -500,6 +500,28 @@ on disk, then binds its port regardless. A hang reaches none of that.
 `_WIN_LOCK_TIMEOUT_SECS` and `_WIN_LOCK_POLL_SECS` are aliases of the
 platform-neutral names.
 
+### The five-whys log lock follows the same rule
+
+`scripts/five_whys.py` serializes each mutating command on a `<log>.lock`
+sidecar, and it cannot import `platform_compat`: a skill script is copied out of
+the package and run as a bare `python3` file, so `kiro_crew` is usually not on
+its path. Its `_flock` therefore applies the rule above itself, with the
+helper's poll interval and ceiling. On Windows it polls
+`LK_NBLCK` every `_LOCK_POLL_SECS` until the holder lets go, so a second
+command against the same log serializes behind the first instead of failing
+with `EDEADLOCK` after about ten seconds. Only `EACCES` and `EDEADLOCK` are
+read as "held"; any other errno is about the descriptor and surfaces at once.
+Past `_LOCK_TIMEOUT_SECS` it exits with "refusing to proceed unserialized"
+rather than appending without the lock, and `_log_lock` unlocks only a lock it
+took, because unlocking a range this process never held fails `EACCES` on
+Windows and would replace that message. POSIX keeps its kernel-blocking
+`flock`.
+
+`test/test_five_whys_windows_lock.py` pins the wait against a fake CRT that
+gives up on the blocking code as `_locking` does, pins the poll interval and
+ceiling to the helper's, and its source scan fails any module under
+`src/kiro_crew` that passes `LK_LOCK` or `LK_RLCK`.
+
 ## `os.kill(pid, 0)` is a process killer here, not a liveness probe
 
 On POSIX, `os.kill(pid, 0)` is the idiomatic "does this pid exist?" test: signal 0
