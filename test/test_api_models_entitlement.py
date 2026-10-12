@@ -76,11 +76,13 @@ def _reset_catalog_cache():
     agents._catalog_cache.models = None
     agents._catalog_cache.fetched_at = 0.0
     agents._catalog_cache.task = None
+    agents._catalog_cache.failure = None
     yield
     _drain_catalog_task()
     agents._catalog_cache.models = None
     agents._catalog_cache.fetched_at = 0.0
     agents._catalog_cache.task = None
+    agents._catalog_cache.failure = None
 
 
 def _stub_wrap_argv(argv: list[str], **kwargs: Any) -> tuple[list[str], None]:

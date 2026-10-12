@@ -357,6 +357,14 @@ _LIST_MODELS_BACKGROUND_TIMEOUT_SECS: float = 90.0
 # revalidate). The catalog changes rarely, so a few minutes stale costs nothing
 # the per-request entitlement narrowing does not already correct.
 _LIST_MODELS_CATALOG_TTL_SECS: float = 300.0
+# A fetch that spawned kiro-cli and failed (signed out, non-zero exit, timeout,
+# bad output) is remembered this long, and every poll inside the window gets the
+# same 503 without a new spawn or a new WARNING. The dashboard re-polls about
+# every 8s while the list is degraded, so a signed-out CLI cost one spawn and one
+# WARNING per poll (81 of each in 16 minutes on one gateway). 30s holds a failing
+# CLI to two spawns a minute, while a user who has just signed in waits at most
+# 30s for the picker to fill. A success clears the entry at once.
+_LIST_MODELS_FAILURE_BACKOFF_SECS: float = 30.0
 # The cache is the one place ``--list-models`` output is held past the request,
 # so retention is bounded before it is stored. Row count and identifying-field
 # length reuse the repo's ONE shared admission bound
@@ -924,11 +932,17 @@ class _CatalogUnavailable(Exception):
     the request path renders a dict-literal 503 body from it — one 503 per
     outcome. The message is carried, not a response dict, so the single render
     site stays a dict literal the error-code ratchet can scan.
+
+    ``backoff`` says whether the outcome is held in the cache's negative entry
+    (see :data:`_LIST_MODELS_FAILURE_BACKOFF_SECS`). It is true for every outcome
+    of a spawn that ran. An unresolved binary spawns nothing and resolves on its
+    own shortly after start, so it is retried on the next poll.
     """
 
-    def __init__(self, error: str):
+    def __init__(self, error: str, *, backoff: bool = True):
         super().__init__(error)
         self.error = error
+        self.backoff = backoff
 
 
 def _bounded_catalog(models: list[dict]) -> list[dict]:
@@ -1012,11 +1026,27 @@ class _CatalogCache:
 
     ``task`` single-flights the fetch: concurrent polls (and the 8s self-heal
     loop) share one spawn rather than each starting its own cold start.
+
+    ``failure`` is the negative entry: the 503 message of the last failed fetch,
+    and ``failed_at`` when it ended. Inside :data:`_LIST_MODELS_FAILURE_BACKOFF_SECS`
+    the request path answers that 503 instead of spawning again. Only the message
+    is held, not the exception, so no traceback frame outlives the fetch. A
+    successful fetch clears it.
     """
 
     models: list[dict] | None = None
     fetched_at: float = 0.0
     task: "asyncio.Task[list[dict]] | None" = None
+    failure: str | None = None
+    failed_at: float = 0.0
+
+    def recent_failure(self) -> str | None:
+        """The 503 message of a fetch that failed inside the backoff window."""
+        if self.failure is None:
+            return None
+        if time.monotonic() - self.failed_at >= _LIST_MODELS_FAILURE_BACKOFF_SECS:
+            return None
+        return self.failure
 
 
 _catalog_cache = _CatalogCache()
@@ -1050,7 +1080,7 @@ async def _fetch_kiro_catalog() -> list[dict]:
         # Degraded (binary not resolved yet), NOT a genuine "zero models" result.
         # 503 so the client retries instead of caching an empty list — a cached
         # [] renders an empty picker that only a manual page refresh recovers from.
-        raise _CatalogUnavailable("kiro binary not resolved")
+        raise _CatalogUnavailable("kiro binary not resolved", backoff=False)
     argv = [kiro_bin, "chat", "--list-models", "--format", "json", "--no-interactive"]
     # Mirror AcpClient._spawn() sandbox: wrap_argv + env + process isolation.
     # Note: AcpClient._spawn() is for interactive ACP sessions (stdin/stdout
@@ -1240,6 +1270,13 @@ def _shared_catalog_fetch() -> "asyncio.Task[list[dict]]":
     async def _run() -> list[dict]:
         try:
             models = await _fetch_kiro_catalog()
+        except _CatalogUnavailable as exc:
+            # Remember a failed spawn so the polls inside the backoff window
+            # answer its 503 without spawning again (see recent_failure).
+            if exc.backoff:
+                _catalog_cache.failure = exc.error
+                _catalog_cache.failed_at = time.monotonic()
+            raise
         finally:
             # Release the single-flight slot the moment this attempt ends,
             # win or lose, so a failed fetch does not wedge every later poll.
@@ -1249,6 +1286,7 @@ def _shared_catalog_fetch() -> "asyncio.Task[list[dict]]":
         bounded = _bounded_catalog(models)
         _catalog_cache.models = bounded
         _catalog_cache.fetched_at = time.monotonic()
+        _catalog_cache.failure = None
         return bounded
 
     task = asyncio.ensure_future(_run())
@@ -1308,9 +1346,10 @@ async def api_models(request: web.Request) -> web.Response:
     # Keep the tight destructive bound here: this endpoint polls only while the
     # model list is a degraded fallback and stops the instant a live fetch wins
     # (website/src/providers/modelListHealth.ts), so it is not polled at all when
-    # healthy and gains no latency from a wider window. It has no server-side
-    # cooldown on its kiro-cli spawn, so a wide stale-authorize window would let a
-    # stale ready=True latch spawn a browser-opening login on most degraded ticks.
+    # healthy and gains no latency from a wider window. Its only server-side
+    # cooldown is the short failure backoff below, so a wide stale-authorize window
+    # would still let a stale ready=True latch spawn a browser-opening login on
+    # most degraded ticks.
     blocked = await reject_if_kiro_unverified(request)
     if blocked is not None:
         return blocked
@@ -1321,7 +1360,9 @@ async def api_models(request: web.Request) -> web.Response:
             # behind the reply (stale-while-revalidate). Entitlement narrowing
             # still runs on every request, so a plan change is reflected now even
             # when the catalog rows themselves are a few minutes old.
-            if time.monotonic() - _catalog_cache.fetched_at >= _LIST_MODELS_CATALOG_TTL_SECS:
+            # A refresh that just failed is not retried until its backoff ends.
+            stale = time.monotonic() - _catalog_cache.fetched_at >= _LIST_MODELS_CATALOG_TTL_SECS
+            if stale and _catalog_cache.recent_failure() is None:
                 _shared_catalog_fetch()
             models = await _entitled_kiro_models(request, list(cached))
             return web.json_response(models)
@@ -1332,6 +1373,12 @@ async def api_models(request: web.Request) -> web.Response:
         # cancelled: it runs on under its own longer ceiling and warms the cache,
         # so the next 8s poll is served from its result instead of starting
         # another doomed cold start.
+        #
+        # A fetch that failed inside the backoff window answers the same 503
+        # straight from the negative entry: no spawn, no new WARNING line.
+        failure = _catalog_cache.recent_failure()
+        if failure is not None:
+            raise _CatalogUnavailable(failure)
         task = _shared_catalog_fetch()
         try:
             models = await asyncio.wait_for(
