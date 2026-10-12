@@ -28,6 +28,7 @@ import pytest
 
 from kiro_crew.config import KiroCrewConfig
 from kiro_crew.session import FirstTurnState, SessionManager, _Session
+from kiro_crew.testing.wait import await_until
 
 
 @pytest.fixture
@@ -370,6 +371,11 @@ async def test_reacquire_and_validate_releases_semaphore_on_cancellation(cfg):
 # Bug: a reset between the reacquire's permit and its lock wait
 # --------------------------------------------------------------------------
 
+#: Lost-run ceiling for the steps below that stay a ``wait_for``. Each finishes in
+#: milliseconds once the interleaving is set up, so the ceiling only turns a hang
+#: into a failure and never decides pass versus fail.
+_LOST_RUN_CEILING_SECS = 30.0
+
 
 async def _until(cond, what: str) -> None:
     """Yield to the loop until *cond* holds; a bounded count, not a wall clock."""
@@ -395,7 +401,7 @@ async def _cancel_and_drain(task: asyncio.Task) -> None:
     by name here instead of hanging the worker."""
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task, what="the cancelled background task")
 
 
 async def _hand_permit_into_reset_window(sm: SessionManager, key: str, sess: _Session):
@@ -410,10 +416,12 @@ async def _hand_permit_into_reset_window(sm: SessionManager, key: str, sess: _Se
     t_claimed_successor = asyncio.Event()
 
     async def _turn() -> None:
+        # wait_for, not await_until: the test cancels T while it is parked on an
+        # event here, and wait_for cancels the inner event wait with it.
         assert await sm._reacquire_and_validate(key, sess)
-        await asyncio.wait_for(t_done.wait(), timeout=5)
+        await asyncio.wait_for(t_done.wait(), timeout=_LOST_RUN_CEILING_SECS)
         sm.release(key)
-        await asyncio.wait_for(t_next.wait(), timeout=5)
+        await asyncio.wait_for(t_next.wait(), timeout=_LOST_RUN_CEILING_SECS)
         successor = sm._sessions[key]
         assert await sm._reacquire_and_validate(key, successor)
         t_claimed_successor.set()
@@ -447,13 +455,13 @@ async def test_a_reset_while_a_woken_claimant_waits_for_the_lock_releases_the_pe
 
     t_task, w_task, r_task, _t_next = await _hand_permit_into_reset_window(sm, key, sess)
     try:
-        await asyncio.wait_for(r_task, timeout=5)
-        assert await asyncio.wait_for(w_task, timeout=5) is False
+        await await_until(r_task, what="the reset")
+        assert await await_until(w_task, what="the woken claimant") is False
 
         assert t_task not in _orphans(sm, key), "T had already released; it is not the holder"
         assert w_task not in _orphans(sm, key), "W's record is consumed by its own refusal"
         assert not sess.semaphore.locked()
-        await asyncio.wait_for(sess.semaphore.acquire(), timeout=1.0)
+        await asyncio.wait_for(sess.semaphore.acquire(), timeout=_LOST_RUN_CEILING_SECS)
         sess.semaphore.release()
     finally:
         await _cancel_and_drain(t_task)
@@ -483,9 +491,9 @@ async def test_a_fence_refusal_after_a_reset_in_the_reacquire_window_does_not_ov
 
     t_task, w_task, r_task, _t_next = await _hand_permit_into_reset_window(sm, key, sess)
     try:
-        await asyncio.wait_for(r_task, timeout=5)
+        await await_until(r_task, what="the reset")
         with pytest.raises(SessionEndingError):
-            await asyncio.wait_for(w_task, timeout=5)
+            await await_until(w_task, what="the woken claimant")
         assert not sess.semaphore.locked()
     finally:
         await _cancel_and_drain(t_task)
@@ -505,16 +513,16 @@ async def test_a_reset_in_the_reacquire_window_leaves_the_previous_turns_next_re
     t_task, w_task, r_task, (t_next, t_claimed) = await _hand_permit_into_reset_window(
         sm, key, sess
     )
-    await asyncio.wait_for(r_task, timeout=5)
-    await asyncio.wait_for(asyncio.gather(w_task, return_exceptions=True), timeout=5)
+    await await_until(r_task, what="the reset")
+    await await_until(asyncio.gather(w_task, return_exceptions=True), what="the woken claimant")
 
     successor = _live_session()
     sm._sessions[key] = successor
     t_next.set()
-    await asyncio.wait_for(t_task, timeout=5)
+    await await_until(t_task, what="the previous turn's claim on the successor")
     assert t_claimed.is_set()
     assert not successor.semaphore.locked(), "T's genuine release was absorbed; the key stays busy"
-    await asyncio.wait_for(successor.semaphore.acquire(), timeout=1.0)
+    await asyncio.wait_for(successor.semaphore.acquire(), timeout=_LOST_RUN_CEILING_SECS)
     successor.semaphore.release()
 
 
@@ -534,7 +542,7 @@ async def test_a_reset_while_a_claimant_is_still_parked_wakes_it_and_absorbs_the
 
     async def _turn() -> None:
         assert await sm._reacquire_and_validate(key, sess)
-        await asyncio.wait_for(t_done.wait(), timeout=5)
+        await await_until(t_done, what="the signal for T to release its permit")
         sm.release(key)
 
     t_task = asyncio.ensure_future(_turn())
@@ -542,15 +550,15 @@ async def test_a_reset_while_a_claimant_is_still_parked_wakes_it_and_absorbs_the
     w_task = asyncio.ensure_future(sm._reacquire_and_validate(key, sess))
     await _until(lambda: bool(sess.semaphore._waiters), "W parked on the permit")
 
-    await asyncio.wait_for(sm.reset(key), timeout=5)
+    await asyncio.wait_for(sm.reset(key), timeout=_LOST_RUN_CEILING_SECS)
     assert t_task in _orphans(sm, key)
-    assert await asyncio.wait_for(w_task, timeout=5) is False
+    assert await await_until(w_task, what="the parked claimant") is False
 
     successor = _live_session()
     sm._sessions[key] = successor
     await successor.semaphore.acquire()  # another task's turn on the successor
     t_done.set()
-    await asyncio.wait_for(t_task, timeout=5)
+    await await_until(t_task, what="the holder's release")
     assert successor.semaphore.locked(), "T's release must not unlock the successor's turn"
     assert t_task not in _orphans(sm, key)
     successor.semaphore.release()
