@@ -6266,6 +6266,21 @@ capacity. The native model input, provider-owned resources and external MCP
 serialization are outside this boundary and remain UNKNOWN, not estimated from
 the Crew string.
 
+Those limits scale with `model_registry.model_window(model)`, which resolves a model
+id through the live window, then `agent.model_context_tokens` (the window an operator
+declares an EXACT, backend-qualified model id is served with; source `operator`), the
+Kiro-list cache, the static registry, the supplementary map and the `[1m]` heuristic.
+An id none of them lists is unknown, and unknown keeps the 1,000,000-token reference:
+nothing shrinks an undeclared model. A fresh session has no live window, so a
+declared one is what budgets its first prompt. The declaration is the operator's
+statement and is never probed or measured. `coerce_model_context_tokens`
+(`config/sections.py`) bounds it: a real integer from 1,024 to 10,000,000 per key, a
+non-empty id of at most 256 characters with no surrounding whitespace as the key, the
+first 64 entries read, a warning per dropped entry. The dashboard server's config
+watcher installs it through `model_registry.apply_operator_windows` at boot and on each
+reload; that replaces the previous set, and a degraded `agent` section defers the
+change instead of dropping the declarations.
+
 The full agent contract is still injected through the existing path. Native
 prompt/resource configuration alone is not proof that the native provider received
 the same effective substituted content. Until that equivalence can be established,

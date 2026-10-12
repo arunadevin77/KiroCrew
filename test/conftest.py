@@ -1218,17 +1218,21 @@ def _isolate_kiro_window_cache():
     Clearing before the test (and restoring the original snapshot after) makes
     every test start from the same empty cache regardless of what the host had on
     disk — so a local run matches CI. Tests that need entries seed them in their
-    own body.
+    own body. The operator-declared windows (``_OPERATOR_WINDOWS``) get the same
+    treatment, so a declaration one test applies never reaches the next.
     """
     import kiro_crew.model_registry as _mr
 
     saved = dict(_mr._KIRO_WINDOWS)
+    saved_operator = _mr._OPERATOR_WINDOWS
     _mr._KIRO_WINDOWS.clear()
+    _mr._OPERATOR_WINDOWS = {}
     try:
         yield
     finally:
         _mr._KIRO_WINDOWS.clear()
         _mr._KIRO_WINDOWS.update(saved)
+        _mr._OPERATOR_WINDOWS = saved_operator
 
 
 @pytest.fixture(autouse=True)

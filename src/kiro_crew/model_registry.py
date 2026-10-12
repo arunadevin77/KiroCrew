@@ -35,7 +35,7 @@ import json
 import logging
 import math
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypeGuard
 
@@ -1011,6 +1011,22 @@ def _supplementary_window(model: str) -> int | None:
     return None
 
 
+# Windows an operator declared for exact model ids (``agent.model_context_tokens``): the
+# one tier a person can set. The config appliers replace it whole, at boot and on reload.
+_OPERATOR_WINDOWS: dict[str, int] = {}
+
+
+def apply_operator_windows(windows: Mapping[str, int]) -> None:
+    """Make *windows* the whole set of operator-declared served windows.
+
+    Replaces, never merges, so an id the operator removed or renamed stops resolving at
+    once. The set is copied and swapped in as one reference, so a reader on another thread
+    sees the old set or the new one, never a half-built one.
+    """
+    global _OPERATOR_WINDOWS
+    _OPERATOR_WINDOWS = dict(windows)
+
+
 def model_window(canonical_or_id: str, *, live_tokens: int | None = None) -> int | None:
     """THE central model -> context-window resolver. Single source of truth.
 
@@ -1019,26 +1035,33 @@ def model_window(canonical_or_id: str, *, live_tokens: int | None = None) -> int
     1. ``live_tokens`` — the served window from kiro's per-turn
        ``usage_update.size`` (or any live signal the caller already has). Wins
        over everything: it is what the backend is ACTUALLY billing against.
-    2. Kiro-list cache — the structured ``context_window_tokens`` from
+    2. Operator-declared window (``agent.model_context_tokens``, see
+       :func:`apply_operator_windows`) — the window the operator says this exact id is
+       SERVED with. It outranks the catalog and the registry because a served limit is
+       narrower than the architecture maximum those advertise.
+    3. Kiro-list cache — the structured ``context_window_tokens`` from
        ``kiro-cli chat --list-models`` (see :func:`refresh_kiro_windows`),
        keyed by the kiro model id/name. Correct for EVERY model kiro serves,
        including non-Anthropic (GPT 272k, DeepSeek 164k, Qwen 256k) and the
        sonnet/haiku ids the static registry folds onto a 1M canonical.
-    3. Static registry — the hand-maintained ``window`` literal (Anthropic ids).
-    4. Supplementary map — Bedrock/legacy ids (:data:`_SUPPLEMENTARY_WINDOWS`),
+    4. Static registry — the hand-maintained ``window`` literal (Anthropic ids).
+    5. Supplementary map — Bedrock/legacy ids (:data:`_SUPPLEMENTARY_WINDOWS`),
        exact then longest-substring.
-    5. ``[1m]``/``-1m`` heuristic -> 1M (forward-compat for an unlisted 1M id).
-    6. ``None`` — genuinely unknown. Callers treat None as
+    6. ``[1m]``/``-1m`` heuristic -> 1M (forward-compat for an unlisted 1M id).
+    7. ``None`` — genuinely unknown. Callers treat None as
        :data:`REFERENCE_WINDOW_TOKENS` (never a silent 200k), so an unknown
        model keeps the full budget rather than being wrongly shrunk.
 
     NOTE: there is intentionally no silent 200k default — that literal, which
     caused GPT/DeepSeek/etc. to under-report and the alias fold to over-report,
     is gone. A concrete 200k only ever comes from a source that really says 200k
-    (kiro list, registry entry, or a live usage_update).
+    (an operator declaration, the kiro list, a registry entry, or a live usage_update).
     """
     if isinstance(live_tokens, int) and not isinstance(live_tokens, bool) and live_tokens > 0:
         return live_tokens
+    declared = _OPERATOR_WINDOWS.get(canonical_or_id)
+    if declared:
+        return declared
     cached = _KIRO_WINDOWS.get(canonical_or_id)
     if cached:
         return cached
@@ -1057,10 +1080,12 @@ def model_window(canonical_or_id: str, *, live_tokens: int | None = None) -> int
 def window_source(canonical_or_id: str) -> str:
     """Diagnostic: which tier :func:`model_window` resolves ``id`` from.
 
-    One of ``"kiro-list"``, ``"registry"``, ``"supplementary"``, ``"heuristic"``,
-    ``"unknown"``. (The ``"live"`` tier is per-call via ``live_tokens`` and not
-    reflected here.)
+    One of ``"operator"``, ``"kiro-list"``, ``"registry"``, ``"supplementary"``,
+    ``"heuristic"``, ``"unknown"``. (The ``"live"`` tier is per-call via ``live_tokens`` and
+    not reflected here.)
     """
+    if _OPERATOR_WINDOWS.get(canonical_or_id):
+        return "operator"
     if _KIRO_WINDOWS.get(canonical_or_id):
         return "kiro-list"
     if _registry_window(canonical_or_id) is not None:
@@ -1087,8 +1112,9 @@ def window(canonical_or_id: str) -> int:
 
 
 def has_known_window(canonical_or_id: str) -> bool:
-    """True if the window for ``id`` comes from a real source (kiro list or the
-    static registry) — NOT the ``[1m]`` heuristic or the unknown fallback.
+    """True if the window for ``id`` comes from a real source (an operator
+    declaration, the kiro list or the static registry) — NOT the ``[1m]`` heuristic or
+    the unknown fallback.
 
     Lets the context-budget scaler tell a genuinely-known window apart from a
     guessed/unknown one so it never shrinks an unknown model's budget. Now also
@@ -1097,7 +1123,8 @@ def has_known_window(canonical_or_id: str) -> bool:
     backfill report the model's real window.
     """
     return (
-        bool(_KIRO_WINDOWS.get(canonical_or_id))
+        bool(_OPERATOR_WINDOWS.get(canonical_or_id))
+        or bool(_KIRO_WINDOWS.get(canonical_or_id))
         or _registry_window(canonical_or_id) is not None
         or _supplementary_window(canonical_or_id) is not None
     )

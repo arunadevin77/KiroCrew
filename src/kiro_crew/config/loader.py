@@ -3237,6 +3237,7 @@ def _build_agent_config(agent_data: dict) -> AgentConfig:
         model=section.get("model"),
         role_models=coerce_role_models(section.get("role_models")),
         role_efforts=coerce_role_efforts(section.get("role_efforts")),
+        model_context_tokens=section.get("model_context_tokens"),
         fallback_model=coerce_fallback_model(section.get("fallback_model")),
         refusal_fallback_model=_sections.coerce_refusal_fallback_model(
             section.get("refusal_fallback_model")

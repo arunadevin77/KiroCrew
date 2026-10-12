@@ -2477,11 +2477,15 @@ object's constructor (session manager, subagent manager, each channel
 dispatcher; `WorkflowService` binds `agent.workflow_run_timeout_secs` to its
 `set_timeout_secs` and `ChannelManager` binds `agent.max_channels` /
 `agent.max_channel_agents` to its cap setters, both with `live.bind`). Only the
-ones whose holder is `DashboardState`, or that must rebuild agent artifacts,
+ones whose holder is `DashboardState`, that must rebuild agent artifacts, or that set
+process-wide registry state
 live in `dashboard/server_runtime/config_watch.py::_register_config_watch` — `agent.provider`,
 `agent.model`, `agent.role_models.background`, `agent.log_level`
-(→ `handlers/updates.py::apply_log_level_from_config`), and
-`dashboard.dynamic_dashboard_cards` (→ `DashboardState.set_dynamic_cards_enabled`). The log-level applier
+(→ `handlers/updates.py::apply_log_level_from_config`),
+`dashboard.dynamic_dashboard_cards` (→ `DashboardState.set_dynamic_cards_enabled`), and
+`agent.model_context_tokens` (→ `model_registry.apply_operator_windows`, process state of
+the model registry rather than of any holder, so it is also installed once from the boot
+document: the first tick reports only what changed since boot). The log-level applier
 shares `apply_log_level` with the Logs page's `POST /api/logs/level`, and that
 one function moves the `kiro_crew` logger only — which is the ONLY level gate
 on the way to `gateway.log`: the file handler and the queue handler
@@ -2703,6 +2707,7 @@ class AgentConfig:
     approval_mode: str = "auto"    # "auto" or "interactive"
     streaming: bool = True
     model: str = "auto"            # resolved from agent config
+    model_context_tokens: dict[str, int] = {}  # operator-declared served context window per EXACT agent.model id, e.g. {"server-a/org/model-7b": 32768}; value an int in [1024, 10000000], first 64 entries read, a warning per dropped entry (coerce_model_context_tokens); live via model_registry.apply_operator_windows
     provider: str = "acp"          # fixed to "acp" (kiro-cli) — the only provider
     bot_name: str = ""             # the name the agent identifies as in conversations (the {bot_name} placeholder in prompts); "" = the provider's default (Kiro). Loaded through _sanitize_bot_name (sections.py): NFC-normalized, capped at 50 code points (_BOT_NAME_MAX), then filtered to Unicode letters (Lu/Ll/Lt/Lm/Lo), the combining marks that attach to them (Mn/Mc), decimal digits (Nd) and letter numbers (Nl, the ideographic zero) in any script, plus the ASCII space, "_", "-" and "." -- the character policy of the artifact tag rule (artifacts.md § Validation & Limits), applied as a filter that drops instead of a validator that refuses. Everything else is dropped: braces (the placeholder must not recurse), other punctuation, symbols and emoji, enclosing marks (the keycap), other numbers (², ½), controls, format characters (zero-width, bidi), the letters and marks that render as nothing (variation selectors, Hangul fillers: terminal_safe._is_invisible, the one shared table), surrogates and private-use. A non-ASCII space (NO-BREAK SPACE, IDEOGRAPHIC SPACE) becomes the plain space; a space run a removal leaves behind folds to one and a leading or trailing one is stripped; a double space the user typed is kept; the result is NFC-normalized again, since a removal can leave a composable pair adjacent. Three tag rules are not applied: compatibility forms (full-width ｋｉｒｏ) are kept as typed because a drop cannot name the plain spelling; a name may open with a separator; and a run of combining marks is not bounded, since the bound guards a chip's width and nothing draws this name. A name that filters to "" takes the default. Nothing is logged when a name changes, and the CLI `config set` echo shows the raw value (#18728 follow-ups). dashboard.bot_name is a separate field and is not filtered.
     sandbox: str = "auto"          # "auto" (default: standard tier -- namespace on Linux, seatbelt on macOS; leaves ~/.aws, ~/.ssh, ~/.kube visible for credential tooling; delegates to kiro-cli's internal sandbox on macOS when enabled) | "strict" (opt-in: also hides ~/.aws incl. sso/cache, ~/.ssh bar known_hosts, ~/.kube, ~/.config/gh and the _CC_FILES credential files; applies to sessions started after the change) | "off" (skips Kiro Crew's sandbox). Any other value falls back to "auto"

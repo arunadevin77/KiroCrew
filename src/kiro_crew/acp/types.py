@@ -1392,8 +1392,8 @@ class AcpPromptStats:
         counts. No-op once a real usage_update has
         set authoritative counts. ``model_id`` is the caller's resolved id (the
         kiro-agent ``currentModelId``, else the user-picked alias). Resolves the
-        window through ``model_registry.model_window`` (kiro-list cache >
-        registry > heuristic) and only backfills a KNOWN window, leaving 0 for a
+        window through ``model_registry.model_window`` (operator window > kiro-list
+        cache > registry > heuristic) and only backfills a KNOWN window, leaving 0 for a
         genuinely-unknown model so the frontend's own authoritative window drives
         the meter. A real ``usage_update.size`` always wins. A surviving
         ``context_window_tokens`` (e.g. kept across a compaction reset — the

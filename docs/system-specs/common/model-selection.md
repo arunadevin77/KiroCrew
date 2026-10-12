@@ -429,6 +429,13 @@ its own once the cache refreshes with a list that carries it.
   cost cap is that profile's `worker_model` / `worker_reasoning_effort`, where
   `"auto"` is a real pin on the backend default. Until then a dispatched session
   starts on the default like any other.
+- **A served context window** is declared only through `agent.model_context_tokens`, one
+  entry per EXACT model id as `agent.model` carries it (`model_registry.model_window`
+  matches it as written, so two servers of the same weights stay distinct). It is an
+  operator's statement, never a built-in default for a family and never probed: an id
+  nobody declared and no registry tier lists stays unknown and keeps the 1,000,000-token
+  reference. See [memory-skills-hooks](../modules/memory-skills-hooks.md) "Model-window
+  metadata" for the resolution order.
 - **Entitlement checks** always use the shared predicate
   `acp.client.model_is_unusable(id, advertised)` together with
   `advertised_model_ids(...)`. It is one predicate on purpose: two spellings of "can

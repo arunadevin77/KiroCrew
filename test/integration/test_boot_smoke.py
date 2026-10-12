@@ -458,6 +458,11 @@ _KNOWN_SECOND_BOOT_CHANGES: dict[tuple[str, str], str] = {
     ("kiro_crew.skill_usage", "_global_skill_read_observer"): "replaced per boot",
     ("kiro_crew.slack.interactions", "_orch"): "replaced per boot",
     ("kiro_crew.taskq.dependency", "_current"): "cleared by _shutdown()",
+    # The operator-declared model windows (``agent.model_context_tokens``): each boot's
+    # config apply rebinds the global to a fresh dict built from that boot's own config,
+    # replacing and never merging, so the second boot holds the same content and nothing
+    # of the first one carries over.
+    ("kiro_crew.model_registry", "_OPERATOR_WINDOWS"): "rebound by every config apply",
     # Caches keyed by the thing they cache (a path, a server name), so a stale
     # entry is never returned for a different home.
     ("kiro_crew.agent_discovery", "_LIST_AGENTS_CACHE"): "keyed cache",

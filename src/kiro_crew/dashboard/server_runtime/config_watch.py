@@ -34,12 +34,19 @@ def _register_config_watch(
     object's constructor; only the ones whose holder is the dashboard state, or
     that must rebuild agent artifacts, live here.
     """
+    from kiro_crew import model_registry
     from kiro_crew.config import live
     from kiro_crew.config.live import ConfigChange
     from kiro_crew.dashboard.handlers.updates import apply_log_level_from_config
 
     # Wiring only: optional producer import/construction belongs after bind.
     live.bind("dashboard.dynamic_dashboard_cards", state.set_dynamic_cards_enabled)
+    # The declared served windows are the model registry's own state, so no holder owns the
+    # applier. The boot document's map is installed here because the first tick reports only
+    # what changed since boot; every later change replaces it through the bind.
+    if initial is not None:
+        model_registry.apply_operator_windows(initial.agent.model_context_tokens)
+    live.bind("agent.model_context_tokens", model_registry.apply_operator_windows)
 
     async def _switch_provider(cfg: KiroCrewConfig) -> None:
         # Refresh agent artifacts so the target provider is immediately usable.

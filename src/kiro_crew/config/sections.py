@@ -319,6 +319,67 @@ def coerce_role_efforts(raw: object) -> dict[str, str]:
     return out
 
 
+# agent.model_context_tokens: the context window an operator says an exact model id is
+# served with. The value bounds keep a typo from declaring a nonsense window; the entry cap
+# bounds the map a hand-edited file can make every process carry.
+MODEL_CONTEXT_TOKENS_MIN = 1_024
+MODEL_CONTEXT_TOKENS_MAX = 10_000_000
+MODEL_CONTEXT_TOKENS_MAX_ENTRIES = 64
+
+
+def coerce_model_context_tokens(raw: object) -> dict[str, int]:
+    """Normalize ``agent.model_context_tokens`` from hand-edited config / request bodies.
+
+    An entry survives when its key is a model id (non-empty, no surrounding whitespace,
+    at most :data:`model_registry.ADVERTISED_MODEL_ID_MAX_CHARS` characters) and its value
+    is a real ``int`` (not a bool, float or string) from :data:`MODEL_CONTEXT_TOKENS_MIN`
+    to :data:`MODEL_CONTEXT_TOKENS_MAX`. A key is taken as written: never stripped, folded
+    or read as a path. Only the first :data:`MODEL_CONTEXT_TOKENS_MAX_ENTRIES` entries are
+    read. Every entry that is dropped is named in a warning (the key only, quoted
+    truncated), so a typo costs that one declaration and never goes unseen.
+    """
+    if not isinstance(raw, dict):
+        if raw is not None:
+            logger.warning("agent.model_context_tokens is not a mapping; ignoring it")
+        return {}
+    if len(raw) > MODEL_CONTEXT_TOKENS_MAX_ENTRIES:
+        logger.warning(
+            "agent.model_context_tokens: ignoring %d entries past the first %d",
+            len(raw) - MODEL_CONTEXT_TOKENS_MAX_ENTRIES,
+            MODEL_CONTEXT_TOKENS_MAX_ENTRIES,
+        )
+    out: dict[str, int] = {}
+    for index, (key, value) in enumerate(raw.items()):
+        if index >= MODEL_CONTEXT_TOKENS_MAX_ENTRIES:
+            break
+        if not (
+            isinstance(key, str)
+            and key
+            and key == key.strip()
+            and len(key) <= model_registry.ADVERTISED_MODEL_ID_MAX_CHARS
+        ):
+            logger.warning(
+                "agent.model_context_tokens: ignoring %.80r, a key must be a model id of "
+                "1 to %d characters with no surrounding whitespace",
+                key,
+                model_registry.ADVERTISED_MODEL_ID_MAX_CHARS,
+            )
+        elif (
+            not isinstance(value, int)
+            or not MODEL_CONTEXT_TOKENS_MIN <= value <= MODEL_CONTEXT_TOKENS_MAX
+        ):
+            logger.warning(
+                "agent.model_context_tokens: ignoring %.80r, the window must be an "
+                "integer from %d to %d",
+                key,
+                MODEL_CONTEXT_TOKENS_MIN,
+                MODEL_CONTEXT_TOKENS_MAX,
+            )
+        else:
+            out[key] = value
+    return out
+
+
 def deepseek_env_plaintext_keys(raw: object) -> tuple[str, ...]:
     """Env-var names in an ``agent.deepseek_env`` shape whose value is NOT a reference.
 
@@ -1027,6 +1088,21 @@ class AgentConfig:
             "(keys: 'background', 'subagent'). Empty for a role inherits the chat "
             "default (agent.reasoning_effort) and then the provider/model default. "
             "Only applies on reasoning-capable models.",
+        ),
+    )
+    model_context_tokens: dict[str, int] = field(
+        default_factory=dict,
+        metadata=_meta(
+            "Served context windows",
+            "Context window, in tokens, that an exact model id is served with, for "
+            'example {"server-a/org/model-7b": 32768}. The key is the id exactly as '
+            "agent.model carries it, so two servers of the same weights stay "
+            "distinct. A declared window budgets the first prompt of a new session, "
+            "before the backend has reported one, and outranks the catalog and "
+            "registry windows. A value is an integer from 1024 to 10000000, at most "
+            "64 entries are read, and an invalid entry is ignored with a warning. "
+            "Empty by default: a model with no window of its own keeps the "
+            "1,000,000-token reference. Takes effect on the next config reload.",
         ),
     )
     fallback_model: str = field(
@@ -2084,6 +2160,7 @@ class AgentConfig:
         # feeds coerced input.
         self.role_models = coerce_role_models(self.role_models)
         self.role_efforts = coerce_role_efforts(self.role_efforts)
+        self.model_context_tokens = coerce_model_context_tokens(self.model_context_tokens)
         # Same defensive TYPE coercion for the DeepSeek provider-key map. What its
         # names and values may BE is refused at spawn, by name -- see
         # coerce_deepseek_env.
