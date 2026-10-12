@@ -1980,6 +1980,7 @@
         "embedding_threads": 4,
         "embedding_bulk_threads": 1,
         "embedding_bulk_duty": 0.2,
+        "embedding_idle_evict_secs": 3600,
         "embed_model_url": "",
         "embed_model_path": "",
         "embed_model_id": "",
@@ -2078,6 +2079,20 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": 0.2
+    },
+    {
+      "path": "memory.embedding_idle_evict_secs",
+      "kind": "core",
+      "type": "integer",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Unload Embedding Model When Idle (seconds)",
+      "help": "Seconds without any embedding before the embedding model is unloaded from memory. The next search or memory write loads it again, which takes a few seconds. 0 keeps the model loaded.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": 3600
     },
     {
       "path": "memory.embed_model_url",
