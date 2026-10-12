@@ -164,6 +164,18 @@ class TestSyncEffortLevels:
             client._sync_effort_levels()
         mock_update.assert_not_called()
 
+    def test_does_not_sync_when_off_only(self):
+        """An off-only list must not overwrite the global fallback for other backends."""
+        client = AcpClient(acp_backend="goose")
+        client._acp_config_options = [
+            {"id": "thinking_effort", "options": [{"value": "off"}]},
+        ]
+        with patch(
+            "kiro_crew.dashboard.chat_persistence.update_reasoning_effort_values"
+        ) as mock_update:
+            client._sync_effort_levels()
+        mock_update.assert_not_called()
+
 
 class TestUpdateReasoningEffortValues:
     def setup_method(self):

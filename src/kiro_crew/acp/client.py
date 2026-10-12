@@ -5670,14 +5670,28 @@ class AcpClient:
             logger.warning("post-capture re-seed of settings.local.json failed", exc_info=True)
 
     async def set_config_option(self, config_id: str, value: str) -> None:
-        """Set a session config option (e.g. effort level) via session/set_config_option."""
+        """Set a session config option (e.g. effort level) via session/set_config_option.
+
+        When the response carries the session's full ``configOptions`` (the ACP
+        response shape), they replace the cached ones, as
+        ``SessionHandle.set_config_option`` does. A write can change which options
+        exist -- goose rebuilds its ``thinking_effort`` select for the model a
+        ``model`` write selects -- and the matching ``config_option_update`` that
+        arrives first is only buffered by ``_wait_for_response``, which nothing
+        drains after init. Without this, ``supports_effort`` after a live model
+        switch reads the previous model's option.
+        """
         if not self._session_id:
             raise AcpError("Cannot set config option before session is initialized")
         req_id = await self._send_request(
             "session/set_config_option",
             {"sessionId": self._session_id, "configId": config_id, "value": value},
         )
-        await self._wait_for_response(req_id, timeout=10.0)
+        result = await self._wait_for_response(req_id, timeout=10.0)
+        config_options = result.get("configOptions") if isinstance(result, dict) else None
+        if isinstance(config_options, list):
+            self._acp_config_options = config_options
+            self._sync_effort_levels()
 
     # ── Dynamic Config from ACP ──
 
@@ -5824,9 +5838,15 @@ class AcpClient:
             self._sync_effort_levels()
 
     def _sync_effort_levels(self) -> None:
-        """Push ACP-reported effort levels to the global validation set."""
+        """Push ACP-reported effort levels to the global validation set.
+
+        Skips an off-only list: a backend that advertises only ``off`` (no real
+        effort levels) must not overwrite the global fallback that other
+        backends such as kiro-cli use, or those sessions' dropdowns would show
+        only "off".
+        """
         levels = self.get_valid_effort_levels()
-        if levels:
+        if levels and set(levels) != {"off"}:
             # circular import: chat_persistence → dashboard → session → acp.client
             from kiro_crew.dashboard.chat_persistence import update_reasoning_effort_values
 

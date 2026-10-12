@@ -17,8 +17,8 @@ corpus does and does not prove.
 its own wire, including the permission request, so there is no class written from a
 declared shape.
 
-Captured off `goose acp` 1.50.1 (`effort-live.jsonl`: 1.54.0, against a local Ollama-compatible stub) driven over stdio against a model served locally, so
-no provider credential was involved.
+Captured off `goose acp` 1.50.1 driven over stdio against a model served locally, so
+no provider credential was involved. `effort-live.jsonl` is captured off `goose acp` 1.54.0 the same way, against a local Ollama-compatible stub.
 
 ## What the permission capture establishes
 

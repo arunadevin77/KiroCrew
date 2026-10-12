@@ -1810,6 +1810,50 @@ class TestGooseEffortReachesAThinkingModel:
 
         assert provider.supports_effort() is False
 
+    @pytest.mark.asyncio
+    async def test_a_live_set_model_withdraws_the_control(self, tmp_path) -> None:
+        """``AcpProvider.set_model`` reads goose's answer to the ``model`` write itself.
+
+        The real path, not the notification handler: the switch goes through
+        ``AcpClient.set_config_option``, whose wait only buffers the
+        ``config_option_update`` that arrives first, so the answer must come from
+        the result's own ``configOptions``. The wire frames are the capture's.
+        """
+        from kiro_crew.acp.types import JsonRpcMessage
+
+        frames = _effort_frames()
+        # The model switch: goose's update, then the result of request id 5.
+        switch_update, switch_result = frames[4], frames[5]
+        assert switch_result["id"] == 5
+        assert _thinking_effort(switch_result["result"]["configOptions"]) == ("off", ["off"])
+        provider = _goose_provider(tmp_path, _config_option_sets()[0])
+        client = provider._client
+        client._session_id = "goose-session-1"
+        assert provider.supports_effort() is True
+
+        sent: list[tuple[str, dict]] = []
+        wire = [JsonRpcMessage.from_dict(switch_update), JsonRpcMessage.from_dict(switch_result)]
+
+        async def _send_request(method, params, **_kwargs):
+            sent.append((method, params))
+            return 5
+
+        async def _read_message(timeout=None):
+            return wire.pop(0) if wire else None
+
+        client._send_request = _send_request
+        client._read_message = _read_message
+
+        await provider.set_model("llama3.2:3b")
+
+        assert sent[0] == (
+            "session/set_config_option",
+            {"sessionId": "goose-session-1", "configId": "model", "value": "llama3.2:3b"},
+        )
+        assert provider.supports_effort() is False
+        # The off-only model takes no effort write after the switch.
+        assert [params["configId"] for _method, params in sent] == ["model"]
+
     def test_the_knowledge_pool_sends_nothing_on_an_off_only_option(self) -> None:
         from kiro_crew.knowledge.llm_pool import _select_effort_level
 

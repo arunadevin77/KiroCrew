@@ -1852,9 +1852,9 @@ class AcpProvider(LLMProvider):
 
         A member of ``ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION`` advertises the
         effort option itself, so the option it last served answers both which
-        levels exist and whether any do. That is the ``session/new`` option, or the
-        one in the latest ``config_option_update`` where the harness rebuilds it per
-        model (goose).
+        levels exist and whether any do. That is the ``session/new`` option, or,
+        where the harness rebuilds it per model (goose), the one in the latest
+        ``config_option_update`` or ``session/set_config_option`` result.
         ``None`` -- every other harness -- means the model registry answers, which
         is right where the level rides the model.
         """
