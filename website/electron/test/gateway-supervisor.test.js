@@ -739,6 +739,8 @@ function staleBundleHarness({
   // the default; the cases that matter override it with a foreign holder or a
   // probe that cannot run at all.
   ownerExecFile = ownerProbe(OWN_GATEWAY_COMMAND),
+  BrowserWindow,
+  mainWindow,
 } = {}) {
   const state = {
     pruned: false,
@@ -765,7 +767,9 @@ function staleBundleHarness({
       error.code = "ENOENT";
       throw error;
     },
-    existsSync() { return false; },
+    // `interpreterOnly` puts a bare interpreter back with no stdlib yet: the
+    // shape of files arriving again under a launcher that resolves.
+    existsSync(target) { return Boolean(state.interpreterOnly) && target.endsWith("python.exe"); },
     openSync() { return 41; },
     closeSync() {},
     readFileSync() { throw new Error("unexpected filesystem read"); },
@@ -777,7 +781,8 @@ function staleBundleHarness({
     httpMod,
     timers,
     ...(ownerExecFile ? { execFileFn: ownerExecFile } : {}),
-    mainWindow: {
+    ...(BrowserWindow ? { BrowserWindow } : {}),
+    mainWindow: mainWindow || {
       isDestroyed: () => false,
       webContents: { send: (channel, message) => state.statuses.push(`${channel}:${message}`) },
     },
@@ -1821,8 +1826,140 @@ test("a packaged Windows app whose bundle was pruned refuses the PATH fallback i
 
   assert.strictEqual(spawnCalls.length, 1, "nothing is spawned from PATH");
   assert.ok(errors.some((line) => line.includes("spawn REFUSED: no bundled backend")));
-  assert.ok(state.statuses.some((line) => line.includes("Finishing installation")));
+  assert.ok(state.statuses.some((line) => line.includes("Some app files are missing")));
   assert.deepStrictEqual(state.exits, []);
+});
+
+// Opens the failure dialog for a packaged Windows app. With `pruneMidRun` the
+// bundle is pruned under a running backend, so the PATH refusal follows a
+// stale-asset re-resolve; without it the app boots with no bundle at all.
+async function windowsNoBundleDialog({ pruneMidRun }) {
+  const { windows, FakeBrowserWindow } = fakeDialogWindows();
+  let built = null;
+  const window = {
+    // Destroyed once a retry has spawned: that ends the post-retry boot before
+    // it polls a backend this harness has not got.
+    isDestroyed: () => built.spawnCalls.length > (pruneMidRun ? 1 : 0),
+    show() {},
+    focus() {},
+    isMinimized: () => false,
+    restore() {},
+    webContents: { loadFile() {}, send: (channel, message) => statuses.push(`${channel}:${message}`) },
+  };
+  const statuses = [];
+  built = staleBundleHarness({
+    platform: "win32",
+    isPackaged: true,
+    BrowserWindow: FakeBrowserWindow,
+    mainWindow: window,
+  });
+  if (pruneMidRun) {
+    assert.strictEqual(await built.supervisor.start(), true);
+    built.state.pruned = true;
+    built.spawnCalls[0].child.emit("exit", 75, null);
+  } else {
+    built.state.pruned = true;
+    assert.strictEqual(await built.supervisor.start(), false);
+  }
+  assert.ok(built.errors.some((line) => line.includes("spawn REFUSED: no bundled backend")));
+  void built.supervisor.connect(window);
+  await flush();
+  assert.strictEqual(windows.length, 1, "the failure dialog opened");
+  return { ...built, windows, statuses };
+}
+
+const QUIT_ACCENTED = `<button class="ok" onclick="act('quit')">Quit</button>`;
+
+// Nothing is installing once the running version's tree was pruned, so the
+// dialog says the files were removed and puts quit-and-reopen first, with the
+// accent on Quit. The probe stays armed: a backend back at a probed path still
+// starts on its own.
+test("a pruned Windows backend opens the removed-files dialog and still auto-starts when files return", async () => {
+  const { windows, timers, state, spawnCalls, errors } = await windowsNoBundleDialog({ pruneMidRun: true });
+  const dialog = windows[0];
+  const html = decodeURIComponent(dialog.loaded[0]);
+  assert.match(html, /app files missing/);
+  assert.match(html, /app files were removed, likely by an update\. Quit and reopen Kiro Crew/);
+  assert.doesNotMatch(html, /installation still finishing|still being installed|five minutes/);
+  assert.ok(html.includes(QUIT_ACCENTED), "the accent follows the sentence onto Quit");
+  assert.match(html, /var primaryAct = "act\('quit'\)";/, "Enter presses the highlighted Quit");
+  assert.ok(errors.length > 0);
+
+  timers.tick(INSTALLING_PROBE_MS);
+  assert.deepStrictEqual(dialog.scripts, [], "an unchanged probe repaints nothing");
+
+  state.pruned = false;
+  timers.tick(INSTALLING_PROBE_MS);
+  assert.match(dialog.completionChrome(), /installation finished/);
+  // The pruned dialog opened with Quit accented; the completion frame puts the
+  // accent back on the (now busy) Retry so "Quit anyway" never reads as the
+  // recommended action.
+  assert.match(dialog.completionChrome(), /act\('quit'\)"\) b\.className = 'cancel';/);
+  assert.match(dialog.completionChrome(), /act\('retry'\)"\) b\.className = 'ok';/);
+  timers.fire(INSTALLING_COMPLETE_LINGER_MS);
+  await flush();
+  assert.strictEqual(spawnCalls.length, 2, "the returned backend is started by the dialog's own retry");
+  assert.strictEqual(spawnCalls[1][0], BUNDLED_BIN);
+});
+
+// Retry starts a fresh launch, which resets the stale-asset budget; the dialog
+// it reopens must still describe the removed backend, not an install.
+test("a Retry from the removed-files dialog reopens it with the same copy", async () => {
+  const { windows } = await windowsNoBundleDialog({ pruneMidRun: true });
+  windows[0].click("retry");
+  await flush();
+  await flush();
+  assert.strictEqual(windows.length, 2, "the refusal reopened the dialog");
+  const html = decodeURIComponent(windows[1].loaded[0]);
+  assert.match(html, /app files were removed/);
+  assert.doesNotMatch(html, /still being installed/);
+});
+
+// Nothing is installing behind the pruned dialog, so the splash under it must
+// not say "Finishing installation".
+test("the splash behind the removed-files dialog does not claim an install", async () => {
+  const { statuses } = await windowsNoBundleDialog({ pruneMidRun: true });
+  assert.ok(statuses.some((line) => line.includes("Some app files are missing. Use Quit in the dialog, then reopen Kiro Crew.")), statuses.join(" | "));
+  assert.ok(!statuses.some((line) => line.includes("Finishing installation")), statuses.join(" | "));
+});
+
+// Files arriving again under a pruned dialog do not change its copy: the
+// remedy stays quit-and-reopen until the probe finds a complete tree.
+test("the removed-files dialog keeps its copy while files arrive", async () => {
+  const { windows, timers, state, statuses } = await windowsNoBundleDialog({ pruneMidRun: true });
+  const dialog = windows[0];
+  state.pruned = false;
+  state.interpreterOnly = true;
+  timers.tick(INSTALLING_PROBE_MS);
+  assert.deepStrictEqual(dialog.scripts, [], "nothing is repainted while parts are still missing");
+  assert.match(statuses.at(-1), /Some app files are missing/);
+});
+
+// Reveal Log reopens the dialog through the caller's loop; it reopens on the
+// same pruned copy, with Quit accented and on Enter.
+test("a removed-files dialog reopened from Reveal Log keeps its copy and accent", async () => {
+  const { windows, state } = await windowsNoBundleDialog({ pruneMidRun: true });
+  state.pruned = false;
+  state.interpreterOnly = true;
+  windows[0].click("reveal");
+  await flush();
+  await flush();
+  assert.strictEqual(windows.length, 2, "the dialog reopened");
+  const html = decodeURIComponent(windows[1].loaded[0]);
+  assert.match(html, /app files missing/);
+  assert.ok(html.includes(QUIT_ACCENTED));
+  assert.match(html, /var primaryAct = "act\('quit'\)";/);
+});
+
+// A launch that never saw a backend has no incident behind it, so it keeps the
+// install copy (an installer may still be writing the tree).
+test("a packaged Windows app that boots with no bundle keeps the install copy", async () => {
+  const { windows } = await windowsNoBundleDialog({ pruneMidRun: false });
+  const html = decodeURIComponent(windows[0].loaded[0]);
+  assert.match(html, /installation still finishing/);
+  assert.match(html, /still being installed/);
+  assert.doesNotMatch(html, /app files were removed/);
+  assert.ok(!html.includes(QUIT_ACCENTED));
 });
 
 test("a packaged Windows app that boots with no bundle reports it instead of spawning from PATH", async () => {
@@ -2610,7 +2747,8 @@ test("installing dialog retries exactly once when the probe reports complete", a
   // an update install dispatched during the linger disables Retry for the
   // mouse, and the keyboard has to honour the same guard.
   const html = decodeURIComponent(dialog.loaded[0]);
-  assert.match(html, /if \(e\.key === 'Enter'\) \{\s*for \(const b of document\.querySelectorAll\('button'\)\) \{\s*if \(b\.getAttribute\('onclick'\) !== "act\('retry'\)"\) continue;\s*if \(!b\.disabled\) b\.click\(\);/,
+  assert.match(html, /var primaryAct = "act\('retry'\)";/, "Enter's primary is Retry here");
+  assert.match(html, /if \(e\.key === 'Enter'\) \{\s*for \(const b of document\.querySelectorAll\('button'\)\) \{\s*if \(b\.getAttribute\('onclick'\) !== primaryAct\) continue;\s*if \(!b\.disabled\) b\.click\(\);/,
     "Enter presses the primary button and respects its disabled state");
   assert.ok(!/if \(e\.key === 'Enter'\) act\(/.test(html), "Enter never calls act() directly");
   assert.strictEqual(dialog.destroyed, false, "the dialog lingers on the completion line");

@@ -21,6 +21,8 @@ const {
   describeIncompleteBundle,
   nextInstallingDialogState,
   INSTALLING_DIALOG_TITLE,
+  PRUNED_BACKEND_MESSAGE,
+  PRUNED_DIALOG_TITLE,
   shouldReclassifyAsInstalling,
   currentAttemptLog,
   SPAWN_MARKER,
@@ -91,6 +93,10 @@ const { createRemoteCrewPrompt } = require("./runtime/gateway/remote-crew-prompt
 const DEFAULT_THEME_ACCENT = "#8E48FF";
 const THEME_ACCENT_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 const INSTALLING_STATUS = "Finishing installation…";
+// The splash line behind the pruned-backend dialog: nothing is installing, so
+// it must not say so, and it points at the dialog's Quit, the control that
+// carries the action.
+const PRUNED_STATUS = "Some app files are missing. Use Quit in the dialog, then reopen Kiro Crew.";
 const RESTARTING_STATUS = "Restarting Kiro Crew to finish the update…";
 // The same handoff serves a caller that is not updating anything, and the splash
 // is the only surface the user is looking at while it runs, so the reason is the
@@ -254,6 +260,12 @@ function createGatewaySupervisor({
   // whenever one reaches handoff, and whenever a monitored backend answers
   // again, so each incident gets its own budget.
   let reresolveAttempts = 0;
+  // Set when a packaged Windows app refuses the PATH fallback after a
+  // stale-bundle incident: the backend tree it ran from was removed, so the
+  // dialog says to quit and reopen rather than to wait for an install. Kept
+  // across a Retry (which resets reresolveAttempts) and cleared once a launcher
+  // resolves to a real backend again.
+  let backendPruned = false;
   // Executables the CURRENT child was actually spawned from. findKirocrewBin
   // re-probes on every call, so after a Toolbox `current` junction is repointed
   // at a newer version it names a backend this shell never started; the child
@@ -1403,16 +1415,21 @@ function createGatewaySupervisor({
     // is back at a probed path. Unpackaged (source checkout) launches keep the
     // PATH fallback, which is how a developer's own install is found.
     if (IS_WIN && app.isPackaged && isPathFallback(bin)) {
+      if (reresolveAttempts >= 1) backendPruned = true;
       userError(`spawn REFUSED: no bundled backend under ${processObj.resourcesPath || "(no resourcesPath)"} — a packaged app does not fall back to ${bin} on PATH`);
       gatewayStartFailure = {
-        error: describeIncompleteBundle([], { autoRetry: true }),
+        error: backendPruned
+          ? PRUNED_BACKEND_MESSAGE
+          : describeIncompleteBundle([], { autoRetry: true }),
         incompleteBundle: true,
         bundled: true,
+        backendPruned,
       };
-      sendStatus(INSTALLING_STATUS);
+      sendStatus(backendPruned ? PRUNED_STATUS : INSTALLING_STATUS);
       resolve(false);
       return;
     }
+    backendPruned = false;
 
     // The Windows installer writes backend-dist incrementally. Refusing an
     // incomplete interpreter is preventive but cannot see package siblings that
@@ -1787,6 +1804,9 @@ function createGatewaySupervisor({
       // gateway while it swaps the bundle, and a retry then would relaunch what
       // it is replacing.
       autoRetryProbe,
+      // The refusal followed a stale-bundle incident: an unresolvable launcher
+      // means the backend was removed, and the probe's copy says so.
+      backendPruned: prunedBackend = false,
     } = options;
     const showQuitButton = configuredShowQuitButton ?? !noRetry;
     // The installing dialog opens on what the bundle looks like NOW, not on the
@@ -1795,7 +1815,7 @@ function createGatewaySupervisor({
     // again after the probe had already shown it falling.
     const opening = typeof autoRetryProbe === "function"
       ? (() => {
-        try { return nextInstallingDialogState(autoRetryProbe()); }
+        try { return nextInstallingDialogState(autoRetryProbe(), { pruned: prunedBackend }); }
         catch { return null; }
       })()
       : null;
@@ -1839,8 +1859,10 @@ function createGatewaySupervisor({
       // Only the Enter key binding reads this: the row builds each button's own
       // label below, so a separate primary label would be a second place for the
       // rendered text to drift from the action it fires.
+      // A pruned dialog accents Quit, so Enter presses Quit too: the keyboard
+      // default is the highlighted button.
       const primaryAction = configuredPrimaryAction
-        || (noRetry ? "quit" : (portConflict ? "force-retry" : "retry"));
+        || (noRetry || prunedBackend ? "quit" : (portConflict ? "force-retry" : "retry"));
       // Client-only mode cannot reach dashboard Settings to reverse the choice,
       // so this pre-dashboard UI carries the only in-app way back. The spawn
       // binds THIS port: on a crew's port a gateway started in place would
@@ -1948,11 +1970,13 @@ function createGatewaySupervisor({
           function act(a){ document.title = 'mc-action:' + a; window.close(); }
           // Enter presses the primary BUTTON rather than calling act() directly,
           // so a button the completion paint has disabled stays disabled for the
-          // keyboard too; Escape maps to Quit, which is never disabled.
+          // keyboard too; Escape maps to Quit, which is never disabled. The
+          // completion paint reassigns primaryAct when it moves the accent.
+          var primaryAct = "act('${primaryAction}')";
           document.addEventListener('keydown', e => {
             if (e.key === 'Enter') {
               for (const b of document.querySelectorAll('button')) {
-                if (b.getAttribute('onclick') !== "act('${primaryAction}')") continue;
+                if (b.getAttribute('onclick') !== primaryAct) continue;
                 if (!b.disabled) b.click();
                 break;
               }
@@ -1978,7 +2002,7 @@ function createGatewaySupervisor({
           }
           let state;
           try {
-            state = nextInstallingDialogState(autoRetryProbe());
+            state = nextInstallingDialogState(autoRetryProbe(), { pruned: prunedBackend });
           } catch (probeError) {
             glog(`install probe failed (${probeError && probeError.message}); will probe again`);
             return;
@@ -2010,7 +2034,13 @@ function createGatewaySupervisor({
                 `document.querySelector(".title").textContent = ${JSON.stringify(state.title)};`
                 + " for (const b of document.querySelectorAll('button')) {"
                 + " if (b.getAttribute('onclick') === \"act('retry')\") { b.disabled = true; b.textContent = 'Starting…'; }"
-                + " if (b.getAttribute('onclick') === \"act('quit')\") b.textContent = 'Quit anyway'; }",
+                + " if (b.getAttribute('onclick') === \"act('quit')\") b.textContent = 'Quit anyway';"
+                // A pruned dialog opened with Quit accented; the finished frame
+                // puts the accent back on the busy Retry, so "Quit anyway" never
+                // reads as the recommended action.
+                + " if (b.getAttribute('onclick') === \"act('retry')\") b.className = 'ok';"
+                + " if (b.getAttribute('onclick') === \"act('quit')\") b.className = 'cancel'; }"
+                + " primaryAct = \"act('retry')\";",
               )
               .catch(() => { /* window closing under the paint */ });
             setTimeoutFn(() => {
@@ -2494,7 +2524,7 @@ function createGatewaySupervisor({
       let title;
       let message;
       if (failureKind === "installing") {
-        title = INSTALLING_DIALOG_TITLE;
+        title = failureRecord?.backendPruned ? PRUNED_DIALOG_TITLE : INSTALLING_DIALOG_TITLE;
         message = refusedBeforeSpawn
           ? error.message
           : describeIncompleteBundle([]);
@@ -2545,6 +2575,9 @@ function createGatewaySupervisor({
           // not run, so both action buttons reach the same check and quitting and
           // reopening is the route that recovers.
           ...(gatewayStartFailure?.localStartUnverifiable ? { accentQuit: true } : {}),
+          // The pruned-backend paragraph asks for Quit first, so the accent
+          // follows it.
+          ...(failureRecord?.backendPruned ? { accentQuit: true, backendPruned: true } : {}),
           // Retry reaches the crew in every one of these states, so it says which
           // crew in every one of them. Labelling it only where the accent moves
           // made the same control read as two: "Retry" in one opening of a dialog
