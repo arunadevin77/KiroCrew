@@ -51,6 +51,7 @@ import hashlib
 import logging
 import os
 import tempfile
+import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -253,6 +254,56 @@ def is_present(model: WhisperModel) -> bool:
     """
     try:
         return model_path(model).stat().st_size == model.size_bytes
+    except OSError:
+        return False
+
+
+#: Empty file whose mtime records the last real (non-prewarm) decode on this host.
+#: It holds no audio, no transcript and no model name: only "speech recognition was
+#: used at about this time", which is what the boot prewarm needs to decide whether
+#: loading 1.6 GB of weights on every launch is serving anyone.
+_USAGE_MARKER = ".last-decode"
+
+#: How often a busy gateway re-stamps the marker. The boot gate asks about DAYS,
+#: so an hour of slack costs nothing, and every partial of a dictation does not
+#: turn into a filesystem write.
+_USAGE_STAMP_INTERVAL_SECS = 3600.0
+
+_last_usage_stamp: float | None = None
+
+
+def usage_marker_path() -> Path:
+    return models_dir() / _USAGE_MARKER
+
+
+def claim_usage_stamp() -> bool:
+    """Whether a stamp is due now, claiming it if so. No I/O: safe on the event loop.
+
+    True at most once per :data:`_USAGE_STAMP_INTERVAL_SECS` per process. The caller
+    that gets True then runs :func:`write_usage_marker`, off the loop.
+    """
+    global _last_usage_stamp
+    now = time.monotonic()
+    if _last_usage_stamp is not None and now - _last_usage_stamp < _USAGE_STAMP_INTERVAL_SECS:
+        return False
+    _last_usage_stamp = now
+    return True
+
+
+def write_usage_marker() -> None:
+    """Create or touch the usage marker. Blocking I/O; best-effort, never raises."""
+    path = usage_marker_path()
+    try:
+        path.touch(exist_ok=True)
+        os.utime(path)
+    except OSError:
+        logger.debug("Could not stamp the speech usage marker", exc_info=True)
+
+
+def used_within(seconds: float) -> bool:
+    """Whether a real decode was recorded in the last *seconds*. False when unknown."""
+    try:
+        return time.time() - usage_marker_path().stat().st_mtime <= seconds
     except OSError:
         return False
 

@@ -513,8 +513,8 @@ mutates the context, so two concurrent decodes on one context corrupt each other
 and a superseded partial aborts rather than queueing.
 
 **Boot prewarm.** `dashboard.server._stt_startup_prewarm` loads and warms the model
-in the background a few seconds after boot, so the first dictation of a gateway's
-life does not pay the cold start. Triggering only on the browser's pointer-down is
+in the background a few seconds after boot, on a host that has dictated recently (see
+below), so the first dictation of a gateway's life does not pay the cold start. Triggering only on the browser's pointer-down is
 too late: the digest verification and the native load sit in front of the first
 utterance's own decode, so a user who says a short phrase and stops is still waiting
 on them after they have finished speaking. It is registered beside the idle sweep and
@@ -532,6 +532,26 @@ first and second decode after a load). On macOS it is not: a reviewer measured
 0.018 s on every run after, because the OS caches the compiled library. Boot prewarm
 covers that once-per-machine cost, which makes it worth more on a Mac than the aarch64
 figures suggest rather than less.
+
+It runs only on a host that dictates. whisper.cpp reads the weights into one
+anonymous native buffer rather than mmapping them, so a boot warm of `large-v3-turbo`
+held ~1.6 GB for `idle_evict_secs` on every launch, the largest single mapping in the
+gateway's startup peak, whether or not anyone spoke. A model file on disk only proves
+a download once happened. So every real decode (any kind but the prewarm's own
+throwaway, `KIND_PREWARM`) touches the empty marker `models/whisper/.last-decode`,
+at most once an hour per process: `stt.models.claim_usage_stamp` decides on the loop
+with no I/O and `write_usage_marker` runs in a worker thread as a detached task the
+decode does not await, so a stalled filesystem can neither freeze the loop nor hold a
+finished transcript past the final's deadline. The boot
+prewarm requires `stt.models.used_within(_STT_BOOT_PREWARM_RECENT_USE_SECS)` (14 days)
+after the presence gate. The window is a recency test, not "ever decoded", so a host
+that tried dictation once and stopped does not pay the block on every boot for good;
+the hourly throttle keeps the marker's mtime current without a write per partial. The
+cost is a cold first dictation after a quiet spell, and on every host's first boot after
+upgrading, when no marker exists yet: that dictation pays the load via the pointer-down
+prewarm, as every host did before the boot warm existed, and its decode writes the
+marker so the next boot warms again. A models directory the gateway cannot write never
+gets a marker, so that host never boot-warms; stamping is best-effort and never raises.
 
 **A fixture is evidence too, and a wrong one is worse than none.** The capture
 harness answered `/api/stt/status` with `size_mb` where the payload's field is

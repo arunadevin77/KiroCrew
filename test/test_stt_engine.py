@@ -1481,6 +1481,76 @@ async def test_prewarm_does_not_repeat_inference_until_the_model_is_reloaded(fak
 
 
 @pytest.mark.asyncio
+async def test_a_prewarm_does_not_count_as_use_for_the_boot_gate(
+    fake_engine, monkeypatch, tmp_path
+):
+    """The boot prewarm is gated on recent use; its own decode must not feed that gate."""
+    monkeypatch.setattr(models, "models_dir", lambda: tmp_path)
+    monkeypatch.setattr(models, "_last_usage_stamp", None)
+    eng, fake = fake_engine
+    assert (await eng.prewarm("base", "en")).ok
+    assert fake.decoded_samples
+    assert not models.usage_marker_path().exists()
+
+
+@pytest.mark.asyncio
+async def test_a_real_decode_stamps_use_for_the_boot_gate(fake_engine, monkeypatch, tmp_path):
+    monkeypatch.setattr(models, "models_dir", lambda: tmp_path)
+    monkeypatch.setattr(models, "_last_usage_stamp", None)
+    eng, _fake = fake_engine
+    await eng.ensure_loaded("base", "en")
+    audio = np.zeros(engine_mod.SAMPLE_RATE_HZ, dtype=np.float32)
+    assert await eng.decode(audio) == "hello world"
+    await asyncio.gather(*eng._stamp_tasks)
+    assert models.used_within(60)
+
+
+@pytest.mark.asyncio
+async def test_the_usage_stamp_write_runs_off_the_event_loop(fake_engine, monkeypatch, tmp_path):
+    """A stalled filesystem must not freeze the gateway's loop on the first dictation."""
+    monkeypatch.setattr(models, "models_dir", lambda: tmp_path)
+    monkeypatch.setattr(models, "_last_usage_stamp", None)
+    writers: list[int] = []
+    monkeypatch.setattr(models, "write_usage_marker", lambda: writers.append(threading.get_ident()))
+    eng, _fake = fake_engine
+    await eng.ensure_loaded("base", "en")
+    audio = np.zeros(engine_mod.SAMPLE_RATE_HZ, dtype=np.float32)
+    assert await eng.decode(audio) == "hello world"
+    assert await eng.decode(audio) == "hello world"  # inside the interval: no second write
+    await asyncio.gather(*eng._stamp_tasks)
+    assert len(writers) == 1
+    assert writers[0] != threading.get_ident()
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_usage_stamp_does_not_hold_the_transcript(
+    fake_engine, monkeypatch, tmp_path
+):
+    """The final's deadline would cancel a decode still waiting on the marker write."""
+    monkeypatch.setattr(models, "models_dir", lambda: tmp_path)
+    monkeypatch.setattr(models, "_last_usage_stamp", None)
+    release = threading.Event()
+    written = threading.Event()
+
+    def _stalled_write() -> None:
+        release.wait(60)
+        written.set()
+
+    monkeypatch.setattr(models, "write_usage_marker", _stalled_write)
+    eng, _fake = fake_engine
+    await eng.ensure_loaded("base", "en")
+    audio = np.zeros(engine_mod.SAMPLE_RATE_HZ, dtype=np.float32)
+    try:
+        # The ceiling only names a hang; the verdict is the line after it.
+        assert await asyncio.wait_for(eng.decode(audio), timeout=30) == "hello world"
+        assert not written.is_set(), "the transcript must not wait for the marker write"
+        assert eng._stamp_tasks, "the write is still in flight, held by the engine"
+    finally:
+        release.set()
+        await asyncio.gather(*eng._stamp_tasks)
+
+
+@pytest.mark.asyncio
 async def test_a_session_stop_aborts_its_partial_but_never_its_final(fake_engine):
     eng, fake = fake_engine
     await eng.ensure_loaded("base", "en")

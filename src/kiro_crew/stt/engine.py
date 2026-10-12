@@ -506,6 +506,9 @@ class WhisperEngine:
         #: 148 MB at the default and 1.6 GB at the largest, so two at once is what
         #: exhausts a host sized for one.
         self._load_future: "asyncio.Future[Any] | None" = None
+        #: Usage-marker writes in flight. Detached so a stalled filesystem never
+        #: holds a finished transcript; kept here so the loop cannot collect one.
+        self._stamp_tasks: set[asyncio.Task[None]] = set()
         # A native call can outlive its abort grace. Keep its future so retries
         # cannot allocate another large model while the retired one still runs.
         self._retired_decode: asyncio.Future | None = None
@@ -1022,6 +1025,15 @@ class WhisperEngine:
                 self._last_used = time.monotonic()
                 self._warmed_key = self._key
                 complete = True
+                if kind != telemetry.KIND_PREWARM and models.claim_usage_stamp():
+                    # Read by the boot prewarm gate (stt_hooks): a host that never
+                    # decodes does not pay for resident weights on every launch.
+                    # The claim is a clock read; the write is file I/O, so it runs
+                    # in a thread, once an hour per process, and is NOT awaited: a
+                    # stalled filesystem must not cost the transcript in hand.
+                    stamp = asyncio.create_task(asyncio.to_thread(models.write_usage_marker))
+                    self._stamp_tasks.add(stamp)
+                    stamp.add_done_callback(self._stamp_tasks.discard)
                 if should_abort():
                     return ""
                 # Only after the abort check: an aborted decode unwinds early, and its

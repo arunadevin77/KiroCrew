@@ -455,6 +455,12 @@ _STT_SWEEP_BOOT_DELAY_SECS = 30.0
 # listener, serving the first page, or restoring sessions.
 _STT_PREWARM_BOOT_DELAY_SECS = 5.0
 
+# How recent a real decode must be for the boot prewarm to load the speech model.
+# The weights are one anonymous native buffer (1.6 GB for large-v3-turbo) held for
+# `stt.idle_evict_secs`, so a host that does not dictate skips the boot warm and keeps
+# the pointer-down prewarm.
+_STT_BOOT_PREWARM_RECENT_USE_SECS = 14 * 86400
+
 
 async def _prune_browser_snapshots_loop() -> None:
     """Keep the browser snapshot directory bounded for as long as we run.
