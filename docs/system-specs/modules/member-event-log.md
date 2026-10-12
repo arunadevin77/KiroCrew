@@ -322,9 +322,9 @@ row therefore carries
 this log. The rows are not dropped -- they are that member's real history as far as
 anything can tell, and discarding them would lose activity the dashboard has always
 shown. `_activity_key` strips the marker before hashing, so the marker changes no
-row's migration identity: a row a pass before this rule appended bare still dedupes
-against the marked one a later pass writes, and no member gets a duplicate for having
-been migrated by the older code.
+row's migration identity: a stored row without it, such as a live `record_activity`
+entry, has the same identity as that row with the marker added, so a stored row of
+either shape is one match for the same legacy row.
 
 **The legacy file is decoded with replacement, not strictly.** The fold already skips
 a line it cannot parse as JSON, but that guard sits on the parse, and a strict decode

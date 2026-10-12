@@ -1331,7 +1331,7 @@ def test_a_colliding_members_activity_does_not_reach_the_other_members_view(tmp_
 
     # Stamped relative to NOW rather than to a fixed calendar date. The fold's
     # ``today`` is a ROLLING 24-hour window (``age < day`` in
-    # ``ActivityProjection.view``), so a hardcoded date stops being inside it
+    # ``_recency_counts``), so a hardcoded date stops being inside it
     # the following day and the count assertion below reds on an unchanged
     # tree -- which is exactly what happened to this test.
     from datetime import datetime, timedelta, timezone

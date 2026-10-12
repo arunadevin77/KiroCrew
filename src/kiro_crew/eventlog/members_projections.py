@@ -60,18 +60,7 @@ def scope_activity_view(view: dict, owner: str) -> dict:
     records = [r for r in view.get("recent", []) if isinstance(r, dict)]
     kept = [r for r in records if r.get("member") == owner]
     now = datetime.now(timezone.utc).timestamp()
-    day = 86400.0
-    today = 0
-    week = 0
-    for r in kept:
-        secs = _parse_ts(r.get("ts"))
-        if secs is None:
-            continue
-        age = now - secs
-        if age < day:
-            today += 1
-        if age < 7 * day:
-            week += 1
+    today, week = _recency_counts([_parse_ts(r.get("ts")) for r in kept], now)
     out = dict(view)
     out["recent"] = kept
     out["today"] = today
@@ -96,6 +85,27 @@ def _parse_ts(ts: Any) -> float | None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.timestamp()
     return None
+
+
+def _recency_counts(timestamps: list[float | None], now: float) -> tuple[int, int]:
+    """How many *timestamps* are less than a day old, and less than a week old.
+
+    A timestamp later than *now* counts in both.
+
+    ``None`` is a record with no readable timestamp, which neither window counts.
+    """
+    day = 86400.0
+    today = 0
+    week = 0
+    for secs in timestamps:
+        if secs is None:
+            continue
+        age = now - secs
+        if age < day:
+            today += 1
+        if age < 7 * day:
+            week += 1
+    return today, week
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +165,10 @@ class RosterProjection:
             # `reconcile_member_preview` corrects a stale quote by appending a
             # `member/message` carrying the TRANSCRIPT's epoch, which is the last
             # thing SAID and is therefore older than any machinery turn since. A
-            # last-wins fold let that correction reset recency to the last
+            # last-wins fold would let that correction reset recency to the last
             # speech, on every roster read, in an append-only log with nothing to
-            # reopen it -- so a crewmate the user had just messaged sank back to
-            # where the quote was from. Taking the greater keeps both writers
+            # reopen it -- so a crewmate the user had just messaged would sink back
+            # to where the quote was from. Taking the greater keeps both writers
             # honest: the correction still lands its quote, and no writer has to
             # know what the recency was before it.
             #
@@ -209,9 +219,6 @@ class ActivityProjection:
     def view(self, state: dict) -> dict:
         recent = state["recent"]
         now = datetime.now(timezone.utc).timestamp()
-        day = 86400.0
-        today = 0
-        week = 0
         served: list[dict] = []
         for r in recent:
             secs = _parse_ts(r.get("ts")) if isinstance(r, dict) else None
@@ -220,16 +227,12 @@ class ActivityProjection:
                 # timeline, so it is skipped rather than served as garbage --
                 # the same rule the REST activity read applies.
                 continue
-            age = now - secs
-            if age < day:
-                today += 1
-            if age < 7 * day:
-                week += 1
             # ``ts`` is served as EPOCH SECONDS, not as the ISO string the log
-            # stores. The counting loop above already parses it, and the REST
-            # activity read serves epoch seconds too, so a consumer reading one
-            # of the two paths must not have to branch on which one it got.
+            # stores. The counts need it parsed anyway, and the REST activity
+            # read serves epoch seconds too, so a consumer reading one of the
+            # two paths must not have to branch on which one it got.
             served.append({**r, "ts": secs})
+        today, week = _recency_counts([r["ts"] for r in served], now)
         return {"recent": served, "today": today, "week": week}
 
 
