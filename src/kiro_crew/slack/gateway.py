@@ -14711,6 +14711,14 @@ class GatewayOrchestrator:
                 callback=self._on_slack_config_change,
                 name="GatewayOrchestrator.slack",
             ),
+            # Its own subscription: a deferral is merged per subscription, so a
+            # discarded ``agent`` section is retried without keeping the Slack
+            # paths stale beside it.
+            live.subscribe(
+                "agent.default_agent",
+                callback=self._on_default_agent_config_change,
+                name="GatewayOrchestrator.default_agent",
+            ),
         ]
 
     # gateway_runtime/channel_lifecycle.py
@@ -14727,6 +14735,8 @@ class GatewayOrchestrator:
     _close_channel_locked = _channel_lifecycle._close_channel_locked
 
     _on_slack_config_change = _channel_lifecycle._on_slack_config_change
+
+    _on_default_agent_config_change = _channel_lifecycle._on_default_agent_config_change
 
     _adopt_channel_sections_from_watcher = _channel_lifecycle._adopt_channel_sections_from_watcher
 

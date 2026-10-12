@@ -2445,7 +2445,8 @@ nothing to diff (`_retry_stale` on the empty-diff and unchanged-fingerprint
 paths), so the roster catches up with the repair. `_section_applier`,
 `_object_applier`, the `bind()` leaf applier (a discarded section holds a leaf's
 DEFAULT, and a bound setter handed that default would reset a cap or a ceiling),
-`_on_slack_config_change`, `_on_channel_config_change` and the session manager's
+`_on_slack_config_change`, `_on_default_agent_config_change`,
+`_on_channel_config_change` and the session manager's
 applier all raise it; the channel applier raises only the DEGRADED channels'
 paths after scheduling the healthy channels' restarts, so the retry never
 restarts a channel twice.

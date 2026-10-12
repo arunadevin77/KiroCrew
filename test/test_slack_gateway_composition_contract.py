@@ -142,6 +142,7 @@ _BASE_SURFACE: dict[str, tuple[tuple[str, str, str], ...]] = {
         ),
         ("_close_channel_locked", "async method", "(self, channel_type: 'str') -> 'None'"),
         ("_on_slack_config_change", "async method", "(self, change: 'ConfigChange') -> 'None'"),
+        ("_on_default_agent_config_change", "method", "(self, change: 'ConfigChange') -> 'None'"),
         (
             "_adopt_channel_sections_from_watcher",
             "async method",

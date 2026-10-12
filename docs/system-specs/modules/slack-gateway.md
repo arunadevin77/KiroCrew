@@ -1219,7 +1219,7 @@ Messages arriving while a session is busy are queued with ⏳ reaction and drain
 
 ## Live configuration
 
-`GatewayOrchestrator` is the process's channel host, so it owns two config
+`GatewayOrchestrator` is the process's channel host, so it owns three config
 appliers, registered in `_register_config_appliers` on the shared `ConfigWatch`
 (the appliers, `restart_channel` and the boot re-hoist are
 `slack/gateway_runtime/channel_lifecycle.py`; the hoists stay in `gateway.py`)
@@ -1345,6 +1345,24 @@ made.
 `config/sections.py`: the slash command is registered with Slack's app manifest, so
 no in-process apply can change it. No channel CONNECTION field is marked, because
 `restart_channel` applies those without a process restart.
+
+### The default-agent applier
+
+`_on_default_agent_config_change` (subscribed on `agent.default_agent` alone) hands
+the reloaded value to `handler.adopt_default_agent`, which sets the cached default a
+thread with no `!ta` / `!agent` override starts on (`_cached_default_agent`). The
+local `!agent` command sets that cache itself right after its own write; every other
+writer (the dashboard, `kirocrew config set`, an editor) reaches a running gateway
+through this applier, and the watcher then applies `!agent`'s value again, which
+changes nothing.
+
+A DISCARDED `agent` section holds defaults, so the applier keeps the configured
+default and defers its own path, retried until the section validates. It is a
+subscription of its own because the watcher merges the paths a subscription defers
+with the ones it already holds stale: raised from the Slack applier, the deferral
+would keep the `slack.*` paths stale for as long as `agent` stays discarded, and the
+Slack work (an authorization audit record, the enterprise-id reload) would run again
+on every tick.
 
 ## Subagent & Cron Acknowledgment
 

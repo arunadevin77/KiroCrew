@@ -325,6 +325,19 @@ def _set_default_agent(name: str) -> None:
     _cached_default_agent = name
 
 
+def adopt_default_agent(name: str) -> None:
+    """Make *name* the default agent a thread with no override starts on.
+
+    Called by the gateway's config applier when ``agent.default_agent`` changes,
+    whichever writer changed it (the dashboard, ``kirocrew config set``, an editor).
+    :func:`_set_default_agent` sets the same cache straight after its own write,
+    because the next message may arrive before the watcher's next tick; the watcher
+    then applies the same value again, which changes nothing.
+    """
+    global _cached_default_agent
+    _cached_default_agent = name
+
+
 def _persist_channel_config(
     channel_id: str,
     activation: str | None = None,
