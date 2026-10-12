@@ -3,8 +3,8 @@ title: Crewmate dynamic dashboard -- a project report beside every crewmate's ch
 status: partial
 author: chenmingwei23, with kirocrew-lead
 created: 2026-10-03
-last-audited: 2026-10-11
-audited-at: 22a7358cf9
+last-audited: 2026-10-12
+audited-at: 8f6baa05c9
 doc-pr: 19204
 implementation-prs: [17507, 17998, 18014, 18994]
 tracking-issues: [18642]
@@ -25,10 +25,13 @@ superseded-by: []
   this bullet, that the repository takes no standalone RFC pull request and so
   this document could only ship inside its implementation, no longer holds: the
   amendment of 2026-10-11 below landed on its own.
-- Where this document and its amendment disagree, **the amendment holds**. The
+- Where this document and its amendments disagree, **the amendment holds**. The
   one of 2026-10-11 at the end supersedes §Migration plan's P2 row and the three
   passages that withheld an agent-written page until this gateway minted a
-  wrapper document around it.
+  wrapper document around it. The one of 2026-10-12 after it records three
+  further decisions -- a save stages a page rather than landing it, the catalog
+  flow is retired in favour of a reference gallery, and the approval gate is its
+  own module -- and names the passage each one supersedes.
 - Author: written up by the crew that implements it.
 - Created: 2026-10-03
 - Related:
@@ -738,3 +741,112 @@ rather than taking effect immediately, and a save-time lint on a hard-coded
 number WARNS rather than refuses. Keep this text when that work lands -- the
 flow is the premise the wrapper exemption above was granted on, so removing the
 gate would reopen the decision rather than simplify it.
+
+## Amendment 2026-10-12 -- a save stages, the catalog flow is retired, and the gate is its own module
+
+**This section records three accepted decisions, not proposals.** All three were
+decided on 2026-10-12 by this document's author for the dashboard line tracked in
+[issue #18642](https://github.com/kirodotdev/KiroCrew/issues/18642), and they land
+on main on their own so that each is readable off a base branch rather than
+proposed inside the pull request that depends on it. Where this section and the
+body above disagree, this section holds.
+
+It leaves the amendment of 2026-10-11 standing. Decision 1 below is the gate that
+amendment's exemption was granted on, stated as a rule of its own rather than left
+as a sentence inside a paragraph about ownership.
+
+### Decision 1 -- a save STAGES a page; it does not make it live
+
+This supersedes §The agent surface for the page itself's verb table, which gives
+staging to `dashboard_preview` and the undo to `dashboard_rollback`.
+
+A save writes a page into the owner agent's own package as a **staged** copy. It
+does not make that page live, it cuts no version, and the controller pushes it no
+values. The live path is one sequence of four steps:
+
+```
+stage -> preview -> a person approves -> apply
+```
+
+- **stage** is the save. The agent asks the person in chat for the page they want,
+  then saves what they agreed to; the save records the page and nothing else.
+- **preview** shows the staged page to the person who will decide on it. A preview
+  records nothing, which is what makes "show me" free when the answer is no.
+- **a person approves** the page they have just read.
+- **apply** cuts a version from the STAGED page and takes no page argument, so what
+  lands is provably the page the person looked at.
+
+The undo is `artifact_revert` on the package artifact rather than a
+dashboard-specific rollback verb. A page is a version of an artifact, so the
+artifact store's own revert is what puts an earlier page back, and a second
+rollback mechanism over the same versions would be two answers to one question.
+
+**The 2026-10-11 amendment's exemption rests on this gate, and that dependency is
+recorded here rather than inferred.** That amendment lets an agent-written page
+render with no gateway-minted navigation-blocking wrapper, and its reasons are
+reasons about the AUTHOR: only the owner agent writes the HTML, pushed values are
+text-only, the frame holds only the subscribed-fields allowlist, and the author
+already reaches the network with its own tools. Not one of them says a page nobody
+approved is safe to render. What makes the author test worth anything to a reader
+is that the page in front of them is a page a person said yes to. So: **remove the
+stage-preview-approve-apply gate and the no-wrapper decision is reopened, not
+simplified.** A change that would render a page no person approved needs this
+document amended first; it is not a local simplification of a save path.
+
+### Decision 2 -- the catalog flow is retired; the pages become a reference gallery
+
+This supersedes §Non-goals' "A template editor, a picker, or any authoring UI ...
+the controls to choose and edit a page are a later phase"; §The agent surface for
+the page itself's "show me another" row, which routes that request to
+`dashboard_templates`; §Templates are copied, versioned and shared's Registry row
+and its built-ins paragraph; and §Open questions 3's closing sentence, which parks
+the caller in "Phase 2's template picker".
+
+A crewmate **composes its own page**. There is no template picker, and the
+`dashboard_templates` id flow is retired: **nothing is loaded by id at run time**,
+and no run-time path resolves a page from a catalog entry.
+
+The pages that exist are not thrown away. They change role:
+
+| what it was | what it becomes |
+| --- | --- |
+| the twelve built-in dashboard templates | reference pages in a gallery |
+| the three panel templates | reference pages in the same gallery |
+| the good task-dashboard pages | reference pages in the same gallery |
+
+A gallery page is READ MATERIAL for the agent that writes a page: it copies from
+one and adapts it to what the person asked for. A gallery page is therefore not a
+template -- it has no instance, no adopt, no id anything resolves, and nothing a
+reader sees passes through it. The picker §Non-goals parked as a later phase is
+not a later phase any more; it is cancelled, because the caller it existed for --
+a person choosing one of our pages off a list -- is now a person asking the agent
+for the page they want.
+
+### Decision 3 -- the approval gate is its own module, and a renderer may name a package it does not publish
+
+This supersedes §Backward compatibility's "The page read resolves the default
+template for a crewmate that has adopted nothing, so the body always carries a
+page and the tab always draws the dynamic dashboard", wherever that is read as
+naming a page being the same act as publishing it.
+
+The gate of decision 1 and the renderer are **two modules**, and each owns one
+half:
+
+| half | the module that owns it | what it may do |
+| --- | --- | --- |
+| the approval gate | the save module (`dashboard_save`) | stage a page, show it, take the person's yes, and apply -- and apply is the only thing that cuts a version |
+| the render path | the dashboard renderer and its host | serve an APPLIED version of the package this dashboard is bound to, and fill the fields that page subscribed to |
+
+From that split follows the thing worth writing down: **a renderer may hold the
+name of a package it does not publish.** A renderer carrying a binding -- the slug
+of the package this dashboard renders, `bound_package_slug` -- publishes nothing by
+carrying it, because the renderer serves an applied version and nothing is applied
+until a person has approved it. A bound package with no applied version renders
+nothing at all. Naming and publishing are different acts: the binding answers
+WHICH package a reader would see, and the gate answers WHETHER there is yet
+anything to see.
+
+The ordering this permits is one-way, and both directions are part of the
+decision. A renderer may land before the gate, because until a version is applied
+it has nothing to serve. The gate may not be dropped afterwards, because decision
+1 is the premise the no-wrapper exemption of 2026-10-11 was granted on.
