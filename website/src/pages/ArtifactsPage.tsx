@@ -13,6 +13,7 @@ import { useCollapseOnScroll, COLLAPSE_MS, CHROME_ATTR } from '../hooks/useColla
 import { DndContext, DragOverlay, MeasuringStrategy, pointerWithin, type DragEndEvent, type DragStartEvent, type CollisionDetection, type Modifier } from '@dnd-kit/core'
 import SegmentedControl from '../components/SegmentedControl'
 import { api } from '../api/client'
+import { apiErrorCode } from '../api/apiError'
 import { Card, CardTitle, PageHeader, Btn, Badge, SearchInput, EmptyState, Input } from '../components/ui'
 import ErrorNotice from '../components/ErrorNotice'
 import Clickable from '../components/Clickable'
@@ -2214,35 +2215,64 @@ function RemoteBrowseSection({ provider, onForked, onCloned }: {
   onCloned: (slug: string) => void
 }) {
   const [search, setSearch] = useState('')
-  const scope = provider.discovery_model.list_mine ? 'mine'
-    : provider.discovery_model.list_shared_with_me ? 'shared' : 'public'
+  // Every listing scope the provider advertises, tried in this order. A scope
+  // the provider answers `scope_unsupported` for is skipped rather than shown
+  // as a failure; once every scope is skipped the section renders nothing.
+  const { list_mine, list_shared_with_me, list_public } = provider.discovery_model
+  const scopes = useMemo(
+    () => [list_mine && 'mine', list_shared_with_me && 'shared', list_public && 'public']
+      .filter((s): s is string => !!s),
+    [list_mine, list_shared_with_me, list_public],
+  )
+  const [skippedScopes, setSkippedScopes] = useState(0)
+  const scope: string | undefined = scopes[skippedScopes]
   const useSearch = !!search && provider.discovery_model.full_text_search
   const {
     data, isLoading, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isPlaceholderData,
   } = useInfiniteQuery<
-    { artifacts: RemoteArtifact[]; next_page_token?: string | null }
+    { artifacts: RemoteArtifact[]; next_page_token?: string | null; scopeUnsupported?: boolean }
   >({
     // Tag the key with the mode ('q' vs 'scope') so a full-text query that
     // happens to equal the scope word (e.g. typing "mine") can't collide with
     // the scope listing's cache entry.
     queryKey: ['remote-artifacts', provider.name, useSearch ? ['q', search] : ['scope', scope]],
-    queryFn: ({ pageParam }) =>
-      api.browseRemoteArtifacts(provider.name, {
-        ...(useSearch ? { q: search } : { scope }),
-        ...(pageParam ? { pageToken: pageParam as string } : {}),
-      }),
+    queryFn: async ({ pageParam }) => {
+      try {
+        return await api.browseRemoteArtifacts(provider.name, {
+          ...(useSearch ? { q: search } : { scope }),
+          ...(pageParam ? { pageToken: pageParam as string } : {}),
+        })
+      } catch (err) {
+        // A scope the provider does not list is its settled answer, not a
+        // failure: it resolves as an empty page the section skips, so no retry
+        // asks again and no error card renders. Only a listing is skipped; a
+        // search the provider cannot run stays an error, because the user typed it.
+        if (!useSearch && apiErrorCode(err) === 'scope_unsupported') {
+          return { artifacts: [], scopeUnsupported: true }
+        }
+        throw err
+      }
+    },
     initialPageParam: '',
     // The provider paginates via next_page_token; stop when it stops handing
     // one out (null/empty ⇒ last page). Without this, remote artifacts beyond
     // the provider's first page would be unreachable.
     getNextPageParam: (last) => last.next_page_token || undefined,
     staleTime: 60_000,
+    // Nothing left to list once every advertised scope is skipped.
+    enabled: useSearch || scope !== undefined,
     // Keep the prior page's rows while a new full-text query fetches. Without
     // this, every keystroke changes the key → data=undefined → isLoading=true →
     // the section (and the focused SearchInput inside it) unmounts, dropping
     // keyboard focus mid-word.
     placeholderData: keepPreviousData,
   })
+  // Read only from the current key's own answer: the placeholder kept while the
+  // next scope loads is the skipped scope's page, which would skip again.
+  const scopeUnsupported = !isPlaceholderData && !!data?.pages[0]?.scopeUnsupported
+  useEffect(() => {
+    if (scopeUnsupported) setSkippedScopes((n) => n + 1)
+  }, [scopeUnsupported])
   const items: RemoteArtifact[] = (data?.pages || []).flatMap((p) => p.artifacts || [])
   // Drop artifacts already on this device (cloned or forked) — they live in
   // Your Artifacts above, so listing them here too would be a duplicate.

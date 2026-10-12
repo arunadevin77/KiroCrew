@@ -325,7 +325,23 @@ class TestRemoteBrowse:
         req = _request(match={"provider": "fakeprov"}, query={"scope": "public"})
         resp = await api_remote_artifacts_browse(req)
         assert resp.status == 400
-        assert "does not support" in _json_body(resp)["error"]
+        body = _json_body(resp)
+        assert "does not support" in body["error"]
+        # The machine-readable code is what lets the page skip the scope
+        # instead of showing an error card.
+        assert body["code"] == "scope_unsupported"
+
+    @pytest.mark.asyncio
+    async def test_browse_unsupported_search_carries_no_scope_code(
+        self, isolated_store, patch_restricted, registered_provider
+    ):
+        registered_provider.listing = None
+        req = _request(match={"provider": "fakeprov"}, query={"q": "dashboards"})
+        resp = await api_remote_artifacts_browse(req)
+        assert resp.status == 400
+        body = _json_body(resp)
+        assert "does not support full-text search" in body["error"]
+        assert "code" not in body
 
     @pytest.mark.asyncio
     async def test_browse_restricted_session_403(

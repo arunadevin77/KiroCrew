@@ -4990,7 +4990,8 @@ async def api_remote_artifacts_browse(request: web.Request) -> web.Response:
     A non-empty ``q`` runs full-text ``search_remote`` (providers whose
     ``discovery_model().full_text_search`` is True); otherwise
     ``list_remote(scope)``. ``None`` from the provider means that discovery
-    primitive isn't supported (400). Gated like other reads-with-state. A
+    primitive isn't supported (400; an unsupported scope listing also carries
+    ``code: "scope_unsupported"``). Gated like other reads-with-state. A
     provider name with nothing registered under it answers 404; in the public
     edition the registry is empty, so every browse returns 404 — the surface is
     inert until a companion registers a provider. A registered provider that
@@ -5056,8 +5057,18 @@ async def api_remote_artifacts_browse(request: web.Request) -> web.Response:
         )
         return _err(reason, status=502)
     if result is None:
-        verb = "full-text search" if query else f"{scope} listing"
-        return _err(f"{provider_name} does not support {verb}", status=400)
+        if query:
+            return _err(f"{provider_name} does not support full-text search", status=400)
+        # A scope the provider does not list is not a failure: the code lets the
+        # browse UI move on to the next scope the provider advertises instead of
+        # rendering an error card, and keeps it apart from a provider that raised.
+        return _json_response(
+            {
+                "error": f"{provider_name} does not support {scope} listing",
+                "code": "scope_unsupported",
+            },
+            status=400,
+        )
     # Annotate on the UN-redacted rows (external_ids intact) using a single
     # off-loop store scan, THEN redact — annotating after redaction would look up
     # a credential-shaped external_id in its ``[REDACTED]`` form and miss the

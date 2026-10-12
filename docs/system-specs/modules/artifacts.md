@@ -466,7 +466,7 @@ The CLI proxies through the gateway HTTP API (matches `kirocrew learn`).
 | `POST` | `/api/artifacts/{slug}/pull-latest` | Pull the tracked upstream (`?source=publication\|origin\|auto`) into a NEW local snapshot via `publish_sync.pull_upstream`; ungated ingress |
 | `GET` | `/api/artifacts/{slug}/upstream-status` | Cheap metadata-only drift check (`publish_sync.upstream_status`); best-effort, never blocks on the network |
 | `POST` | `/api/artifacts/{slug}/overwrite-remote` | Force-push local content over an upstream-ahead remote (`publish_sync.overwrite_upstream`); **egress — gated by `_publish_governance_denied` on the resolved `publication.provider`** |
-| `GET` | `/api/remote-artifacts/{provider}/browse` | Provider-routed discovery: `?q=` → `search_remote`, else `list_remote(?scope=mine\|shared\|public)`; rows annotated with `local_slug`; unregistered provider → 404; registered but unavailable → 503 |
+| `GET` | `/api/remote-artifacts/{provider}/browse` | Provider-routed discovery: `?q=` → `search_remote`, else `list_remote(?scope=mine\|shared\|public)`; rows annotated with `local_slug`; unregistered provider → 404; registered but unavailable → 503; a scope the provider does not list → 400 with `code: "scope_unsupported"`, which the `/artifacts` page answers by trying the provider's next advertised scope and hiding the section when none lists |
 | `POST` | `/api/remote-artifacts/{provider}/clone` | Bidirectional clone (`publish_sync.clone_from_remote`, sets `auto_sync=True` → arms future pushes); **gated by `_publish_governance_denied` on the routed provider**; empty registry → 503. Body: `{ "external_id": ... }` (provider-native ids can contain `/`, which a path segment can't carry) |
 | `POST` | `/api/remote-artifacts/{provider}/fork` | Independent copy with pull-only `fork_metadata` lineage (`publish_sync.fork_from_remote`); ungated ingress; empty registry → 503. Body: `{ "external_id": ... }` |
 | `GET` | `/api/remote-artifacts/{provider}/{external_id}` | Read-only detail fetch (metadata + content) for a provider-hosted artifact the user has no local copy of — content source for the remote-detail viewer; ungated ingress; passes `_redact_remote_response`; unregistered provider → 404; provider failure → 502 |
@@ -531,6 +531,8 @@ What holds the default back is not the transfer but a cross-store contract for
 whether a publication exists — see the withdrawal rules below and
 `personal_drive.PERSONAL_DRIVE_PROVIDER`; until that lands, the windows those rules
 guard are reachable only by someone who chose this destination deliberately.
+A provider that keeps the base `list_remote` advertises no listing scope from the
+base `discovery_model()`, so a publish-only destination gets no browse section.
 
 Because the drive pools **one** bucket and **one** distribution across every artifact,
 those artifacts share a serving domain, and what keeps them from sharing a browser origin

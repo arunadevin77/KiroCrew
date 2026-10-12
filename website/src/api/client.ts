@@ -997,6 +997,16 @@ const jInstancesDisabled = (r: Response) => parseJson(r, INSTANCES_DISABLED)
 const CREW_BOARD_NO_LEDGER: BenignDenial = { status: 404, code: 'no_ledger' }
 const jCrewBoard = (r: Response) => parseJson(r, CREW_BOARD_NO_LEDGER)
 
+/**
+ * The third: a remote-artifact provider answering `scope_unsupported` for a
+ * browse scope it does not list. The `/artifacts` page treats it as "try the
+ * next scope", not a failure, and probes every discovery provider on each load,
+ * so journaling it would file one error report per load for a provider that
+ * works. Any other browse failure, including a different 400, journals normally.
+ */
+const REMOTE_SCOPE_UNSUPPORTED: BenignDenial = { status: 400, code: 'scope_unsupported' }
+const jRemoteBrowse = (r: Response) => parseJson(r, REMOTE_SCOPE_UNSUPPORTED)
+
 /** Add transport failures that have no HTTP Response to the same journal as apiFailure.
  *
  *  The journaled report is also PINNED to the rejection (`attachReport`). Every deadline here
@@ -1435,7 +1445,7 @@ export const api = {
         `?scope=${encodeURIComponent(opts?.scope ?? 'mine')}` +
         (opts?.q ? `&q=${encodeURIComponent(opts.q)}` : '') +
         (opts?.pageToken ? `&pageToken=${encodeURIComponent(opts.pageToken)}` : ''),
-    ).then(j),
+    ).then(jRemoteBrowse),
   ...artifacts.remoteAndComments,
   ...browserAndComputerUse.hostAutomation,
   ...decisions.consentRead,
