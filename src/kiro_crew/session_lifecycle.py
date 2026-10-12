@@ -519,6 +519,12 @@ class _ChildTeardownHandler(Protocol):
 
     def has_live_or_queued_children(self, parent_session_key: str) -> bool: ...
 
+    def has_in_memory_pending_work_for(
+        self, parent_session_key: str, *, exclude_id: str = ""
+    ) -> bool: ...
+
+    async def has_pending_work_for_async(self, parent_session_key: str) -> bool: ...
+
     async def has_pending_store_children(self, parent_session_key: str) -> bool: ...
 
     def open_teardown_fence(self, parent_session_key: str) -> "AbstractSet[str] | None": ...
@@ -2727,11 +2733,23 @@ class SessionLifecycleService:
             return complete
 
     async def remove_if_unclaimed(self, key: str) -> bool:
-        """Remove a speculative session only while its first turn is unclaimed."""
+        """Remove a speculative session only while its first turn is unclaimed
+        and it owes no sub-agent work.
+
+        A free semaphore proves only that the parent's own turn is over: children
+        it spawned keep running on its runtime, and a finished child still owes
+        the parent its report. The decision follows the identity sweep's
+        spare-children shape. A tentative teardown fence opens under the lock,
+        the off-loop read asks the manager's single pending-work signal
+        (``has_pending_work_for_async``) plus the fence-aware store read, and the
+        commit re-asks the in-memory half under the lock before promoting the
+        fence. Any child, a failed read, or a pending injection keeps the parent.
+        """
         owner = self._owner
         constants = self._deps.constants()
         requested_key = key
         key = owner._fold_key(key)
+        handler = self._child_teardown
         async with owner._lock:
             session = owner._sessions.get(key)
             if (
@@ -2740,23 +2758,65 @@ class SessionLifecycleService:
                 or session.semaphore.locked()
             ):
                 return False
-            del owner._sessions[key]
-            # Snapshot the runs this key owns in the SAME lock hold as the pop: every
-            # await below is a window a cold start can register a successor under
-            # this key in, and a selection made after one would name the
-            # successor's runs. The cancel itself happens after the teardown.
-            teardown_children = self._snapshot_parent_children(key)
-            owner._advance_session_generation(key)
-            owner._compact_cooldown_until.pop(key, None)
-            self._suppress_replay.discard(key)
-            owner._compact_pending_verdict.pop(key, None)
-            self._origin_links.pop(key, None)
-            self.state.stop_requests.pop(key, None)
-            self._discard_replay_gap(key)
-            self.state.orphaned_holders.pop(key, None)
-            self._release_turn_ceiling(key, requested_key)
-            # Same tick as the removal: see reset.
-            await record_session_ended(key, end_reason=END_REASON_UNCLAIMED)
+            fence = self._open_teardown_fence(key)
+        committed = False
+        try:
+            if handler is not None:
+                try:
+                    if await handler.has_pending_work_for_async(
+                        key
+                    ) or await self._parent_has_sparable_child(key):
+                        return False
+                except Exception:
+                    self._deps.logger.warning(
+                        "Unclaimed removal: reading the sub-agents of %s failed; keeping it",
+                        key,
+                        exc_info=True,
+                    )
+                    return False
+            async with owner._lock:
+                if (
+                    owner._sessions.get(key) is not session
+                    or session.first_turn is constants.first_turn_nothing_armed
+                    or session.semaphore.locked()
+                    or owner._has_pending_injection(key)
+                ):
+                    return False
+                if handler is not None:
+                    if handler.has_live_or_queued_children(
+                        key
+                    ) or handler.has_in_memory_pending_work_for(key):
+                        return False
+                    if fence is not None and not handler.commit_identity_sweep_retire(key, fence):
+                        return False
+                committed = True
+                del owner._sessions[key]
+                # Select the runs this key owns in the SAME lock hold as the pop: every
+                # await below is a window a cold start can register a successor under
+                # this key in, and a selection made after one would name the
+                # successor's runs. The cancel itself happens after the teardown. A
+                # promoted fence is already the committed one, so only the selection
+                # half runs; re-opening it would drop the admissions it carries.
+                if handler is not None and fence is not None:
+                    teardown_children = tuple(handler.snapshot_teardown_children_only(key))
+                else:
+                    teardown_children = self._snapshot_parent_children(key)
+                owner._advance_session_generation(key)
+                owner._compact_cooldown_until.pop(key, None)
+                self._suppress_replay.discard(key)
+                owner._compact_pending_verdict.pop(key, None)
+                self._origin_links.pop(key, None)
+                self.state.stop_requests.pop(key, None)
+                self._discard_replay_gap(key)
+                self.state.orphaned_holders.pop(key, None)
+                self._release_turn_ceiling(key, requested_key)
+                # Same tick as the removal: see reset.
+                await record_session_ended(key, end_reason=END_REASON_UNCLAIMED)
+        finally:
+            # A kept parent (or a cancellation mid-read) runs no cancel sweep, so its
+            # tentative fence has no consumer; a commit promoted it instead.
+            if not committed and handler is not None and fence is not None:
+                handler.release_teardown_fence(key, fence)
         await asyncio.to_thread(self._deps.get_unlink_session_queue(), session)
         try:
             await session.provider.shutdown()

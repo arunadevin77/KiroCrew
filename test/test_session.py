@@ -7021,8 +7021,14 @@ class TestParentEndCancelsItsChildren:
         store_read_raises: bool = False,
         on_store_probe=None,
         fenced_children: dict[str, bool] | None = None,
+        pending_work: dict[str, bool] | None = None,
     ):
         """A handler shaped like ``SubagentManager``'s teardown halves.
+
+        ``pending_work`` drives both halves of the manager's pending-work signal
+        (``has_pending_work_for_async`` and ``has_in_memory_pending_work_for``):
+        work the live/queued probe cannot see, such as a finished child whose
+        terminal report is not yet registered. Default: none.
 
         Records the keys it was asked to snapshot and the id tuples it was asked
         to cancel, so a test can tell "asked about the right parent" apart from
@@ -7046,8 +7052,15 @@ class TestParentEndCancelsItsChildren:
         owned = children if children is not None else {}
         owned_store = store_children if store_children is not None else {}
         owned_fenced = fenced_children if fenced_children is not None else {}
+        owed = pending_work if pending_work is not None else {}
 
         class _Handler:
+            def has_in_memory_pending_work_for(self, parent_session_key, *, exclude_id=""):
+                return bool(owed.get(parent_session_key, False))
+
+            async def has_pending_work_for_async(self, parent_session_key: str) -> bool:
+                return bool(owed.get(parent_session_key, False))
+
             def snapshot_teardown_children(self, parent_session_key: str) -> tuple[str, ...]:
                 snapshotted.append(parent_session_key)
                 return owned.get(parent_session_key, ("run-1",))
@@ -7249,21 +7262,105 @@ class TestParentEndCancelsItsChildren:
         assert seen == [("run-1",)]
         await mgr.close_all()
 
+    @staticmethod
+    async def _armed_unclaimed(mgr, key: str) -> None:
+        """Open *key* as a removable speculative session.
+
+        Removable only while its first turn is armed and unclaimed: the arm is a
+        non-sentinel ``first_turn``, and unclaimed means nothing holds the
+        session's semaphore.
+        """
+        await mgr.get_or_create(key)
+        mgr.release(key)
+        mgr._sessions[key].first_turn = object()
+
     @pytest.mark.asyncio
-    async def test_remove_if_unclaimed_cancels_children(self, cfg):
+    async def test_remove_if_unclaimed_keeps_a_parent_with_a_live_child(self, cfg):
+        """An idle prefetch parent whose child still runs is not reclaimed.
+
+        The free semaphore proves only that the parent's own turn ended; the
+        child runs on the parent's runtime, so a reclaim here cancels it.
+        """
+        key = "dashboard:chat-9"
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         _snapshotted, seen, cb = self._recorder()
         mgr.set_child_teardown_handler(cb)
-        await mgr.get_or_create("dashboard:chat-9")
-        # A speculative session is removable only while its first turn is armed
-        # and unclaimed: the arm is a non-sentinel ``first_turn``, and unclaimed
-        # means nothing holds the session's semaphore.
-        mgr.release("dashboard:chat-9")
-        mgr._sessions["dashboard:chat-9"].first_turn = object()
+        await self._armed_unclaimed(mgr, key)
 
-        assert await mgr.remove_if_unclaimed("dashboard:chat-9") is True
+        assert await mgr.remove_if_unclaimed(key) is False
 
-        assert seen == [("run-1",)]
+        assert mgr.has_session(key)
+        assert seen == []
+        assert cb.fence_released == [key]  # type: ignore[attr-defined]
+        await mgr.close_all()
+
+    @pytest.mark.parametrize(
+        "owes",
+        ["pending_work", "store_children", "fenced_children", "store_read_raises"],
+    )
+    @pytest.mark.asyncio
+    async def test_remove_if_unclaimed_keeps_a_parent_that_owes_work(self, cfg, owes):
+        """Work the live-child probe cannot see still keeps the parent.
+
+        ``pending_work``: a finished child whose report is not registered yet.
+        ``store_children``: a row only the task store holds. ``fenced_children``:
+        a child admitted while the read ran. ``store_read_raises``: an unreadable
+        store is read as attached, never as childless.
+        """
+        key = "dashboard:chat-9"
+        kwargs: dict = {
+            "pending_work": {key: True},
+            "store_children": {key: True},
+            "fenced_children": {key: True},
+            "store_read_raises": True,
+        }
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        _snapshotted, seen, cb = self._recorder({key: ()}, **{owes: kwargs[owes]})
+        mgr.set_child_teardown_handler(cb)
+        await self._armed_unclaimed(mgr, key)
+
+        assert await mgr.remove_if_unclaimed(key) is False
+
+        assert mgr.has_session(key)
+        assert seen == []
+        assert cb.fence_released == [key]  # type: ignore[attr-defined]
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_remove_if_unclaimed_keeps_a_parent_that_gains_work_during_the_read(self, cfg):
+        """Work that appears while the off-loop read is suspended keeps the parent."""
+        key = "dashboard:chat-9"
+        owed: dict[str, bool] = {}
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        _snapshotted, seen, cb = self._recorder(
+            {key: ()},
+            pending_work=owed,
+            on_store_probe=lambda k: owed.__setitem__(k, True),
+        )
+        mgr.set_child_teardown_handler(cb)
+        await self._armed_unclaimed(mgr, key)
+
+        assert await mgr.remove_if_unclaimed(key) is False
+
+        assert mgr.has_session(key)
+        assert seen == []
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_remove_if_unclaimed_reclaims_a_parent_that_owes_nothing(self, cfg):
+        key = "dashboard:chat-9"
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        _snapshotted, seen, cb = self._recorder({key: ()})
+        mgr.set_child_teardown_handler(cb)
+        await self._armed_unclaimed(mgr, key)
+
+        assert await mgr.remove_if_unclaimed(key) is True
+
+        assert not mgr.has_session(key)
+        # The promoted fence is the committed one: only the selection half ran,
+        # and no tentative fence is left to release.
+        assert cb.fence_opened == [key]  # type: ignore[attr-defined]
+        assert cb.fence_released == []  # type: ignore[attr-defined]
         await mgr.close_all()
 
     @pytest.mark.asyncio
@@ -8805,6 +8902,9 @@ class TestParentEndCancelsItsChildren:
             # ``first_turn``, and nothing holding the semaphore.
             mgr.release("dashboard:chat-9")
             mgr._sessions["dashboard:chat-9"].first_turn = object()
+            # The reclaim keeps a parent whose child is live, so the probe answers
+            # "nothing owed" while the snapshot still names the run to cancel.
+            handler.has_live_or_queued_children = lambda _key: False  # type: ignore[method-assign]
 
         if verb == "retire_kiro_identity_sessions":
             # The sweep acts only on an idle (released) session whose provider uses the
