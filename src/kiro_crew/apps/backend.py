@@ -49,6 +49,7 @@ from kiro_crew.constants import (
     KIROCREW_SPAWNED_ENV,
     KIROCREW_SPAWNED_VALUE,
 )
+from kiro_crew.jsonl_util import rotate_jsonl_at as _rotate_jsonl_at
 from kiro_crew.owner_only_files import ensure_directory as _ensure_directory
 from kiro_crew.owner_only_files import owner_only_opener_for as _owner_only_opener_for
 from kiro_crew.sandbox import (
@@ -125,6 +126,21 @@ _warned_unconfined_cache = False
 # elevated-but-finite NOFILE ceiling as the workload's ANCESTOR. Every other
 # app backend keeps the standard (operator-configurable) resource policy.
 _BUILD_CAPABLE_APPS = frozenset({"dev-fleet"})
+
+
+# backend.log durability bound. The log is opened in APPEND mode so a crash
+# cause written just before a respawn survives the next start (truncate-on-open
+# would erase exactly the line that explains the crash). To stop the file
+# growing without limit ACROSS restarts, a size cap is applied ON OPEN with the
+# shared ``rotate_jsonl_at`` primitive: when backend.log reaches the cap it is
+# rolled aside to backend.log.1 (one previous generation kept, under a
+# non-blocking lock, never raising) before the append handle is taken, so the
+# previous session's log -- including a crash cause -- is still readable next to
+# the fresh current file. The check runs at spawn time only; within a single
+# session the child writes through the inherited stdout descriptor and can
+# overshoot the cap until the next (re)start rolls it, so this bounds growth
+# across restarts rather than continuously.
+_BACKEND_LOG_MAX_BYTES = 1_048_576  # 1 MiB
 
 
 # ---------------------------------------------------------------------------
@@ -1200,9 +1216,16 @@ def _start_app_backend_body(app_name: str, manifest: Any) -> AppProcess | None:
         # why provisioning failed. ``errors="replace"`` keeps the write total
         # for any codepoint; the child's own output is appended as raw bytes
         # through the inherited fd and is not affected by this wrapper.
+        #
+        # APPEND, not truncate: a respawn (including a crash-respawn loop) must
+        # not erase the prior session's log, which is exactly where the crash
+        # cause was written. The size cap is applied first by rolling the file
+        # aside with the shared ``rotate_jsonl_at`` primitive when it is full,
+        # so append does not grow it without bound.
+        _rotate_jsonl_at(log_path, _BACKEND_LOG_MAX_BYTES)
         log_fh = open(
             log_path,
-            "w",
+            "a",
             encoding="utf-8",
             errors="replace",
             opener=_owner_only_opener_for(log_path),  # 0600 inside the data home
