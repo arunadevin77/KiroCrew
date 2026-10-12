@@ -125,8 +125,7 @@ class TestOffLoopWrappers:
         )
         rows = log.read_messages("cron:abc")
         assert [r["role"] for r in rows] == ["user", "assistant"], (
-            "the already-present prompt must not be duplicated, and must not "
-            "suppress the result"
+            "the already-present prompt must not be duplicated, and must not " "suppress the result"
         )
 
     def test_append_if_absent_off_loop_inline_failure_is_logged(self, caplog) -> None:
@@ -178,9 +177,7 @@ class TestOffLoopWrappers:
         assert captured["fut"].done()
 
     @pytest.mark.asyncio
-    async def test_update_metadata_off_loop_offloads_to_executor(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_update_metadata_off_loop_offloads_to_executor(self, tmp_path: Path) -> None:
         log = _log(tmp_path)
         log.append("k", "user", "hi")
         loop = asyncio.get_running_loop()
@@ -199,9 +196,7 @@ class TestOffLoopWrappers:
         assert _log(tmp_path).get_metadata("k")["title"] == "later"
 
     @pytest.mark.asyncio
-    async def test_append_if_absent_off_loop_offloads_to_executor(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_append_if_absent_off_loop_offloads_to_executor(self, tmp_path: Path) -> None:
         log = _log(tmp_path)
         loop = asyncio.get_running_loop()
         futures: list[asyncio.Future] = []
@@ -256,9 +251,7 @@ class TestTranscriptStems:
 
     def test_legacy_stem_is_not_duplicated(self) -> None:
         with patch.object(H, "legacy_key", return_value="dashboard:chat-1"):
-            assert H.transcript_stems("dashboard:chat-1") == (
-                H._safe_key("dashboard:chat-1"),
-            )
+            assert H.transcript_stems("dashboard:chat-1") == (H._safe_key("dashboard:chat-1"),)
 
     @pytest.mark.parametrize(
         "key",
@@ -639,23 +632,25 @@ class TestListSessions:
         assert rows[0]["title"] == "newer"
 
     def test_stat_failure_skips_file(self, tmp_path: Path) -> None:
+        # A real file whose stat fails: a dangling handoff alias. Exercised on
+        # the filesystem rather than by patching Path.stat, because the listing
+        # stats through its directory scan entries.
         log = _log(tmp_path)
-        _write(tmp_path / "s1.jsonl", _jsonl({"_type": "metadata"}))
-        real_stat = Path.stat
-
-        def _stat(self, *args, **kwargs):
-            if self.suffix == ".jsonl":
-                raise OSError("gone")
-            return real_stat(self, *args, **kwargs)
-
-        with patch.object(Path, "stat", _stat):
-            assert log.list_sessions() == []
+        try:
+            os.symlink(tmp_path / "gone.jsonl.target", tmp_path / "s1.jsonl")
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks unavailable")
+        assert log.list_sessions() == []
 
     def test_symlinks_are_skipped(self, tmp_path: Path) -> None:
         log = _log(tmp_path)
-        _write(tmp_path / "s1.jsonl", _jsonl({"_type": "metadata"}))
-        with patch.object(Path, "is_symlink", return_value=True):
-            assert log.list_sessions() == []
+        real = tmp_path / "real.jsonl"
+        _write(real, _jsonl({"_type": "metadata"}))
+        try:
+            os.symlink(real, tmp_path / "s1.jsonl")
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks unavailable")
+        assert [row["key"] for row in log.list_sessions()] == ["real"]
 
 
 # ── clear_closed ───────────────────────────────────────────────────────────
@@ -760,9 +755,7 @@ class TestRecordEnvironmentFailure:
     def test_increments_and_widens_wait(self, tmp_path: Path) -> None:
         log = _log(tmp_path)
         log.append("k", "user", "hi")
-        first, at1 = log.record_consolidation_environment_failure(
-            "k", 100.0, 10_000.0, now=1_000.0
-        )
+        first, at1 = log.record_consolidation_environment_failure("k", 100.0, 10_000.0, now=1_000.0)
         second, at2 = log.record_consolidation_environment_failure(
             "k", 100.0, 10_000.0, now=1_000.0
         )
@@ -785,9 +778,7 @@ class TestRecordEnvironmentFailure:
         log = _log(tmp_path)
         log.append("k", "user", "hi")
         log.update_metadata("k", {"consolidation_env_failures": "wat"})
-        failures, _ = log.record_consolidation_environment_failure(
-            "k", 100.0, 10_000.0, now=0.0
-        )
+        failures, _ = log.record_consolidation_environment_failure("k", 100.0, 10_000.0, now=0.0)
         assert failures == 1
 
 
@@ -1137,9 +1128,7 @@ class TestDedupeJudge:
     async def test_returns_text_and_releases_session(self) -> None:
         sessions = _fake_sessions()
         c = _consolidator(sessions=sessions)
-        with patch(
-            "kiro_crew.history.stream_and_collect", AsyncMock(return_value="DUP")
-        ):
+        with patch("kiro_crew.history.stream_and_collect", AsyncMock(return_value="DUP")):
             assert await c._dedupe_judge("prompt") == "DUP"
         sessions.release.assert_called_once_with(BACKGROUND_KEY)
         sessions.recycle_background.assert_awaited_once()
@@ -1148,9 +1137,7 @@ class TestDedupeJudge:
     async def test_empty_text_becomes_empty_string(self) -> None:
         sessions = _fake_sessions()
         c = _consolidator(sessions=sessions)
-        with patch(
-            "kiro_crew.history.stream_and_collect", AsyncMock(return_value=None)
-        ):
+        with patch("kiro_crew.history.stream_and_collect", AsyncMock(return_value=None)):
             assert await c._dedupe_judge("prompt") == ""
 
     @pytest.mark.asyncio
@@ -1169,9 +1156,7 @@ class TestDedupeJudge:
         sessions = _fake_sessions()
         sessions.release.side_effect = RuntimeError("already released")
         c = _consolidator(sessions=sessions)
-        with patch(
-            "kiro_crew.history.stream_and_collect", AsyncMock(return_value="NEW")
-        ):
+        with patch("kiro_crew.history.stream_and_collect", AsyncMock(return_value="NEW")):
             assert await c._dedupe_judge("prompt") == "NEW"
 
 
@@ -1351,9 +1336,9 @@ class TestAttemptsDescribeCurrentSpan:
 
     def test_missing_count_skips_the_extent_test(self, tmp_path: Path) -> None:
         log = self._log(tmp_path)
-        assert log._attempts_describe_current_span(
-            {"consolidation_attempts_count": 3}, None
-        ) is True
+        assert (
+            log._attempts_describe_current_span({"consolidation_attempts_count": 3}, None) is True
+        )
 
 
 # ── metadata write guards ──────────────────────────────────────────────────
@@ -1405,17 +1390,13 @@ class TestUpdateMetadataLocked:
         assert log.update_metadata_if("k", {"tab_id": "t1"}, lambda m: True) is True
         assert _log(tmp_path).get_metadata("k")["tab_id"] == "t1"
 
-    def test_update_metadata_if_fails_closed_on_unreadable_record(
-        self, tmp_path: Path
-    ) -> None:
+    def test_update_metadata_if_fails_closed_on_unreadable_record(self, tmp_path: Path) -> None:
         log = _log(tmp_path)
         log.append("k", "user", "hi")
         with patch.object(log, "_read_metadata_status", return_value=({}, False)):
             assert log.update_metadata_if("k", {"title": "T"}, lambda m: True) is False
 
-    def test_update_metadata_if_upserts_a_missing_record_by_default(
-        self, tmp_path: Path
-    ) -> None:
+    def test_update_metadata_if_upserts_a_missing_record_by_default(self, tmp_path: Path) -> None:
         """The default contract, pinned so the new flag cannot quietly change it.
 
         Callers that publish identity into a record which may not exist yet rely
@@ -1444,9 +1425,7 @@ class TestUpdateMetadataLocked:
         assert _log(tmp_path).get_metadata("k") == {}
         assert list(tmp_path.glob("*.jsonl")) == []
 
-    def test_require_existing_still_merges_into_a_record_that_exists(
-        self, tmp_path: Path
-    ) -> None:
+    def test_require_existing_still_merges_into_a_record_that_exists(self, tmp_path: Path) -> None:
         """The flag must refuse only absence, never an ordinary merge."""
         log = _log(tmp_path)
         log.append("k", "user", "hi")
@@ -1466,9 +1445,7 @@ class TestUpdateMetadataLocked:
         log.delete_session("k")
 
         assert (
-            log.update_metadata_if(
-                "k", {"folder_id": "f1"}, lambda m: True, require_existing=True
-            )
+            log.update_metadata_if("k", {"folder_id": "f1"}, lambda m: True, require_existing=True)
             is False
         )
         assert list(tmp_path.glob("*.jsonl")) == []
@@ -1590,10 +1567,7 @@ class TestContentSnippet:
 
 class TestRecentFromSource:
     def test_missing_dir_returns_empty(self, tmp_path: Path) -> None:
-        assert (
-            ConversationLog(base_dir=tmp_path / "absent").recent_from_source("slack")
-            == []
-        )
+        assert ConversationLog(base_dir=tmp_path / "absent").recent_from_source("slack") == []
 
     def test_collects_and_excludes(self, tmp_path: Path) -> None:
         log = _log(tmp_path)
@@ -1697,9 +1671,7 @@ class TestReadMessagesSkipsBlankLines:
         log = _log(tmp_path)
         _write(
             log._path("k"),
-            _jsonl({"_type": "metadata"})
-            + "\n\n"
-            + _jsonl({"role": "user", "content": "only"}),
+            _jsonl({"_type": "metadata"}) + "\n\n" + _jsonl({"role": "user", "content": "only"}),
         )
         assert [m["content"] for m in log._read_messages("k")] == ["only"]
 
@@ -1820,9 +1792,7 @@ class TestSidecarSummariesSurviveMtimePreservingRewrites:
         assert log.get_cached_summary(key) == "describes the PRE-rewrite conversation"
         return sig
 
-    def test_an_advanced_content_generation_invalidates_both_sidecars(
-        self, tmp_path: Path
-    ) -> None:
+    def test_an_advanced_content_generation_invalidates_both_sidecars(self, tmp_path: Path) -> None:
         """The general contract, independent of which writer moved the content.
 
         ``rotation_generation`` is the module's content-identity counter: it is
@@ -1857,9 +1827,9 @@ class TestSidecarSummariesSurviveMtimePreservingRewrites:
             "signature would have caught this on its own and the test proves "
             "nothing about the generation"
         )
-        assert log.get_cached_summary("k") is None, (
-            "the summary describes a body of content that has been replaced"
-        )
+        assert (
+            log.get_cached_summary("k") is None
+        ), "the summary describes a body of content that has been replaced"
         assert log.get_cached_intent_summary("k") is None
 
         # ...but the payload is still ON DISK and reported as STALE, not gone.
@@ -1912,9 +1882,7 @@ class TestSidecarSummariesSurviveMtimePreservingRewrites:
         H._restore_mtime(path, sig)
         log._invalidate_cache(key)
 
-    def test_a_rewrite_during_generation_cannot_bless_a_stale_summary(
-        self, tmp_path: Path
-    ) -> None:
+    def test_a_rewrite_during_generation_cannot_bless_a_stale_summary(self, tmp_path: Path) -> None:
         """The write side of the same hole.
 
         Summary generation holds no lock while the model call is in flight, so
@@ -1937,9 +1905,9 @@ class TestSidecarSummariesSurviveMtimePreservingRewrites:
         log.set_cached_summary("k", "summarises the REPLACED content", sig, generation)
 
         assert log.session_mtime("k") == sig, "precondition: the mtime was preserved"
-        assert log.get_cached_summary("k") is None, (
-            "a summary of superseded content must not be served as current"
-        )
+        assert (
+            log.get_cached_summary("k") is None
+        ), "a summary of superseded content must not be served as current"
 
     def test_the_intent_setter_refuses_a_summary_the_rewrite_superseded(
         self, tmp_path: Path

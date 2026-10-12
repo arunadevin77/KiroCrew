@@ -21,7 +21,6 @@ from collections.abc import Mapping
 from typing import Any, Callable, Literal, NamedTuple, Optional, overload
 
 from kiro_crew import platform_compat
-from kiro_crew.acp.types import JSONRPC_METHOD_NOT_FOUND
 from kiro_crew.config.loader import KiroCrewConfig, config_dir, read_local_secret  # noqa: F401
 from kiro_crew.dashboard.origin import parse_dashboard_url  # noqa: F401
 from kiro_crew.install_liveness import (
@@ -63,6 +62,11 @@ from kiro_crew.validation import (
     validate_jsonrpc_request,
     validate_jsonrpc_response,
 )
+
+#: JSON-RPC 2.0 "method not found". Spelled here, not imported from
+#: ``kiro_crew.acp.types``: importing that module runs the ``kiro_crew.acp``
+#: package, which pulls the whole ACP client into every stdio MCP server.
+JSONRPC_METHOD_NOT_FOUND = -32601
 
 logger = logging.getLogger(__name__)
 

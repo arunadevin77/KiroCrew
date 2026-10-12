@@ -18,6 +18,7 @@ import re
 import time as _time
 from collections.abc import Callable, Container, Iterable, Iterator, Sequence
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from kiro_crew._sqlite_compat import is_cjk_char, script_runs
@@ -26,6 +27,9 @@ from kiro_crew.jsonl_util import bounded_records
 
 if TYPE_CHECKING:
     from kiro_crew.history import ConversationLog
+
+#: ``_scan_head_title`` outcome for a head that raised while being read; never cached.
+_UNREADABLE = object()
 
 
 SEARCH_MIN_CHARS = 2  # shortest query string that triggers backend search
@@ -1076,6 +1080,33 @@ class SessionCatalogProjection:
             stripped = stripped[len("dashboard_") :]
         return f"dashboard_{stripped}" if stripped else key
 
+    @staticmethod
+    def _scan_head_title(path: Path) -> object:
+        """The first user message's content[:80] within the first 21 lines.
+
+        Returns the title, ``None`` when the head holds none, or ``_UNREADABLE``
+        when reading or interpreting the head raised -- that outcome is not
+        cached, so a transient error is retried on the next listing exactly as
+        the uncached read always was.
+        """
+        try:
+            with open(path, encoding="utf-8") as f:
+                for i, ln in enumerate(f):
+                    if i > 20:
+                        break
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    try:
+                        d = json.loads(ln)
+                    except json.JSONDecodeError:
+                        continue
+                    if d.get("role") == "user" and d.get("content"):
+                        return d["content"][:80]
+        except Exception:
+            return _UNREADABLE
+        return None
+
     def list_sessions(self, *, keys: Iterable[str] | None = None) -> list[dict]:
         """Return metadata for session files, newest first.
 
@@ -1090,12 +1121,25 @@ class SessionCatalogProjection:
             return sessions
         # Deduplicate stacked dashboard_ prefixes by canonical key, keeping newer
         by_canon: dict[str, dict] = {}
-        paths = (
-            self._log._dir.glob("*.jsonl")
-            if keys is None
-            else (self._log._path(key) for key in keys)
-        )
-        for path in paths:
+        if keys is None:
+            # One scandir pass: the entry's d_type answers is_symlink without an
+            # lstat, and the order is the same directory order glob() used
+            # (glob iterates scandir), so ties in the final mtime sort resolve
+            # exactly as before. The suffix test is glob("*.jsonl")'s match:
+            # pathlib matches dot-names and directories, and folds case only
+            # where the platform's paths do (Windows).
+            try:
+                with os.scandir(self._log._dir) as it:
+                    entries: list[tuple[Path, os.DirEntry[str] | None]] = [
+                        (self._log._dir / e.name, e)
+                        for e in it
+                        if os.path.normcase(e.name).endswith(".jsonl")
+                    ]
+            except OSError:
+                entries = []
+        else:
+            entries = [(self._log._path(key), None) for key in keys]
+        for path, entry in entries:
             key = path.stem
             # Snapshot the invalidation generation BEFORE the stat: the
             # The first-line fill records this stat's cache identity. The
@@ -1103,12 +1147,15 @@ class SessionCatalogProjection:
             # stayed write-free for this process.
             gen = self._log._cache_gen(key)
             try:
-                stat = path.stat()
+                # Windows DirEntry.stat() reports st_ino as 0, so its cache
+                # identity would never equal the one every other reader takes
+                # from path.stat(); there the entry answers only is_symlink.
+                stat = path.stat() if entry is None or os.name == "nt" else entry.stat()
             except OSError:
                 continue
             identity = self._log._cache_identity(stat)
             # Skip symlinks — these are handoff aliases pointing to the real session
-            if path.is_symlink():
+            if path.is_symlink() if entry is None else entry.is_symlink():
                 continue
             meta: dict = {
                 "key": key,
@@ -1177,23 +1224,27 @@ class SessionCatalogProjection:
                             meta["title"] = m["content"][:80]
                             break
                 else:
-                    try:
-                        with open(path, encoding="utf-8") as f:
-                            for i, ln in enumerate(f):
-                                if i > 20:
-                                    break
-                                ln = ln.strip()
-                                if not ln:
-                                    continue
-                                try:
-                                    d = json.loads(ln)
-                                except json.JSONDecodeError:
-                                    continue
-                                if d.get("role") == "user" and d.get("content"):
-                                    meta["title"] = d["content"][:80]
-                                    break
-                    except Exception:
-                        pass
+                    scanned = self._log._title_scan_cache.get(key)
+                    if (
+                        scanned is not None
+                        and scanned[0] == (identity, stat.st_size)
+                        and scanned[1] == self._log._cache_gen(key)
+                    ):
+                        if scanned[2] is not None:
+                            meta["title"] = scanned[2]
+                    else:
+                        found = self._scan_head_title(path)
+                        if found is not _UNREADABLE:
+                            if found is not None:
+                                meta["title"] = found
+                            # Guarded like the metadata fill above.
+                            self._log._publish_if_current(
+                                self._log._title_scan_cache,
+                                key,
+                                ((identity, stat.st_size), gen, found),
+                                key=key,
+                                gen=gen,
+                            )
             if "title" not in meta:
                 meta["title"] = key
             # Deduplicate: keep newer entry per canonical key

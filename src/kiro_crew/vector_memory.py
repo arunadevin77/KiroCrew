@@ -1993,7 +1993,7 @@ class VectorMemoryStore:
                         tuple(chunk),
                     )
                 )
-        return {row["record_id"] for row in rows if not record_meta.eligible(dict(row))}
+        return record_meta.ineligible_record_ids(rows)
 
     def _eligible_rows(self, rows, kind: str) -> list:
         blocked = self._ineligible_ids()

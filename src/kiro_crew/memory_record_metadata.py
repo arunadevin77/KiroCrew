@@ -488,6 +488,26 @@ def eligible(metadata: dict, *, now: str | None = None) -> bool:
     )
 
 
+def ineligible_record_ids(rows) -> set[str]:
+    """Record ids among metadata *rows* that :func:`eligible` rejects right now.
+
+    A row whose status is not ``active`` is ineligible at every instant, so it is
+    settled without parsing any timestamp; only active rows carrying a validity
+    window are evaluated, against one ``now`` taken for the whole set.
+    """
+    blocked: set[str] = set()
+    now: str | None = None
+    for row in rows:
+        if row["status"] != "active":
+            blocked.add(row["record_id"])
+            continue
+        if now is None:
+            now = datetime.now(timezone.utc).isoformat()
+        if not eligible(dict(row), now=now):
+            blocked.add(row["record_id"])
+    return blocked
+
+
 def reconcile(db: sqlite3.Connection) -> int:
     """Backfill metadata, or journal writes made by an older compatible binary."""
     changed = 0

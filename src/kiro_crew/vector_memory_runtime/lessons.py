@@ -11,6 +11,7 @@ on the store and uses the same codec.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import math
@@ -1169,23 +1170,48 @@ def _renderable_entries(
     lesson_rows: list[dict], project_dir: str | Path | None
 ) -> list[tuple[dict, str]]:
     """``(row, text)`` for every row that renders and is in scope for *project_dir*."""
+    # The rendered text and scope are pure functions of the stored row, and
+    # deriving them (JSON decode plus the volatile-fact regexes) is most of a
+    # warm render. Memoize them only when the whole population fits the memo:
+    # a repeated scan wider than an LRU bound has a hit rate of exactly zero.
+    render = (
+        _lesson_render_fields
+        if len(lesson_rows) <= _LESSON_RENDER_CACHE_SIZE
+        else _lesson_render_fields.__wrapped__
+    )
     entries: list[tuple[dict, str]] = []
     for row in lesson_rows:
-        try:
-            decoded = json.loads(row["value_json"])
-        except (TypeError, ValueError, RecursionError):
+        rendered = render(row["key"], row["value_json"])
+        if rendered is None:
             # One unreadable row must not fail every context build; the key
             # names the row to repair, the value is left out of the log.
             logger.warning("Skipping lesson %r: stored value_json does not decode", row["key"])
             continue
-        text = _renderable_lesson_text(decoded, row["key"])
+        text, scope = rendered
         if not text:
             continue
-        scope = _lesson_scope(decoded)
         if scope and not project_scope_satisfied(scope, project_dir):
             continue
         entries.append((row, text))
     return entries
+
+
+#: Entries in the lesson render memo. Keyed by ``(key, value_json)``; an entry
+#: retains only the rendered text and scope, so the bound is in rows.
+_LESSON_RENDER_CACHE_SIZE = 16_384
+
+
+@functools.lru_cache(maxsize=_LESSON_RENDER_CACHE_SIZE)
+def _lesson_render_fields(key: str, value_json: object) -> tuple[str, str | None] | None:
+    """``(text, scope)`` for one stored lesson, or ``None`` when it does not decode."""
+    try:
+        decoded = json.loads(value_json)  # type: ignore[arg-type]
+    except (TypeError, ValueError, RecursionError):
+        return None
+    text = _renderable_lesson_text(decoded, key)
+    if not text:
+        return ("", None)
+    return (text, _lesson_scope(decoded))
 
 
 #: Request words in ``lesson_keywords``' stop list and words of two letters or

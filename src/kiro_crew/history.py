@@ -1729,6 +1729,17 @@ class ConversationLog:
         self._meta_cache: _LRUCache[tuple[CacheIdentity, int, dict]] = _LRUCache(
             _METADATA_CACHE_MAX
         )
+        #: ``((identity, size), gen, title_or_None)`` — the first-user-message
+        #: title ``list_sessions`` derives for a session whose metadata line
+        #: carries no title. Without it every listing would re-open and re-read
+        #: the head of every untitled transcript to compute a value that only
+        #: changes when the file does. Same generation guard and bound as
+        #: ``_meta_cache``, plus the size: the identity alone does not move for
+        #: two writes inside one timestamp tick. ``None`` records "no title in
+        #: the head", which is just as cacheable.
+        self._title_scan_cache: _LRUCache[tuple[tuple[tuple[int, int, int], int], int, object]] = (
+            _LRUCache(_METADATA_CACHE_MAX)
+        )
         #: Bounded identity-keyed LRU of formatted ``recent()`` windows keyed by
         #: (key, max_messages, roles). The tail-read fast path intentionally
         #: never warms ``_msg_cache`` (it returns a partial view), so a session
