@@ -140,7 +140,8 @@ describe('seeding the cache', () => {
 
   it('never moves a held value backwards: a delayed older frame leaves a newer baseline', () => {
     const client = new QueryClient()
-    // A REST read answered at revision 10; it raises no floor, so a frame at 9 passes it.
+    // A prior FRAME applied revision 10 (a read caches no revision); a delayed
+    // frame at 9 is older than it, so it is dropped and the baseline stays.
     client.setQueryData(WORK_KEY, { name: 'work', value: { items: ['rest'] }, revision: 10 })
     expect(seedFoldedProjection(client, SLOT, taken(9, ['delayed']))).toBe(true)
     expect(client.getQueryData(WORK_KEY)).toEqual({ name: 'work', value: { items: ['rest'] }, revision: 10 })

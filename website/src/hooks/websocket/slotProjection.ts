@@ -140,12 +140,15 @@ export function fetchingAnyFoldQuery(queryClient: QueryClient, frame: FoldedSlot
  *  An absent entry is seeded whole, because a tab that has not read yet is
  *  exactly the one a push saves a read for.
  *
- *  NEVER BACKWARDS. A REST read records no revision in this module's ledger, so a
- *  frame can pass that ledger and still be older than the value the cache holds:
- *  a read at revision 10 answered before a delayed frame at 9. The check is made
- *  against the CACHED value, which is the only thing that knows. When the held
- *  value's revision is at or above the frame's, it stays, and the key is already
- *  current.
+ *  NEVER BACKWARDS. The cached entry carries a `revision` only when a FRAME wrote
+ *  it: the work read strips its own revision before caching (see useCommandCenter),
+ *  because a read revision is not comparable to a frame revision. So the check
+ *  below compares a frame against an earlier FRAME, never against a read: a
+ *  redelivered or out-of-order frame older than one already applied is dropped,
+ *  while a read never raises the floor and the next frame always applies. The
+ *  check is made against the CACHED value, which is the only thing that knows.
+ *  When the held value's revision is at or above the frame's, it stays, and the
+ *  key is already current.
  *
  *  The caller owes `fetchingAnyFoldQuery` first: an in-flight read is not yet held. */
 export function seedFoldedProjection(

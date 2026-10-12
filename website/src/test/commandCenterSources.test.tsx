@@ -112,9 +112,40 @@ describe('task dashboard sources and containment', () => {
       await view.result.current.queryClient.refetchQueries({ queryKey: ['command-center', 'root', 'work'], exact: true })
     })
     await waitFor(() => expect(view.result.current.workItems.map(w => w.item_id)).toEqual(['a', 'b']))
-    // And the query holds the response itself, not a value kept in its place.
+    // And the query holds the response itself, not a value kept in its place. The
+    // read's own revision is stripped before caching, so it cannot later be read
+    // as a floor that rejects a newer push.
     expect(view.result.current.queryClient.getQueryData(['command-center', 'root', 'work']))
-      .toEqual({ value: { items: read }, revision: 2 })
+      .toEqual({ value: { items: read } })
+  })
+
+  it('a read never raises a floor that drops a later push', async () => {
+    // THE OTHER DIRECTION, and the one that regressed. A REST read answers with
+    // its own revision; a push frame then arrives at a LOWER number, because read
+    // and frame revisions are not one scale (the read's floor could sit above
+    // every frame the folding process will mint). The push MUST still apply --
+    // the read's revision is stripped before caching, so seedFoldedProjection
+    // finds no floor to reject it. Left on the entry, the push was dropped
+    // silently and the board stayed stale until the clock pull.
+    resetSlotProjectionRevisions()
+    const initial = store().getState()
+    const solo = createTestStore({ ...initial, dashboard: { ...initial.dashboard, slots: [{ key: 'root', messages: 0, running: true }] } })
+    const read = [{ item_id: 'a', title: 'from read', state: 'open' }]
+    const pushed = [{ item_id: 'a', title: 'from read', state: 'open' }, { item_id: 'b', title: 'from push', state: 'open' }]
+    // The read answers at a HIGH revision 50.
+    vi.mocked(api.sessionWorkProjection).mockResolvedValue({ value: { items: read }, revision: 50 })
+    const view = renderHookWithProviders(() => ({ ...useCommandCenter('root'), queryClient: useQueryClient() }), { store: solo })
+    await waitFor(() => expect(view.result.current.workItems.map(w => w.item_id)).toEqual(['a']))
+
+    // A push frame at a LOWER revision 7 then arrives; it must apply.
+    const frame = takeFoldedSlotProjection({ slot: 'root', fold: 'work', revision: 7, value: { items: pushed } })
+    expect(frame.kind).toBe('folded')
+    if (frame.kind !== 'folded') throw new Error('expected a folded frame')
+    act(() => { seedFoldedProjection(view.result.current.queryClient, 'root', frame.frame) })
+
+    await waitFor(() => expect(view.result.current.workItems.map(w => w.item_id)).toEqual(['a', 'b']))
+    expect(view.result.current.queryClient.getQueryData(['command-center', 'root', 'work']))
+      .toEqual({ value: { items: pushed }, revision: 7 })
   })
 
   it('finds a slot\'s team roots by walking its creators, stopping on a cycle', () => {

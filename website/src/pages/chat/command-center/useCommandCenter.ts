@@ -172,7 +172,19 @@ export function useCommandCenter(root: string | null, enabled = true, scope: 'ta
     // client that can refuse the server's own current answer can be stuck
     // forever, and a board that is briefly behind cannot -- the pull below
     // corrects it, and whoever is reading the board sees it correct itself.
-    queryFn: () => api.sessionWorkProjection(root!) as Promise<WorkProjection>,
+    //
+    // The read's own `revision` is DROPPED before it is cached. This key is the
+    // one `seedFoldedProjection` seeds a push into, and it keeps the cached value
+    // only when the cached revision is at or above the frame's. A read revision
+    // is not comparable to a frame revision -- the floor could sit above every
+    // response the server would give -- so leaving it on the cached entry would
+    // let a high read revision reject newer pushes, dropping them silently until
+    // the clock pull. The module's rule is "the ledger holds only revisions a
+    // frame applied"; a read records none, so the next frame always applies.
+    queryFn: async (): Promise<WorkProjection> => {
+      const { revision: _ignored, ...rest } = (await api.sessionWorkProjection(root!)) as WorkProjection
+      return rest
+    },
     // The one polled source here (see WORK_BOARD_PULL_MS): this board must catch
     // up without a frame having to arrive.
     ...sourceOptions, enabled: canRead && !fleet, refetchInterval: WORK_BOARD_PULL_MS,
