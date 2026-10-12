@@ -191,8 +191,12 @@ export interface ProviderAdapter {
   fetchProviderHooks(): Promise<Record<string, NormalizedProviderHook[]>>
 
   listPlugins(): Promise<NormalizedPlugin[]>
-  installPlugin(pkg: string, type: 'agent' | 'skill' | 'mcp'): Promise<{ ok: boolean; error?: string }>
-  uninstallPlugin(pkg: string, type: 'agent' | 'skill' | 'mcp'): Promise<{ ok: boolean; error?: string }>
+  // ``agent_spec_rewritten: false`` means the package landed but the agent spec
+  // kept its previous shape (a shared-home guard declined the write); the install
+  // UI shows the saved-but-not-applied notice. Absent for the mcp seam, which has
+  // its own apply path, and when the backend reported no verdict.
+  installPlugin(pkg: string, type: 'agent' | 'skill' | 'mcp'): Promise<{ ok: boolean; error?: string; agent_spec_rewritten?: boolean }>
+  uninstallPlugin(pkg: string, type: 'agent' | 'skill' | 'mcp'): Promise<{ ok: boolean; error?: string; agent_spec_rewritten?: boolean }>
   updatePlugins(type: 'agent' | 'skill' | 'mcp'): Promise<{ ok: boolean; output?: string; error?: string }>
 
   fetchAvailableModels(): Promise<ModelInfo[]>

@@ -6,6 +6,19 @@
 
 import type { ClientTransport } from './transport'
 
+/**
+ * A skill- or agent-package install/uninstall result. ``agent_spec_rewritten``
+ * is the agent-spec rebuild verdict: ``false`` means the package landed but the
+ * spec kept its previous shape (a shared-home guard on a non-default data home
+ * declined the write), so the capability install UI shows the saved-but-not-applied
+ * notice. Absent when the backend did not report a verdict.
+ */
+export interface CapabilityPackageResult {
+  ok: boolean
+  package: string
+  agent_spec_rewritten?: boolean
+}
+
 export function createCapabilityManagerEndpoints({ post, j, jfetch: fetch }: ClientTransport) {
   const catalog = {
     // Graceful no-ops on a public install, where AIM is stubbed; the panels
@@ -14,11 +27,15 @@ export function createCapabilityManagerEndpoints({ post, j, jfetch: fetch }: Cli
     capabilityMcpInstall: (serverId: string) => post('/api/capability/mcp/install', { server_id: serverId }).then(j),
     capabilityMcpUninstall: (serverId: string) => post('/api/capability/mcp/uninstall', { server_id: serverId }).then(j),
     capabilitySkillsList: () => fetch('/api/capability/skills').then(j),
-    capabilitySkillsInstall: (pkg: string) => post('/api/capability/skills/install', { package: pkg }).then(j),
-    capabilitySkillsUninstall: (pkg: string) => post('/api/capability/skills/uninstall', { package: pkg }).then(j),
+    capabilitySkillsInstall: (pkg: string) =>
+      post('/api/capability/skills/install', { package: pkg }).then(j) as Promise<CapabilityPackageResult>,
+    capabilitySkillsUninstall: (pkg: string) =>
+      post('/api/capability/skills/uninstall', { package: pkg }).then(j) as Promise<CapabilityPackageResult>,
     capabilityAgentsList: () => fetch('/api/capability/agents').then(j),
-    capabilityAgentsInstall: (pkg: string) => post('/api/capability/agents/install', { package: pkg }).then(j),
-    capabilityAgentsUninstall: (pkg: string) => post('/api/capability/agents/uninstall', { package: pkg }).then(j),
+    capabilityAgentsInstall: (pkg: string) =>
+      post('/api/capability/agents/install', { package: pkg }).then(j) as Promise<CapabilityPackageResult>,
+    capabilityAgentsUninstall: (pkg: string) =>
+      post('/api/capability/agents/uninstall', { package: pkg }).then(j) as Promise<CapabilityPackageResult>,
     // Plugin packages (agent-client integrations). The response pairs the installed
     // rows with `out_of_sync` — packages installed as agents but missing their
     // plugin counterpart — so the UI can offer a one-click reconcile.
