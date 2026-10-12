@@ -703,3 +703,76 @@ describe('ChatPage prompt optimizer keeps picked file mentions (#13063)', { time
     expect(screen.queryByLabelText('Remove')).toBeNull()
   })
 })
+
+// #19467: a FOLDER chip is derived purely from its `@rel/` token, so the same
+// optimizer rewrite that #13063 guards against for file mentions drops a folder
+// too -- reword `@src/utils/` into prose and the token vanishes, the chip with
+// it, and the message is sent with no folder reference and no user edit. The
+// composer's optimizer guard, extended here from file chips to folder tokens,
+// discards a rewrite whose set of `@rel/` folder tokens differs from the draft's,
+// exactly as it already does for the file-chip set.
+describe('ChatPage prompt optimizer keeps @folder/ mentions (#19467)', { timeout: 15_000 }, () => {
+  // `src/widgets` is a dir in the mocked file tree; `@src/widgets/` is the
+  // folder token the composer derives a chip from.
+  const DRAFT = 'please review @src/widgets/ for the bug'
+
+  /** Type a draft that stages the folder chip, click Optimize prompt with the
+   *  optimizer answering `optimized`, and wait for the composer to settle. The
+   *  folder chip is text-derived, so no pick step is needed. */
+  async function optimizeWith(optimized: string, edit = async (ta: HTMLTextAreaElement) => {
+    fireEvent.change(ta, { target: { value: DRAFT } })
+    await waitFor(() => expect(ta.value).toBe(DRAFT))
+  }) {
+    let calls = 0
+    const realFetch = globalThis.fetch
+    vi.stubGlobal('fetch', (url: string) => {
+      if (typeof url === 'string' && url.includes('/api/optimizer/optimize')) {
+        calls += 1
+        return Promise.resolve({ ok: true, json: async () => ({ changed: true, optimized }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] } as unknown as Response)
+    })
+    try {
+      const store = makeStore('slot-a', [{ key: 'slot-a', project: '/repo' }])
+      await renderPage(store)
+      const ta = screen.getByLabelText('Message input') as HTMLTextAreaElement
+      await edit(ta)
+      // The folder chip derives from the token the moment it is in the text.
+      await waitFor(() => expect(screen.getByLabelText('Remove folder')).toBeInTheDocument())
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Optimize prompt' })) })
+      await waitFor(() => expect(calls).toBe(1))
+      await waitFor(() => expect(ta).not.toHaveAttribute('readonly'))
+      return ta
+    } finally {
+      vi.stubGlobal('fetch', realFetch)
+    }
+  }
+
+  it('a rewrite that turns @src/utils/ into prose leaves the draft and the folder chip as they were', async () => {
+    // The issue's exact scenario: the optimizer rewords the folder mention away.
+    const ta = await optimizeWith('Review the widgets directory and fix the bug.')
+    expect(ta.value).toBe(DRAFT)
+    expect(screen.getByLabelText('Remove folder')).toBeInTheDocument()
+  })
+
+  it('a rewrite that drops the folder token is refused even when the rest reads better', async () => {
+    const ta = await optimizeWith('Please investigate and fix the bug in the widgets code.')
+    expect(ta.value).toBe(DRAFT)
+    expect(screen.getByLabelText('Remove folder')).toBeInTheDocument()
+  })
+
+  it('a rewrite that keeps the folder token verbatim is applied and the chip stays staged', async () => {
+    const ta = await optimizeWith('Review @src/widgets/ and fix the bug.')
+    await waitFor(() => expect(ta.value).toBe('Review @src/widgets/ and fix the bug.'))
+    expect(screen.getByLabelText('Remove folder')).toBeInTheDocument()
+  })
+
+  it('a rewrite that adds a folder token the draft never had is refused', async () => {
+    // The guard is symmetric: a changed set in EITHER direction is discarded,
+    // so an optimizer that invents `@docs/` cannot stage a folder the user
+    // never referenced.
+    const ta = await optimizeWith('Review @src/widgets/ and @docs/ for the bug.')
+    expect(ta.value).toBe(DRAFT)
+    expect(screen.getByLabelText('Remove folder')).toBeInTheDocument()
+  })
+})

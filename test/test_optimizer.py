@@ -52,7 +52,15 @@ class TestOptimizerSystem:
         # A picked "@rel" mention attaches its file; a rewrite that rewords or
         # drops it is refused by the composer, so the model is told to keep it.
         assert "FILE MENTIONS" in OPTIMIZER_SYSTEM
-        assert "keep every file mention verbatim" in OPTIMIZER_SYSTEM
+        assert "keep every file and folder mention verbatim" in OPTIMIZER_SYSTEM
+
+    def test_system_prompt_keeps_folder_mentions_verbatim(self):
+        # A "@rel/" folder token attaches that folder the same way (#19467); the
+        # composer refuses a rewrite that drops it, so the prompt names the
+        # folder case and its trailing slash explicitly alongside the file one.
+        assert "folder path ending in a slash" in OPTIMIZER_SYSTEM
+        assert "@src/utils/" in OPTIMIZER_SYSTEM
+        assert "including a trailing slash" in OPTIMIZER_SYSTEM
 
 
 class TestOptimizerEndpoint:

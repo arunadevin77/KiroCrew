@@ -189,10 +189,11 @@ OPTIMIZER_SYSTEM = (
     "summarize, or expand the pasted content itself — reference it only through its "
     "placeholder. Do NOT invent new placeholders or renumber existing ones.\n\n"
     "FILE MENTIONS — the draft may contain file mentions: an @ immediately followed "
-    'by a file path, such as "@src/main.ts". Each one attaches that file to the '
-    "message. In your rewrite you MUST keep every file mention verbatim (the same @ "
-    "and the same path characters, followed by a space or the end of the text). "
-    "NEVER reword a mention into prose, shorten it, or drop it.\n\n"
+    'by a file path, such as "@src/main.ts", or by a folder path ending in a slash, '
+    'such as "@src/utils/". Each one attaches that file or folder to the message. '
+    "In your rewrite you MUST keep every file and folder mention verbatim (the same @ "
+    "and the same path characters, including a trailing slash, followed by a space or "
+    "the end of the text). NEVER reword a mention into prose, shorten it, or drop it.\n\n"
     "## Rules (earlier rules win on conflict)\n\n"
     "1. NEVER change the user's intent, add requirements they didn't ask for, or invent "
     "specific values they left open.\n"

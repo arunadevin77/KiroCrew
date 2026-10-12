@@ -606,15 +606,28 @@ export function useFileMentionActions({
   // of the rewrite: a rewrite is kept only when it would leave the
   // attachments exactly as the draft does, neither dropping a chip nor
   // restaging one the user removed.
+  //
+  // A FOLDER chip is guarded the same way, against the same failure (#19467).
+  // Unlike a file chip it is purely text-derived: a `@rel/` token IS the whole
+  // reference, so the chip set for any text is exactly its `parseDirTokens`
+  // rels -- the identical derivation `useStagedFolderRefs` reads. The optimizer
+  // can reword `@src/utils/` into prose or drop it, and with the token gone the
+  // chip disappears and the folder is sent with no reference, no user edit. So
+  // the guard also refuses a rewrite whose set of `@rel/` folder tokens differs
+  // from the draft's -- added, dropped, or respelled all count -- next to the
+  // file-chip check it already runs.
   const optimizerMentionGuard = useCallback((draft: string) => {
     const scope = mentionScope(currentProjectRef.current)
     const known = Object.fromEntries(Object.entries(currentSlotTokens() ?? {}).map(([p, a]) => [p, [...a]]))
     const pending = [...pendingFilesRef.current]
     const before = planFileChips(scope, draft, known, pending)
+    const dirsBefore = parseDirTokens(draft).map(t => t.rel)
     const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every(x => b.includes(x))
     return (rewrite: string) => {
       const after = planFileChips(scope, rewrite, known, pending)
+      const dirsAfter = parseDirTokens(rewrite).map(t => t.rel)
       return sameSet(after.stale, before.stale) && sameSet(after.revived, before.revived)
+        && sameSet(dirsAfter, dirsBefore)
     }
   }, [currentSlotTokens, currentProjectRef, pendingFilesRef])
 
