@@ -42,6 +42,9 @@ logger = logging.getLogger("kiro_crew.autonudge")
 #: second turn to finish. One, because the cost is paid per wake and a second
 #: free turn buys progress the probe cannot observe; raising it multiplies the
 #: cost of every wake, and lowering it to zero reintroduces the stall.
+#:
+#: A work-ledger wake gets none: its next news is a worker's report, which pulls
+#: the loop forward by itself.
 _WAKE_FOLLOWUP_TICKS = 1
 
 
@@ -114,6 +117,31 @@ def _ledger_is_idle(loop: NudgeLoop, monitor: MonitorState) -> bool:
         and bool(monitor.ledger_delivered_revision)
         and monitor.ledger_revision == monitor.ledger_delivered_revision
     )
+
+
+def _failure_streak(loop: NudgeLoop) -> int:
+    """How many of the loop's own turns have failed since one last landed."""
+    return loop.consecutive_start_failures + loop.consecutive_failed_cycles
+
+
+def _note_ledger_wake(svc: AutoNudgeService, loop: NudgeLoop) -> None:
+    """A work-ledger wake was delivered: remember the failure streak it went out at."""
+    svc._ledger_wake_streak[loop.id] = _failure_streak(loop)
+
+
+def _spend_ledger_wake_retry(svc: AutoNudgeService, loop: NudgeLoop) -> bool:
+    """Whether the last delivered work-ledger wake's own turn failed; spends the retry.
+
+    The streak has to GROW past the value the wake went out at, so a turn still running,
+    or one that never reports its end, buys nothing, and a failed floor turn is left to
+    the floor. A landed turn ends the wake's claim (``notify_cycle_landed``). In memory
+    only: after a restart the floor delivers instead.
+    """
+    sent_at = svc._ledger_wake_streak.get(loop.id)
+    if sent_at is None or _failure_streak(loop) <= sent_at:
+        return False
+    del svc._ledger_wake_streak[loop.id]
+    return True
 
 
 def _record_delivered_revision(monitor: MonitorState) -> None:
@@ -625,7 +653,9 @@ async def _monitor_tick_is_quiet(self: AutoNudgeService, loop: NudgeLoop) -> boo
     # unbounded allowance driven by a completion signal disables gating
     # entirely on any surface where that signal never arrives, and no
     # allowance at all lets a watch go silent while holding half-finished
-    # work. Costing one turn per wake is the cheap failure.
+    # work. Costing one turn per wake is the cheap failure. A work-ledger wake is
+    # granted none (the fire cycle skips it), so the allowance a work-ledger loop
+    # can hold here is the one a refused fire grants to retry its delivery.
     pushed = loop.id in (getattr(self, "_pushed_running", None) or ())
     if monitor.followup_ticks > 0 and not monitor.terminal_pending and not pushed:
         # NOT while a terminal turn is owed. The allowance exists to protect work
@@ -647,6 +677,19 @@ async def _monitor_tick_is_quiet(self: AutoNudgeService, loop: NudgeLoop) -> boo
         monitor.followup_ticks -= 1
         self._persist_soon()
         logger.debug("AutoNudge: loop %s spending a post-wake follow-up tick", loop.id)
+        return False
+    if monitor.kind == probes.WORK_LEDGER and _spend_ledger_wake_retry(self, loop):
+        # A work-ledger wake carries no follow-up allowance, so this is what brings
+        # the news back when the woken turn read nothing: it never got a session, or
+        # it died. The kernel already counts the wake's observation as reported, so a
+        # probe here reads an unchanged ledger as quiet. One retry per wake, as the
+        # allowance gives a pull-request watch one turn per wake; a retry that fails
+        # too leaves the loop on its quiet floor.
+        logger.info(
+            "AutoNudge: loop %s's woken turn failed -- delivering again rather than "
+            "observing a ledger that turn never read",
+            loop.id,
+        )
         return False
     probe = probes.build(
         monitor.kind,

@@ -1434,11 +1434,10 @@ async def _push_and_settle(svc, loop_id: str, worker: str) -> None:
 
 
 def test_a_close_after_a_done_wake_buys_no_second_turn(tmp_path, monkeypatch):
-    """The done report wakes once; the close lands on the follow-up window and does not.
+    """The done report wakes once; the close that follows it does not.
 
-    The follow-up allowance is the loop's own second turn and survives for its next
-    scheduled tick. A fresh ``question`` on another item in the same window is news, and
-    buys exactly one turn.
+    A work-ledger wake leaves no follow-up allowance behind. A fresh ``question`` on
+    another item is news, and buys exactly one turn.
     """
     closed: set[str] = set()
     done_item = _bind(WORKER)
@@ -1451,7 +1450,7 @@ def test_a_close_after_a_done_wake_buys_no_second_turn(tmp_path, monkeypatch):
             work_ledger.apply_worker_report(CONDUCTOR, done_item, status="done", summary="d")
             await _push_and_settle(svc, loop.id, WORKER)
             after_done = list(delivered)
-            assert loop.monitor.followup_ticks == 1, "precondition: the wake left its follow-up"
+            assert loop.monitor.followup_ticks == 0, "the wake left no follow-up"
 
             closed.add(WORKER)
             await _push_and_settle(svc, loop.id, WORKER)
@@ -1469,7 +1468,83 @@ def test_a_close_after_a_done_wake_buys_no_second_turn(tmp_path, monkeypatch):
     assert after_done == [1]
     assert after_close == [1], "the close bought no second delivered turn"
     assert after_question == [1, 2], "a new question in the window is exactly one turn"
-    assert followups == 1, "the scheduled cadence still owns the free follow-up"
+    assert followups == 0, "no wake left a free follow-up"
+
+
+def _wake_then_scheduled_tick(
+    tmp_path, monkeypatch, *, after_wake=None, refuse_first: bool = False
+) -> "list[int]":
+    """A worker's ``done`` wakes the conductor; then the loop's own next tick runs.
+
+    The ledger does not move between the two. *after_wake* runs between them with the
+    service and the loop, to record what became of the woken turn. With *refuse_first*
+    the wake's first delivery is refused, as a busy slot refuses it.
+    """
+    item = _bind(WORKER)
+
+    async def _drive() -> "list[int]":
+        svc, delivered, _during = _ledger_service(tmp_path, monkeypatch, closed=set())
+        loop = await svc.add(CONDUCTOR, "patrol the fleet", idle_secs=3600, watch="work-ledger")
+        if refuse_first:
+            real_on_fire = svc._on_fire
+            refusals = [True]
+
+            async def _refuse_once(fired) -> bool:
+                if refusals:
+                    refusals.pop()
+                    return False
+                return await real_on_fire(fired)
+
+            svc._on_fire = _refuse_once
+        try:
+            work_ledger.apply_worker_report(CONDUCTOR, item, status="done", summary="d")
+            await _push_and_settle(svc, loop.id, WORKER)
+            if after_wake is not None:
+                await after_wake(svc, loop)
+            # The loop's own scheduled tick, run now instead of an interval from now.
+            task = svc._timers.pop(loop.id, None)
+            if task is not None:
+                task.cancel()
+            svc._arm_timer = lambda *_a, **_k: None  # type: ignore[method-assign]
+            await svc._timer(loop, delay=0.0)
+            return list(delivered)
+        finally:
+            svc.stop()
+
+    return asyncio.run(_drive())
+
+
+def test_the_tick_after_a_wake_reads_an_unchanged_ledger_and_spends_nothing(tmp_path, monkeypatch):
+    """A work-ledger loop gets no free turn after a wake.
+
+    The conductor's next news is a worker's report, and that report pulls the loop
+    forward by itself. So the tick after a delivered wake is observed like any other,
+    and an unchanged ledger is quiet.
+    """
+    assert _wake_then_scheduled_tick(tmp_path, monkeypatch) == [1]
+
+
+def test_the_tick_after_a_wake_whose_turn_died_delivers_again(tmp_path, monkeypatch):
+    """A woken turn that died read nothing, so the next tick brings the news back."""
+
+    async def _died(svc, loop) -> None:
+        await svc.notify_cycle_failed(
+            loop.slot_key, loop_id=loop.id, expected_generation=loop.config_generation
+        )
+
+    assert _wake_then_scheduled_tick(tmp_path, monkeypatch, after_wake=_died) == [1, 2]
+
+
+def test_the_tick_after_a_wake_whose_turn_never_started_delivers_again(tmp_path, monkeypatch):
+    async def _never_started(svc, loop) -> None:
+        svc.notify_cycle_start_failed(loop.slot_key)
+
+    assert _wake_then_scheduled_tick(tmp_path, monkeypatch, after_wake=_never_started) == [1, 2]
+
+
+def test_a_refused_wake_is_delivered_on_the_next_tick(tmp_path, monkeypatch):
+    """A slot that refuses the wake's turn does not lose it: the next tick retries."""
+    assert _wake_then_scheduled_tick(tmp_path, monkeypatch, refuse_first=True) == [1]
 
 
 def _storm_during_a_turn(tmp_path, monkeypatch, *, news: bool) -> "list[int]":

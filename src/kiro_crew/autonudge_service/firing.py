@@ -22,10 +22,11 @@ from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from kiro_crew import shutdown_event
+from kiro_crew import probes, shutdown_event
 from kiro_crew.autonudge_service.gate import (
     _WAKE_FOLLOWUP_TICKS,
     _delivery_basis,
+    _note_ledger_wake,
     _record_delivered_reading,
     _record_delivered_revision,
 )
@@ -649,7 +650,13 @@ async def _run_fire_cycle(self: AutoNudgeService, loop: NudgeLoop) -> None:
         # write is the stronger one, since it holds the lock and cannot be
         # clobbered by a concurrent update()'s snapshot.
         loop.monitor.wakes += 1
-        loop.monitor.followup_ticks = _WAKE_FOLLOWUP_TICKS
+        # Not for a work-ledger watch. Its next news is a worker's report, and that
+        # report pulls the loop forward by itself, so a free tick here only buys an
+        # idle turn. The gate re-delivers instead when this woken turn fails.
+        if loop.monitor.kind != probes.WORK_LEDGER:
+            loop.monitor.followup_ticks = _WAKE_FOLLOWUP_TICKS
+        else:
+            _note_ledger_wake(self, loop)
     if delivered and claimed_floor and loop.monitor is not None:
         # The floor's turn happened. No follow-up allowance goes with it: the floor
         # exists to break a silence, not to protect work the agent had already

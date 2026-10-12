@@ -375,8 +375,10 @@ to carry: they are covered by the steer in #17582, which folds them into the
 running turn.
 
 A pulled-forward tick is extra, and two rules keep it from costing more than
-the news it carries. It never spends the post-wake follow-up tick: that free
-second turn belongs to the loop's own cadence, so a push landing right after a
+the news it carries. It never spends a free follow-up tick, and a work-ledger
+wake grants none: the next news is a worker's report, which pulls the loop
+forward by itself, and the only retry is the one the gate gives when the woken
+turn failed. So a push landing right after a
 wake (a worker's close after its `done` report, or the reports that arrived
 while the woken turn ran) goes through the probe and wakes only for an
 observation the delivered turn did not already carry. And a pulled-forward tick

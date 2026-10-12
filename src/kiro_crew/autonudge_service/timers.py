@@ -499,6 +499,9 @@ def notify_cycle_landed(self: AutoNudgeService, slot_key: str) -> None:
     remedy.
     """
     loop = self._find_by_slot(slot_key)
+    if loop is not None:
+        # A landed turn read the board, so the work-ledger wake it answers owes no retry.
+        self._ledger_wake_streak.pop(loop.id, None)
     if not loop or not (loop.consecutive_start_failures or loop.consecutive_failed_cycles):
         return
     loop.consecutive_start_failures = 0

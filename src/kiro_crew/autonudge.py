@@ -823,6 +823,10 @@ class AutoNudgeService:
         #: free follow-up belongs to the loop's own cadence), and a quiet answer keeps
         #: the loop's earlier deadline rather than pushing it out. Reset at every tick.
         self._pushed_running: set[str] = set()
+        #: ``loop id -> failure streak`` a work-ledger wake was delivered at, so the
+        #: gate can retry that wake if its own turn fails; see
+        #: ``gate._spend_ledger_wake_retry``. Released with the loop.
+        self._ledger_wake_streak: dict[str, int] = {}
         #: ``loop id -> ledger fingerprint`` read by the running tick's person-wait
         #: check ("" when not every open item waits on a person). The delivered turn
         #: copies it to ``ledger_seen_fp``; see ``_holds_for_person_wait``.

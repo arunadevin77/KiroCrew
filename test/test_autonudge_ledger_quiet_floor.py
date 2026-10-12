@@ -180,6 +180,86 @@ async def test_a_stall_wake_still_delivers(tmp_path, monkeypatch):
         assert loop.monitor is not None
         assert fired == [loop.id]
         assert loop.monitor.wakes == 1
+        assert loop.monitor.followup_ticks == 0, "a work-ledger wake buys no free tick"
+    finally:
+        service.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_pull_request_wake_keeps_its_follow_up_tick(tmp_path, monkeypatch):
+    fired: list[str] = []
+    ledger = _Ledger("rev-1")
+    ledger.outcome = _an.irq.Outcome.WAKE
+    service = _service(tmp_path, monkeypatch, ledger, fired)
+    loop = _loop(service, kind="gh-pr")
+    try:
+        assert await service._monitor_tick_is_quiet(loop) is False, "the wake fires"
+        await service._run_fire_cycle(loop)
+        assert loop.monitor is not None and loop.monitor.wakes == 1
+        assert loop.monitor.followup_ticks == _gate._WAKE_FOLLOWUP_TICKS
+        ledger.outcome = _an.irq.Outcome.QUIET
+        assert await service._monitor_tick_is_quiet(loop) is False, "the follow-up tick fires"
+        assert await service._monitor_tick_is_quiet(loop) is True, "then the gate observes"
+    finally:
+        service.stop()
+
+
+async def _deliver_a_wake(service, ledger, loop) -> None:
+    ledger.outcome = _an.irq.Outcome.WAKE
+    assert await service._monitor_tick_is_quiet(loop) is False, "a worker's news wakes"
+    await service._run_fire_cycle(loop)
+    assert loop.monitor is not None and loop.monitor.wakes >= 1
+    ledger.outcome = _an.irq.Outcome.QUIET
+
+
+@pytest.mark.asyncio
+async def test_a_woken_turn_that_fails_is_retried_once(tmp_path, monkeypatch):
+    # While the woken turn runs nothing has failed, so a tick then buys nothing; a turn
+    # whose end is never reported cannot make the loop fire on every tick either.
+    fired: list[str] = []
+    ledger = _Ledger("rev-1")
+    service = _service(tmp_path, monkeypatch, ledger, fired)
+    loop = _loop(service, ledger_revision="rev-1", ledger_delivered_revision="rev-1")
+    try:
+        await _deliver_a_wake(service, ledger, loop)
+        assert await service._monitor_tick_is_quiet(loop) is True, "the turn is still running"
+        loop.consecutive_failed_cycles = 1
+        assert await service._monitor_tick_is_quiet(loop) is False, "the dead wake is retried"
+        for _ in range(3):
+            assert await service._monitor_tick_is_quiet(loop) is True, "once"
+    finally:
+        service.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_wake_inside_a_failure_streak_is_retried_when_its_own_turn_fails(
+    tmp_path, monkeypatch
+):
+    fired: list[str] = []
+    ledger = _Ledger("rev-1")
+    service = _service(tmp_path, monkeypatch, ledger, fired)
+    loop = _loop(service, ledger_revision="rev-1", ledger_delivered_revision="rev-1")
+    loop.consecutive_failed_cycles = 2
+    try:
+        await _deliver_a_wake(service, ledger, loop)
+        assert await service._monitor_tick_is_quiet(loop) is True, "the old streak buys nothing"
+        loop.consecutive_failed_cycles = 3
+        assert await service._monitor_tick_is_quiet(loop) is False, "this wake's turn failed"
+    finally:
+        service.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_landed_wake_owes_no_retry_to_a_later_failed_turn(tmp_path, monkeypatch):
+    fired: list[str] = []
+    ledger = _Ledger("rev-1")
+    service = _service(tmp_path, monkeypatch, ledger, fired)
+    loop = _loop(service, ledger_revision="rev-1", ledger_delivered_revision="rev-1")
+    try:
+        await _deliver_a_wake(service, ledger, loop)
+        service.notify_cycle_landed(_SLOT)
+        loop.consecutive_failed_cycles = 1
+        assert await service._monitor_tick_is_quiet(loop) is True, "a floor turn's failure"
     finally:
         service.stop()
 
