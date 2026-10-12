@@ -5123,10 +5123,10 @@ class TestAPeerRequestRefusesAForwardThatMovedUnderIt:
         assert f"127.0.0.1:{hop}/" in _FakeMintSession.posted[0]
 
     def test_every_peer_call_revalidates_the_forward_it_resolved(self):
-        """Over the SOURCE, because four of the five carriers are public API whose
+        """Over the SOURCE, because five of the six carriers are public API whose
         doubles in this file replace the credential builder outright.
 
-        The five sites resolve a target with ``_peer_target`` and then await. A new
+        The six carrier sites resolve a target with ``_peer_target`` and then await. A new
         carrier added without the revalidation is the failure this catches -- it would
         pass every behavioural case here, since nothing in them moves a forward.
         """
@@ -5140,15 +5140,17 @@ class TestAPeerRequestRefusesAForwardThatMovedUnderIt:
         lines = source.splitlines()
         resolvers = [n for n, line in enumerate(lines, 1) if resolve in line]
         guarded = [n for n, line in enumerate(lines, 1) if helper in line]
-        # Six resolvers, five of them carriers that await before spending a
-        # credential. The sixth is `_prime_peer_session`, which needs no
+        # Seven resolvers, six of them carriers that await before spending a
+        # credential (the sixth carrier is `proxy_websocket`, the pane relay's
+        # WebSocket leg, which revalidates like `proxy_request`). The seventh is
+        # `_prime_peer_session`, which needs no
         # revalidation: it awaits nothing between resolving and the exchange, and it
         # has no retry, so it has no window.
-        assert len(resolvers) == 6, (
+        assert len(resolvers) == 7, (
             f"the peer-target resolvers moved ({resolvers}); re-derive which of them "
             f"awaits before spending a credential rather than editing this number"
         )
-        assert len(guarded) == 5, (
-            f"{len(guarded)} of the five carriers revalidate the forward they "
+        assert len(guarded) == 6, (
+            f"{len(guarded)} of the six carriers revalidate the forward they "
             f"resolved: {guarded}"
         )

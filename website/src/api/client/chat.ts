@@ -5,6 +5,7 @@
  * links, the send wire, and the composer autocomplete read.
  */
 
+import { relocateRequestUrl } from '../../lib/dashboardRuntime'
 import type { ChatSlot } from '../../types'
 import type { SessionSummary } from '../../types/sessionSummary'
 import type { DynamicDashboardCard } from '../../types/dynamicDashboard'
@@ -50,9 +51,9 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
      *  opening cannot become a refresh loop. Returns `enabled: false` (not an
      *  error) when the feature is off, so the panel can explain itself. */
     sessionSummary: (slot: string) =>
-      fetch('/api/chat/slots/' + encodeURIComponent(slot) + '/summary').then(j) as Promise<SessionSummary>,
+      fetch(relocateRequestUrl('/api/chat/slots/' + encodeURIComponent(slot) + '/summary')).then(j) as Promise<SessionSummary>,
     dashboardCard: (slot: string) =>
-      fetch('/api/chat/slots/' + encodeURIComponent(slot) + '/dashboard-card').then(j) as Promise<DynamicDashboardCard>,
+      fetch(relocateRequestUrl('/api/chat/slots/' + encodeURIComponent(slot) + '/dashboard-card')).then(j) as Promise<DynamicDashboardCard>,
     /** Summarize this session NOW, on the person's explicit request.
      *
      *  Same path as the GET, different verb: reading a summary must stay free of
@@ -61,7 +62,7 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
      *  `too_few_turns`, `summary_unavailable`, `summary_disabled`) so the panel can
      *  say which rather than showing one generic failure. */
     generateSessionSummary: (slot: string) =>
-      fetch('/api/chat/slots/' + encodeURIComponent(slot) + '/summary', {
+      fetch(relocateRequestUrl('/api/chat/slots/' + encodeURIComponent(slot) + '/summary'), {
         method: 'POST',
       }).then(j) as Promise<SessionSummary>,
   }
@@ -69,7 +70,7 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
   const slotList = {
     // The look-preview frame (utils/lookPreview.ts) shows one demo session in
     // place of the user's own: fixtures answer both reads below.
-    chatSlots: () => isLookPreviewFrame() ? Promise.resolve(lookPreviewSlots()) : fetch('/api/chat/slots').then(j),
+    chatSlots: () => isLookPreviewFrame() ? Promise.resolve(lookPreviewSlots()) : fetch(relocateRequestUrl('/api/chat/slots')).then(j),
   }
 
   const slots = {
@@ -78,7 +79,7 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
      *  chips per kind, so the links behind that chip are not on the client until
      *  this is called. */
     chatSlotSourceLinks: (slot: string): Promise<{ links: NonNullable<ChatSlot['source_links']>; total: number }> =>
-      fetch('/api/chat/slots/' + encodeURIComponent(slot) + '/source-links').then(j),
+      fetch(relocateRequestUrl('/api/chat/slots/' + encodeURIComponent(slot) + '/source-links')).then(j),
     /** Unlink one PR/issue/Jira chip from a session. The chip is derived by
      *  scanning the transcript, so this records the link's serialized `identity`
      *  in a per-slot dismissed set the derivation filters against — a local UI
@@ -97,13 +98,13 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
       const p = new URLSearchParams()
       if (limit) p.set('limit', String(limit))
       if (before !== undefined) p.set('before', String(before))
-      return fetch(chatSlotDetailPath(slot) + '?' + p, { signal }).then(j)
+      return fetch(relocateRequestUrl(chatSlotDetailPath(slot) + '?' + p), { signal }).then(j)
     },
     /** Create a chat slot on this machine. A session on a connected crew is
      *  created on that crew and opened through its window, never here. */
     createChatSlot: async (name?: string, agent?: string, model?: string, mode?: string, memory_mode?: string, title?: string, artifact?: string, folder_id?: string, agent_kind?: 'member' | 'template', no_session_folder?: boolean) => {
       const resolvedMemoryMode = memory_mode ?? await resolveDefaultMemoryMode(
-        () => fetch('/api/dashboard/config').then(j),
+        () => fetch(relocateRequestUrl('/api/dashboard/config')).then(j),
       )
       return post('/api/chat/slots', {
         ...(name ? { name } : {}),
@@ -169,7 +170,7 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
      *  session was born in, or its explicit mirror binding. A session can hold
      *  both, and they mute independently, so the row has to say which it is. */
     pauseMirror: (slot: string, paused: boolean, origin = false) => post('/api/chat/slots/' + encodeURIComponent(slot) + '/mirror-pause', { paused, origin }).then(j),
-    channelTargets: () => fetch('/api/chat/channel-targets').then(j),
+    channelTargets: () => fetch(relocateRequestUrl('/api/chat/channel-targets')).then(j),
     linkMirror: (slot: string, channelType: string, targetId: string) => post(
       '/api/chat/slots/' + encodeURIComponent(slot) + '/mirror-link',
       { channel_type: channelType, target_id: targetId },
@@ -181,7 +182,7 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
     // no channel-to-endpoint assumption. Without `expected`, an unconditional
     // clear of the mirror for callers that hold no row.
     unlinkMirror: (slot: string, expected?: { channel_type: string; binding: string }) => post('/api/chat/slots/' + encodeURIComponent(slot) + '/mirror-unlink', expected).then(j),
-    slackChannels: () => fetch('/api/slack/channels').then(j),
+    slackChannels: () => fetch(relocateRequestUrl('/api/slack/channels')).then(j),
   }
 
   const send = {
@@ -224,13 +225,13 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
       // guide observation before Start asks this tab and no other. `X-UI-Lang`
       // is the language this tab renders, so the agent quotes dashboard labels
       // as this screen spells them (the gateway keeps only a shipped tag).
-      return fetch('/api/chat?ws=1', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Guide-Tab': TAB_ID, 'X-UI-Lang': activeLocale(), ..._sk }, body: JSON.stringify({ message, slot, ...(colorTheme ? { color_theme: colorTheme } : {}), ...(themeConsent ? { theme_consent_sha: themeConsent } : {}), ...(meta ? { meta } : {}), ...(steer ? { steer: steer === 'auto' ? 'auto' : true } : {}) }), signal }).then(sendResponseAuthRecovery)
+      return fetch(relocateRequestUrl('/api/chat?ws=1'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Guide-Tab': TAB_ID, 'X-UI-Lang': activeLocale(), ..._sk }, body: JSON.stringify({ message, slot, ...(colorTheme ? { color_theme: colorTheme } : {}), ...(themeConsent ? { theme_consent_sha: themeConsent } : {}), ...(meta ? { meta } : {}), ...(steer ? { steer: steer === 'auto' ? 'auto' : true } : {}) }), signal }).then(sendResponseAuthRecovery)
     },
   }
 
   const composerAutocomplete = {
     // Autocomplete
-    autocomplete: (q: string): Promise<{suggestions: string[]}> => fetch('/api/autocomplete?q=' + encodeURIComponent(q)).then(j),
+    autocomplete: (q: string): Promise<{suggestions: string[]}> => fetch(relocateRequestUrl('/api/autocomplete?q=' + encodeURIComponent(q))).then(j),
   }
 
   return { summaries, slotList, slots, send, composerAutocomplete }

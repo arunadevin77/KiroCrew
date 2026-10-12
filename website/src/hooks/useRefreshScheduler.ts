@@ -39,6 +39,7 @@
 
 import { useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { relocateRequestUrl, dashboardNavigateUrl, currentDashboardRuntime } from '../lib/dashboardRuntime'
 import { refreshOnce } from '../api/refreshOnce'
 import { withBase } from '@/lib/basePath'
 
@@ -128,7 +129,7 @@ export function useRefreshScheduler(opts: UseRefreshSchedulerOptions = {}): void
         console.warn('[refresh] chain revoked; re-auth required')
         const cb = onChainRevokedRef.current
         if (cb) cb()
-        else window.location.assign(withBase('/'))
+        else window.location.assign(withBase(dashboardNavigateUrl('/')))
         return
       }
       // Transient (5xx / no_refresh_cookie / network) — exponential backoff.
@@ -143,7 +144,7 @@ export function useRefreshScheduler(opts: UseRefreshSchedulerOptions = {}): void
   const meQuery = useQuery({
     queryKey: ['auth-me'],
     queryFn: async (): Promise<AuthMeResponse | null> => {
-      const resp = await fetch('/api/auth/me', { credentials: 'include' })
+      const resp = await fetch(relocateRequestUrl('/api/auth/me'), { credentials: 'include' })
       if (resp.status === 404) {
         // Older server; no refresh-token support. Mark stopped, surface
         // null so the scheduling effect bails.
@@ -172,7 +173,7 @@ export function useRefreshScheduler(opts: UseRefreshSchedulerOptions = {}): void
           return null
         }
         // Cookies rotated; retry /api/auth/me ONCE.
-        const retry = await fetch('/api/auth/me', { credentials: 'include' })
+        const retry = await fetch(relocateRequestUrl('/api/auth/me'), { credentials: 'include' })
         if (retry.ok) return retry.json() as Promise<AuthMeResponse>
         // eslint-disable-next-line no-console -- intentional auth breadcrumb
         console.warn(`[refresh] re-auth retry still unauthenticated (${retry.status})`)
@@ -181,6 +182,12 @@ export function useRefreshScheduler(opts: UseRefreshSchedulerOptions = {}): void
       if (!resp.ok) return null
       return resp.json() as Promise<AuthMeResponse>
     },
+    // A relayed pane is an opaque origin with NO browser session cookie of its
+    // own: the capability relay injects the peer's credential upstream and the
+    // parent re-issues the short-lived lease. The browser-cookie refresh cycle
+    // is therefore meaningless here, and its credentialed /api/auth/me would only
+    // trip the opaque-origin CORS wall. Disable the whole scheduler in relay mode.
+    enabled: currentDashboardRuntime().kind !== 'relayed-pane',
     retry: false,
     // staleTime longer than typical access TTL (20h) so routine renders
     // don't refetch; only invalidateQueries (after successful refresh)

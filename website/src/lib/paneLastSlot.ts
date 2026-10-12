@@ -18,6 +18,7 @@
  */
 import { safeSetItem } from '../utils/safeStorage'
 import { relayTargetOrigin } from './nativeNotify'
+import { stampPaneChannel } from './embeddedParent'
 
 export const PANE_ACTIVE_SLOT_TYPE = 'mc-pane-active-slot'
 export const PANE_SLOT_HINT_PARAM = 'lastSid'
@@ -58,6 +59,6 @@ export function relayActiveSlotToParent(key: string): void {
   const target = relayTargetOrigin()
   if (!target) return
   try {
-    window.parent.postMessage({ source: 'kirocrew', type: PANE_ACTIVE_SLOT_TYPE, key }, target)
+    window.parent.postMessage(stampPaneChannel({ source: 'kirocrew', type: PANE_ACTIVE_SLOT_TYPE, key }), target)
   } catch { /* a relay must never break a state update */ }
 }

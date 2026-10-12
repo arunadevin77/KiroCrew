@@ -151,6 +151,16 @@ UNGUARDED_OTHER: dict[tuple[str, str], tuple[int, str]] = {
         404,
         "native browser panel route; this build serves no panel",
     ),
+    ("*", "/instance-pane"): (
+        404,
+        "Remote Crew pane relay; authenticated by the capability in the path, not the "
+        "cookie (token_auth bypass), and the bare prefix carries none: uniform 404",
+    ),
+    ("*", "/instance-pane/{tail}"): (
+        404,
+        "Remote Crew pane relay; authenticated by the capability in the path, not the "
+        "cookie (token_auth bypass); an unknown capability is a uniform 404",
+    ),
     ("GET", "/artifact-app/{slug}/{token}/{path}"): (
         404,
         "authenticated by the token in the URL, not the cookie; an unknown token is 404",

@@ -4,6 +4,7 @@ import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import type { AppState as ExcalidrawAppState } from '@excalidraw/excalidraw/types'
 import type * as ExcalidrawModuleType from '@excalidraw/excalidraw'
 import { safeGetItem, safeSetItem } from '../utils/safeStorage'
+import { relocateRequestUrl } from '../lib/dashboardRuntime'
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog'
 import ErrorBoundary from './ErrorBoundary'
 import ErrorNotice from './ErrorNotice'
@@ -53,7 +54,12 @@ function loadExcalidraw(): Promise<typeof ExcalidrawModuleType> {
   // falls back to a third-party CDN (esm.sh) — which an air-gapped dashboard
   // can't reach and a private one shouldn't. The path is emitted into the
   // built dist (and served in dev) by vite.config's excalidrawFontsPlugin.
-  ;(window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = withBase('/vendor/excalidraw/')
+  // Routed through the dashboard runtime seam so the base stays under the
+  // capability prefix when this document is a relayed pane; identity (`/vendor/
+  // excalidraw/`) in direct mode, so the air-gapped/private-dashboard guarantee
+  // above is unchanged. withBase then applies a sub-path build's base, if any.
+  ;(window as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH =
+    withBase(relocateRequestUrl('/vendor/excalidraw/'))
   loadInFlight = Promise.all([
     import('@excalidraw/excalidraw'),
     // Vite splits the stylesheet into the same lazy chunk group; Excalidraw

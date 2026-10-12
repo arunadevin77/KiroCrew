@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { MeetingsApiError, meetingsApi, type TranscriptSegment } from '../api'
 import { reportIfMicDenied } from '../../../hooks/mic'
+import { dashboardWebSocket } from '../../../lib/dashboardRuntime'
 import { dictationSeparator, joinTranscript, transcriptTail } from '../../../lib/dictationText'
 import { withBase } from '../../../lib/basePath'
 
@@ -289,8 +290,7 @@ export function useMeetingTranscription({
     }
     streamRef.current = stream
 
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${proto}//${window.location.host}/api/ws/stt`)
+    const ws = dashboardWebSocket('/api/ws/stt')
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
 

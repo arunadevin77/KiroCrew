@@ -22,6 +22,7 @@ import {
   type WatchStatus,
 } from '../api'
 import { approvalRoute } from './approvalActions'
+import { relocateRequestUrl, dashboardWebSocket } from '../../../lib/dashboardRuntime'
 import { noteStaleOwnerResponse } from '../../../api/staleOwnerSignal'
 import { purposeFromToolArgs } from '../../../utils/toolPurpose'
 import { readSendReceipt } from '../../../utils/sendDelivery'
@@ -97,7 +98,7 @@ function ensurePolling(): void {
 export type MochiTrustLevel = 'normal' | 'trust_reads' | 'trust' | 'yolo'
 
 export async function setMochiTrustLevel(level: MochiTrustLevel): Promise<void> {
-  await fetch('/api/chat/mode', {
+  await fetch(relocateRequestUrl('/api/chat/mode'), {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
@@ -108,7 +109,7 @@ export async function setMochiTrustLevel(level: MochiTrustLevel): Promise<void> 
 /** Current level, derived from the slot's own trust flags. */
 export async function getMochiTrustLevel(): Promise<MochiTrustLevel> {
   try {
-    const res = await fetch('/api/chat/slots', { credentials: 'same-origin' })
+    const res = await fetch(relocateRequestUrl('/api/chat/slots'), { credentials: 'same-origin' })
     if (!res.ok) return 'normal'
     // The route returns a BARE ARRAY of slot payloads (chat_handlers
     // api_chat_slots ends in `json_response(payloads)`); reading a `slots`
@@ -139,7 +140,7 @@ export async function getMochiTrustLevel(): Promise<MochiTrustLevel> {
  * Fire-and-forget: a dropped stat must never affect the chat or the pet.
  */
 export function reportStat(kind: 'message_sent' | 'message_received' | 'screenshot' | 'drag'): void {
-  void fetch('/api/apps/mochi/stat', {
+  void fetch(relocateRequestUrl('/api/apps/mochi/stat'), {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
@@ -166,7 +167,7 @@ export type PetEvent =
  * Fire-and-forget — an animation must never be able to fail a send.
  */
 export function reportPetEvent(event: PetEvent): void {
-  void fetch('/api/apps/mochi/pet-event', {
+  void fetch(relocateRequestUrl('/api/apps/mochi/pet-event'), {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
@@ -251,7 +252,7 @@ export async function updateWatchItem(
 export async function clearCompletedWatchItems(): Promise<boolean> {
   let ok = false
   try {
-    const res = await fetch('/api/apps/mochi/watchlist/clear-completed', {
+    const res = await fetch(relocateRequestUrl('/api/apps/mochi/watchlist/clear-completed'), {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -553,8 +554,7 @@ function setOnline(next: boolean): void {
 
 function connect(): void {
   if (socket !== null) return
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const ws = new WebSocket(`${proto}//${location.host}/api/ws`)
+  const ws = dashboardWebSocket('/api/ws')
   socket = ws
 
   ws.onopen = () => {
@@ -890,7 +890,7 @@ export async function sendMessage(text: string, screenshot?: string): Promise<vo
   // holding an SSE response open (matching how the dashboard chat works).
   let resp: Response
   try {
-    resp = await fetch('/api/chat?ws=1', {
+    resp = await fetch(relocateRequestUrl('/api/chat?ws=1'), {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -976,7 +976,7 @@ let slotEnsured = false
  */
 export async function ensureSlot(): Promise<void> {
   if (slotEnsured) return
-  const resp = await fetch('/api/chat/slots', {
+  const resp = await fetch(relocateRequestUrl('/api/chat/slots'), {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
@@ -1040,14 +1040,14 @@ export async function ensureSlot(): Promise<void> {
  * already marked `danger`, and re-enabling is one click in the App Store.
  */
 export async function disableApp(): Promise<void> {
-  await fetch('/api/apps/mochi/disable', {
+  await fetch(relocateRequestUrl('/api/apps/mochi/disable'), {
     method: 'POST',
     credentials: 'same-origin',
   })
 }
 
 export async function stopGeneration(): Promise<void> {
-  await fetch(`/api/chat/slots/${MOCHI_SLOT}/stop`, {
+  await fetch(relocateRequestUrl(`/api/chat/slots/${MOCHI_SLOT}/stop`), {
     method: 'POST',
     credentials: 'same-origin',
   })
@@ -1061,7 +1061,7 @@ export async function stopGeneration(): Promise<void> {
  */
 export async function getChatHistory(): Promise<Record<string, unknown>[]> {
   try {
-    const resp = await fetch(`/api/chat/slots/${MOCHI_SLOT}`, {
+    const resp = await fetch(relocateRequestUrl(`/api/chat/slots/${MOCHI_SLOT}`), {
       credentials: 'same-origin',
     })
     if (!resp.ok) return [] // 404 = slot not created yet (first ever open)
@@ -1084,7 +1084,7 @@ export async function getChatHistory(): Promise<Record<string, unknown>[]> {
  * caller keeps the rendered messages and appends a separator itself).
  */
 export async function newSession(): Promise<void> {
-  const resp = await fetch(`/api/chat/slots/${MOCHI_SLOT}`, {
+  const resp = await fetch(relocateRequestUrl(`/api/chat/slots/${MOCHI_SLOT}`), {
     method: 'DELETE',
     credentials: 'same-origin',
   })
@@ -1115,7 +1115,7 @@ export const clearChat = newSession
  * without waiting for the next message to force a reload.
  */
 export async function deleteHistory(): Promise<void> {
-  const resp = await fetch(`/api/sessions/${encodeURIComponent(`dashboard:${MOCHI_SLOT}`)}`, {
+  const resp = await fetch(relocateRequestUrl(`/api/sessions/${encodeURIComponent(`dashboard:${MOCHI_SLOT}`)}`), {
     method: 'DELETE',
     credentials: 'same-origin',
   })
@@ -1151,7 +1151,7 @@ export const onContextUsage = (cb: ContextListener) =>
  */
 export async function getPetStateInfo(): Promise<{ state: PetState; mood: string }> {
   try {
-    const res = await fetch('/api/apps/mochi/pet-state', { credentials: 'same-origin' })
+    const res = await fetch(relocateRequestUrl('/api/apps/mochi/pet-state'), { credentials: 'same-origin' })
     if (!res.ok) return { state: 'offline', mood: 'neutral' }
     const data = await res.json()
     return {
@@ -1270,14 +1270,14 @@ export const onDeleteHistory = (cb: () => void) => onShellEvent('onDeleteHistory
 export type PackMetaWire = PackMeta
 
 export async function galleryListPacks(): Promise<PackMetaWire[]> {
-  const res = await fetch('/api/apps/mochi/packs', { credentials: 'same-origin' })
+  const res = await fetch(relocateRequestUrl('/api/apps/mochi/packs'), { credentials: 'same-origin' })
   if (!res.ok) return []
   const body = await res.json()
   return Array.isArray(body?.packs) ? body.packs : []
 }
 
 export async function galleryGetPackDetail(packId: string): Promise<PackManifest | null> {
-  const res = await fetch(`/api/apps/mochi/packs/${encodeURIComponent(packId)}`, {
+  const res = await fetch(relocateRequestUrl(`/api/apps/mochi/packs/${encodeURIComponent(packId)}`), {
     credentials: 'same-origin',
   })
   return res.ok ? res.json() : null
@@ -1285,13 +1285,13 @@ export async function galleryGetPackDetail(packId: string): Promise<PackManifest
 
 /** URL of one image inside a pack — usable directly as an `<img src>`. */
 export function galleryPackFileUrl(packId: string, filename: string): string {
-  return `/api/apps/mochi/packs/${encodeURIComponent(packId)}/file/${encodeURIComponent(filename)}`
+  return relocateRequestUrl(`/api/apps/mochi/packs/${encodeURIComponent(packId)}/file/${encodeURIComponent(filename)}`)
 }
 
 export async function gallerySaveSpritePack(
   data: Record<string, unknown>,
 ): Promise<{ ok: boolean; packId?: string; error?: string }> {
-  const res = await fetch('/api/apps/mochi/packs', {
+  const res = await fetch(relocateRequestUrl('/api/apps/mochi/packs'), {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
@@ -1315,7 +1315,7 @@ export async function gallerySaveSpritePack(
  * into a named error, including the case where something else wins the write.
  */
 export async function gallerySetActive(packId: string): Promise<void> {
-  const res = await fetch('/api/apps/mochi/settings', {
+  const res = await fetch(relocateRequestUrl('/api/apps/mochi/settings'), {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
@@ -1333,7 +1333,7 @@ export async function gallerySetActive(packId: string): Promise<void> {
 }
 
 export async function galleryDeletePack(packId: string): Promise<boolean> {
-  const res = await fetch(`/api/apps/mochi/packs/${encodeURIComponent(packId)}`, {
+  const res = await fetch(relocateRequestUrl(`/api/apps/mochi/packs/${encodeURIComponent(packId)}`), {
     method: 'DELETE',
     credentials: 'same-origin',
   })
@@ -1454,7 +1454,7 @@ export function onApprovalResolvedExternal(cb: ApprovalListener): () => void {
 /** Pending approvals at mount time — rehydration after a panel reopen. */
 export async function getPendingApprovals(): Promise<Record<string, unknown>[]> {
   try {
-    const res = await fetch('/api/approvals', { credentials: 'same-origin' })
+    const res = await fetch(relocateRequestUrl('/api/approvals'), { credentials: 'same-origin' })
     if (!res.ok) return []
     const body = await res.json()
     const all = Array.isArray(body) ? (body as Record<string, unknown>[]) : []
@@ -1504,7 +1504,7 @@ export async function respondApproval(
   try {
     const res =
       route.kind === 'approval' && target?.origin === 'native'
-        ? await fetch(`/api/chat/slots/${MOCHI_SLOT}/approve`, {
+        ? await fetch(relocateRequestUrl(`/api/chat/slots/${MOCHI_SLOT}/approve`), {
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
@@ -1517,7 +1517,7 @@ export async function respondApproval(
           })
         : route.kind === 'approval'
         ? await fetch(
-            `/api/approvals/${encodeURIComponent(id)}/${route.action}` +
+            relocateRequestUrl(`/api/approvals/${encodeURIComponent(id)}/${route.action}` +
               (target?.origin === 'coordinator'
                 ? '?' +
                   new URLSearchParams({
@@ -1525,7 +1525,7 @@ export async function respondApproval(
                     slot: target.slot,
                     instance: target.instance,
                   }).toString()
-                : ''),
+                : '')),
             {
               method: 'POST',
               credentials: 'same-origin',
@@ -1535,7 +1535,7 @@ export async function respondApproval(
           )
         : // approval-target: trust-only. The slot route accepts a durable trust
           // action only by request id, and re-verifies the card before granting.
-          await fetch(`/api/chat/slots/${MOCHI_SLOT}/approve`, {
+          await fetch(relocateRequestUrl(`/api/chat/slots/${MOCHI_SLOT}/approve`), {
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
@@ -1599,7 +1599,7 @@ export interface ModelChoice {
  */
 export async function getModels(): Promise<ModelChoice[]> {
   try {
-    const res = await fetch('/api/models', { credentials: 'same-origin' })
+    const res = await fetch(relocateRequestUrl('/api/models'), { credentials: 'same-origin' })
     if (!res.ok) return []
     const body = await res.json()
     const list = Array.isArray(body) ? body : body?.models
@@ -1619,7 +1619,7 @@ export async function getModels(): Promise<ModelChoice[]> {
  */
 export async function getSlotModel(): Promise<string> {
   try {
-    const res = await fetch('/api/chat/slots', { credentials: 'same-origin' })
+    const res = await fetch(relocateRequestUrl('/api/chat/slots'), { credentials: 'same-origin' })
     if (!res.ok) return ''
     const body = await res.json()
     const slots = Array.isArray(body) ? body : body?.slots
@@ -1653,7 +1653,7 @@ export interface SetModelResult {
  */
 export async function setModel(model: string): Promise<SetModelResult> {
   try {
-    const res = await fetch(`/api/chat/slots/${MOCHI_SLOT}/model`, {
+    const res = await fetch(relocateRequestUrl(`/api/chat/slots/${MOCHI_SLOT}/model`), {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -1689,7 +1689,7 @@ export async function editResend(
   ts: string,
 ): Promise<{ ok: boolean; message?: string }> {
   try {
-    const res = await fetch(`/api/chat/slots/${MOCHI_SLOT}/edit-resend`, {
+    const res = await fetch(relocateRequestUrl(`/api/chat/slots/${MOCHI_SLOT}/edit-resend`), {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
@@ -1712,7 +1712,7 @@ export async function editResend(
  * be strictly worse.
  */
 export function localFileUrl(path: string): string {
-  return `/api/file-raw?path=${encodeURIComponent(path)}`
+  return relocateRequestUrl(`/api/file-raw?path=${encodeURIComponent(path)}`)
 }
 
 // ── Remote instances (replaces the original's tunnel/backend surface) ───────
@@ -1764,7 +1764,7 @@ export type InstancesView =
 
 export async function listInstances(): Promise<InstancesView> {
   try {
-    const res = await fetch('/api/instances', { credentials: 'same-origin' })
+    const res = await fetch(relocateRequestUrl('/api/instances'), { credentials: 'same-origin' })
     // 403 is the documented "instances.enabled is off" answer, not a failure.
     if (res.status === 403) return { state: 'disabled' }
     if (!res.ok) return { state: 'error' }
@@ -1780,7 +1780,7 @@ export async function listInstances(): Promise<InstancesView> {
 /** Liveness of one configured instance (core owns the SSH tunnel, not Mochi). */
 export async function getInstanceStatus(id: string): Promise<Record<string, unknown> | undefined> {
   try {
-    const res = await fetch(`/api/instances/${encodeURIComponent(id)}/status`, {
+    const res = await fetch(relocateRequestUrl(`/api/instances/${encodeURIComponent(id)}/status`), {
       credentials: 'same-origin',
     })
     return res.ok ? await res.json() : undefined
@@ -1798,7 +1798,7 @@ export async function getInstanceStatus(id: string): Promise<Record<string, unkn
 
 export async function getSttConfig(): Promise<SttConfig | undefined> {
   try {
-    const res = await fetch('/api/config/stt', { credentials: 'same-origin' })
+    const res = await fetch(relocateRequestUrl('/api/config/stt'), { credentials: 'same-origin' })
     return res.ok ? await res.json() : undefined
   } catch {
     return undefined
@@ -1811,7 +1811,7 @@ export async function transcribeAudio(
   mime = 'audio/webm',
 ): Promise<string | undefined> {
   try {
-    const res = await fetch('/api/stt/transcribe', {
+    const res = await fetch(relocateRequestUrl('/api/stt/transcribe'), {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },

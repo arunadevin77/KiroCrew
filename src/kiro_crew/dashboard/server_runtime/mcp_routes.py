@@ -380,6 +380,31 @@ def _register_mcp_routes(app: web.Application) -> None:
     # handlers/browser_view_relay.py for the rewrites and the full posture.
     app.router.add_get("/browser-view", handlers.api_browser_view_relay)
     app.router.add_get("/browser-view/{tail:.*}", handlers.api_browser_view_relay)
+    # The Remote Crew pane relay (dashboard/instance_pane_relay.py): a same-origin
+    # capability path that forwards a connected peer crew's dashboard — HTTP and
+    # WebSocket — over the SSH forward the manager already holds, so a remote pane
+    # rides the one published HTTPS origin with no wildcard host and no second
+    # port. Self-authenticating (the capability is in the path; the prefix is on
+    # token_auth's bypass list) with a UNIFORM 404 for any bad capability, so the
+    # handler must own every method — ALL verbs plus the WebSocket upgrade. The
+    # bare path is registered too, for the same uniform-404 reason as
+    # /browser-view. Registered here, before the SPA shell fallback the auth
+    # middleware serves, so a pane document is never answered with the hub shell.
+    from kiro_crew.dashboard.instance_pane_relay import (
+        api_instance_pane_relay,
+        install_access_log_redaction,
+    )
+
+    app.router.add_route("*", "/instance-pane", api_instance_pane_relay)
+    app.router.add_route("*", "/instance-pane/{tail:.*}", api_instance_pane_relay)
+    # A relay capability is a bearer secret in the request PATH. aiohttp's access
+    # log (its default ``%r`` atom records the request line) is a separate sink
+    # from the relay's own SEL audit, so redact the capability there too, at the
+    # server boundary that owns the aiohttp app — idempotent, so registering the
+    # route on every app build installs exactly one filter. Without this the
+    # "never logged" guarantee would hold only for the relay's audit, not for an
+    # access log the production runner may enable.
+    install_access_log_redaction()
     # The Browser panel's address bar on the non-native transport: opens an
     # owner-typed URL in the gateway host's Playwright CLI browser and shows it
     # through the view above. Owner-only (cookie/token) and deliberately NOT on

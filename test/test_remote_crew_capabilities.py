@@ -441,7 +441,10 @@ class TestUnwrapHelper:
 class TestPeerCapabilityCarrier:
     """The carrier is a closed path set, not a widening of the proxy fence."""
 
-    def test_the_path_set_holds_exactly_the_five_reads(self):
+    def test_the_path_set_holds_exactly_the_six_reads(self):
+        """``/api/status`` joined for the pane relay: the hub reads the peer's
+        advertised ``pane_relay_protocol`` before issuing a same-origin relay
+        endpoint. Still a closed set of reads; any further row is a new grant."""
         from kiro_crew.instances.ssh_tunnel_manager import _PEER_CAPABILITY_PATHS
 
         assert _PEER_CAPABILITY_PATHS == frozenset(
@@ -451,6 +454,7 @@ class TestPeerCapabilityCarrier:
                 "/api/models",
                 "/api/effort-levels",
                 "/api/workspaces",
+                "/api/status",
             }
         )
 

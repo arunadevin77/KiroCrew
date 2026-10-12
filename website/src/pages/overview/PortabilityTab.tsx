@@ -1,3 +1,4 @@
+import { relocateRequestUrl } from '../../lib/dashboardRuntime'
 import { useEffect, useState, useRef } from 'react'
 import { Download, Upload, FileArchive, AlertCircle, CheckCircle } from 'lucide-react'
 import { Card, CardTitle } from '../../components/ui'
@@ -305,7 +306,7 @@ export default function PortabilityTab() {
       const exportUrl = memoryOnly
         ? '/api/portability/export?components=memory'
         : withChats ? '/api/portability/export?include_sessions=true' : '/api/portability/export'
-      const resp = await fetch(exportUrl)
+      const resp = await fetch(relocateRequestUrl(exportUrl))
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: resp.statusText }))
         noteStaleOwnerResponse(resp.status, err)
@@ -339,7 +340,7 @@ export default function PortabilityTab() {
     const fd = new FormData()
     fd.append('file', file)
     try {
-      const resp = await fetch('/api/portability/preview', { method: 'POST', body: fd })
+      const resp = await fetch(relocateRequestUrl('/api/portability/preview'), { method: 'POST', body: fd })
       const data = await resp.json()
       if (data.ok) {
         setPreview(data.manifest)
@@ -370,7 +371,7 @@ export default function PortabilityTab() {
     try {
       const params = new URLSearchParams({ mode: effectiveMode })
       if (memoryImport && effectiveMode === 'merge') params.set('components', 'memory')
-      const resp = await fetch(`/api/portability/import?${params}`, { method: 'POST', body: fd })
+      const resp = await fetch(relocateRequestUrl(`/api/portability/import?${params}`), { method: 'POST', body: fd })
       const data = await resp.json()
       if (data.ok) {
         const summary = data.summary || {}

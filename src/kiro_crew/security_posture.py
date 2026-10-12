@@ -1791,6 +1791,15 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         # hygiene so a response echoing a credential or exfiltration URL cannot
         # leak into the log ring / /api/logs stream; not an egress boundary.
         "task_planner.py",
+        # Log hygiene for the Remote Crew pane relay: masks the relay capability
+        # (a bearer secret carried in the request PATH) out of aiohttp access-log
+        # lines before any handler sees them (`redact_capability_in_log`,
+        # `install_access_log_redaction`). It is not a baseline redactor and the
+        # module emits no human- or third-party-bound text through it; it keeps a
+        # replayable secret out of the gateway log. `mcp_routes.py` only installs
+        # that filter where the relay route is registered.
+        "dashboard/instance_pane_relay.py",
+        "dashboard/server_runtime/mcp_routes.py",
         # Gate-side log hygiene, same shape as update_provider: redacts pip's
         # stderr tail (an app requirements.txt can name an index URL carrying
         # credentials) before the provisioning failure is written to the

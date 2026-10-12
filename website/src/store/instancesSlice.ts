@@ -22,11 +22,21 @@ import { createSlice, type PayloadAction } from '@reduxjs/toolkit'
 
 // The shapes live in a neutral module, so the store does not depend on a page.
 import type { InstanceDraft, InstanceFormValues } from '../types/instanceForm'
+import { type PaneEndpoint, sameEndpoint } from '../lib/paneChannel'
 
-export interface WarmConn {
-  port: number
-  token: string
-}
+/**
+ * One warm pane's resolved, discriminated endpoint (see `lib/paneChannel`):
+ *
+ *  - `direct-loopback` — the loopback `port` + minted `token`; the browser
+ *    reaches the SSH forward itself (desktop / localhost).
+ *  - `same-origin-relay` — a short-lived capability `documentPath` + frame
+ *    `channel` (published HTTPS); NO port and NO remote token are held here.
+ *
+ * Either way it is NEVER persisted and never logged — it lives only for the
+ * dashboard session. The header tab strip writes it (on connect / open-pane) and
+ * the viewport reads it (to build the iframe src + attribute postMessage).
+ */
+export type WarmConn = PaneEndpoint
 
 /** One switcher tab as relayed to an embedded pane (parent → frame). */
 export interface HostTab {
@@ -192,14 +202,23 @@ const instancesSlice = createSlice({
       // so the one already on screen stays valid: when the port is unchanged and
       // a token is mounted, keep it. The explicit remint path (`refreshToken`)
       // and a port change (tunnel rebuild) both leave this flag off and swap the
-      // token as before.
-      const keepToken = !!keepTokenIfPortUnchanged && !!prev && prev.port === action.payload.conn.port && !!prev.token
-      const conn: WarmConn = keepToken ? { ...action.payload.conn, token: prev.token } : action.payload.conn
-      // A new port/token changes the iframe src (srcFor), which reloads the
-      // pane — its previous readiness no longer describes what's on screen.
+      // token as before. Only a direct-loopback endpoint carries a port/token; a
+      // same-origin-relay endpoint is always taken as written.
+      const next = action.payload.conn
+      const keepToken =
+        !!keepTokenIfPortUnchanged &&
+        next.kind === 'direct-loopback' &&
+        prev?.kind === 'direct-loopback' &&
+        prev.port === next.port &&
+        !!prev.token
+      const conn: WarmConn =
+        keepToken && prev?.kind === 'direct-loopback' ? { ...next, token: prev.token } : next
+      // A new endpoint changes the iframe src (srcFor) — a fresh port/token in
+      // direct mode, or a fresh capability/channel in relay mode — which reloads
+      // the pane, so its previous readiness no longer describes what's on screen.
       // Tests preload partial slices, so tolerate a missing `ready` map.
       if (!state.ready) state.ready = {}
-      if (!prev || prev.port !== conn.port || prev.token !== conn.token) {
+      if (!sameEndpoint(prev, conn)) {
         delete state.ready[id]
       }
       state.warm[id] = conn

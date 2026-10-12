@@ -27,6 +27,8 @@ import { AUTH_BANNER_BUTTON_CSS, AUTH_BANNER_CSS } from './authBannerStyles'
 import { beginArtifactWrite, endArtifactWrite } from '../lib/artifactWrites'
 import { withDeadline } from '../lib/withDeadline'
 import { installApiTransport } from './apiTransport'
+import { relocateRequestUrl, currentDashboardRuntime } from '../lib/dashboardRuntime'
+import { stampPaneChannel } from '../lib/embeddedParent'
 import { isDeadlineError, queryClient, invalidateAcrossQueryClients } from './queryClient'
 import { recordError, recordTransportRejection, attachReport, parseErrorCode, requestPath } from '../utils/errorReport'
 import { i18nT } from '../i18n/t'
@@ -356,7 +358,7 @@ function postAuthExpiredToHub(): boolean {
   if (_embeddedHandoffPosted) return true
   try {
     // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
-    window.parent.postMessage({ type: 'mc-auth-expired' }, '*')
+    window.parent.postMessage(stampPaneChannel({ type: 'mc-auth-expired' }), '*')
   } catch {
     return false // cross-origin parent unreachable — caller falls back to the banner
   }
@@ -445,8 +447,13 @@ const EXCHANGE_UNREACHABLE: PasteExchange = {
 
 async function exchangePastedToken(token: string): Promise<PasteExchange> {
   try {
-    const r = await fetch('/api/auth/me?token=' + encodeURIComponent(token), {
-      credentials: 'include',
+    const r = await fetch(relocateRequestUrl('/api/auth/me?token=' + encodeURIComponent(token)), {
+      // A relayed pane is an opaque origin: it holds no hub cookie to send, and
+      // the relay injects the peer's own credential upstream. Requesting
+      // `credentials: 'include'` there only forces a CORS preflight/response that
+      // demands `Access-Control-Allow-Credentials`, which the opaque relay
+      // deliberately does not set — so omit ambient credentials in relay mode.
+      credentials: currentDashboardRuntime().kind === 'relayed-pane' ? 'omit' : 'include',
     })
     if (!r.ok) return { reached: true, ok: false, tokenAccepted: false, ownerOk: false }
     try {
@@ -1100,7 +1107,13 @@ function jfetch(input: string, init?: RequestInit): Promise<Response> {
   // a second `undefined` is a wire change the transport-contract tests pin (and
   // keeping the shapes identical means this wrapper is observable only on the
   // rejection path it exists for).
-  const request = init === undefined ? fetch(input) : fetch(input, init)
+  //
+  // The TARGET is relocated through the dashboard runtime seam so a relayed pane
+  // stays under its capability prefix (identity in direct mode). The journal
+  // below keeps the caller's gateway path: a stable endpoint identity, and the
+  // capability in a relocated path is a bearer secret that must never be logged.
+  const target = relocateRequestUrl(input)
+  const request = init === undefined ? fetch(target) : fetch(target, init)
   return request.catch((error: unknown) => {
     if (!isDeliberateAbort(error)) {
       const report = recordTransportRejection({

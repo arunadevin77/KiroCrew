@@ -1,3 +1,4 @@
+import { relocateRequestUrl } from '../lib/dashboardRuntime'
 import { useEffect, useId, useRef, type MutableRefObject } from 'react'
 import { type QueryClient, useQuery } from '@tanstack/react-query'
 
@@ -233,7 +234,7 @@ export function useRunInTerminalBridge({
             const payload: unknown = await queryClient.fetchQuery({
               queryKey: ['terminal-sessions'],
               queryFn: async () => {
-                const response = await fetch('/api/terminal/sessions')
+                const response = await fetch(relocateRequestUrl('/api/terminal/sessions'))
                 if (!response.ok) {
                   throw new Error(`Failed to list terminal sessions (${response.status})`)
                 }

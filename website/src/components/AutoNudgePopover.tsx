@@ -1,3 +1,4 @@
+import { relocateRequestUrl } from '../lib/dashboardRuntime'
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Goal, Pause, Play, Radar, X, Zap } from 'lucide-react'
@@ -315,7 +316,7 @@ export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, on
    *  stale copy of a record a write just changed. */
   const loopWrite = useMutation({
     mutationFn: async ({ url, method, body }: { url: string, method: 'PATCH' | 'POST', body?: unknown }): Promise<AutoNudgeLoop> => {
-      const resp = await fetch(url, body === undefined
+      const resp = await fetch(relocateRequestUrl(url), body === undefined
         ? { method }
         : { method, headers: JSON_HEADERS, body: JSON.stringify(body) })
       const data = await resp.json().catch(() => ({}))
@@ -334,7 +335,7 @@ export default function AutoNudgePopover({ slotKey, loop, open, onOpenChange, on
     if (!loop) return
     setSaving(true)
     try {
-      const resp = await fetch(`/api/autonudge/${loop.id}?intent=clear`, { method: 'DELETE' })
+      const resp = await fetch(relocateRequestUrl(`/api/autonudge/${loop.id}?intent=clear`), { method: 'DELETE' })
       if (!resp.ok) {
         // A successful DELETE may return 204 No Content, so the body is read only here.
         const data = await resp.json().catch(() => ({}))

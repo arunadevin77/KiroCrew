@@ -1,3 +1,4 @@
+import { relocateRequestUrl } from '../../lib/dashboardRuntime'
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { confirmRestoredTabs, reconcileRestoredTabs } from '../../hooks/useBottomTerminal'
@@ -29,7 +30,7 @@ export function useTerminalRestoreProbe(): boolean {
     // confirm look further down.
     queryFn: async ({ signal }) => {
       const r = await withDeadline(TERMINAL_PROBE_TIMEOUT_MS, signal, s =>
-        fetch('/api/terminal/sessions', { signal: s }))
+        fetch(relocateRequestUrl('/api/terminal/sessions'), { signal: s }))
       // Default-on: the terminal is enabled unless the server explicitly says
       // otherwise. A transient/auth-timing failure of this probe must NOT hide
       // an enabled terminal by falling back to {enabled:false}, which with
@@ -65,7 +66,7 @@ export function useTerminalRestoreProbe(): boolean {
       let second: unknown = null
       try {
         const r = await withDeadline(TERMINAL_PROBE_TIMEOUT_MS, undefined, s =>
-          fetch('/api/terminal/sessions', { signal: s }))
+          fetch(relocateRequestUrl('/api/terminal/sessions'), { signal: s }))
         if (r.ok) second = await r.json()
       } catch { /* null: the confirm look could not rule, so every suspect stays */ }
       confirmRestoredTabs(second)

@@ -1491,6 +1491,15 @@ def _register_instances_hooks(app: web.Application, state: DashboardState, port:
         )
         state.instances_registry = registry
         state.instances_manager = manager
+        # The Remote Crew pane relay shares the manager's live forward and its
+        # credential machinery: it issues short-lived, generation-bound pane
+        # capabilities and serves the /instance-pane/ route. Constructed here so
+        # it exists for the first request; the serve-time generation check makes
+        # every lease fail closed the moment its forward moves, independent of the
+        # shutdown/removal revoke hooks. See dashboard/instance_pane_relay.py.
+        from kiro_crew.dashboard.instance_pane_relay import InstancePaneRelay
+
+        state.instance_pane_relay = InstancePaneRelay(manager)
         # First-party cookies: embedded instances load from
         # http://127.0.0.1:<port>, so the hub itself should be reached at
         # http://127.0.0.1:<port> (NOT localhost / kirocrew.localhost) — mixing
@@ -1517,6 +1526,9 @@ def _register_instances_hooks(app: web.Application, state: DashboardState, port:
         revive_task.add_done_callback(state._background_tasks.discard)
 
     async def _instances_shutdown(app_: web.Application) -> None:
+        relay = getattr(state, "instance_pane_relay", None)
+        if relay is not None:
+            await relay.close()
         manager = getattr(state, "instances_manager", None)
         if manager is not None:
             await manager.shutdown()

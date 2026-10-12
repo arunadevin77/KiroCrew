@@ -11,6 +11,7 @@
  * `api.wakatimeExportUrl` at call time, as it always has.
  */
 
+import { relocateRequestUrl } from '../../lib/dashboardRuntime'
 import type { KiroUsagePayload, KiroUsageRefreshResponse } from '../client'
 import type { ClientTransport } from './transport'
 
@@ -71,7 +72,7 @@ export function createTelemetryEndpoints({ get, post, j, jfetch: fetch }: Client
      *  Each fold still carries its OWN `seq`, because they really do differ: an entry
      *  advances the folds it belongs to and leaves the rest where they were. */
     sessionCrewLogProjections: async (slot: string) => {
-      const body = await fetch(`/api/sessions/${encodeURIComponent(slot)}/crew-log/projections`).then(j)
+      const body = await fetch(relocateRequestUrl(`/api/sessions/${encodeURIComponent(slot)}/crew-log/projections`)).then(j)
       const read = body as {
         projections?: Record<string, unknown>
         unit?: unknown
@@ -112,16 +113,16 @@ export function createTelemetryEndpoints({ get, post, j, jfetch: fetch }: Client
     /** The conductor's accepted work, not worker-reported completion. */
     sessionWorkProjection: (slot: string) =>
       get(`/api/sessions/${encodeURIComponent(slot)}/crew-log/projection/work`).then(j),
-    telemetryStartup: () => fetch('/api/telemetry/startup').then(j),
+    telemetryStartup: () => fetch(relocateRequestUrl('/api/telemetry/startup')).then(j),
     // Per-turn context injection breakdown for one session. Independent of the
     // telemetry main switch: the usage rows it reads are always written.
     telemetryContextTrace: (slot: string) =>
-      fetch('/api/telemetry/context-trace?slot=' + encodeURIComponent(slot)).then(j),
+      fetch(relocateRequestUrl('/api/telemetry/context-trace?slot=' + encodeURIComponent(slot))).then(j),
     /** Per-turn usage rows for one session — the Spend table's drill-down.
      *  Same always-written row store as the context trace; the dashboard reads
      *  every row (the endpoint's app-ownership filter applies to app callers). */
     usageTurns: (slot: string) =>
-      fetch('/api/usage/turns?slot=' + encodeURIComponent(slot)).then(j),
+      fetch(relocateRequestUrl('/api/usage/turns?slot=' + encodeURIComponent(slot))).then(j),
     /** The Usage tab's stacked spend-over-time series: whole-install credits by
      *  one dimension; the same always-written row store as `usageTurns`, with no
      *  slot filter, which is why the route refuses app tokens. */
@@ -130,7 +131,7 @@ export function createTelemetryEndpoints({ get, post, j, jfetch: fetch }: Client
     /** WakaTime coding stats for a named range. Returns { configured: false }
      *  when the integration is off; a 502 body carries { code: 'upstream_unavailable' }. */
     wakatimeStats: (range: string) =>
-      fetch('/api/wakatime/stats?range=' + encodeURIComponent(range)).then(j) as Promise<WakaTimeStats>,
+      fetch(relocateRequestUrl('/api/wakatime/stats?range=' + encodeURIComponent(range))).then(j) as Promise<WakaTimeStats>,
     /** Download URL for the billable-hours export. The browser navigates to it so
      *  the CSV/JSON arrives via the endpoint's own Content-Disposition. */
     wakatimeExportUrl: (start: string, end: string, format: 'csv' | 'json') =>
@@ -138,14 +139,14 @@ export function createTelemetryEndpoints({ get, post, j, jfetch: fetch }: Client
   }
 
   const privacyPosture = {
-    beaconStatus: () => fetch('/api/telemetry/beacon').then(j),
+    beaconStatus: () => fetch(relocateRequestUrl('/api/telemetry/beacon')).then(j),
     /** Local metric-collection posture for the Privacy panel's recording switch.
      *  Separate from telemetryStartup(), which parses every shard in the window. */
-    collectionStatus: () => fetch('/api/telemetry/collection').then(j),
+    collectionStatus: () => fetch(relocateRequestUrl('/api/telemetry/collection')).then(j),
   }
 
   const creditUsage = {
-    sessionsUsage: () => fetch('/api/sessions/usage').then(j) as Promise<{ usage?: KiroUsagePayload }>,
+    sessionsUsage: () => fetch(relocateRequestUrl('/api/sessions/usage')).then(j) as Promise<{ usage?: KiroUsagePayload }>,
     /**
      * Refresh the credit reading now (the account modal's Refresh button). Same
      * `{usage}` envelope as `sessionsUsage`, so `parseKiroUsagePayload` reads
@@ -156,13 +157,13 @@ export function createTelemetryEndpoints({ get, post, j, jfetch: fetch }: Client
      * one refusal is 409 `refresh_in_flight` while a refresh is already running.
      */
     sessionsUsageRefresh: () => post('/api/sessions/usage/refresh').then(j) as Promise<KiroUsageRefreshResponse>,
-    providerUsage: () => fetch('/api/usage').then(j),
+    providerUsage: () => fetch(relocateRequestUrl('/api/usage')).then(j),
   }
 
   const kiroUsage = {
     // A graceful no-op on a public install, where Kiro usage is stubbed; the
     // panels render empty when the feature is absent.
-    kiroUsage: () => fetch('/api/usage/kiro').then(j),
+    kiroUsage: () => fetch(relocateRequestUrl('/api/usage/kiro')).then(j),
   }
 
   return { usageReadouts, privacyPosture, creditUsage, kiroUsage }

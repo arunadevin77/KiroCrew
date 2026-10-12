@@ -4,6 +4,7 @@ import { useHoverIntent } from '../../hooks/useHoverIntent'
 import { railWidthFor } from '../../hooks/useRailWidth'
 import { computeHeaderDragGaps, type DragGap } from '../../lib/dragGaps'
 import { isEmbeddedPane } from '../../lib/embedded'
+import { stampPaneChannel } from '../../lib/embeddedParent'
 import { isMacElectron } from '../../lib/electron'
 import { setNativeFocusChrome, subscribeNativeFocusModeToggle } from '../platform/electronBridge'
 
@@ -160,7 +161,7 @@ export function useFocusChrome({ isMobile, navCollapsed, activeInstanceId, topRe
     if (!isEmbeddedPane()) return
     try {
       // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
-      window.parent?.postMessage({ type: 'mc-focus-chrome', v: 1, on: !focusActive || topChromeShown }, '*')
+      window.parent?.postMessage(stampPaneChannel({ type: 'mc-focus-chrome', v: 1, on: !focusActive || topChromeShown }), '*')
     } catch {
       /* no parent / cross-origin restriction — the next change re-posts */
     }

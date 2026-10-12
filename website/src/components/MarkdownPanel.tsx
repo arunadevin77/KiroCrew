@@ -1,3 +1,4 @@
+import { relocateRequestUrl } from '../lib/dashboardRuntime'
 import { safeSetItem } from '../utils/safeStorage'
 import { composerDraftStoreFor } from '../utils/composerDraftStore'
 import { clearAnnotationHighlight, paintAnnotationHighlight } from '../utils/annotationHighlight'
@@ -888,12 +889,12 @@ function useFileKnowledgeState(filePath: string, onError: ReportError) {
   const { data, error: queryError } = useQuery({
     queryKey: ['knowledge-config', filePath],
     queryFn: async () => {
-      const r = await fetch('/api/knowledge/config')
+      const r = await fetch(relocateRequestUrl('/api/knowledge/config'))
       // A failed read used to resolve to `null`, which rendered as "not added"
       // — a failure dressed as a state. Reject instead so the panel can say so.
       if (!r.ok) throw new Error(i18nT('components.markdownPanel.knowledge_status_failed'))
       const cfg = await r.json()
-      const sr = await fetch(`/api/knowledge/sources?uri=${encodeURIComponent(filePath)}`)
+      const sr = await fetch(relocateRequestUrl(`/api/knowledge/sources?uri=${encodeURIComponent(filePath)}`))
       // A failed sources read must not resolve to `[]`: that would read as "not
       // added" and hide the Remove affordance (and offer Add) for a file that
       // may already be in the library. Reject like the config read above does,
@@ -931,7 +932,7 @@ function useFileKnowledgeState(filePath: string, onError: ReportError) {
       // imported bundle and is otherwise only validated as a non-empty string,
       // so an id like `../../../sessions` would otherwise resolve to a
       // different route and land an irreversible DELETE on it.
-      const res = await fetch(`/api/knowledge/sources/${encodeURIComponent(sourceId)}`, { method: 'DELETE' })
+      const res = await fetch(relocateRequestUrl(`/api/knowledge/sources/${encodeURIComponent(sourceId)}`), { method: 'DELETE' })
       // 404 just means the source is already gone — removing an absent thing
       // is success, so the panel falls back to the Add affordance instead of
       // reporting a failure dressed as an error.
@@ -956,7 +957,7 @@ function useFileKnowledgeState(filePath: string, onError: ReportError) {
   const { mutate: add, isPending: adding, isSuccess: added, data: addResult, reset } = useMutation({
     mutationFn: async () => {
       const name = pathBasename(filePath) || filePath
-      const res = await fetch('/api/knowledge/sources', {
+      const res = await fetch(relocateRequestUrl('/api/knowledge/sources'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, source_type: 'local_file', uri: filePath }),

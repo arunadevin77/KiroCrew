@@ -9,6 +9,7 @@
  * writing it.
  */
 
+import { relocateRequestUrl } from '../../lib/dashboardRuntime'
 import type { SessionDoc, PublishProviderDescriptor } from '../../types'
 import type { Site } from '../../hooks/useDirectDeploy'
 import { toApiError } from '../apiError'
@@ -81,7 +82,7 @@ export function createArtifactsEndpoints({ get, post, del, patch, j, jfetch: fet
      *  slot, which is correct deny-by-default) — callers treat a breadcrumb as
      *  best-effort and swallow the failure rather than failing the user's click. */
     recordArtifactReference: (slug: string, slot: string, metadata?: { message_ts?: string; widget_index?: number }) =>
-      fetch(`/api/artifacts/${encodeURIComponent(slug)}/events`, {
+      fetch(relocateRequestUrl(`/api/artifacts/${encodeURIComponent(slug)}/events`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Session-Key': `dashboard:${slot}` },
         body: JSON.stringify({ type: 'referenced', ...(metadata ? { metadata } : {}) }),

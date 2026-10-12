@@ -5,6 +5,7 @@
  * view, the log level, and the problem-report diagnostics bundle.
  */
 
+import { relocateRequestUrl } from '../../lib/dashboardRuntime'
 import type { SessionStorageReport, SessionStorageCleanup, SessionStorageEmptyJob, SessionInventoryList, SessionInventoryDetail, SessionTrashResult } from '../../types'
 import type { TasksSummary, TasksListResponse, TaskDetailResponse } from '../tasks'
 import type { ClientTransport } from './transport'
@@ -43,9 +44,9 @@ export interface LeakedRuntimesReclaim {
 
 export function createSystemEndpoints({ get, post, j, jfetch: fetch }: ClientTransport) {
   const statusAndStorage = {
-    status: () => fetch('/api/status').then(j),
-    tunnelStatus: () => fetch('/api/tunnel/status').then(j) as Promise<TunnelStatus>,
-    system: () => fetch('/api/system').then(j),
+    status: () => fetch(relocateRequestUrl('/api/status')).then(j),
+    tunnelStatus: () => fetch(relocateRequestUrl('/api/tunnel/status')).then(j) as Promise<TunnelStatus>,
+    system: () => fetch(relocateRequestUrl('/api/system')).then(j),
     leakedRuntimes: () => get('/api/system/leaked-runtimes').then(j) as Promise<LeakedRuntimes>,
     /** Owner-only; the body's `confirm` is what the route requires before it acts. */
     reclaimLeakedRuntimes: () =>
@@ -75,24 +76,24 @@ export function createSystemEndpoints({ get, post, j, jfetch: fetch }: ClientTra
   }
 
   const taskQueue = {
-    sessionsHealth: () => fetch('/api/sessions/health').then(j),
+    sessionsHealth: () => fetch(relocateRequestUrl('/api/sessions/health')).then(j),
     // Durable task queue + capacity view (System > Services "Tasks & capacity").
-    tasksSummary: () => fetch('/api/tasks/summary').then(j) as Promise<TasksSummary>,
+    tasksSummary: () => fetch(relocateRequestUrl('/api/tasks/summary')).then(j) as Promise<TasksSummary>,
     tasksList: (params: { state?: string; lane?: string; limit?: number } = {}) => {
       const q = new URLSearchParams()
       if (params.state) q.set('state', params.state)
       if (params.lane) q.set('lane', params.lane)
       if (params.limit != null) q.set('limit', String(params.limit))
       const qs = q.toString()
-      return fetch(`/api/tasks${qs ? `?${qs}` : ''}`).then(j) as Promise<TasksListResponse>
+      return fetch(relocateRequestUrl(`/api/tasks${qs ? `?${qs}` : ''}`)).then(j) as Promise<TasksListResponse>
     },
-    taskDetail: (id: string) => fetch(`/api/tasks/${encodeURIComponent(id)}`).then(j) as Promise<TaskDetailResponse>,
+    taskDetail: (id: string) => fetch(relocateRequestUrl(`/api/tasks/${encodeURIComponent(id)}`)).then(j) as Promise<TaskDetailResponse>,
     taskCancel: (id: string) => post(`/api/tasks/${encodeURIComponent(id)}/cancel`).then(j) as Promise<{ ok: boolean; cancelled: boolean; code?: string }>,
   }
 
   const logs = {
     // Logs
-    logLevel: () => fetch('/api/logs/level').then(j),
+    logLevel: () => fetch(relocateRequestUrl('/api/logs/level')).then(j),
     setLogLevel: (level: string) => post('/api/logs/level', { level }).then(j),
   }
 

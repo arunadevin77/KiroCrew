@@ -3,6 +3,7 @@
  * and agent question cards (rehydrate, answer, dismiss).
  */
 
+import { relocateRequestUrl } from '../../lib/dashboardRuntime'
 import type { ClientTransport } from './transport'
 
 type PendingQuestion = {
@@ -25,7 +26,7 @@ export type PendingQuestions = PendingQuestion[] & {
 
 export function createApprovalsEndpoints({ post, j, jfetch: fetch }: ClientTransport) {
   const requests = {
-    approvals: (): Promise<{ id: string; source?: string; tool?: string; tool_input?: string; tool_purpose?: string; tool_call_id?: string; slot?: string; ts?: number }[]> => fetch('/api/approvals').then(j),
+    approvals: (): Promise<{ id: string; source?: string; tool?: string; tool_input?: string; tool_purpose?: string; tool_call_id?: string; slot?: string; ts?: number }[]> => fetch(relocateRequestUrl('/api/approvals')).then(j),
     resolveApproval: (id: string, action: 'approve' | 'reject' | 'reject_once', target?: { origin: 'coordinator'; slot: string; instance: string }) => post('/api/approvals/' + encodeURIComponent(id) + '/' + action + (target ? '?' + new URLSearchParams(target) : ''), {}).then(j),
     /** Question cards still awaiting an answer, for rehydration after a reload or
      *  websocket reconnect (`question_card` is a one-shot broadcast). A blocking
@@ -33,7 +34,7 @@ export function createApprovalsEndpoints({ post, j, jfetch: fetch }: ClientTrans
      *  `native` when it is kiro-cli's mid-turn `AskUserQuestion` card (whose
      *  answer steers into the live turn). */
     pendingQuestions: async (): Promise<PendingQuestions> => {
-      const response = await fetch('/api/ask-question/pending').then(j) as
+      const response = await fetch(relocateRequestUrl('/api/ask-question/pending')).then(j) as
         | PendingQuestion[]
         | { pending?: PendingQuestion[]; resolved?: Record<string, string> }
       if (Array.isArray(response)) return response

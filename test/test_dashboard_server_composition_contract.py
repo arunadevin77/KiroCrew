@@ -480,6 +480,7 @@ _LAZY_IMPORTS = {
         "api_workflow_run_rerun api_workflow_runs"
     ),
     "kiro_crew.dashboard.handlers_system": "_get_owner_hash _get_static_system_info",
+    "kiro_crew.dashboard.instance_pane_relay": "api_instance_pane_relay install_access_log_redaction",
     "kiro_crew.dashboard.workflow_inject": "inject_bound_workflow_result",
     "kiro_crew.decisions": "local_runtime",
     "kiro_crew.diag.recorder": "_DiagRecorder get_recorder",
@@ -512,7 +513,7 @@ def test_the_lazy_imports_stay_inside_the_functions_that_need_them() -> None:
                     for alias in node.names:
                         local.setdefault(alias.asname or alias.name, set()).add(alias.name)
     assert local == {name: {module} for name, module in expected.items()}
-    assert len(expected) == 81
+    assert len(expected) == 83
 
 
 def test_a_star_import_carries_the_moved_public_names(tmp_path: Path) -> None:
@@ -1698,8 +1699,8 @@ def _routes(app: web.Application) -> list[tuple[str, str, str]]:
 #: SHA-256 of the MCP route table's ``"<method> <path> <handler>"`` rows in
 #: registration order, and their count. The table is shared by both entrypoints, so a
 #: route added to it on purpose updates these with it.
-_MCP_TABLE_ROWS = 278
-_MCP_TABLE_DIGEST = "b89c0b9c4e6eeef603eaf96d34ca79eb274050121c6919ecd69575f2a185a29a"
+_MCP_TABLE_ROWS = 280
+_MCP_TABLE_DIGEST = "b3a9ec2371d5649c565b3e584f882dba8f4ad7f364c6c3f323982ce89f7d0640"
 
 
 def test_the_mcp_route_table_keeps_its_rows_and_order() -> None:
@@ -2702,6 +2703,7 @@ def test_the_redaction_census_classifies_the_owners() -> None:
         if re.search(r"\bStreamRedactor\(|\b\w*redact\w*\(|\.redact\(", source)
     }
     assert rel == {
+        "dashboard/server_runtime/mcp_routes.py",
         "dashboard/server_runtime/owner_notices.py",
         "dashboard/server_runtime/workflow_startup.py",
     }
