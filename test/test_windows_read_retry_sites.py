@@ -29,14 +29,11 @@ import pytest
 from windows_sim import read_sharing_violation, read_text_sharing_violation
 
 from kiro_crew import atomic_write as aw
-from kiro_crew import hooks as hooks_mod
 from kiro_crew import platform_compat, webhooks
 from kiro_crew.apps.manifest import AppManifest
 from kiro_crew.cloud import connect
-from kiro_crew.config import loader
 from kiro_crew.dashboard_templates import catalog, instance
 from kiro_crew.execution_context import ExecutionContext, MemoryStoreRef
-from kiro_crew.hooks import HOOK_EVENT_PRE_TOOL_USE, ScriptHook, ScriptHookStore
 from kiro_crew.workflow_memory import WorkflowMemoryError, read_binding
 from kiro_crew.workflows.store import WorkflowRunStore
 
@@ -234,77 +231,6 @@ def test_staged_preview_read_rides_out_a_sharing_violation():
     assert preview is not None
     assert preview.template_id == instance.DEFAULT_TEMPLATE_ID
     assert reads["n"] == RIDDEN_OUT + 1
-
-
-# -- hook_runtime/hook_dispatch.py and hooks.py -------------------------------------
-
-
-@pytest.fixture
-def saved_hooks(tmp_path, monkeypatch) -> Path:
-    """A ``hooks.json`` holding one saved PreToolUse hook, with no store registered."""
-    monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
-    monkeypatch.setattr(hooks_mod, "_global_script_hook_store", None)
-    monkeypatch.setattr(hooks_mod, "get_global_hook_store", lambda: None)
-    store = ScriptHookStore(config_dir=tmp_path, load=False)
-    store._hooks = {
-        "saved": ScriptHook(
-            id="saved", event=HOOK_EVENT_PRE_TOOL_USE, matcher="web_fetch", command="s"
-        )
-    }
-    store._save()
-    return tmp_path / "hooks.json"
-
-
-def test_saved_hooks_gate_read_rides_out_a_sharing_violation(saved_hooks):
-    with held_open(saved_hooks, RIDDEN_OUT) as reads:
-        store = hooks_mod.persisted_hook_store()
-
-    assert [h.matcher for h in store.list_all()] == ["web_fetch"]
-    assert reads["n"] == RIDDEN_OUT + 1
-
-
-def test_saved_hooks_gate_stays_closed_when_the_hold_outlasts_the_budget(saved_hooks):
-    """The gate raises, as for any unreadable file; it never reads the hooks as absent."""
-    with held_open(saved_hooks, PERSISTENT) as reads:
-        with pytest.raises(PermissionError):
-            hooks_mod.persisted_hook_store()
-
-    assert reads["n"] == aw._REPLACE_MAX_ATTEMPTS
-
-
-def test_hook_store_load_rides_out_a_sharing_violation(saved_hooks, tmp_path):
-    with held_open(saved_hooks, RIDDEN_OUT) as reads:
-        store = ScriptHookStore(config_dir=tmp_path)
-
-    assert [h.id for h in store.list_all()] == ["saved"]
-    assert reads["n"] == RIDDEN_OUT + 1
-
-
-def test_hook_store_save_rides_out_a_sharing_violation(saved_hooks, tmp_path):
-    """The read-merge before a write keeps the file's other keys through a brief hold."""
-    store = ScriptHookStore(config_dir=tmp_path)
-    store._hooks.clear()
-
-    with held_open(saved_hooks, RIDDEN_OUT) as reads:
-        store._save()
-
-    assert json.loads(saved_hooks.read_text(encoding="utf-8"))["hooks"] == []
-    assert reads["n"] == RIDDEN_OUT + 1
-
-
-def test_hook_store_save_refuses_to_overwrite_when_the_hold_outlasts_the_budget(
-    saved_hooks, tmp_path
-):
-    store = ScriptHookStore(config_dir=tmp_path)
-    before = saved_hooks.read_bytes()
-    store._hooks.clear()
-
-    with held_open(saved_hooks, PERSISTENT) as reads:
-        with pytest.raises(webhooks.WebhookStoreUnreadable):
-            store._save()
-
-    assert reads["n"] == aw._REPLACE_MAX_ATTEMPTS
-    assert saved_hooks.read_bytes() == before
 
 
 # -- webhooks.py --------------------------------------------------------------------

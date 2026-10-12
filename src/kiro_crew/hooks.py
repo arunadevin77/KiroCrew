@@ -46,14 +46,11 @@ from kiro_crew import jsonl_util, pinned_fs, platform_compat, security, webhooks
 # install a fresh inode and must reproduce the source's access controls or
 # refuse. atomic_write is a leaf module (imported here transitively already via
 # platform_compat), so importing these from there keeps one spelling of the
-# policy without a cycle. ``read_bytes_with_retry`` is imported here for the store's
-# own reads of ``hooks.json`` and for the ``hook_dispatch`` owner, which reads it as a
-# facade global.
-from kiro_crew.atomic_write import (  # noqa: F401 - read by the owners
+# policy without a cycle.
+from kiro_crew.atomic_write import (  # noqa: F401 - read by the pinned_writes owner
     _XATTR_UNSUPPORTED_ERRNOS,
     _is_access_control_xattr,
     _should_carry_xattr,
-    read_bytes_with_retry,
 )
 from kiro_crew.config import paths as _config_paths
 
@@ -2199,7 +2196,7 @@ class ScriptHookStore:
         if not self._path.exists():
             return
         try:
-            data = json.loads(read_bytes_with_retry(self._path).decode("utf-8"))
+            data = json.loads(self._path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Failed to load hooks: %s", exc)
             return
@@ -2281,7 +2278,7 @@ class ScriptHookStore:
             data: dict = {}
             if self._path.exists():
                 try:
-                    loaded = json.loads(read_bytes_with_retry(self._path).decode("utf-8"))
+                    loaded = json.loads(self._path.read_text(encoding="utf-8"))
                     if not isinstance(loaded, dict):
                         raise webhooks.WebhookStoreUnreadable(
                             f"{self._path.name} root is not an object; refusing to overwrite it"
