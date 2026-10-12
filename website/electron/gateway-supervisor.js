@@ -376,6 +376,8 @@ function createGatewaySupervisor({
     sendStatus,
     snapshotGatewayPortPids,
     getGatewayProcess: () => gatewayProcess,
+    psPpid,
+    holdsHomeGatewayLock,
   });
   const { promptRemoteCrew } = createRemoteCrewPrompt({ BrowserWindow, nativeTheme, isWindows: IS_WIN });
 
@@ -836,31 +838,37 @@ function createGatewaySupervisor({
     return response === 1 ? "quit" : "continue";
   }
 
-  // The single LISTEN pid on PORT when it holds this app's own data folder,
-  // else 0. Two facts, both required: gateway.lock names that pid, and that
-  // pid has gateway.lock open right now. The recorded pid alone survives its
-  // writer, so a reused pid serving another home would match it; the open
-  // descriptor is what ties the listener to THIS home. lsof reports the
-  // kernel-resolved path, so a symlinked home is compared by its real path.
-  // POSIX only: Windows has no lsof, and an unproven holder keeps today's
-  // spawn path.
-  async function sameHomeGatewayPid() {
-    if (IS_WIN) return 0;
-    const pids = await snapshotGatewayPortPids(PORT);
-    if (pids?.length !== 1) return 0;
+  // Whether `pid` holds this app's own data folder. Two facts, both required:
+  // gateway.lock names that pid, and that pid has gateway.lock open right now.
+  // The recorded pid alone survives its writer, so a reused pid serving another
+  // home would match it; the open descriptor is what ties the process to THIS
+  // home. lsof reports the kernel-resolved path, so a symlinked home is
+  // compared by its real path. POSIX only: Windows has no lsof, so nothing is
+  // ever proven there.
+  async function holdsHomeGatewayLock(pid) {
+    if (IS_WIN) return false;
     const lockFile = path.join(KIROCREW_HOME, "gateway.lock");
     let recorded = NaN;
     try {
       recorded = parseInt(String(fs.readFileSync(lockFile, "utf8")).trim(), 10);
     } catch {
-      return 0;
+      return false;
     }
-    if (!Number.isInteger(recorded) || recorded !== pids[0]) return 0;
+    if (!Number.isInteger(recorded) || recorded !== pid) return false;
     let realLock = lockFile;
     try { realLock = fs.realpathSync(lockFile); } catch { /* compare the literal path */ }
-    const held = await lsofHoldsFile(pids[0], lockFile)
-      || (realLock !== lockFile && await lsofHoldsFile(pids[0], realLock));
-    return held ? pids[0] : 0;
+    return await lsofHoldsFile(pid, lockFile)
+      || (realLock !== lockFile && await lsofHoldsFile(pid, realLock));
+  }
+
+  // The single LISTEN pid on PORT when it holds this app's own data folder
+  // (`holdsHomeGatewayLock`), else 0. An unproven holder keeps today's spawn
+  // path.
+  async function sameHomeGatewayPid() {
+    if (IS_WIN) return 0;
+    const pids = await snapshotGatewayPortPids(PORT);
+    if (pids?.length !== 1) return 0;
+    return await holdsHomeGatewayLock(pids[0]) ? pids[0] : 0;
   }
 
   // Run the CLI's own stop for PORT, pinned to the pid this app proved. With
