@@ -388,12 +388,17 @@ def _matches(
     skipped: list[Path] | None = None,
     linked: list[Path] | None = None,
     missing: list[Path] | None = None,
+    *,
+    confined: bool = False,
 ) -> list[Path]:
     """Expand a declared glob with bounded directory work and no link traversal.
 
     A link the walk meets below *root* is refused, unless *linked* is given: then
-    it is appended there and left out, unread and not descended into. Only the
-    implicit steering scan passes *linked*; a declared resource keeps refusing.
+    it is appended there and left out, unread and not descended into. The implicit
+    steering scan passes *linked* alone, so it leaves a link out wherever it
+    points. A declared steering glob also passes *confined*: only a link whose
+    target the path screen resolves inside *root* is left out, and any other link
+    still refuses.
 
     A glob-free *pattern* naming a path that does not exist is appended to
     *missing*, when given, and matches nothing -- kiro-cli skips an absent
@@ -418,6 +423,14 @@ def _matches(
     admitted_root = _admitted_root(root)
     if admitted_root is None:
         raise MemberEssentialContextError(f"Essential source {root}: outside admitted root")
+
+    def _escapes(link: Path) -> bool:
+        """Whether *confined* forbids leaving *link* out: its target is not inside *root*."""
+        if not confined:
+            return False
+        target = validate_file_path(str(link))
+        return target is None or not Path(target).is_relative_to(admitted_root)
+
     if not any(c in pattern for c in "*?["):
         path = admitted_root / pattern
         if missing is not None and _is_absent(path, admitted_root):
@@ -448,7 +461,7 @@ def _matches(
             # project root must not exhaust a steering subtree's scan budget.
             path = directory / component
             if is_link_or_junction(path):
-                if linked is not None:
+                if linked is not None and not _escapes(path):
                     linked.append(path)
                     continue
                 raise MemberEssentialContextError(
@@ -504,7 +517,7 @@ def _matches(
                                 logger.debug("Managed state %s pruned from %s", path, pattern)
                         continue
                     if is_link_or_junction(path):
-                        if linked is not None:
+                        if linked is not None and not _escapes(path):
                             # Name only a link the glob could have used: a document
                             # matching the final component, or a directory to descend.
                             # The directory probe follows the link, so the target is
@@ -848,7 +861,9 @@ def documents_for_member(
     if include_project and isinstance(resources, list):
         if _declared_document_count(resources) > _MAX_DOCUMENTS:
             raise MemberEssentialContextError(f"Essential template {spec_path}: too many resources")
-        for match, root in _resource_paths(resources, source_root, absolute_root, skipped, missing):
+        for match, root in _resource_paths(
+            resources, source_root, absolute_root, skipped, missing, linked=linked
+        ):
             add(match, root, steering="steering" in match.parts)
     return _finish()
 
@@ -906,9 +921,17 @@ def _resource_paths(
     skipped: list[Path] | None = None,
     missing: list[Path] | None = None,
     *,
+    linked: list[Path] | None = None,
     markdown_only: bool = True,
 ) -> list[tuple[Path, Path]]:
-    """Declared ``file://`` matches; an absent literal one goes to *missing* instead."""
+    """Declared ``file://`` matches; an absent literal one goes to *missing* instead.
+
+    A caller that passes *linked* has a steering glob (a ``steering`` component in
+    its pattern, the test :func:`documents_for_member` applies to a match) leave a
+    link that stays inside its root out and name it there, as the implicit steering
+    scan does. A link that resolves elsewhere, and a link under any other glob,
+    still refuses, as it does for a caller that passes none.
+    """
     paths: list[tuple[Path, Path]] = []
     absent: list[Path] = [] if missing is None else missing
     if _declared_document_count(resources) > _MAX_DOCUMENTS:
@@ -924,7 +947,8 @@ def _resource_paths(
             pattern = _resource_pattern(path, root)
         else:
             pattern = str(path)
-        for match in _matches(root, pattern, skipped, missing=absent):
+        left_out = linked if "steering" in Path(pattern).parts else None
+        for match in _matches(root, pattern, skipped, left_out, absent, confined=True):
             wanted = not markdown_only or match.suffix.lower() == ".md"
             if wanted and (match, root) not in paths:
                 paths.append((match, root))
@@ -947,12 +971,14 @@ def _declared_file_size(path: Path) -> int:
 
 
 def _projected_resource_paths(
-    definition: dict, cwd: str, *, markdown_only: bool = True
+    definition: dict, cwd: str, *, markdown_only: bool = True, linked: list[Path] | None = None
 ) -> list[tuple[Path, Path]]:
     resources = definition.get("resources", [])
     if not isinstance(resources, list) or any(not isinstance(r, (str, dict)) for r in resources):
         raise MemberEssentialContextError("Projected resources must be a list of declarations")
-    return _resource_paths(resources, Path(cwd), Path.home(), markdown_only=markdown_only)
+    return _resource_paths(
+        resources, Path(cwd), Path.home(), linked=linked, markdown_only=markdown_only
+    )
 
 
 def _declared_file_bytes(definition: dict, cwd: str) -> int:
@@ -1009,10 +1035,11 @@ def projected_resource_documents(definition: dict, cwd: str) -> dict[str, str]:
     substitute their resources for the global definition KAS actually registers.
     Conditional inclusion stays with the native selector; skill URI resources
     and object-form ``knowledgeBase`` declarations keep their on-demand
-    behavior and are never treated as full text.
+    behavior and are never treated as full text. A link a steering glob reaches
+    inside its root is left out unread, as in the snapshot, which names it.
     """
     documents: dict[str, str] = {}
-    for path, root in _projected_resource_paths(definition, cwd):
+    for path, root in _projected_resource_paths(definition, cwd, linked=[]):
         if str(path) in documents:
             continue
         body = _read(path, root)

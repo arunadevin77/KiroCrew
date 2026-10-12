@@ -1668,7 +1668,8 @@ Containment is judged on resolved paths on both sides: a declared root (the
 project root, or the owner's home for a resource outside it) is normalized the
 same way an admitted document is, so a root reached through a symlink -- a
 symlinked `$HOME` -- admits its documents, while a document that is, or sits
-under, a link below the root is still refused. The managed-state isolation
+under, a link below the root is still refused (a declared steering glob leaves out
+a link that stays inside the root instead, below). The managed-state isolation
 (`_refuse_managed_source`) compares its admin and workspace roots in the same
 resolved spelling, so it fires for resolved candidates on symlinked-home hosts
 exactly as it does elsewhere.
@@ -1703,7 +1704,17 @@ The implicit global and project `.kiro/steering/**/*.md` scan treats a link the
 same way: a linked steering file or directory is not followed or read, and one
 `essential-context#linked-skipped` note names it, so a member whose steering is
 symlinked into a repository still starts. kiro-cli follows the link natively. A
-template that declares a glob reaching the same link still refuses. There is no mtime-only content cache or automatic
+declared steering glob (a `steering` component in the pattern, such as the shipped
+`file://.kiro/steering/**/*.md` or the global one a skill projection copies into an
+agent definition) does the same for a link whose target the path screen resolves
+inside the glob's root: the snapshot and the KAS document reader
+(`projected_resource_documents`) leave it out unread, and the snapshot names it in
+that note. A link that resolves outside the root, or that the screen refuses, still
+refuses, and so does a link under any other declared glob. The launch-record size
+check (`_declared_files_fit`, `projected_launch_paths`) does not opt in: it measures
+what kiro-cli loads and cannot measure a link it does not follow, so a link still
+withholds that record (the size check reports unfit, the path read refuses) and the
+folder sends every guide itself. There is no mtime-only content cache or automatic
 retrieval on the warm path.
 
 Structural-marker scanning copies contiguous ASCII segments without per-character

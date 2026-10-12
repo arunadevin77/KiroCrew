@@ -1349,8 +1349,8 @@ def test_kiro_launch_documents_leaves_a_linked_global_steering_file_out(env, tmp
 
 
 @requires_symlinks
-def test_declared_glob_still_refuses_a_linked_steering_file(env, tmp_path):
-    """Only the implicit scan skips links; a template that declares them still refuses."""
+def test_walk_without_a_collector_still_refuses_a_linked_steering_file(env, tmp_path):
+    """A walk handed no ``linked`` collector refuses a link instead of leaving it out."""
     _link_global_steering(env, tmp_path)
     with pytest.raises(MemberEssentialContextError, match="linked document"):
         _mec._matches(Path.home(), ".kiro/steering/**/*.md")
@@ -2346,6 +2346,164 @@ def test_opt_out_still_loads_steering_the_template_declares(operator_steering):
     bodies = _snapshot_bodies(env)
     assert "Always guide: explain assumptions." in bodies
     assert _OPERATOR_RULE not in bodies
+
+
+def _declare_steering_glob_only(env) -> None:
+    """Declare just the steering glob and opt the workspace out of the implicit scan.
+
+    With the opt-out the declared glob is the only walk that can meet a link, so a
+    refusal or a note can only come from it.
+    """
+    (env.project / ".kiro" / "agents" / "writer-template.json").write_text(
+        json.dumps({"name": "writer-template", "resources": ["file://.kiro/steering/**/*.md"]}),
+        encoding="utf-8",
+    )
+    _write_kiro_settings(env.project / ".kiro", {"chat.disableInheritingDefaultResources": True})
+
+
+def _steering_link_target(env, tmp_path, *, inside: bool) -> Path:
+    """A Markdown file a steering link can point at: in the project, or beside it."""
+    base = env.project / "docs" if inside else tmp_path / "outside"
+    base.mkdir(exist_ok=True)
+    target = base / "shared-style.md"
+    target.write_text("LINKED_TARGET_BODY", encoding="utf-8")
+    return target
+
+
+@requires_symlinks
+def test_declared_steering_glob_names_a_link_inside_the_project_instead_of_refusing(env, tmp_path):
+    """The shipped steering glob treats an in-project link as the implicit scan does.
+
+    The link is left out unread and named in-band; the regular steering beside it
+    still loads.
+    """
+    _declare_steering_glob_only(env)
+    link = env.project / ".kiro" / "steering" / "linked.md"
+    link.symlink_to(_steering_link_target(env, tmp_path, inside=True))
+    bodies = _snapshot_bodies(env)
+    assert "LINKED_TARGET_BODY" not in bodies
+    assert "Always guide: explain assumptions." in bodies
+    assert f"[Essential source: {_mec.ESSENTIAL_LINKED_SKIP_SOURCE}]" in bodies
+    assert str(link) in bodies
+
+
+@requires_symlinks
+def test_declared_steering_glob_names_a_linked_directory_inside_the_project_unread(env, tmp_path):
+    _declare_steering_glob_only(env)
+    inner = env.project / "docs" / "team-steering"
+    inner.mkdir(parents=True)
+    (inner / "inner.md").write_text("LINKED_DIR_BODY", encoding="utf-8")
+    shared = env.project / ".kiro" / "steering" / "shared"
+    make_dir_link(shared, inner)
+    bodies = _snapshot_bodies(env)
+    assert "LINKED_DIR_BODY" not in bodies
+    assert str(shared) in bodies
+
+
+@requires_symlinks
+def test_declared_steering_glob_names_a_linked_steering_root_inside_the_project(env):
+    """A linked ``.kiro/steering`` puts the whole tree behind the link: named, nothing read."""
+    _declare_steering_glob_only(env)
+    steering = env.project / ".kiro" / "steering"
+    real = env.project / "docs" / "steering-tree"
+    real.parent.mkdir()
+    steering.rename(real)
+    make_dir_link(steering, real)
+    bodies = _snapshot_bodies(env)
+    assert "Always guide: explain assumptions." not in bodies
+    assert str(steering) in bodies
+
+
+@requires_symlinks
+def test_declared_steering_glob_does_not_name_an_inside_link_it_would_never_read(env, tmp_path):
+    """As in the implicit scan, only a link the glob could have used is reported."""
+    _declare_steering_glob_only(env)
+    notes = env.project / "docs" / "notes.txt"
+    notes.parent.mkdir()
+    notes.write_text("NOT_STEERING", encoding="utf-8")
+    (env.project / ".kiro" / "steering" / "README.txt").symlink_to(notes)
+    bodies = _snapshot_bodies(env)
+    assert "Always guide: explain assumptions." in bodies
+    assert _mec.ESSENTIAL_LINKED_SKIP_SOURCE not in bodies
+
+
+@requires_symlinks
+@pytest.mark.parametrize(
+    "shape", ["file", "directory", "dangling", "unrelated-name", "steering-root"]
+)
+def test_declared_steering_glob_still_refuses_a_link_that_leaves_the_project(env, tmp_path, shape):
+    """Only a link that resolves inside the project may be left out; any other refuses."""
+    _declare_steering_glob_only(env)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("OUTSIDE_SECRET", encoding="utf-8")
+    steering = env.project / ".kiro" / "steering"
+    if shape == "file":
+        (steering / "linked.md").symlink_to(outside / "secret.md")
+    elif shape == "directory":
+        make_dir_link(steering / "shared", outside)
+    elif shape == "dangling":
+        (steering / "linked.md").symlink_to(outside / "gone.md")
+    elif shape == "unrelated-name":
+        (outside / "notes.txt").write_text("NOT_STEERING", encoding="utf-8")
+        (steering / "README.txt").symlink_to(outside / "notes.txt")
+    else:
+        for child in steering.iterdir():
+            child.rename(outside / child.name)
+        steering.rmdir()
+        make_dir_link(steering, outside)
+    with pytest.raises(MemberEssentialContextError, match="linked document or directory"):
+        _snapshot_bodies(env)
+
+
+@requires_symlinks
+def test_projected_steering_glob_leaves_a_link_inside_the_project_out(env, tmp_path):
+    """The KAS document reader meets the same link and must not stop the session either."""
+    link = env.project / ".kiro" / "steering" / "linked.md"
+    link.symlink_to(_steering_link_target(env, tmp_path, inside=True))
+    definition = {"id": "worker", "resources": ["file://.kiro/steering/**/*.md"]}
+    documents = _mec.projected_resource_documents(definition, str(env.project))
+    assert "Always guide: explain assumptions." in documents.values()
+    assert not any("LINKED_TARGET_BODY" in body for body in documents.values())
+
+
+@requires_symlinks
+def test_projected_global_steering_glob_leaves_a_link_inside_home_out(operator_steering):
+    """A projected global steering glob is rooted at home, so a link into home passes."""
+    env = operator_steering
+    steering = Path.home() / ".kiro" / "steering"
+    dotfiles = Path.home() / "dotfiles"
+    dotfiles.mkdir()
+    (dotfiles / "style.md").write_text("LINKED_DOTFILE_BODY", encoding="utf-8")
+    (steering / "style.md").symlink_to(dotfiles / "style.md")
+    definition = {"id": "worker", "resources": [f"file://{steering.as_posix()}/**/*.md"]}
+    documents = _mec.projected_resource_documents(definition, str(env.project))
+    assert _OPERATOR_RULE in documents.values()
+    assert not any("LINKED_DOTFILE_BODY" in body for body in documents.values())
+
+
+@requires_symlinks
+def test_projected_steering_glob_still_refuses_a_link_outside_the_project(env, tmp_path):
+    (env.project / ".kiro" / "steering" / "linked.md").symlink_to(
+        _steering_link_target(env, tmp_path, inside=False)
+    )
+    definition = {"id": "worker", "resources": ["file://.kiro/steering/**/*.md"]}
+    with pytest.raises(MemberEssentialContextError, match="linked document or directory"):
+        _mec.projected_resource_documents(definition, str(env.project))
+
+
+@requires_symlinks
+def test_launch_record_stays_withheld_while_a_steering_glob_reaches_a_link(env, tmp_path):
+    """The record measures what kiro-cli loads, and a link cannot be measured unfollowed."""
+    definition = {"resources": ["file://.kiro/steering/**/*.md"]}
+    assert _mec._declared_files_fit(definition, str(env.project)) is True
+    assert _mec.projected_launch_paths(definition, str(env.project))
+    (env.project / ".kiro" / "steering" / "linked.md").symlink_to(
+        _steering_link_target(env, tmp_path, inside=True)
+    )
+    assert _mec._declared_files_fit(definition, str(env.project)) is False
+    with pytest.raises(MemberEssentialContextError, match="linked document or directory"):
+        _mec.projected_launch_paths(definition, str(env.project))
 
 
 def test_a_caller_that_names_no_harness_keeps_inheriting_under_the_opt_out(
