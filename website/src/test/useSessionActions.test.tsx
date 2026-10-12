@@ -22,8 +22,22 @@ import type { ReactNode } from 'react'
 import type { ChatSlot } from '../types'
 
 const mocks = vi.hoisted(() => ({ setSlotPin: vi.fn(), forkChatSlot: vi.fn(), chatSlots: vi.fn() }))
+const { MockApiError } = vi.hoisted(() => ({
+  // Mirrors the real ApiError: apiFailure (api/client.ts) sets .message to the
+  // friendly text, so the hook reads err.message directly.
+  MockApiError: class extends Error {
+    status: number
+    body: string
+    constructor(status: number, body: string, message?: string) {
+      super(message ?? body)
+      this.status = status
+      this.body = body
+    }
+  },
+}))
 vi.mock('../api/client', () => ({
   SEARCH_MIN_CHARS: 2,
+  ApiError: MockApiError,
   api: new Proxy(mocks as Record<string, unknown>, {
     get: (t, p: string) => (p in t ? t[p] : vi.fn().mockResolvedValue([])),
   }),
@@ -165,6 +179,63 @@ describe('useSessionActions', () => {
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(slotOf()?.pinned).toBe(false)
     expect(mocks.chatSlots).not.toHaveBeenCalled()
+  })
+
+  it('duplicate alerts the slot-cap guidance on its own on a 429 refusal instead of failing silently', async () => {
+    // The bug: forkMutation had no onError, so Duplicate's refusal vanished and
+    // the button did nothing. The slot-cap guidance arrives on err.message
+    // (apiFailure sets it to friendlyErrText(status, body)) and is already a
+    // whole message, so it is shown alone, not after the "Couldn't duplicate" prefix.
+    const guidance = 'Too many sessions are open. Close a few old sessions, then try again.'
+    mocks.forkChatSlot.mockRejectedValueOnce(new MockApiError(429, JSON.stringify({ error: 'slot cap reached (500)', code: 'slot_cap_reached' }), guidance))
+    const alertSpy = vi.fn()
+    vi.stubGlobal('alert', alertSpy)
+    seed()
+    const a = renderActions()
+    act(() => a.current.duplicate(SLOT))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
+    expect(alertSpy.mock.calls[0][0]).toBe(guidance)
+  })
+
+  it('duplicate wraps an ordinary 429 reason in the subject template', async () => {
+    // Only the slot-cap codes skip the prefix; a tunnel-edge 429 still names the subject.
+    mocks.forkChatSlot.mockRejectedValueOnce(new MockApiError(429, JSON.stringify({ error: 'x', code: 'throttled' }), 'Rate limited'))
+    const alertSpy = vi.fn()
+    vi.stubGlobal('alert', alertSpy)
+    seed()
+    const a = renderActions()
+    act(() => a.current.duplicate(SLOT))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
+    expect(alertSpy.mock.calls[0][0]).toBe("Couldn't duplicate this session: Rate limited")
+  })
+
+  it('duplicate wraps the server reason in the subject template on a non-429 ApiError', async () => {
+    // A bare "not found" must name the subject and read as a whole sentence.
+    mocks.forkChatSlot.mockRejectedValueOnce(new MockApiError(404, 'not found body', 'not found'))
+    const alertSpy = vi.fn()
+    vi.stubGlobal('alert', alertSpy)
+    seed()
+    const a = renderActions()
+    act(() => a.current.duplicate(SLOT))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
+    expect(alertSpy.mock.calls[0][0]).toBe("Couldn't duplicate this session: not found")
+  })
+
+  it('duplicate alerts the connection copy when fetch itself rejects (non-ApiError)', async () => {
+    // A gateway that can't be reached rejects with a TypeError, not an ApiError,
+    // so there is no server reason to wrap — the handler shows the standalone
+    // connection message instead.
+    mocks.forkChatSlot.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const alertSpy = vi.fn()
+    vi.stubGlobal('alert', alertSpy)
+    seed()
+    const a = renderActions()
+    act(() => a.current.duplicate(SLOT))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1))
+    // Real i18n string (not mocked): names Kiro Crew, and is NOT the subject template.
+    expect(alertSpy.mock.calls[0][0]).toContain('Kiro Crew')
+    expect(alertSpy.mock.calls[0][0]).not.toContain('Couldn\'t duplicate this session:')
+    expect(alertSpy.mock.calls[0][0]).not.toBe('Failed to fetch')
   })
 
   it('close honours confirmCloseSession', () => {
