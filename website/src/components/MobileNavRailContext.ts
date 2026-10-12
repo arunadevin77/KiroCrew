@@ -32,3 +32,28 @@ export const MobileNavRailContext = createContext<MobileNavRailRenderer | null>(
 export function useMobileNavRail(): MobileNavRailRenderer | null {
   return useContext(MobileNavRailContext)
 }
+
+/**
+ * What the Crewmates page tells the shell, on a phone, about the top bar.
+ *
+ * The shell gives a phone `/members` visit the chat page's single top bar
+ * while the page reports a crewmate or team on screen (`open`) or still being
+ * read (`pending`, which is also where every visit starts). The page opens its
+ * crewmate from an effect, so a bar keyed on the URL alone drew the logo row
+ * for the frames before `?member=` landed, then dropped it -- a flicker on
+ * every switch to the tab. Until the page reports `open` the shell keeps its
+ * nav-drawer swipe on, so the navigation stays one swipe away while a slow
+ * read is still out. `roster` gives the regular bar back: the page reports it
+ * for the bare roster with nothing to open (an empty roster, a failed read, a
+ * link that names no one) and on unmount, including through its error
+ * boundary. `null` outside the shell (popout and embed frames).
+ */
+export type MobileRosterBarState = 'open' | 'pending' | 'roster'
+
+export type MobileRosterBarReport = (state: MobileRosterBarState) => void
+
+export const MobileRosterBarContext = createContext<MobileRosterBarReport | null>(null)
+
+export function useMobileRosterBar(): MobileRosterBarReport | null {
+  return useContext(MobileRosterBarContext)
+}

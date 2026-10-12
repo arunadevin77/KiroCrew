@@ -166,8 +166,9 @@ import { defaultAgentQuery } from '../../api/defaultAgentQuery'
 import { AnimatePresence, animate, motion, useMotionValue, useReducedMotion, useTransform } from 'framer-motion'
 import { useDrawerSwipe, animateDrawer, registerDrawerTargets, takeOverDrawer, safeAreaLeft } from '../../hooks/useDrawerSwipe'
 import OverlayDrawer from '../../components/OverlayDrawer'
-import { useMobileNavRail } from '../../components/MobileNavRailContext'
+import { useMobileNavRail, useMobileRosterBar, type MobileRosterBarState } from '../../components/MobileNavRailContext'
 import { useVisualViewport } from '../../hooks/useVisualViewport'
+import { useShellSlot } from '../../hooks/useShellSlot'
 import { isTrapEntry } from '../../lib/routeHistoryPosition'
 import { isSidePanelHidden, shouldMountSidePanel, sidePanelDockMotion } from '../chat/sidePanelMount'
 import SidePanel, { SIDE_PANEL_MIN_W, SIDE_PANEL_RESERVED_W, type SidePanelLeadingTab, type SidePanelWithholdable } from '../chat/SidePanel'
@@ -1609,6 +1610,25 @@ export default function MembersPage() {
   const landingPending =
     !activeName && !urlTeam && !loadError && !(loaded && hasNoCrewmates(members))
   const rosterFolded = (!!activeName || landingPending) && !rosterPinned
+  // Phone: tell the shell which top bar this page needs (see
+  // `MobileRosterBarContext`). `open` once a crewmate or team is on screen,
+  // with its header in the bar; `pending` while one is still being read (the
+  // landing, or a `?team=` link before the teams read answers), which keeps
+  // the single bar and the shell's nav-drawer swipe; `roster` for the bare
+  // roster, which has no drawer and needs the regular bar's logo. A `?team=` link the teams read failed on,
+  // or that names no team, opens nothing. A layout effect, so the shell
+  // re-renders before paint; `roster` on unmount, so a page taken down by its
+  // error boundary does not keep the navigation hidden.
+  const reportRosterBar = useMobileRosterBar()
+  const teamPending = !!urlTeam && !activeTeam && teamsQ.data === undefined && !teamsQ.isError
+  const rosterBar: MobileRosterBarState = activeName || activeTeam
+    ? 'open'
+    : landingPending || teamPending ? 'pending' : 'roster'
+  useLayoutEffect(() => {
+    if (!reportRosterBar || !isMobile) return
+    reportRosterBar(rosterBar)
+  }, [reportRosterBar, isMobile, rosterBar])
+  useLayoutEffect(() => (reportRosterBar ? () => reportRosterBar('roster') : undefined), [reportRosterBar])
   const rosterShown = !rosterFolded
   // The switcher chip fades out while the pin holds (the column IS its list),
   // so each of the two controls that flip the pin goes away under the press:
@@ -3236,6 +3256,18 @@ export default function MembersPage() {
   // Bumped by the unread column's "+N" pill; the switcher opens its list on
   // each change (a counter, so two presses in a row both open).
   const [switcherOpenRequest, setSwitcherOpenRequest] = useState(0)
+  /** Phone: the shell's single top bar slot this page's thread header moves
+   *  into while a crewmate is open, as the chat page's header does. `null` on
+   *  a wide window, a bare roster, or any host that renders no such slot. */
+  // Only while the page reports `open`: before that the shell may still swap
+  // the single bar out (a read that ends on the bare roster), and a slot
+  // looked up then would be a detached node the header portals into, out of
+  // sight. Asking again once `open` is reported finds the shell's current one.
+  const topbarSlot = useShellSlot('mobile-topbar-slot', isMobile && rosterBar === 'open')
+  const headerInBar = !!topbarSlot
+  /** The transcript's top inset: the floating header's height, or nothing
+   *  once the header sits in the shell bar above the pane. */
+  const headerInset = headerInBar ? 0 : threadHeaderH
   const [betweenHeaderRef, betweenHeaderH] = useMeasuredHeight<HTMLDivElement>()
   const pillStreamState = useAppSelector((s) => (pillSlotKey ? selectSlotStreamState(s, pillSlotKey) : 'idle'))
   const pillLiveSlot = useAppSelector((s) => (pillSlotKey ? s.dashboard.slots.find((sl) => sl.key === pillSlotKey) : undefined))
@@ -4674,14 +4706,25 @@ export default function MembersPage() {
                 (narrow) or the panel opener (docked, panel hidden) is present:
                 a flex row with `flex-1` around the pill would shift it by the
                 width of whichever side control is missing. */}
-            <header ref={threadHeaderRef} className="absolute top-0 inset-x-0 z-20 grid grid-cols-[1fr_minmax(0,auto)_1fr] items-center gap-2 px-3 py-2 pointer-events-none" data-testid="member-thread-header">
+            {(() => { const threadHeader = (
+            <header
+              ref={headerInBar ? undefined : threadHeaderRef}
+              // Phone: the row lives in the shell's one top bar (`#mobile-topbar-slot`,
+              // the chat page's single-bar hand-off), so it is a plain flex row
+              // there, with no fade and nothing to pad the transcript for.
+              className={headerInBar
+                ? 'grid grid-cols-[1fr_minmax(0,auto)_1fr] items-center gap-1.5 w-full min-w-0 h-full'
+                : 'absolute top-0 inset-x-0 z-20 grid grid-cols-[1fr_minmax(0,auto)_1fr] items-center gap-2 px-3 py-2 pointer-events-none'}
+              data-testid="member-thread-header"
+              data-in-topbar={headerInBar ? '' : undefined}
+            >
               {/* Fade behind the three controls: rows scrolling up into the
                   band dissolve toward the page colour before they reach the
                   chips, instead of printing through them; the chips sit on a
                   half-faded ground and the pane's top edge stays glass. Fills
                   the header's own box (`inset-0`), so it grows with the
                   header and never needs a measured height of its own. */}
-              <div aria-hidden className="absolute inset-0 -z-10 bg-gradient-to-b from-bg via-bg/70 to-transparent pointer-events-none" />
+              {!headerInBar && <div aria-hidden className="absolute inset-0 -z-10 bg-gradient-to-b from-bg via-bg/70 to-transparent pointer-events-none" />}
               <div className="flex items-center justify-start min-w-0 gap-1 [&>*]:pointer-events-auto">
                 {/* The roster, folded into one chip (crewmate-panel IA): stacked
                     faces and the count; open, a searchable list that switches
@@ -4777,7 +4820,7 @@ export default function MembersPage() {
                 // press closes it (through the draft guard — see requestCloseProfile)
                 // instead of re-opening on the default tab, which remounted the card.
                 onClick={() => { if (profile) requestCloseProfile(); else openProfile() }}
-                className="glass-shadow flex items-center gap-2.5 pl-3.5 pr-3.5 py-1.5 min-w-0 max-w-full justify-self-center cursor-pointer text-left focus-ring pointer-events-auto"
+                className={`glass-shadow flex items-center gap-2.5 pl-3.5 pr-3.5 ${headerInBar ? 'py-0' : 'py-1.5'} min-w-0 max-w-full justify-self-center cursor-pointer text-left focus-ring pointer-events-auto`}
                 title={t('pages.membersPage.profile_card')}
                 aria-expanded={!!profile}
                 data-testid="member-identity-pill"
@@ -4799,7 +4842,10 @@ export default function MembersPage() {
                     avatar={active.avatar}
                     slotKey={activeSlot || active.slot_key}
                     running={!!isRunning(active)}
-                    size={30}
+                    // Smaller in the shell bar, which is 42px tall: the pill sits
+                    // there with no vertical padding, at the height of the 32px
+                    // controls beside it, so it does not reach the bar's edges.
+                    size={headerInBar ? 26 : 30}
                     working="full"
                   />
                   <CrewLoopIndicator on={isLoopOn(active)} testId="member-pill-loop-indicator" />
@@ -4906,6 +4952,7 @@ export default function MembersPage() {
                 />
               </div>
             </header>
+            ); return headerInBar && topbarSlot ? createPortal(threadHeader, topbarSlot) : threadHeader })()}
             {/* Everything that can sit between the header and the pane —
                 notices, the greeting cards — stays in flow and is padded
                 below the floating header by the header's measured height;
@@ -4918,7 +4965,7 @@ export default function MembersPage() {
                 under `md:hidden` with the roster pinned — still measures 0,
                 where `:empty` would have called it content), the outer box
                 pads nothing, and the pane takes the inset. */}
-            <div style={{ paddingTop: betweenHeaderH > 0 ? threadHeaderH : 0 }}>
+            <div style={{ paddingTop: betweenHeaderH > 0 ? headerInset : 0 }}>
             <div ref={betweenHeaderRef} className="flex flex-col">
             {/* The roster is folded into the switcher while a DM is open, so
                 every roster-only failure also needs a visible copy above the
@@ -5202,7 +5249,7 @@ export default function MembersPage() {
                     foldBefore={freshStarts[activeSlot] ?? activeRoster?.reset_at}
                     // Under the floating header only when nothing sits between
                     // them (see the block above); a card between already paid.
-                    topInset={betweenHeaderH > 0 ? 0 : threadHeaderH}
+                    topInset={betweenHeaderH > 0 ? 0 : headerInset}
                     crewmate={crewmateIdentity}
                     // The greeting (cold welcome or warm resume) is a message
                     // from the crewmate at the end of its chat, drawn here and

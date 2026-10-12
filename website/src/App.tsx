@@ -123,7 +123,7 @@ import { useRequestFeature } from './shell/topbar/requestFeature'
 import { IS_MAC } from './hooks/useKeyboardShortcuts'
 import { useNavShortcutHint } from './hooks/useNavShortcutHint'
 import { useShellKeyboard } from './shell/shortcuts/shellKeyboard'
-import { MobileNavRailContext, type MobileNavRailOptions } from './components/MobileNavRailContext'
+import { MobileNavRailContext, MobileRosterBarContext, type MobileNavRailOptions, type MobileRosterBarState } from './components/MobileNavRailContext'
 import ShortcutsModal from './components/ShortcutsModal'
 import QuickSearchSurface from './components/QuickSearchSurface'
 import ReportProblemModal from './components/ReportProblemModal'
@@ -1102,6 +1102,14 @@ export default function App() {
    * there (the chat page keeps its sessions drawer on a rightward drag). The
    * hamburger stays the discoverable path.
    */
+  // What the Crewmates page last reported about the bar (see
+  // `MobileRosterBarContext`); `pending` until it has said anything on this
+  // visit. Reset whenever the route is not the Crewmates page, so each visit
+  // starts on the single bar instead of whatever the last visit ended on.
+  const onMembersRoute = location.pathname === '/members' || location.pathname.startsWith('/members/')
+  const [membersBar, setMembersBar] = useState<MobileRosterBarState>('pending')
+  if (!onMembersRoute && membersBar !== 'pending') setMembersBar('pending')
+  const membersSingleBar = onMembersRoute && (membersBar === 'open' || membersBar === 'pending')
   useDrawerSwipe(shellRef, {
     // Off on the phone chat page: that page's sessions drawer carries the main
     // navigation as a rail (see `mobileNavRail`), so the nav drawer has no
@@ -1109,7 +1117,13 @@ export default function App() {
     // — two drawers for one gesture is the state this bar exists to remove.
     // The chat container already claims its own swipe via `data-owns-swipe`;
     // this gate covers the header above it.
-    enabled: isMobile && !isChatRoute(location.pathname),
+    // The phone Crewmates page with a crewmate open is the same single bar (see
+    // `mobileSingle`), with the rail in its roster drawer, so it is off there too.
+    // Only once the page has said it has a crewmate open: before that its
+    // drawer is not bound, so while a crewmate is still being read (or the
+    // page threw before it could report) the swipe stays a way to the
+    // navigation and the bar does not have to change under the user.
+    enabled: isMobile && !isChatRoute(location.pathname) && !(onMembersRoute && membersBar === 'open'),
     travel: mobileNavTravel,
     open: mobileNavPhase === 'open',
     x: mobileNavX,
@@ -1456,7 +1470,15 @@ export default function App() {
   // The nav drawer's logo trigger, the readout capsule and the search square
   // are not rendered here: search and the main destinations live in the rail
   // the chat page's sessions drawer shows (see `mobileNavRail` below).
-  const mobileSingle = isMobile && isChat
+  //
+  // The phone Crewmates page joins it while a crewmate or a team is open: its
+  // header (drawer toggle, identity pill, panel toggle) moves into the same
+  // slots, and the rail lives in its roster drawer. Keyed on the URL naming one,
+  // and on a bare `/members` until the page reports its roster: that page has
+  // no drawer and still needs the bar's logo to reach the navigation, but a
+  // bare visit that is about to open a crewmate must not flash the logo row.
+  const membersRoute = activePath === '/members' || activePath.startsWith('/members/')
+  const mobileSingle = isMobile && (isChat || membersSingleBar)
 
   // Render one standard nav row (used by the top-fixed mains, the Apps list,
   // and the bottom-fixed section). Active-state, mobile close, chat pin
@@ -1532,7 +1554,7 @@ export default function App() {
    * renders no rail. The Crewmates page hosts it the same way, beside its
    * roster in the drawer over the open chat.
    */
-  const railHost = mobileSingle || (isMobile && (activePath === '/members' || activePath.startsWith('/members/')))
+  const railHost = mobileSingle || (isMobile && membersRoute)
   const mobileNavRail = railHost
     ? ({ onActivate }: MobileNavRailOptions) => {
       const railRow = (
@@ -2786,6 +2808,7 @@ export default function App() {
           {/* The rail renderer reaches the chat page through context rather than
               a prop: the route element is shared with the popout/embed frames. */}
           <MobileNavRailContext.Provider value={mobileNavRail}>
+          <MobileRosterBarContext.Provider value={setMembersBar}>
           {/* Registered-action guide: offered in the chat it came from, driven
               only after the human presses Start; the pages it walks through
               read their draft and request-header seams from this provider. */}
@@ -2853,6 +2876,7 @@ export default function App() {
             <Route path="*" element={<ChatRedirect />} />
           </Routes>
           </GuideProvider>
+          </MobileRosterBarContext.Provider>
           </MobileNavRailContext.Provider>
         </main>
         {/* App-wide docked terminal panel — renders beside <main> (right) or

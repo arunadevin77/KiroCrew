@@ -263,6 +263,7 @@ vi.mock('react-router-dom', async (importOriginal) => {
 
 import { api } from '../../api/client'
 import NewCrewmateDialog, { CACHE_WARM_BOUND_MS, RECONCILE_BOUND_MS } from './NewCrewmateDialog'
+import { MobileRosterBarContext } from '../../components/MobileNavRailContext'
 import MembersPage, { CREW_DASHBOARD_TAB_ID, CREW_PANEL_TAB_IDS, MEMBERS_UNCONFIRMED_WITHHELD_VIEWS, MEMBERS_UNFED_VIEWS, MEMBERS_WITHHELD_VIEWS, lastChattedMember, rememberedMember, resolveDefaultMember, resolveMateLanding } from './MembersPage'
 import { resetFirstGreetingRequests } from './useFirstGreeting'
 import { __resetPanelTabs, VIEW_DATA_SOURCE } from '../../hooks/usePanelTabs'
@@ -396,7 +397,8 @@ async function renderPage(
     route = '/members',
     thread,
     queryDefaults,
-  }: { route?: string; thread?: Record<string, unknown> | Error; queryDefaults?: Record<string, unknown> } = {},
+    reportRosterBar,
+  }: { route?: string; thread?: Record<string, unknown> | Error; queryDefaults?: Record<string, unknown>; reportRosterBar?: (showsRoster: boolean) => void } = {},
 ) {
   ;(api.members as ReturnType<typeof vi.fn>).mockResolvedValue({
     members,
@@ -407,12 +409,14 @@ async function renderPage(
   else if (thread) threadMock.mockResolvedValue(thread)
   else threadMock.mockImplementation(echoThread)
   const utils = renderWithProviders(
+    <MobileRosterBarContext.Provider value={reportRosterBar ?? null}>
     <NavigationLeaveGuardProvider>
       <MembersPage />
       <LocationProbe />
       <LeaveProbe />
       <GuideNavProbe />
-    </NavigationLeaveGuardProvider>,
+    </NavigationLeaveGuardProvider>
+    </MobileRosterBarContext.Provider>,
     { route, queryDefaults },
   )
   await waitFor(() => expect(api.members).toHaveBeenCalled())
@@ -6148,6 +6152,107 @@ describe('MembersPage default member, memory and URL', () => {
       // The card leaves through its exit animation.
       await waitFor(() => expect(screen.queryByTestId('crew-profile-modal')).toBeNull(), { timeout: 3000 })
       expect(screen.getByTestId('member-identity-pill')).toHaveAttribute('aria-expanded', 'false')
+    })
+
+    it('moves the thread header into the shell bar slot when the shell renders one', async () => {
+      // The shell renders `#mobile-topbar-slot` on a phone with a crewmate open
+      // (App's single bar); the page's header then sits there, not over the pane.
+      const slot = document.createElement('div')
+      slot.id = 'mobile-topbar-slot'
+      document.body.appendChild(slot)
+      try {
+        await renderPage(alphaBeta(), 'kirocrew', { route: '/members?member=alpha' })
+        await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+        const header = await screen.findByTestId('member-thread-header')
+        expect(slot).toContainElement(header)
+        expect(header).toHaveAttribute('data-in-topbar')
+        expect(within(slot).getByTestId('member-back')).toBeInTheDocument()
+        expect(within(slot).getByTestId('member-identity-pill')).toBeInTheDocument()
+      } finally {
+        slot.remove()
+      }
+    })
+
+    it('tells the shell which bar it needs: open for a landing, roster only when it can open no one and on unmount', async () => {
+      const opening = vi.fn()
+      const first = await renderPage(alphaBeta(), 'kirocrew', { reportRosterBar: opening })
+      await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+      // A landing that opens a crewmate never asks for the regular bar back.
+      // A landing reports `pending` while it reads, then `open`, and never asks
+      // for the regular bar back.
+      expect(opening.mock.calls.map((c) => c[0])).toEqual(expect.arrayContaining(['open']))
+      expect(opening).not.toHaveBeenCalledWith('roster')
+      first.unmount()
+      // Unmounting (an error boundary taking the page down, too) hands it back.
+      expect(opening).toHaveBeenLastCalledWith('roster')
+      const empty = vi.fn()
+      await renderPage([defaultRow()], 'kirocrew', { reportRosterBar: empty })
+      await screen.findAllByTestId('crewmate-empty-hero')
+      expect(empty).toHaveBeenLastCalledWith('roster')
+    })
+
+    it('a ?team= link the teams read failed on opens nothing, so it asks for the regular bar', async () => {
+      vi.mocked(api.teams.list).mockRejectedValue(new Error('teams unavailable'))
+      const report = vi.fn()
+      await renderPage(alphaBeta(), 'kirocrew', { route: '/members?team=ghost', reportRosterBar: report })
+      await waitFor(() => expect(report).toHaveBeenLastCalledWith('roster'), PANE_READY)
+    })
+
+    it('looks the shell bar slot up only once a crewmate is open, so a bar swapped during a slow read is not kept', async () => {
+      // The shell may re-render its bar while the roster read is pending,
+      // replacing its slot; the crewmate's header must land in the slot that is
+      // there once it opens. A slot latched while pending would be the detached
+      // first one.
+      const first = document.createElement('div')
+      first.id = 'mobile-topbar-slot'
+      document.body.appendChild(first)
+      const second = document.createElement('div')
+      let release: (v: unknown) => void = () => {}
+      ;(api.members as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise((r) => { release = r }))
+      try {
+        renderWithProviders(
+          <MobileRosterBarContext.Provider value={() => {}}>
+            <NavigationLeaveGuardProvider><MembersPage /></NavigationLeaveGuardProvider>
+          </MobileRosterBarContext.Provider>,
+          { route: '/members' },
+        )
+        await waitFor(() => expect(api.members).toHaveBeenCalled())
+        first.remove()
+        second.id = 'mobile-topbar-slot'
+        document.body.appendChild(second)
+        await act(async () => { release({ members: alphaBeta(), default_agent: 'kirocrew' }) })
+        const header = await screen.findByTestId('member-thread-header', undefined, PANE_READY)
+        await waitFor(() => expect(second).toContainElement(header))
+      } finally {
+        first.remove()
+        second.remove()
+      }
+    })
+
+    it('finds the shell bar slot again after the bare roster had the regular bar', async () => {
+      // The empty roster gets the regular bar, so the shell's slot goes away;
+      // the first crewmate then brings the single bar back with a NEW slot. A
+      // page that kept the first slot would portal its header into a detached
+      // node, out of sight.
+      const first = document.createElement('div')
+      first.id = 'mobile-topbar-slot'
+      document.body.appendChild(first)
+      const second = document.createElement('div')
+      try {
+        const utils = await renderPage([defaultRow()], 'kirocrew', { reportRosterBar: () => {} })
+        await screen.findAllByTestId('crewmate-empty-hero')
+        first.remove()
+        second.id = 'mobile-topbar-slot'
+        document.body.appendChild(second)
+        ;(api.members as ReturnType<typeof vi.fn>).mockResolvedValue({ members: alphaBeta(), default_agent: 'kirocrew' })
+        await act(async () => { await utils.queryClient.invalidateQueries({ queryKey: MEMBERS_ROSTER_QUERY_KEY }) })
+        const header = await screen.findByTestId('member-thread-header', undefined, PANE_READY)
+        await waitFor(() => expect(second).toContainElement(header))
+        expect(first).not.toContainElement(header)
+      } finally {
+        first.remove()
+        second.remove()
+      }
     })
 
     it('with nothing to open the roster is the page, and the page claims no drag', async () => {
