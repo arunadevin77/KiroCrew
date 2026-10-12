@@ -21,6 +21,8 @@ const mockApi = vi.hoisted(() => ({
   chatSlotModel: vi.fn(),
   chatSlotReasoningEffort: vi.fn(),
   agentResolvedModel: vi.fn(),
+  memberDashboard: vi.fn(),
+  memberDashboardLock: vi.fn(),
 }))
 vi.mock('../../api/client', () => ({ api: mockApi }))
 const modelsState = vi.hoisted(() => ({ isDegraded: false }))
@@ -46,6 +48,8 @@ import CrewProfileSettings from './CrewProfileSettings'
 import { isTrustRootTarget } from '../../guide/findTargetPolicy'
 import { ApiError } from '../../api/apiError'
 import { MEMBERS_ROSTER_QUERY_KEY } from '../../api/membersQuery'
+import { MEMBER_DASHBOARD_QUERY_PREFIX } from '../../hooks/useWebSocket'
+import { PREVIEW_DASHBOARD } from '../../utils/previewFlags'
 
 let lastQc: QueryClient
 
@@ -71,7 +75,10 @@ const pick = (label: string, option: string) =>
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.removeItem(PREVIEW_DASHBOARD)
   modelsState.isDegraded = false
+  mockApi.memberDashboard.mockResolvedValue({ structure_locked: false })
+  mockApi.memberDashboardLock.mockResolvedValue({ ok: true, structure_locked: true })
   mockApi.updateKirocrewAgent.mockResolvedValue({ ok: true })
   mockApi.chatMode.mockResolvedValue({ ok: true })
   mockApi.chatSlotModel.mockResolvedValue({ ok: true })
@@ -215,5 +222,93 @@ describe('CrewProfileSettings model and effort', () => {
   it('hides effort on a model that does not reason', () => {
     setup(member({ model: 'claude-haiku-4' }))
     expect(screen.queryByTestId('select-Edit reasoning effort')).toBeNull()
+  })
+})
+
+/* The person's lock on the crewmate's dynamic dashboard lives HERE, on the
+ * crewmate's card, as one labelled switch with a line of help. The Dashboard tab
+ * only shows a badge (CrewDynamicDashboard.test.tsx pins that it has no control). */
+describe('CrewProfileSettings dashboard lock', () => {
+  const SWITCH = 'Lock dashboard layout'
+  const on = () => localStorage.setItem(PREVIEW_DASHBOARD, '1')
+
+  it('hides the switch when Dynamic Dashboard preview is off', () => {
+    setup(member())
+    expect(screen.queryByRole('switch', { name: SWITCH })).toBeNull()
+    expect(mockApi.memberDashboard).not.toHaveBeenCalled()
+  })
+
+  it('offers the switch and reads lock state when preview is on', async () => {
+    on()
+    setup(member())
+    const sw = await screen.findByRole('switch', { name: SWITCH })
+    await waitFor(() => expect(sw).toHaveAttribute('aria-checked', 'false'))
+    expect(screen.getByTestId('crew-profile-dashboard-lock')).toHaveTextContent(SWITCH)
+    expect(screen.getByTestId('crew-profile-settings')).toHaveTextContent(
+      "While locked, oncall can't replace its dashboard with a different layout or restore an older one.",
+    )
+  })
+
+  it('reads the lock off the dashboard body, so it shows what the gateway holds', async () => {
+    on()
+    mockApi.memberDashboard.mockResolvedValue({ structure_locked: true })
+    setup(member())
+    const sw = await screen.findByRole('switch', { name: SWITCH })
+    await waitFor(() => expect(sw).toHaveAttribute('aria-checked', 'true'))
+    expect(mockApi.memberDashboard).toHaveBeenCalledWith('oncall', 'oncall')
+  })
+
+  it('is held until the read answers: a switch that moves first shows a state nothing holds', async () => {
+    on()
+    let answer: (v: { structure_locked: boolean }) => void = () => {}
+    mockApi.memberDashboard.mockReturnValue(new Promise((r) => { answer = r }))
+    setup(member())
+    const sw = await screen.findByRole('switch', { name: SWITCH })
+    expect(sw).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(sw)
+    expect(mockApi.memberDashboardLock).not.toHaveBeenCalled()
+    answer({ structure_locked: false })
+    await waitFor(() => expect(sw).not.toHaveAttribute('aria-disabled'))
+  })
+
+  it('flips the lock through the owner route, then re-reads every dashboard query for the crewmate', async () => {
+    on()
+    setup(member())
+    const sw = await screen.findByRole('switch', { name: SWITCH })
+    await waitFor(() => expect(sw).not.toHaveAttribute('aria-disabled'))
+    const spy = vi.spyOn(lastQc, 'invalidateQueries')
+    fireEvent.click(sw)
+    await waitFor(() => expect(mockApi.memberDashboardLock).toHaveBeenCalledWith('oncall', 'oncall', true))
+    await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: [MEMBER_DASHBOARD_QUERY_PREFIX, 'oncall'] }))
+    // The tab's frame reads under the same prefix, so it is refreshed by that one call.
+    expect(spy.mock.calls.some(([arg]) => (arg as { queryKey: string[] }).queryKey[0] === MEMBER_DASHBOARD_QUERY_PREFIX)).toBe(true)
+  })
+
+  it('says which change failed and what stayed the same', async () => {
+    on()
+    mockApi.memberDashboard.mockResolvedValue({ structure_locked: true })
+    mockApi.memberDashboardLock.mockRejectedValue(new Error('403'))
+    setup(member())
+    const sw = await screen.findByRole('switch', { name: SWITCH })
+    await waitFor(() => expect(sw).not.toHaveAttribute('aria-disabled'))
+    fireEvent.click(sw)
+    await waitFor(() => expect(mockApi.memberDashboardLock).toHaveBeenCalledWith('oncall', 'oncall', false))
+    expect(await screen.findByTestId('crew-profile-dashboard-lock-error')).toHaveTextContent(
+      "Couldn't unlock the dashboard. It's still locked. Try again.",
+    )
+  })
+
+  it('hides the switch and shows error + hint when the lock cannot be read', async () => {
+    on()
+    mockApi.memberDashboard.mockRejectedValue(new Error('500'))
+    setup(member())
+    expect(await screen.findByTestId('crew-profile-dashboard-lock-error')).toHaveTextContent(
+      "Couldn't read whether the dashboard is locked.",
+    )
+    // Switch is hidden when the state is unknown (showing a dim off switch
+    // for an unknown state would look identical to "unlocked" and mislead),
+    // but the hint text is still shown so the section is not context-free.
+    expect(screen.queryByRole('switch', { name: SWITCH })).toBeNull()
+    expect(screen.getByTestId('crew-profile-settings')).toHaveTextContent("can't replace")
   })
 })

@@ -17735,7 +17735,15 @@
       "fresh_start_confirm_action": "새로 시작",
       "fresh_start_failed_queued": "아직 대기 중인 메시지가 있어요. 끝날 때까지 기다린 뒤 새로 시작을 다시 눌러 주세요.",
       "fresh_start_failed_busy": "크루메이트가 아직 일하고 있고 멈추지 않았어요. 먼저 멈춘 뒤 다시 시도해 주세요.",
-      "fresh_start_unsaved_fold": "이 대화는 잉었고 메시지는 접혀 있지만, 접은 시간이 저장되지 않았어요. 페이지를 다시 불러오면 다시 펵추어져요."
+      "fresh_start_unsaved_fold": "이 대화는 잉었고 메시지는 접혀 있지만, 접은 시간이 저장되지 않았어요. 페이지를 다시 불러오면 다시 펵추어져요.",
+      "dashboard_locked_badge": "레이아웃 잠김 — 프로필에서 해제",
+      "dashboard_locked_badge_label": "대시보드 레이아웃이 잠겨 있습니다. 프로필 탭에서 잠금을 해제하세요.",
+      "profile_dashboard": "대시보드",
+      "profile_dashboard_lock_switch": "대시보드 레이아웃 잠금",
+      "profile_dashboard_lock_hint": "잠긴 동안 {{name}}은(는) 대시보드를 다른 레이아웃으로 바꾸거나 이전 레이아웃으로 되돌릴 수 없습니다. 표시되는 값은 계속 업데이트됩니다.",
+      "profile_dashboard_lock_failed": "대시보드를 잠글 수 없습니다. 아직 잠기지 않았습니다. 다시 시도하세요.",
+      "profile_dashboard_unlock_failed": "대시보드 잠금을 해제할 수 없습니다. 아직 잠겨 있습니다. 다시 시도하세요.",
+      "profile_dashboard_lock_unreadable": "대시보드가 잠겨 있는지 읽을 수 없습니다. 페이지를 새로 고침해 보세요."
     },
     "tasksCapacityCard": {
       "title": "작업 및 용량",

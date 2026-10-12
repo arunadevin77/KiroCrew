@@ -17735,7 +17735,15 @@
       "fresh_start_confirm_action": "重新开始",
       "fresh_start_failed_queued": "还有排队的消息。等它们完成后，再试一次重新开始。",
       "fresh_start_failed_busy": "队友还在工作，没有停下。先停止它，再试一次。",
-      "fresh_start_unsaved_fold": "它已经忘记这段对话，消息已折叠起来，但折叠时间没有保存。重新加载后，它们会再次展开。"
+      "fresh_start_unsaved_fold": "它已经忘记这段对话，消息已折叠起来，但折叠时间没有保存。重新加载后，它们会再次展开。",
+      "dashboard_locked_badge": "布局已锁定 — 在个人资料中解锁",
+      "dashboard_locked_badge_label": "仪表板布局已锁定。请在个人资料选项卡上解锁。",
+      "profile_dashboard": "仪表板",
+      "profile_dashboard_lock_switch": "锁定仪表板布局",
+      "profile_dashboard_lock_hint": "锁定期间，{{name}} 无法将其仪表板换成其他布局，也无法恢复旧布局。上面的数值会继续更新。",
+      "profile_dashboard_lock_failed": "无法锁定仪表板。它仍未锁定。请重试。",
+      "profile_dashboard_unlock_failed": "无法解锁仪表板。它仍处于锁定状态。请重试。",
+      "profile_dashboard_lock_unreadable": "无法读取仪表板是否已锁定。 尝试刷新页面。"
     },
     "tasksCapacityCard": {
       "title": "任务与容量",

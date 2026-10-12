@@ -17994,7 +17994,15 @@
       "fresh_start_confirm_action": "Neu anfangen",
       "fresh_start_failed_queued": "Es warten noch Nachrichten. Warte, bis sie fertig sind, und versuche Neu anfangen dann erneut.",
       "fresh_start_failed_busy": "Der Crewmate arbeitet noch und hat nicht gestoppt. Stoppe ihn zuerst und versuche es dann erneut.",
-      "fresh_start_unsaved_fold": "Er hat dieses Gespräch vergessen und die Nachrichten sind eingeklappt, aber der Zeitpunkt wurde nicht gespeichert. Nach einem Neuladen klappen sie wieder auf."
+      "fresh_start_unsaved_fold": "Er hat dieses Gespräch vergessen und die Nachrichten sind eingeklappt, aber der Zeitpunkt wurde nicht gespeichert. Nach einem Neuladen klappen sie wieder auf.",
+      "dashboard_locked_badge": "Layout gesperrt — auf Profil entsperren",
+      "dashboard_locked_badge_label": "Dashboard-Layout gesperrt. Entsperre es auf dem Profil-Tab.",
+      "profile_dashboard": "Dashboard",
+      "profile_dashboard_lock_switch": "Dashboard-Layout sperren",
+      "profile_dashboard_lock_hint": "Solange gesperrt, kann {{name}} das Dashboard nicht durch ein anderes Layout ersetzen oder ein älteres wiederherstellen. Die Werte darauf werden weiter aktualisiert.",
+      "profile_dashboard_lock_failed": "Das Dashboard konnte nicht gesperrt werden und bleibt entsperrt. Versuche es erneut.",
+      "profile_dashboard_unlock_failed": "Das Dashboard konnte nicht entsperrt werden und bleibt gesperrt. Versuche es erneut.",
+      "profile_dashboard_lock_unreadable": "Es konnte nicht gelesen werden, ob das Dashboard gesperrt ist. Versuche, die Seite neu zu laden."
     },
     "tasksCapacityCard": {
       "title": "Aufgaben & Kapazität",

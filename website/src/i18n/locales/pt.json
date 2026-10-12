@@ -18253,7 +18253,15 @@
       "fresh_start_confirm_action": "Começar do zero",
       "fresh_start_failed_queued": "Ainda há mensagens na fila. Espere terminarem e tente Começar do zero de novo.",
       "fresh_start_failed_busy": "O colega ainda está trabalhando e não parou. Pare-o primeiro e tente de novo.",
-      "fresh_start_unsaved_fold": "Ele esqueceu esta conversa e as mensagens ficaram recolhidas, mas a hora em que foram recolhidas não foi salva. Depois de recarregar, elas se expandem de novo."
+      "fresh_start_unsaved_fold": "Ele esqueceu esta conversa e as mensagens ficaram recolhidas, mas a hora em que foram recolhidas não foi salva. Depois de recarregar, elas se expandem de novo.",
+      "dashboard_locked_badge": "Layout bloqueado — desbloquear em Perfil",
+      "dashboard_locked_badge_label": "Layout do painel bloqueado. Desbloqueie-o na guia Perfil.",
+      "profile_dashboard": "Painel",
+      "profile_dashboard_lock_switch": "Bloquear o layout do painel",
+      "profile_dashboard_lock_hint": "Enquanto bloqueado, {{name}} não pode substituir o painel por outro layout nem restaurar um anterior. Os valores exibidos continuam a ser atualizados.",
+      "profile_dashboard_lock_failed": "Não foi possível bloquear o painel. Ele continua desbloqueado. Tente novamente.",
+      "profile_dashboard_unlock_failed": "Não foi possível desbloquear o painel. Ele continua bloqueado. Tente novamente.",
+      "profile_dashboard_lock_unreadable": "Não foi possível ler se o painel está bloqueado. Tente recarregar a página."
     },
     "tasksCapacityCard": {
       "title": "Tarefas e capacidade",

@@ -4922,6 +4922,13 @@ export default function MembersPage() {
                     displayName={crewDisplayName(activeView ?? active)}
                     // A needs-you option lands in this crewmate's chat box; the person sends it.
                     onAct={activeSlot ? (text: string) => mergePaneDraft(activeSlot, text, []) : undefined}
+                    // Badge click opens the Profile tab directly so the person can unlock.
+                    // Guard against an unsaved schedule form in the already-open card:
+                    // openProfile() increments the nonce which re-mounts the panel.
+                    onOpenProfileTab={() => {
+                      if (!schedAtStakeRef.current()) { openProfile('profile'); return }
+                      void schedGuardRef.current().then((ok) => { if (ok) openProfile('profile') })
+                    }}
                   />
                 ) : (
                   <CrewDashboardFrame

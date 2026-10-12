@@ -308,7 +308,14 @@ export function createAgentsEndpoints({ post, put, del, j, jfetch: fetch, sessio
         rendered_html?: string
         manifest: DashboardManifest
         state: 'empty' | 'live' | 'stale' | 'error'
+        /** The person's layout lock: while true the crewmate cannot apply or roll back a page. */
+        structure_locked?: boolean
       } | null>,
+    // Set or clear that lock. Owner-only on the gateway, and refused to an agent's
+    // internal-secret caller: only the person, from the crewmate's Profile card, can move it.
+    memberDashboardLock: (slug: string, member: string, locked: boolean) =>
+      post('/api/members/' + encodeURIComponent(slug) + '/dashboard/lock?member=' + encodeURIComponent(member), { locked })
+        .then(j) as Promise<{ ok: boolean; structure_locked: boolean }>,
     // A ROOT session's own dynamic dashboard, the same body as `memberDashboard`.
     // Keyed by the slot: the gateway reads every field from that session's own work
     // ledger and crew log, and answers 404 `not_root_session` for a dispatched or

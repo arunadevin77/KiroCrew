@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { RotateCw } from 'lucide-react'
+import { Lock, RotateCw } from 'lucide-react'
 import { api, type DashboardManifest } from '../../api/client'
-import { Btn } from '../../components/ui'
+import { Badge, Btn } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
 import { useTheme } from '../../hooks/useTheme'
 import { useSandboxDoc } from '../../hooks/useSandboxDoc'
@@ -138,7 +138,7 @@ export function dashboardQueryKey(target: DashboardTarget): readonly string[] {
     : [SESSION_DASHBOARD_QUERY_PREFIX, target.slot]
 }
 
-export default function CrewDynamicDashboard({ target, displayName, onAct, preview = false, onPreviewGone }: {
+export default function CrewDynamicDashboard({ target, displayName, onAct, preview = false, onPreviewGone, onOpenProfileTab }: {
   target: DashboardTarget
   displayName: string
   /** Put a reply the page offered into the chat box. Absent: the page's options do nothing. */
@@ -149,6 +149,8 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   preview?: boolean
   /** Told whether the staged page is gone (applied or expired), so a host can drop its "not applied" label. */
   onPreviewGone?: (gone: boolean) => void
+  /** Called when the person clicks the Locked badge to jump to the Profile tab. */
+  onOpenProfileTab?: () => void
 }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const onActRef = useRef(onAct)
@@ -197,6 +199,10 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   })
   const previewGone = staged && isError && apiErrorCode(error) === 'no_preview'
   useEffect(() => { onPreviewGone?.(previewGone) }, [onPreviewGone, previewGone])
+
+  // The person's layout lock, read off the same body the page comes from. This tab
+  // only SHOWS it: the switch that sets it is on the crewmate's Profile card.
+  const locked = target.kind === 'member' && !!data && 'structure_locked' in data && data.structure_locked === true
 
   /**
    * The page currently believed to work, and the candidate waiting to prove it.
@@ -369,6 +375,43 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
     // could never promote the page it just re-minted.
   }, [probating, candidate, probe.url])
 
+  // A badge-button ("Layout locked — unlock on Profile") that opens the Profile tab
+  // when clicked (via onOpenProfileTab), so the person can unlock in one tap. When
+  // onOpenProfileTab is absent the badge falls back to a non-interactive Badge.
+  // Drawn in EVERY view that has a read, not only the page view: a
+  // page locked while its record was healthy can later read as broken or empty, and
+  // the person should still see why the crewmate is not changing it. Not on a staged
+  // preview: that read is not the page the lock holds, so it carries no lock.
+  const lockBadge = locked && !preview ? (
+    <div className="shrink-0 flex justify-end px-2 pt-1">
+      {onOpenProfileTab ? (
+        // Clickable: goes straight to the Profile tab where the lock switch lives.
+        // Uses the shared Btn primitive for consistent interactive semantics.
+        <Btn
+          type="button"
+          onClick={onOpenProfileTab}
+          className="inline-flex items-center gap-1 px-2 py-[2px] rounded-full text-[13px] font-medium whitespace-nowrap bg-[var(--bg-hover)] text-accent underline hover:opacity-80 focus-ring"
+          aria-label={i18nT('pages.membersPage.dashboard_locked_badge_label')}
+          data-testid="crew-dashboard-lock-badge"
+        >
+          <Lock size={11} aria-hidden="true" />
+          {i18nT('pages.membersPage.dashboard_locked_badge')}
+        </Btn>
+      ) : (
+        <Badge
+          variant="muted"
+          role="status"
+          aria-label={i18nT('pages.membersPage.dashboard_locked_badge_label')}
+          data-testid="crew-dashboard-lock-badge"
+          style={{ cursor: 'default' }}
+        >
+          <Lock size={11} aria-hidden="true" />
+          {i18nT('pages.membersPage.dashboard_locked_badge')}
+        </Badge>
+      )}
+    </div>
+  ) : null
+
   if (isLoading || awaitingFirstPage) {
     return (
       <div className="p-4 space-y-1.5" data-testid="crew-dashboard-loading" aria-hidden>
@@ -413,6 +456,7 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
       // Nothing good to keep, so the frame is not drawn at all rather than drawn from
       // markup the gateway refused to fill.
       <div className="p-4 space-y-1.5">
+        {lockBadge}
         {/* No hand-off: this tab sits on the Members page, which holds unsaved
             Profile and crew-editor drafts; the hand-off navigates to /chat and
             unmounts them past the page's leave guard. Reasoned in full at the
@@ -438,6 +482,7 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
       // the same empty answer and a button that cannot change anything reads as a
       // fault the reader could clear.
       <div className="p-4 text-sm text-muted" data-testid="crew-dashboard-none">
+        {lockBadge}
         {i18nT('pages.membersPage.dashboard_none_yet')}
       </div>
     )
@@ -452,6 +497,7 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
       // nothing, because this tab renders the dashboard and no longer renders a
       // published document.
       <div className="p-4 space-y-1.5">
+        {lockBadge}
         {/* No hand-off: the Members page's unsaved Profile and crew-editor drafts,
             as at the isError branch above. */}
         <ErrorNotice
@@ -468,6 +514,7 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
 
   return (
     <div className="h-full min-h-0 flex flex-col" data-testid="crew-dashboard-frame">
+      {lockBadge}
       {broken && (
         // The page on screen is the last one that parsed. Banded, never replaced: the
         // alternative is blanking a working page because a NEWER copy is broken.

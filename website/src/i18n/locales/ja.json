@@ -17735,7 +17735,15 @@
       "fresh_start_confirm_action": "リセットして再開",
       "fresh_start_failed_queued": "まだキューにメッセージがあります。終わるのを待ってから、もう一度リセットしてください。",
       "fresh_start_failed_busy": "クルーメイトはまだ作業中で止まりませんでした。先に止めてから、もう一度お試しください。",
-      "fresh_start_unsaved_fold": "この会話は忘れられ、メッセージは折りたたまれていますが、折りたたんだ時刻を保存できませんでした。再読み込み後にまた開きます。"
+      "fresh_start_unsaved_fold": "この会話は忘れられ、メッセージは折りたたまれていますが、折りたたんだ時刻を保存できませんでした。再読み込み後にまた開きます。",
+      "dashboard_locked_badge": "レイアウトがロック中 — プロフィールで解除",
+      "dashboard_locked_badge_label": "ダッシュボードのレイアウトはロックされています。プロフィールタブでロックを解除してください。",
+      "profile_dashboard": "ダッシュボード",
+      "profile_dashboard_lock_switch": "ダッシュボードのレイアウトをロック",
+      "profile_dashboard_lock_hint": "ロック中、{{name}} はダッシュボードを別のレイアウトに置き換えたり、以前のものに戻したりできません。表示される値は引き続き更新されます。",
+      "profile_dashboard_lock_failed": "ダッシュボードをロックできませんでした。ロックされていないままです。もう一度お試しください。",
+      "profile_dashboard_unlock_failed": "ダッシュボードのロックを解除できませんでした。ロックされたままです。もう一度お試しください。",
+      "profile_dashboard_lock_unreadable": "ダッシュボードがロックされているか読み取れませんでした。 ページを再読み込みしてみてください。"
     },
     "tasksCapacityCard": {
       "title": "タスクと処理能力",

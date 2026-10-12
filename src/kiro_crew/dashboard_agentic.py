@@ -842,13 +842,17 @@ def turn_block(slug: str) -> str:
         from kiro_crew.dashboard_templates.manifest import parse_manifest
 
         record = instance_store.read(slug)
+        # Read BEFORE any fallback: the default page carries no lock of its own. The
+        # line is the store's own refusal, so the turn and the tool never disagree.
+        locked = record.structure_locked
+        locked_line = instance_store.LOCKED_REFUSAL
         if record.state == instance_store.STATE_EMPTY:
             fallback = instance_store.default_instance(slug)
             if fallback is None:
-                return ""
+                return f"[DASHBOARD]\n{locked_line}" if locked else ""
             record = fallback
         elif record.state not in (instance_store.STATE_LIVE, instance_store.STATE_STALE):
-            return ""
+            return f"[DASHBOARD]\n{locked_line}" if locked else ""
         manifest = parse_manifest(dict(record.manifest))
     except Exception:
         logger.debug("no [DASHBOARD] block for %r", slug, exc_info=True)
@@ -859,7 +863,8 @@ def turn_block(slug: str) -> str:
         "[DASHBOARD]\n"
         f"Your dynamic dashboard is template {manifest.id} v{manifest.version}; the "
         "Dashboard tab shows it only with the 'Dynamic Dashboard' Feature Preview on.\n"
-        f"Fields you write: {writes}. Call dashboard_fields for their shapes and "
+        + (f"{locked_line}\n" if locked else "")
+        + f"Fields you write: {writes}. Call dashboard_fields for their shapes and "
         "current values before dashboard_write."
     )
 

@@ -15,12 +15,15 @@ const CrewDynamicDashboard = lazy(() => import('./CrewDynamicDashboard'))
  * The tab holds the dashboard alone and offers no view switch. The raw crew-log
  * record is a Developer Mode surface, reached from the chat panel's own Crew log
  * view, so the thread's slot is not part of this tab's input. */
-export default function CrewDashboardTab({ slug, member, displayName, onAct }: {
+export default function CrewDashboardTab({ slug, member, displayName, onAct, onOpenProfileTab }: {
   slug: string
   member: string
   displayName: string
   /** Put a reply the page offered into this crewmate's chat box. */
   onAct?: (text: string) => void
+  /** Called when the person clicks the "Layout locked · Profile" badge to go
+   *  straight to the Profile tab where the lock switch lives. */
+  onOpenProfileTab?: () => void
 }) {
   const { t } = useTranslation()
   return (
@@ -32,7 +35,7 @@ export default function CrewDashboardTab({ slug, member, displayName, onAct }: {
               "last good page" must not survive the switch -- one crewmate's
               numbers under another's name is the one thing this surface must
               never show. */}
-          <CrewDynamicDashboard key={slug} target={{ kind: 'member', slug, member }} displayName={displayName || member} onAct={onAct} />
+          <CrewDynamicDashboard key={slug} target={{ kind: 'member', slug, member }} displayName={displayName || member} onAct={onAct} onOpenProfileTab={onOpenProfileTab} />
         </Suspense>
       </ErrorBoundary>
     </div>

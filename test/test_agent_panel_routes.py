@@ -2863,6 +2863,9 @@ def _page_store(monkeypatch, **over: Any) -> SimpleNamespace:
     class InstanceRefused(Exception):
         pass
 
+    class InstanceLocked(InstanceRefused):
+        pass
+
     staged = {
         "template_id": "fixture-board",
         "template_version": 1,
@@ -2874,6 +2877,7 @@ def _page_store(monkeypatch, **over: Any) -> SimpleNamespace:
     }
     store = SimpleNamespace(
         InstanceRefused=InstanceRefused,
+        InstanceLocked=InstanceLocked,
         InstanceError=Exception,
         read=lambda _slug: SimpleNamespace(template_id="fixture-board"),
         stage_preview=lambda _slug, **_kw: SimpleNamespace(wire=lambda: dict(staged)),

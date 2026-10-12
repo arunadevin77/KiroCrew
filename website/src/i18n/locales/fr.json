@@ -18253,7 +18253,15 @@
       "fresh_start_confirm_action": "Repartir à zéro",
       "fresh_start_failed_queued": "Des messages sont encore en file. Attends qu'ils finissent, puis réessaie Repartir à zéro.",
       "fresh_start_failed_busy": "Le coéquipier travaille encore et ne s'est pas arrêté. Arrête-le d'abord, puis réessaie.",
-      "fresh_start_unsaved_fold": "Il a oublié cette conversation et les messages sont repliés, mais l'heure du repli n'a pas été enregistrée. Après un rechargement, ils se déplient à nouveau."
+      "fresh_start_unsaved_fold": "Il a oublié cette conversation et les messages sont repliés, mais l'heure du repli n'a pas été enregistrée. Après un rechargement, ils se déplient à nouveau.",
+      "dashboard_locked_badge": "Mise en page verrouillée — déverrouiller dans Profil",
+      "dashboard_locked_badge_label": "Mise en page du tableau de bord verrouillée. Déverrouille-la dans l'onglet Profil.",
+      "profile_dashboard": "Tableau de bord",
+      "profile_dashboard_lock_switch": "Verrouiller la mise en page du tableau de bord",
+      "profile_dashboard_lock_hint": "Tant que c'est verrouillé, {{name}} ne peut pas remplacer son tableau de bord par une autre disposition ni en restaurer une plus ancienne. Les valeurs affichées continuent de se mettre à jour.",
+      "profile_dashboard_lock_failed": "Impossible de verrouiller le tableau de bord. Il reste déverrouillé. Réessaie.",
+      "profile_dashboard_unlock_failed": "Impossible de déverrouiller le tableau de bord. Il reste verrouillé. Réessaie.",
+      "profile_dashboard_lock_unreadable": "Impossible de lire si le tableau de bord est verrouillé. Réessaie de rafraîchir la page."
     },
     "tasksCapacityCard": {
       "title": "Tâches et capacité",

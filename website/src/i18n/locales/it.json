@@ -18253,7 +18253,15 @@
       "fresh_start_confirm_action": "Ricomincia da capo",
       "fresh_start_failed_queued": "Ci sono ancora messaggi in coda. Aspetta che finiscano, poi riprova Ricomincia da capo.",
       "fresh_start_failed_busy": "Il compagno sta ancora lavorando e non si è fermato. Fermalo prima, poi riprova.",
-      "fresh_start_unsaved_fold": "Ha dimenticato questa conversazione e i messaggi sono ripiegati, ma il momento in cui sono stati ripiegati non è stato salvato. Dopo un ricaricamento tornano a dispiegarsi."
+      "fresh_start_unsaved_fold": "Ha dimenticato questa conversazione e i messaggi sono ripiegati, ma il momento in cui sono stati ripiegati non è stato salvato. Dopo un ricaricamento tornano a dispiegarsi.",
+      "dashboard_locked_badge": "Layout bloccato — sblocca su Profilo",
+      "dashboard_locked_badge_label": "Layout della dashboard bloccato. Sbloccalo nella scheda Profilo.",
+      "profile_dashboard": "Dashboard",
+      "profile_dashboard_lock_switch": "Blocca il layout della dashboard",
+      "profile_dashboard_lock_hint": "Finché è bloccato, {{name}} non può sostituire la sua dashboard con un altro layout né ripristinarne uno precedente. I valori mostrati continuano ad aggiornarsi.",
+      "profile_dashboard_lock_failed": "Impossibile bloccare la dashboard. È ancora sbloccata. Riprova.",
+      "profile_dashboard_unlock_failed": "Impossibile sbloccare la dashboard. È ancora bloccata. Riprova.",
+      "profile_dashboard_lock_unreadable": "Impossibile leggere se la dashboard è bloccata. Prova ad aggiornare la pagina."
     },
     "tasksCapacityCard": {
       "title": "Attività e capacità",

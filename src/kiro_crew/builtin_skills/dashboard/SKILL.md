@@ -45,6 +45,17 @@ still reach -- read that list rather than guessing, because the store keeps fewe
 payloads than the history has rows. A rollback moves FORWARD: restoring version 1 over
 version 2 writes version 3, so going back is itself undoable.
 
+## 4. "The layout is locked"
+
+The person can lock the page's layout with the **Lock dashboard layout** switch
+on your Profile tab; the Dashboard tab then shows a small **Layout locked — unlock on Profile** badge-button. While it is locked,
+`dashboard_apply` and `dashboard_rollback` answer `dashboard_locked`: adopting,
+applying or rolling back a page all wait. Only the person can unlock it, and no tool
+of yours can. Your `[DASHBOARD]` block says LOCKED when it is. Then do not apply,
+roll back or propose another page: ask them to unlock it, and wait until they
+say they have. You can still preview a page for them to look at.
+`dashboard_write` values still land.
+
 ## The values ON the page are yours to write
 
 A template declares which of its fields you fill. Those are the ones carrying

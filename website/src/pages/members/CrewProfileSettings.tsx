@@ -1,10 +1,15 @@
 import { useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Lock } from 'lucide-react'
 import { api, type MemberRosterRow } from '../../api/client'
 import { ApiError } from '../../api/apiError'
 import { MEMBERS_ROSTER_QUERY_KEY } from '../../api/membersQuery'
+import { MEMBER_DASHBOARD_QUERY_PREFIX } from '../../hooks/useWebSocket'
+import { usePreviewFlag } from '../../hooks/usePreviewFlag'
+import { PREVIEW_DASHBOARD } from '../../utils/previewFlags'
 import SimpleSelect from '../../components/SimpleSelect'
+import { Toggle } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
 import { INHERIT_MODEL } from '../../components/crew/useCrewEditor'
 import { useAvailableModelsQuery } from '../../hooks/useAvailableModels'
@@ -69,6 +74,40 @@ export default function CrewProfileSettings({ member, slotKey, waiting = false }
   const model = value('model')
   const effortCapable = modelSupportsEffort(model === INHERIT_MODEL ? resolved?.model : model)
   const modelOptions = [INHERIT_MODEL, ...(models.data || []).map((m) => m.name).filter((n) => n && n !== INHERIT_MODEL)]
+
+  // The person's lock on the crewmate's dynamic dashboard: set HERE, on the
+  // crewmate's own card, never on the Dashboard tab (which only shows a badge).
+  // Read off the dashboard body under the tab's own query prefix, so the gateway's
+  // "dashboard moved" frame and this card's own flip refresh both surfaces at once.
+  // Only with the Dynamic Dashboard preview on: without it the tab draws no page
+  // this switch could bind.
+  const dashboardPreview = usePreviewFlag(PREVIEW_DASHBOARD)
+  const lockRead = useQuery({
+    queryKey: [MEMBER_DASHBOARD_QUERY_PREFIX, member.slug, member.name, 'lock'],
+    queryFn: () => api.memberDashboard(member.slug, member.name),
+    enabled: dashboardPreview && Boolean(member.slug),
+    select: (page) => Boolean(page?.structure_locked),
+  })
+  const lockFlip = useMutation({
+    mutationFn: (want: boolean) => api.memberDashboardLock(member.slug, member.name, want),
+    onSettled: () => {
+      // Return the promise so TanStack Query awaits the refetch before clearing
+      // isPending — without this, isPending goes false before lockRead is updated
+      // and displayLocked briefly shows the old position.
+      return queryClient.invalidateQueries({ queryKey: [MEMBER_DASHBOARD_QUERY_PREFIX, member.slug] })
+    },
+  })
+  const locked = lockRead.data === true
+  // While a flip is in flight, show the state being requested rather than the
+  // last-read state: the switch should not snap back to the old position
+  // between the mutation's onSettled firing and the refetch landing.
+  const displayLocked = lockFlip.isPending ? (lockFlip.variables ?? locked) : locked
+  // The error names the state that HELD, so the person knows what to expect.
+  const lockError = lockRead.isError
+    ? t('pages.membersPage.profile_dashboard_lock_unreadable')
+    : lockFlip.isError
+      ? t(lockFlip.variables ? 'pages.membersPage.profile_dashboard_lock_failed' : 'pages.membersPage.profile_dashboard_unlock_failed')
+      : null
 
   const save = async (key: Setting, next: string) => {
     if (inFlight.current || waiting) return
@@ -162,6 +201,27 @@ export default function CrewProfileSettings({ member, slotKey, waiting = false }
           />
         </Field>
       )}
+      {dashboardPreview && (
+        <Field label={t('pages.membersPage.profile_dashboard')} hint={t('pages.membersPage.profile_dashboard_lock_hint', { name })}>
+          <div className="flex items-center justify-between gap-3 min-w-0" data-testid="crew-profile-dashboard-lock">
+            <span className="flex items-center gap-2 min-w-0 text-[13px] text-text">
+              <Lock size={14} className="text-muted shrink-0" aria-hidden="true" />
+              <span className="truncate">{t('pages.membersPage.profile_dashboard_lock_switch')}</span>
+            </span>
+            {/* Hide the switch when the lock state cannot be read: showing a dim off switch
+                for an unknown state looks identical to "unlocked" and misleads the person.
+                The error notice below names the problem and the next step. */}
+            {!lockRead.isError && (
+            <Toggle
+              checked={displayLocked}
+              onChange={(v) => lockFlip.mutate(v)}
+              disabled={lockRead.data === undefined || lockFlip.isPending}
+              label={t('pages.membersPage.profile_dashboard_lock_switch')}
+            />
+            )}
+          </div>
+        </Field>
+      )}
       {/* No hand-off on any notice here: the Crewmates page's composer may hold an
           unsent draft to this crewmate, and "Ask the agent" navigates away. */}
       <ErrorNotice
@@ -173,6 +233,7 @@ export default function CrewProfileSettings({ member, slotKey, waiting = false }
         testId="crew-profile-settings-models-error"
       />
       <ErrorNotice message={error || null} testId="crew-profile-settings-error" />
+      <ErrorNotice message={lockError} testId="crew-profile-dashboard-lock-error" />
       <ErrorNotice message={notice || null} testId="crew-profile-settings-notice" />
       </fieldset>
     </section>
