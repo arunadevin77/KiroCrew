@@ -5336,6 +5336,40 @@
       "defaultValue": null
     },
     {
+      "path": "cloud_sync",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "cloud"
+      ],
+      "label": "Cloud Sync",
+      "help": "Default target for `kirocrew cloud memory push|restore|list`.",
+      "hasChildren": true,
+      "enumValues": null,
+      "defaultValue": {
+        "target": ""
+      }
+    },
+    {
+      "path": "cloud_sync.target",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [
+        "cloud"
+      ],
+      "label": "Memory Sync Target",
+      "help": "Default scheme://path for `kirocrew cloud memory push|restore|list` when --target is omitted. Empty means every call must pass --target.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": ""
+    },
+    {
       "path": "wecom",
       "kind": "core",
       "type": "object",

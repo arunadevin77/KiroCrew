@@ -181,6 +181,29 @@ class PublishConfig:
 
 
 @dataclass
+class CloudSyncConfig:
+    """The default destination for ``kirocrew cloud memory push | restore | list``.
+
+    ``--target`` on the command line always wins; this is only the fallback a
+    repeated ``--target scheme://path`` would otherwise force on every call. The
+    value is a URL: ``file://`` is built in, any other scheme is handed to an
+    external ``kirocrew-sync-<scheme>`` helper on ``PATH``
+    (:mod:`kiro_crew.cloud.memory_sync`). Kiro Crew stores no credential for any
+    target; a helper that needs one reads its own service's login session.
+    """
+
+    target: str = field(
+        default="",
+        metadata=_meta(
+            "Memory Sync Target",
+            "Default scheme://path for `kirocrew cloud memory push|restore|list` "
+            "when --target is omitted. Empty means every call must pass --target.",
+            tags=["cloud"],
+        ),
+    )
+
+
+@dataclass
 class ExternalRegistryConfig:
     """An external app registry source (org-owned repo with app.json files)."""
 

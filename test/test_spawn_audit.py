@@ -1846,6 +1846,19 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # which a scrubbed-env/filesystem-scoped wrapper would move or forbid.
         "apps/builtins/aws_control/crew/packaging/tests/test_producer.py"
         "::test_cli_subprocess_leaves_no_pycache_in_the_source_tree",
+        # The external sync-helper spawn behind `kirocrew cloud memory
+        # push|restore|list`. The `cloud` verbs are human/installer actions,
+        # never LLM/MCP tools (blocked by the shell deniedCommands floor), so no
+        # turn text reaches this argv. The binary name is
+        # `kirocrew-sync-<scheme>` where <scheme> is validated by a strict,
+        # length-bounded regex (`_SCHEME_RE`) before it is resolved through
+        # `shutil.which`; the remaining args are the operator-supplied target URL
+        # and `/`-separated relative paths built from a sanitized host label and a
+        # UTC timestamp. No shell, a fixed verb set, and a redacted bundle is the
+        # only payload. Routing through the agent sandbox would add nothing: the
+        # helper is a trusted on-PATH binary carrying its own transport and
+        # sign-in, run by a person on their own machine.
+        "cloud/memory_sync.py::_run_helper",
     }
 )
 

@@ -336,7 +336,7 @@ class RedactionFailed(RuntimeError):
 
 
 def _redacted_upload_copy(
-    outfile: Path, workdir: Path
+    outfile: Path, workdir: Path, *, force: bool = False
 ) -> "tuple[Path, snapshot_redact.RedactionReport] | None":
     """Build a redacted archive to upload in place of *outfile*.
 
@@ -348,19 +348,30 @@ def _redacted_upload_copy(
     The local bundle is never touched. It sits on the machine that already holds these
     secrets, so redacting it would destroy the only copy that restores complete and buy
     nothing — the boundary worth defending is the one the upload crosses.
+
+    *force* makes redaction unconditional: the opt-out switch
+    (:func:`snapshot_redact.outbound_redaction_enabled`) exists to let an ON-HOST
+    backup skip rewriting, and it does not apply to an off-host sync target where
+    redaction is always required. When *force* is set the switch is not read
+    (so it never short-circuits to ``None`` and an unreadable switch never refuses
+    the upload), and the bundle is always scrubbed.
     """
-    try:
-        redact = _redactor().outbound_redaction_enabled()
-    except _redactor().RedactionSwitchUnreadable as e:
-        # The operator wrote this file on purpose and we cannot tell which way. Neither
-        # silent answer is honest -- off ignores a request to scrub, on rewrites files they
-        # may not have meant to touch -- so refuse the UPLOAD and name the file. The local
-        # bundle is already written and is unaffected.
-        raise RedactionFailed(
-            f"{e}.\n"
-            "   Refusing to upload rather than guess whether your files should be "
-            "rewritten. Fix the file (or delete it to leave redaction off), then re-run."
-        ) from e
+    # When forced, redaction is unconditional and the switch is not consulted at all;
+    # otherwise the operator's opt-out switch decides, and an unreadable switch refuses.
+    redact = force
+    if not force:
+        try:
+            redact = _redactor().outbound_redaction_enabled()
+        except _redactor().RedactionSwitchUnreadable as e:
+            # The operator wrote this file on purpose and we cannot tell which way. Neither
+            # silent answer is honest -- off ignores a request to scrub, on rewrites files
+            # they may not have meant to touch -- so refuse the UPLOAD and name the file.
+            # The local bundle is already written and is unaffected.
+            raise RedactionFailed(
+                f"{e}.\n"
+                "   Refusing to upload rather than guess whether your files should be "
+                "rewritten. Fix the file (or delete it to leave redaction off), then re-run."
+            ) from e
     if not redact:
         return None
 
@@ -449,7 +460,9 @@ def _report_redaction(report: "snapshot_redact.RedactionReport") -> None:
     )
 
 
-def prepare_redacted_copy(outfile: Path, workdir: Path, selected: list[str]) -> Path | None:
+def prepare_redacted_copy(
+    outfile: Path, workdir: Path, selected: list[str], *, force: bool = False
+) -> Path | None:
     """Produce a redacted copy of *outfile* for a caller that is about to send it off-host.
 
     Returns the redacted archive's path, or ``None`` when the operator has not opted in --
@@ -464,13 +477,17 @@ def prepare_redacted_copy(outfile: Path, workdir: Path, selected: list[str]) -> 
     that app does not do -- rewriting the bytes that leave -- and it is kept here because
     it is the snapshot format's own business, not the transport's.
 
+    *force* passes straight through to :func:`_redacted_upload_copy`: a destination that
+    always requires redaction (an off-host sync target) sets it so the opt-out switch is
+    ignored and a redacted copy is always produced, never ``None``.
+
     *workdir* must be a directory the caller controls and removes; the redacted copy is
     written inside it. The LOCAL bundle is never touched: it sits on the machine that
     already holds these secrets, so redacting it would destroy the only copy that restores
     complete and buy nothing.
     """
     _report_unresolved_payload(selected)
-    prepared = _redacted_upload_copy(outfile, workdir)
+    prepared = _redacted_upload_copy(outfile, workdir, force=force)
     if prepared is None:
         _report_unredacted_upload()
         return None

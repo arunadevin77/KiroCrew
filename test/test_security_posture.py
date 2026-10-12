@@ -990,6 +990,11 @@ class TestRedactionSinkRegistry:
             # exfil scanner THEN the credential scanner over every string in a
             # projection view or event `data`, so a sink using it is fully covered.
             "_redact_projection_value",
+            # snapshot_redact._scrub runs redact_credentials THEN
+            # redact_exfiltration_urls and then _scrub_unrecognised over the text,
+            # so a sink using it (cloud/memory_sync.py, the memory sync-target
+            # backup) runs strictly more than either scanner alone.
+            "_scrub(",
         )
         for label, module, detail in security_posture._REDACTION_SINKS:
             text = (pkg / module).read_text(encoding="utf-8")

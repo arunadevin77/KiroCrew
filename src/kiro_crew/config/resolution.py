@@ -47,6 +47,7 @@ _KNOWN_CONFIG_SECTIONS: frozenset = frozenset(
         "memory",
         "slack",
         "publish",
+        "cloud_sync",
         "telegram",
         "discord",
         "webex",
