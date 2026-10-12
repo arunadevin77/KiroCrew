@@ -43,8 +43,10 @@ export function createArtifactsEndpoints({ get, post, del, patch, j, jfetch: fet
     /** List artifacts. `session` scopes to the artifacts one chat session
      *  ORIGINATED; `touchedBy` widens that to every artifact the session was
      *  involved with — created, read, edited, iterated on or reverted — which is
-     *  what the in-session Artifacts tab lists. `pinned` filters on the star. */
-    artifacts: (filters?: { tag?: string; kind?: string; q?: string; source_path?: string; snippet?: boolean; contentMatch?: boolean; session?: string; touchedBy?: string; pinned?: boolean }) => {
+     *  what the in-session Artifacts tab lists. `chatFolder` names a chat
+     *  sidebar folder and returns what any chat filed in it was involved with;
+     *  the server resolves the folder's chats. `pinned` filters on the star. */
+    artifacts: (filters?: { tag?: string; kind?: string; q?: string; source_path?: string; snippet?: boolean; contentMatch?: boolean; session?: string; touchedBy?: string; chatFolder?: string; pinned?: boolean }) => {
       const params = new URLSearchParams()
       if (filters?.tag) params.set('tag', filters.tag)
       if (filters?.kind) params.set('kind', filters.kind)
@@ -54,6 +56,7 @@ export function createArtifactsEndpoints({ get, post, del, patch, j, jfetch: fet
       if (filters?.contentMatch) params.set('content', '1')
       if (filters?.session) params.set('session', filters.session)
       if (filters?.touchedBy) params.set('touched_by', filters.touchedBy)
+      if (filters?.chatFolder) params.set('chat_folder', filters.chatFolder)
       if (filters?.pinned !== undefined) params.set('pinned', filters.pinned ? '1' : '0')
       const s = params.toString()
       return get(`/api/artifacts${s ? `?${s}` : ''}`).then(j)

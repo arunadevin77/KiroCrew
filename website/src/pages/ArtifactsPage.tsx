@@ -41,6 +41,7 @@ import { haptic } from '../lib/haptic'
 import type { Artifact, ArtifactFolder, PublishProviderDescriptor, RemoteArtifact, SessionDoc } from '../types'
 import { KIND_BADGE, isoToTs, docFileType, FolderColorSwatches, FolderGlyph, FolderNameInput, FolderMenu, SessionDocStar, SessionDocPath, LibraryTable, LibraryTree } from '../components/library/LibraryTable'
 import SessionDocPreview from '../components/library/SessionDocPreview'
+import ArtifactScopeChips, { type ArtifactChatScopeParam } from '../components/library/ArtifactScopeChips'
 import type { SortKey, SortState, LibraryDrag, FolderActions } from '../components/library/LibraryTable'
 import { WidgetThumb, ContentThumb, ImageThumb, WebAppThumb } from '../components/library/ArtifactThumbs'
 import { useColumnCount } from '../hooks/useColumnCount'
@@ -895,7 +896,25 @@ export default function ArtifactsPage() {  const navigate = useNavigate()
     setSearchParams(folderId ? { folder: folderId } : {}, { replace: false })
   }, [setSearchParams])
   const { folders } = useArtifactFolders()
-  const filtersActive = !!(filter || tagFilter || kindFilter || pinnedOnly)
+  // ── Chat scope ───────────────────────────────────────────────
+  // ?touched_by=<slot> and ?chat_folder=<id> narrow the library to what one
+  // chat, or the chats filed in one sidebar folder, created, read or edited.
+  // The server resolves both. Each renders as a dismissible chip, and like any
+  // other filter an active scope lists matches flat across all folders.
+  const touchedByScope = searchParams.get('touched_by') || ''
+  const chatFolderScope = searchParams.get('chat_folder') || ''
+  const chatScopeActive = !!(touchedByScope || chatFolderScope)
+  const clearChatScope = useCallback((param: ArtifactChatScopeParam) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete(param)
+      return next
+    }, { replace: false })
+  }, [setSearchParams])
+  const filtersActive = !!(filter || tagFilter || kindFilter || pinnedOnly || chatScopeActive)
+  // Unsaved session documents are not artifact records, so a chat scope (which
+  // the server applies to records only) hides them like a tag or star filter does.
+  const hideSessionDocs = pinnedOnly || !!tagFilter || chatScopeActive
   // If the URL points at a deleted/unknown folder, treat it as root rather
   // than showing a phantom empty view.
   const scopeFolderId = folders.some(f => f.id === currentFolderId) ? currentFolderId : ''
@@ -1189,11 +1208,13 @@ export default function ArtifactsPage() {  const navigate = useNavigate()
   }, [deletingFolder, folders, scopeFolderId, openFolder, invalidateFolders])
 
   const { data, isLoading, error, refetch } = useQuery<{ artifacts: Artifact[] }>({
-    queryKey: ['artifacts', { tag: tagFilter, kind: kindFilter }],
+    queryKey: ['artifacts', { tag: tagFilter, kind: kindFilter, touchedBy: touchedByScope, chatFolder: chatFolderScope }],
     queryFn: () =>
       api.artifacts({
         tag: tagFilter || undefined,
         kind: kindFilter || undefined,
+        touchedBy: touchedByScope || undefined,
+        chatFolder: chatFolderScope || undefined,
       }),
   })
 
@@ -1487,7 +1508,7 @@ export default function ArtifactsPage() {  const navigate = useNavigate()
   const sessionDocsQ = useQuery<{ docs: SessionDoc[] }>({
     queryKey: ['artifact-session-docs'],
     queryFn: () => api.artifactSessionDocs(),
-    enabled: !pinnedOnly,
+    enabled: !pinnedOnly && !chatScopeActive,
     staleTime: 30_000,
   })
   // A suffixed slug means the canonical one still serves the older artifact, so without
@@ -1934,6 +1955,7 @@ export default function ArtifactsPage() {  const navigate = useNavigate()
               )
               : starredToggle}
           </div>
+          <ArtifactScopeChips touchedBy={touchedByScope} chatFolder={chatFolderScope} onClear={clearChatScope} askAgent={handoffSafe} />
         </CollapsibleChrome>
 
           {/* One DndContext spans breadcrumb + folder cards + gallery/table so
@@ -2029,7 +2051,7 @@ export default function ArtifactsPage() {  const navigate = useNavigate()
               * discoverability gap this feature exists to close. Table/tree
               * views fold the docs into their own rows instead. Skipped while
               * folder-scoped (docs are unfiled) and in the Starred view. */}
-            {view === 'grid' && !pinnedOnly && !tagFilter && (filtersActive || !scopeFolderId) && (
+            {view === 'grid' && !hideSessionDocs && (filtersActive || !scopeFolderId) && (
               <CollapsibleChrome collapsed={chromeCollapsed}>
                 <SessionDocsGallery
                   docs={sessionDocs}
@@ -2061,7 +2083,7 @@ export default function ArtifactsPage() {  const navigate = useNavigate()
                 action={<Btn onClick={() => { void refetch(); void allTagsQ.refetch(); void qc.invalidateQueries({ queryKey: ['artifact-folders'] }) }}>{i18nT('pages.artifactsPage.retry')}</Btn>}
               />
             ) : gridEntries.length === 0 && (view === 'grid' || filtersActive) ? (
-              (artifacts.length === 0 && folders.length === 0) ? (
+              (artifacts.length === 0 && folders.length === 0 && !chatScopeActive) ? (
                 <EmptyState
                   icon={<Bookmark className="lucide-inline" />}
                   title={i18nT('pages.artifactsPage.no_artifacts_yet')}
@@ -2101,7 +2123,7 @@ export default function ArtifactsPage() {  const navigate = useNavigate()
                 deletingSlug={deleteMut.isPending ? (deleteMut.variables as string) : null}
                 onTogglePin={handleTogglePin}
                 pinningSlug={pinningSlug}
-                sessionDocs={pinnedOnly || tagFilter ? [] : sessionDocs}
+                sessionDocs={hideSessionDocs ? [] : sessionDocs}
                 onMaterialize={pinnedOnly ? undefined : handleMaterialize}
                 onPreviewDoc={handlePreviewDoc}
                 materializingPath={materializingPath}
@@ -2122,7 +2144,7 @@ export default function ArtifactsPage() {  const navigate = useNavigate()
                 pinningSlug={pinningSlug}
                 overFolderId={overFolderId}
                 dragActive={!!activeDrag}
-                sessionDocs={pinnedOnly || tagFilter ? [] : sessionDocs}
+                sessionDocs={hideSessionDocs ? [] : sessionDocs}
                 onMaterialize={pinnedOnly ? undefined : handleMaterialize}
                 onPreviewDoc={handlePreviewDoc}
                 materializingPath={materializingPath}

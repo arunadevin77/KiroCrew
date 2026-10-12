@@ -20,7 +20,7 @@ import type { ChatPin } from '../../api/pins'
 import { useAppSelector, useAppDispatch } from '../../store'
 import { markSubagentApproving, openActivityToTab, selectSubagent, clearTerminalSubagents, sseSubagentDone } from '../../store/chatSlice'
 import SegmentedControl from '../../components/SegmentedControl'
-import { PanelSectionHeader, ContentSkeleton } from '../../components/ui'
+import { Btn, PanelSectionHeader, ContentSkeleton } from '../../components/ui'
 import SideChat from './SideChat'
 import WorkflowSidebarRow, { type WfRunRow } from './WorkflowSidebarRow'
 import { runBelongsToSlot } from '../../apps/workflows/runModel'
@@ -624,6 +624,9 @@ type SessionArtifactRow = {
   offerSave: boolean
 }
 
+/** `Btn` restyled as an inline text link, for the tab's navigation controls. */
+const PANEL_LINK_BTN = 'border-transparent bg-transparent text-accent hover:underline hover:border-transparent hover:bg-transparent'
+
 /** Cap on library search results shown inline — the panel is a ~460px rail, so
  *  a search that matches half the library still shows a readable slice, and the
  *  "Browse all" link goes to the full /artifacts page for the rest. */
@@ -662,6 +665,12 @@ function SessionArtifactsTab({ slot, onArtifactOpen }: { slot: string; onArtifac
   // slot field changing (message count, running flag) can't re-render the tab.
   const boundArtifactSlug = useAppSelector(
     s => s.dashboard.slots.find(x => x.key === slot)?.artifact || '',
+  )
+  // The sidebar folder this chat is filed in, if any: it adds a "Browse this
+  // folder" link that opens the library scoped to the chats in that folder and
+  // its sub-folders.
+  const slotFolderId = useAppSelector(
+    s => s.dashboard.slots.find(x => x.key === slot)?.folder_id || '',
   )
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['session-artifact-records', slot] })
@@ -775,6 +784,15 @@ function SessionArtifactsTab({ slot, onArtifactOpen }: { slot: string; onArtifac
               label={i18nT('pages.chat.activityViewer.artifacts_this_session')}
               count={rows.length}
               className="mt-0.5 mb-0.5"
+              trailing={slot ? (
+                <Btn
+                  type="button"
+                  onClick={() => navigate(`/artifacts?touched_by=${encodeURIComponent(slot)}`)}
+                  className={`shrink-0 px-1 py-0 text-[11px] ${PANEL_LINK_BTN}`}
+                >
+                  {i18nT('pages.chat.activityViewer.artifacts_open_session_in_library')}
+                </Btn>
+              ) : undefined}
             />
             {rows.map(r => (
               <ArtifactListRow key={r.key} row={r} busy={rowBusy(r)} onOpen={openRow} onSave={savePermanently} />
@@ -824,13 +842,24 @@ function SessionArtifactsTab({ slot, onArtifactOpen }: { slot: string; onArtifac
                 </div>
               )
             )}
-            <button
-              type="button"
-              onClick={() => navigate('/artifacts')}
-              className="self-start mt-1.5 px-2 py-1 text-[11.5px] text-accent hover:underline bg-transparent border-none cursor-pointer transition-colors"
-            >
-              {i18nT('pages.chat.activityViewer.artifacts_browse_all', { count: libraryTotal })}
-            </button>
+            <div className="self-start mt-1.5 flex flex-wrap items-center gap-x-1">
+              {slotFolderId && (
+                <Btn
+                  type="button"
+                  onClick={() => navigate(`/artifacts?chat_folder=${encodeURIComponent(slotFolderId)}`)}
+                  className={`px-2 py-1 text-[11.5px] ${PANEL_LINK_BTN}`}
+                >
+                  {i18nT('pages.chat.activityViewer.artifacts_browse_folder')}
+                </Btn>
+              )}
+              <Btn
+                type="button"
+                onClick={() => navigate('/artifacts')}
+                className={`px-2 py-1 text-[11.5px] ${PANEL_LINK_BTN}`}
+              >
+                {i18nT('pages.chat.activityViewer.artifacts_browse_all', { count: libraryTotal })}
+              </Btn>
+            </div>
           </div>
         )}
       </div>
