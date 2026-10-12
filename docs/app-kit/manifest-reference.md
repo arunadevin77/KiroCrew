@@ -136,6 +136,13 @@ installed against:
 | `skip_dates` | string[] | Calendar dates the job must not fire on, evaluated in `timezone`. Must be zero-padded `YYYY-MM-DD` — `2026-1-1` parses but never matches the padded fire-time rendering, so it is rejected at manifest validation rather than silently skipping nothing |
 | `enabled` | boolean | Default `true`. Must be a JSON boolean — any other type is rejected at manifest validation. When `false` the cron is registered **paused** (visible in the Schedule view, resumable) instead of firing on install/enable — for jobs that need user configuration first |
 
+A manifest that declares any `crons` must also declare `"cron": true` under
+[`permissions`](#permissions--declared-capabilities): a schedule runs unattended, so
+the permissions an operator reviews before installing name it. Install, update
+and self-registration refuse a manifest without it, with an error that names the
+fix. An app installed before it declared the grant keeps loading and firing its
+crons; it meets the rule on its next update.
+
 > **Caveat:** disabling an app deletes its registered cron jobs when a cron
 > service is reachable, and re-enabling the app re-registers them from the
 > manifest. A cron shipped with `"enabled": false` that a user later resumed
@@ -843,7 +850,7 @@ packages at all.
 | `permissions.events` | string[] | Allowed WebSocket event types |
 | `permissions.mcpTools` | string[] | Allowed MCP tool names |
 | `permissions.storage` | boolean | Can use app-scoped storage |
-| `permissions.cron` | boolean | Can create cron jobs |
+| `permissions.cron` | boolean | Can create cron jobs at runtime (`ctx.cron`). Required when `crons` is non-empty |
 | `permissions.memory` | string | Memory access: `""` (none), `"app-scoped"`, or `"shared"` |
 | `permissions.network` | boolean | Can make external network requests |
 | `permissions.sessionApproval` | boolean | Controls existing local user sessions: send messages (including generated response-option choices, but not a change to the session's agent binding, persona settings, or a harness slash command), approve or deny pending tool requests, and change approval modes within the limits below |
@@ -1197,6 +1204,9 @@ gateway has them: `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`,
   and are not path-checked.
 - All required fields must be non-empty strings
 - Each cron entry must specify either `every` or `cron_expr`
+- A non-empty `crons` requires `"cron": true` under `permissions`. Install,
+  update and self-registration refuse the manifest otherwise; an app already
+  installed keeps loading and firing its crons until its next update
 - Each UI page must have `route` and `label`
 - Each UI overlay must have `id` and `replaces`; both must be kebab-case, and `id`
   must be unique within the manifest
@@ -1235,7 +1245,8 @@ gateway has them: `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`,
   },
   "permissions": {
     "api": ["/api/crons", "/api/status"],
-    "events": ["notification"]
+    "events": ["notification"],
+    "cron": true
   },
   "platform": {
     "os": ["macos", "linux"]

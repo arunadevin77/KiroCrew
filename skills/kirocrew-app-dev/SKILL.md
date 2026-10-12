@@ -532,8 +532,8 @@ service, not the grant (#13788, which closed
 cron store is busy or unreadable, disable reports `cron_cleanup: failed ...`
 in its result instead of raising, so read the result rather than assuming.
 
-- Declare `permissions.cron` if you ship any cron at all, so the manifest
-  states the capability truthfully.
+- Declare `permissions.cron` if you ship any cron at all. Install, update and
+  self-registration refuse a manifest whose `crons` is non-empty without it.
 - Keep `permissions` truthful both ways. Declare what you use, drop what you no
   longer use. Grants are read at the gateway boundary, never inferred from your
   code, so an over-broad block is a real grant and a missing one is a real

@@ -39,6 +39,7 @@ from kiro_crew.apps.manifest import (
     RESERVED_APP_NAME_CODE,
     AppManifest,
     app_name_error,
+    cron_permission_error,
     is_reserved_app_name,
 )
 from kiro_crew.atomic_write import atomic_write
@@ -3162,6 +3163,34 @@ def register_external_app(
                 "by self-registration"
             ),
         )
+
+    # Self-registration admits a new manifest the way install and update do, so it
+    # applies the same cron-grant rule. A re-registration at the version already on
+    # record, whose recorded manifest already scheduled crons without the grant, is
+    # a routine relaunch of an app registered before the rule rather than an
+    # update: it keeps registering so the app's crons keep firing, and the rule
+    # reaches the app with its next version.
+    if admission_manifest is not None:
+        cron_grant_error = cron_permission_error(admission_manifest)
+        if cron_grant_error and existing:
+            recorded = get_app_manifest(name)
+            if (
+                recorded is not None
+                and recorded.version == admission_manifest.version
+                and cron_permission_error(recorded)
+            ):
+                cron_grant_error = ""
+        if cron_grant_error:
+            sel().log_api_access(
+                caller="app_register_external",
+                operation="manifest",
+                outcome="rejected",
+                resources=f"name={name!r}",
+                error=cron_grant_error,
+            )
+            return AppResult(
+                ok=False, name=name, error=f"invalid manifest: {cron_grant_error}"
+            )
 
     # Self-registration is routine (self-managed apps re-register on every
     # launch) and the app authors its own manifest, so this path can widen the

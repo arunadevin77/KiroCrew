@@ -77,6 +77,7 @@ def _make_app_source(tmp_path, name="test-app", **extras):
         "agents": ["agents/my-agent.json"],
         "skills": ["skills/my-skill"],
         "crons": [{"name": "refresh", "every": 3600, "agent": "my-agent", "message": "go"}],
+        "permissions": {"cron": True},
         **extras,
     }
     (src / APP_MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2))

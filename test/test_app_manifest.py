@@ -279,7 +279,8 @@ class TestValidation:
         for value, expected in ((False, False), (True, True)):
             m = AppManifest.from_dict(
                 _valid_manifest(
-                    crons=[{"name": "j1", "every": 300, "message": "go", "enabled": value}]
+                    crons=[{"name": "j1", "every": 300, "message": "go", "enabled": value}],
+                    permissions={"cron": True},
                 )
             )
             assert m.validate() == []
@@ -309,7 +310,10 @@ class TestValidation:
         assert not any(selector in error for error in m.validate())
         # Absent key: default enabled, no error.
         m = AppManifest.from_dict(
-            _valid_manifest(crons=[{"name": "j1", "every": 300, "message": "go"}])
+            _valid_manifest(
+                crons=[{"name": "j1", "every": 300, "message": "go"}],
+                permissions={"cron": True},
+            )
         )
         assert m.validate() == []
         assert m.crons[0].enabled is True
@@ -367,7 +371,7 @@ class TestValidation:
                 "crons": [{"name": "refresh", "every": 3600, "message": "refresh data"}],
                 "ui": {"pages": [{"route": "/apps/owt", "label": "Dashboard", "icon": "Shield"}]},
                 "backend": {"entryPoint": "backend/app.py"},
-                "permissions": {"mcpTools": ["GetPipelineHealth"], "storage": True},
+                "permissions": {"mcpTools": ["GetPipelineHealth"], "storage": True, "cron": True},
                 "setup": {"onInstall": "backend/setup.py:on_install"},
                 "tags": ["oncall"],
                 "jobFamilies": ["SDE"],
