@@ -85,7 +85,7 @@ and Feishu turn the whole `[OPTIONS:]` list into numbered lines in the message
 body, and you answer by typing the number as an ordinary message — nothing to
 configure, nothing to tap, nothing dropped with the trailer. It is the same helper
 that handles overflow on a channel that does have buttons
-(`render_options_as_text` is `apply_options_cap` with zero widget slots), so the
+(`render_options_as_text` numbers every choice through `format_overflow`), so the
 numbering reads the same everywhere.
 
 **WhatsApp drops the list instead**, and that is a gap rather than a setting. Its

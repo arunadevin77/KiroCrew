@@ -537,7 +537,7 @@ from kiro_crew.messaging.link import (  # noqa: F401
     parse_session_key,
     telemetry_channel_of,
 )
-from kiro_crew.messaging.renderer import chunk_for_transport
+from kiro_crew.messaging.renderer import chunk_for_transport, render_options_as_text
 from kiro_crew.metrics.events import TURN_TIMEOUT_CAUSE, emit_counter
 from kiro_crew.metrics.provider import get_recorder
 from kiro_crew.metrics.turns import emit_turn_duration, emit_turn_usage, turn_outcome
@@ -3434,6 +3434,9 @@ async def _deliver_cross_surface_reply(
     # dashboard turn — a marker-taught session — to a channel whose client
     # renders HTML comments literally. Strip-then-redact matches display_safe.
     text, _ = redact_for_display(strip_control_comments(assistant_text), redact_via_context)
+    # ``send_message`` takes no choices, so the mirror builds no button: number the
+    # ``[OPTIONS:]`` choices rather than ship the raw marker.
+    text = render_options_as_text(text, transport.capabilities)
     # Split on the channel's max message length so a long reply mirrors in full
     # rather than being hard-truncated by the transport (Telegram caps at 4096,
     # and its client slices at that width), matching the Slack leg's chunking.

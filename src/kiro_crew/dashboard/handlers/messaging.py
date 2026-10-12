@@ -250,6 +250,7 @@ from kiro_crew.messaging.renderer import (  # noqa: F401
     chunk_text,
     display_safe_for,
     format_overflow,
+    render_options_as_text,
 )
 from kiro_crew.messaging.transport import (  # noqa: F401
     DM_TARGET_PREFIX,

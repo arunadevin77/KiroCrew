@@ -22,6 +22,7 @@ if TYPE_CHECKING:
         delivery_confirmed,
         display_safe_for,
         logger,
+        render_options_as_text,
         sole_direct_target,
     )
 
@@ -170,7 +171,15 @@ async def _deliver_channel_dm(
     # 25s dump-then-exit alarm. Offloaded like the renderer's own send legs.
     units = await asyncio.to_thread(
         chunk_for_transport,
-        display_safe_for(text, live_transport.capabilities),
+        # ``send_message`` takes no choices, so a proactive send builds no button
+        # even where a reply would: number the ``[OPTIONS:]`` choices instead of
+        # sending the raw marker. After the display pass, whose control-comment
+        # strip would otherwise leave a trailing tag hiding the trailer. The two
+        # legs below do the same.
+        render_options_as_text(
+            display_safe_for(text, live_transport.capabilities),
+            live_transport.capabilities,
+        ),
         live_transport.capabilities,
     )
     try:
@@ -319,7 +328,11 @@ async def _deliver_to_channel(
     # purpose: this one splits plain text, while the gateway's splits markdown with
     # fence sealing, and collapsing them would silently retune one of the two.
     parts = chunk_text(
-        display_safe_for(text, transport.capabilities), transport.capabilities.max_message_chars
+        render_options_as_text(
+            display_safe_for(text, transport.capabilities),
+            transport.capabilities,
+        ),
+        transport.capabilities.max_message_chars,
     )
     for part in parts:
         try:
@@ -435,7 +448,10 @@ async def _send_to_channel_target(
     # a large body would stall the loop past the watchdog's 25s dump-then-exit alarm.
     parts = await asyncio.to_thread(
         chunk_for_transport,
-        display_safe_for(text, transport.capabilities),
+        render_options_as_text(
+            display_safe_for(text, transport.capabilities),
+            transport.capabilities,
+        ),
         transport.capabilities,
     )
     try:
