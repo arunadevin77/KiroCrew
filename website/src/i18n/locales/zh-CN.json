@@ -15466,6 +15466,12 @@
         "soft_stop_budget_seconds": "软停止预算（秒）",
         "somewhat": "略懂",
         "split_view_session_grid": "分屏视图（会话网格）",
+        "session_folder_root": "新会话文件夹",
+        "session_folder_root_desc": "请输入一个已存在文件夹的完整路径。每个新聊天都会在其中获得一个专属的新文件夹，并在那里工作。留空即可关闭。",
+        "session_folder_root_hint": "文件夹按日期加一个简短的随机后缀命名，且只有你可以打开。~ 表示你的主文件夹。在自带项目的聊天文件夹中开始的聊天会保留该项目。",
+        "session_folder_root_invalid": "无法使用该文件夹。请输入一个已存在、且不包含凭据或系统文件的文件夹的完整路径。",
+        "session_folder_root_placeholder": "例如：{{path}}",
+        "session_folder_root_saved": "已保存",
         "dim_inactive_panes": "淡化非活动窗格",
         "dim_inactive_panes_desc": "在分屏视图中，淡化没有键盘焦点的窗格。关闭后，所有窗格保持正常亮度，聚焦的窗格由强调色边框标示。",
         "subagent_effort": "子代理推理强度",
@@ -17937,7 +17943,8 @@
       "session_open_error": "无法打开该会话。",
       "session_gone_open_failed_named": "“{{name}}”已被删除，无法打开。",
       "truncated_chars": "…（已截断 {{count}} 个字符 —— 重新打开会话可查看完整输出）",
-      "truncated": "…（已截断）"
+      "truncated": "…（已截断）",
+      "session_folder_unavailable": "此聊天无法获得专属文件夹，因此已在默认项目文件夹中打开。请检查设置中的“新会话文件夹”。"
     }
   },
   "utils": {

@@ -1164,6 +1164,19 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     }
   },
   {
+    "id": "chat.new-session-folders",
+    "label": "New Session Folders",
+    "labelKey": "pages.settings.chatPanel.session_folder_root",
+    "description": "Folders are named by date with a short random suffix, and only you can open them. ~ stands for your home folder. A chat started in a chat folder that has its own project keeps that project. Enter the full path of a folder that already exists. Each new chat gets its own new folder inside it and works there. Leave empty to turn this off.",
+    "tab": "chat",
+    "type": "input",
+    "occurrence": 1,
+    "params": {
+      "sub": "sessions"
+    },
+    "configKey": "dashboard.session_folder_root"
+  },
+  {
     "id": "chat.pin-the-latest-turn",
     "label": "Pin the latest turn",
     "labelKey": "pages.settings.chatPanel.pin_last_prompt",

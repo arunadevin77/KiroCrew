@@ -3375,6 +3375,20 @@ class DashboardConfig:
             "Directory path used as the project for new chat tabs. Empty = workspace dir.",
         ),
     )
+    # Off while empty. The root is re-validated each time a folder is made under
+    # it, so a hand-edited value that names a sensitive or missing directory
+    # falls back to the default project instead of being trusted.
+    session_folder_root: str = field(
+        default="",
+        metadata=_meta(
+            "New Session Folders",
+            "Directory under which each new dashboard chat gets its own freshly "
+            "created folder, used as that chat's project directory. The folder is "
+            "named by date with a short random suffix and only you can read it. "
+            "A chat filed into a folder that has its own project keeps that "
+            "project. Empty = off; new chats use the default project.",
+        ),
+    )
     theme_mode: str = field(
         default="",
         metadata=_meta(

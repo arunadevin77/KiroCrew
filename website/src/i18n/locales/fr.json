@@ -15948,6 +15948,12 @@
         "soft_stop_budget_seconds": "Budget d'arrêt souple (secondes)",
         "somewhat": "Un peu",
         "split_view_session_grid": "Vue divisée (grille de sessions)",
+        "session_folder_root": "Nouveaux dossiers de session",
+        "session_folder_root_desc": "Saisis le chemin complet d’un dossier qui existe déjà. Chaque nouveau chat y reçoit son propre nouveau dossier et y travaille. Laisse vide pour désactiver.",
+        "session_folder_root_hint": "Les dossiers sont nommés d’après la date avec un court suffixe aléatoire, et toi seul peux les ouvrir. ~ désigne ton dossier personnel. Un chat commencé dans un dossier de chats qui a son propre projet conserve ce projet.",
+        "session_folder_root_invalid": "Impossible d’utiliser ce dossier. Saisis le chemin complet d’un dossier existant qui ne contient ni identifiants ni fichiers système.",
+        "session_folder_root_placeholder": "Par exemple, {{path}}",
+        "session_folder_root_saved": "Enregistré",
         "dim_inactive_panes": "Atténuer les volets inactifs",
         "dim_inactive_panes_desc": "En vue divisée, atténue chaque volet qui n’a pas le focus clavier. Si désactivé, tous les volets gardent leur pleine luminosité et la bordure d’accent signale le volet actif.",
         "subagent_effort": "Effort des sous-agents",
@@ -18455,7 +18461,8 @@
       "session_open_error": "Impossible d’ouvrir la session.",
       "session_gone_open_failed_named": "« {{name}} » a été supprimée et ne peut pas être ouverte.",
       "truncated_chars": "…({{count}} caractères tronqués — rouvre la session pour voir la sortie complète)",
-      "truncated": "…(tronqué)"
+      "truncated": "…(tronqué)",
+      "session_folder_unavailable": "Ce chat n’a pas pu obtenir son propre dossier ; il s’est donc ouvert dans ton dossier de projet par défaut. Vérifie Nouveaux dossiers de session dans les paramètres."
     }
   },
   "utils": {

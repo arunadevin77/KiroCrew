@@ -15948,6 +15948,12 @@
         "soft_stop_budget_seconds": "Margen de parada suave (segundos)",
         "somewhat": "Algo técnico",
         "split_view_session_grid": "Vista dividida (cuadrícula de sesiones)",
+        "session_folder_root": "Carpetas de sesión nuevas",
+        "session_folder_root_desc": "Introduce la ruta completa de una carpeta que ya exista. Cada chat nuevo recibe dentro su propia carpeta nueva y trabaja en ella. Déjalo vacío para desactivarlo.",
+        "session_folder_root_hint": "Las carpetas se nombran con la fecha y un sufijo aleatorio corto, y solo tú puedes abrirlas. ~ representa tu carpeta personal. Un chat iniciado en una carpeta de chats con proyecto propio conserva ese proyecto.",
+        "session_folder_root_invalid": "No se pudo usar esa carpeta. Introduce la ruta completa de una carpeta que exista y que no contenga credenciales ni archivos del sistema.",
+        "session_folder_root_placeholder": "Por ejemplo, {{path}}",
+        "session_folder_root_saved": "Guardado",
         "dim_inactive_panes": "Atenuar paneles inactivos",
         "dim_inactive_panes_desc": "En la vista dividida, atenúa cada panel que no tiene el foco del teclado. Si está desactivado, todos los paneles conservan el brillo completo y el borde de acento marca el panel enfocado.",
         "subagent_effort": "Esfuerzo de subagente",
@@ -18455,7 +18461,8 @@
       "session_open_error": "No se pudo abrir la sesión.",
       "session_gone_open_failed_named": "«{{name}}» se eliminó y no se puede abrir.",
       "truncated_chars": "…({{count}} caracteres truncados: vuelve a abrir la sesión para ver la salida completa)",
-      "truncated": "…(truncado)"
+      "truncated": "…(truncado)",
+      "session_folder_unavailable": "Este chat no pudo obtener su propia carpeta, así que se abrió en tu carpeta de proyecto predeterminada. Revisa Carpetas de sesión nuevas en Configuración."
     }
   },
   "utils": {

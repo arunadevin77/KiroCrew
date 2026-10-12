@@ -1383,7 +1383,7 @@ describe('CommandBarOverlay contributed commands', () => {
     enterCommand(/Write my standup/)
     expect(dispatch).toHaveBeenCalledWith({
       type: 'createSlot',
-      arg: { activate: false, memory_mode: 'persistent' },
+      arg: { activate: false, sessionFolder: false, memory_mode: 'persistent' },
     })
   })
 

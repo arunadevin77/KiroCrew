@@ -1607,6 +1607,7 @@ export default function CommandBarOverlay({
       // has moved on, at which point the seed lands in whatever they moved to.
       void dispatch(createSlot({
         activate: false,
+        sessionFolder: false,
         ...(contributed ? { memory_mode: 'persistent' } : {}),
       }))
         .unwrap()

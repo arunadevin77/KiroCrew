@@ -14,6 +14,7 @@ import { isLookPreviewFrame } from '../../utils/lookPreview'
 import { lookPreviewSlotDetail, lookPreviewSlots } from '../../utils/lookPreviewFixtures'
 import { resolveDefaultMemoryMode } from '../queryClient'
 import { TAB_ID } from '../tabId'
+import { takeSessionFolderNotice } from '../../lib/sessionFolderNotice'
 import { activeLocale } from '../../i18n/format'
 import type { ClientTransport } from './transport'
 
@@ -100,7 +101,7 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
     },
     /** Create a chat slot on this machine. A session on a connected crew is
      *  created on that crew and opened through its window, never here. */
-    createChatSlot: async (name?: string, agent?: string, model?: string, mode?: string, memory_mode?: string, title?: string, artifact?: string, folder_id?: string, agent_kind?: 'member' | 'template') => {
+    createChatSlot: async (name?: string, agent?: string, model?: string, mode?: string, memory_mode?: string, title?: string, artifact?: string, folder_id?: string, agent_kind?: 'member' | 'template', no_session_folder?: boolean) => {
       const resolvedMemoryMode = memory_mode ?? await resolveDefaultMemoryMode(
         () => fetch('/api/dashboard/config').then(j),
       )
@@ -115,7 +116,10 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
         ...(title ? { title } : {}),
         ...(artifact ? { artifact } : {}),
         ...(folder_id ? { folder_id } : {}),
-      }).then(j) as Promise<ChatSlot>
+        // No fresh session folder: the caller sets the project right after the
+        // create, or opens a purpose-built chat that keeps the default project.
+        ...(no_session_folder ? { no_session_folder: true } : {}),
+      }).then(j).then(takeSessionFolderNotice) as Promise<ChatSlot>
     },
     /** Inject silent background context into a slot — consumed on the next user
      * message. Used by the artifact companion chat to name the bound artifact so

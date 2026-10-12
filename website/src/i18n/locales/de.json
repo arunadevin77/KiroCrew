@@ -15707,6 +15707,12 @@
         "soft_stop_budget_seconds": "Zeitbudget für sanftes Stoppen (Sekunden)",
         "somewhat": "Etwas",
         "split_view_session_grid": "Geteilte Ansicht (Sitzungsraster)",
+        "session_folder_root": "Neue Sitzungsordner",
+        "session_folder_root_desc": "Gib den vollständigen Pfad eines vorhandenen Ordners ein. Jeder neue Chat erhält darin einen eigenen neuen Ordner und arbeitet dort. Leer lassen, um das auszuschalten.",
+        "session_folder_root_hint": "Die Ordner werden nach Datum mit einem kurzen zufälligen Suffix benannt, und nur du kannst sie öffnen. ~ steht für deinen Home-Ordner. Ein Chat, der in einem Chat-Ordner mit eigenem Projekt beginnt, behält dieses Projekt.",
+        "session_folder_root_invalid": "Dieser Ordner kann nicht verwendet werden. Gib den vollständigen Pfad eines vorhandenen Ordners ein, der keine Zugangsdaten oder Systemdateien enthält.",
+        "session_folder_root_placeholder": "Zum Beispiel {{path}}",
+        "session_folder_root_saved": "Gespeichert",
         "dim_inactive_panes": "Inaktive Bereiche abdunkeln",
         "dim_inactive_panes_desc": "Blendet in der geteilten Ansicht jeden Bereich ohne Tastaturfokus ab. Wenn aus, bleiben alle Bereiche voll hell, und der Akzentrahmen markiert den fokussierten Bereich.",
         "subagent_effort": "Subagent-Aufwand",
@@ -18196,7 +18202,8 @@
       "session_open_error": "Die Sitzung konnte nicht geöffnet werden.",
       "session_gone_open_failed_named": "„{{name}}“ wurde gelöscht und kann nicht geöffnet werden.",
       "truncated_chars": "…({{count}} Zeichen gekürzt — öffne die Sitzung erneut, um die vollständige Ausgabe zu sehen)",
-      "truncated": "…(gekürzt)"
+      "truncated": "…(gekürzt)",
+      "session_folder_unavailable": "Dieser Chat konnte keinen eigenen Ordner erhalten und wurde daher in deinem Standard-Projektordner geöffnet. Prüfe „Neue Sitzungsordner“ in den Einstellungen."
     }
   },
   "utils": {

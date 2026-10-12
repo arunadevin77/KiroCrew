@@ -40,7 +40,7 @@ const configuredDefaultMemoryMode = () =>
 
 export const createSlot = createAsyncThunk<
   ChatSlot,
-  { agent?: string; agent_kind?: 'member' | 'template'; model?: string; mode?: string; memory_mode?: string; folder_id?: string | null; title?: string; color_index?: number | null; color_hex?: string | null; project?: string | null; activate?: boolean } | string | undefined,
+  { agent?: string; agent_kind?: 'member' | 'template'; model?: string; mode?: string; memory_mode?: string; folder_id?: string | null; title?: string; color_index?: number | null; color_hex?: string | null; project?: string | null; activate?: boolean; sessionFolder?: boolean } | string | undefined,
   { fulfilledMeta: { originActiveSlot: string | null; activate: boolean } }
 >(
   'chat/createSlot',
@@ -66,6 +66,11 @@ export const createSlot = createAsyncThunk<
     // do so before the user is able to type into it. Defaults to true — every
     // existing caller keeps the create-and-focus behaviour.
     const activate = typeof opts === 'string' ? true : opts?.activate !== false
+    // `sessionFolder: false` is for a purpose-built chat (an app's session, an
+    // intake, a hand-off) that should keep the default project even when the
+    // owner turned on a fresh folder per new chat. A carried project opts out
+    // too: the server would otherwise make a folder the carry then replaces.
+    const skipSessionFolder = !!project || (typeof opts !== 'string' && opts?.sessionFolder === false)
     // Capture the active slot BEFORE the (potentially slow) create round-trip.
     // The fulfilled reducer compares this against the active slot at resolution
     // time: if the user switched to a different session while the create was
@@ -76,7 +81,7 @@ export const createSlot = createAsyncThunk<
     // entry points resolve the persisted preference here, before the first turn
     // can read or write memory.
     const memory_mode = requestedMemoryMode || await configuredDefaultMemoryMode()
-    const slot = await api.createChatSlot(undefined, agent, model, mode, memory_mode, title, undefined, folderId || undefined, agentKind)
+    const slot = await api.createChatSlot(undefined, agent, model, mode, memory_mode, title, undefined, folderId || undefined, agentKind, skipSessionFolder)
     const dashState = (getState() as RootState).dashboard
     // An explicit color (e.g. carried from a slot being recreated on a
     // mode switch) wins; otherwise fall back to the default-color policy.

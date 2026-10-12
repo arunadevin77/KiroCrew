@@ -1406,7 +1406,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
         // No targetSlot (or reconnect failed): create the session HERE and,
         // for a fresh thread, slack-link it so responses mirror to Slack.
         try {
-          const create = dispatch(createSlot({ mode }))
+          const create = dispatch(createSlot({ mode, sessionFolder: false }))
           noCarryCreateIdsRef.current.add(create.requestId)
           const slot = await create.unwrap()
           slotKey = slot?.key ?? null
@@ -2148,7 +2148,9 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       // paste blocks and attachments, surface the failure, and bail.
       let created: { key: string } | null = null
       try {
-        created = await dispatch(createSlot({ agent: pendingAgentRef.current || defaultAgent || undefined, agent_kind: pendingAgentRef.current ? pendingAgentKindRef.current : undefined, model: pendingModelRef.current || undefined, mode: modeRef.current })).unwrap()
+        // A project picked on the fresh composer is applied right after the
+        // create below, so the server must not make a session folder for it.
+        created = await dispatch(createSlot({ agent: pendingAgentRef.current || defaultAgent || undefined, agent_kind: pendingAgentRef.current ? pendingAgentKindRef.current : undefined, model: pendingModelRef.current || undefined, mode: modeRef.current, ...(pendingProjectRef.current ? { sessionFolder: false } : {}) })).unwrap()
       } catch (e: unknown) {
         sendingRef.current = false
         if (isolated) {

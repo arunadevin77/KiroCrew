@@ -239,6 +239,10 @@ from kiro_crew.dashboard.handlers._shared import (
 )
 from kiro_crew.dashboard.handlers.messaging import _resolve_session_target
 from kiro_crew.dashboard.origin import is_direct_local_request
+from kiro_crew.dashboard.session_folders import (  # noqa: F401
+    SESSION_FOLDER_ROOT_MAX_CHARS,
+    validate_session_folder_root,
+)
 from kiro_crew.dashboard.slot_projection import summary_rows
 from kiro_crew.dashboard.state import (  # noqa: F401
     VALID_MEMORY_MODES,

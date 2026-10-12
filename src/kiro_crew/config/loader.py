@@ -3449,6 +3449,15 @@ def _title_refresh_every_turns(value: object, default: int) -> int:
     return every if every == 0 else max(every, _sections.TITLE_REFRESH_EVERY_TURNS_MIN)
 
 
+def _session_folder_root_or_empty(value: object) -> str:
+    """``dashboard.session_folder_root`` as a trimmed string; "" (off) for any non-string.
+
+    A hand-edited number or list must read as "off", never as a path built from its
+    ``str()``: the value names the directory new session folders are created in.
+    """
+    return value.strip() if isinstance(value, str) else ""
+
+
 def _build_dashboard_config(_degraded: set[str], dashboard_data: dict) -> DashboardConfig:
     section = _sections.SectionReader(DashboardConfig, dashboard_data)
     return DashboardConfig(
@@ -3536,6 +3545,7 @@ def _build_dashboard_config(_degraded: set[str], dashboard_data: dict) -> Dashbo
         tail_fork_enabled=section.get("tail_fork_enabled"),
         terminal=section.get("terminal"),
         default_project=section.get("default_project"),
+        session_folder_root=_session_folder_root_or_empty(section.get("session_folder_root")),
         theme_mode=section.get("theme_mode"),
         sso_login_flags=str(section.get("sso_login_flags")),
         theme_color=section.get("theme_color"),

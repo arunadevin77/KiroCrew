@@ -15466,6 +15466,12 @@
         "soft_stop_budget_seconds": "ソフトストップ予算（秒）",
         "somewhat": "やや",
         "split_view_session_grid": "分割表示（セッショングリッド）",
+        "session_folder_root": "新しいセッションフォルダー",
+        "session_folder_root_desc": "既に存在するフォルダーのフルパスを入力してください。新しいチャットごとに、その中に専用の新しいフォルダーが作られ、チャットはそこで作業します。オフにするには空のままにします。",
+        "session_folder_root_hint": "フォルダー名は日付と短いランダムな接尾辞で付けられ、開けるのはあなただけです。~ はホームフォルダーを表します。独自のプロジェクトを持つチャットフォルダーで始めたチャットは、そのプロジェクトを使い続けます。",
+        "session_folder_root_invalid": "そのフォルダーは使用できません。存在していて、認証情報やシステムファイルを含まないフォルダーのフルパスを入力してください。",
+        "session_folder_root_placeholder": "例: {{path}}",
+        "session_folder_root_saved": "保存しました",
         "dim_inactive_panes": "非アクティブなペインを暗くする",
         "dim_inactive_panes_desc": "分割表示で、キーボードフォーカスのないペインを暗くします。オフにすると、すべてのペインが通常の明るさのままになり、フォーカス中のペインはアクセントの枠線で示されます。",
         "subagent_effort": "サブエージェントの推論強度",
@@ -17937,7 +17943,8 @@
       "session_open_error": "セッションを開けませんでした。",
       "session_gone_open_failed_named": "「{{name}}」は削除されたため開けません。",
       "truncated_chars": "…({{count}} 文字を省略 — セッションを開き直すと全文を表示できます)",
-      "truncated": "…(省略)"
+      "truncated": "…(省略)",
+      "session_folder_unavailable": "このチャットには専用のフォルダーを用意できなかったため、既定のプロジェクトフォルダーで開きました。設定の「新しいセッションフォルダー」を確認してください。"
     }
   },
   "utils": {

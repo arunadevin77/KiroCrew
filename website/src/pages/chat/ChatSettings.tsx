@@ -345,6 +345,8 @@ export interface DashboardConfig {
   mcp_app_panel: boolean
   auto_open_git_panel: boolean
   session_card_source_links: boolean
+  /** Directory each new chat gets its own fresh folder under; '' = off. */
+  session_folder_root?: string
   folder_suggestions_enabled: boolean
   topic_tags_enabled?: boolean
   model_picker_hidden_models: string[]

@@ -15948,6 +15948,12 @@
         "soft_stop_budget_seconds": "Budget per l'arresto graduale (secondi)",
         "somewhat": "In parte",
         "split_view_session_grid": "Vista divisa (griglia delle sessioni)",
+        "session_folder_root": "Nuove cartelle di sessione",
+        "session_folder_root_desc": "Inserisci il percorso completo di una cartella già esistente. Ogni nuova chat riceve al suo interno una propria nuova cartella e lavora lì. Lascia vuoto per disattivare.",
+        "session_folder_root_hint": "Le cartelle prendono il nome dalla data con un breve suffisso casuale e solo tu puoi aprirle. ~ indica la tua cartella home. Una chat avviata in una cartella di chat con un proprio progetto mantiene quel progetto.",
+        "session_folder_root_invalid": "Impossibile usare quella cartella. Inserisci il percorso completo di una cartella esistente che non contenga credenziali o file di sistema.",
+        "session_folder_root_placeholder": "Ad esempio, {{path}}",
+        "session_folder_root_saved": "Salvato",
         "dim_inactive_panes": "Attenua i riquadri inattivi",
         "dim_inactive_panes_desc": "Nella vista divisa, attenua ogni riquadro che non ha il focus della tastiera. Se disattivato, tutti i riquadri restano a piena luminosità e il bordo in evidenza indica quello attivo.",
         "subagent_effort": "Sforzo dei subagent",
@@ -18455,7 +18461,8 @@
       "session_open_error": "Impossibile aprire la sessione.",
       "session_gone_open_failed_named": "“{{name}}” è stata eliminata e non può essere aperta.",
       "truncated_chars": "…({{count}} caratteri troncati: riapri la sessione per vedere l'output completo)",
-      "truncated": "…(troncato)"
+      "truncated": "…(troncato)",
+      "session_folder_unavailable": "Questa chat non ha potuto ottenere una propria cartella, quindi si è aperta nella cartella di progetto predefinita. Controlla Nuove cartelle di sessione nelle impostazioni."
     }
   },
   "utils": {

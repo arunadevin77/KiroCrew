@@ -293,7 +293,8 @@ export interface ChatState {
    *  the user is typing. */
   mainComposerAppend: { slot: string; text: string } | null
   /** Transient feedback for agent-rebind failures shared by the picker and
-   *  global cycle shortcuts. The App shell owns rendering and expiry. */
+   *  global cycle shortcuts, and for a new chat that could not get its own
+   *  session folder. The App shell owns rendering and expiry. */
   agentSwitchNotice: { message: string } | null
   // True while a createSlot POST is in flight. Lets every New Chat entry
   // point show a pending state so the UI never looks dead on click.

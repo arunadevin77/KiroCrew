@@ -15466,6 +15466,12 @@
         "soft_stop_budget_seconds": "소프트 중지 예산(초)",
         "somewhat": "보통",
         "split_view_session_grid": "분할 보기(세션 그리드)",
+        "session_folder_root": "새 세션 폴더",
+        "session_folder_root_desc": "이미 있는 폴더의 전체 경로를 입력하세요. 새 채팅마다 그 안에 전용 새 폴더가 생기고, 채팅은 거기서 작업합니다. 끄려면 비워 두세요.",
+        "session_folder_root_hint": "폴더 이름은 날짜와 짧은 임의 접미사로 정해지며 본인만 열 수 있습니다. ~는 홈 폴더를 뜻합니다. 자체 프로젝트가 있는 채팅 폴더에서 시작한 채팅은 그 프로젝트를 유지합니다.",
+        "session_folder_root_invalid": "해당 폴더를 사용할 수 없습니다. 존재하며 자격 증명이나 시스템 파일이 들어 있지 않은 폴더의 전체 경로를 입력하세요.",
+        "session_folder_root_placeholder": "예: {{path}}",
+        "session_folder_root_saved": "저장됨",
         "dim_inactive_panes": "비활성 창 흐리게 표시",
         "dim_inactive_panes_desc": "분할 보기에서 키보드 포커스가 없는 창을 흐리게 표시합니다. 끄면 모든 창이 원래 밝기를 유지하고, 포커스된 창은 강조 테두리로 표시됩니다.",
         "subagent_effort": "서브에이전트 추론 강도",
@@ -17937,7 +17943,8 @@
       "session_open_error": "세션을 열 수 없었습니다.",
       "session_gone_open_failed_named": "‘{{name}}’은(는) 삭제되어 열 수 없습니다.",
       "truncated_chars": "…({{count}}자 생략됨 — 세션을 다시 열면 전체 출력을 볼 수 있습니다)",
-      "truncated": "…(생략됨)"
+      "truncated": "…(생략됨)",
+      "session_folder_unavailable": "이 채팅은 전용 폴더를 받지 못해 기본 프로젝트 폴더에서 열렸습니다. 설정에서 새 세션 폴더를 확인하세요."
     }
   },
   "utils": {

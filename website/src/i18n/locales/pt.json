@@ -15948,6 +15948,12 @@
         "soft_stop_budget_seconds": "Orçamento de parada suave (segundos)",
         "somewhat": "Um pouco",
         "split_view_session_grid": "Visualização dividida (grade de sessões)",
+        "session_folder_root": "Novas pastas de sessão",
+        "session_folder_root_desc": "Insira o caminho completo de uma pasta que já exista. Cada novo chat recebe dentro dela sua própria pasta nova e trabalha nela. Deixe em branco para desativar.",
+        "session_folder_root_hint": "As pastas recebem o nome da data com um sufixo aleatório curto, e só você pode abri-las. ~ representa sua pasta pessoal. Um chat iniciado em uma pasta de chats com projeto próprio mantém esse projeto.",
+        "session_folder_root_invalid": "Não foi possível usar essa pasta. Insira o caminho completo de uma pasta que exista e que não contenha credenciais nem arquivos do sistema.",
+        "session_folder_root_placeholder": "Por exemplo, {{path}}",
+        "session_folder_root_saved": "Salvo",
         "dim_inactive_panes": "Escurecer painéis inativos",
         "dim_inactive_panes_desc": "Na visualização dividida, escurece cada painel sem o foco do teclado. Desativado, todos os painéis mantêm o brilho total e a borda de destaque marca o painel em foco.",
         "subagent_effort": "Esforço de subagente",
@@ -18455,7 +18461,8 @@
       "session_open_error": "Não foi possível abrir a sessão.",
       "session_gone_open_failed_named": "“{{name}}” foi excluída e não pode ser aberta.",
       "truncated_chars": "…({{count}} caracteres truncados — reabra a sessão para ver a saída completa)",
-      "truncated": "…(truncado)"
+      "truncated": "…(truncado)",
+      "session_folder_unavailable": "Este chat não conseguiu obter sua própria pasta, então foi aberto na sua pasta de projeto padrão. Verifique Novas pastas de sessão nas configurações."
     }
   },
   "utils": {

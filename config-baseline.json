@@ -7200,6 +7200,7 @@
           "enabled": true
         },
         "default_project": "",
+        "session_folder_root": "",
         "theme_mode": "",
         "sso_login_flags": "",
         "theme_color": "",
@@ -8044,6 +8045,20 @@
       "tags": [],
       "label": "Default Project",
       "help": "Directory path used as the project for new chat tabs. Empty = workspace dir.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": ""
+    },
+    {
+      "path": "dashboard.session_folder_root",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "New Session Folders",
+      "help": "Directory under which each new dashboard chat gets its own freshly created folder, used as that chat's project directory. The folder is named by date with a short random suffix and only you can read it. A chat filed into a folder that has its own project keeps that project. Empty = off; new chats use the default project.",
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": ""

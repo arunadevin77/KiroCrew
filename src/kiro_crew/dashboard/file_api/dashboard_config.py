@@ -14,12 +14,14 @@ if TYPE_CHECKING:
         LINK_PATTERNS_MAX,
         MODEL_PICKER_HIDDEN_MODEL_ID_RE,
         MODEL_PICKER_HIDDEN_MODELS_MAX,
+        SESSION_FOLDER_ROOT_MAX_CHARS,
         VALID_MEMORY_MODES,
         _body_err_code,
         _sel,
         link_pattern_url_ok,
         logger,
         read_bounded_json,
+        validate_session_folder_root,
     )
 
 
@@ -90,6 +92,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "folder_suggestions_enabled",
             "topic_tags_enabled",
             "session_card_source_links",
+            "session_folder_root",
             "model_picker_hidden_models_add",
             "model_picker_hidden_models_remove",
         }
@@ -443,6 +446,40 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
                     status=400,
                 )
             updates["session_card_source_links"] = val
+        if "session_folder_root" in body:
+            val = body["session_folder_root"]
+            if not isinstance(val, str) or len(val) > SESSION_FOLDER_ROOT_MAX_CHARS:
+                _sel().log_tool_invocation(
+                    session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+                )
+                return web.json_response(
+                    {
+                        "error": (
+                            "session_folder_root must be a path of at most "
+                            f"{SESSION_FOLDER_ROOT_MAX_CHARS} characters"
+                        ),
+                        "code": "invalid_session_folder_root",
+                    },
+                    status=400,
+                )
+            # Every save sends the whole settings document back, so an unchanged
+            # value is a round trip, not a choice: it is neither re-validated nor
+            # rewritten, and a root that has since gone missing cannot block an
+            # unrelated toggle. Creation re-validates it on every use anyway.
+            if val.strip() != cfg.dashboard.session_folder_root:
+                resolved, root_err = await asyncio.to_thread(validate_session_folder_root, val)
+                if root_err:
+                    _sel().log_tool_invocation(
+                        session_key="dashboard",
+                        tool_name="dashboard_config_write",
+                        outcome="failure",
+                        error="invalid_session_folder_root",
+                    )
+                    return web.json_response(
+                        {"error": root_err, "code": "invalid_session_folder_root"},
+                        status=400,
+                    )
+                updates["session_folder_root"] = resolved
         if "model_picker_hidden_models_add" in body:
             hidden_model_add, error_response = _validated_hidden_model_list(
                 "model_picker_hidden_models_add"
@@ -615,6 +652,7 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             "mcp_app_panel": cfg.dashboard.mcp_app_panel,
             "auto_open_git_panel": cfg.dashboard.auto_open_git_panel,
             "session_card_source_links": cfg.dashboard.session_card_source_links,
+            "session_folder_root": cfg.dashboard.session_folder_root,
             "tail_fork_enabled": cfg.dashboard.tail_fork_enabled,
             "link_previews": cfg.dashboard.link_previews,
             "folder_suggestions_enabled": cfg.dashboard.folder_suggestions_enabled,

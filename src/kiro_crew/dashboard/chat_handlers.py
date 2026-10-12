@@ -214,6 +214,7 @@ from kiro_crew.dashboard.handlers._shared import (
 from kiro_crew.dashboard.handlers.source_providers import is_owner_dashboard_request
 from kiro_crew.dashboard.relay_archive import relay_archive_refusal
 from kiro_crew.dashboard.request_priority import owner_start_priority
+from kiro_crew.dashboard.session_folders import SessionFolderError, create_session_folder
 from kiro_crew.dashboard.slot_buffers import (
     MAX_DEFERRED_NOTE_CHARS,
     MAX_DEFERRED_NOTES,
@@ -2403,6 +2404,36 @@ async def api_chat_slot_create(request: web.Request) -> web.Response:
         # it and continue to use the project endpoint for scope changes.
         if folder_project and folder_applied and not slot.project:
             slot.project = folder_project
+        # A fresh folder per new chat, when the owner turned it on. Only for a
+        # brand-new unnamed dashboard chat: a named create can reopen a saved
+        # session, and apps, crons and ephemeral helpers keep their own rules. A
+        # project-linked folder (applied above) wins, an artifact companion chat
+        # keeps the default, and a dashboard caller opts out with
+        # `no_session_folder` when it sets the project itself right after the
+        # create or opens a purpose-built chat (an app, an intake, a hand-off).
+        # A refused root or a failed create falls through to the default below
+        # and is reported in the response, so the chat still opens and the user is
+        # told why it has no folder of its own.
+        session_folder_notice = ""
+        session_folder_root = getattr(cfg.dashboard, "session_folder_root", "") if cfg else ""
+        if (
+            isinstance(session_folder_root, str)
+            and session_folder_root
+            and not slot.project
+            and is_new_slot
+            and not _requested_key
+            and body.get("no_session_folder") is not True
+            and not body.get("artifact")
+            and not request_app
+            and not cron_creator
+            and not body.get("ephemeral")
+            and is_owner_dashboard_request(request)
+        ):
+            try:
+                slot.project = await asyncio.to_thread(create_session_folder, session_folder_root)
+            except SessionFolderError as exc:
+                logger.warning("Slot %s: no session folder (%s)", slot.key, exc)
+                session_folder_notice = "session_folder_unavailable"
         # Default project to workspace directory so file search works out of the box
         if not slot.project:
             cfg_proj = cfg.dashboard.default_project if cfg else ""
@@ -2548,7 +2579,10 @@ async def api_chat_slot_create(request: web.Request) -> web.Response:
     # idle until it timed out.
     if slot.executor != "remote":
         schedule_eager_spawn(state, slot, start_priority=owner_start_priority(request))
-    return web.json_response(state.serialize_slot(slot))
+    created = state.serialize_slot(slot)
+    if session_folder_notice:
+        created["session_folder_notice"] = session_folder_notice
+    return web.json_response(created)
 
 
 def _reject_pending_approvals(slot: _ChatSlot) -> None:

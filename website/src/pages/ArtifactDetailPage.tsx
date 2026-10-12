@@ -1401,6 +1401,7 @@ export default function ArtifactDetailPage({ popout = false }: { popout?: boolea
       const res = await api.createChatSlot(
         undefined, undefined, undefined, undefined, undefined,
         i18nT('pages.artifactDetailPage.session_title', { name: artifact.name }), artifact.slug,
+        undefined, undefined, true,
       )
       if (prefillText) writePrefill(res.key, prefillText)
       dispatch(addSlotOptimistic({
