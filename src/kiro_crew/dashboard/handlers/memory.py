@@ -21,6 +21,7 @@ from kiro_crew.config.loader import (
     config_path,
     update_config_locked,
 )
+from kiro_crew.config.memory_sections import memory_writes_off_key
 from kiro_crew.context import validated_cached_vector_stores
 from kiro_crew.dashboard.chat_utils import run_config_write
 from kiro_crew.dashboard.handlers._shared import memory_startup_refusal
@@ -2181,26 +2182,33 @@ async def api_memory_consolidate(request: web.Request) -> web.Response:
         return gate
     if not state.consolidator:
         return web.json_response({"error": "consolidator not available"}, status=503)
-    # Global persistence switch (memory.persistence_enabled). The
+    # Global persistence switch (memory.persistence_enabled) and the
+    # writes-only switch (memory.writes_enabled). The
     # inner _consolidate gate would refuse anyway; refusing here tells the
     # dashboard caller WHY instead of returning a generic refusal, and spends
     # no transcript read on a request that cannot proceed. The denial is
     # SEL-recorded: the request passed identity and the write gate, so the
     # refusal is a config-state decision an audit trail has to show rather than
     # an unauthenticated caller being turned away upstream.
-    if not KiroCrewConfig.load().memory.persistence_enabled:
+    writes_off = memory_writes_off_key(KiroCrewConfig.load().memory)
+    if writes_off is not None:
+        code = (
+            "persistence_disabled"
+            if writes_off == "memory.persistence_enabled"
+            else "writes_disabled"
+        )
         _sel().log_api_access(
             caller=request.headers.get("X-Session-Key", ""),
             operation="memory.consolidate",
             outcome="denied",
             source="dashboard",
-            resources="persistence_disabled",
+            resources=code,
         )
         return web.json_response(
             {
-                "error": "Consolidation is paused: persistent memory is disabled "
-                "(memory.persistence_enabled is false).",
-                "code": "persistence_disabled",
+                "error": "Consolidation is paused: persistent memory writes are "
+                f"disabled ({writes_off} is false).",
+                "code": code,
             },
             status=403,
         )

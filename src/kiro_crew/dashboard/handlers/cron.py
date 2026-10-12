@@ -20,6 +20,7 @@ from aiohttp import web
 
 from kiro_crew import model_registry
 from kiro_crew.config.loader import KiroCrewConfig, config_dir
+from kiro_crew.config.memory_sections import memory_writes_off_key
 from kiro_crew.context import ContextBuilder
 from kiro_crew.cron import (
     CronPauseNotSaved,
@@ -2885,27 +2886,34 @@ async def api_lessons_create(request: web.Request) -> web.Response:
             {"error": "Memory writes are not allowed in this session mode."},
             status=403,
         )
-    # Global persistence switch (memory.persistence_enabled).
+    # Global persistence switch (memory.persistence_enabled) and the
+    # writes-only switch (memory.writes_enabled).
     # Enforced on the route rather than in the learn_add MCP handler so every
     # transport that posts here (MCP tool, dashboard, direct HTTP) is covered
     # by the one check. Reads and deletions stay available — the right to
     # forget survives the switch.
-    if not KiroCrewConfig.load().memory.persistence_enabled:
+    writes_off = memory_writes_off_key(KiroCrewConfig.load().memory)
+    if writes_off is not None:
+        code = (
+            "persistence_disabled"
+            if writes_off == "memory.persistence_enabled"
+            else "writes_disabled"
+        )
         _sel().log_api_access(
             caller=sk,
             operation="learn_add",
             outcome="denied",
             source="dashboard",
-            resources="persistence_disabled",
-            error="Persistent memory is disabled (memory.persistence_enabled).",
+            resources=code,
+            error=f"Persistent memory writes are disabled ({writes_off}).",
         )
         return web.json_response(
             {
-                "error": "Lesson was NOT saved: persistent memory is disabled "
-                "(memory.persistence_enabled is false). Re-enable it with "
-                "`kirocrew config set memory.persistence_enabled true` to save "
+                "error": "Lesson was NOT saved: persistent memory writes are disabled "
+                f"({writes_off} is false). Re-enable them with "
+                f"`kirocrew config set {writes_off} true` to save "
                 "lessons again.",
-                "code": "persistence_disabled",
+                "code": code,
             },
             status=403,
         )
@@ -3798,10 +3806,11 @@ async def api_lessons(request: web.Request) -> web.Response:
     ) -> dict:
         """One sanitization chokepoint for every branch of this endpoint.
 
-        *source* is the row's write origin (``user_explicit`` for a lesson the
-        user saved, ``consolidation`` for one extracted from chat history, and
-        so on). It is reported only when the store recorded one, so a reader can
-        tell a lesson the user approved from one the extractor inferred.
+        *source* is the row's write origin (``user_explicit`` for a lesson saved
+        on purpose through ``learn_add``, the dashboard or the CLI,
+        ``consolidation`` for one extracted from chat history, and so on). It is
+        reported only when the store recorded one, so a reader can tell a lesson
+        saved on purpose from one the extractor inferred.
 
         *tier* names the JSONL file a row was read from -- ``("global", None)``
         or ``("workspace", <name>)`` -- and is emitted as the ``scope`` /
@@ -3847,7 +3856,7 @@ async def api_lessons(request: web.Request) -> web.Response:
         if authored_applies is not None:
             result["applies"] = authored_applies
         if isinstance(source, str) and source.strip():
-            result["source"] = _redact_memory_field(source.strip()[:64])
+            result["source"] = _redact_memory_field(source.strip())[:64]
         if contains_volatile_lesson_fact(rule, negative):
             result["withheld_reason"] = "volatile_session_fact"
         return result

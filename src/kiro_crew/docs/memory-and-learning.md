@@ -80,6 +80,44 @@ Lessons have two scopes:
 - **Global** (default): shared across all workspaces
 - **Repository-scoped**: an optional `repo_scope` path fragment restricts a lesson to sessions whose active project is inside that repository tree
 
+Each lesson records its `source`, the writer that saved it: `user_explicit` for a
+lesson saved on purpose through `learn_add`, the dashboard or `kirocrew learn add`,
+`consolidation` for one extracted from a conversation. `learn_list` and the
+Lessons table on the Memory page show it.
+
+## How instructions rank
+
+Steering, preferences, lessons and memory reach a session as separate blocks, and
+each block states how much weight it carries. When two of them disagree, the
+order is:
+
+1. **The current user message.** Every stored block says that stored inferences
+   do not override the current user.
+2. **Steering files and the agent's own prompt.** The harness loads them as
+   standing instructions; see [Steering files](steering-and-hooks.md).
+3. **Preferences** (`preferences.md`). Injected as rules: "Preferences in the user
+   preference document remain rules."
+4. **Lessons.** Injected as retained rules, filtered to the session's repository
+   and capped by the context budget. Lessons tagged with `applies` rank ahead of
+   untagged ones; within that, ranking is by relevance, whatever the `source`.
+5. **Semantic memory, experience, the activity index and recent-session
+   snippets.** Reference data, not instructions.
+
+Switches that change what is written or injected:
+
+| Key | Writes | Injection |
+|-----|--------|-----------|
+| `memory.persistence_enabled: false` | No automatic writes | Stored memory and lessons withheld |
+| `memory.writes_enabled: false` | No automatic writes | Unchanged |
+| `memory.lesson_extraction_enabled: false` | No extracted lessons; other writes and `learn_add` unchanged | Unchanged |
+| `memory.inject_memory: false` | Unchanged | Stored memory block withheld |
+| `memory.inject_lessons: false` | Unchanged | Lessons and user-profile blocks withheld |
+
+Incognito sessions still read stored memory but write none, and Temporary
+sessions neither read nor write it, whatever these keys say. The keys apply to
+every surface (dashboard, channels, cron, sub-agents) at once, where a memory
+mode is chosen per session.
+
 ## Memory Modes
 
 Each session can operate in one of three memory modes:

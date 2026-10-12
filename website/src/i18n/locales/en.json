@@ -7973,6 +7973,11 @@
         "semantic_memory_active_text_files_are_read_only": "Semantic memory active — text files are read-only",
         "session_one": "{{count}} session",
         "session_other": "{{count}} sessions",
+        "source": "Source",
+        "source_consolidation": "Learned from chat",
+        "source_taskrunner": "Learned from a task",
+        "source_unknown": "Unknown",
+        "source_user_explicit": "Saved by you or the agent",
         "summarize_now": "Summarize now",
         "tool": "tool",
         "when": "When"

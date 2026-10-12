@@ -504,6 +504,9 @@ export interface Lesson {
    *  where the delete reaches the store whatever `scope` says. */
   scope?: 'global' | 'workspace'
   workspace?: string
+  /** Where the lesson came from (`user_explicit`, `consolidation`, ...), as the
+   *  store recorded it. Absent or empty when the row carries no source. */
+  source?: string
 }
 
 /** One row of `GET /api/memory/stores` — a declared memory store.

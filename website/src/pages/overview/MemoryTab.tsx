@@ -86,6 +86,20 @@ function scopeCell(lesson: Lesson) {
   return <>{repo}<span className="block text-[12px] text-muted">{i18nT('pages.overview.memoryTab.scope_workspace', { name: lesson.workspace })}</span></>
 }
 
+/** The Source cell: the store's write origin in plain words. `user_explicit`
+ *  covers every deliberate save (`learn_add`, the dashboard, the CLI), whoever
+ *  made it, so its label names both the user and the agent. An origin with no
+ *  label shows its stored code; a row with none reads "Unknown". */
+function sourceCell(lesson: Lesson) {
+  switch (lesson.source || '') {
+    case '': return <span className="text-muted italic">{i18nT('pages.overview.memoryTab.source_unknown')}</span>
+    case 'user_explicit': return i18nT('pages.overview.memoryTab.source_user_explicit')
+    case 'consolidation': return i18nT('pages.overview.memoryTab.source_consolidation')
+    case 'taskrunner': return i18nT('pages.overview.memoryTab.source_taskrunner')
+    default: return <span className="font-mono">{esc(lesson.source ?? '')}</span>
+  }
+}
+
 export default function MemoryTab({ refreshTrigger, selectedStore, onStoreNavigate }: { refreshTrigger: number; selectedStore?: string; onStoreNavigate?: (store: string) => void }) {
   const stores = useMemoryStores()
   const navigate = useNavigate()
@@ -286,6 +300,7 @@ function GlobalMemoryTab({ refreshTrigger, onDirtyChange }: { refreshTrigger: nu
     rule: (a: Lesson, b: Lesson) => a.rule.localeCompare(b.rule),
     category: (a: Lesson, b: Lesson) => a.category.localeCompare(b.category),
     repo_scope: (a: Lesson, b: Lesson) => compareText(a.repo_scope ?? '', b.repo_scope ?? ''),
+    source: (a: Lesson, b: Lesson) => compareText(a.source ?? '', b.source ?? ''),
     ts: (a: Lesson, b: Lesson) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
   }), [])
   const recentLessons = useMemo(() => lessons.slice(-20), [lessons])
@@ -657,13 +672,13 @@ function GlobalMemoryTab({ refreshTrigger, onDirtyChange }: { refreshTrigger: nu
       />
       {/* Scrolls sideways rather than clipping: five columns plus a long path
           fragment overrun a narrow viewport, and the card hides overflow. */}
-      <div className="overflow-x-auto"><table className="w-full border-collapse table-striped"><thead><tr><SortableHeader label={i18nT('pages.overview.memoryTab.rule')} sortKey="rule" sort={lessonSort} onToggle={toggleLessonSort} /><SortableHeader label={i18nT('pages.overview.memoryTab.category')} sortKey="category" sort={lessonSort} onToggle={toggleLessonSort} /><SortableHeader label={i18nT('pages.overview.memoryTab.scope')} sortKey="repo_scope" sort={lessonSort} onToggle={toggleLessonSort} /><SortableHeader label={i18nT('pages.overview.memoryTab.when')} sortKey="ts" sort={lessonSort} onToggle={toggleLessonSort} /><th aria-label={i18nT('pages.overview.memoryTab.actions')} className="text-left text-muted text-[12px] uppercase tracking-[.04em] px-2.5 py-2 border-b border-border font-medium"></th></tr></thead>
-        <tbody>{lessons.length === 0 ? <tr><td colSpan={5}><EmptyState icon={<BookOpen className="lucide-inline" />} title={i18nT('pages.overview.memoryTab.no_lessons_yet')} subtitle={i18nT('pages.overview.memoryTab.lessons_empty_subtitle')} /></td></tr> : sortedLessons.map((l) => (
+      <div className="overflow-x-auto"><table className="w-full border-collapse table-striped"><thead><tr><SortableHeader label={i18nT('pages.overview.memoryTab.rule')} sortKey="rule" sort={lessonSort} onToggle={toggleLessonSort} /><SortableHeader label={i18nT('pages.overview.memoryTab.category')} sortKey="category" sort={lessonSort} onToggle={toggleLessonSort} /><SortableHeader label={i18nT('pages.overview.memoryTab.scope')} sortKey="repo_scope" sort={lessonSort} onToggle={toggleLessonSort} /><SortableHeader label={i18nT('pages.overview.memoryTab.source')} sortKey="source" sort={lessonSort} onToggle={toggleLessonSort} /><SortableHeader label={i18nT('pages.overview.memoryTab.when')} sortKey="ts" sort={lessonSort} onToggle={toggleLessonSort} /><th aria-label={i18nT('pages.overview.memoryTab.actions')} className="text-left text-muted text-[12px] uppercase tracking-[.04em] px-2.5 py-2 border-b border-border font-medium"></th></tr></thead>
+        <tbody>{lessons.length === 0 ? <tr><td colSpan={6}><EmptyState icon={<BookOpen className="lucide-inline" />} title={i18nT('pages.overview.memoryTab.no_lessons_yet')} subtitle={i18nT('pages.overview.memoryTab.lessons_empty_subtitle')} /></td></tr> : sortedLessons.map((l) => (
           // Scope is part of the key: a scoped and a global row sharing rule text
           // are two lessons, and can share a timestamp. String() keeps the null
           // (unusable-scope) row distinct from the "" (global) one; the JSONL tier
           // keeps a workspace row distinct from a global one.
-          <tr key={`${l.rule}-${String(l.repo_scope)}-${l.workspace ?? ''}-${l.ts}`} className="hover:bg-bg-hover transition-colors"><td className="px-2.5 py-2 border-b border-border text-sm">{esc(l.rule)}</td><td className="px-2.5 py-2 border-b border-border text-sm"><Badge variant="ok">{l.category}</Badge></td><td className="px-2.5 py-2 border-b border-border text-sm">{scopeCell(l)}</td><td className="px-2.5 py-2 border-b border-border text-sm">{fmtDateTimeNumeric(l.ts)}</td>
+          <tr key={`${l.rule}-${String(l.repo_scope)}-${l.workspace ?? ''}-${l.ts}`} className="hover:bg-bg-hover transition-colors"><td className="px-2.5 py-2 border-b border-border text-sm">{esc(l.rule)}</td><td className="px-2.5 py-2 border-b border-border text-sm"><Badge variant="ok">{l.category}</Badge></td><td className="px-2.5 py-2 border-b border-border text-sm">{scopeCell(l)}</td><td className="px-2.5 py-2 border-b border-border text-sm">{sourceCell(l)}</td><td className="px-2.5 py-2 border-b border-border text-sm whitespace-nowrap">{fmtDateTimeNumeric(l.ts)}</td>
             <td className="px-2.5 py-2 border-b border-border text-sm"><Btn danger onClick={() => deleteLesson(l)}>{i18nT('pages.overview.memoryTab.delete')}</Btn></td></tr>
         ))}</tbody></table></div></Card>
     )}

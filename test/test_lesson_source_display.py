@@ -7,6 +7,7 @@ different authority, so both the agent's ``learn_list`` tool and the dashboard's
 
 from __future__ import annotations
 
+import contextlib
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -47,8 +48,8 @@ def test_source_suffix_ignores_blank_and_non_string_values():
     assert _source_suffix({}) == ""
 
 
-@pytest.mark.asyncio
-async def test_lessons_api_reports_the_vector_rows_source(tmp_path):
+async def _lessons_api_body(tmp_path, source: str, **patches) -> dict:
+    """GET /api/lessons over a real vector store holding one row with *source*."""
     from kiro_crew.dashboard.handlers import cron
 
     store = VectorMemoryStore(db_path=tmp_path / "m.db", embedding_dim=4)
@@ -59,7 +60,7 @@ async def test_lessons_api_reports_the_vector_rows_source(tmp_path):
                 "lesson.userrow",
                 {"rule": "always run the formatter", "category": "preference"},
                 1.0,
-                "user_explicit",
+                source,
             )
             is None
         )
@@ -68,24 +69,47 @@ async def test_lessons_api_reports_the_vector_rows_source(tmp_path):
         request.app = {"state": state}
         request.headers = {"X-Session-Key": "dashboard:ui"}
         request.query = {}
-        with (
-            patch.object(cron, "_blocks_reads_session", return_value=False),
-            patch.object(
-                cron,
-                "resolve_lesson_memory_store",
-                new=AsyncMock(return_value=(None, None)),
-            ),
-            patch.object(
-                cron,
-                "_prepare_member_lesson_store",
-                new=AsyncMock(return_value=None),
-            ),
-            patch.object(cron, "_get_memory", return_value=MagicMock(vector_store=store)),
-        ):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(cron, "_blocks_reads_session", return_value=False))
+            stack.enter_context(
+                patch.object(
+                    cron, "resolve_lesson_memory_store", new=AsyncMock(return_value=(None, None))
+                )
+            )
+            stack.enter_context(
+                patch.object(cron, "_prepare_member_lesson_store", new=AsyncMock(return_value=None))
+            )
+            stack.enter_context(
+                patch.object(cron, "_get_memory", return_value=MagicMock(vector_store=store))
+            )
+            for name, value in patches.items():
+                stack.enter_context(patch.object(cron, name, value))
             resp = await cron.api_lessons(request)
-
-        body = json.loads(resp.text)
-        assert body["lessons"][0]["rule"] == "always run the formatter"
-        assert body["lessons"][0]["source"] == "user_explicit"
+        return json.loads(resp.text)
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_lessons_api_reports_the_vector_rows_source(tmp_path):
+    body = await _lessons_api_body(tmp_path, "user_explicit")
+    assert body["lessons"][0]["rule"] == "always run the formatter"
+    assert body["lessons"][0]["source"] == "user_explicit"
+
+
+@pytest.mark.asyncio
+async def test_lessons_api_redacts_the_whole_source_before_bounding_it(tmp_path):
+    """A credential straddling the length bound is redacted whole, not cut first.
+
+    The stand-in redactor only recognises the complete marker, as a real pattern
+    only recognises a complete credential; bounding first would leave its prefix.
+    """
+    marker = "SECRET-0123456789"
+    body = await _lessons_api_body(
+        tmp_path,
+        "a" * 55 + marker,
+        _redact_memory_field=lambda value: value.replace(marker, "[REDACTED]"),
+    )
+    source = body["lessons"][0]["source"]
+    assert "SECRET" not in source
+    assert len(source) <= 64

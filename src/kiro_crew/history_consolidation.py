@@ -457,9 +457,10 @@ class _RunCommitState:
 
 
 def _persistence_disabled() -> bool:
-    """True when the operator turned persistent memory off.
+    """True when the operator turned automatic memory writes off.
 
-    ``memory.persistence_enabled`` is the global persistence switch: consolidation
+    ``memory.persistence_enabled`` is the global persistence switch and
+    ``memory.writes_enabled`` the writes-only one; either off answers True. Consolidation
     is the largest automatic writer (lessons, semantic, episodic, preferences,
     projects, history, auto-skills all flow from one pass), so a disabled
     system must not schedule it — pausing entirely rather than run-and-discard,
@@ -470,8 +471,21 @@ def _persistence_disabled() -> bool:
     module's import graph light (same rationale as the facade seams above).
     """
     from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.config.memory_sections import memory_writes_off_key
 
-    return not KiroCrewConfig.load().memory.persistence_enabled
+    return memory_writes_off_key(KiroCrewConfig.load().memory) is not None
+
+
+def _lesson_extraction_disabled() -> bool:
+    """True when consolidation must not save the lessons it extracted.
+
+    ``memory.lesson_extraction_enabled`` stops the lesson stage alone: the pass
+    still runs and writes history, semantic, episodic and the rest.
+    """
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.config.memory_sections import lesson_extraction_enabled
+
+    return not lesson_extraction_enabled(KiroCrewConfig.load().memory)
 
 
 def _fmt_message(message: dict, *, prestripped: bool = False) -> str:
@@ -1707,7 +1721,7 @@ class HistoryConsolidator:
             # between create_task and the task's first line.
             if _persistence_disabled():
                 self._logger.info(
-                    "consolidation skipped for %s: memory.persistence_enabled is false", key
+                    "consolidation skipped for %s: automatic memory writes are off", key
                 )
                 return _CONSOLIDATION_REFUSED
 
@@ -2377,6 +2391,11 @@ class HistoryConsolidator:
                 # the model never read is withheld here, the same fence the V1
                 # writer applies, so the two paths cannot drift.
                 consolidation, _ = _withhold_unseen_deletes(result, semantic_visible, self._logger)
+                # memory.lesson_extraction_enabled covers the member store too:
+                # its extracted lessons are dropped from the payload, and every
+                # other update still applies.
+                if _lesson_extraction_disabled():
+                    consolidation = {k: v for k, v in consolidation.items() if k != "lessons"}
 
                 # ``source_total`` is the receipt-identity token and must satisfy
                 # ``apply_consolidation``'s ``>= len(messages)`` guard. For an
@@ -2534,6 +2553,7 @@ class HistoryConsolidator:
             if (
                 not member_memory
                 and (lessons_store or vector_store)
+                and not _lesson_extraction_disabled()
                 and (raw_lessons := result.get("lessons"))
             ):
                 stage = "lessons"
@@ -2653,7 +2673,7 @@ class HistoryConsolidator:
             return None
         except _PersistenceDisabledMidRun:
             self._logger.info(
-                "Consolidation refused for %s: memory.persistence_enabled turned off "
+                "Consolidation refused for %s: automatic memory writes turned off "
                 "during the run",
                 key,
             )

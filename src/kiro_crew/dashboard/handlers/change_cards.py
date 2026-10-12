@@ -735,12 +735,14 @@ def _record_memory(
 
     def _write() -> None:
         from kiro_crew.config.loader import KiroCrewConfig
+        from kiro_crew.config.memory_sections import memory_writes_off_key
         from kiro_crew.context import ContextBuilder
         from kiro_crew.memory_stores import DEFAULT_MEMORY_STORE
 
-        # An automatic writer: with persistent memory switched off, the
-        # change still happens but leaves no history line.
-        if not KiroCrewConfig.load().memory.persistence_enabled:
+        # An automatic writer: with memory.persistence_enabled or
+        # memory.writes_enabled off, the change still happens but leaves no
+        # history line.
+        if memory_writes_off_key(KiroCrewConfig.load().memory) is not None:
             return
         ContextBuilder.get_memory_for(memory_store=DEFAULT_MEMORY_STORE).append_history(entry)
 

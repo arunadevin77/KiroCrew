@@ -221,6 +221,8 @@ def _build_memory_config(memory_data: dict) -> MemoryConfig:
         backup_enabled=section.read("backup_enabled", _safe_bool),
         backup_keep=section.read("backup_keep", _safe_int, 1, None),
         persistence_enabled=section.read("persistence_enabled", _safe_bool),
+        writes_enabled=section.read("writes_enabled", _safe_bool),
+        lesson_extraction_enabled=section.read("lesson_extraction_enabled", _safe_bool),
         inject_memory=section.read("inject_memory", _safe_bool),
         inject_lessons=section.read("inject_lessons", _safe_bool),
         inject_lessons_per_turn=section.read("inject_lessons_per_turn", _safe_bool),

@@ -20,6 +20,7 @@ from kiro_crew import git_coord, shutdown_event
 from kiro_crew.atomic_write import atomic_write
 from kiro_crew.config import live
 from kiro_crew.config.loader import KiroCrewConfig
+from kiro_crew.config.memory_sections import lesson_extraction_enabled
 from kiro_crew.execution_context import (
     ExecutionContext,
     bind_session_execution,
@@ -2640,11 +2641,12 @@ class TaskRunner:
     # ── Learn from Failures ──
 
     async def _extract_lesson(self, task: Task, run: Project | None = None) -> None:
-        # Global persistence switch (memory.persistence_enabled):
+        # Global persistence switch (memory.persistence_enabled), plus
+        # memory.writes_enabled and memory.lesson_extraction_enabled:
         # skip BEFORE the LLM call, so a disabled system spends no turn
         # distilling a lesson it is not allowed to store. Placed ahead of store
         # resolution so member-private lesson stores are covered too.
-        if not KiroCrewConfig.load().memory.persistence_enabled:
+        if not lesson_extraction_enabled(KiroCrewConfig.load().memory):
             return
         try:
             from kiro_crew.memory_stores import UnknownMemoryStore

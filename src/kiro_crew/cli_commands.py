@@ -3173,6 +3173,7 @@ def _lesson_scope_suffix(scope: str | None) -> str:
 
 def _learn(args: argparse.Namespace) -> None:
     """Save, list, or remove learned corrections."""
+    from kiro_crew.config.memory_sections import memory_writes_off_key
 
     jsonl_store = LessonStore()
     cfg = KiroCrewConfig.load()
@@ -3182,12 +3183,14 @@ def _learn(args: argparse.Namespace) -> None:
     # POST /api/lessons refusal. Refused ahead of the vector store because
     # constructing and init-ing it creates or migrates memory.db, which a
     # refused write must not do; list and remove still need that store, so the
-    # check is scoped to the add action.
-    if action == "add" and not cfg.memory.persistence_enabled:
+    # check is scoped to the add action. memory.writes_enabled is refused the
+    # same way.
+    writes_off = memory_writes_off_key(cfg.memory)
+    if action == "add" and writes_off is not None:
         print(
-            "Lesson NOT saved: persistent memory is disabled "
-            "(memory.persistence_enabled is false). Re-enable with: "
-            "kirocrew config set memory.persistence_enabled true"
+            "Lesson NOT saved: persistent memory writes are disabled "
+            f"({writes_off} is false). Re-enable with: "
+            f"kirocrew config set {writes_off} true"
         )
         return
     vs = VectorMemoryStore(embedding_dim=cfg.memory.embedding_dim, config=cfg)

@@ -343,6 +343,30 @@ describe('MemoryTab — lessons', () => {
     expect(rules).toEqual(['zzq-rule-beta', 'zzq-rule-alpha'])
   })
 
+  it('shows each lesson\'s recorded source in plain words, Unknown when the row has none', async () => {
+    api.lessons.mockResolvedValue({
+      lessons: [
+        { rule: 'zzq-src-a', category: 'tool', ts: '2026-01-04T00:00:00Z', repo_scope: '', source: 'user_explicit' },
+        { rule: 'zzq-src-b', category: 'tool', ts: '2026-01-03T00:00:00Z', repo_scope: '', source: 'consolidation' },
+        { rule: 'zzq-src-c', category: 'tool', ts: '2026-01-02T00:00:00Z', repo_scope: '', source: 'taskrunner' },
+        { rule: 'zzq-src-d', category: 'tool', ts: '2026-01-01T00:00:00Z', repo_scope: '', source: 'init' },
+        { rule: 'zzq-src-e', category: 'tool', ts: '2025-12-31T00:00:00Z', repo_scope: '' },
+      ],
+    })
+    renderWithProviders(<MemoryTab refreshTrigger={0} />)
+    await screen.findByText('zzq-src-a')
+    expect(screen.getByText(/^Source$/)).toBeInTheDocument()
+    const sources = lessonRows().map((tr) => tr.querySelector('td:nth-child(4)'))
+      .map((td) => td?.textContent)
+    expect(sources).toEqual([
+      'Saved by you or the agent',
+      'Learned from chat',
+      'Learned from a task',
+      'init',
+      'Unknown',
+    ])
+  })
+
   it('re-sorts on a header click', async () => {
     renderWithProviders(<MemoryTab refreshTrigger={0} />)
     await screen.findByText('zzq-rule-beta')

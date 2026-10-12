@@ -231,6 +231,25 @@ class MemoryConfig:
             "edits and deletions stay available.",
         ),
     )
+    writes_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Memory Writes Enabled",
+            "Off: no automatic memory writes (lessons, consolidation extraction, "
+            "task-runner lessons), the same writers Persistence Enabled stops, "
+            "while stored memory and lessons are still injected into new sessions "
+            "and memory_recall still answers. Incognito is unaffected. Explicit "
+            "dashboard edits and deletions stay available.",
+        ),
+    )
+    lesson_extraction_enabled: bool = field(
+        default=True,
+        metadata=_meta(
+            "Lesson Extraction Enabled",
+            "Off: history consolidation and the task runner save no extracted "
+            "lessons; every other memory write, learn_add and injection carry on.",
+        ),
+    )
     inject_memory: bool = field(
         default=True,
         metadata=_meta(
@@ -284,6 +303,32 @@ class MemoryConfig:
 #: widgets). ``svg`` is excluded because ``.svg`` is not in
 #: ``FileReader.SUPPORTED``.
 DEFAULT_AUTO_INGEST_ARTIFACT_KINDS = ["markdown", "text", "html", "json"]
+
+
+def memory_writes_off_key(memory: object) -> str | None:
+    """The config key that stops automatic memory writes, or None when writes run.
+
+    ``memory.persistence_enabled`` stops writes and injection together;
+    ``memory.writes_enabled`` stops writes alone. Every automatic writer gates on
+    this one answer, so the two switches cover the same writers. Read with
+    ``getattr`` so a partial config stand-in that predates a key counts it as on.
+    """
+    if not getattr(memory, "persistence_enabled", True):
+        return "memory.persistence_enabled"
+    if not getattr(memory, "writes_enabled", True):
+        return "memory.writes_enabled"
+    return None
+
+
+def lesson_extraction_enabled(memory: object) -> bool:
+    """Whether automatic lesson extraction may save lessons.
+
+    False when ``memory.lesson_extraction_enabled`` is off, or when automatic
+    writes are off as a whole.
+    """
+    return memory_writes_off_key(memory) is None and bool(
+        getattr(memory, "lesson_extraction_enabled", True)
+    )
 
 
 def _coerce_embedding_provider(raw: str) -> str:
