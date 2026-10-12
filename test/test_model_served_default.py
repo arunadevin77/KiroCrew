@@ -89,6 +89,20 @@ def _sent(sink):
     return _send_request
 
 
+def _hold_spawns(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    """Stand in for every ``AcpClient`` launch and return the stand-in to assert on.
+
+    The entitlement probe launches from a throwaway client that
+    ``_entitlement_probe_client`` builds with ``type(self)(...)``, so a ``_spawn``
+    set on one client never sees it. The class is the one place the session's
+    client and the probe's client both launch from, and ``setattr`` raises if
+    ``_spawn`` is renamed, so the hold cannot silently stop holding.
+    """
+    spawn = AsyncMock(name="AcpClient._spawn")
+    monkeypatch.setattr(AcpClient, "_spawn", spawn)
+    return spawn
+
+
 class TestClientInheritExits:
     """Both inherit exits of ``_apply_startup_model`` run the check."""
 
@@ -120,24 +134,41 @@ class TestClientInheritExits:
         assert client._resolved_model_id == "auto"
 
     @pytest.mark.asyncio
-    async def test_withheld_pin_still_lands_on_a_served_model(self):
+    async def test_withheld_pin_still_lands_on_a_served_model(self, monkeypatch):
         """The pin is withheld AND the default it falls back to is unserved."""
         client = _kiro_client(["gpt-5.6-sol"], "auto", model="claude-opus-4.8")
         sent: list = []
         client._send_request = _sent(sent)
-        # The revalidation before the withhold must stay on the stubbed probe:
-        # a real spawn here would ask the developer's own kiro-cli account.
-        client._spawn = AsyncMock()
+        # The revalidation before the withhold stays on the stubbed probe. A launch from
+        # this client or from the probe's own throwaway client would ask the developer's
+        # kiro-cli account, so the hold sits on the class both launch from.
+        spawn = _hold_spawns(monkeypatch)
 
         await client._apply_startup_model()
 
-        client._spawn.assert_not_awaited()
+        spawn.assert_not_awaited()
         assert sent == [
             (METHOD_SET_MODEL, {"sessionId": "sess-1", "modelId": "gpt-5.6-sol"}),
         ]
         assert client._resolved_model_id == "gpt-5.6-sol"
         # Withholding still records the pin as inherited, unchanged by this.
         assert client._model == DEFAULT_MODEL
+
+    @pytest.mark.asyncio
+    async def test_a_probe_left_open_reaches_the_spawn_hold(self, monkeypatch):
+        """The hold in the test above can fail.
+
+        With the probe stub taken away, the revalidation before the withhold
+        launches from the probe's own client, and the class-level hold records it.
+        """
+        client = _kiro_client(["gpt-5.6-sol"], "auto", model="claude-opus-4.8")
+        del client._probe_advertised_models
+        client._send_request = _sent([])
+        spawn = _hold_spawns(monkeypatch)
+
+        await client._apply_startup_model()
+
+        spawn.assert_awaited()
 
 
 def _handle(backend: str, advertised, resolved):
