@@ -1242,16 +1242,16 @@ class TestRewriteSession:
         assert "drop" in body
         assert "{ corrupted" in body
 
-    def test_archive_failure_is_logged_not_raised(self, tmp_path: Path, caplog) -> None:
+    def test_archive_failure_raises_and_keeps_every_row(self, tmp_path: Path) -> None:
+        """The archive is the only other copy of the dropped rows, so compaction fails closed."""
         log = _log(tmp_path)
         log.append("k", "user", "a")
         log.append("k", "user", "b")
         keep = log._read_messages("k")[:1]
         with patch.object(H, "_archive_lines", side_effect=OSError("read-only")):
-            with caplog.at_level(logging.WARNING, logger="kiro_crew.history"):
+            with pytest.raises(OSError):
                 log.rewrite_session("k", keep)
-        assert "Failed to archive dropped lines" in caplog.text
-        assert [m["content"] for m in _log(tmp_path)._read_messages("k")] == ["a"]
+        assert [m["content"] for m in _log(tmp_path)._read_messages("k")] == ["a", "b"]
 
     def test_unowned_metadata_is_carried_through(self, tmp_path: Path) -> None:
         log = _log(tmp_path)

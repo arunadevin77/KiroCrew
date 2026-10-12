@@ -857,8 +857,12 @@ no longer destroy older turns.
   sentence. Rows in the in-memory window count towards the newest N and are
   never changed. The changed rows' original lines are written to the session
   archive (`reason="file-changes"`, which `read_rotated_messages` never serves
-  back) BEFORE the payload uses them; a failed archive write keeps the prefix
-  as read and the next prefix read retries. The prefix is
+  back) BEFORE the payload uses them, and `_archive_lines` syncs the archive
+  file and its directory before it returns, as it does for every reason; a
+  failed archive write keeps the prefix as read and the next prefix read
+  retries. A crash after the archive write and before the transcript replace
+  leaves the rows whole, so the next uncached prefix read archives them again:
+  a duplicate archive file, never a lost row. The prefix is
   cached on the slot keyed by the file's `(mtime, size)` and
   `_disk_older_count`, together with the foreign lines that save kept, so a
   steady 5s flush is O(window), not O(file size).
@@ -1294,9 +1298,11 @@ no longer destroy older turns.
   - **Archive of ambiguous drops (no permanent loss).** A fresh-`ts` id-less
     copy folded by tiebreak (b) is the genuinely ambiguous case
     (indistinguishable from a distinct same-content message without a stable
-    id), so those drops are returned as `dedup_dropped` and routed through
-    `_archive_lines` (`reason="foreign-dedup"`) by `_save_slot_to_history`
-    before the atomic replace — the trade-off loses no data permanently. (A
+    id), so the scan archives them through `_archive_lines`
+    (`reason="foreign-dedup"`) before the atomic replace — the trade-off loses
+    no data permanently. When that archive raises, the drops stay in the
+    payload as foreign lines, in disk order: a duplicate row, never a lost
+    one. (A
     ts-less / ts-matched plain re-serialization is a normal window copy and is
     dropped silently to avoid archive spam; a corroborated id-matched pass-0
     fold is exact, not ambiguous, and is likewise silent.)
@@ -1436,6 +1442,19 @@ archived instead of being permanently deleted:
   `rewrite=True` / `_pending_rewrite` → `_archive_dropped_lines`). The default
   frozen-prefix dashboard save drops nothing, so it does not archive.
 - **Atomic writes**: exclusive-create (`open mode 'x'`) avoids TOCTOU clobber
+- **Durable before the replace**: `_archive_lines` fsyncs the archive file and
+  syncs the archive directory and its parent (`atomic_write.fsync_dir`, a no-op
+  on Windows) on every call before it returns, and raises if any sync fails.
+  The parent is synced even when the directory already exists, because an
+  earlier call may have created it and failed that sync. Every trigger archives
+  lines its transcript rewrite is about to remove, so the archive must reach
+  disk first.
+- **Fail closed**: an archive failure never lets the rewrite drop the rows.
+  Rotation declines to rotate, compaction (`rewrite_session`) raises with the
+  transcript untouched, the dashboard rewrite path raises so the save writes
+  nothing (a rewind answers `503 rewind_save_failed`; a regenerate keeps
+  `_pending_rewrite` and the next save retries), the file-change bound keeps the
+  prefix as read, and foreign-dedup keeps its lines.
 - **Retention**: configurable via `session.archive_retention_days` (default 30
   days; `-1` or `null` disables cleanup so the user manages deletion manually).
   `_cleanup_old_archives()` reads the value from config when called with no

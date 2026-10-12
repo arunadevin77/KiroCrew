@@ -325,6 +325,7 @@ def _frozen_prefix_and_foreign_appends(
     *,
     collect_foreign: bool = True,
     bound_prefix: Callable[[list[str]], list[str]] | None = None,
+    archive_dedup: Callable[[list[str]], object] | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """Return ``(frozen_prefix, foreign_lines, dedup_dropped)`` for a save.
 
@@ -376,8 +377,10 @@ def _frozen_prefix_and_foreign_appends(
     those two real events into one; the bounded, timestamp-first identity
     fixes it for id-less lines, and the ``meta.mid`` tier resolves it exactly
     for stamped lines (see also ``docs/system-specs/modules/history.md``).
-    ``dedup_dropped`` returns any fresh-``ts`` content-tiebreak drops so the
-    caller can route them through the archive — even the residual ambiguous
+    ``dedup_dropped`` returns any fresh-``ts`` content-tiebreak drops. With
+    *archive_dedup*, they are archived here first and returned only once that
+    write landed; when it raises they are kept in ``foreign_lines`` instead.
+    Without it, the caller routes them through the archive — even the residual ambiguous
     case (an id-less distinct message indistinguishable from an
     ``append_if_absent`` copy without a stable id) then loses no data
     permanently. A corroborated id-matched fold is NOT such a drop: the ids
@@ -588,8 +591,10 @@ def _frozen_prefix_and_foreign_appends(
         if ts and _take(exact_idx.get((ts, role, content))):
             handled[_j] = True
 
-    foreign: list[str] = []
-    dedup_dropped: list[str] = []
+    # Disk positions ride along so a dedup drop whose archive fails can return
+    # to ``foreign`` in disk order (see below).
+    foreign_at: list[tuple[int, str]] = []
+    dedup_at: list[tuple[int, str]] = []
     # After the exact pass, an in-place EDIT (same ``ts``, changed content) is the
     # only legitimate reason to drop a still-unmatched disk line by ``ts`` alone.
     # But under COLLIDING timestamps a ts-only match is AMBIGUOUS: a foreign
@@ -629,7 +634,7 @@ def _frozen_prefix_and_foreign_appends(
         if handled[_j]:
             continue
         if mid_foreign[_j]:
-            foreign.append(norm)
+            foreign_at.append((_j, norm))
             continue
         # ts-match: an in-place edit keeps the ``ts`` but changes content, so the
         # window's version wins and the disk line is dropped silently — but ONLY
@@ -651,10 +656,29 @@ def _frozen_prefix_and_foreign_appends(
         # copy and is dropped silently to avoid archive spam.
         if _take(rc_idx.get((role, content))):
             if ts:
-                dedup_dropped.append(norm)
+                dedup_at.append((_j, norm))
             continue
         # genuinely foreign → preserve verbatim.
-        foreign.append(norm)
+        foreign_at.append((_j, norm))
+    # The archive is the precondition of dropping a dedup line: until it lands
+    # the transcript holds that line's only copy. When *archive_dedup* raises,
+    # the lines are kept as foreign, in disk order, so the payload carries them:
+    # a duplicate row at worst, never a lost one. Decided here, before the
+    # cache below, so a cached fast path re-emits the same kept lines.
+    if dedup_at and archive_dedup is not None:
+        try:
+            archive_dedup([line for _j, line in dedup_at])
+        except Exception:
+            logger.warning(
+                "Slot %s keeping %d foreign-dedup line(s): archiving them failed",
+                slot.key,
+                len(dedup_at),
+                exc_info=True,
+            )
+            foreign_at = sorted(foreign_at + dedup_at, key=lambda item: item[0])
+            dedup_at = []
+    foreign = [line for _j, line in foreign_at]
+    dedup_dropped = [line for _j, line in dedup_at]
     # Cache the frozen prefix AND the foreign lines together, keyed on the
     # as-read (mtime, size). If this save's atomic_write later fails, the file
     # on disk is unchanged, so a subsequent save that re-reads the same
@@ -731,7 +755,7 @@ def compose_payload(
     # A rewrite archives every old line its payload does not repeat, so a bound
     # applied on that save would archive the rewritten rows a second time; the
     # next ordinary save applies it instead.
-    frozen_prefix, foreign_lines, dedup_dropped = _frozen_prefix_and_foreign_appends(
+    frozen_prefix, foreign_lines, _dedup_archived = _frozen_prefix_and_foreign_appends(
         slot,
         path,
         disk_older,
@@ -740,23 +764,19 @@ def compose_payload(
         bound_prefix=(
             None if rewrite else _file_change_prefix_bound(state, history_key, window_entries)
         ),
+        archive_dedup=lambda lines: _archive_lines(
+            history_key,
+            lines,
+            reason="foreign-dedup",
+            base=state.conversation_log._dir if state.conversation_log else None,
+        ),
     )
     # A fresh-``ts`` disk copy folded into the window by the bounded
     # (role, content) tiebreak is redundant with a window entry, so the
     # payload does not carry it. It is nonetheless the genuinely ambiguous
     # case (indistinguishable from a distinct same-content message without
-    # a stable per-message id), so archive it before the atomic replace so
-    # the trade-off loses no data permanently.
-    if dedup_dropped:
-        try:
-            base = state.conversation_log._dir if state.conversation_log else None
-            _archive_lines(history_key, dedup_dropped, reason="foreign-dedup", base=base)
-        except Exception:
-            logger.warning(
-                "Failed to archive foreign-dedup drops for %s",
-                history_key,
-                exc_info=True,
-            )
+    # a stable per-message id), so ``archive_dedup`` archives it before the
+    # atomic replace, and keeps it in ``foreign_lines`` when that fails.
     payload = (
         meta_str
         + frozen_prefix
@@ -785,12 +805,11 @@ def compose_payload(
     # nothing — and we skip the O(file) archive-diff read there to keep a
     # steady flush O(window). Both sides are passed as proper
     # per-line lists so the normalized-JSON diff matches the
-    # frozen-prefix lines (never archived).
+    # frozen-prefix lines (never archived). The archive is the precondition of
+    # the caller's replace, so a failed read or archive raises and nothing is
+    # written: the slot keeps ``_pending_rewrite`` and the next save retries.
     if rewrite and path.exists():
-        try:
-            old_lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-            new_lines = payload.splitlines(keepends=True)
-            _archive_dropped_lines(state, history_key, old_lines, new_lines)
-        except Exception:
-            logger.warning("Failed to archive dropped lines for %s", history_key, exc_info=True)
+        old_lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        new_lines = payload.splitlines(keepends=True)
+        _archive_dropped_lines(state, history_key, old_lines, new_lines)
     return payload, frozen_prefix, foreign_lines

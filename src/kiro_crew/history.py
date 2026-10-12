@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Literal, overload
 
 from kiro_crew import platform_compat
-from kiro_crew.atomic_write import append_line, atomic_write, atomic_write_at
+from kiro_crew.atomic_write import append_line, atomic_write, atomic_write_at, fsync_dir
 from kiro_crew.chat_attachments import persist_inline_images, same_text_modulo_images
 from kiro_crew.config.loader import KiroCrewConfig, config_dir
 
@@ -1077,7 +1077,17 @@ def _archive_dir(base: Path | None = None) -> Path:
 def _archive_lines(
     key: str, lines: list[str], reason: str, base: Path | None = None
 ) -> Path | None:
-    """Append dropped message lines to archive/{key}.{YYYYMMDD-HHMMSS}.jsonl. Returns path or None."""
+    """Append dropped message lines to archive/{key}.{YYYYMMDD-HHMMSS}.jsonl. Returns path or None.
+
+    Durable on return: the file, the directory entry naming it and the parent
+    entry naming the directory are synced before this returns, and a sync
+    failure raises. Every caller archives lines its next transcript rewrite
+    removes, so until the archive is on disk the transcript holds their only
+    copy, and an unsynced archive could be lost to a crash that the rewrite
+    survives. The parent is synced on every call, not only when this call made
+    the directory: a directory that exists was not necessarily synced into its
+    parent (an earlier call may have created it and then failed that sync).
+    """
     if not lines:
         return None
     import itertools
@@ -1108,9 +1118,13 @@ def _archive_lines(
         try:
             with open(candidate, "x", encoding="utf-8", opener=owner_only_opener) as f:
                 f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
             break
         except FileExistsError:
             continue
+    fsync_dir(adir)
+    fsync_dir(adir.parent)
     logger.info(
         "Archived %d lines from session %s to %s (reason=%s)",
         len(lines),

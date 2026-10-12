@@ -16,6 +16,7 @@ transcript.
 from __future__ import annotations
 
 import json
+import os
 import random
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from kiro_crew import history as history_module
 from kiro_crew.config.loader import KiroCrewConfig
+from kiro_crew.dashboard import chat_persistence
 from kiro_crew.dashboard.chat_persistence import _rehydrate_slot_from_history, _save_slot_to_history
 from kiro_crew.dashboard.slot_persistence import transcript_merge
 from kiro_crew.dashboard.slot_persistence.transcript_merge import (
@@ -407,3 +410,69 @@ def test_the_card_reads_the_reason_this_module_writes() -> None:
     """The card tells an older turn from a budget-demoted one by this exact value."""
     card = Path(__file__).resolve().parents[1] / "website/src/components/FileChangeChips.tsx"
     assert f"const OLDER_TURN = '{FILE_CHANGES_OLDER_TURN}'" in card.read_text(encoding="utf-8")
+
+
+class TestTheArchiveIsDurableBeforeTheReplace:
+    """Once the replace lands the archive holds the only copy, so it is synced first."""
+
+    def test_the_archive_file_and_directory_sync_before_the_transcript_replace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, keep
+    ) -> None:
+        keep(1)
+        rows = _history(6)
+        state, slot, path = _loaded_slot(tmp_path, monkeypatch, rows, window=2)
+        events: list[str] = []
+        archive_dir = tmp_path / "archive"
+
+        class _RecordingOs:
+            """``history``'s ``os``, recording each file fsync it is asked for."""
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(os, name)
+
+            @staticmethod
+            def fsync(fd: int) -> None:
+                events.append("file-fsync")
+                os.fsync(fd)
+
+        real_fsync_dir = history_module.fsync_dir
+        real_atomic_write = chat_persistence.atomic_write
+
+        def recording_fsync_dir(directory: Any, **kwargs: Any) -> None:
+            events.append(f"dir-fsync:{Path(directory).name}")
+            real_fsync_dir(directory, **kwargs)
+
+        def recording_atomic_write(*args: Any, **kwargs: Any) -> Any:
+            events.append("replace")
+            return real_atomic_write(*args, **kwargs)
+
+        monkeypatch.setattr(history_module, "os", _RecordingOs())
+        monkeypatch.setattr(history_module, "fsync_dir", recording_fsync_dir)
+        monkeypatch.setattr(chat_persistence, "atomic_write", recording_atomic_write)
+
+        assert _save_slot_to_history(state, slot) is True
+
+        assert len(_archives(tmp_path)) == 1
+        # The first archive also created its directory, so the parent is synced too.
+        assert events == [
+            "file-fsync",
+            f"dir-fsync:{archive_dir.name}",
+            f"dir-fsync:{tmp_path.name}",
+            "replace",
+        ]
+
+    def test_a_failed_archive_sync_keeps_the_rows_whole(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, keep
+    ) -> None:
+        """A sync that raises is a failed archive: the save keeps every copy."""
+        keep(1)
+        rows = _history(4)
+        state, slot, path = _loaded_slot(tmp_path, monkeypatch, rows, window=2)
+
+        def refuse(*_a: Any, **_k: Any) -> None:
+            raise OSError(5, "device did not take the write")
+
+        monkeypatch.setattr(history_module, "fsync_dir", refuse)
+
+        assert _save_slot_to_history(state, slot) is True
+        assert _changes(_rows(path)) == _changes(rows)
