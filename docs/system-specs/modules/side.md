@@ -406,10 +406,21 @@ and the derivation empties its `permissions` block with the other grants, so
 every KAS tool call raises `session/request_permission` (measured on kiro-cli
 2.29.0, `--agent-engine v3`). A main-chat `allow_always` does not carry over: KAS
 keeps it for its own session only, so a side session on the same process asks
-again (measured the same way). On KAS the gate proves less than on kiro-cli: a
-read-only shell command is approved from the `_meta.kiro.command` the engine
-states, while `read_file` and `grep_search` frames carry no
-`_meta.kiro.toolName` and are refused. Another harness has its own
+again (measured the same way). On KAS the gate proves the same calls as on
+kiro-cli. A read-only shell command is approved from the `_meta.kiro.command`
+the engine states. A file read or search is approved from the engine's own
+`_meta.kiro.toolId`: KAS's tool_call frame names no tool, so the permission
+frame's id fills the empty name (`acp/_dispatch.build_permission_event`), and on
+KAS alone (`kas_builtin_ids`) the read-only proof reads that id under its
+kiro-cli policy name (`hook_runtime/tool_identity._is_host_read_only_builtin`,
+`platform/tool_names.KIRO_CLI_NAME_BY_KAS_TOOL`). Four ids fold onto the host
+read-only allowlist: `read_file` and `list_directory` (`fs_read`),
+`grep_search` (`grep`) and `file_search` (`glob`). A write id folds onto
+`fs_write`, which the allowlist does not carry. An MCP tool that calls itself
+`read_file` is refused: KAS stamps `_meta.kiro.serverName` on its tool_call
+frame, and a call with a server is never a host built-in. The sensitive-path
+deny runs before the proof, so a `read_file` of `~/.aws/credentials` is
+refused (`test_side_readonly_kas.py`). Another harness has its own
 pre-approval surface (claude-agent-acp `permissions.allow` /
 `bypassPermissions`) that neither the derived spec nor the host gate can see:
 a call it pre-approves would run with no READ_ONLY decision and no SEL row. Off the set,

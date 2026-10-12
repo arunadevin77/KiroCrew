@@ -2330,10 +2330,12 @@ ACP_BACKENDS_MCP_CONFIG_HOT_RELOAD = frozenset({ACP_BACKEND_KIRO})
 # one process, after a normal session's ``run_command`` and ``fs_write`` were
 # answered ``allow_always``, the same calls from a ``--readonly`` side session, from
 # a second normal session, and from a fresh process each asked again. What the
-# READ_ONLY gate can then PROVE on KAS is narrower
-# than on kiro-cli: a shell command is judged from the ``_meta.kiro.command`` the
-# engine states, so a read-only one is approved, while ``read_file`` and
-# ``grep_search`` frames carry no ``_meta.kiro.toolName`` and stay refused.
+# READ_ONLY gate can then PROVE on KAS is what it
+# proves on kiro-cli: a shell command is judged from the ``_meta.kiro.command`` the
+# engine states, and a file read or search from the engine's ``_meta.kiro.toolId``
+# read under its kiro-cli policy name (``read_file``/``list_directory`` ->
+# ``fs_read``, ``grep_search`` -> ``grep``, ``file_search`` -> ``glob``), so a
+# read-only one is approved and anything else is refused.
 #
 # opencode is NOT a member. Its tool calls do reach ``session/request_permission``
 # (captured live), but that is by way of its own ``permission`` setting, not the
