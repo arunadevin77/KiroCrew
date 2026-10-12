@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from kiro_crew.config.loader import KiroCrewConfig
+
 SIDE_BOUNDARY_PROMPT = (
     "You are answering an ephemeral side question. Use the conversation "
     "only as background context. Do not continue or complete any "
@@ -57,3 +62,36 @@ def build_side_system_prompt(*, tools_available: bool = True) -> str:
     """
     boundary = SIDE_BOUNDARY_PROMPT if tools_available else SIDE_BOUNDARY_PROMPT_NO_TOOLS
     return f"{SIDE_DEVELOPER_INSTRUCTIONS}\n\n{boundary}"
+
+
+def build_side_format_prompt(cfg: KiroCrewConfig | None = None) -> str:
+    """The dashboard's rendering contract and the reply-style setting, for a side turn.
+
+    The main chat gets both on every turn from ``context.build_message``: the
+    ``[CRITICAL RULES]`` block says how the dashboard draws a reply (an absolute
+    path in backticks becomes a file chip, a URL must be a markdown link, an
+    ``[OPTIONS:]`` last line becomes buttons), and ``[RESPONSE PREFERENCES]``
+    carries ``dashboard.verbosity``. A side turn builds its own envelope
+    (``side_context.build_side_message``) and never calls ``build_message``, and
+    the derived read-only agent spec keeps the base spec's prompt, which on the
+    built-in agent only points at an ``[AGENT SYSTEM PROMPT]`` block no side turn
+    sends. So the side transcript is drawn by the same components as the main
+    chat while its model was told nothing about how they draw.
+
+    The rules are the main chat's own constants rather than a copy, so the two
+    surfaces cannot drift apart. The diff-block rule is the one part left out:
+    a side turn cannot change a file, so there is nothing for it to describe.
+
+    ``cfg`` is the config the turn already loaded (``_run_side_turn`` reads it to
+    resolve the agent); ``None`` when that load failed, in which case the
+    reply-style block is omitted rather than loaded again here. Imported inside
+    the function: ``kiro_crew.context`` is a heavy module that the dashboard
+    handlers load lazily for the same reason.
+    """
+    from kiro_crew.context import _CRITICAL_RULES_HEAD, _CRITICAL_RULES_TAIL
+    from kiro_crew.context_assembly.sections import _build_response_preferences_section
+
+    block = _CRITICAL_RULES_HEAD + _CRITICAL_RULES_TAIL
+    if cfg is not None:
+        block += _build_response_preferences_section(cfg)
+    return block.rstrip("\n")

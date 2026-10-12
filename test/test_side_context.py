@@ -140,3 +140,64 @@ def test_first_turn_states_the_boundary_again_right_before_the_question():
         )
         assert out.count(boundary) == 2
         assert out.endswith(f"{boundary}\n\nUser: and beta?")
+
+
+def _cfg(verbosity):
+    """Minimal config stub: the format prompt reads only ``cfg.dashboard.verbosity``."""
+    return SimpleNamespace(dashboard=SimpleNamespace(verbosity=verbosity))
+
+
+def test_first_turn_carries_the_dashboard_rendering_contract():
+    """The envelope tells the model how the dashboard draws a reply, in the main
+    chat's own words: the ``[CRITICAL RULES]`` block (absolute paths in backticks
+    become file chips, URLs are markdown links, ``[OPTIONS:]`` is the last line
+    and becomes buttons). It sits with the instructions, before the parent
+    snapshot — framing, not history — and the diff-block rule is left out
+    because a side turn cannot change a file."""
+    from kiro_crew.context import _CRITICAL_RULES_HEAD, _CRITICAL_RULES_TAIL
+
+    messages = [_msg("user", "deploy the alpha stack"), _msg("assistant", "Deployed.")]
+    out = sc.build_side_message(_slot(messages), "and beta?", is_first_turn=True)
+
+    assert _CRITICAL_RULES_HEAD in out
+    assert _CRITICAL_RULES_TAIL.rstrip("\n") in out
+    # The rules the side transcript's own renderer acts on.
+    assert "ALWAYS use the absolute path inside inline `code` backticks" in out
+    assert "Write every URL as [text](url) instead" in out
+    assert "[OPTIONS: Choice A | Choice B | Choice C] as the very last line" in out
+    # Nothing to describe: a read-only turn never changes a file.
+    assert "```diff" not in out
+    assert "File changes and diff blocks" not in out
+    assert "keep-visible" not in out
+    # Placement: after the system prompt, before the parent snapshot.
+    assert out.index("Decline to disrupt") < out.index(_CRITICAL_RULES_HEAD)
+    assert out.index(_CRITICAL_RULES_HEAD) < out.index(sc._PARENT_SNAPSHOT_HEADER)
+
+
+def test_follow_up_turn_stays_the_bare_question():
+    """The contract is framing the session retains; a follow-up is the question alone."""
+    out = sc.build_side_message(_slot([]), "and beta?", is_first_turn=False, cfg=_cfg("concise"))
+
+    assert out == "and beta?"
+
+
+def test_reply_style_follows_the_verbosity_setting():
+    """``dashboard.verbosity`` binds a side reply as it binds a main reply: the
+    ``[RESPONSE PREFERENCES]`` block is present for a non-default level, absent
+    for ``default``, and absent when the turn has no config to read it from."""
+    from kiro_crew.context_assembly.sections import _RESPONSE_PREFERENCES_HEADER
+
+    concise = sc.build_side_message(_slot([]), "q", is_first_turn=True, cfg=_cfg("concise"))
+    assert _RESPONSE_PREFERENCES_HEADER in concise
+    assert "Concise mode is on" in concise
+    # Preferences follow the rules; both precede the question.
+    assert concise.index("[END CRITICAL RULES]") < concise.index(_RESPONSE_PREFERENCES_HEADER)
+    assert concise.index(_RESPONSE_PREFERENCES_HEADER) < concise.index("User: q")
+
+    answer_only = sc.build_side_message(_slot([]), "q", is_first_turn=True, cfg=_cfg("answer_only"))
+    assert "Reply style: Answer Only" in answer_only
+
+    for cfg in (_cfg("default"), None):
+        out = sc.build_side_message(_slot([]), "q", is_first_turn=True, cfg=cfg)
+        assert _RESPONSE_PREFERENCES_HEADER not in out
+        assert "[CRITICAL RULES" in out

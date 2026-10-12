@@ -434,7 +434,11 @@ async def _run_side_turn(
         # The selected harness, read from the same config load that resolves the
         # agent. ``None`` when the load failed: the harness is then unknown, and
         # the read-only allowance below is granted by positive membership only.
+        # The config itself is kept too: the first-turn envelope reads the
+        # reply-style setting off it (``build_side_format_prompt``), and a
+        # failed load leaves it ``None`` so that block is simply omitted.
         side_backend: str | None = None
+        cfg: KiroCrewConfig | None = None
         try:
             cfg = KiroCrewConfig.load()
             side_backend = cfg.agent.acp_backend
@@ -617,6 +621,7 @@ async def _run_side_turn(
             question,
             is_first_turn=is_first_turn or (is_new and not resumed),
             tools_available=tools_available,
+            cfg=cfg,
         )
         try:
             response_text = await stream_and_collect(

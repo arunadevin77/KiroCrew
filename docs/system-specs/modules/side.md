@@ -280,12 +280,26 @@ Three prompt constants, two lifted from the upstream protocol:
 - `build_side_system_prompt(tools_available=...)` — concatenates the developer
   instructions and the matching boundary prompt into the first-turn envelope;
   the envelope repeats the boundary prompt before the question.
+- `build_side_format_prompt(cfg)` — the dashboard's rendering contract for a
+  side reply, in the main chat's own words: `context._CRITICAL_RULES_HEAD` +
+  `_CRITICAL_RULES_TAIL` (absolute paths in backticks become file chips, URLs
+  are markdown links, `[OPTIONS:]` is the last line and becomes buttons), then
+  the `[RESPONSE PREFERENCES]` block for `cfg.dashboard.verbosity`
+  (`context_assembly.sections._build_response_preferences_section`; omitted for
+  `default`, and when `cfg` is `None` because the turn's config load failed).
+  The diff-block rule is left out: a side turn cannot change a file. Reused
+  rather than copied so the two surfaces cannot drift. Without it the side
+  transcript was drawn by the main chat's components while its model had been
+  told nothing about how they draw — the derived read-only spec keeps the base
+  spec's prompt, which on the built-in agent only points at an
+  `[AGENT SYSTEM PROMPT]` block no side turn sends.
 
 ### `dashboard/side_context.py`
 
-- `build_side_message(slot, question, is_first_turn=...)` — with
-  `is_first_turn` set, the full envelope: developer instructions + parent
-  snapshot + side history + boundary prompt + question; otherwise the bare
+- `build_side_message(slot, question, is_first_turn=..., cfg=...)` — with
+  `is_first_turn` set, the full envelope: developer instructions + rendering
+  contract (`build_side_format_prompt(cfg)`) + parent snapshot + side history +
+  boundary prompt + question; otherwise the bare
   question (the session retains its framing). `_run_side_turn` sets it for
   the sidecar's first turn and for any turn whose acquisition cold-started
   the session (`get_or_create` reported a new, non-resumed session — a rebind
