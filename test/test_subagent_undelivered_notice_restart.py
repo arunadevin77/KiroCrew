@@ -342,3 +342,81 @@ async def test_a_drained_boot_orphan_notice_keeps_its_outcome_and_is_announced_o
     assert tomb.get("outcome") == ("completed" if whole else None)
     assert await _next_start_announcements(monkeypatch) == []
     assert len(transcript) == 1
+
+
+# The record a queued notice owes rides the slot ledger in memory until the drain.
+# Its entry cap bounds how many records the ledger holds, not how large each is, so
+# the fields the record carries from the run's ``state.json`` are bounded as they
+# are built. ``last_tool`` is backend-authored (a shell tool's title is the whole
+# command) and tool diagnostics persist it whole.
+_HUGE_COMMAND = "echo " + "x" * 200_000
+
+
+@pytest.mark.asyncio
+async def test_the_record_a_queued_notice_owes_is_bounded_where_it_is_built(monkeypatch):
+    from kiro_crew import subagent_persistence as sp
+    from kiro_crew.dashboard.state import _ChatSlot
+
+    _orphaned_run("orpL001", whole=False)
+    assert sp.update_state("orpL001", last_tool=_HUGE_COMMAND, turns=3)
+    slot, transcript = _ChatSlot("chat-7"), []
+    await _boot(monkeypatch, slot, transcript)
+    (delivery,) = slot.take_pending_subagent_deliveries(slot._pending_subagent_failures)
+    record = delivery.tombstone
+    assert record is not None
+    assert (
+        len(record["last_tool"]) <= 80
+    ), f"the ledger retained {len(record['last_tool'])} characters"
+    assert record["last_tool"].startswith("echo xxx")
+    assert (record["cause"], record["recovery_action"], record["turns"]) == (
+        "gateway_restart",
+        "delivered",
+        3,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("injected", [True, False], ids=["injected", "digest"])
+async def test_a_tombstone_the_scan_writes_carries_the_bounded_title(monkeypatch, injected):
+    from kiro_crew import subagent_persistence as sp
+
+    _orphaned_run("orpL002", whole=False)
+    assert sp.update_state("orpL002", last_tool=_HUGE_COMMAND, turns=5)
+    manager = _manager()
+
+    async def _inject(parent_session, msg, meta=None, delivery=None):  # type: ignore[no-untyped-def]
+        return injected
+
+    monkeypatch.setattr(manager, "_try_inject_orphan_notification", _inject)
+    monkeypatch.setattr(manager, "_send_orphan_slack_dm", AsyncMock())
+    monkeypatch.setattr(manager, "_is_pid_alive", lambda _pid: False)
+    await manager._reconcile_orphans()
+    tomb = sp.read_tombstone("orpL002") or {}
+    assert tomb.get("cause") == "gateway_restart"
+    assert tomb.get("turns") == 5
+    assert 0 < len(tomb.get("last_tool", "")) <= 80, tomb.get("last_tool", "")[:120]
+
+
+@pytest.mark.parametrize(
+    ("stored", "kept"),
+    [
+        (
+            {"pid": 4242, "turns": 7, "last_tool": "ls\n   -la"},
+            {"pid": 4242, "turns": 7, "last_tool": "ls -la"},
+        ),
+        (
+            {"pid": "4242", "turns": "7", "last_tool": ["ls"]},
+            {"pid": None, "turns": 0, "last_tool": ""},
+        ),
+        (
+            {"pid": True, "turns": True, "last_tool": 5},
+            {"pid": None, "turns": 0, "last_tool": ""},
+        ),
+        ({}, {"pid": None, "turns": 0, "last_tool": ""}),
+    ],
+    ids=["as-stored", "strings-and-lists", "booleans-and-numbers", "absent"],
+)
+def test_the_carried_fields_keep_only_the_types_the_run_stores(stored, kept):
+    from kiro_crew.subagent_manager.monitoring import orphan_carried_fields
+
+    assert orphan_carried_fields(stored) == kept

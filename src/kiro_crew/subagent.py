@@ -216,6 +216,7 @@ from kiro_crew.subagent_manager import (
     copy_component_docs,
 )
 from kiro_crew.subagent_manager.monitoring import (  # noqa: F401 - resolved by monitoring.py via bind_component_globals
+    orphan_carried_fields,
     orphan_resume_hint,
     tombstone_recovery_action,
 )

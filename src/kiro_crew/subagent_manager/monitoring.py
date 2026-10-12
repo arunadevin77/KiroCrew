@@ -81,6 +81,36 @@ if TYPE_CHECKING:
     )
 
 
+#: Longest ``last_tool`` an orphan's notice and its tombstone keep. The title is
+#: backend-authored (a shell tool's is the whole command) and the tombstone a queued
+#: notice owes rides the slot ledger in memory until the notice drains; the ledger's
+#: entry cap bounds how many records it holds, not how large each one is.
+_ORPHAN_LAST_TOOL_CHARS = 80
+
+
+def orphan_carried_fields(state: dict) -> dict[str, Any]:
+    """The fields of a restart orphan's tombstone that come from its run record.
+
+    Bounded where they are built, because the record outlives this call: a type
+    that is not the one the run's writer stores reads as absent (``pid`` ``None``,
+    ``turns`` 0, ``last_tool`` empty), and ``last_tool`` is flattened to one line,
+    redacted over the whole value, then cut to :data:`_ORPHAN_LAST_TOOL_CHARS`.
+    """
+    # Imported here, as ``orphan_resume_hint`` below does.
+    from ..security import redact_and_truncate
+
+    pid, turns, tool = state.get("pid"), state.get("turns"), state.get("last_tool")
+    return {
+        "pid": pid if type(pid) is int else None,
+        "turns": turns if type(turns) is int else 0,
+        "last_tool": (
+            redact_and_truncate(" ".join(tool.split()), _ORPHAN_LAST_TOOL_CHARS)
+            if isinstance(tool, str)
+            else ""
+        ),
+    }
+
+
 def orphan_resume_hint(agent_id: str, state: dict) -> str:
     """The resume line for a lost orphan's notice, or ``""`` when nothing survives.
 
@@ -116,7 +146,9 @@ def orphan_resume_hint(agent_id: str, state: dict) -> str:
         # ``bind_component_globals`` rebinds onto ``subagent``'s namespace.
         from ..security import redact_and_truncate
 
-        last_tool = redact_and_truncate(" ".join(str(state.get("last_tool") or "").split()), 80)
+        last_tool = redact_and_truncate(
+            " ".join(str(state.get("last_tool") or "").split()), _ORPHAN_LAST_TOOL_CHARS
+        )
         progress = f"It had completed {turns} turn(s)"
         if last_tool:
             progress += f"; its last tool call was `{last_tool}`"
@@ -484,9 +516,7 @@ class OrphanStallMonitor(ManagerComponent):
                     tombstone: dict[str, Any] = {
                         "cause": "gateway_restart",
                         "recovery_action": recovery,
-                        "pid": pid,
-                        "turns": state.get("turns", 0),
-                        "last_tool": state.get("last_tool", ""),
+                        **orphan_carried_fields(state),
                         # A run that finished is completed, whichever reader
                         # asks: the panel, this notice and the task queue.
                         **({"outcome": "completed"} if result_is_whole(state) else {}),
@@ -821,13 +851,11 @@ class OrphanStallMonitor(ManagerComponent):
         if has_dashboard_surface(parent_session):
             # The record a notice leaves once the parent agent has it. It is written
             # after the notice, so no earlier tombstone carries the outcome forward:
-            # it is stated here.
-            record = {
-                "cause": "gateway_restart",
+            # it is stated here. The slot ledger holds it in memory until the notice
+            # drains, so its fields are bounded as they are built.
+            fields = {
                 "recovery_action": "delivered",
-                "pid": state.get("pid"),
-                "turns": state.get("turns", 0),
-                "last_tool": state.get("last_tool", ""),
+                **orphan_carried_fields(state),
                 **({"outcome": "completed"} if result_is_whole(state) else {}),
             }
             try:
@@ -838,7 +866,9 @@ class OrphanStallMonitor(ManagerComponent):
                     parent_session,
                     msg,
                     row_meta,
-                    delivery=SubagentDelivery(agent_id, 0.0, 0.0, tombstone=record),
+                    delivery=SubagentDelivery(
+                        agent_id, 0.0, 0.0, tombstone={"cause": "gateway_restart", **fields}
+                    ),
                 )
                 if injected == ORPHAN_NOTICE_OWED:
                     # No tombstone exists yet (the scan writes one only after a
@@ -849,7 +879,9 @@ class OrphanStallMonitor(ManagerComponent):
                     # Update tombstone recovery_action
                     try:
                         # Off the loop, same reason as the reconciliation write.
-                        await asyncio.to_thread(write_tombstone, agent_id, **record)
+                        await asyncio.to_thread(
+                            write_tombstone, agent_id, cause="gateway_restart", **fields
+                        )
                     except Exception:
                         pass
                     return None
