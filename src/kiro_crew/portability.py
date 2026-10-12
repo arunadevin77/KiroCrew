@@ -904,8 +904,105 @@ def missing_crew_templates(config_path: Path) -> tuple[list[dict[str, str]], int
     return rows, len(missing) - len(kept)
 
 
+#: Archive directory (under the export prefix) that carries opted-in agent templates.
+AGENT_TEMPLATES_DIR = "agents"
+
+#: Stands in for every ``mcpServers.*.env`` and ``mcpServers.*.headers`` value of a
+#: bundled template: those values hold tokens and keys, and an export carries none.
+AGENT_TEMPLATE_SECRET_PLACEHOLDER = "<redacted: set on this machine>"
+
+#: Most templates one export carries; the reference walk stops there.
+MAX_BUNDLED_AGENT_TEMPLATES = 200
+
+#: A bundled template's file stem: one path segment, no separators, no leading dot.
+_TEMPLATE_STEM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+#: The spec keys under ``toolsSettings.subagent`` that name further templates.
+_SUBAGENT_REF_KEYS = ("availableAgents", "trustedAgents")
+
+
+def _template_refs_in_spec(data: dict[str, Any]) -> list[str]:
+    """The template names *data* hands work to (its subagent allow lists).
+
+    Glob patterns are left out: they name no single template.
+    """
+    tools_settings = data.get("toolsSettings")
+    sub = tools_settings.get("subagent") if isinstance(tools_settings, dict) else None
+    if not isinstance(sub, dict):
+        return []
+    names: list[str] = []
+    for key in _SUBAGENT_REF_KEYS:
+        value = sub.get(key)
+        for name in value if isinstance(value, list) else ():
+            if isinstance(name, str) and name and not any(ch in name for ch in "*?["):
+                names.append(name)
+    return names
+
+
+def redact_agent_template(data: dict[str, Any]) -> dict[str, Any]:
+    """A copy of template *data* with every MCP server ``env`` and ``headers`` value
+    replaced by :data:`AGENT_TEMPLATE_SECRET_PLACEHOLDER`. The keys stay, so the
+    receiving machine sees which values it has to fill in."""
+    out = json.loads(json.dumps(data))
+    servers = out.get("mcpServers")
+    for server in servers.values() if isinstance(servers, dict) else ():
+        if not isinstance(server, dict):
+            continue
+        for field in ("env", "headers"):
+            block = server.get(field)
+            if isinstance(block, dict):
+                server[field] = {key: AGENT_TEMPLATE_SECRET_PLACEHOLDER for key in block}
+            elif field in server:
+                server[field] = {}
+    return out
+
+
+def bundled_agent_templates() -> list[tuple[str, dict[str, Any]]]:
+    """``(file stem, redacted spec)`` for each template an opted-in export carries.
+
+    Starts from the templates this install's crews name (:func:`crew_template_refs`)
+    and follows each template's subagent allow lists in turn, visiting every name
+    once so a cycle ends the walk. A name is matched against a spec's ``name`` field
+    or file stem, the test the config loader applies. Templates Kiro Crew writes
+    itself are skipped (every install regenerates them), as are specs reached
+    through a link and specs whose stem is not a plain file name.
+    """
+    by_name: dict[str, tuple[str, dict[str, Any]]] = {}
+    for data, path in parsed_agent_specs(
+        kiro_agents_dir(), operation="portability", source="dashboard"
+    ):
+        if not isinstance(data, dict) or path.is_symlink():
+            continue
+        if not _TEMPLATE_STEM_RE.match(path.stem) or path.stem in _MANAGED_TEMPLATES:
+            continue
+        by_name.setdefault(path.stem, (path.stem, data))
+        spec_name = data.get("name")
+        if isinstance(spec_name, str) and spec_name:
+            by_name.setdefault(spec_name, (path.stem, data))
+
+    pending = sorted({t for _holder, t in crew_template_refs(_mc_dir() / "config.json")})
+    seen: set[str] = set()
+    chosen: dict[str, dict[str, Any]] = {}
+    while pending and len(chosen) < MAX_BUNDLED_AGENT_TEMPLATES:
+        name = pending.pop(0)
+        if name in seen or name in _MANAGED_TEMPLATES:
+            continue
+        seen.add(name)
+        found = by_name.get(name)
+        if found is None:
+            continue
+        stem, data = found
+        if stem not in chosen:
+            chosen[stem] = redact_agent_template(data)
+            pending.extend(_template_refs_in_spec(data))
+    return sorted(chosen.items())
+
+
 def create_export_zip(
-    *, include_sessions: bool = False, memory_only: bool = False
+    *,
+    include_sessions: bool = False,
+    memory_only: bool = False,
+    include_agent_templates: bool = False,
 ) -> tuple[bytes, dict]:
     """Create a zip archive of Kiro Crew state. Returns (zip_bytes, manifest_dict).
 
@@ -920,9 +1017,16 @@ def create_export_zip(
     other workspace files or chats, so memory can be handed to someone else without
     the rest of the install. The manifest records ``components: ["memory"]``. It
     wins over *include_sessions*.
+
+    *include_agent_templates* adds the agent templates the crews name, and the ones
+    those name in turn (:func:`bundled_agent_templates`), under ``agents/`` with every
+    MCP server ``env`` and ``headers`` value replaced by a placeholder. The manifest
+    then lists them in ``agent_templates``. Off by default; with it off the archive is
+    unchanged. A memory-only export carries none.
     """
     if memory_only:
         include_sessions = False
+        include_agent_templates = False
     mc = _mc_dir()
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     prefix = f"kirocrew-export-{ts}"
@@ -1028,6 +1132,15 @@ def create_export_zip(
                     stores.add(rel.parts[1])
         contents_summary["memory_store_count"] = len(stores)
 
+        bundled_templates: list[str] = []
+        if include_agent_templates:
+            for stem, spec in bundled_agent_templates():
+                zf.writestr(
+                    f"{prefix}/{AGENT_TEMPLATES_DIR}/{stem}.json", json.dumps(spec, indent=2)
+                )
+                bundled_templates.append(stem)
+            contents_summary["agent_template_count"] = len(bundled_templates)
+
         # Build the envelope before selecting chats so their timestamp map is
         # budgeted against the same document the importer will read.
         manifest = {
@@ -1040,6 +1153,8 @@ def create_export_zip(
         }
         if memory_only:
             manifest["components"] = ["memory"]
+        if include_agent_templates:
+            manifest["agent_templates"] = bundled_templates
         if include_sessions:
             session_mtimes: dict[str, float] = {}
             exported, withheld, skipped = _export_sessions(

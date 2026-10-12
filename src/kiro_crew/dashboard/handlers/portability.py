@@ -106,6 +106,9 @@ async def api_portability_export(request: web.Request) -> web.Response:
 
     ``?include_sessions=true`` adds the persistent dashboard chats
     (`portability._export_sessions`); without it the archive carries none.
+    ``?include_agent_templates=true`` adds the agent templates the crews name, with
+    their MCP server ``env`` and ``headers`` values replaced by a placeholder
+    (`portability.bundled_agent_templates`); without it the archive carries none.
     """
     if "user" not in request or not request["user"]:
         return web.json_response(
@@ -117,15 +120,23 @@ async def api_portability_export(request: web.Request) -> web.Response:
     caller = request["user"]
     # Opt-in per export: chats ride only when this request asks for them.
     include_sessions = request.query.get("include_sessions", "").lower() in ("1", "true")
+    include_agent_templates = request.query.get("include_agent_templates", "").lower() in (
+        "1",
+        "true",
+    )
     components, bad = _requested_components(request)
     if bad is not None:
         return bad
     memory_only = components == ["memory"]
     if memory_only:
         include_sessions = False
+        include_agent_templates = False
     try:
         zip_bytes, manifest = await asyncio.to_thread(
-            create_export_zip, include_sessions=include_sessions, memory_only=memory_only
+            create_export_zip,
+            include_sessions=include_sessions,
+            memory_only=memory_only,
+            include_agent_templates=include_agent_templates,
         )
     except Exception as e:
         logger.exception("Export failed")
@@ -154,6 +165,11 @@ async def api_portability_export(request: web.Request) -> web.Response:
             f",sessions={contents.get('session_count', 0)},sessions_skipped_size={skipped_size}"
             if include_sessions
             else ""
+        )
+        + (
+            f",agent_templates={contents.get('agent_template_count', 0)}"
+            if include_agent_templates
+            else ""
         ),
     )
 
@@ -162,12 +178,14 @@ async def api_portability_export(request: web.Request) -> web.Response:
         "Content-Length": str(len(zip_bytes)),
     }
     # The body is the archive, so the warning rides a header: the agent templates
-    # the crews name, none of which the bundle carries. JSON with ASCII escapes, so
+    # the crews name that the bundle does not carry. JSON with ASCII escapes, so
     # a hand-edited name cannot break the header line.
     # Bounded upstream (count and length), so the header stays small; the left-out
     # count rides along as a trailing "+N".
     # A memory export carries no crews or config, so the template warning does not apply.
     unbundled, more = ([], 0) if memory_only else await asyncio.to_thread(unbundled_agent_templates)
+    bundled = manifest.get("agent_templates") or []
+    unbundled = [name for name in unbundled if name not in bundled]
     if unbundled:
         headers[UNBUNDLED_TEMPLATES_HEADER] = json.dumps(unbundled + ([f"+{more}"] if more else []))
     if include_sessions:
