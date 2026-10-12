@@ -71,6 +71,9 @@ def split_cron_agent_member(agent_id: str, member_id: str) -> tuple[str, str]:
     never happens inside ``add_job`` -- so editing an existing schedule's
     ``agent`` field to a member name still records a template (the update paths
     are out of scope).
+
+    A name to classify loads the configuration from disk on every call, so an
+    ``async`` caller hands this function to ``asyncio.to_thread``.
     """
     from kiro_crew.config.loader import KiroCrewConfig, _resolve_agent_selection
 

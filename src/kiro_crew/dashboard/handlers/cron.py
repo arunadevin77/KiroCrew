@@ -926,9 +926,13 @@ async def api_crons_create(request: web.Request) -> web.Response:
     # POST can still send a member NAME in ``agent``; resolve the split here so
     # that path records a member selection too, not a template id the cron chat's
     # reply path cannot bind. An explicit ``member_id`` is left as the caller set it.
+    # The split reads the member roster from the configuration on disk, so it runs
+    # on a worker thread and never holds the event loop.
     from kiro_crew.cron_service.identity import split_cron_agent_member
 
-    agent_id, member_id = split_cron_agent_member(agent_id or "", member_id or "")
+    agent_id, member_id = await asyncio.to_thread(
+        split_cron_agent_member, agent_id or "", member_id or ""
+    )
     add_kwargs: dict[str, Any] = {
         "channel": channel,
         "agent_id": (agent_id or ""),
