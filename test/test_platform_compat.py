@@ -7995,13 +7995,6 @@ class TestOpenLockFile:
         import kiro_crew
 
         src_root = os.path.dirname(os.path.abspath(kiro_crew.__file__))
-        # deploy/pending.py and deploy/profiles.py are owned by an in-flight
-        # deploy-locks fix; drop the exemptions once it merges — the scan
-        # will then enforce those sites too.
-        exempt = {
-            os.path.join(src_root, "deploy", "pending.py"),
-            os.path.join(src_root, "deploy", "profiles.py"),
-        }
         offenders = []
         open_w = re.compile(r"""\bopen\([^)]*["']wb?["']\)""")
         acquire = re.compile(r"\b(file_lock|flock_exclusive|acquire_lock)\(\s*\w+\.fileno\(\)")
@@ -8010,8 +8003,6 @@ class TestOpenLockFile:
                 if not name.endswith(".py"):
                     continue
                 path = os.path.join(dirpath, name)
-                if path in exempt:
-                    continue
                 with open(path, encoding="utf-8", errors="replace") as fh:
                     lines = fh.readlines()
                 for i, line in enumerate(lines):
