@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -27,7 +28,9 @@ from chat_test_helpers import _make_state
 
 from kiro_crew import session_directive
 from kiro_crew.acp.types import (
+    EVENT_COMPACTION_STATUS,
     EVENT_COMPLETE,
+    EVENT_STEER_CONSUMED,
     EVENT_TEXT_CHUNK,
     EVENT_TOOL_CALL,
     EVENT_TOOL_RESULT,
@@ -274,6 +277,33 @@ class _ScriptedProvider:
         pass
 
 
+class _RecordingRenderer(_NullRenderer):
+    def __init__(self):
+        super().__init__()
+        self.text: list[str] = []
+
+    async def on_text_chunk(self, text):
+        self.text.append(text)
+
+
+#: Placed in a scripted stream where a person's steer reaches the backend: the
+#: provider stamps the write the way the ACP session does.
+_STAMP = object()
+
+
+class _StampingProvider(_ScriptedProvider):
+    last_steer_monotonic = 0.0
+
+    async def stream(self, message):
+        for ev in self._events:
+            if ev is _STAMP:
+                # Strictly after the turn's own start stamp, whatever the
+                # platform clock's resolution.
+                self.last_steer_monotonic = time.monotonic() + 1.0
+                continue
+            yield ev
+
+
 def _core_call(tool: str, tcid: str = "tc-1") -> AcpEvent:
     return AcpEvent(
         kind=EVENT_TOOL_CALL,
@@ -364,6 +394,79 @@ class TestChannelDriverHonoursTheSignal:
         asyncio.run(driver.run("patrol"))
         assert driver.terminal_directive_applied is True
         assert driver.empty_turn_notice != ""
+
+    def test_text_after_the_quiet_end_is_dropped_not_rendered(self, caplog):
+        """The backend's alternation filler echoed after an applied
+        ``nothing_to_do`` reaches the channel as a plain text chunk. Keyed on
+        the consumer's structured answer, the driver drops it: nothing reaches
+        the renderer, ``run()`` returns no text for the transcript, the quiet
+        end still owes no notice, and the violation is one counted WARNING."""
+
+        async def _consumer(kind, args):
+            return True
+
+        marker = session_directive.encode("nothing_to_do", {}, "Quiet end requested.")
+        events = [
+            _core_call("nothing_to_do"),
+            _result(marker),
+            AcpEvent(kind=EVENT_TEXT_CHUNK, text="(No assistant response was recorded "),
+            AcpEvent(kind=EVENT_TEXT_CHUNK, text="for the preceding turn.)"),
+            AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
+        ]
+        renderer = _RecordingRenderer()
+        driver = TurnDriver(_ScriptedProvider(events), renderer, directive_consumer=_consumer)
+        with caplog.at_level("WARNING", logger="kiro_crew.messaging.driver"):
+            text = asyncio.run(driver.run("patrol"))
+        assert text == ""
+        assert driver.partial_text == ""
+        assert renderer.text == []
+        assert driver.terminal_directive_applied is True
+        assert driver.empty_turn_notice == ""
+        violations = [r for r in caplog.records if "Turn-end contract violation" in r.getMessage()]
+        assert len(violations) == 1
+        assert "2 text frame(s)" in violations[0].getMessage()
+        assert "preceding turn" not in violations[0].getMessage()
+
+    @pytest.mark.parametrize("order", ["echo_before_reply", "stamp_only", "echo_before_quiet_end"])
+    def test_a_steer_in_the_turn_keeps_the_reply_through_a_quiet_end(self, caplog, order):
+        """A person can steer into a channel turn that ends (or has ended) on
+        ``nothing_to_do`` while its stream is still open. Their answer must not
+        be dropped with the filler, in every shape the evidence takes: kiro-cli
+        echoes consumption before the reply streams; codex echoes it only at
+        the terminal, so the provider's steer stamp is the only early evidence;
+        and a steer the model read BEFORE the directive still owns the text
+        that follows it."""
+
+        async def _consumer(kind, args):
+            return True
+
+        marker = session_directive.encode("nothing_to_do", {}, "Quiet end requested.")
+        quiet_end = [_core_call("nothing_to_do"), _result(marker)]
+        filler = AcpEvent(kind=EVENT_TEXT_CHUNK, text="(No assistant response was recorded.)")
+        reply = AcpEvent(kind=EVENT_TEXT_CHUNK, text="Yes, still here.")
+        consumed = AcpEvent(kind=EVENT_STEER_CONSUMED, text="are you still there?")
+        if order == "echo_before_reply":
+            events = quiet_end + [filler, _STAMP, consumed, reply]
+            dropped = 1
+        elif order == "stamp_only":
+            events = quiet_end + [filler, _STAMP, reply]
+            dropped = 1
+        else:
+            events = [_STAMP, consumed] + quiet_end + [reply]
+            dropped = 0
+        events.append(AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"))
+        renderer = _RecordingRenderer()
+        driver = TurnDriver(_StampingProvider(events), renderer, directive_consumer=_consumer)
+        with caplog.at_level("WARNING", logger="kiro_crew.messaging.driver"):
+            text = asyncio.run(driver.run("patrol"))
+        assert text == "Yes, still here."
+        assert "".join(renderer.text) == "Yes, still here."
+        assert driver.terminal_directive_applied is True
+        violations = [r for r in caplog.records if "Turn-end contract violation" in r.getMessage()]
+        if dropped:
+            assert len(violations) == 1 and "1 text frame(s)" in violations[0].getMessage()
+        else:
+            assert violations == []
 
     def test_the_flag_resets_per_run(self):
         async def _consumer(kind, args):
@@ -709,3 +812,108 @@ class TestDashboardRunnerHonoursTheSignal:
         assert len(violations) == 1
         assert "2 model event(s)" in violations[0].getMessage()
         assert "No assistant response" not in violations[0].getMessage()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "order", ["echo_before_reply", "echo_at_terminal", "echo_before_quiet_end"]
+    )
+    async def test_a_person_s_steer_keeps_the_reply_through_a_quiet_end(
+        self, tmp_path, monkeypatch, caplog, order
+    ):
+        """A person can steer into a turn that ends (or has ended) on
+        ``nothing_to_do`` while its stream is still open. Their answer must not
+        be dropped with the filler, in every order a backend produces: kiro-cli
+        echoes consumption before the reply streams; codex echoes it only at the
+        terminal, so the steer is still pending when the text arrives; and a
+        steer the model read BEFORE calling the directive still owns the text
+        that follows it."""
+        state = _stub_state(tmp_path)
+        slot = state.get_or_create_slot("steer-" + order)
+        slot._titled = True
+        steer = "are you still there?"
+        consumed = AcpEvent(kind=EVENT_STEER_CONSUMED, text=steer)
+        quiet_end = [
+            _core_call("nothing_to_do", "tc-quiet"),
+            _result(
+                session_directive.encode("nothing_to_do", {}, "Quiet end requested."), "tc-quiet"
+            ),
+        ]
+        filler = AcpEvent(kind=EVENT_TEXT_CHUNK, text="(No assistant response was recorded.)")
+        reply = AcpEvent(kind=EVENT_TEXT_CHUNK, text="Yes, still here.")
+        # The admission ``steer_into_running_turn`` records for a live steer,
+        # placed in the stream where the person pressed send.
+        admit = object()
+        if order == "echo_before_reply":
+            # The filler echo lands before any person spoke: still dropped.
+            events = quiet_end + [filler, admit, consumed, reply]
+            dropped = 1
+        elif order == "echo_at_terminal":
+            events = quiet_end + [filler, admit, reply, consumed]
+            dropped = 1
+        else:
+            # Once a person's steer was read, nothing after the quiet end can be
+            # told from their answer, so nothing is dropped.
+            events = [admit, consumed] + quiet_end + [reply]
+            dropped = 0
+        events.append(AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"))
+
+        def _stream():
+            for ev in events:
+                if ev is admit:
+                    slot._pending_steers.append(steer)
+                    continue
+                yield ev
+
+        with caplog.at_level("WARNING", logger="kiro_crew.dashboard.chat_runner"):
+            await _drive_turn(state, slot, _stream(), monkeypatch)
+        assistant = [m for m in slot.messages if m.get("role") == "assistant"]
+        assert [m["content"] for m in assistant] == ["Yes, still here."], slot.messages
+        assert not any("No assistant response" in str(m.get("content", "")) for m in slot.messages)
+        wire = [
+            c.args[1]["content"]
+            for c in state.broadcast_ws.call_args_list
+            if c.args and c.args[0] == "chat_chunk"
+        ]
+        assert "".join(wire) == "Yes, still here."
+        assert slot._pending_steers == []
+        violations = [r for r in caplog.records if "Turn-end contract violation" in r.getMessage()]
+        if dropped:
+            assert len(violations) == 1 and "1 model event(s)" in violations[0].getMessage()
+        else:
+            assert violations == []
+
+    @pytest.mark.asyncio
+    async def test_a_compacted_quiet_end_queues_no_continuation(self, tmp_path, monkeypatch):
+        """An automatic compaction completed mid-turn, then the turn ended on
+        ``nothing_to_do`` and the model echoed the filler. The dropped text
+        leaves the answer segment empty, which is exactly what the
+        post-compaction continuation reads as an abandoned request — but a
+        quiet end is answered by its directive, so no notice and no synthetic
+        continuation."""
+        state = _stub_state(tmp_path)
+        slot = state.get_or_create_slot("compacted-quiet-end")
+        slot._titled = True
+        events = [
+            AcpEvent(kind=EVENT_COMPACTION_STATUS, text="started"),
+            AcpEvent(kind=EVENT_COMPACTION_STATUS, text="completed", title="summary"),
+            _core_call("nothing_to_do", "tc-quiet"),
+            _result(
+                session_directive.encode("nothing_to_do", {}, "Quiet end requested."), "tc-quiet"
+            ),
+            AcpEvent(kind=EVENT_TEXT_CHUNK, text="(No assistant response was recorded.)"),
+            AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
+        ]
+        queue_calls = await _drive_turn(state, slot, events, monkeypatch)
+        assert queue_calls == [], "a compacted quiet end queued a continuation"
+        assert slot._compaction_continue_retries == 0
+        recovery = [
+            m
+            for m in slot.messages
+            if m.get("role") == "notice"
+            and (m.get("meta") or {}).get("kind") == EMPTY_TURN_NOTICE_KIND
+        ]
+        assert recovery == [], recovery
+        # The compaction notice is the only assistant row; the filler is gone.
+        assistant = [m["content"] for m in slot.messages if m.get("role") == "assistant"]
+        assert all(c.startswith("✅ Conversation compacted") for c in assistant), assistant
+        assert not any("No assistant response" in c for c in assistant)

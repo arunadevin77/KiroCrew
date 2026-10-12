@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import logging
 import re
+import time
 from typing import Any, Awaitable, Callable
 
 from kiro_crew import name_grant, session_directive
@@ -605,6 +606,27 @@ class TurnDriver:
         stream_redactor = StreamRedactor(_redact)
         pending_steer_events = 0
         unmatched_marker_events = 0
+        # Monotonic start of this turn, compared with the provider's stamp of
+        # its last steer write (``last_steer_monotonic``, 0.0 when the provider
+        # has none) to tell whether a steer entered THIS turn.
+        turn_started = time.monotonic()
+        # A steer entered this turn: a consumption echo (typed event or inline
+        # marker) was seen, or the provider stamped a steer write after the
+        # turn began (codex echoes consumption only at the terminal, so the
+        # stamp is the only early evidence there). Any text after that may be
+        # the model's answer to the person who steered — including text after
+        # a quiet end the model reached once it had read the steer — so the
+        # post-terminal text drop below is off for the rest of the turn: a
+        # stray bubble is recoverable, a dropped answer is not. The driver's
+        # own deny notices are steers too and lift it the same way; it cannot
+        # tell them apart on the wire, and an unattributable steer is treated
+        # as a person's.
+        steered_this_turn = False
+        # Model text seen AFTER a terminal directive applied: a turn-end
+        # contract violation. Counted and dropped — never rendered, never
+        # accumulated — then reported once at turn end. Counts only, by
+        # contract: no text in the log line.
+        text_after_terminal = 0
         # tool_call_id -> canonical directive-tool name, recorded at
         # EVENT_TOOL_CALL from the trusted ``_meta.kiro`` identity and consumed
         # at the matching EVENT_TOOL_RESULT. Only populated when a directive
@@ -657,12 +679,36 @@ class TurnDriver:
                 self.partial_text = accumulated
                 await self.renderer.dispatch(OutputEvent(kind=TEXT_CHUNK, text=tail))
 
+        def steer_entered_turn() -> bool:
+            try:
+                stamp = float(getattr(self.provider, "last_steer_monotonic", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                return False
+            return stamp > turn_started
+
         async def dispatch_frames(frames: list[tuple[str, str]]) -> None:
             nonlocal pending_steer_events, unmatched_marker_events
+            nonlocal steered_this_turn, text_after_terminal
             for frame_kind, payload in frames:
                 if frame_kind == "text":
+                    if self.terminal_directive_applied and not steered_this_turn:
+                        if steer_entered_turn():
+                            steered_this_turn = True
+                        else:
+                            # The turn already ended on an applied terminal
+                            # directive (the consumer's structured answer,
+                            # never the prose): the quiet end is the reply, so
+                            # text after it is a contract violation and not an
+                            # answer — today the model echoing the backend's
+                            # request-side alternation filler after a
+                            # tool-result tail. Counted, never rendered.
+                            text_after_terminal += 1
+                            continue
                     await emit_text(payload)
                     continue
+                # An inline steer marker is a consumption echo: a steer is in
+                # this turn, so the text that follows it is kept.
+                steered_this_turn = True
                 # Preserve a lexical separator where the inline marker was removed.
                 # Flushing an unterminated credential tail directly would emit its
                 # pre-steer half; join-based renderers could then concatenate the
@@ -699,6 +745,7 @@ class TurnDriver:
                 productive = True
                 await self.renderer.dispatch(OutputEvent(kind=THINKING, text=_redact(event.text)))
             elif kind == EVENT_STEER_CONSUMED:
+                steered_this_turn = True
                 # kiro-cli emits both a typed lifecycle event and an inline
                 # marker, in either order. Pair them so renderers receive one
                 # structured boundary, never two rotations. If an older backend
@@ -1091,6 +1138,15 @@ class TurnDriver:
                         kind=DONE, stop_reason=event.stop_reason, notice=self.empty_turn_notice
                     )
                 )
+        if text_after_terminal:
+            # Turn-end contract: a terminal directive is the LAST thing in its
+            # turn. Text after it is the model's violation, not the driver's —
+            # the turn still ends quietly. Reported once; counts only.
+            logger.warning(
+                "Turn-end contract violation on a channel turn: %d text frame(s) "
+                "after the terminal directive applied.",
+                text_after_terminal,
+            )
         if not self.completion_observed:
             # The stream ended without a terminal. The text is not final yet: the
             # compaction filter, the steering filter and the stream redactor each
