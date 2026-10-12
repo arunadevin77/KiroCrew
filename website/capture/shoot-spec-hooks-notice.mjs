@@ -17,7 +17,8 @@ console.log('vite up on 5177')
 const browser = await chromium.launch({ executablePath: CHROMIUM_PATH, args: ['--no-sandbox'] })
 
 for (const [scene, name] of [['run-nowhere', '01-run-nowhere-dark'], ['withheld', '02-withheld-dark'],
-                               ['run-nowhere', '03-run-nowhere-light'], ['withheld', '04-withheld-light']]) {
+                               ['withheld-none', '03-withheld-none-dark'], ['run-nowhere', '04-run-nowhere-light'],
+                               ['withheld', '05-withheld-light'], ['withheld-none', '06-withheld-none-light']]) {
   const theme = name.includes('light') ? 'light' : 'dark'
   const ctx = await browser.newContext({ viewport: { width: 800, height: 400 }, reducedMotion: 'reduce' })
   const page = await ctx.newPage()

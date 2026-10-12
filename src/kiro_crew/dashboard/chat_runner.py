@@ -1051,7 +1051,11 @@ async def _prepare_spec_hooks(
             "msg msg-info",
         )
     if is_new:
-        await _surface_withheld_project_hooks(state, slot, client, agent)
+        # A withheld project spec yields the user-level spec in its place, so
+        # these hooks are exactly the user-level ones that still run.
+        await _surface_withheld_project_hooks(
+            state, slot, client, agent, user_hooks_run=bool(hooks)
+        )
     return hooks, False, work_dir
 
 
@@ -1085,13 +1089,20 @@ async def _notice_spec_hooks_run_nowhere(
 
 
 async def _surface_withheld_project_hooks(
-    state: "DashboardState", slot: "_ChatSlot", client: Any, agent: str
+    state: "DashboardState",
+    slot: "_ChatSlot",
+    client: Any,
+    agent: str,
+    *,
+    user_hooks_run: bool,
 ) -> None:
     """One notice row when the checkout's own spec sets ``hooks`` Crew does not run.
 
     The hooks are withheld by :func:`trusted_project_agent_spec`; this only says so,
-    so a repository's hooks never stop running unseen. Best-effort: a failed check
-    renders nothing rather than failing the turn.
+    so a repository's hooks never stop running unseen. *user_hooks_run* says
+    whether the user-level spec read in its place carries hooks this session runs,
+    which the notice states only when true. Best-effort: a failed check renders
+    nothing rather than failing the turn.
     """
     project_dir = spec_project_dir(client)
     if not project_dir:
@@ -1106,7 +1117,7 @@ async def _surface_withheld_project_hooks(
             state,
             slot,
             "notice",
-            _redact_display_text(_spec_withheld_hooks_notice(agent)),
+            _redact_display_text(_spec_withheld_hooks_notice(agent, user_hooks_run=user_hooks_run)),
             "msg msg-info",
             meta={"kind": SPEC_HOOKS_NOTICE_KIND},
         )

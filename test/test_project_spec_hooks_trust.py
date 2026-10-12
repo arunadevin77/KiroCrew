@@ -167,9 +167,24 @@ def test_withheld_project_hooks_show_one_notice_on_a_new_session(
     _write(agents_dir / f"{_AGENT}.json", _hooks(_USER_CMD))
     repo = _repo(tmp_path)
     rows = _notices(backend, repo, monkeypatch)
-    assert rows == [chat_runner._spec_withheld_hooks_notice(_AGENT)]
-    assert _AGENT in rows[0] and "hooks" in rows[0]
+    assert rows == [chat_runner._spec_withheld_hooks_notice(_AGENT, user_hooks_run=True)]
+    assert "still run" in rows[0]
     assert _notices(backend, repo, monkeypatch, is_new=False) == []
+
+
+@pytest.mark.parametrize("backend", _MIRRORS)
+@pytest.mark.parametrize(
+    "user_spec", [None, {}, {"hooks": {}}], ids=["absent", "no-hooks", "empty-hooks"]
+)
+def test_withheld_notice_never_claims_user_hooks_run_when_none_do(
+    backend, user_spec, agents_dir, tmp_path, monkeypatch
+):
+    if user_spec is not None:
+        _write(agents_dir / f"{_AGENT}.json", user_spec)
+    rows = _notices(backend, _repo(tmp_path), monkeypatch)
+    assert rows == [chat_runner._spec_withheld_hooks_notice(_AGENT, user_hooks_run=False)]
+    assert "still run" not in rows[0]
+    assert "user-level spec" in rows[0]
 
 
 @pytest.mark.parametrize("backend", _MIRRORS)

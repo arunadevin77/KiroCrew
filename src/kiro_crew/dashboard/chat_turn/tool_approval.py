@@ -80,13 +80,20 @@ def _spec_hooks_run_nowhere_notice(agent: str, events: list[str]) -> str:
     )
 
 
-def _spec_withheld_hooks_notice(agent: str) -> str:
-    """The session-start notice for a project spec's ``hooks`` Crew does not run."""
-    return (
-        f"ℹ This project's own spec for agent {agent} sets hooks. Crew does not "
-        "run commands from a project checkout, so those hooks do not run in this "
-        "session. Hooks from your user-level spec of that name still run."
+def _spec_withheld_hooks_notice(agent: str, *, user_hooks_run: bool) -> str:
+    """The session-start notice for a project spec's ``hooks`` Crew does not run.
+
+    *user_hooks_run* is whether the user-level spec of that name, the one read in
+    the project spec's place, carries hooks this session runs. Only then does the
+    notice say some still run; otherwise it names where a trusted hook can go.
+    """
+    lead = (
+        f"ℹ Project hooks for agent {agent} do not run in this session: Crew does "
+        "not run commands from a project checkout."
     )
+    if user_hooks_run:
+        return f"{lead} The hooks in your user-level spec for agent {agent} still run."
+    return f"{lead} To run a hook you trust, add it to your user-level spec for agent {agent}."
 
 
 #: Deny classes a credential-vending MCP server can actually resolve. Only these

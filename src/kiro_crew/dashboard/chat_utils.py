@@ -3750,9 +3750,9 @@ EMPTY_TURN_NOTICE_KIND = "empty_turn"
 
 #: ``meta.kind`` of the session-start notice that informs the user their agent
 #: spec's ``hooks`` are withheld (project spec not trusted) or never run (backend
-#: has no hook channel). Both are status-only and carry no action for the person.
-#: Crewmate chat drops them (``crewmateBubbles.isCrewmateChatRow``); Sessions
-#: draws them.
+#: has no hook channel). Sessions draws them; crewmate chat drops them
+#: (``crewmateBubbles.isCrewmateChatRow``), because that chat draws no runtime
+#: notice of any kind (the "crewmate chat draws messages only" decision record).
 SPEC_HOOKS_NOTICE_KIND = "spec_hooks"
 
 #: ``meta["notice"]`` on the three `error` rows the transient-5xx ladder appends
