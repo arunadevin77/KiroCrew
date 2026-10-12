@@ -507,10 +507,13 @@ process instead, which is the path
 [windows-install.md](../guides/windows-install.md) describes and the one the
 managed-server invocation resolves.
 
-### `build.yml`'s installer job boots the gateway it installed, on every PR
+### `build.yml`'s installer job boots the gateway it installed, on every qualifying PR
 
 `build.yml`'s `build-windows-installer` job compiles an NSIS installer on every
-qualifying PR, installs it silently, and runs
+qualifying PR (one that changed a Windows-packaging input, per `desktop-matrix`'s
+`windows_installer` filter; a merge group always qualifies, and so does a push
+to main unless `MERGE_QUEUE_ENABLED` is `'true'`),
+installs it silently, and runs
 `.github/scripts/test-windows-installer.ps1` with NO `-SkipGatewayValidation`.
 The script starts the just-installed bundled interpreter against an isolated data
 home and requires `/api/ready` within 50 seconds, so an artifact that installs
