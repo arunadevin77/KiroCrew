@@ -319,6 +319,13 @@ access token.
   existing credential-redaction floor).
 - The child process running any browser-open MUST bind the callback listener to
   `127.0.0.1` only.
+- The loopback sign-in listener (`auth/login/portal.py:bind_allowed_port`) claims its
+  port per platform: `SO_REUSEADDR` on POSIX (a rebind through `TIME_WAIT`; a live
+  listener still refuses it) and `SO_EXCLUSIVEADDRUSE` on Windows, where two listeners
+  that both set `SO_REUSEADDR` share one address and the browser's callback can reach
+  either. A held port then fails the bind and the loop takes the next allowlisted port.
+  `test/test_reuseaddr_platform_branch.py` fails any production `SO_REUSEADDR` set
+  outside a platform branch.
 - `KIRO_API_KEY` remains a supported headless path (matches KAS `EnvAuthProvider`), and
   its ApiKey identity must fail-fast on usage/credit APIs (existing lesson).
 
