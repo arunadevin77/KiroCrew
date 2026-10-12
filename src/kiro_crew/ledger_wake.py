@@ -78,14 +78,23 @@ _RATE_WINDOW_SECS = 3600.0
 #: items still in the window.
 _MAX_TRACKED_ITEMS = 4 * _MAX_ITEMS_PER_CONDUCTOR
 
-#: Tokens remembered per item, so a tick that produces more than one wake for the
-#: same item does not evict its own exemptions. Derived, not guessed: it has to cover
-#: everything one item can be charged for inside a window, and that is the window's
-#: own budget -- which also dominates the probe's eight-event tail. A smaller bound
-#: silently reintroduces the bug it was added for: the tick re-reports its live
-#: tokens, the evicted ones are charged again, and the budget is spent on unchanged
-#: facts until a genuinely new report is refused.
+#: Tokens remembered per item. They are the item's SEEN set: :func:`already_woke`
+#: answers from them, and the probe never re-reports a token found there. Derived, not
+#: guessed: every token the probe can still re-read must fit, and that is one per
+#: report in its eight-event tail plus the newest silence (``note_wake``'s
+#: *replaces* drops the older ones). The hourly budget dominates both that and
+#: everything one window can charge. A smaller bound evicts a token the tail still
+#: holds, and the probe then wakes its conductor again for a report it already
+#: delivered.
 _MAX_REMEMBERED_TOKENS = MAX_WAKES_PER_ITEM_PER_HOUR
+
+#: Watches whose seen sets one item keeps. Each driver polling a ledger -- a loop's
+#: own tick, and the gate's terminal recheck under its own identity -- needs its own
+#: set, for the reason ``irq`` keeps one dedupe memory per driver: a driver that
+#: throws its verdict away must not mark a report delivered for one that does not.
+#: One conductor runs one loop, which brings at most those two, so four leaves room
+#: for a re-armed loop; the oldest-written set goes first.
+_MAX_WATCHERS_PER_ITEM = 4
 
 #: Charge moments stored per item. One more than the budget: the budget's own count
 #: is what the window needs, and the extra slot keeps a moment that arrives while the
@@ -93,11 +102,12 @@ _MAX_REMEMBERED_TOKENS = MAX_WAKES_PER_ITEM_PER_HOUR
 _MAX_STORED_WAKES = MAX_WAKES_PER_ITEM_PER_HOUR + 1
 
 
-def _recent_tokens(entry: Any) -> tuple[str, ...]:
-    """The tokens already charged for one item, newest first."""
+def _seen_tokens(entry: Any, watcher: str) -> tuple[str, ...]:
+    """The tokens *watcher* already woke its conductor for on one item, newest first."""
     if not isinstance(entry, dict):
         return ()
-    raw = entry.get("recent_tokens")
+    seen = entry.get("seen")
+    raw = seen.get(watcher) if isinstance(seen, dict) else None
     if isinstance(raw, list):
         return tuple(str(item) for item in raw if isinstance(item, str))
     return ()
@@ -323,9 +333,7 @@ def _as_number(value: Any) -> float:
     return number
 
 
-def within_rate_limit(
-    conductor_key: str, item_id: str, *, token: str = "", now: float | None = None
-) -> bool:
+def within_rate_limit(conductor_key: str, item_id: str, *, now: float | None = None) -> bool:
     """Whether a wake for *item_id* may fire now.
 
     Read-only: it answers without spending the budget, so an item refused for some
@@ -337,66 +345,105 @@ def within_rate_limit(
     expiry, so a full allowance just before a reset and another just after it both
     pass while the hour spanning them holds twice the budget.
 
-    *token* identifies WHICH wake is being asked about -- an event id, or an
-    item's silence. A probe re-reports a condition on every tick until the
-    kernel's own mask expires, and charging each of those re-reads would spend the
-    hour's allowance on one unchanged fact and then swallow the genuinely new
-    report that follows it. So a token that was charged recently is always allowed
-    again: it is the same wake, already accounted, and the kernel decides whether
-    it is delivered.
-
-    Several tokens are remembered, not one. A single item can produce TWO wakes in
-    the same tick -- a worker reported ``blocked`` and then stopped, so the report's
-    event id and the silence are both live -- and with one remembered token each
-    tick would evict the other's exemption and re-charge it, emptying the budget in
-    half the ticks it is meant to cover.
+    It counts DISTINCT wakes only because the probe asks :func:`already_woke` first:
+    a token already charged never reaches this question, so a re-read of an
+    unchanged fact cannot spend the hour's allowance.
     """
     moment = time.time() if now is None else now
     entry = _read_rate(conductor_key).get(item_id)
     if not isinstance(entry, dict):
         return True
-    if token and token in _recent_tokens(entry):
-        return True
     charged = _wake_times(entry, since=moment - _RATE_WINDOW_SECS)
     return len(charged) < MAX_WAKES_PER_ITEM_PER_HOUR
 
 
+def already_woke(conductor_key: str, item_id: str, token: str, *, watcher: str = "") -> bool:
+    """Whether *token* already woke the conductor for *item_id*, through *watcher*.
+
+    *watcher* is the polling driver's identity (``irq``'s job id). Each driver keeps
+    its own set; see :data:`_MAX_WATCHERS_PER_ITEM`.
+
+    The probe's own dedupe, and it has no clock. ``irq`` masks a sticky key only for
+    ``realert_secs`` and then forgets it, while the probe re-reads the same events and
+    the same silence on every tick for as long as the item is open. Without this, an
+    open item whose last word was ``blocked`` would wake its conductor again every
+    ``realert_secs`` about a report it read long ago.
+
+    Read-only. A missing or damaged rate file answers False, which costs at most one
+    repeated wake per token rather than a lost one.
+    """
+    if not token:
+        return False
+    return token in _seen_tokens(_read_rate(conductor_key).get(item_id), watcher)
+
+
+def forget_items(conductor_key: str, item_ids: list[str]) -> bool:
+    """Drop *item_ids*' budgets and seen sets; whether the file is as asked.
+
+    The probe calls this for items that closed. A closed item never wakes again, so
+    keeping its tokens only grows the file. Writes only when one of the items is
+    present, so a quiet tick with closed items costs a read and no write.
+    """
+    current = _read_rate(conductor_key)
+    present = [item_id for item_id in item_ids if item_id in current]
+    if not present:
+        return True
+    for item_id in present:
+        current.pop(item_id, None)
+    return _write_rate(conductor_key, current)
+
+
 def note_wake(
-    conductor_key: str, item_id: str, *, token: str = "", now: float | None = None
+    conductor_key: str,
+    item_id: str,
+    *,
+    token: str = "",
+    replaces: str = "",
+    watcher: str = "",
+    now: float | None = None,
 ) -> bool:
     """Spend one wake from *item_id*'s budget; whether the write landed.
+
+    The budget is shared by every watch on the ledger, because the item it would
+    wake is the same item. *token* joins *watcher*'s seen set only.
+
+    *replaces* is a token prefix whose older tokens can never be read again once
+    *token* exists, so they are dropped from the seen set rather than kept. The
+    probe passes it for a silence: its token carries ``last_report_at``, which only
+    moves forward, so only the newest one can recur. Without it, a worker that
+    keeps reporting ``progress`` mints a silence per report, and those crowd out a
+    report token the event tail still holds.
 
     Returns False rather than raising: the caller is a probe tick, and a
     maintenance file it could not persist must not turn a real wake into an error.
     A caller that treats False as authorization has no bound at all, though, because
     an unwritable file leaves every later tick reading an unspent budget -- so the
     probe refuses the wake it could not charge and folds it forward instead.
-
-    Re-charging a REMEMBERED token is a no-op on the count, for the reason
-    :func:`within_rate_limit` gives, but the write still happens so the pruned
-    moment list is recorded.
     """
     moment = time.time() if now is None else now
     current = _read_rate(conductor_key)
     entry = current.get(item_id)
-    remembered = _recent_tokens(entry) if isinstance(entry, dict) else ()
-    repeat = bool(token) and token in remembered
-    charged = list(_wake_times(entry, since=moment - _RATE_WINDOW_SECS))
+    remembered = _seen_tokens(entry, watcher)
+    charged = [moment] + list(_wake_times(entry, since=moment - _RATE_WINDOW_SECS))
     if not isinstance(entry, dict):
         entry = {}
-        remembered = ()
-        repeat = False
-    if not repeat:
-        charged = [moment] + charged
     entry["wakes"] = charged[:_MAX_STORED_WAKES]
     entry.pop("window_start", None)
     entry.pop("count", None)
+    entry.pop("recent_tokens", None)
     if token:
-        # Newest first, bounded: one item's live wakes are its newest report and its
-        # silence, so a handful covers every real case while keeping the file small.
-        entry["recent_tokens"] = [token] + [t for t in remembered if t != token][
-            : _MAX_REMEMBERED_TOKENS - 1
-        ]
+        # Newest first, bounded by what the probe can still re-read; see
+        # ``_MAX_REMEMBERED_TOKENS``.
+        kept = [t for t in remembered if t != token and not (replaces and t.startswith(replaces))]
+        stored = entry.get("seen")
+        seen = {
+            str(key): value
+            for key, value in (stored.items() if isinstance(stored, dict) else ())
+            if key != watcher and isinstance(value, list)
+        }
+        # Re-inserted last, so dict order is write order and the oldest set goes first.
+        seen[watcher] = [token] + kept[: _MAX_REMEMBERED_TOKENS - 1]
+        entry["seen"] = dict(list(seen.items())[-_MAX_WATCHERS_PER_ITEM:])
     current[item_id] = entry
     if len(current) > _MAX_TRACKED_ITEMS:
         ordered = sorted(
@@ -405,6 +452,11 @@ def note_wake(
             reverse=True,
         )
         current = dict(ordered[:_MAX_TRACKED_ITEMS])
+    return _write_rate(conductor_key, current)
+
+
+def _write_rate(conductor_key: str, current: dict[str, Any]) -> bool:
+    """Replace the rate file with *current* atomically; whether the write landed."""
     try:
         path = _rate_path(conductor_key)
         parent = path.parent
@@ -438,7 +490,9 @@ def note_wake(
         fd, tmp_name = tempfile.mkstemp(dir=str(parent), prefix=f"{path.name}.", suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(current, handle, sort_keys=True)
+                # Insertion order is kept: a seen map's order is its write order,
+                # which is what its eviction reads.
+                json.dump(current, handle)
             os.replace(tmp_name, path)
         except BaseException:
             # Nothing sweeps this directory, so a temporary left behind by a failed

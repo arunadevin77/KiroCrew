@@ -175,6 +175,21 @@ errored (`consecutive_start_failures`, `consecutive_failed_cycles`), or when the
 revision is unknown (empty, or unreadable on load). Other kinds keep the
 shipped floor.
 
+The work-ledger probe is the one kernel-path probe that wakes once per token for
+the item's life rather than re-asserting after the re-alert window. It re-reads
+the same report events and the same silence on every tick while an item is open,
+so the kernel's expiring mask would re-wake the conductor every
+`DEFAULT_REALERT_SECS` about a report it already read. Each report event id and
+each stall token (`stall:<last_report_at>`) is kept in a seen set in the
+`ledger_wake` rate file: per item, per polling driver (the `irq` job id, so the
+gate's terminal recheck cannot spend the loop's own wake), bounded by
+`_MAX_REMEMBERED_TOKENS` and `_MAX_WATCHERS_PER_ITEM`, and dropped when the item
+closes. A newer stall token replaces older ones, since only the newest can recur.
+A token is marked seen when the probe emits it, not when the turn lands; the
+quiet floor above covers a lost delivery, because a worker report moves
+`ledger_revision` and only a landed turn catches `ledger_delivered_revision` up,
+so the loop stays on the shipped floor and a plain patrol turn reads the board.
+
 A delivered work-ledger wake is a POINTER, not a copy of the board.
 `ledger_wake.wake_turn_text` prefixes the nudge with the kernel's structural briefs
 naming what moved (truncated at `MAX_WAKE_BRIEF_CHARS`, 4000) and then one
@@ -589,7 +604,9 @@ the delay but not the mask. `monitoring/decision.py` now level-triggers too: it
 re-asserts an unresolved actionable change once its re-alert interval has elapsed
 and coalesces a burst of successive changes to one subject, through a window on
 `MonitorState`. So re-assertion-after-a-window is available on both paths rather
-than only the kernel one.
+than only the kernel one. The work-ledger probe is a deliberate exception: it
+dedupes each report and stall once per item's life and relies on its quiet floor
+for a lost delivery (see the `work-ledger` section above).
 
 Each key carries its own alert timestamp, and a key that is still true re-asserts
 once its window has elapsed. Edge triggering loses any condition that stayed true

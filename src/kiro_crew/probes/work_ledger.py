@@ -133,6 +133,9 @@ class WorkLedgerProbe(irq.Probe):
         self._worker_running = worker_running or _always_idle
         self._worker_closed = worker_closed or _always_open
         self._conductor = ""
+        #: The polling driver's identity, read off the ctx each tick. The seen set
+        #: is kept per driver; see ``ledger_wake._MAX_WATCHERS_PER_ITEM``.
+        self._watcher = ""
         #: A digest of each item's worker-owned report fields (``last_report_at``,
         #: ``status``, ``summary``), read on the last successful observation, or
         #: ``None`` when nothing was read. The AutoNudge
@@ -183,6 +186,7 @@ class WorkLedgerProbe(irq.Probe):
         watch.
         """
         key = self._conductor or _conductor_key(getattr(ctx, "message", ""))
+        self._watcher = str(getattr(getattr(ctx, "job", None), "id", "") or "")
         record = work_ledger.read_conductor(key)
         if record is None:
             # No ledger, or one that could not be read. Deliberately NOT the same
@@ -247,6 +251,13 @@ class WorkLedgerProbe(irq.Probe):
                     )
                 ],
             )
+
+        # A closed item never wakes again, so its seen set has nothing left to
+        # suppress. Dropping it here is what keeps that set bounded by the item's
+        # life rather than by the ledger's.
+        closed = [item.item_id for item in items if item.is_terminal]
+        if closed:
+            ledger_wake.forget_items(key, closed)
 
         observations: list[irq.Observation] = []
         for item in items:
@@ -318,7 +329,7 @@ class WorkLedgerProbe(irq.Probe):
             # move with it. Restating any part of it here would be a second copy of a
             # shipped rule.
             token = f"{_STALL_KEY}:{item.last_report_at or 'none'}"
-            if self._spend(conductor_key, item.item_id, token):
+            if self._spend(conductor_key, item.item_id, token, replaces=f"{_STALL_KEY}:"):
                 found.append(
                     irq.Observation(
                         f"{_STALL_KEY}:{item.item_id}:{item.last_report_at or 'none'}",
@@ -332,13 +343,17 @@ class WorkLedgerProbe(irq.Probe):
                 )
         return found
 
-    def _spend(self, conductor_key: str, item_id: str, token: str) -> bool:
+    def _spend(self, conductor_key: str, item_id: str, token: str, *, replaces: str = "") -> bool:
         """Whether this item may wake now, charging the budget if it does.
 
-        The budget counts DISTINCT wakes, keyed on *token*: a condition the probe
-        re-reports on every tick until the kernel's mask expires must not burn the
-        hour's allowance, or a genuinely new report on the same item would be
-        swallowed by a rate limit that its own predecessor had already spent.
+        A *token* that already woke the conductor never wakes it again while the item
+        is open. The kernel masks its key for ``realert_secs`` only,
+        and this probe re-reads the same events and the same silence on every tick, so
+        the kernel cannot be the dedupe here.
+
+        The same check is what makes the budget count DISTINCT wakes: a re-read never
+        reaches it, so an unchanged fact cannot burn the hour's allowance and swallow
+        a genuinely new report on the same item.
 
         A charge that does not persist refuses the wake. The alternative reads as the
         safer one and is not: an unwritable rate file leaves every later tick reading
@@ -346,13 +361,17 @@ class WorkLedgerProbe(irq.Probe):
         costing one extra wake. Refusing costs the conductor its event-driven wakes
         while the file cannot be written, and its plain timer still runs the goal.
         """
-        if not ledger_wake.within_rate_limit(conductor_key, item_id, token=token):
+        if ledger_wake.already_woke(conductor_key, item_id, token, watcher=self._watcher):
+            return False
+        if not ledger_wake.within_rate_limit(conductor_key, item_id):
             logger.debug(
                 "work-ledger probe: item %s is over its wake budget; folding forward",
                 item_id,
             )
             return False
-        if not ledger_wake.note_wake(conductor_key, item_id, token=token):
+        if not ledger_wake.note_wake(
+            conductor_key, item_id, token=token, replaces=replaces, watcher=self._watcher
+        ):
             logger.warning(
                 "work-ledger probe: item %s's wake could not be charged; folding "
                 "forward rather than waking uncounted",

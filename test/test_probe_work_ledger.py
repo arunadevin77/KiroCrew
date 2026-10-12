@@ -647,6 +647,230 @@ def test_two_reports_in_one_tick_deliver_once_and_mask_both():
         irq.run(_ctx(), _probe())
 
 
+def _ticks_across(monkeypatch, *, hours: float, every_secs: float, stall_after: float | None):
+    """Drive ``irq.run`` on a fake clock and return the text of every delivered wake.
+
+    The kernel forgets a sticky key once it is ``realert_secs`` old, so a span past
+    that window is what separates "the probe says it once" from "the kernel masked it
+    for a while". *stall_after* makes the item read stale that many seconds in.
+    """
+    from kiro_crew import irq
+    from kiro_crew.cron_script import Report, Skip
+    from kiro_crew.testing.clock import ManualClock
+
+    clock = ManualClock()
+    clock.install(monkeypatch, irq)
+    clock.install(monkeypatch, lw)
+    start = clock.time()
+    monkeypatch.setattr(
+        work_ledger,
+        "is_stale",
+        lambda _item, **_kw: stall_after is not None and clock.time() - start >= stall_after,
+    )
+    delivered: list[str] = []
+    steps = int(hours * 3600 // every_secs) + 1
+    for step in range(steps):
+        if step:
+            clock.advance(every_secs)
+        try:
+            irq.run(_ctx(), _probe())
+        except Report as report:
+            delivered.append(str(report))
+        except Skip:
+            pass
+    return delivered, clock
+
+
+def test_one_blocked_report_wakes_once_across_the_kernels_realert_window(monkeypatch):
+    """The kernel masks a sticky key for ``irq.DEFAULT_REALERT_SECS`` only.
+
+    So the probe itself must not re-report an event or a silence it already woke for:
+    an open ``blocked`` item otherwise re-wakes its conductor every six hours for a
+    report it read long ago, and its stall token re-fires on the same cycle.
+    """
+    from kiro_crew import irq
+
+    _open_ledger()
+    item = _create()
+    _report(item, "blocked", summary="stuck")
+    hours = irq.DEFAULT_REALERT_SECS / 3600 + 1.5
+    delivered, _clock = _ticks_across(monkeypatch, hours=hours, every_secs=1800, stall_after=1800)
+
+    reports = [text for text in delivered if f"item={item} status=blocked" in text]
+    stalls = [text for text in delivered if f"item={item} reason=stall" in text]
+    assert len(reports) == 1, delivered
+    assert len(stalls) == 1, delivered
+
+
+def test_a_new_report_on_an_already_woken_item_still_wakes(monkeypatch):
+    from kiro_crew import irq
+
+    _open_ledger()
+    item = _create()
+    _report(item, "blocked", summary="stuck")
+    hours = irq.DEFAULT_REALERT_SECS / 3600 + 1
+    first, clock = _ticks_across(monkeypatch, hours=hours, every_secs=1800, stall_after=None)
+    assert len(first) == 1
+
+    _report(item, "blocked", summary="stuck again, on something else")
+    from kiro_crew.cron_script import Report
+
+    clock.advance(1800)
+    with pytest.raises(Report) as again:
+        irq.run(_ctx(), _probe())
+    assert f"item={item} status=blocked" in str(again.value)
+
+
+def test_many_stalls_cannot_evict_a_report_still_in_the_tail(monkeypatch):
+    """Progress reports coalesce, so a ``blocked`` event stays in the tail while each
+    one moves ``last_report_at`` and mints a new stall token. Only the newest stall
+    token can recur, so older ones must not crowd the report's token out."""
+    _open_ledger()
+    item = _create()
+    _report(item, "blocked", summary="stuck")
+    monkeypatch.setattr(work_ledger, "is_stale", lambda _item, **_kw: True)
+    # The probe is observed directly, without the kernel, because the kernel's own
+    # mask would hide a repeat and the probe's answer is what is under test.
+    # An hour per step, so the hourly budget never refuses a stall and hides the
+    # eviction behind a rate limit.
+    from kiro_crew.testing.clock import ManualClock
+
+    clock = ManualClock()
+    clock.install(monkeypatch, lw)
+    # ``last_report_at`` has one-second resolution, so the store reads the same
+    # clock: each step's report then mints a distinct stall token.
+    clock.install(monkeypatch, work_ledger, time=False, datetime=True)
+    briefs: list[str] = []
+    for index in range(lw._MAX_REMEMBERED_TOKENS + 4):
+        if index:
+            clock.advance(lw._RATE_WINDOW_SECS)
+            _report(item, "progress", summary=f"step {index}")
+        briefs.extend(o.brief for o in _observe(_probe(), _ctx()).observations)
+    assert sum(f"item={item} status=blocked" in brief for brief in briefs) == 1
+    assert sum(f"item={item} reason=stall" in brief for brief in briefs) == (
+        lw._MAX_REMEMBERED_TOKENS + 4
+    )
+
+
+def test_a_driver_that_discards_its_verdict_cannot_spend_another_drivers_wake():
+    """Two drivers on one ledger keep separate seen sets.
+
+    A second driver -- the gate's terminal recheck polls under its own identity and
+    throws the verdict away -- must not mark a report as delivered for the main tick,
+    or that report never wakes the conductor at all.
+    """
+    import json
+
+    from kiro_crew import irq
+    from kiro_crew.cron_script import Report
+
+    _open_ledger()
+    item = _create()
+    _report(item, "blocked", summary="stuck")
+    discarded = irq.poll("loop-1:recheck", json.dumps({"conductor": CONDUCTOR}), _probe())
+    assert discarded.outcome is not irq.Outcome.TERMINAL
+
+    with pytest.raises(Report) as delivered:
+        irq.run(_ctx(), _probe())
+    assert f"item={item} status=blocked" in str(delivered.value)
+
+
+def test_a_dropped_delivery_falls_back_to_the_shipped_quiet_floor():
+    """A wake lost after the tick is not retried by the probe; the timer brings it back.
+
+    The probe marks a token seen when it emits it. What surfaces a report whose turn
+    never landed is the gate's quiet floor: it stretches only while the ledger reads
+    the revision the last DELIVERED turn saw, and the report moved that revision, so
+    an undelivered report keeps the loop on its shipped floor and a plain patrol turn
+    reads the board.
+    """
+    from types import SimpleNamespace
+
+    from kiro_crew import irq, probes
+    from kiro_crew.autonudge_service import gate
+    from kiro_crew.cron_script import Report, Skip
+
+    _open_ledger()
+    item = _create()
+    probe = _probe()
+    with pytest.raises(Skip):
+        irq.run(_ctx(), probe)
+    monitor = SimpleNamespace(
+        kind=probes.WORK_LEDGER, ledger_revision="", ledger_delivered_revision=""
+    )
+    loop = SimpleNamespace(consecutive_start_failures=0, consecutive_failed_cycles=0)
+    gate._note_ledger_revision(monitor, probe)
+    gate._record_delivered_revision(monitor)
+    assert gate._ledger_is_idle(loop, monitor), "a delivered, unchanged board is idle"
+
+    _report(item, "blocked", summary="stuck")
+    with pytest.raises(Report):
+        irq.run(_ctx(), probe)
+    # The delivery is dropped here: nothing records the revision as delivered.
+    with pytest.raises(Skip):
+        irq.run(_ctx(), probe)
+    gate._note_ledger_revision(monitor, probe)
+    assert not gate._ledger_is_idle(loop, monitor)
+
+
+def test_a_parked_items_seen_set_outlives_closed_items_under_the_tracked_cap(monkeypatch):
+    """The tracked-item cap evicts the item whose newest wake is oldest.
+
+    A long-parked open item is exactly that item, so closed items charged after it
+    would push its seen set out and its report would wake the conductor again.
+    Dropping closed items' entries keeps the cap for the items still open.
+    """
+    monkeypatch.setattr(lw, "_MAX_TRACKED_ITEMS", 2)
+    _open_ledger()
+    parked = _create(title="parked")
+    _report(parked, "blocked", summary="waiting on a person")
+    briefs = [o.brief for o in _observe(_probe(), _ctx()).observations]
+    for index in range(3):
+        finished = _create(title=f"finished {index}")
+        _report(finished, "done", summary="shipped")
+        briefs.extend(o.brief for o in _observe(_probe(), _ctx()).observations)
+        work_ledger.apply_conductor_action(
+            CONDUCTOR, "close", item_id=finished, state="accepted", decision="verified"
+        )
+        briefs.extend(o.brief for o in _observe(_probe(), _ctx()).observations)
+    assert sum(f"item={parked} status=blocked" in brief for brief in briefs) == 1
+
+
+def test_the_oldest_written_watcher_set_is_the_one_evicted():
+    order = ["b", "c", "d", "a"]
+    for index, watcher in enumerate(order[: lw._MAX_WATCHERS_PER_ITEM]):
+        lw.note_wake(CONDUCTOR, ITEM, token=f"t{index}", watcher=watcher, now=1000.0 + index)
+    lw.note_wake(CONDUCTOR, ITEM, token="t-new", watcher="e", now=2000.0)
+    kept = set(lw._read_rate(CONDUCTOR)[ITEM]["seen"])
+    assert kept == set(order[1 : lw._MAX_WATCHERS_PER_ITEM]) | {"e"}
+
+
+def test_a_closed_items_seen_tokens_are_dropped(monkeypatch):
+    from kiro_crew.cron_script import Report
+
+    _open_ledger()
+    done = _create(title="finished")
+    still_open = _create(title="still open")
+    _report(done, "done", summary="shipped")
+    with pytest.raises(Report):
+        _run_once()
+    assert done in lw._read_rate(CONDUCTOR)
+
+    work_ledger.apply_conductor_action(
+        CONDUCTOR, "close", item_id=done, state="accepted", decision="verified"
+    )
+    _observe(_probe(), _ctx())
+    remembered = lw._read_rate(CONDUCTOR)
+    assert done not in remembered
+    assert still_open not in remembered
+
+
+def _run_once():
+    from kiro_crew import irq
+
+    return irq.run(_ctx(), _probe())
+
+
 def test_a_progress_report_advances_the_epoch_without_waking():
     _open_ledger()
     item = _create()
@@ -871,7 +1095,9 @@ def test_the_remembered_token_bound_covers_what_one_window_can_charge():
     from kiro_crew.probes import work_ledger as probe_module
 
     assert lw._MAX_REMEMBERED_TOKENS >= lw.MAX_WAKES_PER_ITEM_PER_HOUR
-    assert lw._MAX_REMEMBERED_TOKENS >= probe_module._EVENT_TAIL
+    # The seen set must hold every token the probe can still re-read: one per report
+    # in the tail, plus the newest silence.
+    assert lw._MAX_REMEMBERED_TOKENS >= probe_module._EVENT_TAIL + 1
 
 
 def test_an_unreadable_item_cannot_terminate_the_watch():
@@ -932,13 +1158,14 @@ def test_a_wake_whose_charge_cannot_be_recorded_is_refused(monkeypatch):
 
 def test_the_budget_counts_distinct_wakes_rather_than_re_reads():
     for index in range(lw.MAX_WAKES_PER_ITEM_PER_HOUR):
-        assert lw.within_rate_limit(CONDUCTOR, ITEM, token=f"e{index}") is True
+        assert lw.within_rate_limit(CONDUCTOR, ITEM) is True
         lw.note_wake(CONDUCTOR, ITEM, token=f"e{index}")
     # Budget spent: a NEW wake folds forward.
-    assert lw.within_rate_limit(CONDUCTOR, ITEM, token="fresh") is False
-    # The wake already charged is still allowed, because a probe re-reports an
-    # unchanged condition every tick and those re-reads must not spend anything.
+    assert lw.within_rate_limit(CONDUCTOR, ITEM) is False
+    # A wake already charged is answered by the seen set, before the budget is asked,
+    # so a re-read of an unchanged condition spends nothing.
     last = f"e{lw.MAX_WAKES_PER_ITEM_PER_HOUR - 1}"
-    assert lw.within_rate_limit(CONDUCTOR, ITEM, token=last) is True
+    assert lw.already_woke(CONDUCTOR, ITEM, last) is True
+    assert lw.already_woke(CONDUCTOR, ITEM, "fresh") is False
     # A different item has its own budget.
-    assert lw.within_rate_limit(CONDUCTOR, OTHER_ITEM, token="e0") is True
+    assert lw.within_rate_limit(CONDUCTOR, OTHER_ITEM) is True
