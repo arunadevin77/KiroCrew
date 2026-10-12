@@ -48,6 +48,12 @@ class TestOptimizerSystem:
     def test_system_prompt_mentions_structure(self):
         assert "structure" in OPTIMIZER_SYSTEM.lower()
 
+    def test_system_prompt_keeps_file_mentions_verbatim(self):
+        # A picked "@rel" mention attaches its file; a rewrite that rewords or
+        # drops it is refused by the composer, so the model is told to keep it.
+        assert "FILE MENTIONS" in OPTIMIZER_SYSTEM
+        assert "keep every file mention verbatim" in OPTIMIZER_SYSTEM
+
 
 class TestOptimizerEndpoint:
     """Test the handle_optimize handler logic."""

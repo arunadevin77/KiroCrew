@@ -631,3 +631,75 @@ describe('ChatPage file chip remove + undo', { timeout: 15_000 }, () => {
     }
   })
 })
+
+// #13063: the prompt optimizer's rewrite lands in the draft as a whole-text
+// replacement, and the chip reconciliation then reads it like any other edit.
+// A rewrite that drops or rewords a picked `@rel` mention would unstage that
+// file's chip while the composer was readOnly -- no user edit -- and the send
+// would go out without the attachment. A rewrite is kept only when the
+// reconciliation would leave the attachments as the draft does.
+describe('ChatPage prompt optimizer keeps picked file mentions (#13063)', { timeout: 15_000 }, () => {
+  const DRAFT = 'please review @src/main.ts for the bug'
+
+  /** Pick main.ts, let `edit` shape the draft, click Optimize prompt with the
+   *  optimizer answering `optimized`, and wait for the composer to settle. */
+  async function optimizeWith(optimized: string, edit = async (ta: HTMLTextAreaElement) => {
+    fireEvent.change(ta, { target: { value: DRAFT } })
+    await waitFor(() => expect(ta.value).toBe(DRAFT))
+  }) {
+    let calls = 0
+    const realFetch = globalThis.fetch
+    vi.stubGlobal('fetch', (url: string) => {
+      if (typeof url === 'string' && url.includes('/api/optimizer/optimize')) {
+        calls += 1
+        return Promise.resolve({ ok: true, json: async () => ({ changed: true, optimized }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] } as unknown as Response)
+    })
+    try {
+      const store = makeStore('slot-a', [{ key: 'slot-a', project: '/repo' }])
+      await renderPage(store)
+      const ta = await pickFile()
+      await edit(ta)
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Optimize prompt' })) })
+      await waitFor(() => expect(calls).toBe(1))
+      await waitFor(() => expect(ta).not.toHaveAttribute('readonly'))
+      return ta
+    } finally {
+      vi.stubGlobal('fetch', realFetch)
+    }
+  }
+
+  it('a rewrite that drops the mention leaves the draft and its chip alone', async () => {
+    const ta = await optimizeWith('Review the main entry file and fix the bug.')
+    expect(ta.value).toBe(DRAFT)
+    expect(screen.getByLabelText('Remove')).toBeInTheDocument()
+  })
+
+  it('a rewrite that keeps the text but breaks the mention boundary is refused too', async () => {
+    // `@src/main.ts` is still a substring, but `'s` is not a boundary the
+    // reconciliation accepts, so it would read the mention as gone.
+    const ta = await optimizeWith("Fix @src/main.ts's bug.")
+    expect(ta.value).toBe(DRAFT)
+    expect(screen.getByLabelText('Remove')).toBeInTheDocument()
+  })
+
+  it('a rewrite that keeps the mention is applied and the chip stays staged', async () => {
+    const ta = await optimizeWith('Review @src/main.ts and fix the bug.')
+    await waitFor(() => expect(ta.value).toBe('Review @src/main.ts and fix the bug.'))
+    expect(screen.getByLabelText('Remove')).toBeInTheDocument()
+  })
+
+  it('a rewrite that brings back a removed chip\'s mention is refused', async () => {
+    // The chip's ✕ keeps its aliases so an undo can restore it; a rewrite that
+    // re-adds the mention would restage the file the user just removed.
+    const ta = await optimizeWith('Review @src/main.ts for the bug.', async (el) => {
+      fireEvent.click(screen.getByLabelText('Remove'))
+      await waitFor(() => expect(screen.queryByLabelText('Remove')).toBeNull())
+      fireEvent.change(el, { target: { value: 'please review the bug' } })
+      await waitFor(() => expect(el.value).toBe('please review the bug'))
+    })
+    expect(ta.value).toBe('please review the bug')
+    expect(screen.queryByLabelText('Remove')).toBeNull()
+  })
+})

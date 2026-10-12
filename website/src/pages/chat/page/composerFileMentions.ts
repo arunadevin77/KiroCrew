@@ -82,6 +82,79 @@ interface FileMentionActionsOptions {
   announceAttachmentChange?: (message: string) => void
 }
 
+/** What the mention decisions below read besides the text: the slot's
+ *  separator fold (`foldWinSep`, folding only on a Windows-shaped project)
+ *  and its project root (revival re-derives each alias under it). Taken as a
+ *  value so a decision made later -- the optimizer guard judging a result that
+ *  lands after a session switch -- still reads the slot it was asked about. */
+interface MentionScope { fold: (s: string) => string; project: string }
+
+function mentionScope(project: string | undefined): MentionScope {
+  const root = project || ''
+  return { fold: foldWinSep(isWindowsShapedPath(root)), project: root }
+}
+
+/** `relMentionedHere` under an explicit scope (its reasoning is there). */
+function relMentionedIn(scope: MentionScope, text: string, rel: string, otherAliases?: ReadonlySet<string>): boolean {
+  const { fold } = scope
+  const bare = otherAliases && new Set([...otherAliases].map(a => fold(a.startsWith('@') ? a.slice(1) : a)))
+  return mentionTokenRegex(fold(rel), '', bare).test(fold(text))
+}
+
+/** Recorded aliases of every known path other than `p` that are LIVE in
+ *  `input`, optionally limited to the paths in `onlyPaths`. Presence is
+ *  tested with the permissive boundary and no cross-alias context (no
+ *  recursion). The reconciliation explains why each protecting set has the
+ *  scope it has. */
+function liveAliasesIn(
+  scope: MentionScope, input: string, known: Record<string, string[]>, p: string, onlyPaths?: ReadonlySet<string>,
+): Set<string> {
+  const others = new Set<string>()
+  for (const [otherPath, otherTokens] of Object.entries(known)) {
+    if (otherPath === p || (onlyPaths && !onlyPaths.has(otherPath))) continue
+    otherTokens.forEach(t => { if (relMentionedIn(scope, input, t.slice(1))) others.add(t) })
+  }
+  return others
+}
+
+/** `fileChipRevives` under an explicit scope (its reasoning is there). */
+function chipRevivesIn(
+  scope: MentionScope, input: string, p: string, known: Record<string, string[]>, staged: ReadonlySet<string>,
+): boolean {
+  const aliases = known[p]
+  if (!aliases?.length) return false
+  const sameSlash = (a: string, b: string) => a.replace(/\\/g, '/') === b.replace(/\\/g, '/')
+  const currentRel = makeRelative(p, normalizeWindowsPath(scope.project))
+  const otherAliases = liveAliasesIn(scope, input, known, p)
+  const stagedLive = liveAliasesIn(scope, input, known, p, staged)
+  return aliases.some(token => {
+    const storedRel = token.slice(1)
+    if (!sameSlash(storedRel, currentRel)) return false
+    if ([...stagedLive].some(s => extendsConsumably(s, token))) return false
+    return relMentionedIn(scope, input, storedRel, otherAliases)
+  })
+}
+
+/** THE reconciliation decision for `input`: which staged chips it drops
+ *  (`stale`) and which unstaged ones it restages (`revived`). One function,
+ *  so the reconciliation and the optimizer guard ask exactly the same
+ *  question; why each set is scoped the way it is lives at its use in
+ *  `reconcileFileChips`. */
+function planFileChips(
+  scope: MentionScope, input: string, known: Record<string, string[]>, pendingFiles: readonly string[],
+): { stale: string[]; revived: string[] } {
+  const staged = new Set(pendingFiles)
+  const stale = pendingFiles.filter(p => {
+    const aliases = known[p]
+    if (aliases == null || aliases.length === 0) return false
+    const others = liveAliasesIn(scope, input, known, p, staged)
+    return !aliases.some(token => relMentionedIn(scope, input, token.slice(1), others))
+  })
+  const revived = Object.keys(known).filter(p =>
+    !staged.has(p) && !stale.includes(p) && chipRevivesIn(scope, input, p, known, staged))
+  return { stale, revived }
+}
+
 /**
  * Inserting, reconciling and removing file / folder mentions. Returns the
  * page's "Add to chat" entry point (tree context menu and tree drop), the
@@ -150,9 +223,7 @@ export function useFileMentionActions({
     // mixed (`@src\foo/bar.ts`, fork GPT review) -- and a sibling alias
     // recorded in another spelling still triggers the prefix-sibling rule,
     // and revival's asymmetry guard with it.
-    const fold = foldWinSep(isWindowsShapedPath(currentProjectRef.current || ''))
-    const bare = otherAliases && new Set([...otherAliases].map(a => fold(a.startsWith('@') ? a.slice(1) : a)))
-    return mentionTokenRegex(fold(rel), '', bare).test(fold(text))
+    return relMentionedIn(mentionScope(currentProjectRef.current), text, rel, otherAliases)
   }, [currentProjectRef])
 
   // "Add to context" from the file-browser rail's row context menu: insert the
@@ -338,22 +409,6 @@ export function useFileMentionActions({
     revealComposer()
   }, [recordSlotToken, clampOutOfTokens, currentSlotTokens, relMentionedHere, setInput, voiceCaretRef, currentProjectRef, inputRef, voicePendingCaretRef, pendingFilesRef, setPendingFiles])
 
-  // Recorded aliases of every known path other than `p` that are LIVE in
-  // `input`, optionally limited to the paths in `onlyPaths`. Presence is
-  // tested with the permissive boundary and no cross-alias context (no
-  // recursion). The reconciliation below explains why each protecting set
-  // has the scope it has.
-  const liveOtherAliases = useCallback((
-    input: string, known: Record<string, string[]>, p: string, onlyPaths?: ReadonlySet<string>,
-  ) => {
-    const others = new Set<string>()
-    for (const [otherPath, otherTokens] of Object.entries(known)) {
-      if (otherPath === p || (onlyPaths && !onlyPaths.has(otherPath))) continue
-      otherTokens.forEach(t => { if (relMentionedHere(input, t.slice(1))) others.add(t) })
-    }
-    return others
-  }, [relMentionedHere])
-
   // THE revival decision: would the reconciliation re-stage the unstaged file
   // `p` off the mentions in `input`, given the recorded `known` aliases and
   // the `staged` set? One function, so the chip remove handler asks exactly
@@ -363,20 +418,7 @@ export function useFileMentionActions({
   // for each condition is at its use in `reconcileFileChips`.
   const fileChipRevives = useCallback((
     input: string, p: string, known: Record<string, string[]>, staged: ReadonlySet<string>,
-  ) => {
-    const aliases = known[p]
-    if (!aliases?.length) return false
-    const sameSlash = (a: string, b: string) => a.replace(/\\/g, '/') === b.replace(/\\/g, '/')
-    const currentRel = makeRelative(p, normalizeWindowsPath(currentProjectRef.current || ''))
-    const otherAliases = liveOtherAliases(input, known, p)
-    const stagedLive = liveOtherAliases(input, known, p, staged)
-    return aliases.some(token => {
-      const storedRel = token.slice(1)
-      if (!sameSlash(storedRel, currentRel)) return false
-      if ([...stagedLive].some(s => extendsConsumably(s, token))) return false
-      return relMentionedHere(input, storedRel, otherAliases)
-    })
-  }, [liveOtherAliases, relMentionedHere, currentProjectRef])
+  ) => chipRevivesIn(mentionScope(currentProjectRef.current), input, p, known, staged), [currentProjectRef])
 
   // pickedFileTokens reconciliation -- keeps a file chip in sync with its
   // `@rel` alias(es) in BOTH directions, the same way a folder chip
@@ -438,7 +480,6 @@ export function useFileMentionActions({
   const reconcileFileChips = useCallback((input: string) => {
     const known = currentSlotTokens()
     if (!known) return
-    const staged = new Set(pendingFiles)
     // Deliberately NOT a general boundary-checked path-SUFFIX fallback (tried
     // and reverted -- fork GPT review, two rounds): recognizing "any suffix of
     // this path is mentioned" as proof of reference sounds safe for a single
@@ -479,12 +520,9 @@ export function useFileMentionActions({
     // attachments. A dead alias has no text occurrence left to
     // mis-attribute, so it protects nothing; the round-18 hazard
     // needs the longer mention actually present.
-    const otherAliasesFor = (p: string) => liveOtherAliases(input, known, p, staged)
-    const stale = pendingFiles.filter(p => {
-      const aliases = known[p]
-      if (aliases == null || aliases.length === 0) return false
-      return !aliases.some(token => relMentionedHere(input, token.slice(1), otherAliasesFor(p)))
-    })
+    // (`planFileChips` computes `stale` with exactly that staged-scoped,
+    // liveness-gated protecting set.)
+    //
     // Revival's protecting set is WIDER (fork GPT review): revival's
     // candidates are UNSTAGED entries, so a staged-scoped set is empty
     // exactly when it matters -- stage `report` and `report,`, delete both
@@ -499,7 +537,7 @@ export function useFileMentionActions({
     // preferred over the false positive it replaces: an OLD project's alias
     // literally live in the text refuses to revive a same-prefix file -- a
     // visible false negative, one pick away. (`fileChipRevives` builds this
-    // set as `liveOtherAliases(input, known, p)`.)
+    // set as `liveAliasesIn(scope, input, known, p)`.)
     //
     // Revival asymmetry guard (fork GPT review), also in `fileChipRevives`:
     // a LONGER candidate whose
@@ -511,13 +549,12 @@ export function useFileMentionActions({
     // strict onto the SHORTER staged alias), so without this the longer
     // candidate always got the permissive boundary against a shorter
     // staged sibling and silently re-attached. Same predicate, opposite
-    // direction; staged-scoped and liveness-gated like otherAliasesFor, so
+    // direction; staged-scoped and liveness-gated like the stale check's set, so
     // the M2(b) both-unstaged revival (no staged sibling) is untouched and
     // the round-20 dead-history hazard stays closed. Accepted residual:
     // pasting `@report,` back while `report` is staged does not revive
     // `report,` -- a visible false negative, one pick away.
-    const revived = Object.keys(known).filter(p =>
-      !staged.has(p) && !stale.includes(p) && fileChipRevives(input, p, known, staged))
+    const { stale, revived } = planFileChips(mentionScope(currentProjectRef.current), input, known, pendingFiles)
     if (!stale.length && !revived.length) return
     setPendingFiles(prev => {
       const next = prev.filter(p => !stale.includes(p))
@@ -556,8 +593,30 @@ export function useFileMentionActions({
       }
       if (parts.length) announceAttachmentChange(parts.join('. '))
     }
-  }, [currentSlotTokens, relMentionedHere, liveOtherAliases, fileChipRevives, pendingFiles, setPendingFiles, announceAttachmentChange])
+  }, [currentSlotTokens, currentProjectRef, pendingFiles, setPendingFiles, announceAttachmentChange])
   reconcileFileChipsRef.current = reconcileFileChips
+
+  // The prompt optimizer replaces the whole draft, and the next draft commit
+  // reconciles its result like any edit: a rewrite that dropped or reworded a
+  // staged file's mention would unstage that chip while the composer was
+  // readOnly -- no user edit -- and the send would leave the file out. The
+  // guard is taken when the optimize starts, so a result that lands after a
+  // session switch is judged against the slot it was asked about, and the
+  // check it returns asks the reconciliation's own question (`planFileChips`)
+  // of the rewrite: a rewrite is kept only when it would leave the
+  // attachments exactly as the draft does, neither dropping a chip nor
+  // restaging one the user removed.
+  const optimizerMentionGuard = useCallback((draft: string) => {
+    const scope = mentionScope(currentProjectRef.current)
+    const known = Object.fromEntries(Object.entries(currentSlotTokens() ?? {}).map(([p, a]) => [p, [...a]]))
+    const pending = [...pendingFilesRef.current]
+    const before = planFileChips(scope, draft, known, pending)
+    const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every(x => b.includes(x))
+    return (rewrite: string) => {
+      const after = planFileChips(scope, rewrite, known, pending)
+      return sameSet(after.stale, before.stale) && sameSet(after.revived, before.revived)
+    }
+  }, [currentSlotTokens, currentProjectRef, pendingFilesRef])
 
   /** The file chip's remove (ChatInput `onRemoveFile`). */
   const removeFileChip = (p: string) => {
@@ -893,5 +952,5 @@ export function useFileMentionActions({
     if (token) recordSlotToken(canon, token)
     setPendingFiles(prev => addPendingFile(prev, canon))
   }
-  return { clampOutOfTokens, handleAddToContext, removeFileChip, removeDirChip, selectPickedFile, mentionKeyEdit }
+  return { clampOutOfTokens, handleAddToContext, removeFileChip, removeDirChip, selectPickedFile, mentionKeyEdit, optimizerMentionGuard }
 }

@@ -13,7 +13,7 @@ import type { ChatInputProps } from './props'
    that asked, or goes to `onOptimizeResult` when that slot is no longer the
    one on screen. */
 
-export function usePromptOptimizer({ slotId, chatStore, valueRef, pasteBlocks, onChange, onOptimizeResult, lexicalComposer, lexicalLoadFailed, composerControl, inputRef, valueFromUserRef, optimizingRef, appendUndoBoundary, terminalCommands }: {
+export function usePromptOptimizer({ slotId, chatStore, valueRef, pasteBlocks, onChange, onOptimizeResult, lexicalComposer, lexicalLoadFailed, composerControl, inputRef, valueFromUserRef, optimizingRef, appendUndoBoundary, terminalCommands, optimizerMentionGuard }: {
   slotId: string | null
   chatStore: ReturnType<typeof useAppStore>
   valueRef: React.MutableRefObject<string>
@@ -29,6 +29,7 @@ export function usePromptOptimizer({ slotId, chatStore, valueRef, pasteBlocks, o
   optimizingRef: React.MutableRefObject<boolean>
   appendUndoBoundary: (v: string) => void
   terminalCommands?: ChatInputProps['terminalCommands']
+  optimizerMentionGuard?: ChatInputProps['optimizerMentionGuard']
 }) {
   // Tracks the prior render's raw pending state so the completion effect can
   // record a single undo boundary when an optimize actually finishes (as
@@ -89,6 +90,8 @@ export function usePromptOptimizer({ slotId, chatStore, valueRef, pasteBlocks, o
         prompt: string
         context: string
         pastes?: Array<{ seq: number; content: string }>
+        /** The host's mention check, taken with `prompt` (see onSuccess). */
+        keepsMentions?: (rewrite: string) => boolean
         slotId: string | null
       },
     ) => {
@@ -102,6 +105,14 @@ export function usePromptOptimizer({ slotId, chatStore, valueRef, pasteBlocks, o
       return resp.json()
     },
     onSuccess: (data, variables) => {
+      // A rewrite that would change what the draft attaches is discarded, the
+      // way the server discards one that breaks a paste placeholder: it
+      // replaces the whole draft, so a picked mention it dropped or reworded
+      // would unstage that file's chip with no user edit and the send would
+      // leave the file out. The draft stays as the user wrote it.
+      const rewrite: string | null = data.changed && data.optimized && (variables.keepsMentions?.(data.optimized) ?? true)
+        ? data.optimized
+        : null
       // Originating session is still the one on screen: write the result here,
       // undoable. The textarea stayed readOnly for the whole optimize on this
       // session so the value can't have diverged from what we sent; the
@@ -109,14 +120,14 @@ export function usePromptOptimizer({ slotId, chatStore, valueRef, pasteBlocks, o
       // unforeseen divergence (drop rather than clobber).
       if (variables.slotId === slotId) {
         if (valueRef.current.trim() !== variables.prompt.trim()) return
-        setTextUndoable(data.changed && data.optimized ? data.optimized : valueRef.current.trim())
+        setTextUndoable(rewrite ?? valueRef.current.trim())
         return
       }
       // The user navigated to a different session mid-optimize. Route the
       // result back to the session that started it instead of writing into the
       // session now on screen (wrong session) or dropping it (lost work). Fall
       // back to the original prompt when the optimizer returned no change.
-      onOptimizeResult?.(variables.slotId, data.changed && data.optimized ? data.optimized : variables.prompt)
+      onOptimizeResult?.(variables.slotId, rewrite ?? variables.prompt)
     },
     onError: (err, variables) => {
       // eslint-disable-next-line no-console -- surface prompt-optimizer failures to the dev console
@@ -222,8 +233,12 @@ export function usePromptOptimizer({ slotId, chatStore, valueRef, pasteBlocks, o
     // send. Only referenced blocks are sent (pruneBlocks drops stale ones).
     const referenced = pruneBlocks(txt, pasteBlocks)
     const pastes = referenced.map(b => ({ seq: b.seq, content: b.content }))
-    runOptimize({ prompt: txt, context, pastes, slotId })
-  }, [runOptimize, pasteBlocks, slotId, chatStore, valueRef, terminalCommands])
+    // The host's file-mention guard, taken against THIS draft now, so the
+    // result is judged against the attachments it was asked about even if it
+    // lands after a session switch.
+    const keepsMentions = optimizerMentionGuard?.(txt)
+    runOptimize({ prompt: txt, context, pastes, keepsMentions, slotId })
+  }, [runOptimize, pasteBlocks, slotId, chatStore, valueRef, terminalCommands, optimizerMentionGuard])
 
   return { optimizeError, setOptimizeError, optimizePending, optimizing, optimizePrompt }
 }

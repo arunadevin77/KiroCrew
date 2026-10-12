@@ -316,6 +316,12 @@ export interface ChatInputProps {
    *  Lexical composer (`inlineMarkdown` on) edits a node model and does not
    *  call this (also tracked in the #14675 follow-up). */
   onMentionKey?: (text: string, selStart: number, selEnd: number, key: string, mods: MentionKeyMods) => { value: string; caret: number } | null
+  /** The host's file-mention guard for "Optimize prompt", taken with the
+   *  draft when the optimize starts. The check it returns says whether a
+   *  rewrite leaves the draft's attachments unchanged; a rewrite it refuses
+   *  is discarded like one the optimizer did not change. Absent: no mention
+   *  is protected. */
+  optimizerMentionGuard?: (draft: string) => (rewrite: string) => boolean
   onFileOpen?: (path: string) => void
   project?: string
   /** Checked-out branch of the active project (or short SHA when detached). */
