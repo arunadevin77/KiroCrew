@@ -1037,6 +1037,33 @@ def _session_tools() -> tuple[Tool, ...]:
             routes=("POST /api/session-control/rename",),
         ),
         Tool(
+            name="session_generate_title",
+            description=(
+                "Regenerate the sidebar title of a live session YOU created, from its "
+                "recent transcript, the same as the sidebar's 'Regenerate title' action. "
+                "Costs one model call on the titling model and waits for it, so the "
+                "reply carries the new title (or the unchanged one when the model had "
+                "nothing better). The new title replaces the current one, including a "
+                "title someone set by hand, and the automatic titler may revise it "
+                "later. Only sessions this session created are reachable, never your "
+                "own. One call per session every 5 minutes; a repeat inside that window "
+                "is refused. To set an exact title instead, use session_rename."
+            ),
+            schema={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Session key from list_sessions, or its exact title.",
+                    },
+                },
+                "required": ["target"],
+            },
+            run=_run_session_generate_title,
+            identity="strict",
+            routes=("POST /api/session-control/generate-title",),
+        ),
+        Tool(
             name="session_close",
             description=(
                 "Close another session — the same thing as pressing the ✕ on that tab. "
@@ -2972,6 +2999,32 @@ def _run_session_rename(args: dict[str, Any], ctx: ToolContext) -> str:
         return redact(f"Error: could not rename that session: {resp['error']}")
     target = resp.get("target", args["target"])
     return redact(f"Renamed `{target}` to {resp.get('title', args['title'])!r}.")
+
+
+#: The generate-title route waits for one titling-model call, so the client
+#: allows longer than the 30-second default. A transport timeout does not undo
+#: the call: the title can still land, and the target's one-per-window budget
+#: (``create_rate_limit.WINDOW_SECS``, longer than this wait) refuses a retry.
+GENERATE_TITLE_TIMEOUT_SECS = 120
+
+
+def _run_session_generate_title(args: dict[str, Any], ctx: ToolContext) -> str:
+    try:
+        resp = ctx.client.post(
+            "/api/session-control/generate-title",
+            {"target": args["target"]},
+            timeout=GENERATE_TITLE_TIMEOUT_SECS,
+            session_key=ctx.caller_key,
+        )
+    except DashboardError as refused:
+        resp = refused.body
+    if resp.get("error"):
+        return redact(f"Error: could not generate a title for that session: {resp['error']}")
+    target = resp.get("target", args["target"])
+    title = resp.get("title", "")
+    if resp.get("changed"):
+        return redact(f"Retitled `{target}` to {title!r}.")
+    return redact(f"`{target}` keeps its title {title!r}; the model offered nothing new.")
 
 
 def _run_session_reload(args: dict[str, Any], ctx: ToolContext) -> str:

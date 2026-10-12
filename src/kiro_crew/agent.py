@@ -5505,6 +5505,10 @@ handle immediately.
 #:   ``/api/session-control/rename`` where the target is the session named in the
 #:   ARGUMENTS, and the rename is final, so the automatic titler never corrects a
 #:   bad one. Ingested content could relabel any session the conductor may reach.
+#: * ``session_generate_title`` — WITHHELD. Spends a model call and replaces
+#:   another session's sidebar title through ``/api/session-control/generate-title``
+#:   where the target is the session named in the ARGUMENTS, and no conductor step
+#:   needs it.
 #: * ``session_send`` — WITHHELD. Runs text as another session's user-role turn
 #:   under that target's own grants. The server-side gates bound WHICH target is
 #:   reachable; nothing bounds WHAT is sent.

@@ -330,6 +330,12 @@ class TestEveryRouteForwardsTheCarriedVerdict:
             {"target": "chat-7", "title": "renamed"},
             None,
         ),
+        "api_session_control_generate_title": (
+            "generate_title_target",
+            True,
+            {"target": "chat-7"},
+            None,
+        ),
         "api_session_control_read": ("read_messages", False, None, {"target": "chat-7"}),
         # No target to name, so the body carries only the optional create fields
         # and an empty one exercises the carry on its own.

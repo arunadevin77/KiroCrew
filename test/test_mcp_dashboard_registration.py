@@ -386,6 +386,8 @@ class TestWhatThisSetGrants:
         "session_reload",
         # Relabels a session the caller may already stop, or itself; same gate.
         "session_rename",
+        # Regenerates a title on a session the caller created; same gate, narrower.
+        "session_generate_title",
         "session_close",
         "session_revive",
         "session_send",

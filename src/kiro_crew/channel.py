@@ -178,6 +178,9 @@ CHANNEL_AGENT_BLOCKED_TOOLS: tuple[str, ...] = (
     # Renaming relabels a session in the person's sidebar, named from thread text
     # other people wrote; same containment reason as the tree verbs below.
     "session_rename",
+    # Retitling spends a model call and relabels a session in the person's
+    # sidebar; same containment reason as stop.
+    "session_generate_title",
     "session_send",
     "session_read_message",
     # A digest of the same transcript `session_read_message` returns, so it is

@@ -1689,17 +1689,14 @@ async def refresh_forked_title(state: DashboardState, slot: _ChatSlot) -> None:
         slot._title_in_flight = False
 
 
-async def api_chat_slot_generate_title(request: web.Request) -> web.Response:
-    """POST /api/chat/slots/{slot}/generate-title — manually trigger title generation."""
-    state: DashboardState = request.app["state"]
-    name = request.match_info["slot"]
-    slot = state._slots.get(name)
-    if not slot:
-        return web.json_response({"error": "not found", "code": "slot_not_found"}, status=404)
+async def generate_manual_title(state: DashboardState, slot: _ChatSlot) -> str:
+    """The title "Regenerate title" would give *slot* now, or ``""`` for none.
 
-    logger.info("Manual title generation requested for slot %s", name)
-    fallback_is_placeholder = False
-    epoch = slot._title_epoch
+    Shared by the sidebar route and the ``session_generate_title`` verb. Makes
+    one titling-model call and changes nothing on the slot. ``""`` means the
+    model and the heuristic fallback both had nothing better than the
+    placeholder, so the caller keeps the current title.
+    """
     try:
         # Window the RECENT conversational tail: the user reaches for
         # "Regenerate title" when the current name no longer fits, so the
@@ -1718,11 +1715,64 @@ async def api_chat_slot_generate_title(request: web.Request) -> web.Response:
         title = await _generate_title_via_kiro(
             state, convo[-_TITLE_PROMPT_WINDOW:], session_key=effective_session_key(slot)
         )
-        title = _with_ticket_prefix(title, key)
+        return _with_ticket_prefix(title, key)
     except Exception:
-        logger.debug("Title generation failed for slot %s", name, exc_info=True)
+        logger.debug("Title generation failed for slot %s", slot.key, exc_info=True)
         title = _fallback_title_from_messages(slot.messages)
-        fallback_is_placeholder = title == NEW_SESSION_TITLE
+        return "" if title == NEW_SESSION_TITLE else title
+
+
+async def apply_regenerated_title(
+    state: DashboardState,
+    slot: _ChatSlot,
+    title: str,
+    *,
+    still_current: Callable[[], bool] | None = None,
+) -> bool:
+    """Set a freshly generated *title* on *slot*, save it, and show it.
+
+    Every field is assigned BEFORE the first await, so a caller that gates the
+    target synchronously and then awaits this coroutine has no suspension
+    between its gate and the change, as with :func:`apply_manual_title`.
+
+    The title stays refreshable (``auto``) and replaces a hand-set one, which
+    is what the sidebar's "Regenerate title" has always done. The sidebar push
+    is skipped when an explicit title landed during the save (its own push
+    already ran) or when the slot left its key, so a successor opened under the
+    same key never shows this session's title. Returns whether the save landed.
+    """
+    slot.title = title
+    slot._titled = True
+    # Still an LLM-generated name, so it stays refreshable ("auto"). The
+    # epoch bump makes any in-flight background attempt stand down instead
+    # of clobbering the title the user just asked for.
+    slot._title_origin = _TITLE_ORIGIN_AUTO
+    # Generated from the recent conversational tail, so it is not a
+    # first-message echo — the early low-signal refresh must not re-fire.
+    slot._title_low_signal = False
+    slot._title_epoch += 1
+    epoch = slot._title_epoch
+    saved = await _persist_title(state, slot, still_current=still_current)
+    # RE-CHECK after the persist await, mirroring the refresh path: a rename
+    # landing during the write has already pushed ITS name, so pushing our
+    # now-stale local ``title`` would overwrite it in the sidebar (the disk
+    # is already correct via the persist loop; this guards the broadcast).
+    if slot._title_epoch == epoch and state._slots.get(slot.key) is slot:
+        state.push_slot_title(slot.key, title)
+    return saved
+
+
+async def api_chat_slot_generate_title(request: web.Request) -> web.Response:
+    """POST /api/chat/slots/{slot}/generate-title — manually trigger title generation."""
+    state: DashboardState = request.app["state"]
+    name = request.match_info["slot"]
+    slot = state._slots.get(name)
+    if not slot:
+        return web.json_response({"error": "not found", "code": "slot_not_found"}, status=404)
+
+    logger.info("Manual title generation requested for slot %s", name)
+    epoch = slot._title_epoch
+    title = await generate_manual_title(state, slot)
 
     if request.get("app", "") and state._slots.get(name) is not slot:
         return slot_not_found()
@@ -1740,38 +1790,27 @@ async def api_chat_slot_generate_title(request: web.Request) -> web.Response:
         )
         return web.json_response({"ok": True, "title": ""})
 
-    if title and not fallback_is_placeholder:
-        slot.title = title
-        slot._titled = True
-        # Still an LLM-generated name, so it stays refreshable ("auto"). The
-        # epoch bump makes any in-flight background attempt stand down instead
-        # of clobbering the title the user just asked for.
-        slot._title_origin = _TITLE_ORIGIN_AUTO
-        # Generated from the recent conversational tail, so it is not a
-        # first-message echo — the early low-signal refresh must not re-fire.
-        slot._title_low_signal = False
-        slot._title_epoch += 1
-        epoch = slot._title_epoch
-        if request.get("app", ""):
-            await _persist_title(state, slot, still_current=lambda: state._slots.get(name) is slot)
-            if state._slots.get(name) is not slot:
-                return slot_not_found()
-        else:
-            await _persist_title(state, slot)
-        # RE-CHECK after the persist await, mirroring the refresh path: a rename
-        # landing during the write has already pushed ITS name, so pushing our
-        # now-stale local ``title`` would overwrite it in the sidebar (the disk
-        # is already correct via the persist loop; this guards the broadcast).
-        if slot._title_epoch != epoch:
+    if title:
+        is_app = bool(request.get("app", ""))
+
+        def _still_current() -> bool:
+            return state._slots.get(name) is slot
+
+        applied_epoch = slot._title_epoch + 1
+        await apply_regenerated_title(
+            state, slot, title, still_current=_still_current if is_app else None
+        )
+        if is_app and state._slots.get(name) is not slot:
+            return slot_not_found()
+        if slot._title_epoch != applied_epoch:
             logger.info(
                 "Manual title generation: explicit title landed during persist "
                 "for slot %s; keeping it",
                 name,
             )
             return web.json_response({"ok": True, "title": ""})
-        state.push_slot_title(slot.key, title)
 
-    return web.json_response({"ok": True, "title": "" if fallback_is_placeholder else title})
+    return web.json_response({"ok": True, "title": title})
 
 
 async def apply_manual_title(state: DashboardState, slot: Any, title: str) -> bool:

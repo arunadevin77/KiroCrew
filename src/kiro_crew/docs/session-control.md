@@ -1,17 +1,17 @@
 # Session Control — driving another session
 
-One chat session can open, fork, seed, watch, stop, retry, continue, rename, close and revive
+One chat session can open, fork, seed, watch, stop, retry, continue, rename, retitle, close and revive
 another one, change its model, reload its agent process, and take another one under itself in
 the sidebar. The tools come from the
 `kirocrew-dashboard` MCP server, so an agent that does not mount that server
 never has them — exactly like any other MCP server. This page is the reference
-for all 33 of its tools, written for the agent that is about to use them.
+for all 34 of its tools, written for the agent that is about to use them.
 
 The server is defined in `src/kiro_crew/mcp_dashboard.py`. Two halves:
 
 - **Session control** — `session_create`, `session_fork`, `session_send`,
   `session_read_message`, `session_summary`, `session_stop`, `session_end_wait`, `session_retry`,
-  `session_continue`, `session_set_model`, `session_reload`, `session_rename`, `session_close`, `session_revive`,
+  `session_continue`, `session_set_model`, `session_reload`, `session_rename`, `session_generate_title`, `session_close`, `session_revive`,
   `session_broadcast`, `session_status`, `session_adopt`, `session_release`. These reach another
   session.
 - **Sidebar shape** — `chat_folder_tree`, `chat_folder_create`,
@@ -665,6 +665,39 @@ the session's next save writes it; until then a restart brings back the previous
 one. Renaming again with the same title is safe. A call that returns `ok` has
 been saved.
 
+### `session_generate_title`
+
+| Argument | Required | Meaning |
+|---|---|---|
+| `target` | yes | Session key or exact title of a session you created |
+
+Regenerates the target's sidebar title from its recent transcript. It runs the
+code behind the sidebar's "Regenerate title" action, so it costs one model call
+on the titling model, and the call waits for that model. The reply carries the
+new title, or the current one with a note when the model had nothing better.
+
+The new title replaces the current one, including a title someone set by hand,
+exactly as the sidebar action does. It stays an automatic title, so the
+background refresh may revise it later. A rename that lands while the model
+call runs wins, and the call then reports the title unchanged.
+
+The access check runs again once the model answers, before anything changes. A
+target that was closed or replaced meanwhile answers `target_replaced`; one that
+became channel-linked or mirrored answers that refusal. Either way the session
+keeps its title. The save checks again that the session still holds its key, so
+a session closed and reopened during the save also answers `target_replaced`
+and the new session's title is left alone. If the history write fails, the
+session still shows the new title (its next save writes it) and the call
+answers `title_persist_failed` instead of success.
+
+Only sessions the calling session created are reachable (`not_creator`), for
+every kind of caller, and never the caller itself (`self_target`). The other
+refusals are the ones `session_stop` gets. One call per target every 5 minutes,
+counted from when a call is admitted: a repeat inside that window is refused
+with `title_rate_limited`. If the tool call times out, the title can still land;
+a retry is still refused, because the 5-minute window is longer than the tool's
+120-second wait.
+
 ## Folders
 
 The sidebar tree the person organizes their sessions in.
@@ -838,7 +871,8 @@ gateway-issued key counts. Refusals you should expect, by code:
 | `model_owner_only` | HTTP 403: `auto` and **Auto (Jev)** can only be picked by the owner from the model picker |
 | `model_rejected` | The model id is missing, malformed, looks like a credential, or is one the target's backend would refuse |
 | `effort_rejected` | session_set_model: `reasoning_effort` is not one of the five standard levels (low, medium, high, xhigh, max). `""` is refused too; set it from the target's effort dropdown |
-| `target_replaced` | HTTP 409: the target was replaced by another session under the same key while the call ran; nothing was changed. Try again |
+| `target_replaced` | HTTP 409: the target was replaced by another session under the same key while the call ran (or, for title generation, closed); nothing was changed. Try again |
+| `title_rate_limited` | HTTP 429, title generation only: that target's title was generated less than 5 minutes ago |
 | `invalid_field_type` | An argument had the wrong type (for example a broadcast target list that is not a list of strings) |
 
 Two argument checks answer from the HTTP layer instead: `message_required` when
