@@ -575,10 +575,13 @@ def _doctor_effective_model(cfg: KiroCrewConfig, project_dir: str, issues: list[
 # already-authenticated application must stay behind a prompt), and a diagnostic
 # command must not silently undo that.  Doctor still repairs the ``tools`` entry,
 # which only makes the server's tools *reachable*, never pre-approved.
-# ``kirocrew-guide`` is always on but is granted per tool
-# (``agent._GUIDE_AUTO_GRANTS``); a whole-server grant would also pre-approve any
-# tool added to it later, before anyone reviewed it.
-_NO_BLANKET_ALLOW_MCPS = frozenset({CU_MCP_SERVER, "kirocrew-guide"}) | frozenset(_OPT_IN_MCPS)
+# ``kirocrew-guide`` and ``kirocrew-mate`` are always on but are granted per
+# tool (``agent._GUIDE_AUTO_GRANTS``, ``agent._MATE_AUTO_GRANTS``); a
+# whole-server grant would also pre-approve any tool added to either later,
+# before anyone reviewed it.
+_NO_BLANKET_ALLOW_MCPS = frozenset({CU_MCP_SERVER, "kirocrew-guide", "kirocrew-mate"}) | frozenset(
+    _OPT_IN_MCPS
+)
 
 
 def _strict_agent_json_specs(directory: Path) -> list[Path]:

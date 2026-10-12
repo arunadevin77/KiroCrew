@@ -631,6 +631,7 @@ _KIROCREW_MCP_SUBCOMMANDS = frozenset(
         "mcp-debug",
         "mcp-panel",
         "mcp-guide",
+        "mcp-mate",
     }
 )
 

@@ -446,19 +446,46 @@ async def api_cards_agent_propose(request: web.Request) -> web.Response:
         unknown = sorted(set(body) - {"kind", "params", "reason"})
         if unknown:
             raise CardError(400, "invalid_body", f"unknown field '{unknown[0][:64]}'")
-        kind = body.get("kind")
-        params = catalog.validate_params(str(kind or ""), body.get("params"))
+    except CardError as exc:
+        return _refusal(exc)
+    return await propose_for_caller(
+        request,
+        slot_key,
+        sk,
+        kind=str(body.get("kind") or ""),
+        params=body.get("params"),
+        reason=body.get("reason"),
+    )
+
+
+async def propose_for_caller(
+    request: web.Request,
+    slot_key: str,
+    sk: str,
+    *,
+    kind: str,
+    params: Any,
+    reason: Any,
+) -> web.Response:
+    """Propose one card of *kind* in the verified caller's slot. The route body.
+
+    Shared with the ``kirocrew-mate`` routes (:mod:`handlers.member_self`),
+    which resolve the same caller and fix the kind and the member themselves,
+    so a crewmate's request for its own goal, model or tools becomes exactly
+    the card ``propose_change`` would have made: same validation, same
+    preview, same store, same row in the conversation.
+    """
+    try:
+        params = catalog.validate_params(kind, params)
         cards.check_param_text(params)
-        reason = cards.clean_reason(body.get("reason"))
+        reason = cards.clean_reason(reason)
         state = request.app["state"]
-        preview, before, context = await cards.build(
-            str(kind), params, state=state, app=request.app
-        )
+        preview, before, context = await cards.build(kind, params, state=state, app=request.app)
         await _settle(request)
         rec = _store(request).propose(
             slot_key=slot_key,
             session_key=sk,
-            kind=str(kind),
+            kind=kind,
             params=params,
             reason=reason,
             preview=preview,

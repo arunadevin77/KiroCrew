@@ -5005,7 +5005,11 @@ class TestDoctorMcpTools:
         assert issues == [
             f"{ref} auto-approve forbidden by ceiling (repair from the owning install)"
             for ref in ("@kirocrew-cron", "@kirocrew-core")
-        ] + ["@kirocrew-guide config", "agent config (auto-fix skipped: shared home)"]
+        ] + [
+            "@kirocrew-guide config",
+            "@kirocrew-mate config",
+            "agent config (auto-fix skipped: shared home)",
+        ]
 
     def test_ceiling_revoke_drops_per_tool_grants_too(self, tmp_path, capsys):
         """Withholding auto-approve drops the bare ref and every ``@server/tool``

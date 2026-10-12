@@ -11370,6 +11370,18 @@ async def _run_chat(
                     await _card_store.flush()
             except Exception:
                 logger.debug("change-card results block skipped", exc_info=True)
+            # Likewise an Undo the user pressed on a change the crewmate made to
+            # itself (``update_self``): told once, as reference data, so the next
+            # reply does not speak of a face or name the user took back.
+            try:
+                from kiro_crew.context_blocks import render_self_change_undos
+                from kiro_crew.dashboard import member_self_changes
+
+                _self_undos = member_self_changes.take_unreported_undos(slot.key)
+                if _self_undos:
+                    _request_prefix_context += render_self_change_undos(_self_undos)
+            except Exception:
+                logger.debug("self-change undo block skipped", exc_info=True)
 
         # Ensure the mirror-source message is always bound before both the Slack
         # and channel-neutral user-message mirror legs run. The assignment that

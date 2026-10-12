@@ -45,6 +45,12 @@ from datetime import datetime
 from typing import Any
 
 from kiro_crew import guide_catalog
+from kiro_crew.config.sections import (
+    DEFAULT_MODEL,
+    MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE,
+    MEMBER_APPROVAL_MODES,
+    normalize_agent_model,
+)
 
 KIND_SETTING_CHANGE = "setting.change"
 KIND_SCHEDULE_CREATE = "schedule.create"
@@ -237,7 +243,8 @@ KINDS: dict[str, KindDef] = {
         ),
         KindDef(
             KIND_CREWMATE_UPDATE,
-            "Change one crewmate's description, display name, model or effort.",
+            "Change one crewmate's description, display name, model, effort or the "
+            "approval mode of its own chat (normal, trust_reads, trust).",
             _obj(
                 {
                     "name": _STR,
@@ -247,6 +254,7 @@ KINDS: dict[str, KindDef] = {
                             "display_name": _STR,
                             "model": _STR,
                             "reasoning_effort": _STR,
+                            "approval_mode": _STR,
                         },
                         [],
                     ),
@@ -575,11 +583,20 @@ def validate_params(kind: str, params: Any) -> dict[str, Any]:
         fields = p.get("fields")
         if not isinstance(fields, dict) or not fields:
             raise _fail("invalid_param", "'fields' must be a non-empty object")
-        _only(fields, {"description", "display_name", "model", "reasoning_effort"}, "fields")
+        _only(
+            fields,
+            {"description", "display_name", "model", "reasoning_effort", "approval_mode"},
+            "fields",
+        )
         f = {}
         for key in fields:
             f[key] = _clean_str(
                 fields, key, max_len=_TEXT_MAX if key == "description" else 64, allow_empty=True
+            )
+        if "approval_mode" in f and f["approval_mode"] not in MEMBER_APPROVAL_MODES:
+            raise _fail(
+                "invalid_param",
+                "'approval_mode' must be one of " + ", ".join(MEMBER_APPROVAL_MODES),
             )
         return {"name": name, "fields": f}
     if kind == KIND_CREWMATE_CAPABILITIES:
@@ -770,17 +787,24 @@ def _list_diff(before: list[str], after: list[str]) -> tuple[list[str], list[str
     return [x for x in after if x not in before], [x for x in before if x not in after]
 
 
+def _order_risk(order: tuple[Any, ...], before: Any, after: Any) -> str:
+    """Rank a move along *order* (tightest first): toward the end widens."""
+    if before not in order or after not in order:
+        return RISK_NORMAL
+    b, a = order.index(before), order.index(after)
+    if a > b:
+        return RISK_WIDEN
+    if a < b:
+        return RISK_TIGHTEN
+    return RISK_NORMAL
+
+
 def _setting_risk(path: str, before: Any, after: Any) -> str:
     if path in _CODE_EXEC_SETTINGS:
         return RISK_CODE_EXEC
     order = _SETTING_ORDER.get(path)
     if order is not None and before in order and after in order:
-        b, a = order.index(before), order.index(after)
-        if a > b:
-            return RISK_WIDEN
-        if a < b:
-            return RISK_TIGHTEN
-        return RISK_NORMAL
+        return _order_risk(order, before, after)
     segments = set(guide_catalog._SEGMENT_SPLIT.split(path.lower()))
     if segments & guide_catalog._EXCLUDED_SETTING_SEGMENTS:
         return RISK_WIDEN
@@ -949,6 +973,23 @@ def _launched_servers(draft: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]
     return out
 
 
+def _crewmate_put_body(fields: dict[str, Any], expected: dict[str, Any]) -> dict[str, Any]:
+    """The crewmate update route's body for ``fields``, armed against a newer permission.
+
+    An approval mode is a permission, so its write is compare-and-set: the body
+    names the mode this plan read (``expected``'s, ``""`` for unset) and the
+    route refuses with ``409 approval_mode_conflict``, under its config lock,
+    when the stored mode has moved since. Without it a profile save made in the
+    window after the card's own snapshot check and before its PUT would be
+    silently replaced, possibly by a wider mode than the user last chose. The
+    other fields are presentation and carry no such guard.
+    """
+    body = dict(fields)
+    if "approval_mode" in body:
+        body["expected_approval_mode"] = str(expected.get("approval_mode") or "")
+    return body
+
+
 def build_preview(
     kind: str, params: dict[str, Any], snapshot: dict[str, Any], context: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1101,16 +1142,55 @@ def build_preview(
     elif kind == KIND_CREWMATE_UPDATE:
         if not snapshot.get("exists"):
             raise _fail("not_found", f"no crewmate named '{p['name']}'")
-        before = snapshot.get("fields") or {}
-        changed = {k: v for k, v in p["fields"].items() if before.get(k) != v}
+        stored = snapshot.get("fields") or {}
+        before = dict(stored)
+        # An unset approval mode is not "nothing": the thread opens in the
+        # unset-effective mode, which is also what the profile's picker shows.
+        # The card compares against that, so asking for the mode already in
+        # force is refused as no change rather than drawn as "(empty) -> Trust".
+        if "approval_mode" in p["fields"] and not before.get("approval_mode"):
+            before["approval_mode"] = MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE
+        # A model pin of "" and of DEFAULT_MODEL are one value (inherit the next
+        # tier); the record stores "", the picker shows DEFAULT_MODEL. The card
+        # shows the picker's spelling and compares the normalized pair, so asking
+        # for the default while unpinned is no change. Reasoning effort keeps ""
+        # (the dashboard labels it as inherited).
+        if "model" in p["fields"]:
+            before["model"] = before.get("model") or DEFAULT_MODEL
+        changed = {
+            k: v
+            for k, v in p["fields"].items()
+            if (
+                normalize_agent_model(before.get(k)) != normalize_agent_model(v)
+                if k == "model"
+                else before.get(k) != v
+            )
+        }
         if not changed:
             raise _fail("no_change", "the crewmate already has those values")
-        out["title"] = f"Update crewmate “{p['name']}”"
+        if "approval_mode" in changed:
+            # A permission move is ranked like ``agent.approval_mode`` is: toward
+            # ``trust`` the card is a widening (badge and acknowledgement), toward
+            # ``normal`` a tightening. MEMBER_APPROVAL_MODES is ordered tightest
+            # to widest, which is what makes the index comparison the ranking.
+            out["risk"] = _order_risk(
+                MEMBER_APPROVAL_MODES, before["approval_mode"], changed["approval_mode"]
+            )
+        # The title and the scope line name the crewmate the way the user knows
+        # it (its display name, from the context); the key is the identity the
+        # plan addresses and stays in the params and the path.
+        label = str(context.get("label") or p["name"])
+        out["title"] = f"Update crewmate “{label}”"
+        # ``field`` lets the card draw the user's word for the field and its
+        # values (the dashboard's FIELD_LABELS); ``label`` stays the fallback.
         out["changes"] = [
-            {"label": k, "before": before.get(k), "after": v} for k, v in changed.items()
+            {"label": k, "field": k, "before": before.get(k), "after": v}
+            for k, v in changed.items()
         ]
-        out["scope"] = {"members": [p["name"]], "count": 1, "only_this_member": True}
-        out["apply"] = [step("PUT", f"/api/agents/{_q(p['name'])}", changed)]
+        out["scope"] = {"members": [label], "count": 1, "only_this_member": True}
+        out["apply"] = [
+            step("PUT", f"/api/agents/{_q(p['name'])}", _crewmate_put_body(changed, stored))
+        ]
     elif kind == KIND_CREWMATE_CAPABILITIES:
         revision = snapshot.get("revision")
         if not revision:
@@ -1118,14 +1198,15 @@ def build_preview(
         impact = context.get("impact") or []
         if not impact:
             raise _fail("no_change", "these operations change nothing")
-        out["title"] = f"Change tools for “{p['member']}”"
+        label = str(context.get("label") or p["member"])
+        out["title"] = f"Change tools for “{label}”"
         out["changes"] = _impact_rows(impact)
         launched = _launched_servers(p["draft"])
         for server, spec in launched:
             # A server this card defines runs its launch line in the member's
             # next session: shown in full, and marked as running code.
             out["changes"] += _server_spec_rows(server, spec)
-        out["scope"] = {"members": [p["member"]], "count": 1, "only_this_member": True}
+        out["scope"] = {"members": [label], "count": 1, "only_this_member": True}
         # An auto-approval this draft grants widens what the member runs without
         # asking, and a launch line runs third-party code. Both can be true at
         # once: a draft that sets an MCP server AND auto-approves one of its
@@ -1380,7 +1461,7 @@ def capability_inverse(
     """Operations that restore each row *draft* touches to its state in *rows*.
 
     ``None`` when a row cannot be restored exactly: an MCP server definition the
-    member set locally is shown redacted, so writing it back would not restore it.
+    mate set locally is shown redacted, so writing it back would not restore it.
     """
     by_key = {(r.get("section"), r.get("id")): r for r in rows if isinstance(r, dict)}
     ops: list[dict[str, Any]] = []
@@ -1525,7 +1606,18 @@ def _build_undo(
     if kind == KIND_CREWMATE_UPDATE:
         fields = before.get("fields") or {}
         old = {k: fields.get(k) if fields.get(k) is not None else "" for k in p["fields"]}
-        return [step("PUT", f"/api/agents/{_q(p['name'])}", old)], None
+        if "approval_mode" in old:
+            # The route accepts only a real mode, never "" (a pinned mode must
+            # not fall back to the default by accident), so an approval mode
+            # that was unset before the card is restored as the mode the thread
+            # was running in, which is the same permission the user had.
+            old["approval_mode"] = old["approval_mode"] or MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE
+        # The undo's expected mode is the one the card WROTE: a profile save
+        # that landed since is a newer choice, and the route's compare-and-set
+        # refuses to overwrite it (409 approval_mode_conflict).
+        return [
+            step("PUT", f"/api/agents/{_q(p['name'])}", _crewmate_put_body(old, p["fields"]))
+        ], None
     if kind == KIND_CREWMATE_CAPABILITIES:
         # Step 0 is a preview (not a write), step 1 is the PUT. ``applied_steps``
         # counts writes (see :func:`applied_write_count`), so a PUT that never

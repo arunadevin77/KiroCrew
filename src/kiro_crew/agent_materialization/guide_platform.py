@@ -1,9 +1,13 @@
-"""The one-time platform guide grant on an existing default spec.
+"""The one-time platform grants on an existing default spec.
 
-:func:`grant_guide_platform_once` gives an existing default spec the platform
-guide set (``@kirocrew-guide`` and :data:`kiro_crew.agent._GUIDE_AUTO_GRANTS`)
-once, the way a fresh install's shipped defaults already carry it, so a user who
-later removes either keeps that choice.
+Two platform sets ship on every crewmate and dashboard session: the guide
+(``@kirocrew-guide`` with :data:`kiro_crew.agent._GUIDE_AUTO_GRANTS`) and the
+crewmate's own record (``@kirocrew-mate`` with
+:data:`kiro_crew.agent._MATE_AUTO_GRANTS`). A fresh install's shipped defaults
+carry both; an existing spec is given each set ONCE, the way the defaults would
+have, so a user who later removes either keeps that choice. Each set has its own
+marker: an install that already received the guide still receives the mate set
+the first time it rebuilds on a build that ships it.
 """
 
 from __future__ import annotations
@@ -14,6 +18,8 @@ from kiro_crew import agent as agent_mod
 
 #: One-time marker for :func:`grant_guide_platform_once`, under the data home.
 GUIDE_GRANT_MARKER = "guide_platform_granted.json"
+#: One-time marker for :func:`grant_mate_platform_once`, under the data home.
+MATE_GRANT_MARKER = "mate_platform_granted.json"
 
 
 def _marker(name: str):
@@ -26,36 +32,42 @@ def _mark(name: str) -> None:
     atomic_write(_marker(name), '{"version": 1}\n')
 
 
-def grant_guide_platform_once(config: dict[str, Any], *, fresh_install: bool) -> bool:
-    """Reference the platform guide set and its grants on the default spec, once.
+def _grant_platform_set_once(
+    config: dict[str, Any],
+    *,
+    server: str,
+    grants: tuple[str, ...],
+    marker: str,
+    fresh_install: bool,
+) -> bool:
+    """Reference *server* and its *grants* on the default spec, once.
 
     A fresh build already carries both from the shipped defaults. An existing
-    spec gains ``@kirocrew-guide`` in ``tools`` and
-    :data:`kiro_crew.agent._GUIDE_AUTO_GRANTS` in ``allowedTools`` the first
-    time, and is left as the user keeps it from then on. The caller's final
+    spec gains ``@<server>`` in ``tools`` and *grants* in ``allowedTools`` the
+    first time, and is left as the user keeps it from then on. The caller's final
     ceiling pass still filters the grants, so a governance ceiling that denies a
     tool keeps it out.
 
-    Returns whether the one-time grant is still to be recorded: the caller calls
-    :func:`mark_guide_platform_granted` only after the spec is written, so a
-    write that fails leaves the grant to the next rebuild. A spec whose
-    ``mcpServers`` does not carry the guide server yet gains nothing and records
-    nothing, so the grant still lands on the rebuild that adds the server.
+    Returns whether the one-time grant is still to be recorded: the caller marks
+    it only after the spec is written, so a write that fails leaves the grant to
+    the next rebuild. A spec whose ``mcpServers`` does not carry the server yet
+    gains nothing and records nothing, so the grant still lands on the rebuild
+    that adds the server.
     """
-    if _marker(GUIDE_GRANT_MARKER).exists():
+    if _marker(marker).exists():
         return False
     if fresh_install:
         return True
-    if agent_mod._GUIDE_SERVER not in (config.get("mcpServers") or {}):
+    if server not in (config.get("mcpServers") or {}):
         return False
-    ref = f"@{agent_mod._GUIDE_SERVER}"
+    ref = f"@{server}"
     tools = [t for t in config.get("tools") or [] if isinstance(t, str)]
     added = [] if ref in tools else [f"{ref} added to tools"]
     if added:
         tools.append(ref)
     config["tools"] = tools
     allowed = list(config.get("allowedTools") or [])
-    granted = [g for g in agent_mod._GUIDE_AUTO_GRANTS if g not in allowed]
+    granted = [g for g in grants if g not in allowed]
     allowed.extend(granted)
     config["allowedTools"] = allowed
     added += [f"{g} added to allowedTools" for g in granted]
@@ -72,6 +84,33 @@ def grant_guide_platform_once(config: dict[str, Any], *, fresh_install: bool) ->
     return True
 
 
+def grant_guide_platform_once(config: dict[str, Any], *, fresh_install: bool) -> bool:
+    """The guide set (``@kirocrew-guide`` + :data:`agent._GUIDE_AUTO_GRANTS`), once."""
+    return _grant_platform_set_once(
+        config,
+        server=agent_mod._GUIDE_SERVER,
+        grants=agent_mod._GUIDE_AUTO_GRANTS,
+        marker=GUIDE_GRANT_MARKER,
+        fresh_install=fresh_install,
+    )
+
+
 def mark_guide_platform_granted() -> None:
     """Record that :func:`grant_guide_platform_once` has run on a written spec."""
     _mark(GUIDE_GRANT_MARKER)
+
+
+def grant_mate_platform_once(config: dict[str, Any], *, fresh_install: bool) -> bool:
+    """The mate set (``@kirocrew-mate`` + :data:`agent._MATE_AUTO_GRANTS`), once."""
+    return _grant_platform_set_once(
+        config,
+        server=agent_mod._MATE_SERVER,
+        grants=agent_mod._MATE_AUTO_GRANTS,
+        marker=MATE_GRANT_MARKER,
+        fresh_install=fresh_install,
+    )
+
+
+def mark_mate_platform_granted() -> None:
+    """Record that :func:`grant_mate_platform_once` has run on a written spec."""
+    _mark(MATE_GRANT_MARKER)

@@ -233,6 +233,156 @@ def test_crewmate_create_shows_inherited_auto_approvals_and_asks_to_widen():
     assert row["after"] == "builder-mcp, slack-mcp"
 
 
+def test_crewmate_update_reads_an_unset_approval_mode_as_the_mode_in_force():
+    # A record that pins no approval mode opens its thread in the unset-effective
+    # mode. The card's "before" column says so, every row names its field for the
+    # dashboard's labels, and asking for the mode already in force is no change.
+    p = catalog.validate_params(
+        "crewmate.update", {"name": "scout", "fields": {"approval_mode": "normal"}}
+    )
+    preview = catalog.build_preview(
+        "crewmate.update", p, {"exists": True, "fields": {"approval_mode": ""}}, {}
+    )
+    assert preview["changes"] == [
+        {
+            "label": "approval_mode",
+            "field": "approval_mode",
+            "before": catalog.MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE,
+            "after": "normal",
+        }
+    ]
+    same = catalog.validate_params(
+        "crewmate.update",
+        {
+            "name": "scout",
+            "fields": {"approval_mode": catalog.MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE},
+        },
+    )
+    with pytest.raises(catalog.CardCatalogError) as refused:
+        catalog.build_preview(
+            "crewmate.update", same, {"exists": True, "fields": {"approval_mode": ""}}, {}
+        )
+    assert refused.value.code == "no_change"
+
+
+def test_crewmate_update_reads_an_unpinned_model_as_the_default_and_normalizes_the_ask():
+    # "" and DEFAULT_MODEL are one value (inherit the next tier): the card shows
+    # the picker's spelling for the unpinned record and asking for the default
+    # while unpinned is no change. Reasoning effort keeps "" for the dashboard.
+    pin = catalog.validate_params(
+        "crewmate.update", {"name": "scout", "fields": {"model": "fable-9"}}
+    )
+    unpinned = {"exists": True, "fields": {"model": ""}}
+    row = catalog.build_preview("crewmate.update", pin, unpinned, {})["changes"][0]
+    assert (row["before"], row["after"]) == (catalog.DEFAULT_MODEL, "fable-9")
+    default = catalog.validate_params(
+        "crewmate.update", {"name": "scout", "fields": {"model": catalog.DEFAULT_MODEL}}
+    )
+    with pytest.raises(catalog.CardCatalogError) as refused:
+        catalog.build_preview("crewmate.update", default, unpinned, {})
+    assert refused.value.code == "no_change"
+    effort = catalog.validate_params(
+        "crewmate.update", {"name": "scout", "fields": {"reasoning_effort": "high"}}
+    )
+    row = catalog.build_preview(
+        "crewmate.update", effort, {"exists": True, "fields": {"reasoning_effort": ""}}, {}
+    )["changes"][0]
+    assert (row["before"], row["after"]) == ("", "high")
+
+
+def test_crewmate_update_ranks_an_approval_mode_move_like_the_agent_setting():
+    # Toward trust the card is a widening (badge and acknowledgement), toward
+    # normal a tightening; a presentation field is an ordinary change.
+    def risk(before: str, after: str) -> str:
+        p = catalog.validate_params(
+            "crewmate.update", {"name": "scout", "fields": {"approval_mode": after}}
+        )
+        snap = {"exists": True, "fields": {"approval_mode": before}}
+        return catalog.build_preview("crewmate.update", p, snap, {})["risk"]
+
+    assert risk("normal", "trust") == catalog.RISK_WIDEN
+    assert risk("normal", "trust_reads") == catalog.RISK_WIDEN
+    assert risk("trust_reads", "trust") == catalog.RISK_WIDEN
+    assert risk("trust", "normal") == catalog.RISK_TIGHTEN
+    assert risk("trust", "trust_reads") == catalog.RISK_TIGHTEN
+    # Unset reads as the unset-effective mode (trust), so asking for normal tightens.
+    assert risk("", "normal") == catalog.RISK_TIGHTEN
+    desc = catalog.validate_params(
+        "crewmate.update", {"name": "scout", "fields": {"description": "new"}}
+    )
+    assert (
+        catalog.build_preview(
+            "crewmate.update", desc, {"exists": True, "fields": {"description": "old"}}, {}
+        )["risk"]
+        == catalog.RISK_NORMAL
+    )
+
+
+def test_crewmate_cards_name_the_crewmate_the_way_the_user_knows_it():
+    # A card raised in a crewmate's own chat is read under the display name, so
+    # the title and the scope line carry the label the context resolved; the key
+    # stays the identity in the plan's path. Without a label, the key is shown.
+    p = catalog.validate_params(
+        "crewmate.update", {"name": "scout", "fields": {"description": "new"}}
+    )
+    before = {"exists": True, "fields": {"description": "old"}}
+    preview = catalog.build_preview("crewmate.update", p, before, {"label": "Rock"})
+    assert preview["title"] == "Update crewmate “Rock”"
+    assert preview["scope"]["members"] == ["Rock"]
+    assert preview["apply"][0]["path"] == "/api/agents/scout"
+    plain = catalog.build_preview("crewmate.update", p, before, {})
+    assert plain["title"] == "Update crewmate “scout”"
+    assert plain["scope"]["members"] == ["scout"]
+
+
+def test_crewmate_update_arms_an_approval_mode_write_against_a_newer_permission():
+    # A permission write is compare-and-set at the route: the apply names the
+    # stored mode it read ("" for unset) and the undo names the mode the card
+    # wrote, so a profile save that lands between the card's snapshot check and
+    # its PUT, or between apply and Undo, is refused instead of overwritten.
+    p = catalog.validate_params(
+        "crewmate.update", {"name": "scout", "fields": {"approval_mode": "normal"}}
+    )
+    unset = {"exists": True, "fields": {"approval_mode": ""}}
+    apply = catalog.build_preview("crewmate.update", p, unset, {})["apply"]
+    assert apply == [
+        {
+            "method": "PUT",
+            "path": "/api/agents/scout",
+            "body": {"approval_mode": "normal", "expected_approval_mode": ""},
+        }
+    ]
+    # Undo of a card made from an unset mode restores the mode the thread ran in
+    # (the route refuses ""), expecting the mode the card wrote.
+    undo, reason = catalog.build_undo("crewmate.update", p, unset, [{}], applied_steps=1)
+    assert reason is None
+    assert undo == [
+        {
+            "method": "PUT",
+            "path": "/api/agents/scout",
+            "body": {
+                "approval_mode": catalog.MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE,
+                "expected_approval_mode": "normal",
+            },
+        }
+    ]
+    pinned = {"exists": True, "fields": {"approval_mode": "trust_reads"}}
+    assert catalog.build_preview("crewmate.update", p, pinned, {})["apply"][0]["body"] == {
+        "approval_mode": "normal",
+        "expected_approval_mode": "trust_reads",
+    }
+    undo, _ = catalog.build_undo("crewmate.update", p, pinned, [{}], applied_steps=1)
+    assert undo[0]["body"] == {"approval_mode": "trust_reads", "expected_approval_mode": "normal"}
+    # A presentation field carries no permission guard.
+    desc = catalog.validate_params(
+        "crewmate.update", {"name": "scout", "fields": {"description": "new"}}
+    )
+    body = catalog.build_preview(
+        "crewmate.update", desc, {"exists": True, "fields": {"description": "old"}}, {}
+    )["apply"][0]["body"]
+    assert body == {"description": "new"}
+
+
 def test_template_auto_approved_servers_reads_bare_grants_only(tmp_path, monkeypatch):
     import kiro_crew.config.paths as paths
 

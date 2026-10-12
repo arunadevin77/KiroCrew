@@ -8385,6 +8385,20 @@
       "quote": "Citar",
       "quote_hint": "Cita a seleção no compositor desta conversa: sua resposta vai para o chat principal"
     },
+    "selfChange": {
+      "changed_display_name": "{{name}} mudou de nome",
+      "changed_description": "{{name}} atualizou a descrição",
+      "changed_avatar": "{{name}} mudou de avatar",
+      "undo": "Desfazer",
+      "undone": "desfeito",
+      "undo_failed": "Não foi possível desfazer esta alteração: {{message}}",
+      "undo_unavailable": "Esta alteração não pode mais ser desfeita aqui. Defina o valor no perfil de {{name}}: abra Crewmates, escolha {{name}} e depois o lápis ao lado do nome.",
+      "undo_stale": "Este valor foi alterado de novo depois, então este desfazer não vale mais. Defina-o no perfil de {{name}}: abra Crewmates, escolha {{name}} e depois o lápis ao lado do nome.",
+      "field_display_name": "nome",
+      "field_description": "descrição",
+      "field_avatar": "cara",
+      "changed_fields": "{{name}} mudou de {{fields}}"
+    },
     "sendToInstanceSubmenu": {
       "failed": "Falhou",
       "not_connected": "não conectado",
@@ -9855,7 +9869,7 @@
       "primary_connection_connect": "Conectar",
       "primary_crewmate_capabilities": "Salvar ferramentas",
       "primary_crewmate_create": "Criar colega",
-      "primary_crewmate_update": "Salvar colega",
+      "primary_crewmate_update": "Aplicar alteração",
       "primary_denied_command": "Salvar regra",
       "primary_mcp_add_custom": "Adicionar servidor",
       "primary_mcp_install": "Instalar servidor",
@@ -9921,7 +9935,15 @@
       "result_crewmate_created": "Colega criado: {{name}}",
       "primary_schedule_once": "Criar agendamento",
       "due": "Vence {{when}}",
-      "time_passed": "Este horário já passou. Peça a {{name}} um novo horário."
+      "time_passed": "Este horário já passou. Peça a {{name}} um novo horário.",
+      "field_display_name": "Nome exibido",
+      "field_description": "Descrição",
+      "field_model": "Modelo",
+      "field_reasoning_effort": "Esforço de raciocínio",
+      "field_approval_mode": "Modo de aprovação",
+      "approval_mode_hint_normal": "Pergunta a você antes de fazer qualquer coisa.",
+      "approval_mode_hint_trust_reads": "Executa sozinho só comandos de shell de leitura; para tudo o mais, pergunta a você.",
+      "approval_mode_hint_trust": "Trabalha no próprio chat sem perguntar antes."
     },
     "assistantWelcome": {
       "default_name": "Mate"

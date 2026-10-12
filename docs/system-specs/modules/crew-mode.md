@@ -943,6 +943,27 @@ A `schedule.update` also offers no Undo (`no_identity_check`): its inverse is a 
 `crewmate.update` Undo is a `PUT` of the old fields armed with the `member_id` its apply
 snapshot recorded; the update route compares it with the live crew's under its config lock
 and answers `409 changed_since_apply` when the name now belongs to a different crewmate.
+Its title and scope line name the crewmate by the label `read_context` resolved
+(`change_cards._crewmate_label`: the display name, else the key), so a card raised in the
+crewmate's own chat names the crewmate the user knows; the key stays the identity in the
+plan's path, and the label rides in the context, not the compared snapshot, so a rename
+between propose and apply is not a conflict. The `crewmate.capabilities` card does the same.
+Its rows name their `field` so the dashboard labels them and their values in the user's
+words (`CardChanges.FIELD_LABELS`; an `approval_mode` value reads as the picker's word for
+it, with a one-line hint of what that mode means under the value,
+`CardChanges.changeHint`), and a record that pins no approval mode is read as the mode its thread opens in
+(`config.sections.MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE`, the value the profile's picker
+shows): the card's before column says that mode, and asking for it is refused `no_change`.
+An `approval_mode` move is ranked like `agent.approval_mode` (`MEMBER_APPROVAL_MODES`,
+tightest first, through `_order_risk`): toward `trust` the card's `risk` is `widen` and the
+dashboard requires the widening acknowledgement, toward `normal` it is `tighten`.
+An `approval_mode` write is a permission, so both the card's apply and its Undo are
+compare-and-set at the update route (`change_card_catalog._crewmate_put_body`): the apply
+sends `expected_approval_mode` = the stored mode its snapshot read (`""` for unset), the
+Undo sends the mode the card wrote, and a profile save that landed in between answers
+`409 approval_mode_conflict` under the config lock rather than being overwritten. An Undo
+of a card made from an unset mode restores the unset-effective mode explicitly, since the
+route accepts no `""`.
 Crewmate proposals are
 `crewmate.create` cards; the `/members?create=1&name=<encoded-name>&goal=<encoded-goal>`
 link to an editable UI draft remains for a user who wants to fill it in; opening a draft
@@ -1083,7 +1104,8 @@ it, or showing the user around (those three only); and finishes by asking what t
 user would like to call it (the name in question is the crewmate's own). The kickoff
 is written as plain principles, and the greeting itself is the model's own words.
 When the user answers with a name, that later turn says plainly that the crewmate now
-goes by it and calls the `kirocrew-guide` tool `rename_self` (`POST /api/guide/agent/rename`), which renames ONLY the calling
+goes by it and calls the `kirocrew-mate` tool `update_self` with `display_name`
+(`POST /api/member/self/update`, `handlers/member_self.py`), which renames ONLY the calling
 crewmate -- the member is derived from the caller's own pinned thread, never from an
 argument -- and only from a turn the user sent in the dashboard (`_turn_user_sent`,
 so the hidden welcome kickoff, a wake or a cron turn is refused 403
@@ -2357,7 +2379,7 @@ privilege boundary: the default agent frequently runs at broader approval, so a
 typo'd or injected name falling back to it would be an escalation at the manager
 primitive. An empty `agent` still means "use the default".
 
-Crew Mode resolves the member server-side instead of relying on the
+Crew Mode resolves the mate server-side instead of relying on the
 coincidence: `spawn_run(crew=<member>)` forwards `crew` in the request body
 (`mcp_tools/spawn.py`) to `dashboard/messaging_api/spawn.py`. That handler
 refuses a name that is not a key of `config.agents` with `404 unknown_member`,

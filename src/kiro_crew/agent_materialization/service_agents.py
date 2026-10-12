@@ -119,23 +119,26 @@ def _install_knowledge_agent() -> None:
 
 
 def _without_guide_server(config: dict) -> dict:
-    """*config* with the platform guide server, its ref and its grants removed.
+    """*config* with the guide and member platform servers, refs and grants removed.
 
     A background agent is driven by a loop, never by a person at the dashboard,
-    so it has no one to show a guide or a change card to and keeps the narrower
-    server set.
+    so it has no one to show a guide or a change card to, is nobody's crewmate,
+    and keeps the narrower server set.
     """
-    ref = f"@{agent_mod._GUIDE_SERVER}"
+    refs = tuple(f"@{s}" for s in (agent_mod._GUIDE_SERVER, agent_mod._MATE_SERVER))
     servers = config.get("mcpServers")
     if isinstance(servers, dict):
         servers.pop(agent_mod._GUIDE_SERVER, None)
+        servers.pop(agent_mod._MATE_SERVER, None)
     for key in ("tools", "allowedTools"):
         entries = config.get(key)
         if isinstance(entries, list):
             config[key] = [
                 e
                 for e in entries
-                if not (e == ref or (isinstance(e, str) and e.startswith(ref + "/")))
+                if not any(
+                    e == ref or (isinstance(e, str) and e.startswith(ref + "/")) for ref in refs
+                )
             ]
     return config
 

@@ -8262,6 +8262,20 @@
       "quote": "उद्धरण",
       "quote_hint": "चयनित हिस्से को इसी बातचीत के कंपोज़र में उद्धृत करता है — तुम्हारा जवाब मुख्य चैट में जाएगा"
     },
+    "selfChange": {
+      "changed_display_name": "{{name}} ने अपना नाम बदला",
+      "changed_description": "{{name}} ने अपना विवरण बदला",
+      "changed_avatar": "{{name}} ने अपना अवतार बदला",
+      "undo": "पूर्ववत करो",
+      "undone": "पूर्ववत किया गया",
+      "undo_failed": "यह बदलाव पूर्ववत नहीं हो सका: {{message}}",
+      "undo_unavailable": "यह बदलाव अब यहाँ से वापस नहीं हो सकता। मान {{name}} की प्रोफ़ाइल में सेट करो: Crewmates खोलो, {{name}} चुनो, फिर नाम के बगल वाली पेंसिल।",
+      "undo_stale": "यह मान बाद में फिर बदला गया, इसलिए यह अनडू अब लागू नहीं होता। इसे {{name}} की प्रोफ़ाइल में सेट करो: Crewmates खोलो, {{name}} चुनो, फिर नाम के बगल वाली पेंसिल।",
+      "field_display_name": "नाम",
+      "field_description": "विवरण",
+      "field_avatar": "चेहरा",
+      "changed_fields": "{{name}} ने अपना {{fields}} बदला"
+    },
     "sendToInstanceSubmenu": {
       "failed": "विफल",
       "not_connected": "कनेक्ट नहीं है",
@@ -9725,7 +9739,7 @@
       "primary_connection_connect": "कनेक्ट करो",
       "primary_crewmate_capabilities": "टूल सेव करो",
       "primary_crewmate_create": "साथी बनाओ",
-      "primary_crewmate_update": "साथी सेव करो",
+      "primary_crewmate_update": "बदलाव लागू करो",
       "primary_denied_command": "नियम सेव करो",
       "primary_mcp_add_custom": "सर्वर जोड़ो",
       "primary_mcp_install": "सर्वर इंस्टॉल करो",
@@ -9790,7 +9804,15 @@
       "result_crewmate_created": "साथी बन गया: {{name}}",
       "primary_schedule_once": "शेड्यूल बनाओ",
       "due": "{{when}} देय",
-      "time_passed": "यह समय बीत चुका है। {{name}} से नया समय माँगो।"
+      "time_passed": "यह समय बीत चुका है। {{name}} से नया समय माँगो।",
+      "field_display_name": "दिखने वाला नाम",
+      "field_description": "विवरण",
+      "field_model": "मॉडल",
+      "field_reasoning_effort": "तर्क की तीव्रता",
+      "field_approval_mode": "अनुमोदन मोड",
+      "approval_mode_hint_normal": "कुछ भी करने से पहले तुमसे पूछता है।",
+      "approval_mode_hint_trust_reads": "सिर्फ़ पढ़ने वाले शेल कमांड खुद चलाता है, बाकी सब तुमसे पूछता है।",
+      "approval_mode_hint_trust": "अपनी चैट में तुमसे पहले बिना पूछे काम करता है।"
     },
     "assistantWelcome": {
       "default_name": "Mate"

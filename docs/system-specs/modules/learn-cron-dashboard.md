@@ -5686,7 +5686,10 @@ template mounts this server and grants automatic approval, through the governanc
 server's reads and offers in `_GUIDE_AUTO_GRANTS` (`find_ui`, `search_docs`,
 `find_setting`, `get_member_capabilities`, `diagnose_settings`,
 `list_change_kinds`, `get_change_status`, `guide_list_actions`, `guide_start`,
-`guide_status`, `guide_cancel`, `propose_change` and `rename_self`).
+`guide_status`, `guide_cancel` and `propose_change`), and to the member
+server's four tools in `_MATE_AUTO_GRANTS` (`update_self`, `set_model`,
+`set_approval_mode`, `request_capabilities`; see
+[mcp.md](../../architecture/mcp.md)).
 `guide_start` only offers a card in the slot's chat that the owner must press
 Start on, and `propose_change` only offers a change card the owner must
 approve; no auto-granted tool navigates or writes a configuration on its own.

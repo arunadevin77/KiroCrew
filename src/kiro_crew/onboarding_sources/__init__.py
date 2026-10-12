@@ -65,6 +65,7 @@ _CORE_MANAGED_MCP_NAMES = frozenset(
         "kirocrew-debug",
         "kirocrew-panel",
         "kirocrew-guide",
+        "kirocrew-mate",
         "openclaw-core",
         "openclaw-cron",
         "openclaw-computer",

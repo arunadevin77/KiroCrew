@@ -150,9 +150,22 @@ chat, schedules and memory stay where they are, and `--display-name ""` goes
 back to showing the agent name. A name another crewmate already shows is
 refused, as is one with line breaks or hidden characters. A crewmate can also
 take a new name itself: tell it in its own chat what to call it, and it renames
-itself with the `rename_self` tool, under the same rules. It cannot rename
-another crewmate, and nothing but a message you send in the dashboard can make
-it rename itself.
+itself with the `update_self` tool, under the same rules. The same tool lets it
+change its description and its ghost face when you ask it to ("wear a cap",
+"describe yourself as the build watcher"): the change is applied at once and the
+chat shows one line saying what changed, with an **Undo** that puts the old
+value back. The undo is yours alone; the crewmate has no tool for it, and it
+lasts as long as the gateway runs. A crewmate wearing an uploaded picture or an
+appearance pack keeps that face; only the crew editor changes those. It cannot
+change another crewmate, and nothing but a message you send in the dashboard
+can make it change itself.
+
+Everything else about a crewmate stays yours to grant. In its own chat a
+crewmate can ask for a different model or reasoning effort (`set_model`), a
+different approval mode for that chat (`set_approval_mode`), or a change to its
+tools, MCP servers and skills (`request_capabilities`); each ask is a change
+card with a button, and nothing changes until you press it. Its workspace,
+memory store and template are not the crewmate's to ask for.
 
 Creating a crewmate allocates its memory store for it. That store cannot later
 be pointed somewhere else or shared with another crewmate — `kirocrew agent

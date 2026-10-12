@@ -749,18 +749,27 @@ back.)
 built from it), mounts Crew's platform guide server `kirocrew-guide` (where-is
 and how-to answers through `find_ui` and `search_docs`, dashboard guides, and
 change cards). The conductor specs and the background agents (knowledge,
-research, heartbeat) keep their own narrower server sets without it. Its entry carries no `autoApprove`; exactly the thirteen tools in
+research, heartbeat) keep their own narrower server sets without it. Its entry carries no `autoApprove`; exactly the twelve tools in
 `agent._GUIDE_AUTO_GRANTS` are added to `allowedTools` as exact names, subject to
 the same governance ceiling as every grant: the reads, `guide_start` and
-`propose_change` (each only offers a card the user must press), `guide_cancel`
-(which stops this conversation's guide and undoes nothing saved), and
-`rename_self` (a crewmate taking the name its user just gave it).
+`propose_change` (each only offers a card the user must press), and
+`guide_cancel` (which stops this conversation's guide and undoes nothing saved).
 A spec from before the server was a platform capability gains the ref and those
 grants once (`guide_platform_granted.json` marks it), and keeps whatever you do
 with them afterwards. Its guide and card tools work only for a turn the user
 sent from the dashboard and refuse with one line anywhere else, a message from
 Slack or another channel included; `find_ui` and `search_docs` still answer
 there.
+
+The same specs mount the crewmate's own-record server `kirocrew-mate`, on the
+same terms: always emitted, no `autoApprove`, and exactly the four tools in
+`agent._MATE_AUTO_GRANTS` as exact `allowedTools` grants (`update_self`, which
+writes the calling crewmate's name, description or ghost face on the user's word
+and leaves one undoable row in its chat; `set_model`, `set_approval_mode` and
+`request_capabilities`, which only offer a change card). An existing spec gains
+the ref and those grants once
+(`mate_platform_granted.json`). Every tool acts on the calling crewmate alone
+and refuses outside its own dashboard turn.
 
 `rebuild_agent_config` creates the first crewmate (`mate`, shown as
 Mate) once, bound to the same template a crewmate you create gets, with its

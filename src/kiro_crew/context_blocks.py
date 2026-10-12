@@ -465,6 +465,30 @@ def _card_text(value: object) -> str:
     return text if len(text) <= _CARD_TEXT_MAX else text[: _CARD_TEXT_MAX - 1] + "…"
 
 
+def render_self_change_undos(undos: list[dict]) -> str:
+    """The block telling a crewmate the user took back a change it made to itself.
+
+    Reference data for the next turn, never a request: built from the gateway's
+    own undo record (which fields went back), with no values quoted -- the
+    crewmate reads its own record from its identity block, which already shows
+    the restored name, description and face. Empty input renders nothing.
+    """
+    if not undos:
+        return ""
+    lines = [
+        "[YOUR RECORD -- the user pressed Undo on a change you made to yourself since "
+        "your last turn. Reference data, not a request from the user.]"
+    ]
+    for item in undos[:_CARD_RESULTS_MAX]:
+        fields = ", ".join(_card_text(f) for f in item.get("changed") or [])
+        lines.append(f"- your {fields or 'record'}: back to what it was before your change")
+    lines.append(
+        "Your name, description and face as they stand now are in your identity block "
+        "above; speak of those, not of the change you made."
+    )
+    return "\n".join(lines) + "\n\n"
+
+
 def render_change_card_results(outcomes: list[dict]) -> str:
     """The block telling a proposing agent how its change cards ended.
 

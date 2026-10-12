@@ -3125,6 +3125,20 @@
       "saving": "Saving…",
       "tap_to_comment": "Tap to write a comment…"
     },
+    "selfChange": {
+      "changed_display_name": "{{name}} changed its name",
+      "changed_description": "{{name}} updated its description",
+      "changed_avatar": "{{name}} changed its face",
+      "undo": "Undo",
+      "undone": "undone",
+      "undo_failed": "Could not undo this change: {{message}}",
+      "undo_unavailable": "This change can no longer be undone here. Set the value in {{name}}'s profile: open Crewmates, pick {{name}}, then the pencil beside its name.",
+      "undo_stale": "This value was changed again since, so this undo no longer applies. Set it in {{name}}'s profile: open Crewmates, pick {{name}}, then the pencil beside its name.",
+      "field_display_name": "name",
+      "field_description": "description",
+      "field_avatar": "face",
+      "changed_fields": "{{name}} changed its {{fields}}"
+    },
     "sessionActionsMenu": {
       "crew_board": "Crew board",
       "crew_board_failed": "Could not read this board",
@@ -4109,7 +4123,7 @@
       "primary_connection_connect": "Connect",
       "primary_crewmate_capabilities": "Save tools",
       "primary_crewmate_create": "Create crewmate",
-      "primary_crewmate_update": "Save crewmate",
+      "primary_crewmate_update": "Apply change",
       "primary_denied_command": "Save rule",
       "primary_mcp_add_custom": "Add server",
       "primary_mcp_install": "Install server",
@@ -4174,7 +4188,15 @@
       "result_crewmate_created": "Crewmate created: {{name}}",
       "primary_schedule_once": "Create schedule",
       "due": "Due {{when}}",
-      "time_passed": "This time has already passed. Ask {{name}} for a new time."
+      "time_passed": "This time has already passed. Ask {{name}} for a new time.",
+      "field_display_name": "Name shown",
+      "field_description": "Description",
+      "field_model": "Model",
+      "field_reasoning_effort": "Reasoning effort",
+      "field_approval_mode": "Approval mode",
+      "approval_mode_hint_normal": "Asks you before doing anything.",
+      "approval_mode_hint_trust_reads": "Runs read-only shell commands on its own, asks you for everything else.",
+      "approval_mode_hint_trust": "Works in its chat without asking you first."
     },
     "assistantWelcome": {
       "default_name": "Mate"

@@ -92,9 +92,9 @@ _WELCOME_OFFER = (
     "they would like to call you (you, not them), in one short question the way a "
     'person would say it, such as "What would you like to call me?", and let '
     "that question end the message. "
-    "When they answer with a name for you, call rename_self with "
-    "that name in the same reply, say plainly in that reply that you go by the new "
-    "name from now on, and use it from then on."
+    "When they answer with a name for you, call update_self with display_name set "
+    "to that name in the same reply, say plainly in that reply that you go by the "
+    "new name from now on, and use it from then on."
 )
 
 #: Mate's welcome for a user with no other crewmate. ``{name}`` is its label.

@@ -8385,6 +8385,20 @@
       "quote": "Citer",
       "quote_hint": "Cite la sélection dans le composeur de cette discussion — ta réponse part dans la discussion principale"
     },
+    "selfChange": {
+      "changed_display_name": "{{name}} a changé de nom",
+      "changed_description": "{{name}} a mis à jour sa description",
+      "changed_avatar": "{{name}} a changé d’avatar",
+      "undo": "Annuler",
+      "undone": "annulé",
+      "undo_failed": "Impossible d’annuler cette modification : {{message}}",
+      "undo_unavailable": "Ce changement ne peut plus être annulé ici. Définis la valeur dans le profil de {{name}} : ouvre Crewmates, choisis {{name}}, puis le crayon à côté de son nom.",
+      "undo_stale": "Cette valeur a été modifiée à nouveau depuis, cette annulation ne s’applique plus. Définis-la dans le profil de {{name}} : ouvre Crewmates, choisis {{name}}, puis le crayon à côté de son nom.",
+      "field_display_name": "nom",
+      "field_description": "description",
+      "field_avatar": "visage",
+      "changed_fields": "{{name}} a changé de {{fields}}"
+    },
     "sendToInstanceSubmenu": {
       "failed": "Échec",
       "not_connected": "non connecté",
@@ -9855,7 +9869,7 @@
       "primary_connection_connect": "Connecter",
       "primary_crewmate_capabilities": "Enregistrer les outils",
       "primary_crewmate_create": "Créer le coéquipier",
-      "primary_crewmate_update": "Enregistrer le coéquipier",
+      "primary_crewmate_update": "Appliquer le changement",
       "primary_denied_command": "Enregistrer la règle",
       "primary_mcp_add_custom": "Ajouter le serveur",
       "primary_mcp_install": "Installer le serveur",
@@ -9921,7 +9935,15 @@
       "result_crewmate_created": "Coéquipier créé : {{name}}",
       "primary_schedule_once": "Créer la tâche planifiée",
       "due": "Prévu {{when}}",
-      "time_passed": "Cette heure est déjà passée. Demande à {{name}} une nouvelle heure."
+      "time_passed": "Cette heure est déjà passée. Demande à {{name}} une nouvelle heure.",
+      "field_display_name": "Nom affiché",
+      "field_description": "Description",
+      "field_model": "Modèle",
+      "field_reasoning_effort": "Effort de raisonnement",
+      "field_approval_mode": "Mode d’approbation",
+      "approval_mode_hint_normal": "Te demande avant de faire quoi que ce soit.",
+      "approval_mode_hint_trust_reads": "Lance seul les commandes shell en lecture seule, te demande pour tout le reste.",
+      "approval_mode_hint_trust": "Travaille dans son chat sans te demander d’abord."
     },
     "assistantWelcome": {
       "default_name": "Mate"

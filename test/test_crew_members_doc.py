@@ -113,9 +113,9 @@ def test_the_config_fields_the_page_names_are_still_on_the_crew_record(doc_text:
         assert f"`{field}`" in doc_text
 
 
-def test_the_self_rename_tool_the_page_names_is_still_declared(doc_text: str) -> None:
-    """§Editing tells the reader a crewmate renames itself with `rename_self`."""
-    from kiro_crew import mcp_guide
+def test_the_self_change_tool_the_page_names_is_still_declared(doc_text: str) -> None:
+    """§Editing tells the reader a crewmate renames itself with `update_self`."""
+    from kiro_crew import mcp_mate
 
-    assert "rename_self" in {tool["name"] for tool in mcp_guide._list_tools()}
-    assert "`rename_self`" in doc_text
+    assert "update_self" in {tool["name"] for tool in mcp_mate._list_tools()}
+    assert "`update_self`" in doc_text

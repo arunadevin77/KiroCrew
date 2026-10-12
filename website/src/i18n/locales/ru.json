@@ -8508,6 +8508,20 @@
       "quote": "Цитировать",
       "quote_hint": "Цитирует выделенное в поле ввода этого разговора — твой ответ уйдёт в основной чат"
     },
+    "selfChange": {
+      "changed_display_name": "{{name}} изменил имя",
+      "changed_description": "{{name}} обновил описание",
+      "changed_avatar": "{{name}} изменил аватар",
+      "undo": "Отменить",
+      "undone": "отменено",
+      "undo_failed": "Не удалось отменить это изменение: {{message}}",
+      "undo_unavailable": "Это изменение здесь уже не отменить. Задай значение в профиле {{name}}: открой Crewmates, выбери {{name}}, затем карандаш рядом с именем.",
+      "undo_stale": "Это значение с тех пор снова изменили, так что эта отмена больше не действует. Задай его в профиле {{name}}: открой Crewmates, выбери {{name}}, затем карандаш рядом с именем.",
+      "field_display_name": "имя",
+      "field_description": "описание",
+      "field_avatar": "лицо",
+      "changed_fields": "{{name}} изменил {{fields}}"
+    },
     "sendToInstanceSubmenu": {
       "failed": "Ошибка",
       "not_connected": "нет подключения",
@@ -9985,7 +9999,7 @@
       "primary_connection_connect": "Подключить",
       "primary_crewmate_capabilities": "Сохранить инструменты",
       "primary_crewmate_create": "Создать напарника",
-      "primary_crewmate_update": "Сохранить напарника",
+      "primary_crewmate_update": "Применить изменение",
       "primary_denied_command": "Сохранить правило",
       "primary_mcp_add_custom": "Добавить сервер",
       "primary_mcp_install": "Установить сервер",
@@ -10052,7 +10066,15 @@
       "result_crewmate_created": "Напарник создан: {{name}}",
       "primary_schedule_once": "Создать расписание",
       "due": "Срок: {{when}}",
-      "time_passed": "Это время уже прошло. Попроси {{name}} выбрать новое время."
+      "time_passed": "Это время уже прошло. Попроси {{name}} выбрать новое время.",
+      "field_display_name": "Отображаемое имя",
+      "field_description": "Описание",
+      "field_model": "Модель",
+      "field_reasoning_effort": "Глубина рассуждений",
+      "field_approval_mode": "Режим подтверждения",
+      "approval_mode_hint_normal": "Спрашивает тебя, прежде чем что-то сделать.",
+      "approval_mode_hint_trust_reads": "Сам выполняет только команды оболочки для чтения, об остальном спрашивает тебя.",
+      "approval_mode_hint_trust": "Работает в своём чате, не спрашивая тебя заранее."
     },
     "assistantWelcome": {
       "default_name": "Mate"

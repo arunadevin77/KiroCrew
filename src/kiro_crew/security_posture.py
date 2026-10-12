@@ -2264,6 +2264,9 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         # redacts only the refusal prose it hands back to the model; the boundary
         # is the stdio transport, not this module.
         "mcp_guide.py",
+        # Same class again: the mate shim relays gateway results and redacts
+        # the refusal prose and the record it hands back to the model.
+        "mcp_mate.py",
         "mcp_gateway/backend.py",
         # The kirocrew-core tool handlers, moved out of mcp_core.py into their
         # domain modules. Same classification as mcp_core.py above for the same
@@ -2751,6 +2754,7 @@ _SCHEMA_REGISTRY_NAMES: tuple[str, ...] = (
     "MCP_WORK_SCHEMAS",
     "MCP_PANEL_SCHEMAS",
     "MCP_GUIDE_SCHEMAS",
+    "MCP_MATE_SCHEMAS",
 )
 
 

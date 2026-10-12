@@ -25,7 +25,7 @@ import os
 import re
 import threading
 import uuid
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
@@ -1522,6 +1522,14 @@ class MemberApprovalConflict(Exception):
         self.current = current
 
 
+class MemberFieldConflict(Exception):
+    """A stored field is not the value the writer expected to find (compare-and-set)."""
+
+    def __init__(self, field: str) -> None:
+        super().__init__(f"the crewmate's {field} changed since it was read")
+        self.field = field
+
+
 @memory_store_namespace_lock()
 def persist_member_config(
     config,
@@ -1532,6 +1540,7 @@ def persist_member_config(
     changed_fields: set[str] | None = None,
     expected_approval_mode: str | None = None,
     new_workspace: str = "",
+    expected_values: Mapping[str, object] | None = None,
 ) -> None:
     """Atomically publish a member and its ownership while retaining other writes.
 
@@ -1559,6 +1568,14 @@ def persist_member_config(
     directory are re-checked against the document under the lock, the directory
     is made, the entry written), so a member never lands bound to a workspace the
     table does not declare. A create only; an update never allocates one.
+
+
+    *expected_values* is a compare-and-set on an update: each named field must
+    still hold that value on disk, read inside the cross-process config lock,
+    or the write is refused with :class:`MemberFieldConflict` naming the field.
+    A write that landed after the caller took its snapshot therefore wins, the
+    way ``expected_approval_mode`` already works for the permission. An absent
+    stored field compares as the dataclass default.
     """
     from dataclasses import asdict
 
@@ -1633,6 +1650,14 @@ def persist_member_config(
             )
             if stored_mode != expected_approval_mode:
                 raise MemberApprovalConflict(stored_mode)
+        if expected_values and not create and isinstance(current, dict):
+            # The same compare-and-set for any field the caller read: the
+            # value on disk, under this lock, must still be the one it saw.
+            defaults = asdict(type(config.agents[member])())
+            for field_name, expected in expected_values.items():
+                stored = current.get(field_name, defaults.get(field_name))
+                if stored != expected:
+                    raise MemberFieldConflict(field_name)
         if (
             isinstance(current, dict)
             and current.get("member_id")

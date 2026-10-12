@@ -236,7 +236,6 @@ def _register_mcp_routes(app: web.Application) -> None:
         ("POST", "/api/guide/agent/start", "api_guide_agent_start"),
         ("GET", "/api/guide/agent/status", "api_guide_agent_status"),
         ("POST", "/api/guide/agent/cancel", "api_guide_agent_cancel"),
-        ("POST", "/api/guide/agent/rename", "api_guide_agent_rename_self"),
         ("POST", "/api/guide/agent/observe", "api_guide_agent_observe"),
         ("GET", "/api/guide/agent/language", "api_guide_agent_language"),
         ("GET", "/api/guide/pending", "api_guide_pending"),
@@ -251,6 +250,16 @@ def _register_mcp_routes(app: web.Application) -> None:
         ("POST", "/api/guide/observe", "api_guide_observe"),
     ):
         app.router.add_route(_method, _path, _deferred("guide", _name))
+    # A crewmate's own record (``kirocrew-mate``). Same split again: the agent
+    # half (update_self, the card-backed asks) is MCP-only under the strict
+    # "/api/member/self" prefix; the undo is the user's click, owner-only cookie
+    # auth, deliberately OFF that prefix under the member's own "/api/members/{slug}".
+    for _method, _path, _name in (
+        ("POST", "/api/member/self/update", "api_member_self_update"),
+        ("POST", "/api/member/self/propose", "api_member_self_propose"),
+        ("POST", "/api/members/{slug}/self-changes/{change_id}/undo", "api_member_self_undo"),
+    ):
+        app.router.add_route(_method, _path, _deferred("member_self", _name))
     # Change cards. Same split as the guide: the agent half is MCP-only under the
     # strict "/api/cards/agent" prefix, the browser half is owner-only cookie auth.
     # The paths are duplicated from ``change_cards.register_change_card_routes``,

@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { i18nT } from '../i18n/t'
 import { fmtList } from '../i18n/format'
+import { effortLabel } from '../lib/effort'
 import type { Card } from '../api/cards'
 import { CardChanges, FIELD_LABELS, changeLabel, formatCardValue } from './CardChanges'
 import { fmtCron } from '../utils/cronUtils'
@@ -53,6 +54,30 @@ describe('CardChanges', () => {
     expect(screen.getByTestId('change-card-value').textContent).toContain('standard')
     expect(screen.getByTestId('change-card-value').textContent).toContain('brief')
     expect(screen.queryByTestId('change-card-items')).toBeNull()
+  })
+
+  it("shows an approval mode in the picker's words, under its localized label", () => {
+    render(<CardChanges changes={[{ field: 'approval_mode', label: 'approval_mode', before: 'trust', after: 'normal' }]} />)
+    const value = screen.getByTestId('change-card-value').textContent ?? ''
+    expect(value).toContain(i18nT('components.approvalModePicker.trust_label'))
+    expect(value).toContain(i18nT('components.approvalModePicker.normal_label'))
+    expect(value).not.toContain('trust')
+    expect(screen.getByText(L('field_approval_mode'))).toBeTruthy()
+    // The permission being approved is explained under the value.
+    expect(screen.getByTestId('change-card-hint')).toHaveTextContent(L('approval_mode_hint_normal'))
+  })
+
+  it("shows a reasoning effort in the editor's words, and an unset one as inherited", () => {
+    render(<CardChanges changes={[{ field: 'reasoning_effort', label: 'reasoning_effort', before: '', after: 'high' }]} />)
+    const value = screen.getByTestId('change-card-value').textContent ?? ''
+    expect(value).toContain(i18nT('pages.kiroCrewAgentsPage.inherited'))
+    expect(value).toContain(effortLabel('high'))
+    expect(value).not.toContain(L('empty_value'))
+  })
+
+  it('draws no hint under a row whose field has none', () => {
+    render(<CardChanges changes={[{ field: 'description', label: 'description', before: 'old', after: 'new' }]} />)
+    expect(screen.queryByTestId('change-card-hint')).toBeNull()
   })
 
   it('formats empty, scalar and object values', () => {

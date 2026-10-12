@@ -901,6 +901,7 @@ REFLEXIVE_TOOL_MODULES: frozenset[str] = frozenset(
         "mcp_work.py",
         "mcp_panel.py",
         "mcp_guide.py",
+        "mcp_mate.py",
         "mcp_tools/apps.py",
         "mcp_tools/control.py",
         "mcp_tools/learn.py",

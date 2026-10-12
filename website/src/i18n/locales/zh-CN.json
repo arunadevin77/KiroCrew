@@ -8139,6 +8139,20 @@
       "quote": "引用",
       "quote_hint": "把选中内容引用到本对话的输入框——你的回复会发到主聊天"
     },
+    "selfChange": {
+      "changed_display_name": "{{name}} 改了名字",
+      "changed_description": "{{name}} 更新了简介",
+      "changed_avatar": "{{name}} 换了头像",
+      "undo": "撤销",
+      "undone": "已撤销",
+      "undo_failed": "无法撤销这次更改：{{message}}",
+      "undo_unavailable": "这个更改在这里已经不能撤销了。请到 {{name}} 的资料页设置：打开 Crewmates，选中 {{name}}，再点名字旁边的铅笔。",
+      "undo_stale": "这个值之后又被改过了，这次撤销不再适用。请到 {{name}} 的资料页设置：打开 Crewmates，选中 {{name}}，再点名字旁边的铅笔。",
+      "field_display_name": "名字",
+      "field_description": "简介",
+      "field_avatar": "头像",
+      "changed_fields": "{{name}} 改了{{fields}}"
+    },
     "sendToInstanceSubmenu": {
       "failed": "失败",
       "not_connected": "未连接",
@@ -9595,7 +9609,7 @@
       "primary_connection_connect": "连接",
       "primary_crewmate_capabilities": "保存工具",
       "primary_crewmate_create": "创建队友",
-      "primary_crewmate_update": "保存队友",
+      "primary_crewmate_update": "应用更改",
       "primary_denied_command": "保存规则",
       "primary_mcp_add_custom": "添加服务器",
       "primary_mcp_install": "安装服务器",
@@ -9659,7 +9673,15 @@
       "result_crewmate_created": "队友已创建：{{name}}",
       "primary_schedule_once": "创建定时任务",
       "due": "{{when}}到期",
-      "time_passed": "这个时间已经过了。请让 {{name}} 换一个时间。"
+      "time_passed": "这个时间已经过了。请让 {{name}} 换一个时间。",
+      "field_display_name": "显示名",
+      "field_description": "简介",
+      "field_model": "模型",
+      "field_reasoning_effort": "推理强度",
+      "field_approval_mode": "审批模式",
+      "approval_mode_hint_normal": "做任何事之前都先问你。",
+      "approval_mode_hint_trust_reads": "只会自己执行只读的 shell 命令，其他都先问你。",
+      "approval_mode_hint_trust": "在自己的聊天里不先问你就直接做。"
     },
     "assistantWelcome": {
       "default_name": "Mate"

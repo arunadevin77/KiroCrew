@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 ROLE_CARD = "card"
 SURFACE_CHANGE = "change"
 SURFACE_GUIDE = "guide"
+#: A crewmate's own applied change (``update_self``), with its undo.
+SURFACE_SELF = "self"
 
 #: The status a proposal is born with, per surface.
 _PROPOSED = {SURFACE_CHANGE: "pending", SURFACE_GUIDE: "offered"}
@@ -359,3 +361,77 @@ def _record_status(
     elif status == "active" and not started:
         # Once per guide: a tab re-claiming after its lease lapsed is not a start.
         crew_log_emit.on_guide_started(sid, guide_id=item_id)
+
+
+# ── a crewmate's own changes ──
+
+#: The fields a ``self`` row draws, per changed field: the stored value before
+#: and after. Drawing only -- the gateway's own record
+#: (:mod:`kiro_crew.dashboard.member_self_changes`) is what an undo reads.
+_SELF_FIELDS = ("display_name", "description", "avatar")
+
+
+def record_self_change(state: Any, change: dict[str, Any]) -> None:
+    """Put a crewmate's just-applied self-change into its conversation. Never raises.
+
+    *change* is the record :func:`member_self_changes.record` returned. The row
+    is drawn where the crewmate's tool call landed, like a card: its
+    ``meta.card`` carries ``surface: "self"``, the change id, the fields that
+    changed and their before/after values for the faces and labels the row
+    shows, and the status (``applied``, then ``undone``). No crew-log entry: the
+    member's own event log already recorded the change (``member/config``).
+    """
+    try:
+        slot_key = str(change.get("slot_key") or "")
+        slot = _get_slot(state, slot_key)
+        item_id = str(change.get("id") or "")
+        if not item_id or slot is None or find_row(slot, SURFACE_SELF, item_id) is not None:
+            return
+        changed = [f for f in _SELF_FIELDS if f in (change.get("changed") or [])]
+        if not changed:
+            return
+        # The same egress chain every member projection runs before the browser
+        # (``eventlog.service._redact_projection_value``): a credential- or
+        # URL-shaped string planted in a trait or a description is masked in
+        # the row's drawing payload. The gateway's own undo record keeps the
+        # value as stored; only what the browser draws is masked.
+        from kiro_crew.eventlog.service import _redact_projection_value
+
+        before = _redact_projection_value(change.get("before") or {})
+        after = _redact_projection_value(change.get("after") or {})
+        assert isinstance(before, dict) and isinstance(after, dict)
+        meta = _row_meta(
+            SURFACE_SELF,
+            item_id,
+            slot_key,
+            member=str(change.get("member") or ""),
+            name=str(_redact_projection_value(change.get("name") or "")),
+            slug=str(change.get("slug") or ""),
+            kind=changed[0] if len(changed) == 1 else "profile",
+            fields=changed,
+            before={k: before.get(k) for k in changed},
+            after={k: after.get(k) for k in changed},
+            status=str(change.get("status") or "applied"),
+            undoable=bool(change.get("undoable", True)),
+        )
+        _append_row(slot, f"{change.get('member') or ''} changed its {changed[0]}", meta)
+    except Exception:
+        logger.warning(
+            "could not record a crewmate's self-change in its conversation", exc_info=True
+        )
+
+
+def record_self_change_status(state: Any, change: dict[str, Any]) -> None:
+    """Fold an undone (or re-read) self-change into its row. Never raises."""
+    try:
+        slot = _get_slot(state, str(change.get("slot_key") or ""))
+        item_id = str(change.get("id") or "")
+        row = find_row(slot, SURFACE_SELF, item_id) if slot is not None and item_id else None
+        if row is None:
+            return
+        status = str(change.get("status") or "")
+        row_status = ((row.get("meta") or {}).get("card") or {}).get("status")
+        if status and row_status != status:
+            _patch_row(state, slot, row, {"status": status})
+    except Exception:
+        logger.warning("could not record a crewmate's self-change outcome", exc_info=True)

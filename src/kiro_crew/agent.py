@@ -162,7 +162,9 @@ if TYPE_CHECKING:  # served by ``__getattr__`` at runtime; named here for mypy
     )
     from kiro_crew.agent_materialization.guide_platform import (  # noqa: F401
         grant_guide_platform_once,
+        grant_mate_platform_once,
         mark_guide_platform_granted,
+        mark_mate_platform_granted,
     )
     from kiro_crew.agent_materialization.kiro_hooks import (  # noqa: F401
         _CREW_ONLY_HOOK_EVENTS,
@@ -1465,6 +1467,23 @@ _MANAGED_MCP_SERVERS: dict[str, dict] = {
     "kirocrew-guide": {
         "invocation_fn": lambda: _kirocrew_mcp_invocation("mcp-guide"),
     },
+    # A crewmate's own record (``mcp_mate``): its name, description and face
+    # written at once with an undo for the user, and its goal, model, approval
+    # mode and tools asked for through a change card. A platform capability of
+    # every crewmate, so always emitted like the guide; its own server so an
+    # operator or a policy can withhold the whole set at once, and so the guide
+    # set stays what it is (the user's help with the dashboard). Every tool acts
+    # on the CALLING crewmate only and refuses off its own dashboard turn
+    # (``dashboard.handlers.member_self``). Which tools run without a prompt is
+    # :data:`_MATE_AUTO_GRANTS`, through ``allowedTools``.
+    #
+    # No ``autoApprove`` key, and none may ever be added -- the same prohibition
+    # every set above carries, for the same mechanism: an autoApproved MCP tool
+    # never reaches ``hooks.on_tool_call``, so the deny floor and governance
+    # ceiling would be bypassed for a tool that writes a crewmate's record.
+    "kirocrew-mate": {
+        "invocation_fn": lambda: _kirocrew_mcp_invocation("mcp-mate"),
+    },
 }
 
 
@@ -2257,7 +2276,9 @@ _EXPORTS_BY_OWNER: dict[str, tuple[str, ...]] = {
     ),
     "kiro_crew.agent_materialization.guide_platform": (
         "grant_guide_platform_once",
+        "grant_mate_platform_once",
         "mark_guide_platform_granted",
+        "mark_mate_platform_granted",
     ),
     "kiro_crew.agent_materialization.first_crewmate": (
         "create_first_crewmate_once",
@@ -4328,6 +4349,9 @@ def rebuild_agent_config(
     guide_grant_pending = guide_platform.grant_guide_platform_once(
         config, fresh_install=fresh_install
     )
+    mate_grant_pending = guide_platform.grant_mate_platform_once(
+        config, fresh_install=fresh_install
+    )
 
     # Final dedup (preserves order).
     for key in ("tools", "allowedTools"):
@@ -4367,6 +4391,8 @@ def rebuild_agent_config(
     _claim_propagated_model(config, main_name)
     if guide_grant_pending:
         guide_platform.mark_guide_platform_granted()
+    if mate_grant_pending:
+        guide_platform.mark_mate_platform_granted()
 
     # The guard ADMITTED this rebuild above, and that one decision now covers
     # every derived spec it installs. Re-asking per write would answer a
@@ -5062,7 +5088,25 @@ _GUIDE_AUTO_GRANTS = (
     f"@{_GUIDE_SERVER}/diagnose_settings",
     f"@{_GUIDE_SERVER}/propose_change",
     f"@{_GUIDE_SERVER}/get_change_status",
-    f"@{_GUIDE_SERVER}/rename_self",
+)
+
+#: The crewmate's own-record server (``kiro_crew.mcp_mate``), mounted on every
+#: crewmate like the guide.
+_MATE_SERVER = "kirocrew-mate"
+
+#: Member tools kiro-cli runs without a prompt. Reviewed as a set, and every one
+#: passes the ``allowedTools`` ceiling every grant passes. ``update_self`` writes
+#: the crewmate's own presentation (name, description, face) on the user's word:
+#: the gateway admits only a turn the user sent in the crewmate's own chat, and
+#: the change lands in that chat as one row the user can undo. The three ``set_*``
+#: / ``request_*`` tools only OFFER a change card, inert until the user presses
+#: it. A tool added to the server is not in this tuple, so it asks first until it
+#: is reviewed here.
+_MATE_AUTO_GRANTS = (
+    f"@{_MATE_SERVER}/update_self",
+    f"@{_MATE_SERVER}/set_model",
+    f"@{_MATE_SERVER}/set_approval_mode",
+    f"@{_MATE_SERVER}/request_capabilities",
 )
 
 

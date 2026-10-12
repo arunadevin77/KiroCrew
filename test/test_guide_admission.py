@@ -16,8 +16,13 @@ import pytest
 from guide_route_helpers import CREWMATE, FakeState, agent, in_dashboard_turn, run_guide_app
 
 from kiro_crew import mcp_guide
+from kiro_crew.dashboard.handlers import member_self as self_routes
 
 SLACK_KEY = "slack:C1:1700000000.000100"
+
+#: ``update_self``'s route, the one agent-half route that is not a guide route:
+#: it runs the same admission, so it is the probe for the user-turn rules.
+UPDATE_SELF = ("POST", "/api/member/self/update", self_routes.api_member_self_update)
 
 
 def _mirrored_channel_slot(state: FakeState):
@@ -31,11 +36,13 @@ def _mirrored_channel_slot(state: FakeState):
 def _rename_from(session_key: str, state: FakeState) -> tuple[int, dict]:
     async def go(client):
         resp = await client.post(
-            "/api/guide/agent/rename", json={"name": "Pebble"}, headers=agent(session_key)
+            "/api/member/self/update",
+            json={"fields": {"display_name": "Pebble"}},
+            headers=agent(session_key),
         )
         return resp.status, await resp.json()
 
-    return run_guide_app(go, state)
+    return run_guide_app(go, state, extra_routes=[UPDATE_SELF])
 
 
 def _admitted(body: dict) -> bool:
@@ -85,13 +92,13 @@ def test_a_session_the_transport_does_not_attest_is_refused() -> None:
 
     async def go(client):
         resp = await client.post(
-            "/api/guide/agent/rename",
-            json={"name": "Pebble"},
+            "/api/member/self/update",
+            json={"fields": {"display_name": "Pebble"}},
             headers=agent("dashboard:chat-1", auth="internal-unattested"),
         )
         return resp.status, await resp.json()
 
-    status, body = run_guide_app(go, state)
+    status, body = run_guide_app(go, state, extra_routes=[UPDATE_SELF])
     assert (status, body["code"]) == (403, "unattested_caller")
 
 

@@ -527,7 +527,7 @@ async def steer_into_running_turn(
     if not user_origin:
         # The same narrowing for "the person sent this turn": a peer's or an
         # app's text steered into it can ask the model for a user-only action
-        # (``rename_self``), so the turn counts as one the user did not send.
+        # (``update_self``), so the turn counts as one the user did not send.
         # Set before the RPC for the reason above; ``chat_runner`` resets it.
         slot._turn_user_sent = False
     if admission is not None:

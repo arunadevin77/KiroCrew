@@ -1496,7 +1496,7 @@ def _agent_list_label(label: str) -> str:
     """*label* as one ``kirocrew agent list`` cell.
 
     The label is written by the dashboard, the CLI and a crewmate's own
-    ``rename_self``, so it is printed confined to one line with no live
+    ``update_self``, so it is printed confined to one line with no live
     terminal controls, and a credential-shaped one is masked the way the
     dashboard roster masks it.
     """

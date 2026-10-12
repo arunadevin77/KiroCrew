@@ -482,6 +482,17 @@ def build_member_section(
             "naturally, and speak as a colleague who owns their work — never as a "
             "support bot."
         )
+        # The member's own record, named here so the model knows the tools exist
+        # (Tool Search defers their schemas): what is its to change at once and
+        # what is the user's to grant through a card.
+        identity.append(
+            "Your name, your description and your ghost face are yours: when the user "
+            "asks you to change one, call update_self (the kirocrew-mate server) "
+            "and it is done, shown in this chat as one line the user can undo. What "
+            "you run on, what this chat approves without asking and which tools you "
+            "have are the user's to grant: set_model, set_approval_mode and "
+            "request_capabilities each put a card in this chat for them to press."
+        )
 
     parts = ["\n".join(identity)]
     if not desk_withheld:

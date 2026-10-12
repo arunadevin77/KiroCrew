@@ -2455,11 +2455,28 @@ async def _mcp_detail(params: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _crewmate_label(key: str) -> str:
+    """The name the user knows a crewmate by: its display name, else its key.
+
+    A card raised in the crewmate's own chat is read under that display name, so
+    a title or scope line naming the key would name a crewmate the user has never
+    seen. Display-only, so it rides in the context rather than the compared
+    snapshot: a rename between propose and apply is not a conflict.
+    """
+    from kiro_crew.config.loader import KiroCrewConfig
+
+    agent = KiroCrewConfig.load().agents.get(key)
+    label = getattr(agent, "display_name", "") if agent is not None else ""
+    return label.strip() if isinstance(label, str) and label.strip() else key
+
+
 async def read_context(
     kind: str, params: dict[str, Any], before: dict[str, Any], *, state: Any, app: Any
 ) -> dict[str, Any]:
     """Display-only facts and up-front validation a preview needs."""
     p = params
+    if kind == catalog.KIND_CREWMATE_UPDATE:
+        return {"label": await asyncio.to_thread(_crewmate_label, p["name"])}
     if kind == catalog.KIND_SETTING_CHANGE:
         target = await asyncio.to_thread(resolve_setting, p)
         check_target_params(target, p)
@@ -2532,7 +2549,7 @@ async def read_context(
                 + ", ".join(withheld)
                 + "; the tool keeps asking each time, and no card can change that",
             )
-        return {"impact": impact}
+        return {"impact": impact, "label": await asyncio.to_thread(_crewmate_label, p["member"])}
     if kind == catalog.KIND_TEMPLATE_UPDATE:
         from kiro_crew.config.loader import KiroCrewConfig
 

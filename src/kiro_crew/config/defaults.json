@@ -18,7 +18,8 @@
     "@kirocrew-cron",
     "@kirocrew-core",
     "@kirocrew-computer",
-    "@kirocrew-guide"
+    "@kirocrew-guide",
+    "@kirocrew-mate"
   ],
   "allowedTools": [
     "fs_read",
@@ -49,7 +50,10 @@
     "@kirocrew-guide/diagnose_settings",
     "@kirocrew-guide/propose_change",
     "@kirocrew-guide/get_change_status",
-    "@kirocrew-guide/rename_self"
+    "@kirocrew-mate/update_self",
+    "@kirocrew-mate/set_model",
+    "@kirocrew-mate/set_approval_mode",
+    "@kirocrew-mate/request_capabilities"
   ],
   "resources": [
     "file://.kiro/steering/**/*.md"

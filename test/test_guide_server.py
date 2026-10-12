@@ -110,16 +110,16 @@ def test_the_server_accepts_every_name_its_schema_advertises() -> None:
     from kiro_crew import mcp_guide
     from kiro_crew.validation import MCP_GUIDE_SCHEMAS, validate_tool_args
 
-    (tool,) = [t for t in mcp_guide._list_tools() if t["name"] == "rename_self"]
-    longest = tool["inputSchema"]["properties"]["name"]["maxLength"]
-    name = "a" * longest
-    assert validate_tool_args({"name": name}, MCP_GUIDE_SCHEMAS["rename_self"])["name"] == name
+    (tool,) = [t for t in mcp_guide._list_tools() if t["name"] == "find_setting"]
+    longest = tool["inputSchema"]["properties"]["query"]["maxLength"]
+    query = "a" * longest
+    assert validate_tool_args({"query": query}, MCP_GUIDE_SCHEMAS["find_setting"])["query"] == query
 
 
 @pytest.mark.parametrize(
     "denied",
     [
-        {f"{GUIDE_REF}/rename_self"},
+        {f"{GUIDE_REF}/guide_cancel"},
         {f"{GUIDE_REF}/propose_change"},
         {f"{GUIDE_REF}/find_ui", f"{GUIDE_REF}/guide_start"},
     ],
@@ -374,7 +374,7 @@ def test_a_foreign_template_and_its_member_are_left_exactly_as_they_are(
         "unattested_caller",
     ],
 )
-@pytest.mark.parametrize("tool", ["rename_self", "guide_start", "guide_status", "propose_change"])
+@pytest.mark.parametrize("tool", ["guide_cancel", "guide_start", "guide_status", "propose_change"])
 def test_every_gateway_admission_refusal_is_said_as_off_the_dashboard(
     monkeypatch: pytest.MonkeyPatch, code: str, tool: str
 ) -> None:
@@ -390,22 +390,22 @@ def test_every_gateway_admission_refusal_is_said_as_off_the_dashboard(
     monkeypatch.setattr(mcp_guide, "_post", lambda *a, **k: dict(reply))
     monkeypatch.setattr(mcp_guide, "_get", lambda *a, **k: dict(reply))
     args: dict[str, Any] = {
-        "rename_self": {"name": "Pebble"},
+        "guide_cancel": {},
         "guide_start": {"actions": [{"id": "settings.show"}]},
         "guide_status": {},
         "propose_change": {"kind": "setting.change", "params": {}},
     }[tool]
     out = mcp_guide._call_tool_inner(tool, args)
     assert out.startswith(f"Error: {tool} needs the dashboard: ")
-    assert "Your name did not change" in out if tool == "rename_self" else "Nothing" in out
+    assert "Nothing" in out
 
 
 def test_an_unidentified_caller_gets_the_same_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
     from kiro_crew import mcp_guide
 
     monkeypatch.setattr(mcp_guide, "_strict_session_key", lambda: ("", "no identity"))
-    out = mcp_guide._call_tool_inner("rename_self", {"name": "Pebble"})
-    assert out.startswith("Error: rename_self needs the dashboard: no identity")
+    out = mcp_guide._call_tool_inner("guide_status", {})
+    assert out.startswith("Error: guide_status needs the dashboard: no identity")
 
 
 def test_find_ui_and_search_docs_still_answer_off_the_dashboard(

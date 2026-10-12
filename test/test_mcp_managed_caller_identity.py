@@ -41,6 +41,7 @@ _SERVE_ENTRY = {
     "kirocrew-work": "run_mcp_server",
     "kirocrew-panel": "run_mcp_server",
     "kirocrew-guide": "run_mcp_server",
+    "kirocrew-mate": "run_mcp_server",
 }
 
 

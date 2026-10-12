@@ -8385,6 +8385,20 @@
       "quote": "Cita",
       "quote_hint": "Cita la selezione nel compositore di questa conversazione: la tua risposta va nella chat principale"
     },
+    "selfChange": {
+      "changed_display_name": "{{name}} ha cambiato nome",
+      "changed_description": "{{name}} ha aggiornato la descrizione",
+      "changed_avatar": "{{name}} ha cambiato avatar",
+      "undo": "Annulla",
+      "undone": "annullato",
+      "undo_failed": "Impossibile annullare questa modifica: {{message}}",
+      "undo_unavailable": "Questa modifica non può più essere annullata qui. Imposta il valore nel profilo di {{name}}: apri Crewmates, scegli {{name}}, poi la matita accanto al nome.",
+      "undo_stale": "Questo valore è stato cambiato di nuovo nel frattempo, quindi l’annullamento non vale più. Impostalo nel profilo di {{name}}: apri Crewmates, scegli {{name}}, poi la matita accanto al nome.",
+      "field_display_name": "nome",
+      "field_description": "descrizione",
+      "field_avatar": "faccia",
+      "changed_fields": "{{name}} ha cambiato {{fields}}"
+    },
     "sendToInstanceSubmenu": {
       "failed": "Non riuscito",
       "not_connected": "non connesso",
@@ -9855,7 +9869,7 @@
       "primary_connection_connect": "Connetti",
       "primary_crewmate_capabilities": "Salva strumenti",
       "primary_crewmate_create": "Crea compagno",
-      "primary_crewmate_update": "Salva compagno",
+      "primary_crewmate_update": "Applica modifica",
       "primary_denied_command": "Salva regola",
       "primary_mcp_add_custom": "Aggiungi server",
       "primary_mcp_install": "Installa server",
@@ -9921,7 +9935,15 @@
       "result_crewmate_created": "Compagno creato: {{name}}",
       "primary_schedule_once": "Crea pianificazione",
       "due": "Scade {{when}}",
-      "time_passed": "Questo orario è già passato. Chiedi a {{name}} un nuovo orario."
+      "time_passed": "Questo orario è già passato. Chiedi a {{name}} un nuovo orario.",
+      "field_display_name": "Nome mostrato",
+      "field_description": "Descrizione",
+      "field_model": "Modello",
+      "field_reasoning_effort": "Impegno di ragionamento",
+      "field_approval_mode": "Modalità di approvazione",
+      "approval_mode_hint_normal": "Ti chiede prima di fare qualsiasi cosa.",
+      "approval_mode_hint_trust_reads": "Esegue da solo solo i comandi shell di sola lettura, per tutto il resto ti chiede.",
+      "approval_mode_hint_trust": "Lavora nella sua chat senza chiederti prima."
     },
     "assistantWelcome": {
       "default_name": "Mate"

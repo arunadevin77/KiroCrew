@@ -8262,6 +8262,20 @@
       "quote": "Zitieren",
       "quote_hint": "Zitiert die Auswahl in den Verfasser dieses Gesprächs — deine Antwort geht in den Hauptchat"
     },
+    "selfChange": {
+      "changed_display_name": "{{name}} hat den Namen geändert",
+      "changed_description": "{{name}} hat die Beschreibung aktualisiert",
+      "changed_avatar": "{{name}} hat den Avatar geändert",
+      "undo": "Rückgängig",
+      "undone": "rückgängig gemacht",
+      "undo_failed": "Diese Änderung konnte nicht rückgängig gemacht werden: {{message}}",
+      "undo_unavailable": "Diese Änderung lässt sich hier nicht mehr rückgängig machen. Setze den Wert im Profil von {{name}}: öffne Crewmates, wähle {{name}}, dann den Stift neben dem Namen.",
+      "undo_stale": "Dieser Wert wurde seitdem erneut geändert, dieses Rückgängig gilt nicht mehr. Setze ihn im Profil von {{name}}: öffne Crewmates, wähle {{name}}, dann den Stift neben dem Namen.",
+      "field_display_name": "Name",
+      "field_description": "Beschreibung",
+      "field_avatar": "Gesicht",
+      "changed_fields": "{{name}} hat {{fields}} geändert"
+    },
     "sendToInstanceSubmenu": {
       "failed": "Fehlgeschlagen",
       "not_connected": "nicht verbunden",
@@ -9725,7 +9739,7 @@
       "primary_connection_connect": "Verbinden",
       "primary_crewmate_capabilities": "Tools speichern",
       "primary_crewmate_create": "Crewmate erstellen",
-      "primary_crewmate_update": "Crewmate speichern",
+      "primary_crewmate_update": "Änderung anwenden",
       "primary_denied_command": "Regel speichern",
       "primary_mcp_add_custom": "Server hinzufügen",
       "primary_mcp_install": "Server installieren",
@@ -9790,7 +9804,15 @@
       "result_crewmate_created": "Crewmate erstellt: {{name}}",
       "primary_schedule_once": "Zeitplan erstellen",
       "due": "Fällig {{when}}",
-      "time_passed": "Diese Zeit ist schon vorbei. Bitte {{name}} um eine neue Zeit."
+      "time_passed": "Diese Zeit ist schon vorbei. Bitte {{name}} um eine neue Zeit.",
+      "field_display_name": "Anzeigename",
+      "field_description": "Beschreibung",
+      "field_model": "Modell",
+      "field_reasoning_effort": "Denkaufwand",
+      "field_approval_mode": "Freigabemodus",
+      "approval_mode_hint_normal": "Fragt dich, bevor es etwas tut.",
+      "approval_mode_hint_trust_reads": "Führt nur lesende Shell-Befehle selbst aus, fragt dich bei allem anderen.",
+      "approval_mode_hint_trust": "Arbeitet in seinem Chat, ohne dich vorher zu fragen."
     },
     "assistantWelcome": {
       "default_name": "Mate"

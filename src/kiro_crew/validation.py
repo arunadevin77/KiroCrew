@@ -4912,10 +4912,6 @@ MCP_GUIDE_SCHEMAS: dict[str, ToolSchema] = {
             FieldSpec("change_id", str, max_len=48, pattern=re.compile(r"^cc_[A-Za-z0-9_-]{8,40}$"))
         ],
     ),
-    "rename_self": ToolSchema(
-        tool_name="rename_self",
-        fields=[FieldSpec("name", str, required=True, max_len=MAX_SHORT_STRING)],
-    ),
     "search_docs": ToolSchema(
         tool_name="search_docs",
         fields=[
@@ -4943,6 +4939,51 @@ MCP_GUIDE_SCHEMAS: dict[str, ToolSchema] = {
                 pattern=re.compile(r"^[a-z][a-z0-9-]{0,40}(?:\.[a-z0-9-]{1,40})?$"),
             ),
             FieldSpec("offset", int, min_val=0, max_val=100_000),
+        ],
+    ),
+}
+
+# ── Tool Schemas (MCP Mate — server ``kirocrew-mate``) ──
+#
+# A crewmate's own record. The envelope only, as for the guide: what a trait
+# value means is the avatar validator's business (``config.sections._safe_avatar``),
+# and a card-backed ask is validated by the change-card catalog once the gateway
+# has fixed its kind and member.
+MCP_MATE_SCHEMAS: dict[str, ToolSchema] = {
+    "update_self": ToolSchema(
+        tool_name="update_self",
+        fields=[
+            FieldSpec("display_name", str, max_len=MAX_SHORT_STRING),
+            FieldSpec("description", str, max_len=4000),
+            FieldSpec("avatar", dict),
+        ],
+    ),
+    "set_model": ToolSchema(
+        tool_name="set_model",
+        fields=[
+            FieldSpec("model", str, max_len=64),
+            FieldSpec("reasoning_effort", str, max_len=16),
+            FieldSpec("reason", str, max_len=500),
+        ],
+    ),
+    "set_approval_mode": ToolSchema(
+        tool_name="set_approval_mode",
+        fields=[
+            FieldSpec(
+                "approval_mode",
+                str,
+                required=True,
+                max_len=16,
+                allowed=frozenset({"normal", "trust_reads", "trust"}),
+            ),
+            FieldSpec("reason", str, max_len=500),
+        ],
+    ),
+    "request_capabilities": ToolSchema(
+        tool_name="request_capabilities",
+        fields=[
+            FieldSpec("draft", dict, required=True),
+            FieldSpec("reason", str, max_len=500),
         ],
     ),
 }

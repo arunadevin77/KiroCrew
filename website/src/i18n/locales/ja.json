@@ -8139,6 +8139,20 @@
       "quote": "引用",
       "quote_hint": "選択部分をこの会話の入力欄に引用します — 返信はメインのチャットに送られます"
     },
+    "selfChange": {
+      "changed_display_name": "{{name}} が名前を変更しました",
+      "changed_description": "{{name}} が説明を更新しました",
+      "changed_avatar": "{{name}} がアバターを変更しました",
+      "undo": "元に戻す",
+      "undone": "元に戻しました",
+      "undo_failed": "この変更を元に戻せませんでした: {{message}}",
+      "undo_unavailable": "この変更はここでは元に戻せなくなりました。{{name}} のプロフィールで設定してください。Crewmates を開き、{{name}} を選んで、名前の横の鉛筆を押します。",
+      "undo_stale": "この値はその後また変更されたため、この取り消しは適用されません。{{name}} のプロフィールで設定してください。Crewmates を開き、{{name}} を選んで、名前の横の鉛筆を押します。",
+      "field_display_name": "名前",
+      "field_description": "説明",
+      "field_avatar": "顔",
+      "changed_fields": "{{name}} が{{fields}}を変更しました"
+    },
     "sendToInstanceSubmenu": {
       "failed": "失敗",
       "not_connected": "未接続",
@@ -9595,7 +9609,7 @@
       "primary_connection_connect": "接続",
       "primary_crewmate_capabilities": "ツールを保存",
       "primary_crewmate_create": "クルーメイトを作成",
-      "primary_crewmate_update": "クルーメイトを保存",
+      "primary_crewmate_update": "変更を適用",
       "primary_denied_command": "ルールを保存",
       "primary_mcp_add_custom": "サーバーを追加",
       "primary_mcp_install": "サーバーをインストール",
@@ -9659,7 +9673,15 @@
       "result_crewmate_created": "クルーメイトを作成しました：{{name}}",
       "primary_schedule_once": "スケジュールを作成",
       "due": "{{when}}に実行",
-      "time_passed": "この時刻はすでに過ぎています。{{name}}に新しい時刻を頼んでください。"
+      "time_passed": "この時刻はすでに過ぎています。{{name}}に新しい時刻を頼んでください。",
+      "field_display_name": "表示名",
+      "field_description": "説明",
+      "field_model": "モデル",
+      "field_reasoning_effort": "推論の深さ",
+      "field_approval_mode": "承認モード",
+      "approval_mode_hint_normal": "何かをする前に必ず確認します。",
+      "approval_mode_hint_trust_reads": "読み取り専用のシェルコマンドだけ自分で実行し、それ以外は確認します。",
+      "approval_mode_hint_trust": "そのチャット内では確認せずに作業します。"
     },
     "assistantWelcome": {
       "default_name": "Mate"

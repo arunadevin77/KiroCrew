@@ -5,6 +5,7 @@
  * the chips said the same change twice, so the chips alone stand for it.
  */
 import { i18nT } from '../i18n/t'
+import { effortLabel } from '../lib/effort'
 import { fmtList } from '../i18n/format'
 import type { CardChange } from '../api/cards'
 import { CardRow } from './kindBodies'
@@ -21,6 +22,33 @@ export const FIELD_LABELS: Record<string, () => string> = {
   goal: () => i18nT('components.changeCards.field_goal'),
   auto_approve: () => i18nT('components.changeCards.field_auto_approve'),
   enabled: () => i18nT('components.changeCards.field_enabled'),
+  display_name: () => i18nT('components.changeCards.field_display_name'),
+  description: () => i18nT('components.changeCards.field_description'),
+  model: () => i18nT('components.changeCards.field_model'),
+  reasoning_effort: () => i18nT('components.changeCards.field_reasoning_effort'),
+  approval_mode: () => i18nT('components.changeCards.field_approval_mode'),
+}
+
+/** The approval modes a crewmate's own chat can be set to, in the picker's words. */
+const APPROVAL_MODE_LABELS: Record<string, () => string> = {
+  normal: () => i18nT('components.approvalModePicker.normal_label'),
+  trust_reads: () => i18nT('components.approvalModePicker.reads_label'),
+  trust: () => i18nT('components.approvalModePicker.trust_label'),
+}
+
+/** What the mode the card asks for means for the crewmate, one line: this is
+ *  the permission the user is approving, so the card says it rather than
+ *  leaving the reader to look the word up. */
+const APPROVAL_MODE_HINTS: Record<string, () => string> = {
+  normal: () => i18nT('components.changeCards.approval_mode_hint_normal'),
+  trust_reads: () => i18nT('components.changeCards.approval_mode_hint_trust_reads'),
+  trust: () => i18nT('components.changeCards.approval_mode_hint_trust'),
+}
+
+/** A line under a row's value explaining what the new value means, when the field has one. */
+export function changeHint(c: CardChange): string | null {
+  if (c.field === 'approval_mode' && typeof c.after === 'string' && APPROVAL_MODE_HINTS[c.after]) return APPROVAL_MODE_HINTS[c.after]()
+  return null
 }
 
 /** A row's label: the localized field name when known, else the gateway's. */
@@ -31,7 +59,14 @@ export function changeLabel(c: CardChange): string {
 /** A row's value as the Schedule page would show it: cron reads as a clock and
  *  days, plus the recurrence the card must always state. */
 function changeValue(c: CardChange, v: unknown): string {
-  return c.field === 'cron_expr' && typeof v === 'string' ? fmtCardCron(v) : formatCardValue(v)
+  if (c.field === 'cron_expr' && typeof v === 'string') return fmtCardCron(v)
+  // An effort level is a code identifier on the wire; "" is the inherit
+  // sentinel, which the crew editor also labels as inherited.
+  if (c.field === 'reasoning_effort' && typeof v === 'string') return v === '' ? i18nT('pages.kiroCrewAgentsPage.inherited') : effortLabel(v)
+  // An approval mode is a code identifier on the wire; the card shows the word
+  // the picker shows for it, so "trust" reads as the same thing in both places.
+  if (c.field === 'approval_mode' && typeof v === 'string' && APPROVAL_MODE_LABELS[v]) return APPROVAL_MODE_LABELS[v]()
+  return formatCardValue(v)
 }
 
 export function formatCardValue(v: unknown): string {
@@ -75,12 +110,17 @@ export function CardChanges({ changes }: { changes: CardChange[] }) {
               ))}
             </ul>
           ) : (c.before !== undefined || c.after !== undefined) && (
-            <span className="inline-flex max-w-full flex-wrap items-baseline gap-x-1.5" data-testid="change-card-value">
-              {c.before !== undefined && <span className="text-muted [overflow-wrap:anywhere]">{changeValue(c, c.before)}</span>}
-              {c.before !== undefined && <span aria-hidden="true" className="text-muted">→</span>}
-              {c.before !== undefined && <span className="sr-only">{i18nT('components.changeCards.becomes')}</span>}
-              {c.after !== undefined && <span className="font-medium [overflow-wrap:anywhere]">{changeValue(c, c.after)}</span>}
-            </span>
+            <>
+              <span className="inline-flex max-w-full flex-wrap items-baseline gap-x-1.5" data-testid="change-card-value">
+                {c.before !== undefined && <span className="text-muted [overflow-wrap:anywhere]">{changeValue(c, c.before)}</span>}
+                {c.before !== undefined && <span aria-hidden="true" className="text-muted">→</span>}
+                {c.before !== undefined && <span className="sr-only">{i18nT('components.changeCards.becomes')}</span>}
+                {c.after !== undefined && <span className="font-medium [overflow-wrap:anywhere]">{changeValue(c, c.after)}</span>}
+              </span>
+              {changeHint(c) && (
+                <span className="block text-[12px] leading-4 text-muted" data-testid="change-card-hint">{changeHint(c)}</span>
+              )}
+            </>
           )}
         </CardRow>
       ))}

@@ -481,6 +481,11 @@ def coerce_fallback_model(raw: object) -> str:
 #: purpose: it is process-global, never a property of one crewmate.
 MEMBER_APPROVAL_MODES = ("normal", "trust_reads", "trust")
 
+#: The mode a crewmate's thread opens in while its record pins none (``""``).
+#: Every reader of an unset ``approval_mode`` resolves through this: the thread
+#: seed, the profile's picker, and a change card's "before" column.
+MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE = "trust"
+
 
 def coerce_member_approval_mode(raw: object) -> str:
     """Normalize ``agents.<name>.approval_mode``: a known mode, else ``""`` (unset)."""

@@ -34,6 +34,7 @@ from kiro_crew.config.loader import (
     default_project_dir,
     load_config_with_content_stamp,
 )
+from kiro_crew.config.sections import MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE
 from kiro_crew.dashboard.chat_persistence import (
     pin_private_agent_store,
     rehydrate_slot_from_history_async,
@@ -1522,7 +1523,7 @@ def _seed_member_approval(state: DashboardState, slot: Any, mode: str) -> None:
     if slot._member_approval_seeded:
         return
     slot._member_approval_seeded = True
-    effective = mode or "trust"
+    effective = mode or MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE
     if effective == "normal" or slot._trust or slot._trust_reads or slot._trust_scope:
         return
     key = effective_session_key(slot)

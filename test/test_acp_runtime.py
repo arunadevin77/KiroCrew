@@ -6933,6 +6933,7 @@ class TestAcpRuntimeLoadSession:
             "kirocrew-core",
             "kirocrew-cron",
             "kirocrew-guide",
+            "kirocrew-mate",
         ]
         assert all(_identity_tokens(servers))
         assert load_params == {
@@ -7281,6 +7282,7 @@ class TestAcpRuntimeLoadSession:
             "kirocrew-core",
             "kirocrew-cron",
             "kirocrew-guide",
+            "kirocrew-mate",
         ]
         assert all(_identity_tokens(servers))
         expected = {
@@ -7371,6 +7373,7 @@ class TestAcpRuntimeLoadSession:
             "kirocrew-core",
             "kirocrew-cron",
             "kirocrew-guide",
+            "kirocrew-mate",
         ]
 
         # Parity with create_session for the same agent + overlay: the two

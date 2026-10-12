@@ -175,10 +175,11 @@ same text. A fork already at `false` records nothing.
 
 ### Managed servers
 
-`agent._MANAGED_MCP_SERVERS` holds the nine servers the gateway owns end to
-end: the always-on `kirocrew-cron`, `kirocrew-core` and `kirocrew-guide`, the gated
-`kirocrew-computer`, and the opt-in `kirocrew-dashboard`, `kirocrew-work`,
-`kirocrew-crew-log`, `kirocrew-debug` and `kirocrew-panel`. Every emitted or
+`agent._MANAGED_MCP_SERVERS` holds the ten servers the gateway owns end to
+end: the always-on `kirocrew-cron`, `kirocrew-core`, `kirocrew-guide` and
+`kirocrew-mate`, the gated `kirocrew-computer`, and the opt-in
+`kirocrew-dashboard`, `kirocrew-work`, `kirocrew-crew-log`, `kirocrew-debug` and
+`kirocrew-panel`. Every emitted or
 explicitly granted entry is refreshed on every rebuild by
 `_refresh_dynamic_fields()`, which rewrites `command`/`args` from the live
 `kirocrew` binary, strips stale remote-transport fields (`url`, `headers`) left by
@@ -1642,7 +1643,8 @@ Managed servers, registered by `agent._MANAGED_MCP_SERVERS` and installed into
 | `kirocrew-crew-log` | `kirocrew mcp-crew-log` (`mcp_crew_log.py`) | `crew_log_list`, `crew_log_read`, `crew_log_projection` |
 | `kirocrew-debug` | `kirocrew mcp-debug` (`mcp_debug.py`) | `debug_gateway`, `debug_refusals`, `debug_threads`, `debug_processes`, `debug_snapshots` |
 | `kirocrew-panel` | `kirocrew mcp-panel` (`mcp_panel.py`) | `panel_publish`, `panel_templates`, `dashboard_fields`, `dashboard_types`, `dashboard_write`, `dashboard_templates`, `dashboard_preview`, `dashboard_apply`, `dashboard_rollback` |
-| `kirocrew-guide` | `kirocrew mcp-guide` (`mcp_guide.py`) | `guide_list_actions`, `guide_start`, `guide_status`, `guide_cancel`, `list_change_kinds`, `find_setting`, `get_member_capabilities`, `diagnose_settings`, `propose_change`, `get_change_status`, `rename_self`, `search_docs`, `find_ui` |
+| `kirocrew-guide` | `kirocrew mcp-guide` (`mcp_guide.py`) | `guide_list_actions`, `guide_start`, `guide_status`, `guide_cancel`, `list_change_kinds`, `find_setting`, `get_member_capabilities`, `diagnose_settings`, `propose_change`, `get_change_status`, `search_docs`, `find_ui` |
+| `kirocrew-mate` | `kirocrew mcp-mate` (`mcp_mate.py`) | `update_self`, `set_model`, `set_approval_mode`, `request_capabilities` |
 
 `kirocrew-guide` is a platform capability: it is always emitted (not `opt_in`),
 so the default `kirocrew` template, every crewmate built from it, the worker
@@ -1659,7 +1661,7 @@ once (`guide_platform.grant_guide_platform_once`, recorded by the
 `guide_platform_granted.json` marker after the spec is written), and keeps
 whatever its owner does with them afterwards. Its entry carries no `autoApprove`,
 and doctor never mints a whole-server `allowedTools` grant for it
-(`cli_doctor._NO_BLANKET_ALLOW_MCPS`). Exactly the thirteen tools in
+(`cli_doctor._NO_BLANKET_ALLOW_MCPS`). Exactly the twelve tools in
 `agent._GUIDE_AUTO_GRANTS` are exact `allowedTools` grants, each through the
 same `auto_approve._apply_allowed_tools_ceiling` path every grant passes, so a
 governance ceiling that denies one keeps it out and the user is asked instead:
@@ -1667,16 +1669,52 @@ the reads (`find_ui`, `search_docs`, `guide_list_actions`, `guide_status`,
 `list_change_kinds`, `find_setting`, `get_member_capabilities`,
 `diagnose_settings`, `get_change_status`), the offers (`guide_start`,
 `propose_change`), which change nothing until the user presses the card's own
-button, `guide_cancel`, which only removes this conversation's pointer, and
-`rename_self`, which renames only the calling crewmate. A
+button, and `guide_cancel`, which only removes this conversation's pointer. A
 tool added to the server later is not in the tuple and asks first. KAS
 permissions derive from that final filtered list. A harness whose projection
 does not carry the server reports it through the ordinary unresolved-ref doctor
 row ([agent host contract](../system-specs/modules/agent-host-contract.md)); nothing special-cases its
 absence.
-Its guide and card tools work only for a turn the user sent from the dashboard.
-The gateway's admission (`dashboard.handlers.guide._resolve_agent_caller`, shared
-by the card routes) first requires the session key the call names to be attested by
+`kirocrew-mate` (`mcp_mate.py`) is the crewmate's own record, mounted on the
+same specs on the same terms (always emitted, no `autoApprove`, its own server so
+the set is withheld as one and the guide set stays the user's help with the
+dashboard; an existing spec gains the ref and `agent._MATE_AUTO_GRANTS` once,
+`mate_platform_granted.json`). Its tools are named for what they do and act on
+the CALLING crewmate only, never on a name passed in, in two tiers that follow
+who owns the field. `update_self` writes the presentation the crewmate owns (its
+display name, description and ghost face, `members.SELF_EDITABLE_FIELDS`) at
+once through `POST /api/member/self/update`: the gateway resolves the member from
+the caller's pinned-thread slot, cleans each value by its own rule
+(`members.update_member_self`), publishes the record, writes `member/config` to
+the member's event log, keeps the previous values in its own bounded in-process
+record (`dashboard/member_self_changes.py`) and draws one `card` row of surface
+`self` in the crewmate's conversation (`chat_cards.record_self_change`) with the
+faces and labels to show and an **Undo**. The undo is the user's click,
+`POST /api/members/{slug}/self-changes/{id}/undo` with `{"slot"}` naming the
+conversation the page is showing, owner-only cookie auth off the strict prefix:
+it restores from the gateway's record, never from the row (the transcript is
+agent-writable, so a row copied into another crewmate's chat with its id and
+slug intact is refused: the record must have been made in the conversation the
+button was pressed in, and a request naming none is `400 slot_required`), and
+marks the row `undone`; a record the gateway no longer holds answers 410. The
+record is kept, and the change undoable, only while every retained value fits
+`members.MEMBER_DESCRIPTION_MAX_CHARS` (a string by its length, as the write
+path measures it; an avatar mapping by its serialized length). `set_model`, `set_approval_mode` and
+`request_capabilities` are the card tier: `POST /api/member/self/propose` fixes
+the kind (`crewmate.update`, `crewmate.capabilities`) and the member and runs
+the same propose body `propose_change` runs
+(`handlers.change_cards.propose_for_caller`), so the crewmate names the ask and
+the user presses the same card; the outcome reaches the crewmate on its next
+turn, as every card outcome does. A `set_approval_mode` for the mode the thread
+already runs in (a record pinning none opens in
+`MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE`) is refused `no_change` rather than
+drawn as a card from an empty value.
+The workspace, memory store, member id, key and template are not the
+crewmate's to change or to ask for.
+Its guide and card tools, and every `kirocrew-mate` tool, work only for a turn
+the user sent from the dashboard. The gateway's admission
+(`dashboard.handlers.guide._resolve_agent_caller`, shared by the card and member
+routes) first requires the session key the call names to be attested by
 the transport (`member_memory_auth.session_key_is_attested`: the socket peer, or the
 shim's signed per-session token; else 403 `unattested_caller`), then resolves the
 caller's session key to its slot and then reads
@@ -1685,7 +1723,8 @@ the provenance the turn runner recorded: the slot must be executing a turn now
 (`_turn_channel_origin`, set from `_run_chat`'s `_directive_channel_origin` at the
 turn's start and cleared at its end) nor have taken a channel steer since
 (`_turn_channel_narrowed`). Starting something on screen (`guide_start`,
-`propose_change`), renaming the calling crewmate (`rename_self`), or taking
+`propose_change`), changing the calling crewmate's own record (`update_self`,
+its card-backed asks), or taking
 `find_ui`'s live observation (`guide.observe`) also needs
 the turn to be one the person sent (`_turn_user_sent`, set from
 `_directive_user_origin` the same way): a loop wake, a cron or app injection, a

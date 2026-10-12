@@ -8139,6 +8139,20 @@
       "quote": "인용",
       "quote_hint": "선택한 부분을 이 대화의 입력창에 인용합니다 — 답장은 메인 채팅으로 전송됩니다"
     },
+    "selfChange": {
+      "changed_display_name": "{{name}}이(가) 이름을 바꿨습니다",
+      "changed_description": "{{name}}이(가) 설명을 업데이트했습니다",
+      "changed_avatar": "{{name}}이(가) 아바타를 바꿨습니다",
+      "undo": "실행 취소",
+      "undone": "취소됨",
+      "undo_failed": "이 변경을 취소할 수 없습니다: {{message}}",
+      "undo_unavailable": "이 변경은 여기서 더 이상 되돌릴 수 없습니다. {{name}}의 프로필에서 값을 설정하세요. Crewmates를 열고 {{name}}을(를) 선택한 뒤 이름 옆 연필을 누르세요.",
+      "undo_stale": "이 값은 그 뒤에 다시 바뀌어서 이 되돌리기는 더 이상 적용되지 않습니다. {{name}}의 프로필에서 설정하세요. Crewmates를 열고 {{name}}을(를) 선택한 뒤 이름 옆 연필을 누르세요.",
+      "field_display_name": "이름",
+      "field_description": "설명",
+      "field_avatar": "얼굴",
+      "changed_fields": "{{name}}이(가) {{fields}}을(를) 바꿨습니다"
+    },
     "sendToInstanceSubmenu": {
       "failed": "실패",
       "not_connected": "연결되지 않음",
@@ -9595,7 +9609,7 @@
       "primary_connection_connect": "연결",
       "primary_crewmate_capabilities": "도구 저장",
       "primary_crewmate_create": "크루메이트 만들기",
-      "primary_crewmate_update": "크루메이트 저장",
+      "primary_crewmate_update": "변경 적용",
       "primary_denied_command": "규칙 저장",
       "primary_mcp_add_custom": "서버 추가",
       "primary_mcp_install": "서버 설치",
@@ -9659,7 +9673,15 @@
       "result_crewmate_created": "크루메이트 생성됨: {{name}}",
       "primary_schedule_once": "일정 만들기",
       "due": "{{when}} 실행",
-      "time_passed": "이 시간은 이미 지났습니다. {{name}}에게 새 시간을 요청하세요."
+      "time_passed": "이 시간은 이미 지났습니다. {{name}}에게 새 시간을 요청하세요.",
+      "field_display_name": "표시 이름",
+      "field_description": "설명",
+      "field_model": "모델",
+      "field_reasoning_effort": "추론 강도",
+      "field_approval_mode": "승인 모드",
+      "approval_mode_hint_normal": "무엇을 하기 전에 먼저 물어봅니다.",
+      "approval_mode_hint_trust_reads": "읽기 전용 셸 명령만 스스로 실행하고, 나머지는 물어봅니다.",
+      "approval_mode_hint_trust": "자기 채팅에서는 먼저 묻지 않고 작업합니다."
     },
     "assistantWelcome": {
       "default_name": "Mate"

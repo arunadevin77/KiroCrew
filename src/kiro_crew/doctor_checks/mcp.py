@@ -312,6 +312,7 @@ _STRICT_IDENTITY_SERVERS = (
     "kirocrew-debug",
     "kirocrew-panel",
     "kirocrew-guide",
+    "kirocrew-mate",
 )
 
 

@@ -2276,6 +2276,7 @@ def test_control_plane_backends_contain_session_mcp_and_justify_the_difference()
     assert token_only == frozenset(OPT_IN_BIN_MCP_SERVERS) | {
         "kirocrew-computer",
         "kirocrew-guide",
+        "kirocrew-mate",
     }, (
         "a new token recipient must be added to this pin in the same commit that adds it "
         "to mcp_cleanup's managed-server tuples"

@@ -692,6 +692,13 @@ _STRICT_INTERNAL_API_PATHS = frozenset(
         # prefix and stays on owner-only cookie auth; applying a card happens only
         # on the existing settings routes, through the card hook.
         "/api/cards/agent",
+        # MCP-only (the kirocrew-mate update_self / set_* tools); no browser
+        # caller. STRICT for the same reason as the guide and the cards: the
+        # crewmate acted on is derived from the X-Session-Key this secret backs,
+        # so a cookie fall-through would let a browser change any crewmate as
+        # itself. The undo ("/api/members/{slug}/self-changes/{id}/undo") is the
+        # user's click and stays on owner-only cookie auth, off this prefix.
+        "/api/member/self",
         # MCP-only (knowledge_add_document tool); no browser caller — the
         # dashboard ingests via its own cookie-authed knowledge routes. Same
         # wiring class as "/api/notifications/agent" above.

@@ -15,6 +15,11 @@
  * dismissed), the row's recorded status is drawn as a one-line result with no
  * actions. The transcript is agent-writable, so a row is only ever matched to
  * a card of THIS slot; a row naming another slot draws its record line only.
+ *
+ * A third surface, `self`, is a change the crewmate made to its own record
+ * (`update_self`): already applied, so it draws as one quiet line with an Undo
+ * (`SelfChangeRow`). Its row carries what to draw and nothing that authorizes:
+ * the undo is restored from the gateway's own record.
  */
 import type { ChatMessage } from '../types'
 import { useAppSelector } from '../store'
@@ -26,6 +31,7 @@ import ChangeCard from './ChangeCard'
 import { useCardCorners } from './cardCorners'
 import GuideOfferCard from '../guide/GuideOfferCard'
 import ErrorNotice from '../components/ErrorNotice'
+import SelfChangeRow, { type SelfChangeRef, type SelfField } from './SelfChangeRow'
 
 export const CARD_ROLE = 'card'
 
@@ -41,6 +47,40 @@ export interface CardRef {
 }
 
 const str = (v: unknown, max = 300) => (typeof v === 'string' ? v.slice(0, max) : '')
+
+const SELF_FIELDS: readonly SelfField[] = ['display_name', 'description', 'avatar']
+
+/** The row's self-change reference, or null when the row is not one. */
+export function readSelfChangeRef(m: Pick<ChatMessage, 'role' | 'meta'>): SelfChangeRef | null {
+  if (m.role !== CARD_ROLE) return null
+  const raw = (m.meta as { card?: unknown } | undefined)?.card
+  if (!raw || typeof raw !== 'object') return null
+  const c = raw as Record<string, unknown>
+  if (c.surface !== 'self') return null
+  const id = str(c.id, 64)
+  const fields = Array.isArray(c.fields)
+    ? (c.fields.filter((f): f is SelfField => SELF_FIELDS.includes(f as SelfField)))
+    : []
+  if (!id || !fields.length) return null
+  const pick = (v: unknown): Partial<Record<SelfField, unknown>> => {
+    if (!v || typeof v !== 'object') return {}
+    const o = v as Record<string, unknown>
+    return Object.fromEntries(fields.filter(f => f in o).map(f => [f, o[f]]))
+  }
+  return {
+    surface: 'self',
+    id,
+    slot: str(c.slot, 256),
+    member: str(c.member, 128),
+    name: str(c.name, 128),
+    slug: str(c.slug, 128),
+    fields,
+    before: pick(c.before),
+    after: pick(c.after),
+    status: c.status === 'undone' ? 'undone' : 'applied',
+    undoable: c.undoable !== false,
+  }
+}
 
 /** The row's card reference, or null when the row does not carry a usable one. */
 export function readCardRef(m: Pick<ChatMessage, 'role' | 'meta'>): CardRef | null {
@@ -111,9 +151,17 @@ function ChangeCardRow({ card, slot }: { card: CardRef; slot: string | null }) {
 
 export default function ConversationCard({ message, slot }: { message: ChatMessage; slot?: string | null }) {
   const activeSlot = useAppSelector(s => s.chat.activeSlot)
+  const here = slot ?? activeSlot ?? null
+  const self = readSelfChangeRef(message)
+  if (self) {
+    return (
+      <div className="min-w-0" data-testid="conversation-card" data-card-surface="self" data-card-id={self.id}>
+        <SelfChangeRow change={self} slot={here} />
+      </div>
+    )
+  }
   const card = readCardRef(message)
   if (!card) return null
-  const here = slot ?? activeSlot ?? null
   return (
     <div className="min-w-0" data-testid="conversation-card" data-card-surface={card.surface} data-card-id={card.id}>
       {card.surface === 'change'
