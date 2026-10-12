@@ -45,8 +45,38 @@ from kiro_crew.session_agent_selection import (
     session_agent_selection_kind,
 )
 from kiro_crew.skills import SkillsLoader
+from kiro_crew.testing.wait import async_wait_until, await_until, default_timeout
 
 TEMPLATE = "kirocrew-conductor"
+
+
+async def _finished(coro, what: str, *, timeout: float | None = None):
+    """Run ``coro`` to completion under the lost-run bound, failing by name (D8).
+
+    ``await_until`` takes a future the test already holds; a coroutine the test
+    itself calls (a chat turn, a request, the background drain) is wrapped in a
+    task here so a hang is a named failure instead of the runner's kill. The task
+    is cancelled on every early exit -- the bound expiring, or an enclosing wait
+    cancelling this one -- as ``wait_for`` did, so a hung step never outlives its
+    test. A wait nested inside another ``_finished`` passes a smaller ``timeout``
+    so the inner step is the one that fails by name.
+    """
+    task = asyncio.ensure_future(coro)
+    try:
+        return await await_until(task, timeout=timeout, what=what)
+    finally:
+        if not task.done():
+            task.cancel()
+
+
+async def _signalled(event: threading.Event, what: str) -> None:
+    """Wait for a ``threading.Event`` a worker thread sets, under the lost-run bound.
+
+    ``await_until`` reads asyncio signals only; a flag a thread sets is read on
+    the loop, where ``is_set`` is a plain, thread-safe read. Raises by name when
+    the bound expires, so no caller needs to assert on the result.
+    """
+    await async_wait_until(event.is_set, describe=lambda: f"{what}: still clear")
 
 
 def test_global_session_binding_matches_equivalent_alias(monkeypatch):
@@ -389,8 +419,17 @@ async def _template_chat(tmp_path, monkeypatch, *, first_turn=True):
         slot = state._slots["template-chat"]
         if first_turn:
             slot.append("user", "Complete the assigned task.")
-            await asyncio.wait_for(chat_runner._run_chat(state, slot, "Complete the task."), 10)
-            await asyncio.wait_for(drain_background_tasks(state), 10)
+            # Half the caller's bound: this setup runs under its own _finished,
+            # and the step that hung must be the one the failure names.
+            inner = default_timeout() / 2
+            await _finished(
+                chat_runner._run_chat(state, slot, "Complete the task."),
+                "the chat turn",
+                timeout=inner,
+            )
+            await _finished(
+                drain_background_tasks(state), "the background tasks draining", timeout=inner
+            )
             state.sessions.record_failure.assert_not_awaited()
             assert state.sessions.get_or_create.await_count == 1
 
@@ -457,7 +496,9 @@ async def test_slot_create_cannot_overwrite_later_same_name_member(tmp_path, mon
         try:
             if kind == "template":
                 writer_started.set()
-                assert release_writer.wait(15), "Template create writer was not released"
+                assert release_writer.wait(
+                    default_timeout()
+                ), "Template create writer was not released"
             change = record_agent_selection(session_key, agent_name, bindings, **kwargs)
             assert change is not None
             publications[kind] = change[1]
@@ -476,11 +517,13 @@ async def test_slot_create_cannot_overwrite_later_same_name_member(tmp_path, mon
         )
         later_task = None
         try:
-            assert await asyncio.wait_for(asyncio.to_thread(writer_started.wait, 10), 11)
+            await _signalled(writer_started, "the gated writer starting")
             slot = state._slots["create-owner-race"]
             creation_agent, creation_project = slot.agent, slot.project
             create_holds_lock = slot._lock.locked()
-            response = await asyncio.wait_for(client.post("/api/agents/sync", json={}), 10)
+            response = await _finished(
+                client.post("/api/agents/sync", json={}), "the request's response"
+            )
             assert response.status == 200, await response.text()
             assert TEMPLATE in (await response.json())["synced"]
 
@@ -496,11 +539,11 @@ async def test_slot_create_cannot_overwrite_later_same_name_member(tmp_path, mon
             later_task = asyncio.create_task(
                 client.post(f"/api/chat/slots/{slot.key}/agent", json={"agent": TEMPLATE})
             )
-            await asyncio.wait_for(later_lock_attempted.wait(), 10)
+            await await_until(later_lock_attempted, what="the later request's lock attempt")
             if not create_holds_lock:
                 # Prove the actual overwrite on the unlocked handler. A fixed
                 # create may serialize B; do not require B to finish then.
-                later_response = await asyncio.wait_for(asyncio.shield(later_task), 10)
+                later_response = await await_until(later_task, what="the later request")
                 assert later_response.status == 200, await later_response.text()
                 assert slot.agent == creation_agent
                 assert slot.agent is not creation_agent
@@ -509,9 +552,11 @@ async def test_slot_create_cannot_overwrite_later_same_name_member(tmp_path, mon
                     await asyncio.to_thread(session_agent_selection_kind, key, TEMPLATE) == "member"
                 )
             release_writer.set()
-            responses = await asyncio.wait_for(asyncio.gather(create_task, later_task), 15)
+            responses = await await_until(
+                asyncio.gather(create_task, later_task), what="the tasks settling"
+            )
             assert [response.status for response in responses] == [200, 200]
-            assert await asyncio.wait_for(asyncio.to_thread(writer_finished.wait, 10), 11)
+            await _signalled(writer_finished, "the gated writer finishing")
             assert slot.agent == creation_agent == TEMPLATE
             assert slot.project == creation_project
             assert slot.memory_store == private_store
@@ -519,7 +564,9 @@ async def test_slot_create_cannot_overwrite_later_same_name_member(tmp_path, mon
             def final_selection():
                 return read_session_execution(key).to_record()
 
-            selected = await asyncio.wait_for(asyncio.to_thread(final_selection), 10)
+            selected = await _finished(
+                asyncio.to_thread(final_selection), "final_selection off the loop"
+            )
             assert selected == publications["member"], {
                 "selected": selected,
                 "publications": publications,
@@ -533,16 +580,20 @@ async def test_slot_create_cannot_overwrite_later_same_name_member(tmp_path, mon
                 for task in tasks:
                     if not task.done():
                         task.cancel()
-                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 15)
+                await await_until(
+                    asyncio.gather(*tasks, return_exceptions=True), what="the tasks settling"
+                )
             finally:
                 if writer_started.is_set():
-                    assert await asyncio.wait_for(asyncio.to_thread(writer_finished.wait, 10), 11)
-                await asyncio.wait_for(drain_background_tasks(state), 10)
+                    await _signalled(writer_finished, "the gated writer finishing")
+                await _finished(drain_background_tasks(state), "the background tasks draining")
 
 
 @pytest.mark.asyncio
 async def test_slot_create_can_replace_existing_protected_history_selection(tmp_path, monkeypatch):
-    state, slot, _ = await asyncio.wait_for(_template_chat(tmp_path, monkeypatch), 20)
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch), "the template chat setup"
+    )
     key = "dashboard:template-chat"
     later_agent = "kirocrew-worker"
     monkeypatch.setattr(
@@ -552,14 +603,15 @@ async def test_slot_create_can_replace_existing_protected_history_selection(tmp_
     assert await asyncio.to_thread(session_agent_selection_kind, key, TEMPLATE) == "template"
     state._slots.pop(slot.key)
     async with TestClient(TestServer(as_owner(_make_app_with_agent_routes(state)))) as client:
-        response = await asyncio.wait_for(
-            client.post("/api/chat/slots", json={"name": slot.key, "agent": later_agent}), 10
+        response = await _finished(
+            client.post("/api/chat/slots", json={"name": slot.key, "agent": later_agent}),
+            "the request's response",
         )
         assert response.status == 200, await response.text()
     assert state._slots[slot.key].agent == later_agent
     assert await asyncio.to_thread(session_agent_selection_kind, key, later_agent) == "template"
     assert await asyncio.to_thread(read_private_session_store, key) is None
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(drain_background_tasks(state), "the background tasks draining")
 
 
 @pytest.mark.asyncio
@@ -599,16 +651,16 @@ async def test_discovery_keeps_existing_template_conversation(tmp_path, monkeypa
     state.sessions.record_failure.reset_mock()
     state.context_builder.build_message.reset_mock()
     # Completion callbacks enter the same runner with the already selected slot.
-    await asyncio.wait_for(
+    await _finished(
         chat_runner._run_chat(
             state,
             slot,
             "[Subagent completion event] The worker finished.",
             _directive_user_origin=False,
         ),
-        10,
+        "the chat turn",
     )
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(drain_background_tasks(state), "the background tasks draining")
     assert state.sessions.get_or_create.await_count == 1
     state.sessions.record_failure.assert_not_awaited()
     assert (
@@ -629,7 +681,9 @@ async def test_discovery_keeps_existing_template_conversation(tmp_path, monkeypa
 
 @pytest.mark.asyncio
 async def test_live_provider_switch_preserves_selection_after_restore(tmp_path, monkeypatch):
-    state, slot, _ = await asyncio.wait_for(_template_chat(tmp_path, monkeypatch), 20)
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch), "the template chat setup"
+    )
     key = "dashboard:template-chat"
     later_agent = "kirocrew-worker"
     monkeypatch.setattr(
@@ -644,8 +698,8 @@ async def test_live_provider_switch_preserves_selection_after_restore(tmp_path, 
         yield LLMEvent(kind=EVENT_COMPLETE)
 
     provider.stream = switch
-    await asyncio.wait_for(chat_runner._run_chat(state, slot, "switch the template"), 10)
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(chat_runner._run_chat(state, slot, "switch the template"), "the chat turn")
+    await _finished(drain_background_tasks(state), "the background tasks draining")
     assert slot.agent == later_agent
     assert await asyncio.to_thread(session_agent_selection_kind, key, later_agent) == "template"
 
@@ -653,8 +707,8 @@ async def test_live_provider_switch_preserves_selection_after_restore(tmp_path, 
     slot = _rehydrate_slot_from_history(state, "template-chat")
     assert slot is not None
     assert slot.agent == later_agent
-    await asyncio.wait_for(chat_runner._run_chat(state, slot, "continue"), 10)
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(chat_runner._run_chat(state, slot, "continue"), "the chat turn")
+    await _finished(drain_background_tasks(state), "the background tasks draining")
     assert state.sessions.get_or_create.call_args.kwargs["agent"] == later_agent
     state.sessions.record_failure.assert_not_awaited()
     assert await asyncio.to_thread(read_private_session_store, key) is None
@@ -676,7 +730,9 @@ async def test_interrupted_provider_switch_restores_selection(
     tmp_path, monkeypatch, interruption, cancel_count
 ):
     """A provider publication cannot outlive its turn or strand old history."""
-    state, slot, _ = await asyncio.wait_for(_template_chat(tmp_path, monkeypatch), 20)
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch), "the template chat setup"
+    )
     key = "dashboard:template-chat"
     later_agent = "kirocrew-worker"
     monkeypatch.setattr(
@@ -696,7 +752,7 @@ async def test_interrupted_provider_switch_restores_selection(
         try:
             change = publish(*args)
             writer_started.set()
-            assert release_writer.wait(15), "Provider publication was not released"
+            assert release_writer.wait(default_timeout()), "Provider publication was not released"
             return change
         finally:
             writer_finished.set()
@@ -707,7 +763,9 @@ async def test_interrupted_provider_switch_restores_selection(
         try:
             rollback_started.set()
             if interruption == "rollback":
-                assert release_rollback.wait(15), "Provider rollback was not released"
+                assert release_rollback.wait(
+                    default_timeout()
+                ), "Provider rollback was not released"
             return restore(*args)
         finally:
             rollback_finished.set()
@@ -728,7 +786,7 @@ async def test_interrupted_provider_switch_restores_selection(
 
     task = asyncio.create_task(turn())
     try:
-        assert await asyncio.wait_for(asyncio.to_thread(writer_started.wait, 10), 11)
+        await _signalled(writer_started, "the gated writer starting")
         assert not writer_finished.is_set()
         if interruption in ("rebound", "rollback"):
             slot.linked_session_key = "dashboard:other-session"
@@ -736,17 +794,17 @@ async def test_interrupted_provider_switch_restores_selection(
             assert state._slots.pop(slot.key) is slot
         if interruption == "rollback":
             release_writer.set()
-            assert await asyncio.wait_for(asyncio.to_thread(rollback_started.wait, 10), 11)
+            await _signalled(rollback_started, "the rollback starting")
             assert not rollback_finished.is_set()
         for _ in range(cancel_count):
             task.cancel()
             checkpoint = asyncio.Event()
             asyncio.get_running_loop().call_soon(checkpoint.set)
-            await asyncio.wait_for(checkpoint.wait(), 10)
+            await await_until(checkpoint, what="the loop turn")
         release_writer.set()
         release_rollback.set()
-        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 15)
-        assert await asyncio.wait_for(asyncio.to_thread(writer_finished.wait, 10), 11)
+        await await_until(asyncio.gather(task, return_exceptions=True), what="the tasks settling")
+        await _signalled(writer_finished, "the gated writer finishing")
         assert read_session_execution(key).to_record() == before
         assert retired_after_writer == [(True, True)]
         assert slot.agent == TEMPLATE
@@ -757,8 +815,8 @@ async def test_interrupted_provider_switch_restores_selection(
         restored = _turn_state(tmp_path, monkeypatch)
         reopened = _rehydrate_slot_from_history(restored, slot.key)
         assert reopened is not None
-        await asyncio.wait_for(chat_runner._run_chat(restored, reopened, "continue"), 10)
-        await asyncio.wait_for(drain_background_tasks(restored), 10)
+        await _finished(chat_runner._run_chat(restored, reopened, "continue"), "the chat turn")
+        await _finished(drain_background_tasks(restored), "the background tasks draining")
         restored.sessions.record_failure.assert_not_awaited()
         assert restored.sessions.get_or_create.call_args.kwargs["agent"] == TEMPLATE
     finally:
@@ -767,13 +825,15 @@ async def test_interrupted_provider_switch_restores_selection(
         try:
             if not task.done():
                 task.cancel()
-            await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 15)
+            await await_until(
+                asyncio.gather(task, return_exceptions=True), what="the tasks settling"
+            )
         finally:
             if writer_started.is_set():
-                assert await asyncio.wait_for(asyncio.to_thread(writer_finished.wait, 10), 11)
+                await _signalled(writer_finished, "the gated writer finishing")
             if rollback_started.is_set():
-                assert await asyncio.wait_for(asyncio.to_thread(rollback_finished.wait, 10), 11)
-            await asyncio.wait_for(drain_background_tasks(state), 10)
+                await _signalled(rollback_finished, "the rollback finishing")
+            await _finished(drain_background_tasks(state), "the background tasks draining")
 
 
 @pytest.mark.asyncio
@@ -781,7 +841,7 @@ async def test_interrupted_provider_switch_restores_selection(
 async def test_restored_agent_conflict_cannot_replace_protected_selection(
     tmp_path, monkeypatch, restore
 ):
-    state, _, _ = await asyncio.wait_for(_template_chat(tmp_path, monkeypatch), 20)
+    state, _, _ = await _finished(_template_chat(tmp_path, monkeypatch), "the template chat setup")
     key = "dashboard:template-chat"
     later_agent = "kirocrew-worker"
     monkeypatch.setattr(
@@ -810,23 +870,24 @@ async def test_restored_agent_conflict_cannot_replace_protected_selection(
         slot = state._slots["template-chat"]
     else:
         async with TestClient(TestServer(as_owner(_make_app_with_agent_routes(state)))) as client:
-            response = await asyncio.wait_for(
-                client.post("/api/chat/slots/template-chat/resume", json={"key": key}), 10
+            response = await _finished(
+                client.post("/api/chat/slots/template-chat/resume", json={"key": key}),
+                "the request's response",
             )
             assert response.status == 200, await response.text()
         slot = state._slots["template-chat"]
     assert slot is not None
     assert slot.agent == TEMPLATE
-    await asyncio.wait_for(
+    await _finished(
         chat_runner._run_chat(
             state,
             slot,
             "[Subagent completion event] The worker finished.",
             _directive_user_origin=False,
         ),
-        10,
+        "the chat turn",
     )
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(drain_background_tasks(state), "the background tasks draining")
     state.sessions.record_failure.assert_not_awaited()
     state.sessions.get_or_create.assert_awaited_once()
     assert state.sessions.get_or_create.call_args.kwargs["agent"] == TEMPLATE
@@ -851,8 +912,8 @@ async def test_malformed_canonical_selection_refuses_before_provider_start(
     await asyncio.to_thread(ConversationLog().update_metadata, key, {"execution_context": damage})
     state.sessions.get_or_create.reset_mock()
     state.context_builder.build_message.reset_mock()
-    await asyncio.wait_for(chat_runner._run_chat(state, slot, "continue"), 10)
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(chat_runner._run_chat(state, slot, "continue"), "the chat turn")
+    await _finished(drain_background_tasks(state), "the background tasks draining")
     state.sessions.get_or_create.assert_not_awaited()
     state.context_builder.build_message.assert_not_called()
     assert any(row["role"] == "error" for row in slot.messages)
@@ -889,15 +950,15 @@ async def test_discovery_before_first_allocation_preserves_owner_template_pick(
         monkeypatch.setattr(chat_runner, "_EAGER_SPAWN_DEBOUNCE_SECS", 0)
         monkeypatch.setattr(chat_runner, "_prewarm_allowance", lambda: 1)
         monkeypatch.setattr(chat_runner, "_armed_prefetches", {})
-        await asyncio.wait_for(chat_runner._eager_spawn(state, slot), 10)
+        await _finished(chat_runner._eager_spawn(state, slot), "the eager spawn")
         assert state.sessions.get_or_create.call_args.kwargs["speculative"] is True
     else:
-        await asyncio.wait_for(chat_runner._run_chat(state, slot, "Complete the task."), 10)
+        await _finished(chat_runner._run_chat(state, slot, "Complete the task."), "the chat turn")
         assert (
             state.context_builder.build_message.call_args.kwargs["execution_context"].store.store_id
             == "default"
         )
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(drain_background_tasks(state), "the background tasks draining")
     state.sessions.get_or_create.assert_awaited_once()
     assert state.sessions.get_or_create.call_args.kwargs["agent"] == TEMPLATE
     assert read_private_session_store("dashboard:template-chat") is None
@@ -956,8 +1017,8 @@ async def test_prewarm_publication_retains_newer_owner_agent_pick(
         return await to_thread(func, *args, **kwargs)
 
     monkeypatch.setattr(asyncio, "to_thread", owner_pick_during_publication)
-    await asyncio.wait_for(chat_runner._eager_spawn(state, slot), 10)
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(chat_runner._eager_spawn(state, slot), "the eager spawn")
+    await _finished(drain_background_tasks(state), "the background tasks draining")
     assert interleaved
     assert slot.agent == later_agent
     state.sessions.get_or_create.assert_not_awaited()
@@ -985,7 +1046,7 @@ async def test_cancelled_prewarm_cannot_overwrite_owner_pick(tmp_path, monkeypat
     def delayed_write(*args, **kwargs):
         started.set()
         try:
-            assert release.wait(10), "Test did not release the automatic publication"
+            assert release.wait(default_timeout()), "Test did not release the automatic publication"
             return record_agent_selection(*args, **kwargs)
         finally:
             finished.set()
@@ -994,7 +1055,7 @@ async def test_cancelled_prewarm_cannot_overwrite_owner_pick(tmp_path, monkeypat
     task = asyncio.create_task(chat_runner._eager_spawn(state, slot))
     slot._eager_spawn_task = task
     try:
-        assert await asyncio.to_thread(started.wait, 10)
+        await _signalled(started, "the gated writer starting")
         # Exercise the real replacement scheduler; only its successor's
         # provider work is outside this cancelled-publication assertion.
         monkeypatch.setattr(chat_runner, "_eager_spawn", AsyncMock())
@@ -1011,17 +1072,17 @@ async def test_cancelled_prewarm_cannot_overwrite_owner_pick(tmp_path, monkeypat
             assert response.status == 200, await response.text()
         release.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, 10)
-        assert await asyncio.to_thread(finished.wait, 10)
-        await asyncio.wait_for(slot._eager_spawn_task, 10)
+            await await_until(task, what="the handler task")
+        await _signalled(finished, "the gated writer finishing")
+        await await_until(slot._eager_spawn_task, what="the replacement pre-warm")
         state.sessions.get_or_create.assert_not_awaited()
         assert await asyncio.to_thread(session_agent_selection_kind, key, later_agent) == "template"
     finally:
         release.set()
         if not task.done():
             task.cancel()
-        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 15)
-        await asyncio.wait_for(drain_background_tasks(state), 10)
+        await await_until(asyncio.gather(task, return_exceptions=True), what="the tasks settling")
+        await _finished(drain_background_tasks(state), "the background tasks draining")
 
 
 @pytest.mark.asyncio
@@ -1085,7 +1146,9 @@ async def test_default_model_ignores_new_same_name_member_pin(tmp_path, monkeypa
 @pytest.mark.parametrize("restore", ["open", "recent", "resume"])
 async def test_failed_agent_history_write_keeps_prior_selection(tmp_path, monkeypatch, restore):
     """A history lock failure cannot publish an agent that restart cannot use."""
-    state, slot, _ = await asyncio.wait_for(_template_chat(tmp_path, monkeypatch), 20)
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch), "the template chat setup"
+    )
     key = "dashboard:template-chat"
     later_agent = "kirocrew-worker"
     monkeypatch.setattr(
@@ -1101,8 +1164,9 @@ async def test_failed_agent_history_write_keeps_prior_selection(tmp_path, monkey
         state.conversation_log, "_locked", MagicMock(side_effect=TimeoutError("history lock"))
     )
     async with TestClient(TestServer(as_owner(_make_app_with_agent_routes(state)))) as client:
-        response = await asyncio.wait_for(
-            client.post("/api/chat/slots/template-chat/agent", json={"agent": later_agent}), 10
+        response = await _finished(
+            client.post("/api/chat/slots/template-chat/agent", json={"agent": later_agent}),
+            "the request's response",
         )
         assert response.status == 503, await response.text()
     assert (slot.agent, slot.workspace, slot.project, slot.memory_store) == prior
@@ -1132,15 +1196,16 @@ async def test_failed_agent_history_write_keeps_prior_selection(tmp_path, monkey
         async with TestClient(
             TestServer(as_owner(_make_app_with_agent_routes(restored)))
         ) as client:
-            response = await asyncio.wait_for(
-                client.post("/api/chat/slots/template-chat/resume", json={"key": key}), 10
+            response = await _finished(
+                client.post("/api/chat/slots/template-chat/resume", json={"key": key}),
+                "the request's response",
             )
             assert response.status == 200, await response.text()
         slot = restored._slots["template-chat"]
     assert slot is not None
     assert slot.agent == TEMPLATE
-    await asyncio.wait_for(chat_runner._run_chat(restored, slot, "Continue the task."), 10)
-    await asyncio.wait_for(drain_background_tasks(restored), 10)
+    await _finished(chat_runner._run_chat(restored, slot, "Continue the task."), "the chat turn")
+    await _finished(drain_background_tasks(restored), "the background tasks draining")
     restored.sessions.record_failure.assert_not_awaited()
     restored.sessions.get_or_create.assert_awaited_once()
     assert not any(row["role"] == "error" for row in slot.messages)
@@ -1149,7 +1214,9 @@ async def test_failed_agent_history_write_keeps_prior_selection(tmp_path, monkey
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["lookup_error", "unresolved"])
 async def test_failed_agent_lookup_preserves_existing_selection(tmp_path, monkeypatch, failure):
-    state, slot, _ = await asyncio.wait_for(_template_chat(tmp_path, monkeypatch), 20)
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch), "the template chat setup"
+    )
     key = "dashboard:template-chat"
     protected = read_session_execution(key).to_record()
     metadata = state.conversation_log.get_metadata(key)
@@ -1163,11 +1230,11 @@ async def test_failed_agent_lookup_preserves_existing_selection(tmp_path, monkey
                 MagicMock(side_effect=OSError("agent lookup unavailable")),
             )
         async with TestClient(TestServer(as_owner(_make_app_with_agent_routes(state)))) as client:
-            response = await asyncio.wait_for(
+            response = await _finished(
                 client.post(
                     f"/api/chat/slots/{slot.key}/agent", json={"agent": "missing-template"}
                 ),
-                10,
+                "the request's response",
             )
             assert response.status == 503, await response.text()
     state.sessions.reset.assert_not_awaited()
@@ -1175,15 +1242,17 @@ async def test_failed_agent_lookup_preserves_existing_selection(tmp_path, monkey
     assert read_session_execution(key).to_record() == protected
     assert state.conversation_log.get_metadata(key) == metadata
     state.sessions.get_or_create.reset_mock()
-    await asyncio.wait_for(chat_runner._run_chat(state, slot, "Continue."), 10)
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(chat_runner._run_chat(state, slot, "Continue."), "the chat turn")
+    await _finished(drain_background_tasks(state), "the background tasks draining")
     state.sessions.record_failure.assert_not_awaited()
     state.sessions.get_or_create.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_cancelled_agent_lookup_preserves_existing_selection(tmp_path, monkeypatch):
-    state, slot, _ = await asyncio.wait_for(_template_chat(tmp_path, monkeypatch), 20)
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch), "the template chat setup"
+    )
     key = "dashboard:template-chat"
     protected = read_session_execution(key).to_record()
     metadata = state.conversation_log.get_metadata(key)
@@ -1211,37 +1280,40 @@ async def test_cancelled_agent_lookup_preserves_existing_selection(tmp_path, mon
             chat_handlers, "warm_project_agent_names", AsyncMock(side_effect=asyncio.CancelledError)
         )
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(chat_handlers.api_chat_slot_agent(request), 10)
+            await _finished(chat_handlers.api_chat_slot_agent(request), "the agent switch handler")
     state.sessions.reset.assert_not_awaited()
     assert (slot.agent, slot.workspace, slot.project, slot.memory_store) == prior
     assert read_session_execution(key).to_record() == protected
     assert state.conversation_log.get_metadata(key) == metadata
     state.sessions.get_or_create.reset_mock()
-    await asyncio.wait_for(chat_runner._run_chat(state, slot, "Continue."), 10)
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(chat_runner._run_chat(state, slot, "Continue."), "the chat turn")
+    await _finished(drain_background_tasks(state), "the background tasks draining")
     state.sessions.record_failure.assert_not_awaited()
     state.sessions.get_or_create.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_default_agent_switch_replaces_protected_selection(tmp_path, monkeypatch):
-    state, slot, _ = await asyncio.wait_for(_template_chat(tmp_path, monkeypatch), 20)
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch), "the template chat setup"
+    )
     state.sessions.reset = AsyncMock(return_value=True)
     async with TestClient(TestServer(as_owner(_make_app_with_agent_routes(state)))) as client:
-        response = await asyncio.wait_for(
-            client.post(f"/api/chat/slots/{slot.key}/agent", json={"agent": ""}), 10
+        response = await _finished(
+            client.post(f"/api/chat/slots/{slot.key}/agent", json={"agent": ""}),
+            "the request's response",
         )
         assert response.status == 200, await response.text()
     state.sessions.get_or_create.reset_mock()
-    await asyncio.wait_for(chat_runner._run_chat(state, slot, "Continue."), 10)
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(chat_runner._run_chat(state, slot, "Continue."), "the chat turn")
+    await _finished(drain_background_tasks(state), "the background tasks draining")
     state.sessions.record_failure.assert_not_awaited()
     state.sessions.get_or_create.assert_awaited_once()
     restored = _turn_state(tmp_path, monkeypatch)
     restored_slot = _rehydrate_slot_from_history(restored, slot.key)
     assert restored_slot is not None
-    await asyncio.wait_for(chat_runner._run_chat(restored, restored_slot, "Continue."), 10)
-    await asyncio.wait_for(drain_background_tasks(restored), 10)
+    await _finished(chat_runner._run_chat(restored, restored_slot, "Continue."), "the chat turn")
+    await _finished(drain_background_tasks(restored), "the background tasks draining")
     restored.sessions.record_failure.assert_not_awaited()
     restored.sessions.get_or_create.assert_awaited_once()
 
@@ -1249,7 +1321,9 @@ async def test_default_agent_switch_replaces_protected_selection(tmp_path, monke
 @pytest.mark.asyncio
 @pytest.mark.parametrize("selection", ["template", "legacy_member", "default"])
 async def test_non_owner_switch_keeps_durable_selection(tmp_path, monkeypatch, selection):
-    state, slot, _ = await asyncio.wait_for(_template_chat(tmp_path, monkeypatch), 20)
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch), "the template chat setup"
+    )
     cfg = KiroCrewConfig.load()
     default_agent = cfg.default_agent
     cfg.agents["legacy-worker"] = replace(cfg.agents[default_agent])
@@ -1265,25 +1339,25 @@ async def test_non_owner_switch_keeps_durable_selection(tmp_path, monkeypatch, s
     )
     state.sessions.reset = AsyncMock(return_value=True)
     async with TestClient(TestServer(as_owner(_make_app_with_agent_routes(state)))) as client:
-        response = await asyncio.wait_for(
+        response = await _finished(
             client.post(
                 f"/api/chat/slots/{slot.key}/agent",
                 json={"agent": later_agent},
                 headers={"X-Test-User": "allowed-chat-user"},
             ),
-            10,
+            "the request's response",
         )
         assert response.status == 200, await response.text()
     state.sessions.get_or_create.reset_mock()
-    await asyncio.wait_for(chat_runner._run_chat(state, slot, "Continue."), 10)
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(chat_runner._run_chat(state, slot, "Continue."), "the chat turn")
+    await _finished(drain_background_tasks(state), "the background tasks draining")
     state.sessions.record_failure.assert_not_awaited()
     state.sessions.get_or_create.assert_awaited_once()
     restored = _turn_state(tmp_path, monkeypatch)
     restored_slot = _rehydrate_slot_from_history(restored, slot.key)
     assert restored_slot is not None and restored_slot.agent == (later_agent or default_agent)
-    await asyncio.wait_for(chat_runner._run_chat(restored, restored_slot, "Continue."), 10)
-    await asyncio.wait_for(drain_background_tasks(restored), 10)
+    await _finished(chat_runner._run_chat(restored, restored_slot, "Continue."), "the chat turn")
+    await _finished(drain_background_tasks(restored), "the background tasks draining")
     restored.sessions.record_failure.assert_not_awaited()
     restored.sessions.get_or_create.assert_awaited_once()
     assert not any(row["role"] == "error" for row in restored_slot.messages)
@@ -1294,8 +1368,8 @@ async def test_non_owner_switch_keeps_durable_selection(tmp_path, monkeypatch, s
         provision_member_memory(cfg, later_agent)
         cfg.save()
         state.sessions.get_or_create.reset_mock()
-        await asyncio.wait_for(chat_runner._run_chat(state, slot, "Continue."), 10)
-        await asyncio.wait_for(drain_background_tasks(state), 10)
+        await _finished(chat_runner._run_chat(state, slot, "Continue."), "the chat turn")
+        await _finished(drain_background_tasks(state), "the background tasks draining")
         state.sessions.get_or_create.assert_awaited_once()
         state.sessions.record_failure.assert_not_awaited()
         assert read_session_execution("dashboard:template-chat").store.store_id == "default"
@@ -1304,7 +1378,9 @@ async def test_non_owner_switch_keeps_durable_selection(tmp_path, monkeypatch, s
 
 @pytest.mark.asyncio
 async def test_non_owner_member_upgraded_during_lookup_is_refused(tmp_path, monkeypatch):
-    state, slot, _ = await asyncio.wait_for(_template_chat(tmp_path, monkeypatch), 20)
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch), "the template chat setup"
+    )
     cfg = KiroCrewConfig.load()
     cfg.agents["legacy-worker"] = replace(cfg.agents[cfg.default_agent])
     cfg.save()
@@ -1327,13 +1403,13 @@ async def test_non_owner_member_upgraded_during_lookup_is_refused(tmp_path, monk
 
     monkeypatch.setattr(chat_handlers, "resolve_agent_bindings", resolve_then_upgrade)
     async with TestClient(TestServer(as_owner(_make_app_with_agent_routes(state)))) as client:
-        response = await asyncio.wait_for(
+        response = await _finished(
             client.post(
                 f"/api/chat/slots/{slot.key}/agent",
                 json={"agent": "legacy-worker"},
                 headers={"X-Test-User": "allowed-chat-user"},
             ),
-            10,
+            "the request's response",
         )
         assert response.status == 403, await response.text()
     assert calls == 2
@@ -1345,20 +1421,22 @@ async def test_non_owner_member_upgraded_during_lookup_is_refused(tmp_path, monk
 
 @pytest.mark.asyncio
 async def test_non_owner_member_switch_is_refused_before_mutation(tmp_path, monkeypatch):
-    state, slot, _ = await asyncio.wait_for(_template_chat(tmp_path, monkeypatch), 20)
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch), "the template chat setup"
+    )
     key = "dashboard:template-chat"
     protected = read_session_execution(key).to_record()
     metadata = state.conversation_log.get_metadata(key)
     prior = (slot.agent, slot.workspace, slot.project, slot.memory_store)
     state.sessions.reset = AsyncMock(return_value=True)
     async with TestClient(TestServer(as_owner(_make_app_with_agent_routes(state)))) as client:
-        response = await asyncio.wait_for(
+        response = await _finished(
             client.post(
                 f"/api/chat/slots/{slot.key}/agent",
                 json={"agent": TEMPLATE},
                 headers={"X-Test-User": "allowed-chat-user"},
             ),
-            10,
+            "the request's response",
         )
         assert response.status == 403, await response.text()
     state.sessions.reset.assert_not_awaited()
@@ -1373,7 +1451,9 @@ async def test_non_owner_member_switch_is_refused_before_mutation(tmp_path, monk
 async def test_cancelled_agent_history_write_drains_before_restore(
     tmp_path, monkeypatch, cancel_count, phase
 ):
-    state, slot, _ = await asyncio.wait_for(_template_chat(tmp_path, monkeypatch), 20)
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch), "the template chat setup"
+    )
     key = "dashboard:template-chat"
     later_agent = "kirocrew-worker"
     monkeypatch.setattr(
@@ -1391,7 +1471,7 @@ async def test_cancelled_agent_history_write_drains_before_restore(
         if fields.get("agent") == later_agent:
             try:
                 started.set()
-                assert release.wait(15), "Agent metadata writer was not released"
+                assert release.wait(default_timeout()), "Agent metadata writer was not released"
                 update_metadata(history_key, fields)
                 writes.append(later_agent)
             finally:
@@ -1400,7 +1480,9 @@ async def test_cancelled_agent_history_write_drains_before_restore(
             try:
                 if phase == "rebound_restore":
                     restore_started.set()
-                    assert release_restore.wait(15), "Agent metadata rollback was not released"
+                    assert release_restore.wait(
+                        default_timeout()
+                    ), "Agent metadata rollback was not released"
                 update_metadata(history_key, fields)
                 writes.append(fields.get("agent"))
             finally:
@@ -1426,22 +1508,24 @@ async def test_cancelled_agent_history_write_drains_before_restore(
     request["app"] = ""
     task = asyncio.create_task(chat_handlers.api_chat_slot_agent(request))
     try:
-        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 10), 11)
+        await _signalled(started, "the gated writer starting")
         if phase == "rebound_restore":
             slot.linked_session_key = "task:rebound"
             release.set()
-            assert await asyncio.wait_for(asyncio.to_thread(restore_started.wait, 10), 11)
+            await _signalled(restore_started, "the restore starting")
         for _ in range(cancel_count):
             assert task.cancel()
             # Cross the scheduled cancellation boundary with the writer held.
             delivered = asyncio.get_running_loop().create_future()
             asyncio.get_running_loop().call_soon(delivered.set_result, None)
-            await asyncio.wait_for(delivered, 10)
+            await await_until(delivered, what="the loop turn")
             assert not task.done()
             assert slot._lock.locked()
         release.set()
         release_restore.set()
-        result = await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 15)
+        result = await await_until(
+            asyncio.gather(task, return_exceptions=True), what="the tasks settling"
+        )
         assert isinstance(result[0], asyncio.CancelledError)
         assert finished.is_set()
         assert restore_finished.is_set()
@@ -1451,8 +1535,10 @@ async def test_cancelled_agent_history_write_drains_before_restore(
         restored = _turn_state(tmp_path, monkeypatch)
         restored_slot = _rehydrate_slot_from_history(restored, "template-chat")
         assert restored_slot is not None and restored_slot.agent == TEMPLATE
-        await asyncio.wait_for(chat_runner._run_chat(restored, restored_slot, "Continue."), 10)
-        await asyncio.wait_for(drain_background_tasks(restored), 10)
+        await _finished(
+            chat_runner._run_chat(restored, restored_slot, "Continue."), "the chat turn"
+        )
+        await _finished(drain_background_tasks(restored), "the background tasks draining")
         restored.sessions.record_failure.assert_not_awaited()
         restored.sessions.get_or_create.assert_awaited_once()
     finally:
@@ -1460,12 +1546,12 @@ async def test_cancelled_agent_history_write_drains_before_restore(
         release_restore.set()
         if not task.done():
             task.cancel()
-        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 15)
+        await await_until(asyncio.gather(task, return_exceptions=True), what="the tasks settling")
         if started.is_set():
-            assert await asyncio.wait_for(asyncio.to_thread(finished.wait, 10), 11)
+            await _signalled(finished, "the gated writer finishing")
         if restore_started.is_set():
-            assert await asyncio.wait_for(asyncio.to_thread(restore_finished.wait, 10), 11)
-        await asyncio.wait_for(drain_background_tasks(state), 10)
+            await _signalled(restore_finished, "the restore finishing")
+        await _finished(drain_background_tasks(state), "the background tasks draining")
 
 
 @pytest.mark.asyncio
@@ -1474,8 +1560,8 @@ async def test_cancelled_agent_switch_with_failed_history_restore(tmp_path, monk
     """A failed rollback must not leave an empty conversation unresumable."""
     from kiro_crew.history import HistoryLockTimeout
 
-    state, slot, _ = await asyncio.wait_for(
-        _template_chat(tmp_path, monkeypatch, first_turn=False), 20
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch, first_turn=False), "the template chat setup"
     )
     later_agent = "kirocrew-worker"
     monkeypatch.setattr(
@@ -1493,7 +1579,7 @@ async def test_cancelled_agent_switch_with_failed_history_restore(tmp_path, monk
             raise HistoryLockTimeout("history rollback lock")
         try:
             started.set()
-            assert release.wait(15), "Agent metadata writer was not released"
+            assert release.wait(default_timeout()), "Agent metadata writer was not released"
             update_metadata(history_key, fields)
         finally:
             finished.set()
@@ -1518,24 +1604,26 @@ async def test_cancelled_agent_switch_with_failed_history_restore(tmp_path, monk
     request["app"] = ""
     task = asyncio.create_task(chat_handlers.api_chat_slot_agent(request))
     try:
-        assert await asyncio.wait_for(asyncio.to_thread(started.wait, 10), 11)
+        await _signalled(started, "the gated writer starting")
         assert task.cancel()
         delivered = asyncio.get_running_loop().create_future()
         asyncio.get_running_loop().call_soon(delivered.set_result, None)
-        await asyncio.wait_for(delivered, 10)
+        await await_until(delivered, what="the loop turn")
         release.set()
-        result = await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 15)
+        result = await await_until(
+            asyncio.gather(task, return_exceptions=True), what="the tasks settling"
+        )
         assert isinstance(result[0], asyncio.CancelledError)
         assert finished.is_set()
         assert not slot.messages
-        await asyncio.wait_for(drain_background_tasks(state), 10)
+        await _finished(drain_background_tasks(state), "the background tasks draining")
 
         restored = _turn_state(tmp_path, monkeypatch)
         if restore == "open":
             restored_slot = _rehydrate_slot_from_history(restored, slot.key)
         elif restore == "async":
-            restored_slot = await asyncio.wait_for(
-                rehydrate_slot_from_history_async(restored, slot.key), 10
+            restored_slot = await _finished(
+                rehydrate_slot_from_history_async(restored, slot.key), "the slot rehydrating"
             )
         elif restore == "recent":
             _apply_recent_session(
@@ -1554,16 +1642,19 @@ async def test_cancelled_agent_switch_with_failed_history_restore(tmp_path, monk
             async with TestClient(
                 TestServer(as_owner(_make_app_with_agent_routes(restored)))
             ) as client:
-                response = await asyncio.wait_for(
-                    client.post(f"/api/chat/slots/{slot.key}/resume", json={"key": key}), 10
+                response = await _finished(
+                    client.post(f"/api/chat/slots/{slot.key}/resume", json={"key": key}),
+                    "the request's response",
                 )
                 assert response.status == 200, await response.text()
             restored_slot = restored._slots[slot.key]
         assert restored_slot is not None
         assert restored_slot.agent == TEMPLATE
         assert read_session_execution(key).to_record() == protected
-        await asyncio.wait_for(chat_runner._run_chat(restored, restored_slot, "Continue."), 10)
-        await asyncio.wait_for(drain_background_tasks(restored), 10)
+        await _finished(
+            chat_runner._run_chat(restored, restored_slot, "Continue."), "the chat turn"
+        )
+        await _finished(drain_background_tasks(restored), "the background tasks draining")
         restored.sessions.record_failure.assert_not_awaited()
         restored.sessions.get_or_create.assert_awaited_once()
         assert not any(row["role"] == "error" for row in restored_slot.messages)
@@ -1571,10 +1662,10 @@ async def test_cancelled_agent_switch_with_failed_history_restore(tmp_path, monk
         release.set()
         if not task.done():
             task.cancel()
-        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 15)
+        await await_until(asyncio.gather(task, return_exceptions=True), what="the tasks settling")
         if started.is_set():
-            assert await asyncio.wait_for(asyncio.to_thread(finished.wait, 10), 11)
-        await asyncio.wait_for(drain_background_tasks(state), 10)
+            await _signalled(finished, "the gated writer finishing")
+        await _finished(drain_background_tasks(state), "the background tasks draining")
 
 
 @pytest.mark.asyncio
@@ -1622,8 +1713,8 @@ async def test_cancelled_owner_writer_cannot_overwrite_later_choice(
     tmp_path, monkeypatch, later_choice, cancel_count
 ):
     """A cancelled owner still owns its running publication until it settles."""
-    state, slot, _ = await asyncio.wait_for(
-        _template_chat(tmp_path, monkeypatch, first_turn=False), 20
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch, first_turn=False), "the template chat setup"
     )
     key = "dashboard:template-chat"
     later_agent = TEMPLATE if later_choice == "same_name_template" else "kirocrew-worker"
@@ -1662,7 +1753,9 @@ async def test_cancelled_owner_writer_cannot_overwrite_later_choice(
                 # asyncio waiter cannot stop this publication. Pause before the
                 # real writer acquires its file lock, not inside the file lock.
                 writer_started.set()
-                assert release_writer.wait(15), "Cancelled owner writer was not released"
+                assert release_writer.wait(
+                    default_timeout()
+                ), "Cancelled owner writer was not released"
             change = record_agent_selection(*args, **kwargs)
             assert change is not None
             publications[owner] = change[1]
@@ -1712,11 +1805,11 @@ async def test_cancelled_owner_writer_cannot_overwrite_later_choice(
         # is a separate delivery during the drain, not two coalesced requests.
         checkpoint = asyncio.Event()
         asyncio.get_running_loop().call_soon(checkpoint.set)
-        await asyncio.wait_for(checkpoint.wait(), 10)
+        await await_until(checkpoint, what="the loop turn")
         assert not writer_finished.is_set()
 
     try:
-        assert await asyncio.wait_for(asyncio.to_thread(writer_started.wait, 10), 11)
+        await _signalled(writer_started, "the gated writer starting")
         assert not writer_finished.is_set()
         assert not old_task.done()
 
@@ -1728,13 +1821,13 @@ async def test_cancelled_owner_writer_cannot_overwrite_later_choice(
                 del cfg.agents[TEMPLATE]
                 cfg.save()
 
-            await asyncio.wait_for(asyncio.to_thread(remove_member), 10)
+            await _finished(asyncio.to_thread(remove_member), "remove_member off the loop")
 
         await cancel_blocked_owner()
         later_task = asyncio.create_task(
             chat_handlers.api_chat_slot_agent(owner_request(later_agent))
         )
-        await asyncio.wait_for(later_lock_attempted.wait(), 10)
+        await await_until(later_lock_attempted, what="the later request's lock attempt")
         if cancel_count == 2:
             await cancel_blocked_owner()
         if old_task.done():
@@ -1742,12 +1835,12 @@ async def test_cancelled_owner_writer_cannot_overwrite_later_choice(
             # Make the later real request commit before releasing that worker.
             # A handler retaining its lock while draining takes the other path;
             # it need not finish B while A's writer is deliberately paused.
-            await asyncio.wait_for(asyncio.shield(later_task), 10)
+            await await_until(later_task, what="the later request")
         release_writer.set()
-        results = await asyncio.wait_for(
-            asyncio.gather(old_task, later_task, return_exceptions=True), 15
+        results = await await_until(
+            asyncio.gather(old_task, later_task, return_exceptions=True), what="the tasks settling"
         )
-        assert await asyncio.wait_for(asyncio.to_thread(writer_finished.wait, 10), 11)
+        await _signalled(writer_finished, "the gated writer finishing")
         assert old_task.cancelled(), "The real owner handler must propagate cancellation"
         assert isinstance(results[0], asyncio.CancelledError)
         assert not isinstance(results[1], BaseException), results[1]
@@ -1768,7 +1861,7 @@ async def test_cancelled_owner_writer_cannot_overwrite_later_choice(
                 "history_agent": metadata["agent"],
             }
 
-        observed = await asyncio.wait_for(asyncio.to_thread(final_identity), 10)
+        observed = await _finished(asyncio.to_thread(final_identity), "final_identity off the loop")
         observed["cancelled_handler_retired_after_writer"] = retired_after_drain
         assert observed == {
             "protected_agent": later_agent,
@@ -1785,11 +1878,13 @@ async def test_cancelled_owner_writer_cannot_overwrite_later_choice(
             for task in tasks:
                 if not task.done():
                     task.cancel()
-            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 15)
+            await await_until(
+                asyncio.gather(*tasks, return_exceptions=True), what="the tasks settling"
+            )
         finally:
             if writer_started.is_set():
-                assert await asyncio.wait_for(asyncio.to_thread(writer_finished.wait, 10), 11)
-            await asyncio.wait_for(drain_background_tasks(state), 10)
+                await _signalled(writer_finished, "the gated writer finishing")
+            await _finished(drain_background_tasks(state), "the background tasks draining")
 
 
 @pytest.mark.asyncio
@@ -1799,8 +1894,8 @@ async def test_cancelled_rebound_cleanup_finishes_before_later_owner(
     tmp_path, monkeypatch, cleanup_phase, cancel_count
 ):
     """Neither rollback write may outlive the handler or skip the other write."""
-    state, slot, _ = await asyncio.wait_for(
-        _template_chat(tmp_path, monkeypatch, first_turn=False), 20
+    state, slot, _ = await _finished(
+        _template_chat(tmp_path, monkeypatch, first_turn=False), "the template chat setup"
     )
     history_key = "dashboard:template-chat"
     rebound_key = "task:rebound-cleanup"
@@ -1847,7 +1942,7 @@ async def test_cancelled_rebound_cleanup_finishes_before_later_owner(
         cleanup_threads[phase] = threading.get_ident()
         if cleanup_phase == phase:
             cleanup_started.set()
-            assert release_cleanup.wait(15), "Rollback worker was not released"
+            assert release_cleanup.wait(default_timeout()), "Rollback worker was not released"
 
     def restore_protected(key, change):
         if key != history_key or change is None:
@@ -1899,7 +1994,7 @@ async def test_cancelled_rebound_cleanup_finishes_before_later_owner(
 
     old_task = asyncio.create_task(first_owner())
     try:
-        assert await asyncio.wait_for(asyncio.to_thread(cleanup_started.wait, 10), 11)
+        await _signalled(cleanup_started, "the rollback cleanup starting")
         assert rebound.is_set()
         assert not old_task.done()
         for index in range(cancel_count):
@@ -1907,24 +2002,24 @@ async def test_cancelled_rebound_cleanup_finishes_before_later_owner(
             cancel_results.append(old_task.cancel())
             checkpoint = asyncio.Event()
             asyncio.get_running_loop().call_soon(checkpoint.set)
-            await asyncio.wait_for(checkpoint.wait(), 10)
+            await await_until(checkpoint, what="the loop turn")
             if index == 0:
                 later_task = asyncio.create_task(
                     chat_handlers.api_chat_slot_agent(owner_request(later_agent))
                 )
-                await asyncio.wait_for(later_lock_attempted.wait(), 10)
+                await await_until(later_lock_attempted, what="the later request's lock attempt")
         assert cancel_results[0]
         if old_task.done():
             # The unfixed path releases the locks with cleanup still blocked.
             # Force the later metadata to land before that abandoned write.
             # A correct drain retains the locks; never wait for B here then.
-            await asyncio.wait_for(asyncio.shield(later_task), 10)
+            await await_until(later_task, what="the later request")
         release_cleanup.set()
-        results = await asyncio.wait_for(
-            asyncio.gather(old_task, later_task, return_exceptions=True), 15
+        results = await await_until(
+            asyncio.gather(old_task, later_task, return_exceptions=True), what="the tasks settling"
         )
         gated_finished = selection_finished if cleanup_phase == "selection" else history_finished
-        assert await asyncio.wait_for(asyncio.to_thread(gated_finished.wait, 10), 11)
+        await _signalled(gated_finished, "the gated rollback finishing")
         assert old_task.cancelled()
         assert isinstance(results[0], asyncio.CancelledError)
         assert not isinstance(results[1], BaseException), results[1]
@@ -1940,7 +2035,7 @@ async def test_cancelled_rebound_cleanup_finishes_before_later_owner(
                 "history_agent": metadata["agent"],
             }
 
-        observed = await asyncio.wait_for(asyncio.to_thread(final_identity), 10)
+        observed = await _finished(asyncio.to_thread(final_identity), "final_identity off the loop")
         observed.update(
             protected_rollback_finished=selection_finished.is_set(),
             history_rollback_finished=history_finished.is_set(),
@@ -1964,21 +2059,23 @@ async def test_cancelled_rebound_cleanup_finishes_before_later_owner(
             for task in tasks:
                 if not task.done():
                     task.cancel()
-            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 15)
+            await await_until(
+                asyncio.gather(*tasks, return_exceptions=True), what="the tasks settling"
+            )
         finally:
             if cleanup_started.is_set():
                 gated_finished = (
                     selection_finished if cleanup_phase == "selection" else history_finished
                 )
-                assert await asyncio.wait_for(asyncio.to_thread(gated_finished.wait, 10), 11)
-            await asyncio.wait_for(drain_background_tasks(state), 10)
+                await _signalled(gated_finished, "the gated rollback finishing")
+            await _finished(drain_background_tasks(state), "the background tasks draining")
 
 
 @pytest.mark.asyncio
 async def test_failed_empty_chat_private_grant_restores_protected_selection(tmp_path, monkeypatch):
     """A failed first private grant must not commit the same-name member choice."""
-    state, slot, private_store = await asyncio.wait_for(
-        _template_chat(tmp_path, monkeypatch, first_turn=False), 20
+    state, slot, private_store = await _finished(
+        _template_chat(tmp_path, monkeypatch, first_turn=False), "the template chat setup"
     )
     key = "dashboard:template-chat"
     protected = read_session_execution(key).to_record()
@@ -1995,8 +2092,9 @@ async def test_failed_empty_chat_private_grant_restores_protected_selection(tmp_
     pin = AsyncMock(side_effect=fail_grant)
     monkeypatch.setattr(chat_handlers, "pin_private_agent_store", pin)
     async with TestClient(TestServer(as_owner(_make_app_with_agent_routes(state)))) as client:
-        response = await asyncio.wait_for(
-            client.post(f"/api/chat/slots/{slot.key}/agent", json={"agent": TEMPLATE}), 10
+        response = await _finished(
+            client.post(f"/api/chat/slots/{slot.key}/agent", json={"agent": TEMPLATE}),
+            "the request's response",
         )
         assert response.status == 503, await response.text()
 
@@ -2048,13 +2146,16 @@ async def test_new_chat_member_pick_binds_private_memory_over_a_prewarm(tmp_path
     """
     state, store = await asyncio.to_thread(_prewarmed_member_state, tmp_path, monkeypatch, sid=sid)
     async with TestClient(TestServer(as_owner(_make_app_with_agent_routes(state)))) as client:
-        response = await asyncio.wait_for(client.post("/api/chat/slots", json={"name": "new"}), 10)
+        response = await _finished(
+            client.post("/api/chat/slots", json={"name": "new"}), "the request's response"
+        )
         assert response.status == 200, await response.text()
         slot = state._slots["new"]
         key = f"dashboard:{slot.key}"
         assert await asyncio.to_thread(read_private_session_store, key) is None
-        response = await asyncio.wait_for(
-            client.post(f"/api/chat/slots/{slot.key}/agent", json={"agent": "reviewer"}), 10
+        response = await _finished(
+            client.post(f"/api/chat/slots/{slot.key}/agent", json={"agent": "reviewer"}),
+            "the request's response",
         )
         assert response.status == 200, await response.text()
     assert slot.agent == "reviewer"
@@ -2076,11 +2177,14 @@ async def test_new_chat_v1_pick_keeps_its_prewarmed_session(tmp_path, monkeypatc
     cfg.agents["plain"] = KiroCrewAgentConfig(kiro_agent="kirocrew")
     cfg.save()
     async with TestClient(TestServer(as_owner(_make_app_with_agent_routes(state)))) as client:
-        response = await asyncio.wait_for(client.post("/api/chat/slots", json={"name": "v1"}), 10)
+        response = await _finished(
+            client.post("/api/chat/slots", json={"name": "v1"}), "the request's response"
+        )
         assert response.status == 200, await response.text()
         slot = state._slots["v1"]
-        response = await asyncio.wait_for(
-            client.post(f"/api/chat/slots/{slot.key}/agent", json={"agent": "plain"}), 10
+        response = await _finished(
+            client.post(f"/api/chat/slots/{slot.key}/agent", json={"agent": "plain"}),
+            "the request's response",
         )
         assert response.status == 200, await response.text()
     state.sessions.forget_conversation.assert_not_called()
@@ -2105,8 +2209,9 @@ async def test_prewarmed_session_is_kept_when_the_chat_is_not_provably_empty(
         state.conversation_log.has_messages = MagicMock(side_effect=OSError("unreadable"))
     else:
         state.sessions.get_provider = MagicMock(return_value=MagicMock())
-    released = await asyncio.wait_for(
-        release_prewarmed_session(state, key, "reviewer", KiroCrewConfig.load()), 10
+    released = await _finished(
+        release_prewarmed_session(state, key, "reviewer", KiroCrewConfig.load()),
+        "the pre-warm release",
     )
     assert released is False
     state.sessions.forget_conversation.assert_not_called()
@@ -2148,8 +2253,8 @@ async def test_restricted_member_session_persists_transcript_but_no_owner_record
     assert captured.memory_mode == mode
     assert captured.store.store_id == member_store
     slot.append("user", "restricted body sentinel")
-    await asyncio.wait_for(chat_runner._run_chat(state, slot, "restricted body sentinel"), 10)
-    await asyncio.wait_for(drain_background_tasks(state), 10)
+    await _finished(chat_runner._run_chat(state, slot, "restricted body sentinel"), "the chat turn")
+    await _finished(drain_background_tasks(state), "the background tasks draining")
     state.sessions.get_or_create.assert_awaited_once()
     if mode == "temporary":
         state.context_builder.ensure_store.assert_not_awaited()
@@ -2174,8 +2279,8 @@ async def test_restricted_member_session_persists_transcript_but_no_owner_record
     assert key in restarted._restricted_keys
     assert [m["content"] for m in restored.messages][:1] == ["restricted body sentinel"]
     restarted.sessions.reset = AsyncMock(return_value=True)
-    await asyncio.wait_for(chat_runner._run_chat(restarted, restored, "second sentinel"), 10)
-    await asyncio.wait_for(drain_background_tasks(restarted), 10)
+    await _finished(chat_runner._run_chat(restarted, restored, "second sentinel"), "the chat turn")
+    await _finished(drain_background_tasks(restarted), "the background tasks draining")
     rebound = read_session_execution(key)
     assert rebound is not None
     assert rebound.memory_mode == mode
