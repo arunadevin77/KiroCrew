@@ -1,13 +1,13 @@
 ---
-title: Crewmate dashboard upkeep skill -- a generated per-board skill for the fields only the crewmate can fill, named by one pointer line that survives compaction
+title: Crewmate dashboard upkeep -- per-field upkeep text served by dashboard_fields, generated helper scripts for the fields whose data is outside the crew log, named by one pointer line that survives compaction
 status: in-progress
 author: Raymond Chen, with kirocrew-worker
 created: 2026-10-11
-last-audited: 2026-10-11
-audited-at: a84f616557
+last-audited: 2026-10-12
+audited-at: 0cda1525d8
 doc-pr: null
 implementation-prs: []
-tracking-issues: []
+tracking-issues: [19481]
 supersedes: []
 superseded-by: []
 ---
@@ -16,18 +16,22 @@ superseded-by: []
 
 - Status: in-progress. The design is the product owner's ruling of 2026-10-11:
   fold-backed fields already update themselves, so nothing new is built for
-  them; a generated per-board skill covers only the fields the crewmate writes;
+  them; per-board upkeep guidance covers only the fields the crewmate writes;
   a generated helper script fetches the data that lives outside the crew log;
-  one pointer line names the skill. This document lands first because it adds a
-  line to every crewmate's prompt and a section to the profile, and the First
-  Principles lane reads that decision off the base.
+  one pointer line names the guidance. This document lands first because it
+  adds a line to every crewmate's prompt and a section to the profile, and the
+  First Principles lane reads that decision off the base.
+- Revised 2026-10-12 in review: the guidance is returned by `dashboard_fields`
+  rather than written to a generated `SKILL.md`, because a crewmate with no file
+  tools cannot open a file, and the generated directory now holds the helper
+  scripts only (§4.2, §5).
 - Related: [rfc-crewmate-dynamic-dashboard.md](rfc-crewmate-dynamic-dashboard.md)
   (the page, its manifest, the `[DASHBOARD]` block). Open PRs it meets:
   [#18707](https://github.com/kirodotdev/KiroCrew/pull/18707) (writes checked
   against the v3 package Model), [#18687](https://github.com/kirodotdev/KiroCrew/pull/18687)
   (layout lock), [#18957](https://github.com/kirodotdev/KiroCrew/pull/18957)
   (fold-backed conductor drawer).
-- Measured at `a84f616557`.
+- Measured at `a84f616557`; re-read at `0cda1525d8`.
 
 ## 1. Problem
 
@@ -68,15 +72,15 @@ nothing for fold fields.
 
 Goals:
 
-1. Every crewmate with a page has a generated upkeep skill covering its
-   agentic fields only: what each means, when to write it, how.
-2. An agentic field whose data lives outside the crew log gets a helper script
-   beside the skill. The script fetches the data and prints a ready
-   `dashboard_write` payload.
-3. The skill is regenerated whenever the page in force or its field set changes.
-4. One pointer line, injected wherever `[DASHBOARD]` is, names the skill. It
-   survives compaction.
-5. The person can read the skill on the profile.
+1. Every crewmate with a page is told, by `dashboard_fields`, what each of its
+   agentic fields means, when to write it, and how. Fold fields get nothing new.
+2. An agentic field whose data lives outside the crew log gets a helper script.
+   The script fetches the data and prints a ready `dashboard_write` payload.
+3. The upkeep text always matches the page in force, and the helper scripts are
+   regenerated whenever the page in force or its field set changes.
+4. One pointer line, injected wherever `[DASHBOARD]` is, names the upkeep text.
+   It survives compaction.
+5. The person can read the upkeep text on the profile.
 
 Non-goals:
 
@@ -113,76 +117,91 @@ An agentic field may declare:
 - Every built-in agentic field declares `upkeep`. The two whose data is on
   GitHub, `project-report.ci` and `pr-watch.lanes`, declare a helper.
 
-### 4.2 The generated skill
+### 4.2 The upkeep text, returned by `dashboard_fields`
 
-`.dashboard-upkeep/<slug>/SKILL.md` under the skills dir, written by the
-gateway. One section per agentic field:
+`dashboard_fields` is the read the `[DASHBOARD]` block already sends the
+crewmate to before every write (`dashboard_agentic.fields_for_agent`, served by
+`api_dashboard_fields` in `dashboard/handlers/agent_panel.py`). Each agentic
+row in its reply gains an `upkeep` object:
 
+```json
+{
+  "field": "ci",
+  "type": "object",
+  "source": "agentic",
+  "upkeep": {
+    "means": "the CI lanes of the PR this board watches, red ones by name",
+    "when": "after every CI run you watch finishes or changes state",
+    "how": "run the helper with the repo, PR and task item id, set each lane owner, and write the value",
+    "helper": "<skills dir>/.dashboard-upkeep/code-reviewer/scripts/project_report_ci.py"
+  }
+}
 ```
----
-name: .dashboard-upkeep/code-reviewer
-description: Keep code-reviewer's Dashboard fields current (template project-report v1)
-source: generated
----
-# Dashboard upkeep: project-report v1
 
-Fold fields fill themselves from the crew log. These are yours:
-
-## ci
-- Means: the CI lanes of the PR this board watches, red ones by name.
-- When: after every CI run you watch finishes or changes state.
-- How: run the helper with the repo, PR and task item id, set each lane owner,
-  and write the value. Helper: `scripts/project_report_ci.py`, beside this file.
-```
-
-- A field with no `upkeep` gets a default section: its name, type and shape
-  from `dashboard_fields`, "When: in the same turn what it shows changes".
-- A page with no agentic field gets a skill of one line: the page updates
-  itself; do not republish it.
+- It is a tool reply, so a crewmate with no file tools reads it the same way it
+  reads the field shapes today.
+- A field with no `upkeep` gets a default: `when` is "in the same turn what it
+  shows changes", and `means` and `how` point at the field's shape.
+- A page with no agentic field gets one top-level line in the reply: the page
+  updates itself; do not republish it.
 - The text is read from the SHIPPED catalog entry, never from the crewmate's
   copy in `members/<slug>/dashboard/instance.json`. That copy is on the
   agent-writable side, and `instance.edit` may change it.
-- The leading dot keeps it out of the skills index: the skill tree walk already
-  skips dot directories. It is reached by the pointer line, so it costs no other
-  session an index line, and no listing code changes.
+- Nothing is generated for the text. It is read when `dashboard_fields` is
+  called, so it cannot go stale against the page in force.
 
 ### 4.3 The helper script
 
-`.dashboard-upkeep/<slug>/scripts/<helper>` is a COPY of the shipped file
-`dashboard_templates/builtin/<id>/helpers/<helper>`. It runs `gh`, reads the data,
-and prints one JSON object, `{"field": "ci", "value": {...}}`, shaped to the
-field's declared shape.
+`.dashboard-upkeep/<slug>/scripts/<helper>` under the skills dir is a COPY of the
+shipped file `dashboard_templates/builtin/<id>/helpers/<helper>`, written by the
+gateway. It is the only thing in the generated directory. It runs `gh`, reads
+the data, and prints one JSON object, `{"field": "ci", "value": {...}}`, shaped
+to the field's declared shape. `dashboard_fields` names its absolute path in that
+field's `upkeep.helper`.
 
+- The helper is a shortcut, not the only route. A crewmate with no shell tool
+  cannot run it, so for `ci` or `lanes` it writes the lane states it can read
+  from a tool reply or a message, in the shape `dashboard_fields` gives, through
+  the same `dashboard_write` checks. The helper's `upkeep.helper` path is then
+  simply unused.
 - Only a shipped built-in template may name a helper. A user template or a v3
   package is declarative and carries no code, the rule `manifest.py` already
   states, so neither gets a script.
 - Copied, not generated: the bytes are reviewed in the PR that ships them.
   `skills_script_validator` scans LLM-generated candidates and is not on this
   path.
+- The leading dot keeps the directory out of the skills index: the skill tree
+  walk already skips dot directories, so no listing code changes.
 - A test runs each shipped helper against a recorded `gh` reply and checks its
   output passes `dashboard_agentic.check_write` for its field.
 
-### 4.4 When it is regenerated
+### 4.4 When the scripts are regenerated
 
-One function, `dashboard_upkeep.sync(slug)`, renders the skill and scripts and
-writes only what differs from disk. It removes a script the page no longer names,
-so a page swap cannot leave the old board's helper behind, and it puts back a
-hand edit. Two callers:
+One function, `dashboard_upkeep.sync(slug)`, copies the helper scripts the page
+in force names and writes only what differs from disk. It removes a script the
+page no longer names, so a page swap cannot leave the old board's helper behind,
+and it puts back a hand edit. Two callers:
 
 | caller | why |
 |---|---|
 | `instance._commit` | adopt, apply, rollback and edit all commit through it |
-| the `[DASHBOARD]` block build | a crewmate on the default page never commits; a gateway upgrade can change the shipped text |
+| the `[DASHBOARD]` block build | a crewmate on the default page never commits; a gateway upgrade can change a shipped helper |
 
-A lock (#18687) changes no field, so it does not regenerate.
+These are every event that changes which helpers the page in force names: a
+commit (adopt, apply, rollback, edit), the default page taking effect with no
+commit, and a gateway upgrade changing a shipped helper's bytes. A lock (#18687)
+changes no field, so it does not regenerate. A v3 package (#18707, §7 step 3)
+names no helper, so that path adds no trigger. The upkeep text needs no caller
+and has no copy to drift: `dashboard_fields` reads it from the catalog when it
+is called (§4.2).
 
 ### 4.5 The pointer line
 
 `turn_block` gains one last line:
 
 ```
-Upkeep: before you write a field, read <skills dir>/.dashboard-upkeep/code-reviewer/SKILL.md
--- what each field means, when to write it, and how.
+Upkeep: dashboard_fields also says what each field means, when to write it, and
+how -- read it before you write a field.
 ```
 
 It rides wherever `[DASHBOARD]` rides: fresh session, post-compaction
@@ -193,34 +212,38 @@ every turn, so `dashboard_apply` and `dashboard_rollback` also return the new
 
 ### 4.6 Profile
 
-`GET /api/members/{slug}/briefing` gains `upkeep`: `{"pointer", "skill",
-"scripts"}` -- the pointer line, the skill text, and the helper file names, or
-`null` when there is no page. Same owner gate and slug checks as the notes. The
-Notes tab shows it first, read-only, under `Dashboard upkeep`.
+`GET /api/members/{slug}/briefing` gains `upkeep`: `{"pointer", "fields",
+"scripts"}` -- the pointer line, each agentic field's upkeep text as
+`dashboard_fields` returns it, and the helper file names, or `null` when there is
+no page. Same owner gate and slug checks as the notes. The Notes tab shows it
+first, read-only, under `Dashboard upkeep`.
 
 ## 5. Rejected designs
 
 | design | why not |
 |---|---|
 | Guide text only: an `[OPERATING GUIDE]` block with one "when" line per field, injected beside `[DASHBOARD]` (this document's first draft) | Says when, never how. A field like `ci` still needs the crewmate to find the `gh` calls and the payload shape each time, and the full guide is paid for in every build. |
+| A generated `.dashboard-upkeep/<slug>/SKILL.md`, named by its path in the pointer line (this document's second draft) | A crewmate with no file tools cannot open the file, so its fields stay stale, the harm this design exists to remove. `dashboard_fields` is already the read every write starts from. |
 | One generic manifest-driven update script that fills every field | The fold half already updates itself (§2). The agentic half is judgment (`verdict`, `for_you`) or a per-source fetch (`ci`), and one script cannot do either. |
 | A script per board | Most agentic fields have no external data. A helper exists only where one does. |
 | Writing upkeep into `[CURRENT ASSIGNMENT]` | Agent-owned, may be empty, and not writable by a crewmate with no file tools. |
 
 ## 6. Tests (red before the change)
 
-1. Apply page A, then page B: the skill names B's fields, not A's.
+1. Apply page A, then page B: `dashboard_fields` returns B's upkeep text, and
+   A's helper is gone from the scripts directory.
 2. The post-compaction member section carries the pointer line.
-3. A zero-agentic page gives the one-line skill.
+3. A zero-agentic page gets the one-line answer from `dashboard_fields`.
 4. Each shipped helper's output passes `check_write` for its field.
-5. `upkeep` text in the crewmate's copy does not reach the skill.
+5. `upkeep` text in the crewmate's copy does not reach `dashboard_fields`.
 6. The briefing read returns `upkeep`; the Notes tab renders it.
 
 ## 7. Rollout
 
 1. This document.
 2. One implementation PR: the manifest key, the built-in texts and two helpers,
-   `dashboard_upkeep.sync`, the pointer line, the apply / rollback reply, the
-   briefing key and the Notes section.
+   the `upkeep` object in `dashboard_fields`, `dashboard_upkeep.sync`, the
+   pointer line, the apply / rollback reply, the briefing key and the Notes
+   section.
 3. When #18707 lands, the v3 package Model gains the same `upkeep` key
-   (without `helper`), and `sync` reads the Model in force.
+   (without `helper`), and `dashboard_fields` reads the Model in force.
