@@ -2733,7 +2733,8 @@
           "overview": "Resumen",
           "tagging": "Etiquetado",
           "graph": "Grafo",
-          "pipeline": "Flujo"
+          "pipeline": "Flujo",
+          "ci_runs": "Ejecuciones de CI"
         },
         "settings": {
           "generalSettings": {
@@ -2838,7 +2839,9 @@
             "which_labels_mark_newcomer_friendly_work_so_issu": "Qué etiquetas marcan el trabajo apto para recién llegados, para que Issue Radar pueda destacar las incidencias que se derivan a quienes contribuyen por primera vez.",
             "which_labels_mean_an_issue_still_needs_triage_dr": "Qué etiquetas indican que una incidencia todavía necesita clasificación. Alimenta el conteo “Sin clasificar” del Resumen y la cola de asuntos que requieren atención.",
             "without_push_access_to": "Sin acceso de escritura a",
-            "your_edits_are_kept_here_but_won_t_persist_if_yo": "Tus cambios se conservan aquí, pero no se guardarán. Si acabas de actualizar Issue Radar, reinicia el backend para que la API de ajustes esté disponible."
+            "your_edits_are_kept_here_but_won_t_persist_if_yo": "Tus cambios se conservan aquí, pero no se guardarán. Si acabas de actualizar Issue Radar, reinicia el backend para que la API de ajustes esté disponible.",
+            "notify_me_when_ci_fails_on_my_pull_request": "Avísame cuando falle la CI en una de mis pull requests en {{repo}}",
+            "ci_failure_alerts_read_only_your_own_open_pull_requests": "Solo lee las ejecuciones de GitHub Actions de tus propias pull requests abiertas, con tu sesión de gh. Siléncialo o cambia su prioridad en Ajustes → Notificaciones."
           }
         },
         "tagging": {
@@ -2959,6 +2962,24 @@
         "pipelineDashboard": {
           "github_only": "El canal de triaje solo funciona con repositorios de GitHub",
           "github_only_hint": "Sus tareas programadas solo leen y escriben en GitHub, por lo que este panel no tiene datos de canal para este repositorio."
+        },
+        "ciRunsView": {
+          "recent_github_actions_runs_in_your_connected_repos": "Ejecuciones recientes de GitHub Actions en tus repositorios de GitHub conectados.",
+          "refresh": "Actualizar",
+          "loading_runs": "Cargando ejecuciones…",
+          "couldn_t_load_ci_runs": "No se pudieron cargar las ejecuciones de CI.",
+          "no_github_repository_is_connected": "No hay ningún repositorio de GitHub conectado.",
+          "not_every_connected_github_repository_is_listed": "Aquí no aparecen todos los repositorios de GitHub conectados.",
+          "failure_alerts_on": "Alertas de fallo activadas",
+          "couldn_t_read_this_repository_s_runs": "No se pudieron leer las ejecuciones de este repositorio. Comprueba que gh tiene la sesión iniciada y puede leerlo.",
+          "no_workflow_runs_yet": "Aún no hay ejecuciones de flujos de trabajo.",
+          "status_running": "En ejecución",
+          "status_queued": "En cola",
+          "status_passed": "Superada",
+          "status_failed": "Falló",
+          "status_timed_out": "Tiempo agotado",
+          "status_cancelled": "Cancelada",
+          "status_finished": "Finalizada"
         }
       },
       "welcomeCarousel": {

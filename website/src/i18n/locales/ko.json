@@ -2715,7 +2715,8 @@
           "overview": "개요",
           "tagging": "태그 지정",
           "graph": "그래프",
-          "pipeline": "파이프라인"
+          "pipeline": "파이프라인",
+          "ci_runs": "CI 실행"
         },
         "settings": {
           "generalSettings": {
@@ -2820,7 +2821,9 @@
             "which_labels_mark_newcomer_friendly_work_so_issu": "초심자에게 적합한 작업을 표시하는 레이블입니다. Issue Radar가 첫 기여자에게 안내할 이슈를 보여 줄 수 있습니다.",
             "which_labels_mean_an_issue_still_needs_triage_dr": "이슈에 아직 트리아지가 필요함을 뜻하는 레이블입니다. 개요의 ‘트리아지 안 됨’ 개수와 확인 필요 대기열을 결정합니다.",
             "without_push_access_to": "다음에 대한 푸시 권한이 없으면:",
-            "your_edits_are_kept_here_but_won_t_persist_if_yo": "편집 내용은 여기에 유지되지만 영구 저장되지는 않습니다. 방금 Issue Radar를 업데이트했다면 백엔드를 다시 시작해 설정 API를 사용할 수 있게 하세요."
+            "your_edits_are_kept_here_but_won_t_persist_if_yo": "편집 내용은 여기에 유지되지만 영구 저장되지는 않습니다. 방금 Issue Radar를 업데이트했다면 백엔드를 다시 시작해 설정 API를 사용할 수 있게 하세요.",
+            "notify_me_when_ci_fails_on_my_pull_request": "{{repo}}의 내 풀 리퀘스트에서 CI가 실패하면 알림 받기",
+            "ci_failure_alerts_read_only_your_own_open_pull_requests": "gh 로그인으로 내가 연 열린 풀 리퀘스트의 GitHub Actions 실행만 읽습니다. 설정 → 알림에서 음소거하거나 우선순위를 바꿀 수 있습니다."
           }
         },
         "tagging": {
@@ -2931,6 +2934,24 @@
         "pipelineDashboard": {
           "github_only": "분류 파이프라인은 GitHub 저장소만 지원합니다",
           "github_only_hint": "예약 작업이 GitHub만 읽고 쓰므로 이 보드에는 이 저장소의 파이프라인 데이터가 없습니다."
+        },
+        "ciRunsView": {
+          "recent_github_actions_runs_in_your_connected_repos": "연결된 GitHub 저장소의 최근 GitHub Actions 실행입니다.",
+          "refresh": "새로 고침",
+          "loading_runs": "실행 불러오는 중…",
+          "couldn_t_load_ci_runs": "CI 실행을 불러오지 못했습니다.",
+          "no_github_repository_is_connected": "연결된 GitHub 저장소가 없습니다.",
+          "not_every_connected_github_repository_is_listed": "연결된 GitHub 저장소가 여기에 모두 표시되지는 않습니다.",
+          "failure_alerts_on": "실패 알림 켜짐",
+          "couldn_t_read_this_repository_s_runs": "이 저장소의 실행을 읽지 못했습니다. gh에 로그인되어 있고 읽기 권한이 있는지 확인하세요.",
+          "no_workflow_runs_yet": "아직 워크플로 실행이 없습니다.",
+          "status_running": "실행 중",
+          "status_queued": "대기 중",
+          "status_passed": "통과",
+          "status_failed": "실패",
+          "status_timed_out": "시간 초과",
+          "status_cancelled": "취소됨",
+          "status_finished": "완료"
         }
       },
       "welcomeCarousel": {

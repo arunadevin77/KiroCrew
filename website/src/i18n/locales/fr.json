@@ -2823,7 +2823,8 @@
           "overview": "Vue d’ensemble",
           "tagging": "Étiquetage",
           "graph": "Graphe",
-          "pipeline": "Pipeline"
+          "pipeline": "Pipeline",
+          "ci_runs": "Exécutions CI"
         },
         "settings": {
           "generalSettings": {
@@ -2928,7 +2929,9 @@
             "which_labels_mark_newcomer_friendly_work_so_issu": "Quelles étiquettes signalent un travail accessible aux nouveaux venus, pour qu’Issue Radar puisse mettre en avant les tickets à orienter vers les nouveaux contributeurs.",
             "which_labels_mean_an_issue_still_needs_triage_dr": "Quelles étiquettes signifient qu’un ticket nécessite encore un triage. Alimente le compteur « Non triés » de la vue d’ensemble et la file des tickets nécessitant une attention.",
             "without_push_access_to": "Sans accès en écriture à",
-            "your_edits_are_kept_here_but_won_t_persist_if_yo": "Vos modifications sont conservées ici mais ne seront pas persistées. Si vous venez de mettre à jour Issue Radar, redémarrez le backend pour que l’API des paramètres soit disponible."
+            "your_edits_are_kept_here_but_won_t_persist_if_yo": "Vos modifications sont conservées ici mais ne seront pas persistées. Si vous venez de mettre à jour Issue Radar, redémarrez le backend pour que l’API des paramètres soit disponible.",
+            "notify_me_when_ci_fails_on_my_pull_request": "M’avertir quand la CI échoue sur une de mes pull requests dans {{repo}}",
+            "ci_failure_alerts_read_only_your_own_open_pull_requests": "Lit uniquement les exécutions GitHub Actions de tes propres pull requests ouvertes, via ta connexion gh. Coupe-le ou change sa priorité dans Paramètres → Notifications."
           }
         },
         "tagging": {
@@ -3049,6 +3052,24 @@
         "pipelineDashboard": {
           "github_only": "Le pipeline de triage fonctionne uniquement avec les dépôts GitHub",
           "github_only_hint": "Ses tâches planifiées lisent et écrivent uniquement sur GitHub, ce tableau n'a donc aucune donnée de pipeline pour ce dépôt."
+        },
+        "ciRunsView": {
+          "recent_github_actions_runs_in_your_connected_repos": "Exécutions GitHub Actions récentes dans tes dépôts GitHub connectés.",
+          "refresh": "Actualiser",
+          "loading_runs": "Chargement des exécutions…",
+          "couldn_t_load_ci_runs": "Impossible de charger les exécutions CI.",
+          "no_github_repository_is_connected": "Aucun dépôt GitHub n’est connecté.",
+          "not_every_connected_github_repository_is_listed": "Tous les dépôts GitHub connectés ne sont pas listés ici.",
+          "failure_alerts_on": "Alertes d’échec activées",
+          "couldn_t_read_this_repository_s_runs": "Impossible de lire les exécutions de ce dépôt. Vérifie que gh est connecté et peut y accéder.",
+          "no_workflow_runs_yet": "Aucune exécution de workflow pour l’instant.",
+          "status_running": "En cours",
+          "status_queued": "En file",
+          "status_passed": "Réussie",
+          "status_failed": "Échec",
+          "status_timed_out": "Délai dépassé",
+          "status_cancelled": "Annulée",
+          "status_finished": "Terminée"
         }
       },
       "welcomeCarousel": {

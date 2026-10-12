@@ -2627,7 +2627,8 @@
           "overview": "概览",
           "tagging": "打标签",
           "graph": "依赖图",
-          "pipeline": "流水线"
+          "pipeline": "流水线",
+          "ci_runs": "CI 运行"
         },
         "settings": {
           "generalSettings": {
@@ -2732,7 +2733,9 @@
             "which_labels_mark_newcomer_friendly_work_so_issu": "哪些标签标记新手友好的工作，以便 Issue Radar 挑出可以分给首次贡献者的 issue。",
             "which_labels_mean_an_issue_still_needs_triage_dr": "哪些标签表示 issue 仍需分类。它决定概览中的“未分类”计数和待关注队列。",
             "without_push_access_to": "若没有对以下仓库的 push 权限：",
-            "your_edits_are_kept_here_but_won_t_persist_if_yo": "你的编辑会保留在此处但不会持久化。如果你刚更新了 Issue Radar，请重启后端以启用设置 API。"
+            "your_edits_are_kept_here_but_won_t_persist_if_yo": "你的编辑会保留在此处但不会持久化。如果你刚更新了 Issue Radar，请重启后端以启用设置 API。",
+            "notify_me_when_ci_fails_on_my_pull_request": "当我在 {{repo}} 中的拉取请求 CI 失败时通知我",
+            "ci_failure_alerts_read_only_your_own_open_pull_requests": "仅通过你的 gh 登录，读取你自己未关闭拉取请求上的 GitHub Actions 运行。可在 设置 → 通知 中将其静音或更改优先级。"
           }
         },
         "tagging": {
@@ -2843,6 +2846,24 @@
         "pipelineDashboard": {
           "github_only": "分流流水线仅支持 GitHub 仓库",
           "github_only_hint": "其定时任务只读写 GitHub，因此此看板没有该仓库的流水线数据。"
+        },
+        "ciRunsView": {
+          "recent_github_actions_runs_in_your_connected_repos": "你已连接的 GitHub 仓库中最近的 GitHub Actions 运行。",
+          "refresh": "刷新",
+          "loading_runs": "正在加载运行…",
+          "couldn_t_load_ci_runs": "无法加载 CI 运行。",
+          "no_github_repository_is_connected": "尚未连接任何 GitHub 仓库。",
+          "not_every_connected_github_repository_is_listed": "此处未列出所有已连接的 GitHub 仓库。",
+          "failure_alerts_on": "失败提醒已开启",
+          "couldn_t_read_this_repository_s_runs": "无法读取此仓库的运行。请确认 gh 已登录且能读取该仓库。",
+          "no_workflow_runs_yet": "暂无工作流运行。",
+          "status_running": "运行中",
+          "status_queued": "排队中",
+          "status_passed": "通过",
+          "status_failed": "失败",
+          "status_timed_out": "已超时",
+          "status_cancelled": "已取消",
+          "status_finished": "已完成"
         }
       },
       "welcomeCarousel": {

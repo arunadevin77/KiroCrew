@@ -542,6 +542,42 @@ export interface PrRunsResponse {
   runs: PrWorkflowRun[]
 }
 
+/** One GitHub Actions run on the CI runs dashboard. */
+export interface CiRun {
+  id: number
+  name: string
+  status: string
+  conclusion: string | null
+  url: string | null
+  branch: string | null
+  /** PR numbers GitHub links to the run; empty for a run from a fork. */
+  pull_requests: number[]
+  created_at: string | null
+  started_at: string | null
+  updated_at: string | null
+  /** Seconds from start to last update; null until the run has started. */
+  duration_sec: number | null
+}
+
+/** One connected GitHub repo's recent runs. `error` is a fixed code when the
+ * read failed (`provider_error`, `gh_setup`), never the provider's own text. */
+export interface CiRepoRuns {
+  owner: string
+  repo: string
+  provider: string
+  host: string
+  /** Whether CI-failure alerts are on for this repo. */
+  alerts: boolean
+  runs: CiRun[]
+  error: string | null
+}
+
+export interface CiRunsResponse {
+  repos: CiRepoRuns[]
+  /** More GitHub repos are connected than one response lists. */
+  truncated: boolean
+}
+
 export interface PrRunActionResponse {
   owner: string
   repo: string
@@ -617,6 +653,10 @@ export interface RepoSettings {
   /** Watch this repo in the background and push a KiroCrew notification when a
    * new issue is opened. Opt-in (default false). */
   notify_on_new_issue: boolean
+  /** Push a Kiro Crew notification when a GitHub Actions run fails on an open
+   * pull request the signed-in `gh` user authored. GitHub only; opt-in
+   * (default false). */
+  notify_on_own_pr_ci_failure: boolean
   /** Local absolute path to this repo's working copy. Empty string means "use
    * the default cwd". Local-only, never written back to the source host. The
    * Investigate action opens its chat session with this as the working
@@ -636,6 +676,7 @@ export const DEFAULT_REPO_SETTINGS: RepoSettings = {
   unlabeled_is_untriaged: true,
   good_first_issue_labels: [],
   notify_on_new_issue: false,
+  notify_on_own_pr_ci_failure: false,
   workspace_path: '',
   revision: 0,
 }
@@ -1586,6 +1627,14 @@ export const issueRadarApi = {
   ): Promise<PrRunsResponse> => {
     const q = new URLSearchParams({ ...repoQuery(ref), number: String(number), sha })
     const r = await fetch(`${API}/pull/runs?${q.toString()}`, { credentials: 'same-origin' })
+    if (!r.ok) throw new Error(await parseErrorBody(r))
+    return r.json()
+  },
+
+  /** Recent GitHub Actions runs across every connected GitHub repo, for the CI
+   * runs dashboard. Read on demand only. */
+  ciRuns: async (): Promise<CiRunsResponse> => {
+    const r = await fetch(`${API}/ci-runs`, { credentials: 'same-origin' })
     if (!r.ok) throw new Error(await parseErrorBody(r))
     return r.json()
   },

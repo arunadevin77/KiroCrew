@@ -2733,7 +2733,8 @@
           "overview": "Panoramica",
           "tagging": "Etichettatura",
           "graph": "Grafo",
-          "pipeline": "Pipeline"
+          "pipeline": "Pipeline",
+          "ci_runs": "Esecuzioni CI"
         },
         "settings": {
           "generalSettings": {
@@ -2838,7 +2839,9 @@
             "which_labels_mark_newcomer_friendly_work_so_issu": "Quali etichette indicano il lavoro adatto ai nuovi arrivati, così Issue Radar può mostrare le issue da indirizzare ai contributori alla prima esperienza.",
             "which_labels_mean_an_issue_still_needs_triage_dr": "Quali etichette indicano che una issue necessita ancora di triage. Determina il conteggio \"Senza triage\" della Panoramica e la coda degli elementi che richiedono attenzione.",
             "without_push_access_to": "Senza accesso push a",
-            "your_edits_are_kept_here_but_won_t_persist_if_yo": "Le tue modifiche vengono mantenute qui ma non verranno salvate in modo permanente. Se hai appena aggiornato Issue Radar, riavvia il backend così l'API delle impostazioni diventa disponibile."
+            "your_edits_are_kept_here_but_won_t_persist_if_yo": "Le tue modifiche vengono mantenute qui ma non verranno salvate in modo permanente. Se hai appena aggiornato Issue Radar, riavvia il backend così l'API delle impostazioni diventa disponibile.",
+            "notify_me_when_ci_fails_on_my_pull_request": "Avvisami quando la CI fallisce su una delle mie pull request in {{repo}}",
+            "ci_failure_alerts_read_only_your_own_open_pull_requests": "Legge solo le esecuzioni di GitHub Actions sulle tue pull request aperte, tramite il tuo accesso a gh. Silenzialo o cambiane la priorità in Impostazioni → Notifiche."
           }
         },
         "tagging": {
@@ -2959,6 +2962,24 @@
         "pipelineDashboard": {
           "github_only": "La pipeline di triage funziona solo con repository GitHub",
           "github_only_hint": "I suoi processi pianificati leggono e scrivono solo su GitHub, quindi questa bacheca non ha dati di pipeline per questo repository."
+        },
+        "ciRunsView": {
+          "recent_github_actions_runs_in_your_connected_repos": "Esecuzioni recenti di GitHub Actions nei tuoi repository GitHub collegati.",
+          "refresh": "Aggiorna",
+          "loading_runs": "Caricamento esecuzioni…",
+          "couldn_t_load_ci_runs": "Impossibile caricare le esecuzioni CI.",
+          "no_github_repository_is_connected": "Nessun repository GitHub collegato.",
+          "not_every_connected_github_repository_is_listed": "Qui non sono elencati tutti i repository GitHub collegati.",
+          "failure_alerts_on": "Avvisi di errore attivi",
+          "couldn_t_read_this_repository_s_runs": "Impossibile leggere le esecuzioni di questo repository. Verifica che gh abbia effettuato l’accesso e possa leggerlo.",
+          "no_workflow_runs_yet": "Ancora nessuna esecuzione di workflow.",
+          "status_running": "In esecuzione",
+          "status_queued": "In coda",
+          "status_passed": "Riuscita",
+          "status_failed": "Non riuscita",
+          "status_timed_out": "Tempo scaduto",
+          "status_cancelled": "Annullata",
+          "status_finished": "Completata"
         }
       },
       "welcomeCarousel": {
