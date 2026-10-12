@@ -164,15 +164,12 @@ definition replacing the on-disk one), so the match is exact and
 case-sensitive. The fork suffixes past a reserved stem (`default-2`), publish
 and create refuse it as `400 template_name_reserved_by_engine` (its own code,
 so the runtime-owned stems' `template_name_reserved` is not blamed on the
-engine), and the KAS projection
-(`acp/kas_agents.to_client_custom_agent`) refuses the id before the wire with
-the remedy in the dashboard's own labels -- the crewmate's Built from pane;
-on the crewmate's own copy 'Save as new template…' under another name, which
-moves the crewmate to the copy and keeps its edits, or 'Reset my changes' to the
-shared template; on a shared template bound under a reserved id, where neither
-control renders, the template picker at the top of the tab -- raised without the generic
-`cannot project agent ... onto KAS` prefix (`KasReservedAgentIdError`), instead of letting the activation guard report the spec as
-missing or a built-in run in the crewmate's place. The dashboard renders the
+engine). A template that already carries a reserved id -- the seeded `default`
+crewmate's private copy written before these writers refused it, or a kiro-cli
+setup carried over when the operator switches to KAS -- needs no rename: the KAS
+wire registers and activates it as `agent_files.kas_wire_agent_id(id)`
+(`<id>-crewmate`), and every Crew-side record keeps the crewmate's id
+([acp-client](acp-client.md), Guard (C)). The dashboard renders the
 refusal in the user's language inside the dialog that sent the name
 (`components.agentTemplateDetail.publish_name_reserved`,
 `pages.overview.agentTemplatesTab.err_name_reserved`), naming the typed name.

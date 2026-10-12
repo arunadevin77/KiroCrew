@@ -38,6 +38,7 @@ from kiro_crew.acp._dispatch import (
     identified_mcp_call,
     is_mcp_tool_approval,
     is_unattributed_error_candidate,
+    kas_crew_agent_id,
     parse_codex_compaction_update,
     parse_metadata,
     parse_prompt_token_usage,
@@ -6930,18 +6931,27 @@ class AcpSessionHandle:
             mode_id = update.get("currentModeId")
             if not (isinstance(mode_id, str) and mode_id):
                 return []
+            # Deduped on the WIRE id: a crewmate registered as ``vibe-crewmate``
+            # and the engine's own ``vibe`` are two modes, though both report
+            # under the name ``vibe`` below.
             if mode_id == self._last_kas_mode_id:
                 return []
             self._last_kas_mode_id = mode_id
+            registered = getattr(self, "kas_registered_agents", None)
+            # Back to the crewmate's own id when this is an agent the batch
+            # registered under a wire id (see attach_kas_custom_agents).
+            crew_id = kas_crew_agent_id(registered, mode_id)
             # The session now runs this agent, so a turn that names none meets
             # this agent's spec hooks, not the one the batch was built for, and
-            # what it auto-approves is this agent's entry in the registered batch.
+            # what it auto-approves is this agent's entry in the registered batch
+            # -- chosen by wire id, so a built-in of the same name never inherits
+            # the crewmate's approvals.
             if self.kas_projected_agent:
                 from kiro_crew.acp.kas_agents import switched_auto_approved
 
-                self.kas_projected_agent = mode_id
-                self.kas_auto_approved = switched_auto_approved(self.kas_registered_agents, mode_id)
-            return [AcpEvent(kind=EVENT_AGENT_SWITCHED, text=mode_id)]
+                self.kas_projected_agent = crew_id
+                self.kas_auto_approved = switched_auto_approved(registered, mode_id)
+            return [AcpEvent(kind=EVENT_AGENT_SWITCHED, text=crew_id)]
         if session_update == UPDATE_SESSION_INFO:
             return self._handle_kas_session_info(update)
         # available_commands_update / any other KAS discriminant falls through to

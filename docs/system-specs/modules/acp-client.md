@@ -1255,10 +1255,18 @@ positive stamp this code has never measured (an engine that renames `client`)
 is logged at WARNING and let through, because kiro-cli is the operator's own
 install, not pinned by Crew, and an unmeasured value must not become a
 session-start denial of every crewmate with a rename remedy that cannot help.
-The ids measured to trip (C) on kiro-cli 2.23.0 are refused before the wire by
-the projection (`agent_files.KAS_RESERVED_AGENT_IDS`); (C) is the read of the
-wire itself, so a built-in a later engine adds under a new id fails loudly
-instead of resurrecting the silent substitution. (Guard (B) is the spawn-flag check for a markdown-only spec on a
+The ids measured to trip (C) on kiro-cli 2.23.0
+(`agent_files.KAS_RESERVED_AGENT_IDS`) never reach the wire under their own name:
+`attach_kas_custom_agents` sends the batch entry as
+`agent_files.kas_wire_agent_id(id)` (`<id>-crewmate`), and both session-start
+paths read the advertised modes, ask (C) and send `set_mode` with that same wire
+id, so a `default` crewmate carried over from kiro-cli runs unchanged. Nothing
+else sees the alias: the batch Crew records, `handle.active_agent` and
+`kas_projected_agent` keep the crewmate's id, and a `current_mode_update` naming
+the alias is mapped back through the registered batch
+(`_dispatch.kas_crew_agent_id`). (C) is the read of the wire itself, so a
+built-in a later engine adds under a new id fails loudly instead of resurrecting
+the silent substitution. (Guard (B) is the spawn-flag check for a markdown-only spec on a
 JSON-only host, `_spawn_agent_not_loaded_reason`.)
 
 Step 4 (`set_model`) is **conditional**: only sent when `model` is explicitly

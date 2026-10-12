@@ -164,6 +164,7 @@ from kiro_crew.acp.types import (
     overlay_project_scope,
 )
 from kiro_crew.agent import ensure_agent_materialized, markdown_spec_for_agent
+from kiro_crew.agent_files import kas_wire_agent_id
 from kiro_crew.agent_sdk.drivers import acp as acp_driver
 from kiro_crew.agent_sdk.tool_search import (
     ToolSearchSettings,
@@ -6204,8 +6205,13 @@ class AcpRuntime:
         budget: float,
         payload_snapshot: Any,
         wire_registered: bool,
+        mode_id: str | None = None,
     ) -> str | None:
         """Send ``session/set_mode`` for *mode_agent* inside the derived-spec bracket.
+
+        *mode_id* is the id the host registered *mode_agent* under when that
+        differs (``kas_wire_agent_id``); it is what ``set_mode`` names, and
+        *mode_agent* stays the id every gate and message uses.
 
         ONE body for both session-start paths (create and resume), because the bracket
         is a protocol and a protocol written twice is two protocols the moment one copy
@@ -6339,7 +6345,7 @@ class AcpRuntime:
             # agent (an older alias, or the authored spec kiro-cli cached) is proven
             # to match the spec on disk, so none is activated in its place. Every other
             # error propagates as before.
-            params = set_mode_params(session_id, mode_agent)
+            params = set_mode_params(session_id, mode_id or mode_agent)
             # Translated from the projection this bracket adopted and sent as
             # fixed wire params -- past the send's own translation, which reads
             # ``_native_skill_projection`` at send time. The projection lock is
@@ -7763,11 +7769,15 @@ class AcpRuntime:
         # set_mode would succeed and run that agent under the crewmate's name.
         # Asked of the harness as a seam (H13): the spawn-time hosts answer None
         # and the wire-registered one reads the stamp the engine put on the mode.
-        refusal = self._harness.activation_refusal(mode_agent, resp) if mode_agent else None
+        # The id the host knows the agent by: a wire-registered batch went out under
+        # kas_wire_agent_id (attach_kas_custom_agents), so the advertised modes and
+        # set_mode name that; everything Crew records keeps the crewmate's own id.
+        mode_wire = kas_wire_agent_id(mode_agent) if mode_agent and kas_agents else mode_agent
+        refusal = self._harness.activation_refusal(mode_wire, resp) if mode_wire else None
         if refusal:
             await self.terminate_session(session_id)
             raise AcpRuntimeError(refusal)
-        if mode_agent and self._mode_available(mode_agent, resp):
+        if mode_agent and mode_wire and self._mode_available(mode_wire, resp):
             # Measured BEFORE the request goes out, which is the only moment the
             # answer is unambiguous: everything queued right now initialized
             # under the pre-switch mode. Reading it after set_mode returns would
@@ -7782,6 +7792,7 @@ class AcpRuntime:
                 budget=budget,
                 payload_snapshot=payload_snapshot,
                 wire_registered=kas_agents is not None,
+                mode_id=mode_wire,
             )
             set_mode_ran = True
             handle.active_agent = mode_agent
@@ -7792,7 +7803,7 @@ class AcpRuntime:
             # must not arm the drain's idle shortcut while the switched-to
             # agent's own servers may still be booting.
             _ids, _current, _adv = parse_session_modes(resp)
-            mode_switched = mode_agent != _current and (
+            mode_switched = mode_wire != _current and (
                 bool(_current) or self._harness.notification_aliases.mcp_readiness
             )
         elif mode_agent:
@@ -8333,11 +8344,13 @@ class AcpRuntime:
         # spec has no mode to resume onto either.
         mode_agent = agent if self._activates_agent_by_mode() else None
         # Guard (C) -- see create_session: advertised, but as the host's own.
-        refusal = self._harness.activation_refusal(mode_agent, resp) if mode_agent else None
+        # Same wire id as create_session: the batch this load re-sent was renamed.
+        mode_wire = kas_wire_agent_id(mode_agent) if mode_agent and kas_agents else mode_agent
+        refusal = self._harness.activation_refusal(mode_wire, resp) if mode_wire else None
         if refusal:
             await self.terminate_session(resume_sid)
             raise AcpRuntimeError(refusal)
-        if mode_agent and self._mode_available(mode_agent, resp):
+        if mode_agent and mode_wire and self._mode_available(mode_wire, resp):
             # Measured BEFORE the request goes out, which is the only moment the
             # answer is unambiguous: everything queued right now initialized
             # under the pre-switch mode. Reading it after set_mode returns would
@@ -8352,13 +8365,14 @@ class AcpRuntime:
                 budget=budget,
                 payload_snapshot=payload_snapshot,
                 wire_registered=kas_agents is not None,
+                mode_id=mode_wire,
             )
             set_mode_ran = True
             handle.active_agent = mode_agent
             # See create_session: after a real mode switch, registration frames
             # staged during session/load describe the pre-switch roster.
             _ids, _current, _adv = parse_session_modes(resp)
-            mode_switched = mode_agent != _current and (
+            mode_switched = mode_wire != _current and (
                 bool(_current) or self._harness.notification_aliases.mcp_readiness
             )
         elif mode_agent:
@@ -8424,14 +8438,16 @@ class AcpRuntime:
         timeout: float,
         stale_report_frames: int,
     ) -> None:
-        required = required_managed_servers(params, agent)
+        # *params* carries the batch as sent, so its entry is keyed by the wire id.
+        wire_agent = kas_wire_agent_id(agent)
+        required = required_managed_servers(params, wire_agent)
         try:
             if required:
                 await handle.wait_mcp_ready(
                     required,
                     timeout,
                     stale_report_frames=stale_report_frames,
-                    tool_policy=active_custom_agent(params, agent),
+                    tool_policy=active_custom_agent(params, wire_agent),
                     # The names THIS request injected at session level, as sent:
                     # the one declaration site a provenance-less backend is
                     # known to honour over a same-named global server.

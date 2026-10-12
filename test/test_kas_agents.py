@@ -21,7 +21,6 @@ from kiro_crew.acp.kas_agents import (
     _KAS_FALLBACK_PROMPT,
     KAS_MAX_CUSTOM_AGENTS,
     KasAgentTranslationError,
-    KasReservedAgentIdError,
     build_kas_custom_agents,
     hoist_managed_servers,
     load_agent_spec,
@@ -32,7 +31,7 @@ from kiro_crew.agent_discovery import (
     WELCOME_MESSAGE_MAX_CHARS,
     spec_welcome_message,
 )
-from kiro_crew.agent_files import KAS_RESERVED_AGENT_IDS
+from kiro_crew.agent_files import KAS_RESERVED_AGENT_IDS, kas_wire_agent_id
 from kiro_crew.platform.tool_names import (
     KAS_TOOL_FAMILY_BY_KIRO_CLI_NAME,
     expand_kiro_cli_tool_names,
@@ -76,7 +75,7 @@ class TestRequiredFields:
 
 
 class TestReservedIds:
-    """An id the engine keeps for itself is refused before it is sent.
+    """An id the engine keeps for itself goes out under a wire alias.
 
     kiro-cli 2.23.0 accepts a ``customAgents`` batch carrying any of these ids
     and then does one of two things, neither of them an error: ``default`` is
@@ -84,10 +83,10 @@ class TestReservedIds:
     ``spec``, ``quick-spec``, ``bug-fix``, ``plan``, ``autonomous``) keeps the
     ENGINE's definition, so ``set_mode`` would run the built-in with the
     crewmate's name on it. A crewmate bound to a private copy named after
-    itself hits the first case (the seeded crewmate is ``default``); one named
-    ``plan`` would hit the second. The projection refuses both up front and
-    names the remedy that applies, instead of the activation guard's
-    "regenerate the missing spec", which cannot help -- the spec exists.
+    itself hits the first case (the seeded crewmate is ``default``), which is
+    exactly the setup a kiro-cli user carries over when switching to KAS. So
+    the projection keeps the crewmate's id and only the wire envelope renames
+    it (see ``test_kas_mode_binding``).
     """
 
     RESERVED = ("default", "vibe", "spec", "quick-spec", "bug-fix", "plan", "autonomous")
@@ -96,26 +95,19 @@ class TestReservedIds:
         assert KAS_RESERVED_AGENT_IDS == frozenset(self.RESERVED)
 
     @pytest.mark.parametrize("agent_id", RESERVED)
-    def test_a_reserved_id_is_refused_with_the_remedy(self, agent_id):
-        with pytest.raises(KasAgentTranslationError) as exc:
-            to_client_custom_agent(agent_id, _spec(name=agent_id), "You are Kiro.")
-        message = str(exc.value)
-        assert message.startswith(f"Rename this crewmate's template: “{agent_id}” is reserved")
-        # The remedy keeps the user's edits: save-as-new-template first, reset
-        # only as the throwaway alternative. No wire vocabulary reaches the user.
-        # The remedy quotes the shipped labels, not a pane name the UI never shows.
-        assert "Agent Template tab" in message
-        assert "'Save as new template…'" in message
-        # A crewmate bound to a SHARED template under a reserved id (a `plan.json`
-        # created before the refusal existed) has no 'Save as new template…' /
-        # 'Reset my changes' controls, so the remedy names its path too.
-        assert "shared template, the template picker" in message
-        assert "KAS" not in message
-        assert isinstance(exc.value, KasReservedAgentIdError)
+    def test_a_reserved_id_is_projected_under_its_own_name(self, agent_id):
+        out = to_client_custom_agent(agent_id, _spec(name=agent_id), "You are Kiro.")
+        assert out["id"] == agent_id
 
-    def test_the_refusal_reaches_the_batch_builder(self, tmp_path):
-        with pytest.raises(KasAgentTranslationError, match="reserved for a built-in agent"):
-            build_kas_custom_agents(tmp_path, "default", _spec(name="default"))
+    @pytest.mark.parametrize("agent_id", RESERVED)
+    def test_a_reserved_id_gets_a_wire_alias_off_the_reserved_set(self, agent_id):
+        wire = kas_wire_agent_id(agent_id)
+        assert wire == f"{agent_id}-crewmate"
+        assert wire not in KAS_RESERVED_AGENT_IDS
+
+    def test_the_batch_builder_accepts_a_reserved_id(self, tmp_path):
+        batch = build_kas_custom_agents(tmp_path, "default", _spec(name="default"))
+        assert [a["id"] for a in batch] == ["default"]
 
     @pytest.mark.parametrize(
         "agent_id",
@@ -127,6 +119,7 @@ class TestReservedIds:
         # description), so widening the match would refuse working ids.
         out = to_client_custom_agent(agent_id, _spec(name=agent_id), "You are Kiro.")
         assert out["id"] == agent_id
+        assert kas_wire_agent_id(agent_id) == agent_id
 
 
 class TestToolsFailClosed:

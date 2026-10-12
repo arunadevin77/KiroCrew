@@ -154,9 +154,9 @@ REQUIRED_KIRO_AGENT_FILES = (
 # ``default``, so without this set its first template edit writes
 # ``~/.kiro/agents/default.json`` and binds the crewmate to an id that can never
 # be activated on KAS. The template writers (fork, publish, create) consult it
-# when choosing a stem, and the KAS projection refuses the id with the remedy
-# instead of letting the misleading "spec is likely missing" refusal fire, or
-# letting a built-in silently run in the crewmate's place.
+# when choosing a stem. A spec that already carries one of these ids -- written
+# before the writers did, or a kiro-cli setup carried over to KAS -- is sent to
+# the engine under :func:`kas_wire_agent_id` instead, so it runs unchanged.
 KAS_RESERVED_AGENT_IDS = frozenset(
     {
         "default",
@@ -168,3 +168,26 @@ KAS_RESERVED_AGENT_IDS = frozenset(
         "autonomous",
     }
 )
+
+#: Appended to a reserved id to make the id the KAS engine sees. A hyphenated
+#: lower-case id is the shape measured above to register as a client agent
+#: (``kiro-default``).
+KAS_WIRE_ID_SUFFIX = "-crewmate"
+
+
+def kas_wire_agent_id(agent_id: str) -> str:
+    """The id *agent_id* is registered and activated under on the KAS wire.
+
+    Itself for every id but :data:`KAS_RESERVED_AGENT_IDS`, which the engine
+    drops or shadows; those get :data:`KAS_WIRE_ID_SUFFIX`. Applied only where
+    the id crosses the wire (the ``customAgents`` batch, ``set_mode``, the
+    advertised modes read back), so the rest of Kiro Crew keeps the crewmate's
+    own id and kiro-cli, which reserves none of these, never sees the alias.
+
+    A session registers exactly one agent, so the alias cannot meet a second
+    entry of the same id in its batch; an on-disk spec that happens to carry it
+    is replaced by the wire definition (the ``kirocrew-conductor`` row above).
+    """
+    if agent_id in KAS_RESERVED_AGENT_IDS:
+        return f"{agent_id}{KAS_WIRE_ID_SUFFIX}"
+    return agent_id

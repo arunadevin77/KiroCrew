@@ -65,6 +65,7 @@ from kiro_crew.acp.types import (
     RefusalInfo,
 )
 from kiro_crew.acp_backends import ACP_BACKENDS_META_IDENTITY
+from kiro_crew.agent_files import kas_wire_agent_id
 from kiro_crew.mcp_gateway.tool_surface import mcp_identity_name, mcp_identity_unreadable
 from kiro_crew.metrics.tool_calls import note_tool_call_started, record_tool_call_finished
 from kiro_crew.platform.tool_paths import WRITE_PLANE_KINDS
@@ -131,6 +132,10 @@ def attach_kas_custom_agents(
     Merges into any existing ``_meta`` rather than replacing it. Today's other
     writer is a kiro-cli-only transcript path, so in practice they never both
     apply — but a future third writer should not be able to silently drop one.
+
+    Each entry goes out under :func:`~kiro_crew.agent_files.kas_wire_agent_id`,
+    so a crewmate whose id the engine keeps for itself still registers. The
+    caller's list is not mutated: everything else reads it by the crewmate's id.
     """
     if not agents:
         return
@@ -138,7 +143,29 @@ def attach_kas_custom_agents(
     if not isinstance(meta, dict):
         meta = {}
         params["_meta"] = meta
-    meta["kiro"] = {"customAgents": agents}
+    wire = [
+        (
+            {**a, "id": kas_wire_agent_id(a["id"])}
+            if isinstance(a, dict) and isinstance(a.get("id"), str)
+            else a
+        )
+        for a in agents
+    ]
+    meta["kiro"] = {"customAgents": wire}
+
+
+def kas_crew_agent_id(agents: Any, mode_id: str) -> str:
+    """The crewmate id behind *mode_id*, a mode id the KAS engine reported.
+
+    The inverse of the rename :func:`attach_kas_custom_agents` applies, read
+    from the batch the session registered, so it can only ever map back to an
+    agent Kiro Crew sent. Any other id (a KAS built-in) is returned unchanged.
+    """
+    for a in agents if isinstance(agents, list) else ():
+        agent_id = a.get("id") if isinstance(a, dict) else None
+        if isinstance(agent_id, str) and kas_wire_agent_id(agent_id) == mode_id:
+            return agent_id
+    return mode_id
 
 
 def set_mode_params(session_id: str, agent: str) -> dict[str, Any]:

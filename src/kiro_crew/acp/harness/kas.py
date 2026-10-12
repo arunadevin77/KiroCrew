@@ -40,7 +40,7 @@ from kiro_crew.acp.harness.base import (
     SpawnPlan,
     TeardownPolicy,
 )
-from kiro_crew.acp.kas_agents import KasAgentTranslationError, KasReservedAgentIdError
+from kiro_crew.acp.kas_agents import KasAgentTranslationError
 from kiro_crew.acp.kas_host_auth import answer_get_access_token, vault_holds_identity_off_loop
 from kiro_crew.acp.kas_transport import METHOD_KAS_AUTH_GET_ACCESS_TOKEN, build_kas_argv
 from kiro_crew.acp.session_mcp import project_agent_spec
@@ -398,10 +398,6 @@ class KasHarness(MembershipHarness):
             return SessionExtras(custom_agents=built, derived_spec_snapshot=built_from)
         except ForkGovernanceUnresolved as exc:
             raise AcpRuntimeError(str(exc)) from exc
-        except KasReservedAgentIdError as exc:
-            # Already the whole instruction, in the dashboard's labels; the
-            # prefix below would put wire vocabulary in front of it.
-            raise AcpRuntimeError(str(exc)) from exc
         except KasAgentTranslationError as exc:
             raise AcpRuntimeError(f"cannot project agent {agent!r} onto KAS: {exc}") from exc
 
@@ -415,8 +411,9 @@ class KasHarness(MembershipHarness):
         agent under the id and discarded the client entry: the one shape the
         is-it-advertised check cannot see, because the id IS advertised, and a
         ``set_mode`` would succeed and run the built-in under the crewmate's
-        name. ``KAS_RESERVED_AGENT_IDS`` refuses the ids measured to do this
-        before the wire; this reads the wire itself, so a built-in a later
+        name. The ids measured to do this (``KAS_RESERVED_AGENT_IDS``) never
+        reach the wire under their own name (``kas_wire_agent_id``), so *agent*
+        here is the wire id; this reads the wire itself, so a built-in a later
         engine adds under a NEW id fails loudly instead of silently
         substituting. Only that measured stamp refuses. An absent stamp is not
         evidence either way, and a stamp this code has never seen (an engine

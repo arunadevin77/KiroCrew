@@ -85,7 +85,7 @@ from kiro_crew.agent_discovery import (
     spec_by_declared_name,
     spec_welcome_message,
 )
-from kiro_crew.agent_files import KAS_RESERVED_AGENT_IDS
+from kiro_crew.agent_files import kas_wire_agent_id
 from kiro_crew.agent_sdk.spec_hooks import spec_script_hooks
 from kiro_crew.agent_spec_format import agent_spec_candidates, is_markdown_spec
 from kiro_crew.hooks import (
@@ -216,18 +216,6 @@ def spec_keys_without_carrier(spec: dict[str, Any]) -> list[str]:
 
 class KasAgentTranslationError(ValueError):
     """A spec cannot be projected onto KAS's schema at all."""
-
-
-class KasReservedAgentIdError(KasAgentTranslationError):
-    """The agent's id is one the KAS engine keeps for itself.
-
-    A translation error like its parent -- every caller that handles that
-    handles this -- but its message is already the user's whole instruction
-    (action first, in the dashboard's own labels), so the harness raises it as
-    is rather than behind the ``cannot project agent ... onto KAS`` prefix the
-    other translation failures get, which a blind reader rated as noise before
-    the remedy.
-    """
 
 
 #: System prompt fed to a prompt-less agent when projecting onto KAS. KAS
@@ -851,22 +839,6 @@ def to_client_custom_agent(
     """
     if not agent_id:
         raise KasAgentTranslationError("agent id must be non-empty")
-    if agent_id in KAS_RESERVED_AGENT_IDS:
-        # Refused HERE, before the wire, because the engine does not refuse it:
-        # it accepts the batch and either drops this entry (``default``) or
-        # keeps its own built-in agent under the id (``vibe``, ``spec``, ...).
-        # The first would surface one step later as "mode not advertised" with
-        # a remedy (regenerate the spec) that cannot help -- the spec exists;
-        # the second would not surface at all, and the session would run the
-        # engine's agent with the crewmate's name on it.
-        raise KasReservedAgentIdError(
-            f"Rename this crewmate's template: “{agent_id}” is reserved for a built-in "
-            "agent, so the crewmate's own prompt and tools would not run under it. "
-            "Both fixes are on the crewmate's Agent Template tab: for the crewmate's own "
-            "copy, 'Save as new template…' under another name (it keeps its "
-            "customizations) or 'Reset my changes'; for a shared template, the template "
-            "picker at the top of the tab."
-        )
     if not prompt.strip():
         raise KasAgentTranslationError(f"agent {agent_id!r} prompt is empty")
 
@@ -1203,14 +1175,18 @@ def projected_auto_approved(custom_agents: Any, agent_id: str) -> frozenset[str]
 def switched_auto_approved(custom_agents: Any, agent_id: str) -> frozenset[str]:
     """What the session auto-approves once a KAS mode switch moves it to *agent_id*.
 
-    ``set_mode`` activates a definition KAS already holds, so the answer is the
-    registered entry for *agent_id* when the batch carries one. A mode the batch
+    *agent_id* is the mode id the engine reported, so entries are matched by the
+    id they were sent under (``kas_wire_agent_id``). ``set_mode`` activates a
+    definition KAS already holds, so the answer is the registered entry for
+    *agent_id* when the batch carries one. A mode the batch
     does not carry (a KAS built-in) runs permissions Crew never projected, so every
     auto-approvable capability is assumed approved: any PreToolUse hook then reads
     the session as stale, which is the side that re-projects.
     """
     entries = [a for a in custom_agents if isinstance(a, dict)] if custom_agents else []
-    entry = next((a for a in entries if a.get("id") == agent_id), None)
+    entry = next(
+        (a for a in entries if kas_wire_agent_id(str(a.get("id") or "")) == agent_id), None
+    )
     if entry is None:
         return frozenset(AUTO_APPROVABLE_CAPABILITIES)
     return auto_approved_capabilities(entry.get("permissions"))
