@@ -7,6 +7,8 @@ unchanged; ``/note`` writes its redacted visible line and seats no context half.
 Ordinary context is accepted and drains byte-for-byte.
 """
 
+import base64
+import hashlib
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -64,6 +66,20 @@ ORDINARY = [
     pytest.param(
         "Commit 3e92a4228945c4c6edfbb1160dfda48ac9b84a33 is the base.",
         id="git-sha",
+    ),
+    pytest.param(
+        "payload: "
+        + base64.b64encode(b"The quick brown fox jumps over the lazy dog. " * 4).decode(),
+        id="base64-prose-blob",
+    ),
+    pytest.param(
+        "state: "
+        + base64.urlsafe_b64encode(b'{"view": "board", "columns": ["todo", "done"]}').decode(),
+        id="base64-json-single-segment",
+    ),
+    pytest.param(
+        "digest sha256:" + hashlib.sha256(b"artifact").hexdigest(),
+        id="sha256-digest",
     ),
 ]
 
