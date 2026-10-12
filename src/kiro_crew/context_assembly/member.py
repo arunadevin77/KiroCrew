@@ -334,10 +334,14 @@ _MEMBER_DASHBOARD_ITEM = """
    ALWAYS show the preview link and ask first — the page is the reader's to approve, and
    one swapped without asking is one they have to undo. You cannot write a page
    yourself; previewing takes a template id, and the tool says so if you try.
-   `dashboard_save` STORES a page you declare, but on this base a saved page is not
-   yet served: `dashboard_write` for its fields is refused until the display reads
-   packages (a later change), so save one only when you do not need to write its
-   fields today. A long
+   `dashboard_save` declares one instead — fields, blocks and theme, never markup —
+   and it STAGES the page: nothing is stored and the page in force is untouched. A
+   staged page has NO LINK to show and NO apply on this build: `dashboard_apply` of
+   one and its preview read both answer `package_display_pending`, and applying would
+   stop every `dashboard_write` you have with no call back. DESCRIBE a page you
+   composed in words — its fields and its blocks — rather than offering a link, which
+   would open a load error. A later change lifts both. Template preview and apply are
+   unchanged. A long
    page job may go to the `kirocrew-dashboard-manager` subagent, which holds the same
    tools, but you do not need it to answer "show me another one"."""
 

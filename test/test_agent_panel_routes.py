@@ -2925,12 +2925,21 @@ def _page_store(monkeypatch, **over: Any) -> SimpleNamespace:
         InstanceRefused=InstanceRefused,
         InstanceLocked=InstanceLocked,
         InstanceError=Exception,
+        MAX_PREVIEW_AGE_MS=30 * 60 * 1000,
         read=lambda _slug: SimpleNamespace(template_id="fixture-board"),
         # `wire` takes the crew NAME and builds the link from it with the real
         # builder, so a route that forgets to pass the name fails here.
         stage_preview=lambda _slug, **_kw: SimpleNamespace(
             wire=lambda member: {**staged, "preview_url": instance_preview_url(member)}
         ),
+        # NO PACKAGE STAGED, which is this stub's default on purpose: these cases
+        # are the TEMPLATE half of a route that now installs either kind, and a
+        # stub that answered a package here would send every one of them down the
+        # other branch. The package half has its own file,
+        # ``test_dashboard_save_tool.py``.
+        staged_package_preview=lambda _slug: None,
+        stage_package_preview=lambda _slug, **_kw: SimpleNamespace(wire=lambda: {}),
+        discard_preview=lambda _slug: None,
         apply_preview=lambda _slug, **_kw: SimpleNamespace(
             instance_version=5, template_id="fixture-board"
         ),

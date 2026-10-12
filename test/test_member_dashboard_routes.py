@@ -1160,3 +1160,113 @@ class TestAStagedPageReachesOnlyItsOwnersPreview:
                 # `as_posix` for the same reason as the reader scan above.
                 emitters[path.relative_to(root).as_posix()] = count
         assert emitters == {"dashboard/handlers/member_dashboard.py": 3}, emitters
+
+
+# --------------------------------------------------------------------------
+# the STAGED composed page: read back for a look, and nothing installed
+# --------------------------------------------------------------------------
+
+
+def _package(**over) -> dict:
+    """A package the store's own gate accepts, bound to this crewmate."""
+    package = {
+        "kind": "dashboard",
+        "bound_to": f"crewmate:{SLUG}",
+        "model": {
+            "types": {
+                "open_prs": {"type": "number", "source": {"agentic": True}, "label": "Open PRs"},
+                "headline": {"type": "text", "source": {"agentic": True}},
+            }
+        },
+        "view": {
+            "blocks": [
+                {"id": "lead", "type": "stat", "fields": ["open_prs"], "title": "Open"},
+                {"id": "note", "type": "list", "fields": ["headline"]},
+            ]
+        },
+        "theme": {"tokens": {"--accent": "oklch(0.7 0.15 150)"}},
+    }
+    package.update(over)
+    return package
+
+
+def _stage_package(package: dict | None = None) -> None:
+    """Stage a composed package for this crewmate, the way a save does."""
+    from kiro_crew.artifact_store.dashboard_package import canonical_package_content
+
+    instance.stage_package_preview(
+        SLUG, content=canonical_package_content(json.dumps(package or _package()))
+    )
+
+
+class TestTheStagedComposedPage:
+    """``dashboard_save`` stages, and on THIS base the staged page cannot be read.
+
+    Nothing here renders a package into a document, so the ``?preview=1`` read
+    REFUSES one with ``package_display_pending`` rather than handing back a body the
+    tab cannot draw. These cases pin that refusal, pin that a staged template still
+    reads back through the same route, and pin that nothing was installed -- so the
+    display change that adds the drawing has a contract to replace.
+    """
+
+    async def test_staging_installs_nothing_the_ordinary_read_can_see(self) -> None:
+        """The gate's whole point: the page in force does not move on a save."""
+        _stage_package()
+        async with _client() as client:
+            body = await (await client.get(_q(""))).json()
+        assert "preview" not in body
+        assert body["state"] == instance.STATE_EMPTY
+        assert body["instance_version"] == 0
+
+    async def test_the_preview_read_of_a_staged_package_is_refused(self) -> None:
+        """409 ``package_display_pending``, and the staged page is left alone.
+
+        THE REASON THERE IS NO LINK IN THE SAVE REPLY. A body with declarations and
+        no ``rendered_html`` fell through the tab's promote check to its "could not
+        be loaded" card, so the person was asked to approve a page they were shown
+        an error instead of. Refusing here is what makes the save's "describe it in
+        words" instruction true rather than a workaround.
+
+        Remove the ``staged_package_preview`` branch in ``api_member_dashboard`` and
+        this reddens: the read falls through to ``_preview_record``, whose
+        ``staged_preview`` answers ``None`` for a package payload, and the route
+        answers 404 ``no_preview`` instead.
+        """
+        _stage_package()
+        async with _client() as client:
+            resp = await client.get(_q("", preview=1))
+            body = await resp.json()
+        assert resp.status == 409, body
+        assert body["code"] == "package_display_pending", body
+        # A READ, so the page a person may still be asked about survives it.
+        assert instance.staged_package_preview(SLUG) is not None
+
+    async def test_a_store_fault_in_the_package_read_answers_like_every_other(
+        self, monkeypatch
+    ) -> None:
+        """The sibling of the apply's precheck fix, at this route's own new call.
+
+        ``staged_package_preview`` reaches ``instance_dir``, whose link guard raises
+        ``InstanceError`` -- not an ``OSError``, so the store call does not catch it.
+        Unguarded, this route answered an unhandled 500 instead of the body it gives
+        every other store fault. Drop the ``try`` around that call and this reddens.
+        """
+
+        def _boom(_slug: str) -> None:
+            raise instance.InstanceError("a linked dashboard directory is refused")
+
+        monkeypatch.setattr(instance, "staged_package_preview", _boom)
+        async with _client() as client:
+            resp = await client.get(_q("", preview=1))
+            body = await resp.json()
+        assert resp.status == 500, body
+        assert body["code"] == "dashboard_failed", body
+
+    async def test_a_staged_template_still_answers_its_own_preview(self) -> None:
+        """Both readers answer None for the other's payload, so one page comes back."""
+        instance.stage_preview(SLUG, template_id="fixture-board")
+        async with _client() as client:
+            body = await (await client.get(_q("", preview=1))).json()
+        assert body["preview"] is True
+        assert body["template"]["id"] == "fixture-board"
+        assert "manifest" in body

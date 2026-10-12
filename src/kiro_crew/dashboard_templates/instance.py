@@ -103,6 +103,7 @@ __all__ = [
     "InstanceError",
     "InstanceLocked",
     "InstanceRefused",
+    "PackagePreview",
     "Preview",
     "adopt",
     "apply_preview",
@@ -119,7 +120,9 @@ __all__ = [
     "session_instance_key",
     "session_preview_url",
     "set_structure_lock",
+    "stage_package_preview",
     "stage_preview",
+    "staged_package_preview",
     "staged_preview",
     "versions",
 ]
@@ -1499,13 +1502,136 @@ def stage_preview(
     )
 
 
-def staged_preview(slug: str) -> Preview | None:
-    """The page staged for *slug*, or ``None`` when there is none to apply.
+@dataclass(frozen=True)
+class PackagePreview:
+    """One COMPOSED PACKAGE staged for a look, before anything is stored.
 
-    ``None`` covers four cases that are one case to every caller: nothing was staged,
-    the file will not decode, it was written under another schema, and it is older than
-    :data:`MAX_PREVIEW_AGE_MS`. Each means there is no page this gateway will install,
-    and the answer a caller can act on is the same one -- stage it again.
+    The v3 counterpart of :class:`Preview`, and it holds the package's STORED BYTES
+    rather than its parsed form: those bytes already went through the artifact store's
+    own write gate at staging, so what a person is shown and what an apply commits are
+    one string and cannot drift between the two cycles.
+    """
+
+    slug: str
+    #: Canonical stored content, as ``canonical_package_content`` produced it.
+    content: str
+    staged_ms: int
+
+    def package(self) -> dict[str, Any] | None:
+        """The staged package VALIDATED, or ``None`` when these bytes are not one.
+
+        Through the package's own validator, not a shape check of my own. That
+        matters because this file is an ordinary file under the crewmate's
+        directory: whatever wrote it, what comes back here is a canonical package
+        or nothing. A hand-rolled "is model a dict" test would admit arbitrary
+        nested keys -- a credential-shaped key beside a field's ``type``, say,
+        which no name scan downstream is looking for -- and would hand a reader a
+        ``model`` with no ``types`` to raise a ``KeyError`` on.
+
+        ONE decoder for every reader of this preview, so the counts a caller is
+        told and whatever a later reader does with the same bytes describe the same
+        validated package. On this base the only readers are the save's own count
+        and the two refusals, so "the same package" is a promise kept forward
+        rather than one being used today.
+
+        ``None`` rather than an exception: a staged file that is not a package
+        means the same thing to every caller as one that is not there -- stage it
+        again.
+
+        Imported inside the method, like this module's other reach-throughs: the
+        artifact store pulls in the records layer, and the template store should
+        not carry that graph to read a preview.
+        """
+        from kiro_crew.artifact_store.dashboard_package import parse_package
+        from kiro_crew.artifact_store.model import ArtifactValidationError
+
+        try:
+            return parse_package(self.content)
+        except (ArtifactValidationError, ValueError, TypeError):
+            return None
+
+    def wire(self) -> dict[str, Any]:
+        """What a caller is told about the staged package. NEVER the package itself.
+
+        :class:`Preview`'s cut, for its reason: the declarations are the large half
+        and no caller renders them. The counts are what an agent checks its own
+        compose against -- it declared n fields and m blocks, and a number that came
+        back different is the one thing it can act on.
+
+        NO ``preview_url``, unlike :meth:`Preview.wire`. The package read answers
+        ``package_display_pending`` on this base, and the tab turns that into "this
+        dashboard could not be loaded" with a Retry button that retries it. A link
+        whose only outcome is an error card is worse than no link: it sends the
+        person somewhere broken and spends the agent's turn explaining it. A reader
+        for a STAGED package is what would earn this key back: the hosted page draws
+        a BOUND artifact, and staging writes neither artifact nor binding.
+        """
+        package = self.package() or {}
+        model = package.get("model") if isinstance(package, dict) else {}
+        view = package.get("view") if isinstance(package, dict) else {}
+        types = model.get("types") if isinstance(model, dict) else {}
+        blocks = view.get("blocks") if isinstance(view, dict) else []
+        return {
+            "fields": len(types) if isinstance(types, dict) else 0,
+            "blocks": len(blocks) if isinstance(blocks, list) else 0,
+            "staged_ms": self.staged_ms,
+        }
+
+
+def stage_package_preview(slug: str, *, content: str) -> PackagePreview:
+    """Stage an already-gated package for a look. NOTHING is stored.
+
+    *content* must be the artifact store's own canonical bytes -- the caller runs
+    ``canonical_package_content`` before getting here, so a package that could never
+    be stored is refused while the agent is still composing rather than after a person
+    has said yes to it.
+
+    THE SAME FILE a template preview is staged in, which is the point: one crewmate is
+    offered one page at a time, so "keep this one" names something, and a staged
+    package replaces a staged template exactly as a second template replaces the
+    first. Two stores would make that answer ambiguous and would let an apply commit
+    the page nobody was looking at.
+    """
+    staged_ms = _now_ms()
+    payload = {
+        "schema": SCHEMA_VERSION,
+        "slug": slug,
+        "package_content": content,
+        "staged_ms": staged_ms,
+    }
+    with _locked(instance_dir(slug)):
+        _write(
+            instance_dir(slug),
+            _PREVIEW_FILE,
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        )
+    return PackagePreview(slug=slug, content=content, staged_ms=staged_ms)
+
+
+def staged_package_preview(slug: str) -> PackagePreview | None:
+    """The PACKAGE staged for *slug*, or ``None`` when what is staged is not one.
+
+    :func:`staged_preview`'s four ``None`` cases, plus the one this pair adds: a file
+    holding a staged TEMPLATE. Both answer ``None`` for the other's payload, so a
+    caller asks both and gets at most one page -- never the wrong kind rendered as the
+    one it asked for.
+    """
+    raw = _preview_payload(slug)
+    if raw is None:
+        return None
+    content = raw.get("package_content")
+    if not isinstance(content, str) or not content:
+        return None
+    return PackagePreview(slug=slug, content=content, staged_ms=int(raw["staged_ms"]))
+
+
+def _preview_payload(slug: str) -> dict[str, Any] | None:
+    """The staged file's decoded payload, or ``None`` when there is nothing to apply.
+
+    The four cases :func:`staged_preview` documents, answered once for both readers:
+    nothing staged, text that will not decode, another schema, and older than
+    :data:`MAX_PREVIEW_AGE_MS`. Each means no page this gateway will install, and the
+    answer a caller can act on is the same one -- stage it again.
     """
     try:
         raw = json.loads(read_bytes_with_retry(_preview_path(slug)).decode("utf-8"))
@@ -1513,13 +1639,40 @@ def staged_preview(slug: str) -> Preview | None:
         return None
     if not isinstance(raw, dict) or raw.get("schema") != SCHEMA_VERSION:
         return None
+    try:
+        staged_ms = int(raw.get("staged_ms") or 0)
+    except (TypeError, ValueError, OverflowError):
+        # A fifth bad case alongside the four above: a hand-forged envelope whose
+        # ``staged_ms`` is not a number. A gateway writer always stamps an int, so this
+        # is only reachable from a forged file -- answered the same way, stage it again,
+        # rather than letting the conversion escape as an uncaught 500.
+        return None
+    if staged_ms <= 0 or _now_ms() - staged_ms > MAX_PREVIEW_AGE_MS:
+        return None
+    raw["staged_ms"] = staged_ms
+    return raw
+
+
+def staged_preview(slug: str) -> Preview | None:
+    """The TEMPLATE page staged for *slug*, or ``None`` when there is none to apply.
+
+    ``None`` covers four cases that are one case to every caller: nothing was staged,
+    the file will not decode, it was written under another schema, and it is older than
+    :data:`MAX_PREVIEW_AGE_MS`. Each means there is no page this gateway will install,
+    and the answer a caller can act on is the same one -- stage it again.
+
+    A staged PACKAGE answers ``None`` here too, and by this function's own checks
+    rather than by accident: a package payload carries no ``html`` and no ``manifest``.
+    :func:`staged_package_preview` is the reader for that one.
+    """
+    raw = _preview_payload(slug)
+    if raw is None:
+        return None
     html = raw.get("html")
     manifest = raw.get("manifest")
     if not isinstance(html, str) or not isinstance(manifest, dict):
         return None
-    staged_ms = int(raw.get("staged_ms") or 0)
-    if staged_ms <= 0 or _now_ms() - staged_ms > MAX_PREVIEW_AGE_MS:
-        return None
+    staged_ms = int(raw["staged_ms"])
     template = raw.get("template")
     template = template if isinstance(template, dict) else {}
     template_id = str(template.get("id") or "")

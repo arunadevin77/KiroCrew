@@ -1283,16 +1283,30 @@ than history, so a record written before the check can still be re-themed,
 re-versioned and REBOUND. A revert is exempt for the same reason: it submits a
 past version's whole package and `revert_package` discards the binding in it, so
 the submitted value is one the store was never going to store.
-A crewmate writes its own package through the save route — the `dashboard_save`
+A crewmate composes its own package through the save route — the `dashboard_save`
 MCP tool on `kirocrew-panel` and `POST /api/agent-panel/dashboard/save`
 (`kiro_crew.dashboard.handlers.agent_panel`). The `bound_to` is derived from the
 vetted caller and never read from the request, so a body carrying `bound_to` or
-`kind` is refused; a declared field name or block id a redactor would mask is
-refused too, before anything is written. **One crewmate keeps exactly one
-package:** the save holds a per-binding lock across the lookup and the write, and
-a lookup that cannot prove whether a package already exists is refused rather
-than minting a second artifact. (No renderer serves a saved package on this base
-yet — the save stores it; a reader comes with a later change.)
+`kind` is refused; a declared field name, view block id or theme token key a
+redactor would mask is refused too, before anything is written — every one of
+those names is a join key, so a masked name would break the page rather than
+protect it.
+
+**NOTHING IS STORED BY THE SAVE.** It stages the page. The package runs the
+store's own write gate (`canonical_package_content`) at STAGING, so a layout that
+could never be stored is refused while the agent is still composing rather than
+after a person has approved it. STAGING IS AS FAR AS A COMPOSED PAGE GETS ON THIS
+BASE: `dashboard_apply` of a staged package, and its `?preview=1` read, both
+answer HTTP 409 `package_display_pending`, write no artifact, bind nothing and
+leave the staged page in place. The two refusals share a code and have different
+reasons. The READ has nothing to draw: a staged page is neither an artifact nor a
+binding, the hosted page reads a BOUND `kind="dashboard"` artifact, and
+`member_dashboard._preview_record` goes through `staged_preview`, which answers
+`None` for a package payload. The APPLY would cost the caller its field writes:
+`dashboard_write` refuses every agentic field once a package is bound
+(`package.from_package`), with no agent verb that unbinds it. A later change
+lifts that write guard and this apply together, and makes the apply the
+artifact's writer. Template save, preview and apply are unchanged.
 
 The kind is in `ALLOWED_KINDS` and deliberately NOT in
 `USER_SELECTABLE_KINDS`, and [Kind inference](#kind-inference) never returns it:

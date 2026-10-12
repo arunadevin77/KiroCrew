@@ -168,6 +168,24 @@ class TestStagingRecordsNothing:
         with patch.object(instance, "_now_ms", return_value=instance._now_ms() + stale):
             assert instance.staged_preview(SLUG) is None
 
+    def test_a_forged_non_numeric_staged_ms_reads_as_nothing_staged(self) -> None:
+        """A fifth bad envelope: a hand-forged ``staged_ms`` that is not a number.
+
+        A gateway writer always stamps an int, so this is only reachable from a file an
+        agent forged on disk. It must read as nothing staged -- the same answer the four
+        documented bad cases give -- rather than letting the ``int()`` escape as an
+        uncaught HTTP 500 through preview and apply.
+        """
+        instance.stage_preview(SLUG, template_id="fixture-board")
+        raw = json.loads(instance._preview_path(SLUG).read_text(encoding="utf-8"))
+        raw["staged_ms"] = "not-a-number"
+        instance._preview_path(SLUG).write_text(
+            json.dumps(raw, ensure_ascii=False), encoding="utf-8"
+        )
+        # Both readers share _preview_payload, so neither raises.
+        assert instance.staged_preview(SLUG) is None
+        assert instance.staged_package_preview(SLUG) is None
+
     def test_the_preview_wire_carries_the_link_and_never_the_page(self) -> None:
         """The html is the large half and the agent that staged it already holds it."""
         wire = instance.stage_preview(SLUG, template_id="fixture-board").wire("Fleet")
