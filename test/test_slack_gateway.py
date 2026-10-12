@@ -7200,6 +7200,65 @@ class TestRetriggerRecovery:
         orch.dashboard_state.push_slots_update.assert_called()
 
     @pytest.mark.asyncio
+    async def test_subagent_event_injection_failed_notes_the_debt_of_a_completed_run(self):
+        """A completed run keeps no delivered tombstone while its report is undelivered.
+
+        The queued notice carries the debt instead, under its own text, for the
+        drain that hands that text to the parent to settle.
+        """
+        from kiro_crew.subagent import SubagentDelivery
+
+        orch, mock_sm = self._setup()
+        on_event = mock_sm.call_args[1]["on_event"]
+        slot = MagicMock()
+        slot._pending_subagent_failures = []
+        orch.dashboard_state.get_slot = MagicMock(return_value=slot)
+        info = MagicMock()
+        info.id = "agent-done"
+        info.parent_session_key = "dashboard:slot1"
+        info.task = "finished task"
+        info.outcome = "completed"
+        info.elapsed = 3.5
+        info.credits = 0.25
+
+        await on_event(
+            "subagent_injection_failed",
+            info,
+            {"error": "timed out", "failure_msg": "Agent done"},
+        )
+
+        assert slot._pending_subagent_failures == ["Agent done"]
+        slot.note_pending_subagent_delivery.assert_called_once_with(
+            "Agent done", [SubagentDelivery("agent-done", 3.5, 0.25)]
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("outcome", ["failed", "stopped"])
+    async def test_subagent_event_injection_failed_notes_no_debt_for_an_unfinished_run(
+        self, outcome
+    ):
+        """Only a completed run was ever going to get the ``delivered`` tombstone."""
+        orch, mock_sm = self._setup()
+        on_event = mock_sm.call_args[1]["on_event"]
+        slot = MagicMock()
+        slot._pending_subagent_failures = []
+        orch.dashboard_state.get_slot = MagicMock(return_value=slot)
+        info = MagicMock()
+        info.id = "agent-unfinished"
+        info.parent_session_key = "dashboard:slot1"
+        info.task = "unfinished task"
+        info.outcome = outcome
+
+        await on_event(
+            "subagent_injection_failed",
+            info,
+            {"error": "timed out", "failure_msg": "Agent unfinished"},
+        )
+
+        assert slot._pending_subagent_failures == ["Agent unfinished"]
+        slot.note_pending_subagent_delivery.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_subagent_event_chunk(self):
         """Subagent chunk event broadcasts to subscribers."""
         orch, mock_sm = self._setup()

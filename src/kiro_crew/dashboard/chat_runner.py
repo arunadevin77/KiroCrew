@@ -6716,6 +6716,47 @@ def _arm_queued_delivery_settlement(
         logger.debug("Could not arm queued sub-agent delivery settlement", exc_info=True)
 
 
+def settle_drained_subagent_notices(state: Any, slot: Any, notices: list[str]) -> None:
+    """Settle the delivery debt of notices drained from ``_pending_subagent_failures``.
+
+    A notice whose run owes a ``delivered`` tombstone is recorded on the slot's
+    ledger under its own text when it is queued, and that run's folder stays
+    untombstoned until this drain, so a restart before it leaves the run to the
+    next start's orphan reconciliation. The parent's next turn calls this where
+    it takes the list. The manager writes the tombstones on a tracked task,
+    behind the same teardown gate as a queued announce.
+    """
+    try:
+        owed = slot.take_pending_subagent_deliveries(notices)
+    except Exception:
+        logger.debug("Could not claim drained sub-agent notice deliveries", exc_info=True)
+        return
+    if not owed:
+        return
+    mgr = getattr(state, "subagents", None)
+    settle = getattr(mgr, "settle_queued_delivery", None) if mgr is not None else None
+    work = None
+    if settle is not None:
+        try:
+            candidate = settle(owed)
+        except Exception:
+            logger.debug("Manager-side notice settlement refused", exc_info=True)
+        else:
+            work = candidate if asyncio.iscoroutine(candidate) else None
+    if work is None:
+        logger.debug(
+            "No sub-agent manager to settle drained notices for %s; "
+            "leaving the folder for restart reconciliation",
+            owed,
+        )
+        return
+    writer = asyncio.create_task(work)
+    bg = getattr(state, "_background_tasks", None)
+    if isinstance(bg, set):
+        bg.add(writer)
+        writer.add_done_callback(bg.discard)
+
+
 #: Where a requeue stamps the actor of the turn it is retrying. Re-exported from
 #: ``chat_delivery``, which assembles queue-entry meta, so the producers that stamp
 #: it and the drain below that reads it cannot drift onto two spellings.
@@ -11395,6 +11436,7 @@ async def _run_chat(
             if slot._pending_subagent_failures:
                 failures = slot._pending_subagent_failures[:]
                 slot._pending_subagent_failures.clear()
+                settle_drained_subagent_notices(state, slot, failures)
                 message = "\n\n".join(failures) + "\n\n" + message
             # Save raw user message before context/persona prepend for Slack
             # mirror — avoids leaking injected context to the linked thread.

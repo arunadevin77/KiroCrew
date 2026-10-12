@@ -2077,7 +2077,7 @@ class TestOrphanNotification:
         injected_msg = None
         injected_meta = None
 
-        async def _capture_inject(_session, msg, meta=None):
+        async def _capture_inject(_session, msg, meta=None, delivery=None):
             nonlocal injected_msg, injected_meta
             injected_msg = msg
             injected_meta = meta
@@ -2134,7 +2134,7 @@ class TestOrphanNotification:
         }
         injected: list[tuple[str, dict]] = []
 
-        async def _capture_inject(_session, msg, meta=None):
+        async def _capture_inject(_session, msg, meta=None, delivery=None):
             injected.append((msg, meta))
             return True
 

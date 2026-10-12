@@ -96,7 +96,7 @@ async def _boot_announcements(monkeypatch) -> list[tuple[str, str]]:
     manager = _manager()
     injected: list[tuple[str, str]] = []
 
-    async def _inject(parent_session, msg, meta=None):  # type: ignore[no-untyped-def]
+    async def _inject(parent_session, msg, meta=None, delivery=None):  # type: ignore[no-untyped-def]
         injected.append((parent_session, msg))
         return True
 

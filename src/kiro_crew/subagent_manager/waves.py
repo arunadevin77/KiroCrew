@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         sel,
         settle_delivered_batch,
         time,
+        write_tombstone,
     )
 
 
@@ -463,12 +464,16 @@ class WaveDigestCoordinator(ManagerComponent):
                         agent_id,
                     )
             try:
-                await asyncio.to_thread(
-                    mark_delivered,
-                    agent_id,
-                    elapsed=delivery.elapsed,
-                    credits=delivery.credits,
-                )
+                if delivery.tombstone is not None:
+                    # A restart orphan's notice: its own record, outcome included.
+                    await asyncio.to_thread(write_tombstone, agent_id, **delivery.tombstone)
+                else:
+                    await asyncio.to_thread(
+                        mark_delivered,
+                        agent_id,
+                        elapsed=delivery.elapsed,
+                        credits=delivery.credits,
+                    )
             except Exception:
                 logger.debug(
                     "Failed to mark drained subagent %s delivered", agent_id, exc_info=True

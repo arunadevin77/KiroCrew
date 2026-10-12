@@ -468,6 +468,7 @@ from kiro_crew.subagent import (  # noqa: F401
     _TRANSIENT_CONTINUE_MSG,
     DIGEST_HOLD_SECS,
     INJECTION_TIMEOUT,
+    ORPHAN_NOTICE_OWED,
     SpawnApprovalUnreachable,
     SubagentDelivery,
     SubagentInfo,
@@ -11125,6 +11126,21 @@ class GatewayOrchestrator:
                         failure_msg, _ = redact_exfiltration_urls(failure_msg)
                         failure_msg, _ = redact_credentials(failure_msg)
                         slot._pending_subagent_failures.append(failure_msg)
+                        # A completed run keeps no delivered tombstone while its
+                        # report is undelivered, and the drain that hands this
+                        # notice to the parent writes it, keyed on the text.
+                        if info.outcome == "completed":
+                            try:
+                                slot.note_pending_subagent_delivery(
+                                    failure_msg,
+                                    [SubagentDelivery(info.id, info.elapsed, info.credits)],
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "Subagent %s: could not record the notice's delivery",
+                                    info.id,
+                                    exc_info=True,
+                                )
                     self.dashboard_state.push_slots_update()
                     logger.warning(
                         "Injected timeout error for subagent %s into slot %s", info.id, slot_name
@@ -11169,7 +11185,12 @@ class GatewayOrchestrator:
                 if etype in ("subagent_spawn", "subagent_done", "subagent_queued"):
                     _schedule_slots_push()
 
-        async def _orphan_notify(parent_session: str, msg: str, meta: dict | None = None) -> bool:
+        async def _orphan_notify(
+            parent_session: str,
+            msg: str,
+            meta: dict | None = None,
+            delivery: SubagentDelivery | None = None,
+        ) -> bool | str:
             """Inject an orphan notification into the parent dashboard slot.
 
             Mirrors the subagent_injection_failed delivery: visible transcript
@@ -11181,6 +11202,9 @@ class GatewayOrchestrator:
 
             ``meta`` carries the structured completion facts so the
             orphan row renders as a card without re-parsing its prose header.
+            *delivery* is the tombstone the notice owes. It is recorded on the
+            slot's ledger under the queued text, for the drain of that text to
+            write, and ``ORPHAN_NOTICE_OWED`` tells the manager it was taken.
             """
             # Deliver to whichever tab shows the parent conversation, including a
             # channel-born one; only a parent with no tab wants the owner DM.
@@ -11204,9 +11228,20 @@ class GatewayOrchestrator:
                 meta={SUBAGENT_COMPLETION_META_KEY: meta} if meta else None,
             )
             slot._pending_subagent_failures.append(safe_msg)
+            owed = False
+            if delivery is not None:
+                try:
+                    slot.note_pending_subagent_delivery(safe_msg, [delivery])
+                    owed = True
+                except Exception:
+                    logger.debug(
+                        "Could not record orphan %s's notice delivery",
+                        delivery.agent_id,
+                        exc_info=True,
+                    )
             self.dashboard_state.push_slots_update()
             logger.info("Orphan notification injected into slot %s", slot_name)
-            return True
+            return ORPHAN_NOTICE_OWED if owed else True
 
         async def _orphan_dm(msg: str) -> bool:
             """Owner-DM fallback for orphan notifications (bell + Slack DM)."""

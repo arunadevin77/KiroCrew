@@ -1080,12 +1080,24 @@ class SubagentDelivery:
     store owes its report (``TaskStore.owed_reports``) until it reaches the
     parent, and it has no run folder, so settling it clears that mark
     (``taskq_clear_owed_reports``) and writes no ``delivered`` tombstone.
+
+    *tombstone* is the record a restart orphan's notice owes: the fields the boot
+    reconciler would have written, outcome included. Settling writes it in place
+    of the ``delivered`` mark, so a cut-off or failed orphan is not relabelled
+    completed, and *elapsed* and *credits* go unused.
     """
 
     agent_id: str
     elapsed: float
     credits: float
     report_owed: bool = False
+    tombstone: dict[str, Any] | None = field(default=None, hash=False)
+
+
+#: What ``on_orphan_notify`` returns when it queued an orphan's notice for the
+#: parent agent AND took the tombstone that notice owes, which the drain of the
+#: notice writes. Any other truthy value means delivered with no debt taken.
+ORPHAN_NOTICE_OWED = "owed"
 
 
 @dataclass
@@ -3632,7 +3644,7 @@ class SubagentManager:
         on_spawn_approval: SpawnApprovalCallback | None = None,
         is_yolo: Callable[[], bool] | None = None,
         on_event: SubagentEventCallback | None = None,
-        on_orphan_notify: Callable[..., Awaitable[bool]] | None = None,
+        on_orphan_notify: Callable[..., Awaitable[bool | str]] | None = None,
         on_orphan_dm: Callable[[str], Awaitable[bool]] | None = None,
         completion_keep: str = "head",
         completion_keep_chars: int = COMPLETION_KEEP_DEFAULT_CHARS,
@@ -4415,9 +4427,15 @@ class SubagentManager:
         return await self._monitor._notify_orphan_impl(agent_id, state, has_result)
 
     async def _try_inject_orphan_notification(
-        self, parent_session: str, msg: str, meta: dict | None = None
-    ) -> bool:
-        return await self._monitor._try_inject_orphan_notification_impl(parent_session, msg, meta)
+        self,
+        parent_session: str,
+        msg: str,
+        meta: dict | None = None,
+        delivery: SubagentDelivery | None = None,
+    ) -> bool | str:
+        return await self._monitor._try_inject_orphan_notification_impl(
+            parent_session, msg, meta, delivery
+        )
 
     async def _send_orphan_slack_dm(self, msg: str) -> None:
         return await self._monitor._send_orphan_slack_dm_impl(msg)

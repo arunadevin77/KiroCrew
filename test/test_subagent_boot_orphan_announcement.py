@@ -52,7 +52,7 @@ def _boot(monkeypatch, *, injects: bool = True) -> tuple[SubagentManager, list[s
     manager = SubagentManager(sessions=MagicMock(), ctx_builder=MagicMock(), on_done=AsyncMock())
     sent: list[str] = []
 
-    async def _inject(parent_session, msg, meta=None):  # type: ignore[no-untyped-def]
+    async def _inject(parent_session, msg, meta=None, delivery=None):  # type: ignore[no-untyped-def]
         if injects:
             sent.append(parent_session)
         return injects

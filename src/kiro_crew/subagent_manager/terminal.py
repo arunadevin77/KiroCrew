@@ -400,6 +400,11 @@ class TerminalCoordinator(ManagerComponent):
                 and not info.error
                 and not info._digest_held
                 and not info._delivery_queued
+                # A report the gateway gave up on reached the parent at most as a
+                # notice queued in the slot's memory, so the folder stays visible
+                # to restart reconciliation until the drain of that notice
+                # settles it.
+                and not info._report_undelivered
             ):
                 # The teardown has decided by now (this report waited for it
                 # before publishing), so an empty error means the reset ended

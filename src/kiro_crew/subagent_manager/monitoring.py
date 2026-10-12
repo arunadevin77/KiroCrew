@@ -42,6 +42,7 @@ if TYPE_CHECKING:
         _CLK_TCK,
         _REAPER_INTERVAL,
         _SUPPRESS_CEILING,
+        ORPHAN_NOTICE_OWED,
         OUTCOME_FAILED,
         OUTCOME_INTERRUPTED,
         OUTCOME_OK,
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
         VERDICT_UNKNOWN,
         VERDICT_WORKING,
         LivenessOracle,
+        SubagentDelivery,
         SubagentInfo,
         _attributed_count,
         _cost_bucket,
@@ -510,7 +512,11 @@ class OrphanStallMonitor(ManagerComponent):
                         undelivered = await self._manager._notify_orphan(
                             agent_id, state, has_result
                         )
-                        if undelivered:
+                        if undelivered == ORPHAN_NOTICE_OWED:
+                            # Queued for the parent agent with its tombstone, which
+                            # the drain of the notice writes: no DM and no write here.
+                            pass
+                        elif undelivered:
                             dm_pending.append(undelivered)
                             held_tombstones.append((agent_id, tombstone))
                         else:
@@ -736,7 +742,9 @@ class OrphanStallMonitor(ManagerComponent):
         """Notify user about an orphaned subagent.
 
         1. Try session injection if parent session still exists (delivered
-           messages return ``None``).
+           messages return ``None``; a notice the slot queued together with
+           its tombstone returns ``ORPHAN_NOTICE_OWED``, and the drain of the
+           notice writes that tombstone).
         2. Otherwise return the redacted message so the caller can batch all
            undelivered notifications into a SINGLE digest DM — never N pings.
 
@@ -811,26 +819,37 @@ class OrphanStallMonitor(ManagerComponent):
         # parent keeps its channel session key while its tab is open, and with no
         # tab the digest DM below is the only surface.
         if has_dashboard_surface(parent_session):
+            # The record a notice leaves once the parent agent has it. It is written
+            # after the notice, so no earlier tombstone carries the outcome forward:
+            # it is stated here.
+            record = {
+                "cause": "gateway_restart",
+                "recovery_action": "delivered",
+                "pid": state.get("pid"),
+                "turns": state.get("turns", 0),
+                "last_tool": state.get("last_tool", ""),
+                **({"outcome": "completed"} if result_is_whole(state) else {}),
+            }
             try:
+                # A gateway that queues the notice in memory takes the record as a
+                # debt the drain settles, so a restart before then leaves the run to
+                # the next start.
                 injected = await self._manager._try_inject_orphan_notification(
-                    parent_session, msg, row_meta
+                    parent_session,
+                    msg,
+                    row_meta,
+                    delivery=SubagentDelivery(agent_id, 0.0, 0.0, tombstone=record),
                 )
+                if injected == ORPHAN_NOTICE_OWED:
+                    # No tombstone exists yet (the scan writes one only after a
+                    # notice is recorded), and the drain of the queued notice
+                    # writes the one it owes, so none is written here.
+                    return ORPHAN_NOTICE_OWED
                 if injected:
                     # Update tombstone recovery_action
                     try:
                         # Off the loop, same reason as the reconciliation write.
-                        await asyncio.to_thread(
-                            write_tombstone,
-                            agent_id,
-                            cause="gateway_restart",
-                            recovery_action="delivered",
-                            pid=state.get("pid"),
-                            turns=state.get("turns", 0),
-                            last_tool=state.get("last_tool", ""),
-                            # Written after the notice, so no earlier tombstone
-                            # carries the outcome forward: it is stated here.
-                            **({"outcome": "completed"} if result_is_whole(state) else {}),
-                        )
+                        await asyncio.to_thread(write_tombstone, agent_id, **record)
                     except Exception:
                         pass
                     return None
@@ -841,14 +860,20 @@ class OrphanStallMonitor(ManagerComponent):
         return msg
 
     async def _try_inject_orphan_notification_impl(
-        self, parent_session: str, msg: str, meta: dict | None = None
-    ) -> bool:
+        self,
+        parent_session: str,
+        msg: str,
+        meta: dict | None = None,
+        delivery: "SubagentDelivery | None" = None,
+    ) -> bool | str:
         """Try to inject a message into the parent dashboard session.
 
         Delegates to the gateway-wired ``on_orphan_notify`` callback, which
         appends the (already-redacted) message to the parent slot's transcript
         and queues it into ``slot._pending_subagent_failures`` so the LLM
-        learns about the orphan on its next turn. Returns True if delivered.
+        learns about the orphan on its next turn. Returns True if delivered,
+        and ``ORPHAN_NOTICE_OWED`` when the callback also took *delivery*, the
+        tombstone the queued notice owes.
 
         ``meta`` carries the structured completion facts for the dashboard card
         so the orphan row renders without re-parsing its prose header.
@@ -856,7 +881,13 @@ class OrphanStallMonitor(ManagerComponent):
         if self._manager._on_orphan_notify is None:
             return False
         try:
-            delivered = bool(await self._manager._on_orphan_notify(parent_session, msg, meta))
+            if delivery is None:
+                verdict = await self._manager._on_orphan_notify(parent_session, msg, meta)
+            else:
+                verdict = await self._manager._on_orphan_notify(
+                    parent_session, msg, meta, delivery=delivery
+                )
+            delivered = bool(verdict)
         except Exception:
             logger.debug("on_orphan_notify raised for %s", parent_session, exc_info=True)
             return False
@@ -870,6 +901,8 @@ class OrphanStallMonitor(ManagerComponent):
                 )
             except Exception:
                 logger.debug("SEL audit for orphan injection failed", exc_info=True)
+        if delivered and verdict == ORPHAN_NOTICE_OWED:
+            return ORPHAN_NOTICE_OWED
         return delivered
 
     async def _send_orphan_slack_dm_impl(self, msg: str) -> None:
