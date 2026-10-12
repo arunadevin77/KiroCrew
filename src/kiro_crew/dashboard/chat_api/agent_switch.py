@@ -293,8 +293,8 @@ async def switch_slot_agent(
     # runs FIRST, and the slot is mutated only after the reset succeeds — a
     # failed request provably changed nothing, the invariant the frontend's
     # slotSwitch failure-recovery relies on, with no rollback machinery to
-    # race against concurrent writers (e.g. the project endpoint, which does
-    # not take this lock).
+    # race against concurrent writers (e.g. the in-turn set_project directive,
+    # which does not take this lock).
     # Two locks, in the order documented at _slot_switch_session_lock:
     # slot._lock, then the session lock. An ExitStack because the session
     # lock's KEY is only known after the in-lock read below, and locking on
