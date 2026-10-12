@@ -379,7 +379,7 @@
  1 test_session_pulse_counter.py
  1 test_session_scope_reap.py
  4 test_session_sharing.py
-11 test_session_start_gate.py
+10 test_session_start_gate.py
  1 test_session_start_queued_behind.py
  1 test_session_storage_api.py
  1 test_session_terminated_reap.py
