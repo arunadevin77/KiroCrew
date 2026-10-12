@@ -25,6 +25,7 @@ from kiro_crew.acp.types import (
     METHOD_CANCEL,
 )
 from kiro_crew.dashboard.steer_settle import settle_consumed_steers
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 
 class _Runtime:
@@ -69,13 +70,43 @@ def _drain(handle: AcpSessionHandle, can_settle: bool = True) -> list[str]:
     return handle._take_injected_steers(can_settle=can_settle)
 
 
+async def _finished(coro, what: str):
+    """Run *coro* to its end under the lost-run bound, failing by name (D8).
+
+    ``await_until`` takes a future the test already holds; a ``steer()`` the test
+    itself calls is wrapped in a task here so a hang is a named failure instead
+    of the runner's kill. The task is cancelled on every early exit, as
+    ``wait_for`` did.
+    """
+    task = asyncio.ensure_future(coro)
+    try:
+        return await await_until(task, what=what)
+    finally:
+        if not task.done():
+            task.cancel()
+
+
+async def _until_routed(rt: AcpRuntime) -> None:
+    """Wait until the prompt's request is routed to the turn's queue."""
+    await async_wait_until(
+        lambda: rt._routed_requests, describe=lambda: f"routed={rt._routed_requests!r}"
+    )
+
+
+async def _until_pending(rt: AcpRuntime) -> None:
+    """Wait until the steering request is written and awaiting its answer."""
+    await async_wait_until(
+        lambda: rt._pending_requests, describe=lambda: f"pending={rt._pending_requests!r}"
+    )
+
+
 async def _steer_and_settle(handle: AcpSessionHandle, text: str) -> tuple[bool, list[str]]:
     """Steer, then let the turn's dispatch loop take one settle-able frame."""
     steer = asyncio.ensure_future(handle.steer(text))
     for _ in range(3):
         await asyncio.sleep(0)
     echoes = _drain(handle)
-    return await asyncio.wait_for(steer, 5), echoes
+    return await await_until(steer, what="the steer settling"), echoes
 
 
 @pytest.mark.asyncio
@@ -112,7 +143,7 @@ async def test_an_injected_answer_is_never_settled_where_order_cannot_be_read():
     rt = _Runtime()
     rt.answer.set_result({"outcome": "injected"})
     handle = _handle(rt)
-    assert await asyncio.wait_for(handle.steer("hello"), 5) is True
+    assert await _finished(handle.steer("hello"), "the steer") is True
     assert _drain(handle, can_settle=False) == []
     assert len(handle._steering_answers) == 1
     # A clean terminal reports only proven steers; the caller queues this one.
@@ -125,7 +156,7 @@ async def test_a_cancelled_turn_reports_no_steer_consumed():
     rt = _Runtime()
     rt.answer.set_result({"outcome": "injected"})
     handle = _handle(rt)
-    assert await asyncio.wait_for(handle.steer("hello"), 5) is True
+    assert await _finished(handle.steer("hello"), "the steer") is True
     handle._steers_proven.extend(_drain(handle))
     assert len(handle._steers_proven) == 1
     handle._cancelled = True  # what cancel() sets
@@ -143,7 +174,7 @@ async def test_only_a_clean_end_turn_reports_a_proven_steer(reason):
     rt = _Runtime()
     rt.answer.set_result({"outcome": "injected"})
     handle = _handle(rt)
-    assert await asyncio.wait_for(handle.steer("hello"), 5) is True
+    assert await _finished(handle.steer("hello"), "the steer") is True
     handle._steers_proven.extend(_drain(handle))
     assert len(handle._steers_proven) == 1
     assert handle._release_proven_steers(reason, None) == []
@@ -245,7 +276,7 @@ async def _steer_then_end_turn(handle: AcpSessionHandle) -> bool:
     await asyncio.sleep(0)
     assert not steer.done()  # awaiting the answer, with no timer of its own
     handle._turn_done.set()
-    return await asyncio.wait_for(steer, 5)
+    return await await_until(steer, what="the steer settling")
 
 
 @pytest.mark.asyncio
@@ -290,7 +321,7 @@ async def test_an_answer_aimed_at_an_earlier_turn_never_settles_a_newer_one():
     rt = _Runtime()
     rt.answer.set_result({"outcome": "injected"})
     handle = _handle(rt)
-    assert await asyncio.wait_for(handle.steer("hello"), 5) is True
+    assert await _finished(handle.steer("hello"), "the steer") is True
     handle._prompt_starts += 1  # the next prompt of ours began before a frame
     assert _drain(handle) == []
     assert handle._steering_answers == []
@@ -415,7 +446,7 @@ async def test_the_answer_resolves_the_future_and_never_reaches_the_session_queu
                 + "\n"
             ).encode()
         )
-        assert await asyncio.wait_for(fut, 5) == {"outcome": "injected"}
+        assert await await_until(fut, what="the answer") == {"outcome": "injected"}
         assert queue.empty()
     finally:
         task.cancel()
@@ -447,7 +478,7 @@ async def test_an_error_answer_fails_the_future():
             ).encode()
         )
         with pytest.raises(AcpRuntimeError):
-            await asyncio.wait_for(fut, 5)
+            await await_until(fut, what="the answer")
     finally:
         task.cancel()
         try:
@@ -493,16 +524,10 @@ async def test_an_injected_answer_buffered_with_the_terminal_is_queued_not_settl
                 kinds.append(ev.kind)
 
         driver = asyncio.ensure_future(drive())
-        for _ in range(200):
-            if rt._routed_requests:
-                break
-            await asyncio.sleep(0.01)
+        await _until_routed(rt)
         (prompt_id,) = rt._routed_requests
         steer = asyncio.ensure_future(handle.steer("hello"))
-        for _ in range(200):
-            if rt._pending_requests:
-                break
-            await asyncio.sleep(0.01)
+        await _until_pending(rt)
         (steer_id,) = rt._pending_requests
         answer = json.dumps({"jsonrpc": "2.0", "id": steer_id, "result": {"outcome": "injected"}})
         terminal = json.dumps(
@@ -510,8 +535,8 @@ async def test_an_injected_answer_buffered_with_the_terminal_is_queued_not_settl
         )
         lines = [answer, terminal] if answer_first else [terminal, answer]
         reader.feed_data(("\n".join(lines) + "\n").encode())
-        await asyncio.wait_for(driver, 5)
-        assert await asyncio.wait_for(steer, 5) is False
+        await await_until(driver, what="the turn's driver finishing")
+        assert await await_until(steer, what="the steer settling") is False
     finally:
         task.cancel()
         try:
@@ -555,16 +580,10 @@ async def test_an_answer_read_while_the_write_is_still_draining_still_settles_fi
                 kinds.append(ev.kind)
 
         driver = asyncio.ensure_future(drive())
-        for _ in range(200):
-            if rt._routed_requests:
-                break
-            await asyncio.sleep(0.01)
+        await _until_routed(rt)
         (prompt_id,) = rt._routed_requests
         steer = asyncio.ensure_future(handle.steer("hello"))
-        for _ in range(200):
-            if rt._pending_requests:
-                break
-            await asyncio.sleep(0.01)
+        await _until_pending(rt)
         (steer_id,) = rt._pending_requests
         reader.feed_data(
             (
@@ -572,15 +591,19 @@ async def test_an_answer_read_while_the_write_is_still_draining_still_settles_fi
                 + "\n"
             ).encode()
         )
-        for _ in range(20):
-            await asyncio.sleep(0.01)
+        await async_wait_until(
+            lambda: any(fut.done() for fut, _aimed, _text in handle._steering_answers),
+            describe=lambda: f"answers={handle._steering_answers!r}",
+        )
         reader.feed_data((json.dumps(_CHUNK) + "\n").encode())
-        for _ in range(200):
-            if "steer_consumed" in kinds:
-                break
-            await asyncio.sleep(0.01)
+        # The dispatch loop proves the steer at that frame (``steer_consumed`` is
+        # only reported at the clean terminal fed below).
+        await async_wait_until(
+            lambda: handle._steers_proven,
+            describe=lambda: f"kinds={kinds!r} proven={handle._steers_proven!r}",
+        )
         release.set()
-        assert await asyncio.wait_for(steer, 5) is True
+        assert await await_until(steer, what="the steer settling") is True
         reader.feed_data(
             (
                 json.dumps(
@@ -589,7 +612,7 @@ async def test_an_answer_read_while_the_write_is_still_draining_still_settles_fi
                 + "\n"
             ).encode()
         )
-        await asyncio.wait_for(driver, 5)
+        await await_until(driver, what="the turn's driver finishing")
     finally:
         task.cancel()
         try:
@@ -621,20 +644,14 @@ async def test_a_frame_read_before_the_answer_is_handled_before_the_steer_settle
                 kinds.append(ev.kind)
 
         driver = asyncio.ensure_future(drive())
-        for _ in range(200):
-            if rt._routed_requests:
-                break
-            await asyncio.sleep(0.01)
+        await _until_routed(rt)
         (prompt_id,) = rt._routed_requests
         steer = asyncio.ensure_future(handle.steer("hello"))
-        for _ in range(200):
-            if rt._pending_requests:
-                break
-            await asyncio.sleep(0.01)
+        await _until_pending(rt)
         (steer_id,) = rt._pending_requests
         answer = json.dumps({"jsonrpc": "2.0", "id": steer_id, "result": {"outcome": "injected"}})
         reader.feed_data(("\n".join([json.dumps(_CHUNK), answer]) + "\n").encode())
-        assert await asyncio.wait_for(steer, 5) is True
+        assert await await_until(steer, what="the steer settling") is True
         reader.feed_data(
             (
                 json.dumps(
@@ -643,7 +660,7 @@ async def test_a_frame_read_before_the_answer_is_handled_before_the_steer_settle
                 + "\n"
             ).encode()
         )
-        await asyncio.wait_for(driver, 5)
+        await await_until(driver, what="the turn's driver finishing")
     finally:
         task.cancel()
         try:
@@ -676,25 +693,25 @@ async def test_a_steer_proven_mid_turn_is_not_reported_consumed_if_the_turn_is_c
                 kinds.append(ev.kind)
 
         driver = asyncio.ensure_future(drive())
-        for _ in range(200):
-            if rt._routed_requests:
-                break
-            await asyncio.sleep(0.01)
+        await _until_routed(rt)
         (prompt_id,) = rt._routed_requests
         steer = asyncio.ensure_future(handle.steer("hello"))
-        for _ in range(200):
-            if rt._pending_requests:
-                break
-            await asyncio.sleep(0.01)
+        await _until_pending(rt)
         (steer_id,) = rt._pending_requests
         answer = json.dumps({"jsonrpc": "2.0", "id": steer_id, "result": {"outcome": "injected"}})
         reader.feed_data((answer + "\n" + json.dumps(_CHUNK) + "\n").encode())
-        assert await asyncio.wait_for(steer, 5) is True
-        for _ in range(200):
-            if "text_chunk" in kinds and handle._queue.empty():
-                break
-            await asyncio.sleep(0.01)
-        await asyncio.sleep(0.05)
+        assert await await_until(steer, what="the steer settling") is True
+        # Mid-turn signal: the dispatch loop has proven the steer and taken the
+        # chunk off the queue, but codex buffers the chunk to the terminal, so it
+        # is not yet in kinds and the turn is still live (the terminal is not fed
+        # yet). Waiting on the chunk reaching the consumer instead would only
+        # happen when the prompt's own 5 s timeout completes the turn, so the cut
+        # would land after it ended and the reject/cancel path never runs.
+        await async_wait_until(
+            lambda: bool(handle._steers_proven) and handle._queue.empty(),
+            describe=lambda: f"proven={handle._steers_proven!r} kinds={kinds!r}",
+        )
+        assert "complete" not in kinds and "text_chunk" not in kinds, kinds
         if ending == "denied":
             await handle.reject_tool("perm-1")
             stop = "end_turn"
@@ -707,7 +724,7 @@ async def test_a_steer_proven_mid_turn_is_not_reported_consumed_if_the_turn_is_c
                 + "\n"
             ).encode()
         )
-        await asyncio.wait_for(driver, 5)
+        await await_until(driver, what="the turn's driver finishing")
     finally:
         task.cancel()
         try:
@@ -724,7 +741,7 @@ async def test_an_answer_slower_than_the_send_request_bound_is_queued(monkeypatc
     monkeypatch.setattr(sh, "STEERING_ANSWER_WAIT_SECS", 0.05)
     rt = _Runtime()  # the answer never arrives
     handle = _handle(rt)
-    assert await asyncio.wait_for(handle.steer("hello"), 5) is False
+    assert await _finished(handle.steer("hello"), "the steer") is False
     assert handle._steering_answers == []
     assert handle._abandoned_steering == [rt.answer]
 
@@ -752,26 +769,22 @@ async def test_a_terminal_read_before_an_injected_answer_reports_undelivered(cap
                 kinds.append(ev.kind)
 
         driver = asyncio.ensure_future(drive())
-        for _ in range(200):
-            if rt._routed_requests:
-                break
-            await asyncio.sleep(0.01)
+        await _until_routed(rt)
         (prompt_id,) = rt._routed_requests
         steer = asyncio.ensure_future(handle.steer("hello"))
-        for _ in range(200):
-            if rt._pending_requests:
-                break
-            await asyncio.sleep(0.01)
+        await _until_pending(rt)
         (steer_id,) = rt._pending_requests
         terminal = {"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}}
         reader.feed_data((json.dumps(terminal) + "\n").encode())
-        await asyncio.wait_for(driver, 5)
-        assert await asyncio.wait_for(steer, 5) is False
+        await await_until(driver, what="the turn's driver finishing")
+        assert await await_until(steer, what="the steer settling") is False
         with caplog.at_level("WARNING"):
             answer = {"jsonrpc": "2.0", "id": steer_id, "result": {"outcome": "injected"}}
             reader.feed_data((json.dumps(answer) + "\n").encode())
-            for _ in range(20):
-                await asyncio.sleep(0.01)
+            await async_wait_until(
+                lambda: "injected after its turn ended" in caplog.text,
+                describe=lambda: f"log={caplog.text!r}",
+            )
     finally:
         task.cancel()
         try:
@@ -878,10 +891,7 @@ async def test_a_late_started_new_turn_is_cancelled_before_the_next_prompt_goes_
                 pass
 
         driver = asyncio.ensure_future(drive())
-        for _ in range(300):
-            if rt._routed_requests:
-                break
-            await asyncio.sleep(0.01)
+        await _until_routed(rt)
         (prompt_id,) = rt._routed_requests
         methods = _written_methods(proc)
         assert methods.index("session/cancel") < methods.index("session/prompt")
@@ -893,7 +903,7 @@ async def test_a_late_started_new_turn_is_cancelled_before_the_next_prompt_goes_
                 + "\n"
             ).encode()
         )
-        await asyncio.wait_for(driver, 5)
+        await await_until(driver, what="the turn's driver finishing")
     finally:
         task.cancel()
         try:
@@ -928,7 +938,7 @@ async def test_after_a_denied_approval_nothing_in_the_turn_is_reported_consumed(
     rt.send_response = AsyncMock()
     handle = _handle(rt)
     rt.answer.set_result({"outcome": "injected"})
-    assert await asyncio.wait_for(handle.steer("and this"), 5) is True
+    assert await _finished(handle.steer("and this"), "the steer") is True
     handle._steers_proven.extend(_drain(handle))
     await handle.reject_tool("perm-1")
     assert handle._turn_steering_denied is True
@@ -1021,10 +1031,7 @@ async def test_a_scheduled_cancel_alone_still_holds_the_next_prompt_back():
                 pass
 
         driver = asyncio.ensure_future(drive())
-        for _ in range(300):
-            if rt._routed_requests:
-                break
-            await asyncio.sleep(0.01)
+        await _until_routed(rt)
         (prompt_id,) = rt._routed_requests
         methods = _written_methods(proc)
         assert methods.index("session/cancel") < methods.index("session/prompt")
@@ -1036,7 +1043,7 @@ async def test_a_scheduled_cancel_alone_still_holds_the_next_prompt_back():
                 + "\n"
             ).encode()
         )
-        await asyncio.wait_for(driver, 5)
+        await await_until(driver, what="the turn's driver finishing")
     finally:
         task.cancel()
         try:
@@ -1070,14 +1077,14 @@ async def test_a_clean_terminal_never_reports_a_steer_its_caller_has_not_accepte
     rt.send_request_for_answer = suspended_write  # type: ignore[method-assign]
     handle = _handle(rt)
     steer = asyncio.ensure_future(handle.steer("hello"))
-    await asyncio.wait_for(draining.wait(), 5)
+    await await_until(draining, what="the write suspending in its drain")
     handle._steers_proven.extend(_drain(handle))
     assert len(handle._steers_proven) == 1
     # A clean terminal while the caller is still suspended in its write.
     assert handle._release_proven_steers("end_turn", None) == []
     handle._turn_done.set()
     release.set()
-    assert await asyncio.wait_for(steer, 5) is False
+    assert await await_until(steer, what="the steer settling") is False
 
 
 @pytest.mark.asyncio
@@ -1111,7 +1118,7 @@ async def test_a_steer_cancelled_after_it_was_proven_is_never_reported_consumed(
     rt.send_request_for_answer = suspended_write  # type: ignore[method-assign]
     handle = _handle(rt)
     steer = asyncio.ensure_future(handle.steer("hello"))
-    await asyncio.wait_for(draining.wait(), 5)
+    await await_until(draining, what="the write suspending in its drain")
     # The dispatch loop proves the answered steer while the write is suspended.
     handle._steers_proven.extend(_drain(handle))
     assert len(handle._steers_proven) == 1
@@ -1144,7 +1151,7 @@ async def test_a_steer_cancelled_mid_write_leaves_no_registered_answer():
     rt.send_request_for_answer = suspended_write  # type: ignore[method-assign]
     handle = _handle(rt)
     steer = asyncio.ensure_future(handle.steer("hello"))
-    await asyncio.wait_for(draining.wait(), 5)
+    await await_until(draining, what="the write suspending in its drain")
     assert len(handle._steering_answers) == 1
     steer.cancel()
     with pytest.raises(asyncio.CancelledError):

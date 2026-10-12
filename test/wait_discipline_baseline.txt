@@ -109,10 +109,8 @@
  2 test_cloud_connect.py
  2 test_cloud_ssm.py
  1 test_codex_session_mcp.py
-42 test_codex_steering_request.py
  4 test_cold_start_concurrency_config.py
  9 test_compaction_failure_pause.py
-35 test_compaction_stop_declined.py
  6 test_conductor_wake.py
  1 test_config_api.py
  6 test_config_live.py
@@ -322,7 +320,6 @@
  3 test_push_guard.py
  1 test_queue_boundary_finalize.py
  4 test_queue_depth_after_deferred_start.py
-43 test_queue_depth_reconcile.py
  3 test_queue_receipt.py
  6 test_queued_prompt_durability.py
 11 test_registry_store_art_prewarm.py
@@ -445,7 +442,6 @@
 12 test_subprocess_pool.py
  2 test_tag_session.py
  1 test_task_runner_compaction.py
-20 test_taskq_admission_integration.py
  7 test_taskq_runner_adapter.py
  2 test_taskq_startup.py
  9 test_taskrunner.py

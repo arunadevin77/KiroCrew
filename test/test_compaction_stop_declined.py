@@ -39,7 +39,7 @@ from kiro_crew.session_compaction import (
     COMPACT_OUTCOME_WAITING_FOR_SUBAGENTS,
 )
 from kiro_crew.session_lifecycle import compaction_in_flight
-from kiro_crew.testing.wait import async_wait_until
+from kiro_crew.testing.wait import async_wait_until, await_until, until_parked
 
 KEY = "dashboard:chat-14841"
 
@@ -138,7 +138,7 @@ async def test_a_cooperative_stop_during_compaction_is_declined_and_not_recorded
     before = mgr.stop_generation(key)
 
     task = asyncio.ensure_future(mgr._compact_in_place(key, session, 90.0))
-    await asyncio.wait_for(compact.started.wait(), timeout=2)
+    await await_until(compact.started, what="the compaction starting")
     # The trigger paths add the key; _compact_in_place alone does not. Mirror
     # the state a real threshold trigger leaves.
     mgr._compacting.add(key)
@@ -154,7 +154,7 @@ async def test_a_cooperative_stop_during_compaction_is_declined_and_not_recorded
     finally:
         mgr._compacting.discard(key)
         compact.release.set()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task, what="the compaction settling")
     # The compaction ran to its own (failed) end and recycled -- the ordinary
     # failure arm, untouched by the declined Stop.
     assert order == ["shutdown"]
@@ -168,7 +168,7 @@ async def test_a_force_stop_during_compaction_is_never_declined():
     mgr, key, compact, order, notices = await _setup()
     session = mgr._sessions[key]
     task = asyncio.ensure_future(mgr._compact_in_place(key, session, 90.0))
-    await asyncio.wait_for(compact.started.wait(), timeout=2)
+    await await_until(compact.started, what="the compaction starting")
     mgr._compacting.add(key)
     try:
         outcome = await mgr.stop_turn(KEY, force=True)
@@ -177,7 +177,7 @@ async def test_a_force_stop_during_compaction_is_never_declined():
         compact.fail_with = RuntimeError("compaction reported no result")
         compact.release.set()
     assert outcome == "hard"
-    result = await asyncio.wait_for(task, timeout=5)
+    result = await await_until(task, what="the compaction settling")
     # The force stop reset the session; the compaction that was running on it
     # settles as CANCELLED rather than recycling a provider the reset already
     # replaced and telling the user compaction "didn't succeed".
@@ -194,7 +194,7 @@ async def test_a_force_stop_hands_the_permit_to_the_waiter_and_the_compaction_do
     mgr, key, compact, order, notices = await _setup()
     session = mgr._sessions[key]
     task = asyncio.ensure_future(mgr._compact_in_place(key, session, 90.0))
-    await asyncio.wait_for(compact.started.wait(), timeout=2)
+    await await_until(compact.started, what="the compaction starting")
 
     # A claimant parked on the held permit, as ``_reacquire_and_validate`` does.
     async def _claimant():
@@ -214,8 +214,10 @@ async def test_a_force_stop_hands_the_permit_to_the_waiter_and_the_compaction_do
         mgr._compacting.discard(key)
         compact.fail_with = RuntimeError("compaction reported no result")
         compact.release.set()
-    assert await asyncio.wait_for(task, timeout=5) == "cancelled"
-    assert await asyncio.wait_for(claimant, timeout=5) == "released-cleanly"
+    assert await await_until(task, what="the compaction settling") == "cancelled"
+    assert (
+        await await_until(claimant, what="the claimant releasing the permit") == "released-cleanly"
+    )
     await mgr.close_all()
 
 
@@ -421,13 +423,13 @@ async def test_a_stop_that_ends_the_compact_turn_does_not_recycle():
     mgr, key, compact, order, notices = await _setup()
     session = mgr._sessions[key]
     task = asyncio.ensure_future(mgr._compact_in_place(key, session, 90.0))
-    await asyncio.wait_for(compact.started.wait(), timeout=2)
+    await await_until(compact.started, what="the compaction starting")
 
     assert mgr.note_stop(KEY) is True
     compact.fail_with = RuntimeError("compaction reported no result")
     compact.release.set()
 
-    assert await asyncio.wait_for(task, timeout=5) == "cancelled"
+    assert await await_until(task, what="the compaction settling") == "cancelled"
     # No recycle: the provider is still the session's provider and was not shut down.
     assert order == []
     assert mgr._sessions[key] is session
@@ -475,7 +477,7 @@ async def test_a_stop_recorded_during_the_recycle_window_does_not_strand_a_claim
         mgr._compaction._deps, cotenant_wait_secs=30.0, cotenant_poll_secs=0.01
     )
     task = asyncio.ensure_future(mgr._compact_in_place(key, session, 90.0))
-    await asyncio.wait_for(compact.started.wait(), timeout=2)
+    await await_until(compact.started, what="the compaction starting")
     compact.fail_with = RuntimeError("compaction reported no result")
     compact.release.set()
     await asyncio.sleep(0.05)  # inside _await_cotenants now
@@ -494,9 +496,9 @@ async def test_a_stop_recorded_during_the_recycle_window_does_not_strand_a_claim
     # recycling; the permit this task still owns is released, so the parked
     # claimant wakes.
     assert mgr.note_stop(KEY) is True
-    assert await asyncio.wait_for(task, timeout=5) == "cancelled"
+    assert await await_until(task, what="the compaction settling") == "cancelled"
     assert not gate.is_set(), "the sub-agent was not cancelled"
-    await asyncio.wait_for(woke.wait(), timeout=2)
+    await await_until(woke, what="the parked claimant waking")
     gate.set()
     await claimant
     await mgr.close_all()
@@ -540,7 +542,7 @@ async def test_a_hard_stop_during_the_cotenant_wait_settles_cancelled_and_spares
         mgr._compaction._deps, cotenant_wait_secs=30.0, cotenant_poll_secs=0.01
     )
     task = asyncio.ensure_future(mgr._compact_in_place(key, session, 90.0))
-    await asyncio.wait_for(compact.started.wait(), timeout=2)
+    await await_until(compact.started, what="the compaction starting")
     compact.fail_with = RuntimeError("compaction reported no result")
     compact.release.set()
     await asyncio.sleep(0.05)  # inside _await_cotenants now
@@ -561,10 +563,12 @@ async def test_a_hard_stop_during_the_cotenant_wait_settles_cancelled_and_spares
     # The Stop already reset the parent and respawned its successor; this
     # compaction's restart is stale, so it settles as cancelled WITHOUT waiting
     # out the cotenants or cancelling them: the sub-agent stays live.
-    assert await asyncio.wait_for(task, timeout=5) == "cancelled"
+    assert await await_until(task, what="the compaction settling") == "cancelled"
     assert not gate.is_set(), "the live sub-agent was not cancelled"
     assert notices[-1] == (False, COMPACT_OUTCOME_CANCELLED)
-    assert await asyncio.wait_for(claimant, timeout=5) == "released-cleanly"
+    assert (
+        await await_until(claimant, what="the claimant releasing the permit") == "released-cleanly"
+    )
     gate.set()
     await mgr.close_all()
 
@@ -577,11 +581,11 @@ async def test_a_stop_before_the_semaphore_is_held_is_not_this_compactions_cance
     # The Stop happened earlier, on some other turn.
     assert mgr.note_stop(KEY) is True
     task = asyncio.ensure_future(mgr._compact_in_place(key, session, 90.0))
-    await asyncio.wait_for(compact.started.wait(), timeout=2)
+    await await_until(compact.started, what="the compaction starting")
     compact.fail_with = RuntimeError("compaction reported no result")
     compact.release.set()
     # Genuine failure: the ordinary recycle arm.
-    assert await asyncio.wait_for(task, timeout=5) == "recycled"
+    assert await await_until(task, what="the compaction settling") == "recycled"
     assert order == ["shutdown"]
     assert notices == [(True, COMPACT_OUTCOME_RECYCLED)]
     await mgr.close_all()
@@ -599,7 +603,7 @@ async def test_channel_decline_markers_die_with_the_compaction_that_armed_them()
     mgr, key, compact, order, notices = await _setup()
     provider = mgr._sessions[key].provider
     assert mgr._compaction._trigger_compaction(key, "test", 90.0, provider) is None
-    await asyncio.wait_for(compact.started.wait(), timeout=2)
+    await await_until(compact.started, what="the compaction starting")
     # Declined during A, under the live key and under an alias a channel may
     # press with, which the probe folds onto the live key.
     sl.note_stop_declined(key, "bob")
@@ -609,10 +613,9 @@ async def test_channel_decline_markers_die_with_the_compaction_that_armed_them()
     mgr._fold_key = lambda k: key if k == "alias-of-" + key else real_fold(k)
     compact.fail_with = RuntimeError("compaction reported no result")
     compact.release.set()
-    for _ in range(200):
-        if not mgr.is_compacting(KEY):
-            break
-        await asyncio.sleep(0.01)
+    await async_wait_until(
+        lambda: not mgr.is_compacting(KEY), describe=lambda: f"compacting={mgr._compacting!r}"
+    )
     mgr._fold_key = real_fold
     assert sl.consume_stop_declined("alias-of-" + key, "alice") is False, "alias died with A"
     assert sl.consume_stop_declined(key, "bob") is False
@@ -661,15 +664,14 @@ async def test_the_compacting_observer_sees_enter_and_leave_once_each():
     provider = session.provider
     decline = mgr._compaction._trigger_compaction(key, "test", 90.0, provider)
     assert decline is None, decline
-    await asyncio.wait_for(compact.started.wait(), timeout=2)
+    await await_until(compact.started, what="the compaction starting")
     assert seen == [(key, True)]
     assert mgr.is_compacting(KEY) is True
     compact.fail_with = RuntimeError("compaction reported no result")
     compact.release.set()
-    for _ in range(200):
-        if not mgr.is_compacting(KEY):
-            break
-        await asyncio.sleep(0.01)
+    await async_wait_until(
+        lambda: not mgr.is_compacting(KEY), describe=lambda: f"compacting={mgr._compacting!r}"
+    )
     assert seen == [(key, True), (key, False)]
     await mgr.close_all()
 
@@ -685,14 +687,13 @@ async def test_a_raising_observer_does_not_fail_the_compaction():
     session = mgr._sessions[key]
     decline = mgr._compaction._trigger_compaction(key, "test", 90.0, session.provider)
     assert decline is None
-    await asyncio.wait_for(compact.started.wait(), timeout=2)
+    await await_until(compact.started, what="the compaction starting")
     assert mgr.is_compacting(KEY) is True
     compact.release.set()  # completes with no status -> failed -> recycled
     compact.fail_with = RuntimeError("compaction reported no result")
-    for _ in range(200):
-        if not mgr.is_compacting(KEY):
-            break
-        await asyncio.sleep(0.01)
+    await async_wait_until(
+        lambda: not mgr.is_compacting(KEY), describe=lambda: f"compacting={mgr._compacting!r}"
+    )
     assert mgr.is_compacting(KEY) is False
     assert notices == [(True, COMPACT_OUTCOME_RECYCLED)]
     await mgr.close_all()
@@ -1265,12 +1266,16 @@ async def test_parked_entries_are_adopted_by_the_next_ordinary_allocation(tmp_pa
 
 
 async def _until_registered(mgr, key, old) -> object:
-    for _ in range(200):
+    """Wait for a successor of *old* to be registered under *key*, and return it."""
+
+    def _succeeded() -> bool:
         current = mgr._sessions.get(key)
-        if current is not None and current is not old:
-            return current
-        await asyncio.sleep(0.01)
-    raise AssertionError("no successor registered under the key")
+        return current is not None and current is not old
+
+    await async_wait_until(
+        _succeeded, describe=lambda: f"no successor registered under the key: {mgr._sessions!r}"
+    )
+    return mgr._sessions[key]
 
 
 @pytest.mark.asyncio
@@ -1622,7 +1627,7 @@ async def test_the_claude_arm_ignores_a_stop_that_ended_the_previous_turn():
     await _settle()
     assert mgr.note_stop(KEY) is True
     session.semaphore.release()
-    result = await asyncio.wait_for(task, timeout=5)
+    result = await await_until(task, what="the compaction settling")
     assert result == "failed"
     assert notices == [(False, "compacted")]
     await mgr.close_all()
@@ -1670,7 +1675,7 @@ async def test_the_claude_arm_hands_the_permit_to_the_waiter_on_a_force_stop():
         mgr._compaction._deps, is_claude_backend=lambda _p: True
     )
     task = asyncio.ensure_future(mgr._compaction._compact_session(key, 90.0))
-    await asyncio.wait_for(started.wait(), timeout=2)
+    await await_until(started, what="the compaction starting")
 
     async def _claimant():
         await session.semaphore.acquire()
@@ -1687,8 +1692,10 @@ async def test_the_claude_arm_hands_the_permit_to_the_waiter_on_a_force_stop():
     finally:
         mgr._compacting.discard(key)
         release.set()
-    assert await asyncio.wait_for(task, timeout=5) == "cancelled"
-    assert await asyncio.wait_for(claimant, timeout=5) == "released-cleanly"
+    assert await await_until(task, what="the compaction settling") == "cancelled"
+    assert (
+        await await_until(claimant, what="the claimant releasing the permit") == "released-cleanly"
+    )
     await mgr.close_all()
 
 
@@ -2540,17 +2547,16 @@ async def _uncompactable_restart(wait_secs: float):
     )
     task = asyncio.ensure_future(mgr._compaction._recycle_unmanaged(key, session, 95.0))
     # The wait announces itself before its first poll, with the permit held.
-    async with asyncio.timeout(5):
-        while (False, COMPACT_OUTCOME_WAITING_FOR_SUBAGENTS) not in notices:
-            await asyncio.sleep(0)
+    await async_wait_until(
+        lambda: (False, COMPACT_OUTCOME_WAITING_FOR_SUBAGENTS) in notices,
+        describe=lambda: f"notices={notices!r}",
+    )
     return mgr, key, session, gate, task, order, notices
 
 
 async def _parked_on(session) -> None:
     """Return once a claimant is parked on *session*'s turn permit."""
-    async with asyncio.timeout(5):
-        while not session.semaphore._waiters:
-            await asyncio.sleep(0)
+    await until_parked(session.semaphore)
 
 
 @pytest.mark.asyncio
@@ -2568,7 +2574,7 @@ async def test_a_hard_stop_during_the_uncompactable_restart_wait_settles_cancell
         await session.semaphore.acquire()
         holds.set()
         # holds the permit while the restart's finally runs
-        await asyncio.wait_for(let_go.wait(), timeout=5)
+        await await_until(let_go, what="the test letting the permit go")
         try:
             session.semaphore.release()
         except ValueError as exc:
@@ -2581,14 +2587,16 @@ async def test_a_hard_stop_during_the_uncompactable_restart_wait_settles_cancell
 
     assert await mgr.stop_turn(KEY, force=True) == "hard"
     assert mgr._sessions.get(key) is not session
-    await asyncio.wait_for(holds.wait(), timeout=2)
+    await await_until(holds, what="the claimant holding the permit")
     done, _ = await asyncio.wait({task}, timeout=5)
     assert done, "the restart kept waiting for the sub-agent after the Stop"
     let_go.set()
 
     assert task.result() == "cancelled"
     assert not gate.is_set(), "the live sub-agent was cancelled"
-    assert await asyncio.wait_for(claimant, timeout=5) == "released-cleanly"
+    assert (
+        await await_until(claimant, what="the claimant releasing the permit") == "released-cleanly"
+    )
     assert notices[-1] == (False, COMPACT_OUTCOME_CANCELLED)
     gate.set()
     await mgr.close_all()
@@ -2616,7 +2624,7 @@ async def test_a_stop_recorded_during_the_uncompactable_restart_wait_releases_th
     assert task.result() == "cancelled"
     assert not gate.is_set(), "the sub-agent was cancelled"
     assert order == [], "the session was shut down"
-    await asyncio.wait_for(woke.wait(), timeout=2)
+    await await_until(woke, what="the parked claimant waking")
     await claimant
     gate.set()
     await mgr.close_all()
@@ -2626,7 +2634,7 @@ async def test_a_stop_recorded_during_the_uncompactable_restart_wait_releases_th
 async def test_an_unstopped_uncompactable_restart_still_stops_the_subagent_and_recycles():
     """Control: with no Stop the wait runs out, stops the sub-agent and recycles."""
     mgr, key, session, gate, task, order, notices = await _uncompactable_restart(0.5)
-    assert await asyncio.wait_for(task, timeout=5) == "recycled"
+    assert await await_until(task, what="the compaction settling") == "recycled"
     assert gate.is_set(), "the sub-agent was not stopped at the deadline"
     assert order == ["shutdown"]
     assert notices[-1] == (True, COMPACT_OUTCOME_RESTARTED_UNCOMPACTABLE)

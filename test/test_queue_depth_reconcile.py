@@ -50,6 +50,7 @@ from kiro_crew.taskq import KIND_SUBAGENT, model
 from kiro_crew.taskq.reconcile import reconcile_on_boot
 from kiro_crew.taskq.store import TaskStore, TaskStoreUnavailable
 from kiro_crew.taskq.waits import WaitRecord
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 #: Where each warning these tests count is logged; a count filters on it, so a
 #: record another thread in the worker logs cannot move it.
@@ -170,12 +171,23 @@ async def _settle(mgr: SubagentManager) -> None:
 
 async def _until(check: Any, what: str, timeout: float = _SETTLE_SECS) -> None:
     """Wait for *check* to hold (a delayed re-read lands on a timer), or fail by name."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while not check():
-        if loop.time() > deadline:
-            raise AssertionError(f"never happened: {what}")
-        await asyncio.sleep(0.01)
+    await async_wait_until(check, timeout=timeout, describe=lambda: f"never happened: {what}")
+
+
+async def _finished(coro: Any, what: str) -> Any:
+    """Run *coro* to its end under the lost-run bound, failing by name (D8).
+
+    ``await_until`` takes a future the test already holds; a coroutine the test
+    itself calls is wrapped in a task here so a hang is a named failure instead
+    of the runner's kill. The task is cancelled on every early exit -- the bound
+    expiring, or an enclosing wait cancelling this one -- as ``wait_for`` did.
+    """
+    task = asyncio.ensure_future(coro)
+    try:
+        return await await_until(task, what=what)
+    finally:
+        if not task.done():
+            task.cancel()
 
 
 def _close(mgr: SubagentManager) -> None:
@@ -673,7 +685,7 @@ async def test_stop_all_over_store_only_rows_never_blocks_the_loop(
         stop = asyncio.ensure_future(mgr.cancel_for_parent(_PARENT))
         await _until(entered.is_set, "a row's store cancel started")
         release.set()
-        assert await asyncio.wait_for(stop, 10) == (0, rows)
+        assert await await_until(stop, what="the stop finishing") == (0, rows)
         await _settle(mgr)
         # The checks below read the store on the loop themselves.
         monkeypatch.delenv(store_mod.STRICT_ON_LOOP_ENV)
@@ -726,7 +738,7 @@ async def test_stop_all_queues_its_cancels_and_drops_its_entries_before_it_suspe
 
         assert posted and sorted(posted[0]) == sorted(r.id for r in rows)
         assert _parent_window(mgr) == []
-        assert await asyncio.wait_for(stop, 10) == (0, 3)
+        assert await await_until(stop, what="the stop finishing") == (0, 3)
         await _settle(mgr)
         assert _store_waiting(mgr) == 0
         await mgr.cancel_all()
@@ -772,8 +784,8 @@ async def test_a_refill_queued_before_stop_all_windows_none_of_the_parents_rows(
         for _ in range(3):
             await asyncio.sleep(0)
         go.set()
-        assert await asyncio.wait_for(stop, 10) == (0, 4)
-        await asyncio.wait_for(refill, 10)
+        assert await await_until(stop, what="the stop finishing") == (0, 4)
+        await await_until(refill, what="the refill finishing")
         await _settle(mgr)
 
         assert all(mgr._taskq.state_of(r.id) == model.CANCELLED for r in rows)
@@ -818,19 +830,19 @@ async def test_a_row_spawned_after_stop_alls_read_starts_once_the_stop_ends(
 
             monkeypatch.setattr(SpawnAdmissionCoordinator, "taskq_pending_ids_for_async", held_read)
             stop = asyncio.ensure_future(mgr.cancel_for_parent(_PARENT))
-            await asyncio.wait_for(read.wait(), 10)
+            await await_until(read, what="the stop reading its store rows")
             late = mgr.spawn("late", parent_session_key=_PARENT)
             assert late.queued and late.id not in _parent_window(mgr)
             # The slot frees while the stop holds the fence, and that pump pass
             # windows nothing of this parent's.
-            assert await asyncio.wait_for(mgr.cancel(holder.id), 10) is True
+            assert await _finished(mgr.cancel(holder.id), "the holder's cancel") is True
             await _until(
                 lambda: mgr._drain_task is not None and mgr._drain_task.done(),
                 "the freed slot's pump pass finished",
             )
             assert late.id not in mgr._tasks and late.id not in _parent_window(mgr)
             go.set()
-            assert await asyncio.wait_for(stop, 10) == (0, 4)
+            assert await await_until(stop, what="the stop finishing") == (0, 4)
             await _until(lambda: late.id in mgr._tasks, "the late row starts after the stop")
 
         assert all(mgr._taskq.state_of(r.id) == model.CANCELLED for r in rows)
@@ -993,14 +1005,14 @@ async def test_shutdown_during_stop_all_drains_the_reports_its_applier_spawns(
 
         shutdown = asyncio.ensure_future(mgr.cancel_all())
         with patch.object(asyncio, "wait", new=wait):
-            await asyncio.wait_for(drained.wait(), 10)
+            await await_until(drained, what="the report drain waiting on the job")
             release.set()
-            await asyncio.wait_for(shutdown, 20)
+            await await_until(shutdown, what="the shutdown finishing")
 
         assert [t for t in mgr._report_tasks if not t.done()] == []
         assert _kinds(events).count("subagent_done") == rows
         assert all(mgr._taskq.state_of(info.id) == model.CANCELLED for info in infos)
-        await asyncio.wait_for(stop, 10)
+        await await_until(stop, what="the stop finishing")
     finally:
         _close(mgr)
 
@@ -1035,8 +1047,8 @@ async def test_a_single_cancel_during_stop_all_joins_the_batch_and_reports_once(
             # finishes on the loop or waits on the batch it joined.
             await asyncio.sleep(0)
             release.set()
-            assert await asyncio.wait_for(single, 10) is True
-            assert await asyncio.wait_for(stop, 10) == (0, 3)
+            assert await await_until(single, what="the single cancel finishing") is True
+            assert await await_until(stop, what="the stop finishing") == (0, 3)
             await _settle(mgr)
 
         done = [i for etype, _k, i, _x in events if etype == "subagent_done"]
@@ -1100,8 +1112,8 @@ async def test_a_teardown_cancel_queued_before_stop_all_reports_its_row_once(
             stop = asyncio.ensure_future(mgr.cancel_for_parent(_PARENT))
             await _until(lambda: rows[0].id in mgr._batched_stops, "the batch popped the row")
             release.set()
-            await asyncio.wait_for(teardown, 10)
-            stopped = await asyncio.wait_for(stop, 10)
+            await await_until(teardown, what="the teardown finishing")
+            stopped = await await_until(stop, what="the stop finishing")
             await _settle(mgr)
 
         done = [i for etype, _k, i, _x in events if etype == "subagent_done"]
@@ -1159,8 +1171,8 @@ async def test_a_parent_end_during_stop_all_gates_the_batchs_reports(
                 mgr.cancel_for_teardown(selected, parent_session_key=_PARENT, verb="reset")
             )
             release.set()
-            assert await asyncio.wait_for(stop, 10) == (0, 3)
-            assert await asyncio.wait_for(teardown, 10) == 0
+            assert await await_until(stop, what="the stop finishing") == (0, 3)
+            assert await await_until(teardown, what="the teardown finishing") == 0
             await _settle(mgr)
 
         done = [i for etype, _k, i, _x in events if etype == "subagent_done"]
@@ -1198,9 +1210,9 @@ async def test_a_single_cancel_joined_to_a_batch_that_never_answers_returns(
             single = asyncio.ensure_future(mgr.cancel(row.id))
             await asyncio.sleep(0)
             never.cancel()
-            assert await asyncio.wait_for(single, 10) is False
+            assert await await_until(single, what="the single cancel finishing") is False
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(stop, 10)
+                await await_until(stop, what="the stop finishing")
             assert mgr._batched_stops == {}
     finally:
         await mgr.cancel_all()
@@ -1484,7 +1496,7 @@ async def test_a_reread_lands_behind_a_write_posted_before_its_request(
         monkeypatch.setattr(TaskStore, "run", run)
         held["armed"] = True
         mgr._emit_queue_depth(_PARENT)
-        await asyncio.wait_for(read_done.wait(), 5)
+        await await_until(read_done, what="the held store read finishing")
         hand_back.set_result(None)
         # The burst's wake-up is queued now; everything below runs before it.
         assert not mgr._queue_depth_emits[_PARENT].task.done()
@@ -1511,7 +1523,7 @@ async def _block_chip_reads(monkeypatch: pytest.MonkeyPatch) -> tuple[asyncio.Ev
     async def held(self: Any, parent: str) -> int | None:
         if not release.is_set():
             entered.set()
-            await asyncio.wait_for(release.wait(), 5)
+            await await_until(release, what="the test's release")
         return await real(self, parent)
 
     monkeypatch.setattr(SpawnAdmissionCoordinator, "taskq_chip_overflow_async", held)
@@ -1531,7 +1543,7 @@ async def test_a_verdict_during_a_read_keeps_its_reason_on_the_frame(
         events = _record(mgr)
         entered, release = await _block_chip_reads(monkeypatch)
         mgr._emit_queue_depth(_PARENT)
-        await asyncio.wait_for(entered.wait(), 5)
+        await await_until(entered, what="the hold being entered")
         with patch.object(subagent_mod, "check_memory_available", lambda *a, **k: (False, 0.2)):
             with patch.object(SubagentManager, "_run", new=AsyncMock()):
                 mgr.spawn("deferred-late", parent_session_key=_PARENT)
@@ -1733,11 +1745,11 @@ async def test_stop_all_answers_the_card_when_its_store_read_fails(
         events = _record(mgr)
 
         stop = asyncio.create_task(mgr.cancel_for_parent(_PARENT))
-        await asyncio.wait_for(reached.wait(), 5)
+        await await_until(reached, what="the stop reaching its store read")
         if failure == "cancelled":
             stop.cancel()
         with pytest.raises(RuntimeError if failure == "raises" else asyncio.CancelledError):
-            await asyncio.wait_for(stop, 5)
+            await await_until(stop, what="the stop finishing")
         await _settle(mgr)
 
         waiting = _store_waiting(mgr)
@@ -2343,7 +2355,7 @@ async def test_a_request_while_a_frame_is_being_sent_is_answered(
             frames.append(extra["queued"])
             if len(frames) == 1:
                 sending.set()
-                await asyncio.wait_for(release.wait(), 5)
+                await await_until(release, what="the test's release")
 
     try:
         with patch.object(SubagentManager, "_run", new=_park):
@@ -2352,7 +2364,7 @@ async def test_a_request_while_a_frame_is_being_sent_is_answered(
             await _settle(mgr)
             mgr._on_event = on_event
             mgr._emit_queue_depth(_PARENT)
-            await asyncio.wait_for(sending.wait(), 5)
+            await await_until(sending, what="the consumer taking its first frame")
             for row in rows:
                 assert await mgr.cancel(row.id) is True
             release.set()
@@ -2425,7 +2437,7 @@ async def test_a_steady_stream_of_requests_cannot_withhold_every_frame(
     async def held(self: Any, parent: str) -> int | None:
         gate = asyncio.Event()
         reads.put_nowait(gate)
-        await asyncio.wait_for(gate.wait(), 5)
+        await await_until(gate, what="the read's gate")
         return await real(self, parent)
 
     monkeypatch.setattr(SpawnAdmissionCoordinator, "taskq_chip_overflow_async", held)
@@ -2434,14 +2446,14 @@ async def test_a_steady_stream_of_requests_cannot_withhold_every_frame(
         mgr._queue_wait[_PARENT] = dict(_STALE_WAIT)
         mgr._emit_queue_depth(_PARENT)
         for _ in range(4):
-            gate = await asyncio.wait_for(reads.get(), 5)
+            gate = await _finished(reads.get(), "the next read starting")
             assert _depths(events) == []
             mgr._emit_queue_depth(_PARENT)  # lands during this read
             clock["now"] += 0.3
             gate.set()
         # The fourth read was published although a request overlapped it, and
         # that request is answered by one more read.
-        gate = await asyncio.wait_for(reads.get(), 5)
+        gate = await _finished(reads.get(), "the next read starting")
         assert _depths(events) == [{"queued": 0}]
         assert mgr._queue_wait[_PARENT] == _STALE_WAIT, "an overlapped 0 keeps the label"
         gate.set()
@@ -2573,14 +2585,14 @@ async def test_a_fresh_request_restores_the_retry_budget(
     async def flapping(self: Any, parent: str) -> int | None:
         if not release.is_set():
             reading.set()
-            await asyncio.wait_for(release.wait(), 5)
+            await await_until(release, what="the test's release")
         return None if outage["on"] else await real(self, parent)
 
     monkeypatch.setattr(SpawnAdmissionCoordinator, "taskq_chip_overflow_async", flapping)
     try:
         events = _record(mgr)
         mgr._run_events._request_queue_depth(_PARENT, set(), attempt=_QUEUE_DEPTH_RETRIES)
-        await asyncio.wait_for(reading.wait(), 5)
+        await await_until(reading, what="the flapping read starting")
         mgr._emit_queue_depth(_PARENT)
         release.set()
         await settle_depth_emits(mgr)
@@ -2640,7 +2652,7 @@ async def test_a_spawn_async_cancelled_during_its_defer_leaves_a_stoppable_count
     async def slow_await(self: Any, agent_id: str) -> Any:
         entered.set()
         try:
-            await asyncio.wait_for(release.wait(), 5)
+            await await_until(release, what="the test's release")
         except asyncio.CancelledError:
             wait["cancelled"] = True
             raise
@@ -2656,11 +2668,11 @@ async def test_a_spawn_async_cancelled_during_its_defer_leaves_a_stoppable_count
             )
             with patch.object(SubagentManager, "_run", new=AsyncMock()):
                 call = asyncio.create_task(mgr.spawn_async("t", parent_session_key=_PARENT))
-                await asyncio.wait_for(entered.wait(), 5)
+                await await_until(entered, what="the hold being entered")
                 call.cancel()
                 release.set()
                 with pytest.raises(asyncio.CancelledError):
-                    await asyncio.wait_for(call, 5)
+                    await await_until(call, what="the spawn call finishing")
         await _settle(mgr)
 
         # The defer write ran to completion under the caller's cancel.
@@ -2718,7 +2730,7 @@ async def test_a_started_row_is_not_left_waiting_when_its_pop_request_overlapped
 
     async def slow_policy(fn: Any, *a: Any, **kw: Any) -> Any:
         policy_hold.set()
-        await asyncio.wait_for(policy_release.wait(), 5)
+        await await_until(policy_release, what="the policy's release")
         return fn(*a, **kw)
 
     async def on_event(etype: str, info: Any, extra: dict[str, Any]) -> None:
@@ -2728,7 +2740,7 @@ async def test_a_started_row_is_not_left_waiting_when_its_pop_request_overlapped
         if armed["on"]:
             armed["on"] = False
             publish_hold.set()
-            await asyncio.wait_for(publish_release.wait(), 5)
+            await await_until(publish_release, what="the publish's release")
 
     try:
         with (
@@ -2742,10 +2754,10 @@ async def test_a_started_row_is_not_left_waiting_when_its_pop_request_overlapped
             mgr._on_event = on_event
             armed["on"] = True
             mgr._emit_queue_depth(_PARENT)
-            await asyncio.wait_for(publish_hold.wait(), 5)
+            await await_until(publish_hold, what="the publish being held")
             assert frames[-1]["queued"] == 1
             await _free_slot(mgr, first)
-            await asyncio.wait_for(policy_hold.wait(), 5)
+            await await_until(policy_hold, what="the policy being held")
             publish_release.set()
             await settle_depth_emits(mgr)
             policy_release.set()
@@ -2869,7 +2881,7 @@ async def test_a_capacity_queued_spawn_async_is_counted_and_starts_once_let_go(
     async def held_await(self: Any, agent_id: str) -> Any:
         if agent_id == held["id"]:
             entered.set()
-            await asyncio.wait_for(release.wait(), 5)
+            await await_until(release, what="the test's release")
         return await real_await(self, agent_id)
 
     monkeypatch.setattr(SpawnAdmissionCoordinator, "taskq_accept_record", spy_accept)
@@ -2883,7 +2895,7 @@ async def test_a_capacity_queued_spawn_async_is_counted_and_starts_once_let_go(
         mgr._max_concurrent = 0
         with patch.object(SubagentManager, "_run", new=AsyncMock()):
             call = asyncio.create_task(mgr.spawn_async("b", parent_session_key=_PARENT))
-            await asyncio.wait_for(entered.wait(), 5)
+            await await_until(entered, what="the hold being entered")
             assert held["id"] not in {q.get("_preassigned_id") for q in mgr._queue}
             await settle_depth_emits(mgr)
             assert _depths(events)[-1]["queued"] == 1
@@ -2894,7 +2906,7 @@ async def test_a_capacity_queued_spawn_async_is_counted_and_starts_once_let_go(
             await settle_depth_emits(mgr)
             assert held["id"] not in mgr._agents
             release.set()
-            await asyncio.wait_for(call, 5)
+            await await_until(call, what="the spawn call finishing")
             await _settle(mgr)
 
         assert held["id"] in mgr._agents
@@ -2952,12 +2964,12 @@ async def test_each_frame_names_only_the_waves_it_answers(
             batches.append(info.batch_id)
             if len(batches) == 1:
                 sending.set()
-                await asyncio.wait_for(release.wait(), 5)
+                await await_until(release, what="the test's release")
 
     try:
         mgr._on_event = on_event
         mgr._emit_queue_depth(_PARENT, "wave-a")
-        await asyncio.wait_for(sending.wait(), 5)
+        await await_until(sending, what="the consumer taking its first frame")
         mgr._emit_queue_depth(_PARENT, second)
         release.set()
         await _settle(mgr)
