@@ -1624,7 +1624,9 @@ def _pin_entitlement_backend(cfg: Any) -> str:
     return default_backend
 
 
-async def _revalidate_crew_pin(model: str, request: web.Request) -> str | None:
+async def _revalidate_crew_pin(
+    model: str, request: web.Request, *, for_workers: bool = False
+) -> str | None:
     """Revalidate the snapshot a crew's model pin is about to be judged by.
 
     Awaited BEFORE the handlers take the config lock: :func:`_model_pin_rejected`
@@ -1637,6 +1639,10 @@ async def _revalidate_crew_pin(model: str, request: web.Request) -> str | None:
     Skips the cases the locked check answers without the live list -- inherit,
     the retained claude_code seam and a known wrong-flavour spelling -- so no probe
     is spent on a value the snapshot does not decide.
+
+    ``for_workers`` names the crew's ``worker_model``: the sessions a crewmate
+    dispatches run on ``agent.acp_backend`` (never a member DM), so that pin is
+    judged against the worker's harness rather than the member's.
     """
     if not model or model == "auto" or model_registry.acp_id_correction(model):
         return None
@@ -1646,9 +1652,8 @@ async def _revalidate_crew_pin(model: str, request: web.Request) -> str | None:
     # circular import: see _model_pin_rejected.
     from kiro_crew.dashboard.handlers.core import _revalidate_role_pin_evidence
 
-    return await _revalidate_role_pin_evidence(
-        model, request, backend=_pin_entitlement_backend(cfg)
-    )
+    backend = cfg.agent.acp_backend if for_workers else _pin_entitlement_backend(cfg)
+    return await _revalidate_role_pin_evidence(model, request, backend=backend)
 
 
 def _model_pin_rejected(

@@ -41,6 +41,14 @@ export interface MemberRosterRow {
   memory_version?: number
   memory_owner?: string
   model?: string
+  /** The crewmate's own effort pin; '' inherits. */
+  reasoning_effort?: string
+  /** What the sessions this crewmate opens through `session_create` run on
+   *  when the call names no model: '' = the crewmate's own model, 'auto' = the
+   *  backend default (a real pin here), else a listed model. */
+  worker_model?: string
+  /** Same for the reasoning effort; '' = the crewmate's own level. */
+  worker_reasoning_effort?: string
   /** Optional presentation label shown in place of `name`. `name` stays the
    *  identity every per-member route and binding is keyed on. */
   display_name?: string

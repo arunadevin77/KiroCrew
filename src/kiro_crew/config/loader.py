@@ -5866,6 +5866,7 @@ def build_config(
                 # the legacy upgrade) and let the upgrade mint a new identity.
                 # Both stay as written and the resolvers refuse them;
                 # ``agent list`` renders a malformed ``memory_store``.
+                raw_worker_model = crew.get("worker_model")
                 agents[name] = KiroCrewAgentConfig(
                     member_id=crew.get("member_id"),
                     kiro_agent=crew.read("kiro_agent", _safe_str),
@@ -5876,6 +5877,16 @@ def build_config(
                     # collapse to "" (inherit) rather than travel to the
                     # provider, where kiro-cli rejects the whole overlay.
                     reasoning_effort=coerce_effort(crew.get("reasoning_effort")),
+                    # The dispatched-worker pair: the model keeps its raw
+                    # spelling because "auto" is a REAL pin here (see the
+                    # field), so only the non-string guard applies; the
+                    # effort takes the same coercion as the crew's own.
+                    worker_model=(
+                        raw_worker_model.strip()
+                        if isinstance(raw_worker_model, str)
+                        else crew.default("worker_model")
+                    ),
+                    worker_reasoning_effort=coerce_effort(crew.get("worker_reasoning_effort")),
                     approval_mode=_sections.coerce_member_approval_mode(crew.get("approval_mode")),
                     display_name=(
                         raw_display_name

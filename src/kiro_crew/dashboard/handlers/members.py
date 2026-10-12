@@ -455,6 +455,12 @@ async def api_members(request: web.Request) -> web.Response:
                 # vocabulary ("" = never chosen, which opens the thread in trust).
                 "reasoning_effort": _roster_mask(agent_cfg.reasoning_effort),
                 "approval_mode": agent_cfg.approval_mode,
+                # The dispatched-worker pair, the profile card's other two
+                # pickers: what `session_create` pins on a child this crewmate
+                # opens without naming a model or effort. Masked like the
+                # crewmate's own model; the effort is load-time coerced.
+                "worker_model": _roster_mask(agent_cfg.worker_model),
+                "worker_reasoning_effort": agent_cfg.worker_reasoning_effort,
                 # Presentation-only, but `_safe_avatar` pins only the SHAPE:
                 # its `traits` and `expressions` values are free text, so the
                 # avatar is masked leaf-by-leaf (`_roster_avatar`) rather than

@@ -4031,6 +4031,12 @@ SESSION_CREATE_SCHEMA = ToolSchema(
             max_len=MAX_SHORT_STRING,
             pattern=_MODEL_NAME_RE,
         ),
+        # Reasoning effort the new session starts at, the same five levels
+        # ``session_set_model`` takes; the verb refuses anything else. No
+        # ``default``: an absent level means "inherit the dispatching
+        # crewmate's", which an empty string would also read as, so the
+        # schema leaves absence to the handler rather than spelling it.
+        FieldSpec("reasoning_effort", str, required=False, max_len=32),
     ],
 )
 

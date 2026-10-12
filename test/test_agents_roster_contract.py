@@ -79,6 +79,10 @@ WITHHELD_RECORD_FIELDS = frozenset(
         # Shipped on GET /api/members (the profile card's own read), not here:
         # the crew editor echoes this row back, and must not round-trip it.
         "approval_mode",
+        # Same home and same reason: the profile card's dispatched-worker pair,
+        # read by `session_create`, which the crew editor never shows.
+        "worker_model",
+        "worker_reasoning_effort",
     }
 )
 
@@ -117,6 +121,8 @@ def _seed_config_with_every_field_set() -> dict:
                 "watchdog_tool_stall_suspect_secs": 111.0,
                 "watchdog_tool_stall_hard_cap_secs": 222.0,
                 "telegram_account": "probe-telegram-binding",
+                "worker_model": "probe-worker-model",
+                "worker_reasoning_effort": "low",
             },
         },
         "default_agent": "roster-probe",
@@ -154,6 +160,7 @@ class TestRosterRowKeySet:
         # to distinctive non-default values.
         assert not (set(row) & WITHHELD_RECORD_FIELDS)
         assert "probe-telegram-binding" not in json.dumps(row)
+        assert "probe-worker-model" not in json.dumps(row)
 
     @pytest.mark.asyncio
     async def test_project_row_ships_the_same_key_set(self, monkeypatch, tmp_path: Path) -> None:

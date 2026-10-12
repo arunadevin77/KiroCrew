@@ -19,7 +19,12 @@ import { GuideTrustRootRegion } from '../../guide/trustRoot'
 
 /** The approval modes a crewmate's record may pin, in label order; YOLO is process-global. */
 const MODES = ['normal', 'trust_reads', 'trust'] as const
-type Setting = 'approval_mode' | 'model' | 'reasoning_effort'
+type Setting = 'approval_mode' | 'model' | 'reasoning_effort' | 'worker_model' | 'worker_reasoning_effort'
+/** The record's "workers run the crewmate's own" spelling for both worker fields. */
+const SAME_AS_CREWMATE = ''
+/** A REAL worker-model pin, unlike the crewmate's own `model` where it means
+ *  inherit: dispatched sessions run on the backend's default. */
+const WORKER_AUTO = 'auto'
 
 /** The stored permission a refused compare-and-set PUT reports, or undefined
  *  when the error is anything else. */
@@ -57,6 +62,8 @@ export default function CrewProfileSettings({ member, slotKey, waiting = false }
     approval_mode: String(member.approval_mode || 'trust'),
     model: member.model || INHERIT_MODEL,
     reasoning_effort: String(member.reasoning_effort || ''),
+    worker_model: String(member.worker_model || SAME_AS_CREWMATE),
+    worker_reasoning_effort: String(member.worker_reasoning_effort || SAME_AS_CREWMATE),
   }
   const value = (k: Setting) => draft[k] ?? stored[k]
   const mode = value('approval_mode')
@@ -70,8 +77,29 @@ export default function CrewProfileSettings({ member, slotKey, waiting = false }
       ? t('pages.membersPage.profile_mode_reads_hint', { name })
       : t('pages.membersPage.profile_mode_trust_hint', { name })
   const model = value('model')
-  const effortCapable = modelSupportsEffort(model === INHERIT_MODEL ? resolved?.model : model)
-  const modelOptions = [INHERIT_MODEL, ...(models.data || []).map((m) => m.name).filter((n) => n && n !== INHERIT_MODEL)]
+  // The model the crewmate itself runs on, named: its pin, else what Inherited resolves to.
+  const ownModel = model === INHERIT_MODEL ? resolved?.model : model
+  const effortCapable = modelSupportsEffort(ownModel)
+  const listedModels = (models.data || []).map((m) => m.name).filter((n) => n && n !== INHERIT_MODEL)
+  const modelOptions = [INHERIT_MODEL, ...listedModels]
+  // What the crewmate's dispatched workers run on. "Same as <name>" is the
+  // record's '' and follows the crewmate's own pick; Auto is a real pin here.
+  const workerModel = value('worker_model')
+  const workerModelOptions = [SAME_AS_CREWMATE, WORKER_AUTO, ...listedModels.filter((n) => n !== WORKER_AUTO)]
+  const workerRunsOn = workerModel === SAME_AS_CREWMATE ? ownModel : workerModel
+  const workerEffort = value('worker_reasoning_effort')
+  // Offered when the workers' model reasons; a stored level stays visible so it
+  // can be cleared. Otherwise the row folds and the model hint says so.
+  const workerEffortRowShown = modelSupportsEffort(workerRunsOn) || !!workerEffort
+  // Distinct from the model dropdown's "Same as <name>": one names a model, the
+  // other a level, and a reader must be able to tell which is which.
+  const workerEffortInheritLabel = workerModel === SAME_AS_CREWMATE
+    ? t('pages.membersPage.profile_worker_effort_same_as', { name })
+    : t('pages.membersPage.profile_worker_effort_model_default')
+  const ownEffort = value('reasoning_effort') || resolved?.reasoning_effort || ''
+  // The crewmate's own model, named, for the hints; before the resolve answers,
+  // or when it cannot, the phrase "<name>'s own model" stands in.
+  const ownModelNoun = ownModel || t('pages.membersPage.profile_worker_own_model_fallback', { name })
 
   // The person's lock on the crewmate's dynamic dashboard: set HERE, on the
   // crewmate's own card, never on the Dashboard tab (which only shows a badge).
@@ -137,6 +165,8 @@ export default function CrewProfileSettings({ member, slotKey, waiting = false }
       // The server applied the permission to the live thread in the same step
       // (PUT /api/agents/{name}). Model and effort still follow from here; if
       // that write fails the error says so, and the next thread uses the record.
+      // The worker pair touches no thread: it is read when the crewmate next
+      // opens a session, so the record is the whole write.
       if (slotKey && key === 'model') await api.chatSlotModel(slotKey, wire)
       else if (slotKey && key === 'reasoning_effort') await api.chatSlotReasoningEffort(slotKey, wire)
     } catch (e) {
@@ -193,6 +223,58 @@ export default function CrewProfileSettings({ member, slotKey, waiting = false }
             value={value('reasoning_effort')}
             onChange={(v) => void save('reasoning_effort', v)}
             aria-label={t('pages.kiroCrewAgentsPage.edit_reasoning_effort')}
+          />
+        </Field>
+      )}
+      {/* The helper chats this crewmate starts to split up a task (session_create):
+          by default they run what the crewmate runs; the Auto pin makes them cheap.
+          When the effort row below folds away (the chosen model does not reason),
+          the hint says so, so the row never just vanishes. */}
+      <Field
+        label={t('pages.membersPage.profile_worker_model')}
+        hint={[
+          workerModel === SAME_AS_CREWMATE
+            ? t('pages.membersPage.profile_worker_same_hint', { name, model: ownModelNoun })
+            : workerModel === WORKER_AUTO
+              ? t('pages.membersPage.profile_worker_auto_hint', { name, model: ownModelNoun })
+              : t('pages.membersPage.profile_worker_model_hint', { name, model: workerModel, own: ownModelNoun }),
+          // Says what is true when the effort row folds: the setting does not apply
+          // to that model. Never "no reasoning", which reads as a downgrade.
+          workerEffortRowShown ? '' : t('pages.membersPage.profile_worker_no_effort_hint'),
+        ].filter(Boolean).join(' ')}
+      >
+        <SimpleSelect
+          options={workerModelOptions}
+          optionLabels={workerModelOptions.map((m) => (
+            m === SAME_AS_CREWMATE ? t('pages.membersPage.profile_worker_same_as', { name }) : m === WORKER_AUTO ? t('pages.membersPage.profile_worker_auto') : m
+          ))}
+          value={workerModel}
+          onChange={(v) => void save('worker_model', v)}
+          aria-label={t('pages.membersPage.profile_worker_model')}
+        />
+      </Field>
+      {workerEffortRowShown && (
+        // '' means "the crewmate's own level" only while the workers run the
+        // crewmate's own model; under another model it is the model's default,
+        // and the label says which (worker_session_defaults draws the same line).
+        <Field
+          label={t('pages.membersPage.profile_worker_effort')}
+          // The empty option always gets a note: under the crewmate's model it
+          // names the level that carries over; under another model it says no
+          // level is pinned and the crewmate's is not copied (what the worker's
+          // agent then defaults to is resolved at its first turn, not here).
+          hint={workerEffort !== SAME_AS_CREWMATE
+            ? undefined
+            : workerModel === SAME_AS_CREWMATE
+              ? (ownEffort ? t('pages.membersPage.profile_worker_effort_same_hint', { name, effort: effortLabel(ownEffort) }) : undefined)
+              : t('pages.membersPage.profile_worker_effort_default_hint', { name, effort: ownEffort ? ` (${effortLabel(ownEffort)})` : '' })}
+        >
+          <SimpleSelect
+            options={[...EFFORT_LEVELS]}
+            optionLabels={EFFORT_LEVELS.map((l) => (l === '' ? workerEffortInheritLabel : effortLabel(l)))}
+            value={workerEffort}
+            onChange={(v) => void save('worker_reasoning_effort', v)}
+            aria-label={t('pages.membersPage.profile_worker_effort')}
           />
         </Field>
       )}

@@ -231,6 +231,27 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": effort_reason, "code": "invalid_reasoning_effort"}, status=400
             )
+    # The dispatched-worker pair takes the crew pin's own validators: the same
+    # five levels, and the same model guard (which passes "auto" and "").
+    if "worker_reasoning_effort" in body:
+        effort_reason = _crew_effort_rejected(body["worker_reasoning_effort"])
+        if effort_reason:
+            return web.json_response(
+                {
+                    "error": effort_reason.replace("reasoning_effort", "worker_reasoning_effort"),
+                    "code": "invalid_worker_reasoning_effort",
+                },
+                status=400,
+            )
+    if "worker_model" in body:
+        if not isinstance(body["worker_model"], str):
+            return web.json_response(
+                {"error": "worker_model must be a string", "code": "invalid_worker_model"},
+                status=400,
+            )
+        # Stripped, NOT normalized: "auto" stays a pin here (workers on the
+        # backend default) where the crew's own `model` would fold it to "".
+        pending_worker_model = body["worker_model"].strip()
     # Same placement rule as reasoning_effort: validated up here, before the
     # lock and before any field or avatar-file mutation. A body that pairs a
     # bad `starred` with an avatar promotion would otherwise move the staged
@@ -278,6 +299,12 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
         pending_reason = await _revalidate_crew_pin(pending_model, request)
         if pending_reason:
             return web.json_response({"error": pending_reason, "code": "invalid_model"}, status=400)
+    if "worker_model" in body:
+        pending_reason = await _revalidate_crew_pin(pending_worker_model, request, for_workers=True)
+        if pending_reason:
+            return web.json_response(
+                {"error": pending_reason, "code": "invalid_worker_model"}, status=400
+            )
     async with _get_config_lock():
         cfg = KiroCrewConfig.load()
         if name not in cfg.agents:
@@ -294,6 +321,21 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
             if model_reason:
                 return web.json_response(
                     {"error": model_reason, "code": "invalid_model"}, status=400
+                )
+        if "worker_model" in body:
+            # Judged against the WORKER's harness, not the crewmate's: a session
+            # the crewmate dispatches is never a member DM, so it runs on
+            # `agent.acp_backend`, and `create_session` trusts this pin for
+            # exactly that harness (`_inherited_pin_foreign_to_child`).
+            model_reason = _model_pin_rejected(
+                pending_worker_model,
+                request,
+                cfg.agent.provider,
+                backend=cfg.agent.acp_backend,
+            )
+            if model_reason:
+                return web.json_response(
+                    {"error": model_reason, "code": "invalid_worker_model"}, status=400
                 )
         agent = cfg.agents[name]
         # A change card's Undo arms the crewmate its apply wrote to. A
@@ -393,6 +435,14 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
             # Already validated above; "" is the inherit sentinel and clears a pin.
             agent.reasoning_effort = body["reasoning_effort"].strip()
             changed.append("reasoning_effort")
+        if "worker_model" in body:
+            # Validated above. "" = workers run the crewmate's own model;
+            # "auto" is kept verbatim as a real pin (see the field's doc).
+            agent.worker_model = pending_worker_model
+            changed.append("worker_model")
+        if "worker_reasoning_effort" in body:
+            agent.worker_reasoning_effort = body["worker_reasoning_effort"].strip()
+            changed.append("worker_reasoning_effort")
         if "approval_mode" in body:
             # Compare-and-set: the profile sends the value it last read, and a
             # write made from a stale read is refused with the current value,

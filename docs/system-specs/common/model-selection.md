@@ -480,14 +480,17 @@ its own once the cache refreshes with a list that carries it.
   `"auto"` and deliberately do NOT inherit `agent.model`, so a user's chat model
   does not silently become the price of every background task. The sessions a
   crewmate dispatches with `session_create` are the one decided exception
-  ([rfc-worker-model-inheritance](../../request-for-change/rfc-worker-model-inheritance.md),
-  pending its implementation in
-  [#19368](https://github.com/kirodotdev/KiroCrew/pull/19368)): once that lands
-  they inherit the CREWMATE's own model and effort (the pin the person chose on
-  that crewmate's profile, never the user's chat model), and the per-crewmate
-  cost cap is that profile's `worker_model` / `worker_reasoning_effort`, where
-  `"auto"` is a real pin on the backend default. Until then a dispatched session
-  starts on the default like any other.
+  ([rfc-worker-model-inheritance](../../request-for-change/rfc-worker-model-inheritance.md)):
+  they take the CREWMATE profile's explicit model and effort pins (the values
+  the person chose on that crewmate's profile, never the user's chat model).
+  An empty crewmate pin leaves that half unpinned, so the worker's selected agent
+  or the global default decides. The per-crewmate cost cap is that
+  profile's `worker_model` / `worker_reasoning_effort`, where
+  `"auto"` is a real pin on the backend default. `worker_session_defaults` in
+  `config/sections.py` resolves the pair, and an explicit argument on the call
+  wins. An inherited model the picker guard refuses, or one the worker's harness
+  does not serve, is dropped and the session starts on the default; the full
+  rule is in [session-control](../modules/session-control.md).
 - **A served context window** is declared only through `agent.model_context_tokens`, one
   entry per EXACT model id as `agent.model` carries it (`model_registry.model_window`
   matches it as written, so two servers of the same weights stay distinct). It is an

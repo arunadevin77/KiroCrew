@@ -772,12 +772,24 @@ def _session_tools() -> tuple[Tool, ...]:
                         "description": (
                             "Model the new session starts on, pinned exactly as if the "
                             "person had picked it in the session's model dropdown: an id "
-                            "from that same list, or 'auto'. Omit to use the agent's or "
-                            "the global default. A well-formed id the account cannot serve "
-                            "is accepted here but withheld at the session's first turn: "
-                            "the turn succeeds on the account's default model, and the only "
-                            "signal is a notice in that session's transcript. The person "
-                            "can still change it later."
+                            "from that same list, or 'auto'. Omit to inherit: when YOU are "
+                            "a crewmate, the child takes your profile's worker model (or "
+                            "your own model when none is set); otherwise it uses the "
+                            "agent's or the global default. A well-formed id the account "
+                            "cannot serve is accepted here but withheld at the session's "
+                            "first turn: the turn succeeds on the account's default model, "
+                            "and the only signal is a notice in that session's transcript. "
+                            "The person can still change it later."
+                        ),
+                    },
+                    "reasoning_effort": {
+                        "type": "string",
+                        "description": (
+                            "Reasoning effort the new session starts at, one of the five "
+                            "standard levels: 'low', 'medium', 'high', 'xhigh', 'max'. "
+                            "Omit to inherit the same way as `model`: a crewmate's child "
+                            "takes the profile's worker effort (or the crewmate's own); "
+                            "anyone else's child keeps the model's default."
                         ),
                     },
                 },
@@ -2862,6 +2874,8 @@ def _run_session_create(args: dict[str, Any], ctx: ToolContext) -> str:
     payload: dict[str, Any] = {"title": args.get("title", ""), "agent": args.get("agent", "")}
     if args.get("model"):
         payload["model"] = args["model"]
+    if args.get("reasoning_effort"):
+        payload["reasoning_effort"] = args["reasoning_effort"]
     if args.get("agent_kind"):
         payload["agent_kind"] = args["agent_kind"]
 
@@ -2905,6 +2919,18 @@ def _run_session_create(args: dict[str, Any], ctx: ToolContext) -> str:
         return f"Error: {_refused(refused, made_note)}"
     filed = f" filed in `{folder_label}`" if folder_label else ""
     on_model = f" on model `{resp['model']}`" if resp.get("model") else ""
+    if resp.get("reasoning_effort"):
+        on_model += f" at reasoning effort `{resp['reasoning_effort']}`"
+    # Name what the caller did not choose, so a conductor reading its own reply
+    # learns the child runs on its profile's pick rather than the default.
+    inherited = resp.get("inherited") or []
+    if inherited:
+        on_model += f" (inherited from your crewmate profile: {', '.join(inherited)})"
+    if resp.get("inherited_model_dropped"):
+        on_model += (
+            " (your crewmate profile's worker model is not usable here, so the "
+            "session starts on the default model; fix the profile or pass `model`)"
+        )
     return redact(
         f"\U0001f195 Opened `{resp.get('target')}` ({resp.get('title')}){filed}{on_model}.{made_note} "
         "It is empty and waiting in the user's sidebar; watch it with "

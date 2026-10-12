@@ -55,7 +55,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from kiro_crew import model_registry
+from kiro_crew import model_registry, model_scope
 from kiro_crew.agent_sdk.backends import ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS
 from kiro_crew.agent_sdk.capabilities import MODEL_NAMESPACE_ACP, capabilities_for
 from kiro_crew.agent_sdk.provider_identity import is_claude_code
@@ -63,9 +63,16 @@ from kiro_crew.config.loader import (
     KiroCrewConfig,
     _workspace_name_for_dir,
     default_project_dir,
+    member_template_id,
     resolve_agent_bindings,
 )
 from kiro_crew.config.resolution import DEGRADED_WHOLE_CONFIG
+from kiro_crew.config.sections import (
+    DEFAULT_MODEL,
+    KiroCrewAgentConfig,
+    coerce_effort,
+    worker_session_defaults,
+)
 from kiro_crew.context_assembly.markers import _apply_marker_spans, _marker_spans
 from kiro_crew.crew_log import emit as crew_log_emit
 from kiro_crew.crew_log.session_tree_projection import projection
@@ -128,6 +135,7 @@ from kiro_crew.execution_context import (
     ExecutionContext,
     MemoryStoreRef,
     bind_session_execution,
+    member_config_for_id,
     read_session_execution,
     read_vouched_session_execution,
     refresh_vouched_session_execution,
@@ -2421,6 +2429,7 @@ async def create_session(
     agent_kind: str = "",
     folder_id: str = "",
     model: str = "",
+    reasoning_effort: str | None = None,
     caller_fenced: bool | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -2464,9 +2473,20 @@ async def create_session(
     ``model`` pins the model the child starts on, as the person's own pick in the
     model dropdown would: same rejection guard, same pick-generation bump, and
     recorded in the persist-at-birth metadata so an idle child keeps it across a
-    restart. Empty leaves the slot on the agent's or the global default, exactly
-    as before. It is not a privilege the caller lacks -- ``spawn_run`` already
+    restart. It is not a privilege the caller lacks -- ``spawn_run`` already
     takes a per-run ``model`` -- and it moves no memory boundary.
+    ``reasoning_effort`` pins the level the same way, one of the five canonical
+    levels ``session_set_model`` takes; any other value is refused
+    ``effort_rejected`` before anything is allocated.
+
+    Either one left EMPTY takes the matching explicit pin from the crewmate
+    that is dispatching: the caller's member record
+    (:func:`_dispatching_crewmate`) supplies its ``worker_model`` /
+    ``worker_reasoning_effort`` when set, else its explicit ``model`` /
+    ``reasoning_effort`` pin (:func:`worker_session_defaults`). With no matching
+    profile pin, the child remains unpinned and its own agent's or the global
+    default decides. An explicit argument always wins, and the inherited model
+    runs the same guard an explicit one does.
 
     ``caller_fenced`` is the ownership-fence verdict the HTTP gate already settled
     on the caller's VERIFIED scope, carried in for the same reason
@@ -2735,37 +2755,85 @@ async def create_session(
     # the caller stated a kind -- the chat create route's `chosen.selection_kind`.
     committed_kind = bindings.selection_kind if agent_kind else ""
 
-    # The model the child starts on. Checked by the SAME guard the dashboard's
-    # model picker runs (`_model_rejected_reason`), against the provider from the
-    # config snapshot already loaded off the loop, so an id the picker would refuse
-    # is refused here too -- before anything is allocated, where refusing loses
-    # nothing. Length and charset are bounded HERE, not left to the MCP schema:
-    # SESSION_CREATE_SCHEMA runs only in mcp_dashboard, and the HTTP route
-    # forwards the body's model string as-is, so without this bound an
-    # internal-secret caller could persist, broadcast and audit-log an
-    # arbitrarily long or arbitrarily shaped value.
+    # The model and effort the child starts on, checked BEFORE anything is
+    # allocated, where refusing loses nothing (the model guard is
+    # `_model_pin_refusal`, the picker's own).
+    #
+    # The level is validated BEFORE the inheritance below fills the gaps: a malformed
+    # explicit level is the caller's error and must be reported as such, not
+    # papered over by the crewmate's default.
+    if reasoning_effort is not None and reasoning_effort != "":
+        if not is_valid_effort(reasoning_effort):
+            raise SessionControlError(
+                f"reasoning_effort must be one of: {', '.join(EFFORT_LEVELS)}",
+                code="effort_rejected",
+            )
+    # What the caller left unsaid comes from the crewmate doing the dispatch,
+    # read off the config snapshot already loaded above. `model`'s inherited
+    # value goes through the SAME guard below as an explicit one -- a profile
+    # field is operator input too, and `_model_rejected_reason` is what keeps a
+    # display-only key out of `slot.model` whichever door it came through.
+    #
+    # Only a child that is NOT itself a crewmate inherits. A child selected as
+    # a member (an explicit `agent` naming another crewmate) has a profile of
+    # its own, and its turns already resolve that profile's model and effort
+    # through the crew-pin tier; a pin copied from the dispatcher would outrank
+    # it as a per-session pick and run that crewmate on someone else's model.
+    inherited_fields: list[str] = []
+    model_from_worker_pin = False
+    effort_is_crewmates_own = False
+    child_is_crewmate = bool(agent.strip()) and bindings.selection_kind == "member"
+    if (not model.strip() or not reasoning_effort) and not child_is_crewmate:
+        crewmate = _dispatching_crewmate(cfg, caller_slot, caller_execution)
+        if crewmate is not None:
+            worker_model, worker_effort = worker_session_defaults(crewmate)
+            explicit_worker_effort = coerce_effort(crewmate.worker_reasoning_effort)
+            if model.strip():
+                # An explicit model is a model the crewmate's own level was not
+                # chosen for, the same as a `worker_model` pin: only the worker
+                # effort may ride it, never the crewmate's own.
+                worker_effort = explicit_worker_effort
+            elif worker_model:
+                model = worker_model
+                inherited_fields.append("model")
+                # The profile's own worker pin was validated for the worker's
+                # harness; the crewmate's own `model` was validated for the
+                # crewmate's. The cross-harness drop below applies to the latter.
+                model_from_worker_pin = bool(crewmate.worker_model.strip())
+            if not reasoning_effort and worker_effort:
+                reasoning_effort = worker_effort
+                inherited_fields.append("reasoning_effort")
+                # Whether that level is the crewmate's OWN (carried only because
+                # the worker was to run the crewmate's model) rather than the
+                # profile's worker effort: if the model is dropped below, so is it.
+                effort_is_crewmates_own = worker_effort != explicit_worker_effort
     model_name = _normalize_model(model.strip())
-    if model_name:
-        if len(model_name) > MAX_SHORT_STRING or not _MODEL_NAME_RE.fullmatch(model_name):
-            raise SessionControlError(
-                "model id is too long or contains characters outside the model-id charset",
-                code="model_rejected",
-            )
-
-        # Never persist or broadcast a value the security scrubber classifies.
-        if redact(model_name) != model_name:
-            raise SessionControlError(
-                "model id looks like a credential and was refused",
-                code="model_rejected",
-            )
-
-        # circular import: chat_handlers imports session_control lazily, and this
-        # module is imported by the dashboard package before chat_handlers loads.
-        from kiro_crew.dashboard.chat_handlers import _model_rejected_reason
-
-        model_reason = _model_rejected_reason(model_name, provider=cfg.agent.provider or "")
-        if model_reason:
+    # An inherited pin the guard refuses is DROPPED, never fatal: a profile pin
+    # goes stale (delisted, display-only, outside the account's entitlement, or an id only the
+    # crewmate's own harness serves) without anyone looking at it, and a hard
+    # refusal would stop every worker the crewmate opens until someone edits
+    # the profile or names a model on every call -- the burden the inheritance
+    # removes. The child then starts on the default, and the SEL record says
+    # so. An explicit pin is the caller's own and stays a refusal.
+    inherited_model_dropped = ""
+    model_reason = _model_pin_refusal(model_name, cfg) if model_name else None
+    if model_reason is None and "model" in inherited_fields:
+        model_reason = _inherited_pin_foreign_to_child(
+            model_name, cfg, validated_for_worker=model_from_worker_pin
+        )
+    if model_reason is not None:
+        if "model" not in inherited_fields:
             raise SessionControlError(model_reason, code="model_rejected")
+        inherited_fields.remove("model")
+        inherited_model_dropped = model_name
+        model_name = ""
+        if effort_is_crewmates_own and "reasoning_effort" in inherited_fields:
+            # The crewmate's own level rode along only because the worker was to
+            # run the crewmate's model; with that model gone it goes too. The
+            # profile's explicit worker effort is kept.
+            inherited_fields.remove("reasoning_effort")
+            reasoning_effort = ""
+    effort_name = reasoning_effort or ""
 
     # Capture the child route once. Inherited member/store identity survives
     # renamed aliases or changed config; an explicit member selection is resolved
@@ -3303,6 +3371,13 @@ async def create_session(
             # exactly as it treats a human pick rather than as a backfilled value.
             slot.model = model_name
             slot._model_pick_gen += 1
+        if effort_name:
+            # Pinned like the model: the setter bumps the effort pick
+            # generation, and the first turn's cold start applies the level
+            # through the same `reasoning_effort_override` the effort dropdown
+            # relies on. One of the five canonical levels (checked above), so
+            # the restore allowlist always admits it without a marker.
+            slot.reasoning_effort = effort_name
         if clean_title:
             slot.title = clean_title
             slot._titled = True
@@ -3386,6 +3461,10 @@ async def create_session(
                     # dict is the only record, and without it a restart would
                     # bring the session back on the default model.
                     **({"model": slot.model} if model_name else {}),
+                    # The pinned effort, on the same grounds: the metadata codec
+                    # restores `reasoning_effort` from this line, and a canonical
+                    # level needs no validated-effort marker to come back.
+                    **({"reasoning_effort": slot.reasoning_effort} if effort_name else {}),
                     # Creator attribution, only when this entry point set it. The
                     # member ownership boundary in `authorize_target` reads it, so
                     # losing it on restart would strand every worker a member
@@ -3470,6 +3549,15 @@ async def create_session(
             "agent": slot.agent or "",
             "folder_id": slot.folder_id or "",
             "model": model_name,
+            "reasoning_effort": effort_name,
+            # Which of the two the crewmate's profile supplied rather than the
+            # call, so a worker found on an unexpected model is traceable to
+            # the record that chose it. "" when the call named both or the
+            # caller is not a crewmate.
+            "inherited": ",".join(inherited_fields),
+            # The profile model the picker guard refused and the create dropped
+            # (the child started on the default instead). "" when none was.
+            "inherited_model_dropped": redact(inherited_model_dropped),
             # What the child was BORN with, so an auto-approved tool call in it is
             # traceable to the creator's grant rather than appearing unexplained.
             # Always present: "false" is the record that the grant did not transfer.
@@ -3487,7 +3575,113 @@ async def create_session(
         "target": slot.key,
         "title": slot.title or slot.key,
         **({"model": model_name} if model_name else {}),
+        **({"reasoning_effort": effort_name} if effort_name else {}),
+        **({"inherited": inherited_fields} if inherited_fields else {}),
+        **({"inherited_model_dropped": True} if inherited_model_dropped else {}),
     }
+
+
+def _model_pin_refusal(model_name: str, cfg: KiroCrewConfig) -> str | None:
+    """Why ``model_name`` may not be pinned on a new session, or ``None`` to allow it.
+
+    The same guard the dashboard's model picker runs (``_model_rejected_reason``),
+    against the provider from the config snapshot the create already loaded, so an
+    id the picker would refuse is refused here too. Length and charset are bounded
+    HERE, not left to the MCP schema: ``SESSION_CREATE_SCHEMA`` runs only in
+    ``mcp_dashboard``, and the HTTP route forwards the body's model string as-is,
+    so without this bound an internal-secret caller could persist, broadcast and
+    audit-log an arbitrarily long or arbitrarily shaped value. A credential-shaped
+    id is refused without being echoed: the reason is stored and broadcast.
+    """
+    if len(model_name) > MAX_SHORT_STRING or not _MODEL_NAME_RE.fullmatch(model_name):
+        return "model id is too long or contains characters outside the model-id charset"
+    # Never persist or broadcast a value the security scrubber classifies.
+    if redact(model_name) != model_name:
+        return "model id looks like a credential and was refused"
+    # circular import: chat_handlers imports session_control lazily, and this
+    # module is imported by the dashboard package before chat_handlers loads.
+    from kiro_crew.dashboard.chat_handlers import _model_rejected_reason
+
+    return _model_rejected_reason(model_name, provider=cfg.agent.provider or "")
+
+
+def _inherited_pin_foreign_to_child(
+    model_name: str, cfg: KiroCrewConfig, *, validated_for_worker: bool
+) -> str | None:
+    """Why a crewmate's model pin cannot follow its worker onto the child's harness, or ``None``.
+
+    A crewmate's own thread runs on ``agent.member_acp_backend`` and its own
+    ``model`` was validated against THAT harness's catalog
+    (``_pin_entitlement_backend``). A child that inherits is never a crewmate
+    itself, so it runs on ``agent.acp_backend`` -- the backend
+    ``select_provider_backend`` picks for a non-member key -- and an id one
+    harness serves is refused on the wire by the other. Two reads, both keyed on
+    the child's backend: the two harnesses disagree on model-id namespace (a
+    claude or codex member pin cannot ride a kiro worker, and vice versa), or the
+    child's namespace has advertised a list the pin is not on while another
+    harness claims it (:func:`model_scope.pin_applies`). ``"auto"`` is every
+    harness's own word and always passes.
+
+    ``validated_for_worker`` names the profile's explicit ``worker_model``,
+    which ``PUT /api/agents/{name}`` validates against the WORKER's harness
+    (``agent.acp_backend``), so the namespace read does not apply to it -- the
+    person pinned it for exactly this harness -- and only the advertised-list
+    read remains. Only consulted for an INHERITED pin: an explicit model on the
+    call is the caller's own choice and keeps today's guard alone.
+    """
+    if model_name == DEFAULT_MODEL:
+        return None
+    child_namespace = capabilities_for(cfg.agent.acp_backend).model_id_namespace
+    member_namespace = capabilities_for(cfg.agent.member_acp_backend).model_id_namespace
+    if not validated_for_worker and child_namespace != member_namespace:
+        return (
+            "the crewmate's model pin was chosen for its own harness "
+            f"({cfg.agent.member_acp_backend or 'default'}), and the worker runs on "
+            f"{cfg.agent.acp_backend or 'the default backend'}"
+        )
+    if not model_scope.pin_applies(model_name, child_namespace):
+        return "the crewmate's model pin is not served by the harness the worker runs on"
+    return None
+
+
+def _dispatching_crewmate(
+    cfg: KiroCrewConfig, caller_slot: Any, caller_execution: ExecutionContext | None
+) -> KiroCrewAgentConfig | None:
+    """The ``config.agents`` record of the crewmate ``caller_slot`` runs as, or ``None``.
+
+    The caller's protected execution record is the first word: a ``member``
+    selection names the crewmate by its persisted id (which survives a rename)
+    or, for a member that never got one, by its selection name AND its own
+    template. A caller whose record is a TEMPLATE is not a crewmate -- a worker
+    a crewmate dispatched keeps that crewmate's store but runs as the template,
+    and its own children must not re-inherit a profile it does not carry; the
+    id-less member's worker keeps ``member`` as its selection, so there the
+    template is what tells it apart. A caller with no record at
+    all (a slot from before records were written) falls back to the slot's
+    agent name, which is how :func:`resolve_crew_identity` reads the same slot
+    for every other surface.
+
+    Read-only: a lookup miss is ``None``, never a refusal, because inheriting a
+    model is a convenience and a missing record simply leaves the default.
+    """
+    if caller_execution is not None:
+        if caller_execution.selection_kind != "member":
+            return None
+        if caller_execution.member_id is not None:
+            try:
+                return member_config_for_id(cfg, caller_execution.member_id)[1]
+            except Exception:  # noqa: BLE001 - a missing or ambiguous id is "no crewmate"
+                return None
+        record = cfg.agents.get(caller_execution.selection_name)
+        # An id-less member's template worker keeps the member's selection
+        # (the record cannot say "this member, under that template"), so the
+        # template is the only thing that tells the worker from the crewmate:
+        # a record running under another template is such a worker.
+        if record is None or caller_execution.template_id != member_template_id(record):
+            return None
+        return record
+    agent_name = getattr(caller_slot, "agent", "") or ""
+    return cfg.agents.get(agent_name) if agent_name else None
 
 
 #: Maximum ``title`` a forked child accepts, matching ``create_session``'s cap.

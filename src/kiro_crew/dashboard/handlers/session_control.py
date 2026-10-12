@@ -258,6 +258,13 @@ async def api_session_control_create(request: web.Request) -> web.Response:
         agent_kind = body.get("agent_kind", "")
         if not isinstance(agent_kind, str):
             raise sc.SessionControlError("agent_kind must be a string", code="invalid_field_type")
+        # Absent means "inherit the dispatching crewmate's"; present must be a
+        # string, and the verb judges its value against the five levels.
+        effort = body.get("reasoning_effort")
+        if effort is not None and not isinstance(effort, str):
+            raise sc.SessionControlError(
+                "reasoning_effort must be a string", code="invalid_field_type"
+            )
         # Warmed AFTER the body read, which suspends: a config edit landing in that
         # window would change the fingerprint and leave `create_session`'s own
         # synchronous gate re-reading the file on the loop. Nothing suspends between
@@ -271,6 +278,7 @@ async def api_session_control_create(request: web.Request) -> web.Response:
             agent_kind=agent_kind,
             folder_id=str(body.get("folder_id") or ""),
             model=str(body.get("model") or ""),
+            reasoning_effort=effort,
             dry_run=dry_run,
             # The fence verdict this request's admission already settled, for the
             # same reason every other route forwards it as

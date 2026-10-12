@@ -867,6 +867,33 @@ def coerce_effort(raw: object) -> str:
     return ""
 
 
+def worker_session_defaults(crew: "KiroCrewAgentConfig") -> tuple[str, str]:
+    """``(model, reasoning_effort)`` a session this crewmate dispatches starts on.
+
+    The pair ``session_create`` falls back to when the call names neither: the
+    crewmate's ``worker_model`` / ``worker_reasoning_effort`` when set, else its
+    explicit ``model`` / ``reasoning_effort`` pins. An empty crewmate pin leaves
+    that half unpinned, so the child keeps its own agent's or the global default,
+    exactly as a create that named nothing did before the pair existed.
+
+    ``worker_model`` is read RAW: ``"auto"`` is a real pin there (workers on the
+    backend default while the crewmate stays on a costly model), where the
+    crewmate's own ``model`` collapses it to inherit.
+
+    The crewmate's own effort carries over ONLY while the workers run the
+    crewmate's own model. With ``worker_model`` set, the level was chosen for a
+    different model: carrying a ``max`` picked for an opus conductor onto an
+    ``auto`` or haiku worker would pin a level the profile card shows no row
+    for, reaching the provider where the person cannot see or clear it. There
+    the only effort a worker takes is ``worker_reasoning_effort``.
+    """
+    worker_model = crew.worker_model.strip()
+    worker_effort = coerce_effort(crew.worker_reasoning_effort)
+    if worker_model:
+        return worker_model, worker_effort
+    return normalize_agent_model(crew.model), worker_effort or coerce_effort(crew.reasoning_effort)
+
+
 def coerce_fallback_model(raw: object) -> str:
     """Normalize the throttle-fallback model (agent.fallback_model).
 
@@ -4237,6 +4264,33 @@ class KiroCrewAgentConfig:
             "its role effort). A per-session pick still overrides this. Only "
             "reasoning-capable models accept a level; on any other model the pin "
             "is ignored, exactly as the global default is.",
+        ),
+    )
+    worker_model: str = field(
+        default="",
+        metadata=_meta(
+            "Worker Model",
+            "Model for the sessions this crewmate dispatches through "
+            "session_create when the call names none. Empty copies the "
+            "crewmate's model pin when set; with both fields empty, no session "
+            "model is pinned and the worker's own agent or the global default "
+            "decides. Unlike 'model', 'auto' is a real pin here: workers run "
+            "on the backend's own default, which is how a crewmate on a costly "
+            "model keeps its workers cheap. An explicit model on the call wins.",
+        ),
+    )
+    worker_reasoning_effort: str = field(
+        default="",
+        metadata=_meta(
+            "Worker Reasoning Effort",
+            "Reasoning effort for the sessions this crewmate dispatches through "
+            "session_create when the call names none. Empty means: while the "
+            "workers run the crewmate's own model (worker_model empty and no model "
+            "on the call) they take the crewmate's own effort (the field above); "
+            "under any other model no level is pinned and the worker's agent "
+            "decides as usual (its own crew pin if it runs as a crewmate, else "
+            "agent.reasoning_effort, else the model default). Set, one of the five "
+            "standard levels. An explicit effort on the call wins.",
         ),
     )
     approval_mode: str = field(
