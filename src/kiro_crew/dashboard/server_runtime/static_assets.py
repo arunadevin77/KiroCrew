@@ -7,6 +7,7 @@ prefixes, and the app window entries.
 from __future__ import annotations
 
 import asyncio
+import errno
 from collections.abc import Awaitable, Callable
 from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
         _vendor_preflight_handler,
         logger,
         register_app_window_paths,
+        request_persistence_recheck,
     )
 
 
@@ -167,15 +169,80 @@ async def _serve_dist_file(dist_dir: Path, subdir: str, tail: str) -> web.Stream
 
     ``web.FileResponse`` still picks a precompressed ``.br``/``.gz`` sibling and
     answers ranges and conditional requests.
+
+    A path the resolver FOUND (``resolve(strict=True)`` + ``is_file()`` both
+    passed) that then fails to ``open`` with something OTHER than "it is gone"
+    is not a 404: it is the broken-filesystem state #19463 describes, where a
+    seccomp filter inherited from a torn-down sandbox turns every ``open`` into
+    ``ENOSYS`` while ``stat`` keeps working. Letting ``FileResponse`` discover
+    that inside ``prepare()`` produces a bare, uncached-but-indistinguishable
+    404 and nothing else; the SPA never boots and nothing is logged. So the open
+    is probed HERE, off the event loop: on a non-``ENOENT`` failure the
+    persistence watchdog is nudged to re-probe and exit the process (a live
+    seccomp filter cannot be lifted), and the client gets an explicit no-store
+    503 rather than a silent 404 that caches as a genuinely-missing asset.
+
+    A file genuinely swept between resolve and this open (``ENOENT``/``ENOTDIR``)
+    is left as the 404 it always was: the filesystem is healthy, the asset is
+    simply gone (a staging step removed it), and the cache finalizer already
+    stops that 404 being cached ``immutable``. The probe opens and immediately
+    closes one fd; it does not read the body, so ``FileResponse`` still streams
+    it with its own range/conditional/precompressed handling on the healthy
+    path.
     """
-    path = await asyncio.get_running_loop().run_in_executor(
-        None, _resolve_dist_file, dist_dir, subdir, tail
-    )
+    loop = asyncio.get_running_loop()
+    path = await loop.run_in_executor(None, _resolve_dist_file, dist_dir, subdir, tail)
     if path is None:
         # Returned, not raised, so the header middleware still marks it
         # no-store: a cached 404 for a hashed chunk outlives the gap.
         return web.Response(status=404, text="404: Not Found")
-    return web.FileResponse(path)
+    open_error = await loop.run_in_executor(None, _probe_openable, path)
+    if open_error is None:
+        return web.FileResponse(path)
+    errno_, detail = open_error
+    if errno_ in (errno.ENOENT, errno.ENOTDIR):
+        # The file the resolver found vanished before we could open it — a
+        # genuine miss on a healthy filesystem (e.g. a staging sweep). Keep the
+        # pre-existing 404; the cache finalizer keeps it from caching immutable.
+        return web.Response(status=404, text="404: Not Found")
+    logger.error(
+        "Static asset %s was resolved but could not be opened (%s). The data "
+        "home may have stopped persisting (e.g. an inherited seccomp filter "
+        "after a sandbox teardown); nudging the persistence watchdog.",
+        path,
+        detail,
+    )
+    request_persistence_recheck()
+    # 503, not 404: the asset exists and resolved fine, so a 404 would be a lie
+    # a browser caches against the hashed URL for a year. no-store is applied by
+    # the header middleware for any non-200 under /assets.
+    return web.Response(
+        status=503,
+        text="503: asset temporarily unreadable",
+        headers={"Retry-After": "5"},
+    )
+
+
+def _probe_openable(path: Path) -> tuple[int, str] | None:
+    """``None`` if ``path`` opens, else ``(errno, message)`` of the ``OSError``.
+
+    One ``open`` of the already-resolved file, closed at once. The resolver has
+    already confirmed the path exists and is a regular file, so the only errors
+    this surfaces are the ones ``FileResponse`` would hit and swallow inside
+    ``prepare()``. The errno is returned so the caller can separate "the file
+    is gone" (``ENOENT``/``ENOTDIR`` — a healthy filesystem, a genuine 404) from
+    "this process cannot open a file that is there" (chiefly ``ENOSYS`` from a
+    syscall filter that outlived its sandbox — the #19463 state). Runs off the
+    event loop (its one caller dispatches it to an executor). An ``OSError`` with
+    no ``errno`` (``errno is None``) is reported as ``0``, which is neither
+    ``ENOENT`` nor ``ENOTDIR``, so it takes the conservative persistence-failure
+    path rather than being miscategorised as a benign miss.
+    """
+    try:
+        with open(path, "rb"):
+            return None
+    except OSError as exc:
+        return (exc.errno or 0, str(exc))
 
 
 def _register_dist_static_routes(app: web.Application, dist_dir: Path) -> None:

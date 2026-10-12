@@ -74,7 +74,11 @@ async def test_missing_hashed_asset_is_not_cached(tmp_path: Path) -> None:
 async def test_an_asset_swept_after_it_was_found_is_not_cached(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The race the finalizer still covers: found, then removed before prepare()."""
+    """Found by the resolver, then gone: the open-probe turns it into a clean
+    no-store 404 at the handler, rather than a FileResponse that 404s in
+    prepare(). The errno is ENOENT, so it stays a 404 (a healthy filesystem
+    whose file genuinely vanished), not the 503 reserved for a data home that
+    cannot open a file that IS there (#19463)."""
     monkeypatch.setattr(srv, "_resolve_dist_file", lambda *_a: tmp_path / "swept.js")
     async with TestClient(TestServer(_make_app(_dist(tmp_path)))) as client:
         resp = await client.get("/assets/check-BiXj6uGO.js")
@@ -162,10 +166,17 @@ async def test_without_finalizer_the_404_is_immutable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Pins the mechanism this file exists for: with only the middleware, a
-    file that vanishes after the route found it really does leave as a 404
-    with ``immutable``. If aiohttp ever moves the existence check back before
-    the handler returns, this test fails and the finalizer can be retired."""
+    file that vanishes between the handler's open-probe and ``FileResponse``'s
+    own ``stat`` in ``prepare()`` really does leave as a 404 with ``immutable``.
+    If aiohttp ever moves the existence check back before the handler returns,
+    this test fails and the finalizer can be retired.
+
+    The open-probe (``_probe_openable``) catches a vanish it can see and turns
+    it into a clean no-store 404 at the handler — so to exercise the finalizer's
+    OWN narrower window (openable when probed, swept before prepare) the probe
+    is stubbed to report the path as openable."""
     monkeypatch.setattr(srv, "_resolve_dist_file", lambda *_a: tmp_path / "swept.js")
+    monkeypatch.setattr(srv, "_probe_openable", lambda _p: None)
     app = web.Application()
     srv._register_dist_static_routes(app, _dist(tmp_path))
 

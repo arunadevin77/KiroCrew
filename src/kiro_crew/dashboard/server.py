@@ -161,6 +161,9 @@ from kiro_crew.dashboard.origin import (  # noqa: F401
     resolve_dashboard_host,
     should_canonicalize_host,
 )
+from kiro_crew.dashboard.persistence_watchdog import (  # noqa: F401
+    request_persistence_recheck,
+)
 from kiro_crew.dashboard.port_reclaim import (  # noqa: F401
     FOREIGN_HOLDER,
     HEALTHY_PEER,
@@ -329,6 +332,7 @@ from kiro_crew.dashboard.server_runtime.skill_learning import (  # noqa: F401
 from kiro_crew.dashboard.server_runtime.static_assets import (  # noqa: F401
     _dist_file_handler,
     _is_anchored,
+    _probe_openable,
     _register_dist_static_routes,
     _resolve_dist_file,
     _serve_dist_file,
