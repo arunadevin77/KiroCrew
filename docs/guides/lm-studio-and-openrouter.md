@@ -115,7 +115,7 @@ its server settings
    opencode models lmstudio
    ```
 
-   The output lists `lmstudio/google/gemma-3n-e4b`.
+   The output includes `lmstudio/google/gemma-3n-e4b`.
 
 ### Through Pi
 
@@ -142,8 +142,15 @@ its server settings
    authentication is off: Pi lists a custom model only once it can resolve a
    credential for its provider. If you turned on LM Studio authentication, put
    your LM Studio token there instead.
-2. Check that Pi sees it: run `pi`, open `/model`, and find the model. Press
-   `Ctrl+S` on it to save it as Pi's default for new sessions.
+2. Check that Pi sees it, from a terminal:
+
+   ```bash
+   pi --list-models gemma
+   ```
+
+   The output has a row for provider `lmstudio`, model `google/gemma-3n-e4b`.
+   Inside Pi, `/model` shows the same model; press `Ctrl+S` on it to save it
+   as Pi's default for new sessions.
 
 ## 3. OpenRouter
 
@@ -167,6 +174,7 @@ first.
    opencode models openrouter
    ```
 
+   OpenCode lists the `openrouter` provider only once step 1 has stored a key.
    Many OpenRouter models are preloaded. To add one OpenCode does not list, name
    it under `provider.openrouter.models` in `opencode.json`, as the OpenCode
    providers page shows.
@@ -209,5 +217,6 @@ for each harness is its auth declaration, described in Stage 5 of
 | "OpenCode is not signed in" or "Pi is not signed in" when a chat starts | The harness found no usable provider. Run the sign-in step for OpenRouter, or add the LM Studio provider entry, then start a new chat. |
 | The model is missing from the Kiro Crew picker | Run `opencode models <provider>` or Pi's `/model`. If the harness does not list it, fix the harness config first. If it does, start a new chat so a session reports it. |
 | LM Studio requests fail | `curl http://localhost:1234/v1/models` must answer on the gateway host. Check that the server is started and the port in the config matches. |
-| Pi lists the LM Studio model nowhere | The provider entry needs an `apiKey`, and `models.json` must be valid JSON. Opening `/model` reloads the file. |
+| Pi lists the LM Studio model nowhere | The provider entry needs an `apiKey`, and `models.json` must be valid JSON. `pi --list-models` reads the file on each run; inside Pi, opening `/model` reloads it. |
+| `opencode models openrouter` answers "Provider not found" | No OpenRouter key is stored yet. Run `opencode auth login` and choose OpenRouter. |
 | A Crew Member DM does not use the model | Member threads follow `agent.member_acp_backend`, not `agent.acp_backend`. See step 1. |
