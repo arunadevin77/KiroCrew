@@ -6,7 +6,7 @@ author: zejiangg (iamwhatever), with Kiro
 created: 2026-10-12
 last-audited: 2026-10-12
 audited-at: 10350b7294
-doc-pr: null
+doc-pr: 19611
 implementation-prs: []
 tracking-issues: []
 supersedes: []
