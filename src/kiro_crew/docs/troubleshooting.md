@@ -63,6 +63,8 @@ never changes. The fix is `launchctl setenv PATH "$PATH"` plus a full quit and
 relaunch — see the
 [macOS troubleshooting guide](https://github.com/kirodotdev/KiroCrew/blob/main/docs/guides/macos-troubleshooting.md)
 for the recipe and how to persist it across reboots.
+To add only a few directories, a `PATH=` line in `~/.kiro/crew/.env` does it
+without touching launchd; see [Credentials](configuration.md#credentials).
 
 ### Dashboard asks for sign-in but `kiro-cli` is already authenticated
 

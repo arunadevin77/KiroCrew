@@ -4832,8 +4832,13 @@ class KiroCrewConfig:
             # These keys still propagate (operators use them for proxy/feature
             # settings), but the warning makes the behavior visible rather than
             # silently surprising.  The encrypted vault (PR 1+) will provide a
-            # proper agent-isolated path for secrets.
-            unknown = set(creds) - set(CREDENTIAL_KEYS) - _warned_env_keys
+            # proper agent-isolated path for secrets. A PATH line is a supported
+            # setting (it extends the PATH), so it is not one of these keys.
+            unknown = {
+                k
+                for k in set(creds) - set(CREDENTIAL_KEYS) - _warned_env_keys
+                if not platform_compat.env_key_allowed(k, ("PATH",))
+            }
             if unknown:
                 _warned_env_keys.update(unknown)
                 for uk in sorted(unknown):
@@ -4871,6 +4876,14 @@ class KiroCrewConfig:
                 if not v:
                     continue
                 if scrubbed and (k in CREDENTIAL_KEYS or _JIRA_TOKEN_RE.match(k)):
+                    continue
+                if platform_compat.env_key_allowed(k, ("PATH",)):
+                    # A process always has a PATH, so setdefault would make this
+                    # line inert. It extends the PATH instead, and nothing more.
+                    # Lazy import: env must stay off this module's import graph.
+                    from kiro_crew.env import extend_process_path
+
+                    extend_process_path(v)
                     continue
                 os.environ.setdefault(k, v)
 

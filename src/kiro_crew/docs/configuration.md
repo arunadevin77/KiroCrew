@@ -744,6 +744,20 @@ Crew rewrites the file. A file saved as UTF-16 or UTF-32 (PowerShell's default
 warns once, and a dashboard channel save answers 409 until the file is re-saved
 as UTF-8.
 
+To add directories to the `PATH` the agent's shell starts with, put a `PATH` line
+in the same file. List only the directories to add, as absolute paths separated the
+way `PATH` is on your platform (`:` on macOS and Linux, `;` on Windows):
+
+```
+PATH=/opt/tools/bin:/opt/other-tools/bin
+```
+
+They are appended behind the `PATH` the gateway already has, so a directory here
+can supply a tool the gateway cannot find but never replaces one it can. `~`
+expands; `$HOME` and other shell syntax do not, and an entry that is not an
+absolute directory is dropped with a warning in the log. Restart the gateway after
+editing the file.
+
 ## Denied Commands
 
 The built-in destructive-command deny rules are enforced at Kiro Crew's own

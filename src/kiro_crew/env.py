@@ -236,6 +236,31 @@ def _extra_mcp_path_dirs() -> list[str]:
     ]
 
 
+def extend_process_path(value: str) -> None:
+    """Append the directories of a data-home ``.env`` ``PATH`` line to this process's ``PATH``.
+
+    The ``.env`` loader seeds the environment with ``setdefault``, and a process
+    always has a ``PATH``, so this key cannot be applied the way every other one
+    is. The line is read as directories to ADD, never as a replacement: each entry
+    goes through the absolute-directory gate the other operator lists use
+    (:func:`_validated_bin_dirs`, so ``~`` expands and a relative or unexpanded
+    entry such as ``$HOME/bin`` is dropped with a warning), and lands behind the
+    ``PATH`` the process already has, so it can add a launcher but never shadow a
+    system tool. The existing string is kept byte for byte and an entry it
+    already holds is skipped, so the repeated loads of the file do not grow it.
+
+    Nothing else about the environment widens. An agent child still receives its
+    environment through the launch tail's scrub, and the terminal completion
+    probe still filters this ``PATH`` through its ownership check.
+    """
+    current = os.environ.get("PATH") or os.defpath
+    held = _dedup_dirs(current.split(os.pathsep))
+    wanted = [entry for entry in value.split(os.pathsep) if entry.strip()]
+    merged = _dedup_dirs([*held, *_validated_bin_dirs(wanted, ".env PATH")])
+    if len(merged) > len(held):
+        os.environ["PATH"] = os.pathsep.join([current, *merged[len(held) :]])
+
+
 # --- node build toolchain -----------------------------------------------------
 #
 # Directories a Node VERSION MANAGER installs a real ``node``/``npm`` into.

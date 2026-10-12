@@ -42,8 +42,10 @@ If **only an MCP server launcher** is missing, prefer the narrower
 `mcp.extra_path_dirs` config list. It extends MCP resolution and the MCP gateway
 daemon without changing GUI applications' general `PATH`; entries must be
 absolute, and a gateway restart is required because the daemon inherits its
-`PATH` at spawn. It does not affect ordinary agent shell commands, so use the
-launchd fix below when those are missing too.
+`PATH` at spawn. It does not affect ordinary agent shell commands. When those are
+missing too, either add the directories as a `PATH=` line in `~/.kiro/crew/.env`
+([Credentials](../../src/kiro_crew/docs/configuration.md#credentials)), which is
+appended behind the app's `PATH`, or use the launchd fix below.
 
 ### The fix
 
