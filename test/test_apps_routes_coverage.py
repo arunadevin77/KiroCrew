@@ -3925,8 +3925,10 @@ class TestFetchGitBlobCredentialPosture:
         monkeypatch.setattr(routes_mod, "anonymous_git_env", lambda **extra: {"_env": "anonymous"})
         monkeypatch.setattr(routes_mod, "_context_clone_sandbox_mode", lambda url: "context-mode")
 
-        def _fake_wrap(cmd: list[str], *, mode: str) -> tuple[list[str], None]:
+        def _fake_wrap(cmd: list[str], *, mode: str, **kwargs: Any) -> tuple[list[str], None]:
             captured["mode"] = mode
+            # ``wrap_argv_async`` hands the socket request on only when it is set.
+            captured["forward"] = kwargs.get("forward_ssh_auth_sock", False)
             # The clone argv is ``git clone ... <git_url> <tmp_root>`` — the URL
             # the process will actually clone is the second-to-last element.  We
             # DON'T assert the full argv (wrap_argv/cgroup lesson); we read back
@@ -4009,6 +4011,28 @@ class TestFetchGitBlobCredentialPosture:
         # The default (anonymous) path grants no credentials → no audit record.
         assert cap["grants"] == []
         assert cap["cloned_url"] == "ssh://forge.example/org/sibling.git"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("owner_designated", [False, True], ids=["default", "owner"])
+    async def test_blob_clone_asks_for_the_agent_socket_only_for_the_owners_url(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, owner_designated: bool
+    ) -> None:
+        """The agent socket goes with the owner credentials and with nothing else."""
+        _setup_env(tmp_path, monkeypatch)
+        url = "ssh://forge.example/org/registry.git"
+        cap = self._capture(monkeypatch, url)
+
+        ok = await routes_mod._fetch_git_blob(
+            url,
+            "main",
+            "assets/logo.png",
+            tmp_path / "out.png",
+            git_url=url,
+            owner_designated=owner_designated,
+        )
+
+        assert ok is False  # the fake clone fails → graceful fallback
+        assert cap["forward"] is owner_designated
 
     @pytest.mark.asyncio
     async def test_injected_cloneurl_never_becomes_the_credentialed_clone_target(
@@ -4387,7 +4411,7 @@ class TestBlobProxyOwnerDesignatedWiring:
         monkeypatch.setattr(routes_mod, "anonymous_git_env", lambda **extra: {"_env": "anonymous"})
         monkeypatch.setattr(routes_mod, "_context_clone_sandbox_mode", lambda url: "context-mode")
 
-        def _fake_wrap(cmd: list[str], *, mode: str) -> tuple[list[str], None]:
+        def _fake_wrap(cmd: list[str], *, mode: str, **_kwargs: Any) -> tuple[list[str], None]:
             captured["mode"] = mode
             captured["cloned_url"] = cmd[-2]
             return (cmd, None)
@@ -4476,7 +4500,7 @@ class TestBlobProxyOwnerDesignatedWiring:
         monkeypatch.setattr(routes_mod, "anonymous_git_env", lambda **extra: {"_env": "anonymous"})
         monkeypatch.setattr(routes_mod, "_context_clone_sandbox_mode", lambda url: "context-mode")
 
-        def _fake_wrap(cmd: list[str], *, mode: str) -> tuple[list[str], None]:
+        def _fake_wrap(cmd: list[str], *, mode: str, **_kwargs: Any) -> tuple[list[str], None]:
             captured["mode"] = mode
             captured["cloned_url"] = cmd[-2]
             return (cmd, None)
@@ -4548,7 +4572,7 @@ class TestBlobProxyOwnerDesignatedWiring:
         monkeypatch.setattr(reg_mod, "is_clone_host_trusted", lambda u: True)
         monkeypatch.setattr(routes_mod, "minimal_env", lambda **extra: {"_env": "minimal"})
         monkeypatch.setattr(routes_mod, "anonymous_git_env", lambda **extra: {"_env": "anonymous"})
-        monkeypatch.setattr(routes_mod, "wrap_argv", lambda cmd, *, mode: (cmd, None))
+        monkeypatch.setattr(routes_mod, "wrap_argv", lambda cmd, *, mode, **_k: (cmd, None))
         monkeypatch.setattr(routes_mod, "cgroup_scope_argv", lambda cmd: cmd)
         monkeypatch.setattr(routes_mod, "_sel_credential_grant", lambda operation, git_url: None)
 

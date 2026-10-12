@@ -689,11 +689,14 @@ async def _git_fetch_branch(
     clone_env: dict[str, str],
     sandbox_mode: str,
     mask_local_git_config: bool = False,
+    forward_ssh_auth_sock: bool = False,
 ) -> dict[str, Any] | None:
     """Fetch and check out *branch* without exposing credentials to checkout.
 
     *mask_local_git_config* is forwarded to :func:`_git_fetch_ref`; see there. It
     is for the pre-install store-art prewarm only and stays off for installs.
+    *forward_ssh_auth_sock* is forwarded the same way and reaches the network step
+    only; a caller sets it when the owner designated *git_url*.
     """
     return await _git_fetch_ref(
         git_url,
@@ -705,6 +708,7 @@ async def _git_fetch_branch(
         clone_env=clone_env,
         sandbox_mode=sandbox_mode,
         mask_local_git_config=mask_local_git_config,
+        forward_ssh_auth_sock=forward_ssh_auth_sock,
     )
 
 

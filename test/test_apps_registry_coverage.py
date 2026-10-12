@@ -1026,7 +1026,7 @@ class TestFetchAppManifest:
             seen_env.append(kwargs["env"])
             return _FakeProc(returncode=0)
 
-        monkeypatch.setattr(registry, "wrap_argv", lambda cmd, mode="": (list(cmd), None))
+        monkeypatch.setattr(registry, "wrap_argv", lambda cmd, mode="", **_kw: (list(cmd), None))
         monkeypatch.setattr(registry, "cgroup_scope_argv", lambda cmd: list(cmd))
         monkeypatch.setattr(registry, "create_subprocess_limited", _spawn)
 

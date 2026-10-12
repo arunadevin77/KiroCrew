@@ -8958,3 +8958,69 @@ async def test_install_clone_forwards_the_agent_socket_only_for_an_owner_install
     # The socket is for the network step only: local init/checkout never get it.
     local = [c for c in calls if c not in network]
     assert all(c.get("forward_ssh_auth_sock", False) is False for c in local)
+
+
+# --- The rest of the owner posture asks for the socket the same way ---
+#
+# A same-repo manifest fetch, the browse-time blob proxy and the owner-tier art
+# prewarm run in the owner posture (``minimal_env`` plus the context sandbox mode),
+# so on a host that only takes agent-held SSH keys they need the socket too. A
+# fetch for any other URL stays anonymous and never asks.
+
+
+@pytest.mark.parametrize("pinned", [False, True], ids=["branch", "pinned-commit"])
+@pytest.mark.parametrize("owner_designated", [False, True], ids=["default", "owner"])
+@pytest.mark.asyncio
+async def test_manifest_fetch_asks_for_the_agent_socket_only_for_the_owners_url(
+    monkeypatch, owner_designated: bool, pinned: bool
+):
+    from kiro_crew.apps.registry_pipeline import checkout, manifests
+
+    calls: list[dict] = []
+    _ssh_capture(monkeypatch, manifests, calls)
+    _ssh_capture(monkeypatch, checkout, calls)
+    monkeypatch.setattr(manifests, "is_clone_host_trusted", lambda url: True)
+    monkeypatch.setattr(manifests, "_context_clone_sandbox_mode", lambda url: "standard")
+    monkeypatch.setattr(manifests, "_sel_credential_grant", lambda operation, url: None)
+    commit = "a" * 40 if pinned else ""
+    manifest = await manifests._fetch_app_manifest(
+        _SSH_REGISTRY_URL,
+        "main",
+        git_url=_SSH_REGISTRY_URL,
+        owner_designated=owner_designated,
+        commit=commit,
+    )
+    assert manifest is None
+    network = _ssh_calls_with(calls, "fetch" if pinned else "clone")
+    assert network, calls
+    asked = [c.get("forward_ssh_auth_sock", False) for c in network]
+    assert asked == [owner_designated] * len(network)
+    # The socket is for the network step only: local init/remote steps never get it.
+    local = [c for c in calls if c not in network]
+    assert all(c.get("forward_ssh_auth_sock", False) is False for c in local)
+
+
+@pytest.mark.parametrize("forward", [False, True], ids=["default", "forwarded"])
+@pytest.mark.asyncio
+async def test_branch_fetch_asks_for_the_agent_socket_only_when_told_to(
+    monkeypatch, tmp_path: Path, forward: bool
+):
+    from kiro_crew.apps.registry_pipeline import checkout
+
+    calls: list[dict] = []
+    _ssh_capture(monkeypatch, checkout, calls)
+    result = await checkout._git_fetch_branch(
+        _SSH_REGISTRY_URL,
+        "main",
+        tmp_path / "branch",
+        [],
+        clone_env={},
+        sandbox_mode="standard",
+        forward_ssh_auth_sock=forward,
+    )
+    assert result is not None and result["ok"] is False
+    (fetch,) = _ssh_calls_with(calls, "fetch")
+    assert fetch["forward_ssh_auth_sock"] is forward
+    # The socket is for the network step only: local init/remote steps never get it.
+    local = [c for c in calls if c is not fetch]
+    assert all(c.get("forward_ssh_auth_sock", False) is False for c in local)

@@ -131,6 +131,7 @@ def _fake_fetch(monkeypatch, tree: dict[str, bytes], manifest: dict[str, Any] | 
                 "clone_env": dict(clone_env),
                 "sandbox_mode": sandbox_mode,
                 "mask_local_git_config": kw.get("mask_local_git_config", False),
+                "forward_ssh_auth_sock": kw.get("forward_ssh_auth_sock", False),
             }
         )
         dest = Path(dest)
@@ -258,6 +259,17 @@ class TestOwnerTierPrewarm:
         # the same masking would check out pointer files instead of content.
         assert call["mask_local_git_config"] is True
         assert grants == [("prewarm_store_art_owner_tier", SIBLING)]
+
+    @pytest.mark.asyncio
+    async def test_the_clone_asks_for_the_agent_socket(self, monkeypatch):
+        """The owner-tier clone keeps the owner's ssh agent, as the install clone does."""
+        reg = _pin_registry(monkeypatch, _TRUST_OWNER)
+        calls = _fake_fetch(monkeypatch, ART)
+
+        await _prewarm_owner_tier_store_assets(reg, [_entry()])
+
+        (call,) = calls
+        assert call["forward_ssh_auth_sock"] is True
 
     @pytest.mark.asyncio
     async def test_a_failed_fetch_leaves_no_manifest_behind(self, monkeypatch):

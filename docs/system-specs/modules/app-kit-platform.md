@@ -2187,7 +2187,8 @@ them reads the tier off a cached row:
   later sibling's index cache is already written when an earlier registry's
   gate reads it. The rows handed over are still the fresh in-memory lists.
   For each row it does one
-  owner-credentialed shallow clone (`minimal_env` + context sandbox mode,
+  owner-credentialed shallow clone (`minimal_env` + context sandbox mode + the
+  ssh-agent socket, which `wrap_argv` re-judges against the tier,
   `is_clone_host_trusted` still gating the host, a
   `prewarm_store_art_owner_tier` SEL grant per clone) — but only after the row's
   clone URL passes `_is_supported_registry_transport`, the same https/ssh

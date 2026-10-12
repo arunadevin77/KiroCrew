@@ -3761,7 +3761,8 @@ async def _fetch_git_blob(
     ``ExternalRegistryConfig.repo``.  In that case the confused-deputy defense
     does not apply (the owner designated exactly this URL by configuring the
     registry), so the clone uses owner credentials: ``minimal_env`` + the
-    context clone sandbox mode, exactly like the manifest/clone chokepoints.
+    context clone sandbox mode, and the ssh-agent socket (``wrap_argv`` re-judges
+    that against the tier), exactly like the manifest/clone chokepoints.
     A sibling repo on the same host is a *different* URL, so it never matches
     and stays anonymous + strict — the carve-out is URL-exact, not host-granular.
     The public identity and optional transport target must sanitize to the same
@@ -3890,7 +3891,10 @@ async def _fetch_git_blob(
                 tmp_root,
             ]
             sandboxed_cmd, _cleanup = await wrap_argv_async(
-                clone_cmd, mode=clone_mode, _prepare=wrap_argv
+                clone_cmd,
+                mode=clone_mode,
+                forward_ssh_auth_sock=owner_designated,
+                _prepare=wrap_argv,
             )
             sandboxed_cmd = cgroup_scope_argv(sandboxed_cmd)  # cgroup DoS ceiling
             proc = await create_subprocess_limited(

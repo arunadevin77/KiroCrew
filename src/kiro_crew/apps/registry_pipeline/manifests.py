@@ -82,8 +82,10 @@ async def _fetch_app_manifest(
 
     *owner_designated*: when True (same-repo credential carve-out), the
     clone uses ``minimal_env()`` + context sandbox mode instead of the
-    default anonymous+strict posture. Only set when the entry's effective
-    clone URL is byte-identical to the owner-configured registry repo URL.
+    default anonymous+strict posture, and asks to keep the ssh-agent socket
+    (``wrap_argv`` re-judges that against the tier). Only set when the entry's
+    effective clone URL is byte-identical to the owner-configured registry repo
+    URL.
 
     *commit*: a pinned commit. When set, the manifest is read from THAT tree
     rather than a branch tip, and the local fast path compares commits instead of
@@ -164,6 +166,10 @@ async def _fetch_app_manifest(
         # carve-out: when owner_designated is True the clone URL is the
         # owner-configured registry repo itself, so the confused-deputy
         # argument does not apply — use owner credentials + context sandbox.
+        # The owner's ssh agent is one of those credentials: the pinned fetch and
+        # the plain clone below pass owner_designated as the socket request, and
+        # wrap_argv re-judges it against the tier. The credentialed branch is an
+        # HTTP fetch and needs no agent.
         if owner_designated:
             clone_env = minimal_env()
             sandbox_mode = _context_clone_sandbox_mode(git_url)
@@ -194,6 +200,7 @@ async def _fetch_app_manifest(
                 credential_target=credential_target,
                 clone_env=clone_env,
                 sandbox_mode=sandbox_mode,
+                forward_ssh_auth_sock=owner_designated,
             )
             if err is not None:
                 logger.debug(
@@ -241,7 +248,10 @@ async def _fetch_app_manifest(
                 tmp_root,
             ]
             sandboxed_cmd, _cleanup = await wrap_argv_async(
-                clone_cmd, mode=sandbox_mode, _prepare=wrap_argv
+                clone_cmd,
+                mode=sandbox_mode,
+                forward_ssh_auth_sock=owner_designated,
+                _prepare=wrap_argv,
             )
             sandboxed_cmd = cgroup_scope_argv(sandboxed_cmd)  # cgroup DoS ceiling
             transport_env = _git_transport_env(credential_target, git_url, clone_env)
