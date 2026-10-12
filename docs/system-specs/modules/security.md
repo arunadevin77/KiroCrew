@@ -3080,8 +3080,10 @@ and the decline is SEL-audited as `auto_approve_declined` with
 counts as a write is the read-only classifier's own rule
 (`readonly_bash.writes_through_redirect`), so the trust-reads and trusted-pattern
 tiers agree: the discard idioms `>/dev/null`, `2>/dev/null`, `&>/dev/null` and
-`N>&M` are not writes, provided the idiom ends its shell word, and every other
-`>` is, quoted or not.
+`N>&M` are not writes, provided the idiom ends its shell word (a space, tab,
+newline, operator or the end of the line; any other character, including
+non-ASCII whitespace, continues the word), and every other `>` is, quoted or
+not.
 
 **Child-fidelity split: identity vs arguments.** A backend-subagent permission
 event whose structured params never reached the tool_call cache is low-fidelity

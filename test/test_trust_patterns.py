@@ -26,6 +26,7 @@ from kiro_crew.trust_patterns import matches_trusted_pattern as _canonical_match
 from kiro_crew.trust_patterns import (
     redirect_outside_grant,
 )
+from kiro_crew.trust_patterns import split_command_segments as _canonical_split_command_segments
 
 
 def _legacy_title_command(value: str) -> str:
@@ -1471,6 +1472,7 @@ class TestRedirectOutsideGrant:
             "gh pr view 42 &>> /tmp/x",
             "gh pr view 42 2>/tmp/err",
             "gh pr view 42 >&2x",
+            "gh pr view 42 >&2\u00a0report",
             "gh api user <> /tmp/x",
             "gh pr view 42 2>&1 > /tmp/x",
         ],
@@ -1528,6 +1530,21 @@ class TestRedirectOutsideGrant:
         assert redirect_outside_grant("ls /tmp && gh pr view 42 > /tmp/x", patterns) is True
         assert redirect_outside_grant("ls /tmp > /tmp/l; gh pr view 42", patterns) is True
         assert redirect_outside_grant("ls /tmp 2>/dev/null | gh pr view 42", patterns) is False
+
+    @pytest.mark.parametrize("glue", ["\u00a0", "\r", "\v", "\f", "\u2003"])
+    def test_a_segment_keeps_what_bash_reads_as_part_of_a_word(self, glue):
+        """Only space and tab are blanks beside a separator; the rest stays.
+
+        bash opens ``2<glue>`` for ``ls >&2<glue>; ls``, so the segment must
+        still end in ``<glue>`` for the redirect to read as a write.
+        """
+        command = f"ls >&2{glue}; ls"
+        split = _canonical_split_command_segments(command)
+        assert split is not None
+        assert split[1] == [f"ls >&2{glue}", "ls"]
+        assert redirect_outside_grant(command, base_trust_patterns("ls")) is True
+        # A blank bash does split on is still dropped around the separator.
+        assert _canonical_split_command_segments("ls >&2 \t; \tls")[1] == ["ls >&2", "ls"]
 
     def test_an_unsegmentable_command_is_left_to_the_matcher(self):
         patterns = base_trust_patterns("gh")

@@ -17,7 +17,10 @@ ENV_ASSIGNMENT_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*=")
 
 _REDIRECT_PLACEHOLDER = "\x00REDIR\x00"
 _REDIRECT_RE = re.compile(r"[0-9]*>&[0-9]*|&>>?")
-_COMMAND_SPLIT_RE = re.compile(r"\s*(?:\|\||&&|;|&|\n|\|)\s*")
+# The blanks around a separator are bash's own: space and tab. `\s` would also
+# eat U+00A0, `\r`, `\v` and `\f`, which bash keeps as part of the next or
+# previous word, so a segment would read differently from what bash runs.
+_COMMAND_SPLIT_RE = re.compile(r"[ \t]*(?:\|\||&&|;|&|\n|\|)[ \t]*")
 _GRANT_SPLIT_RE = re.compile(r"\s*(?:\|\||&&|;|\|)\s*")
 _COMMAND_SUBSTITUTION_RE = re.compile(r"\$\(|`|<\(|>\(")
 

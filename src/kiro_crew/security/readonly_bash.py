@@ -113,13 +113,15 @@ _UNSAFE_SHELL_RE = re.compile(r">|`|\$\(|<\(|(?<!&)&(?!&)|\$\[")
 # stripped before _UNSAFE_SHELL_RE — otherwise every `find … 2>/dev/null`
 # falls through to an interactive prompt. A redirect to any real path
 # (e.g. `cmd > out.txt`) still trips _UNSAFE_SHELL_RE and stays unsafe.
-# The trailing lookahead ends each idiom where its shell word ends: whitespace,
-# an operator, or the end of the command. Anything else continues the word, so
-# `>/dev/nullx`, `>/dev/null"x"` and `>/dev/null/../etc/passwd` name a real
-# file, and `>&2x` is not a descriptor copy at all: bash opens the file `2x`.
-# Scrubbing any of those as a sink would smuggle a real-file write past the
-# unsafe-shell check.
-_DEVNULL_REDIR_RE = re.compile(r"(?:(?:\d*>>?|&>)\s*/dev/null|\d*>&\d+)(?=$|[\s;&|()<>])")
+# The lookahead ends each idiom where bash ends the word: space, tab, newline,
+# an operator, or the end of the command. Anything else continues it, so
+# `>/dev/nullx`, `>/dev/null"x"` and `>&2x` (bash opens the file `2x`) are real
+# writes, not sinks. The classes are spelled out because `\s` and `\d` on a str
+# pattern also match U+00A0, `\r`, `\v`, `\f` and non-ASCII digits, which bash
+# keeps inside a word.
+_DEVNULL_REDIR_RE = re.compile(
+    r"(?:(?:[0-9]*>>?|&>)[ \t]*/dev/null|[0-9]*>&[0-9]+)(?=$|[ \t\n;&|()<>])"
+)
 
 # ── Side effects reached through an allowlisted read-only verb ──
 #
@@ -1484,17 +1486,9 @@ def unsafe_bash_reason(cmd: str) -> str:
 
 
 def writes_through_redirect(cmd: str) -> bool:
-    """Whether ``cmd`` sends output through a redirect to a real target.
+    """Whether ``cmd`` writes through a redirect: :func:`_classify_bash`'s rule alone.
 
-    This is the redirect half of :func:`_classify_bash`, on its own: the
-    discard idioms ``_DEVNULL_REDIR_RE`` names (``2>/dev/null``, ``2>&1``) are
-    not writes, and every other ``>`` is. Grant tiers that vouch for a program
-    rather than a whole command line read it, so both auto-approve planes
-    agree on what a write redirect is.
-
-    The text is read raw, quotes included, so a ``>`` inside a quoted argument
-    counts as a write too. Telling a quoted ``>`` from a live one needs the
-    shell's full quoting rules, and a mistake there lets a real write through;
-    reading it as a write costs one approval prompt.
+    The ``_DEVNULL_REDIR_RE`` discards are not writes; every other ``>`` is, quoted
+    or not, since telling a quoted ``>`` apart needs bash's full quoting rules.
     """
     return ">" in _DEVNULL_REDIR_RE.sub(" ", cmd)

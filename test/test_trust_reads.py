@@ -1315,10 +1315,19 @@ class TestIsReadOnlyBash:
         assert is_read_only_bash('ls >/dev/null"x"') is False
         assert is_read_only_bash("ls >/dev/null'x'") is False
         assert is_read_only_bash("ls >/dev/null\\x") is False
+        # bash ends a word only at space, tab or newline, and reads only ASCII
+        # digits as a descriptor: anything else continues the word.
+        for glue in ("\u00a0", "\r", "\v", "\f", "\u2003"):
+            assert is_read_only_bash(f"ls >&2{glue}report") is False, repr(glue)
+            assert is_read_only_bash(f"ls 2>/dev/null{glue}report") is False, repr(glue)
+            assert is_read_only_bash(f"ls >{glue}/dev/null") is False, repr(glue)
+        assert is_read_only_bash("ls >&\u0662") is False
+        assert is_read_only_bash("ls 2>&1\u0662") is False
         # Ending at whitespace, an operator or the end of the line stays a discard.
         assert is_read_only_bash("ls >&2") is True
         assert is_read_only_bash("ls 2>&1|head") is True
         assert is_read_only_bash("ls 2>/dev/null;ls") is True
+        assert is_read_only_bash("ls 2>\t/dev/null\t-a") is True
 
     def test_command_substitution_rejected(self):
         assert is_read_only_bash("echo $(rm -rf /)") is False
