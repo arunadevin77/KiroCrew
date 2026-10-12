@@ -2469,7 +2469,7 @@ def test_acquiring_a_lock_does_not_truncate_the_lock_file():
     Truncation is the direct, platform-independent observable: seed the lock file
     with bytes, acquire and release the lock, and assert the bytes survived. Under
     the old ``open(path, "w")`` this test fails on every platform (the file is
-    emptied); under the ``touch`` + ``"r+"`` open it passes, and the same
+    emptied); under ``open_lock_file``'s non-truncating open it passes, and the same
     non-truncating open is what stops the Windows sharing violation.
     """
     wl.ensure_conductor(CONDUCTOR, goal="g")
@@ -2480,6 +2480,68 @@ def test_acquiring_a_lock_does_not_truncate_the_lock_file():
     with wl.conductor_lock(CONDUCTOR):
         pass
     assert lock_path.read_bytes() == sentinel
+
+
+def test_every_store_lock_form_leaves_the_lock_file_bytes_alone():
+    """The same property for every lock the store takes: the conductor's and an
+    item's, creating and non-creating, and the purge's non-blocking hold over every
+    item lock. Bytes are read after release, never under the lock, because a
+    Windows region lock is mandatory and a locked read would answer EACCES."""
+    item_id = _new_item()
+    conductor_lock_path = wl.conductor_dir(CONDUCTOR) / wl._LOCK_FILE
+    item_lock_path = wl._item_lock_path(CONDUCTOR, item_id)
+    sentinel = b"held by a prior acquirer\n"
+    for path in (conductor_lock_path, item_lock_path):
+        path.write_bytes(sentinel)
+
+    with wl.conductor_lock(CONDUCTOR, create=False):
+        pass
+    with wl.item_lock(CONDUCTOR, item_id):
+        pass
+    with wl.item_lock(CONDUCTOR, item_id, create=False):
+        pass
+    with wl._hold_every_item_lock(wl.conductor_dir(CONDUCTOR)):
+        pass
+
+    assert conductor_lock_path.read_bytes() == sentinel
+    assert item_lock_path.read_bytes() == sentinel
+
+
+def test_a_non_creating_store_lock_refuses_a_missing_lock_file_and_creates_nothing():
+    """``create=False`` is the deleter's form: locking a store that is gone must
+    raise ``FileNotFoundError`` and leave no directory or lock file behind."""
+    directory = wl.conductor_dir(CONDUCTOR)
+    assert not directory.exists()
+    with pytest.raises(FileNotFoundError):
+        with wl.conductor_lock(CONDUCTOR, create=False):
+            pass
+    assert not directory.exists()
+
+
+@pytest.mark.skipif(not platform_compat.IS_POSIX, reason="POSIX permission bits")
+def test_store_lock_files_are_created_owner_only():
+    """Every other file in a ledger store is written ``0o600``; its lock files are
+    created the same way, whatever the process umask lets a plain create through."""
+    import os
+    import stat
+
+    def _mode(path: Path) -> int:
+        return stat.S_IMODE(path.stat().st_mode)
+
+    old_umask = os.umask(0o022)
+    try:
+        item_id = _new_item()
+        conductor_lock_path = wl.conductor_dir(CONDUCTOR) / wl._LOCK_FILE
+        item_lock_path = wl._item_lock_path(CONDUCTOR, item_id)
+        assert _mode(conductor_lock_path) == 0o600
+        assert _mode(item_lock_path) == 0o600
+        # The locked recreate path restores a hand-removed item lock for a live item.
+        item_lock_path.unlink()
+        with wl.item_lock(CONDUCTOR, item_id, create=False):
+            pass
+        assert _mode(item_lock_path) == 0o600
+    finally:
+        os.umask(old_umask)
 
 
 # ── revertability ─────────────────────────────────────────────────────────
@@ -3300,14 +3362,14 @@ def test_purge_conductor_holds_every_item_lock_through_the_removal(monkeypatch):
 
 def test_purge_never_unlinks_a_lock_file_while_its_handle_is_held(monkeypatch):
     """Windows: a handle has no FILE_SHARE_DELETE, so unlinking a held lock raises.
-    Every lock the purge holds -- the conductor's, opened through the module's
-    ``open``, and each item's, opened through ``os.open`` -- must therefore be
-    unlinked only after its handle is closed, or the directory stays non-empty and
-    the purge reports False over a store it already emptied. Simulated portably by
-    tracking BOTH open paths and making every lock-file unlink raise while its
-    handle is open. An earlier version of this test tracked ``os.open`` alone, so
-    the conductor lock was invisible to it and a shell that ran inside the
-    conductor hold passed here and failed on the Windows runners."""
+    Every lock the purge holds -- the conductor's and each item's -- must therefore
+    be unlinked only after its handle is closed, or the directory stays non-empty
+    and the purge reports False over a store it already emptied. Simulated portably
+    by tracking BOTH ways a lock handle can be opened -- ``os.open``, which
+    ``open_lock_file`` uses, and the module's ``open`` -- and making every
+    lock-file unlink raise while its handle is open. Tracking one path alone would
+    leave a lock opened the other way invisible here, and a shell that ran inside
+    the conductor hold would pass here and fail on the Windows runners."""
     import builtins
     import os
 
@@ -3343,7 +3405,7 @@ def test_purge_never_unlinks_a_lock_file_while_its_handle_is_held(monkeypatch):
         return real_close(fd)
 
     class _TrackedHandle:
-        """The two things ``_open_lock`` uses: ``fileno()`` and the ``with`` protocol."""
+        """A file object's ``fileno()`` and ``with`` protocol, tracked while open."""
 
         def __init__(self, handle, path: Path):
             self._handle, self._path = handle, path
