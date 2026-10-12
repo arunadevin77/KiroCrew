@@ -27,6 +27,7 @@ from test_cron_thread_routing import _capture_subagent_done, _make_gateway
 
 from kiro_crew import subagent as sa
 from kiro_crew.subagent import SubagentInfo, SubagentManager
+from kiro_crew.testing.wait import async_wait_until
 
 pytestmark = pytest.mark.usefixtures("healthy_host_memory")
 
@@ -117,13 +118,15 @@ async def _reaper_tick(
             )
             stack.enter_context(patch.object(mgr, "force_digest_flush", recorder))
         task = asyncio.ensure_future(mgr._reaper_loop())
-        for _ in range(3000):
-            if pump.call_count >= 2 or task.done():
-                break
-            await asyncio.sleep(0.01)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=5.0)
+        try:
+            await async_wait_until(
+                lambda: pump.call_count >= 2 or task.done(),
+                describe=lambda: f"reaper ticks: {pump.call_count}, reaper done: {task.done()}",
+            )
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=30.0)
     assert pump.call_count >= 2, "the reaper loop did not complete a tick"
     return recorder
 
