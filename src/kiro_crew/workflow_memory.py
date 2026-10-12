@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Literal, overload
 
 from kiro_crew import platform_compat, windows_acl
-from kiro_crew.atomic_write import atomic_write, fsync_dir
+from kiro_crew.atomic_write import atomic_write, fsync_dir, read_bytes_with_retry
 from kiro_crew.execution_context import (
     ExecutionContext,
     MemoryStoreRef,
@@ -224,7 +224,7 @@ def read_binding(run_id: str, *, required: bool = False, record=None) -> dict[st
 
         path = WorkflowRunStore()._path_for(run_id)
         try:
-            record = json.loads(path.read_text(encoding="utf-8"))
+            record = json.loads(read_bytes_with_retry(path).decode("utf-8"))
         except FileNotFoundError:
             if required:
                 raise WorkflowMemoryError("Workflow run is unavailable") from None

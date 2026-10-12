@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         ScriptHookStore,
         _global_script_hook_store,
         logger,
+        read_bytes_with_retry,
         webhooks,
     )
 
@@ -49,7 +50,8 @@ def persisted_hook_store() -> ScriptHookStore:
     The file is read ONCE, under the same ``hooks.json.lock`` its writers hold, and
     that one snapshot is both validated and loaded, so an edit landing mid-read
     cannot pair one version's shape check with another version's hooks. Blocking
-    I/O: an event-loop caller runs it in a worker thread.
+    I/O: an event-loop caller runs it in a worker thread, where the read also rides
+    out a Windows sharing violation before the file counts as unreadable.
     """
     store = get_global_hook_store()
     if store is not None:
@@ -58,7 +60,7 @@ def persisted_hook_store() -> ScriptHookStore:
     if not store._path.exists():
         return store
     with webhooks.locked(store._path):
-        data = json.loads(store._path.read_text(encoding="utf-8"))
+        data = json.loads(read_bytes_with_retry(store._path).decode("utf-8"))
     hooks_data = data.get("hooks", []) if isinstance(data, dict) else None
     if not isinstance(hooks_data, list):
         raise ValueError(f"{store._path} does not hold a hooks list")

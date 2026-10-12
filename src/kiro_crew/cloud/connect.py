@@ -27,6 +27,7 @@ import webbrowser
 from dataclasses import dataclass
 from typing import Optional
 
+from kiro_crew.atomic_write import read_bytes_with_retry
 from kiro_crew.cloud import ssm
 from kiro_crew.instances.validation import split_ecs_target
 from kiro_crew.platform.interfaces import BUILTIN_PROVISIONER_ID
@@ -372,7 +373,7 @@ def is_launched_instance(ssm_target: str) -> bool:
         return False
     for path in sorted(root.glob("*.json")):
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw = json.loads(read_bytes_with_retry(path).decode("utf-8"))
         except FileNotFoundError:
             continue
         if isinstance(raw, dict) and raw.get("instance_id") == ssm_target:

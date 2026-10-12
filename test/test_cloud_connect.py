@@ -789,14 +789,14 @@ class TestIsLaunchedInstance:
         store.save(keep)
 
         victim = store.root / f"{gone.id}.json"
-        real_read_text = Path.read_text
+        real_read_bytes = Path.read_bytes
 
-        def _read_text(self, *a, **k):
+        def _read_bytes(self):
             if self == victim:
                 raise FileNotFoundError(str(victim))
-            return real_read_text(self, *a, **k)
+            return real_read_bytes(self)
 
-        monkeypatch.setattr(Path, "read_text", _read_text)
+        monkeypatch.setattr(Path, "read_bytes", _read_bytes)
 
         assert connect.is_launched_instance("i-stillhere") is True
         assert connect.is_launched_instance("i-vanishing") is False
