@@ -347,6 +347,33 @@ class TestShippedScenarios:
                 assert '"Crewmates" item appears in the left rail' in step, (path.name, step)
         assert checked >= 5
 
+    def test_scenarios_name_the_dormant_row_by_its_shipped_sentence(self) -> None:
+        """The dormant expander reads "1 dormant session hidden/shown".
+
+        A step or expectation naming a "Dormant sessions" label sends the
+        tester looking for a row that is not drawn, so every quote of the row
+        must be the en.json sentence for a count of one.
+        """
+        en = json.loads(
+            (Path(__file__).resolve().parents[2] / "website/src/i18n/locales/en.json").read_text(
+                encoding="utf-8"
+            )
+        )["pages"]["chatSidebar"]
+        allowed = {
+            en[f"stale_collapse_row_{state}_one"].replace("{{count}}", "1")
+            for state in ("hidden", "shown")
+        }
+        checked = 0
+        for path in sorted(SCENARIOS_DIR.glob("*.yaml")):
+            sc = scenarios.load_scenario(path)
+            for text in [*sc.steps, *sc.expectations]:
+                assert "Dormant sessions" not in text, (path.name, text)
+                for quoted in text.split('"')[1::2]:
+                    if "dormant" in quoted.lower():
+                        checked += 1
+                        assert quoted in allowed, (path.name, quoted)
+        assert checked >= 3
+
 
 def _write(tmp_path: Path, name: str, doc: dict) -> Path:
     p = tmp_path / f"{name}.yaml"
