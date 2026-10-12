@@ -1403,6 +1403,10 @@ class TestRoutesScopeEveryStoreCall(unittest.TestCase):
             "list_connected_repos", "set_repo_permissions", "remove_connected_repo",
             "read_repo_settings", "write_repo_settings", "add_setting_label",
             "add_connected_repo", "is_repo_connected",
+            # Followed GitLab groups live in config.json keyed by host + path;
+            # they own no per-repo tree to scope.
+            "list_gitlab_groups", "is_gitlab_group_added", "add_gitlab_group",
+            "remove_gitlab_group",
         }
         calls = [
             (path.name, name)

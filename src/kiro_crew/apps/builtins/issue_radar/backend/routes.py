@@ -142,6 +142,15 @@ from .http_routes.deps import (  # noqa: F401
     _schedule_deps_refresh,
     _stop_deps_refreshes,
 )
+from .http_routes.gitlab_groups import (  # noqa: F401
+    _group_error,
+    _handle_add_gitlab_group,
+    _handle_gitlab_group_reviews,
+    _handle_gitlab_groups,
+    _handle_remove_gitlab_group,
+    _provider_error_response,
+    _query_group,
+)
 from .http_routes.investigation import (  # noqa: F401
     _handle_get_investigation,
     _handle_put_investigation,
@@ -758,6 +767,19 @@ def register_routes(app: web.Application) -> None:
     app.router.add_post("/api/apps/issue-radar/tagging", _require_enabled(_handle_generate_tagging))
     app.router.add_post(
         "/api/apps/issue-radar/labels/apply-bulk", _require_enabled(_handle_labels_apply_bulk)
+    )
+    app.router.add_get(
+        "/api/apps/issue-radar/gitlab-groups", _require_enabled(_handle_gitlab_groups)
+    )
+    app.router.add_post(
+        "/api/apps/issue-radar/gitlab-groups", _require_enabled(_handle_add_gitlab_group)
+    )
+    app.router.add_delete(
+        "/api/apps/issue-radar/gitlab-groups", _require_enabled(_handle_remove_gitlab_group)
+    )
+    app.router.add_get(
+        "/api/apps/issue-radar/gitlab-groups/review-requests",
+        _require_enabled(_handle_gitlab_group_reviews),
     )
 
     # Crews (the worker-agent surface) live in their own module but register HERE,

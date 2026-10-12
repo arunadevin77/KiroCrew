@@ -1102,6 +1102,74 @@ def remove_connected_repo(
     return True
 
 
+# ── GitLab groups ───────────────────────────────────────────────────────────
+#
+# A GitLab group the user follows for review requests. Stored in config.json
+# under ``gitlab_groups`` as ``{"host", "path"}`` and nothing else: no project
+# list, no token, no per-group settings. The key is absent until the first group
+# is added, so an install that never adds one keeps its config byte-for-byte.
+# Paths match case-sensitively, the same fail-safe rule GitLab projects follow.
+
+GITLAB_GROUPS_KEY = "gitlab_groups"
+
+
+def list_gitlab_groups(root: Path | None = None) -> list[dict[str, str]]:
+    """The added GitLab groups as ``[{"host", "path"}]`` (``[]`` if none)."""
+    raw = read_config(root).get(GITLAB_GROUPS_KEY)
+    if not isinstance(raw, list):
+        return []
+    groups: list[dict[str, str]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        host, path = row.get("host"), row.get("path")
+        if isinstance(host, str) and host and isinstance(path, str) and path:
+            groups.append({"host": host, "path": path})
+    return groups
+
+
+def is_gitlab_group_added(host: str, path: str, root: Path | None = None) -> bool:
+    """Whether exactly this ``host`` + ``path`` group was added.
+
+    The authorization gate for the group routes: they accept ``host`` and
+    ``path`` from the query string and serve only a group the owner added.
+    """
+    return {"host": host, "path": path} in list_gitlab_groups(root)
+
+
+def add_gitlab_group(host: str, path: str, root: Path | None = None) -> bool:
+    """Add a group. Returns ``False`` when it was already added (idempotent)."""
+    with _config_lock(root):
+        config = read_config(root)
+        groups = list_gitlab_groups(root)
+        entry = {"host": host, "path": path}
+        if entry in groups:
+            return False
+        config[GITLAB_GROUPS_KEY] = [*groups, entry]
+        write_config(config, root)
+    return True
+
+
+def remove_gitlab_group(host: str, path: str, root: Path | None = None) -> bool:
+    """Remove a group. Returns ``False`` when it was not added.
+
+    Removing the last group drops the ``gitlab_groups`` key, returning the config
+    to exactly what it was before any group was added.
+    """
+    with _config_lock(root):
+        config = read_config(root)
+        groups = list_gitlab_groups(root)
+        kept = [g for g in groups if g != {"host": host, "path": path}]
+        if len(kept) == len(groups):
+            return False
+        if kept:
+            config[GITLAB_GROUPS_KEY] = kept
+        else:
+            config.pop(GITLAB_GROUPS_KEY, None)
+        write_config(config, root)
+    return True
+
+
 def issue_detail_cache_path(owner: str, repo: str, number: int, root: Path | None = None) -> Path:
     return repo_data_dir(owner, repo, root) / f"issue-{int(number)}.json"
 

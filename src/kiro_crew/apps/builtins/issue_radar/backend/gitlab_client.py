@@ -63,6 +63,7 @@ from . import gitlab_transport as _transport
 from .errors import (
     ProviderCliError,
     ProviderInvalidInputError,
+    ProviderNotFoundError,
     ProviderPermissionError,
     ProviderSetupError,
     PrSearchError,
@@ -110,6 +111,23 @@ def parse_gitlab_repo_url(link: str, *, allowed_hosts: frozenset[str] = frozense
 def project_path(owner: str, repo: str) -> str:
     """URL-encode ``owner/repo`` into GitLab's single ``:id`` path parameter."""
     return _transport.project_path(owner, repo)
+
+
+def parse_gitlab_group(
+    value: str, *, allowed_hosts: frozenset[str] = frozenset()
+) -> tuple[str, str]:
+    """Parse a group link or bare group path through the transport boundary."""
+    return _transport.parse_gitlab_group(value, allowed_hosts=allowed_hosts)
+
+
+def group_path(path: str) -> str:
+    """Validate and URL-encode a group path into GitLab's ``:id`` parameter."""
+    return _transport.group_path(path)
+
+
+def validate_group_path(path: str) -> str:
+    """Return ``path`` if it is a well-formed group path; raise ``RepoUrlError``."""
+    return _transport.validate_group_path(path)
 
 
 # ── glab spawn hardening ─────────────────────────────────────────────────────
@@ -1449,6 +1467,143 @@ def search_pulls(
         # being merged, matching the GitHub path.
         out = [row for row in out if not row.get("merged_at")]
     return out
+
+
+# ── group-scoped merge-request search ────────────────────────────────────────
+#
+# A GitLab group is added as a PATH only. Its merge requests are read with one
+# group-level query that GitLab scopes to the group and every subgroup below it,
+# so projects created later appear without anything being re-connected and no
+# per-project list is ever stored.
+
+#: Pages a group search walks: enough for the search cap plus the one sentinel row
+#: the route uses to report "capped", and no more.
+GROUP_SEARCH_MAX_PAGES = -(-(PR_SEARCH_MAX + 1) // _PAGE_SIZE)
+
+
+#: Per-field bounds on a group review row. Rows come from every project in the
+#: group tree, so each retained field is bounded, and a row that lost a field to
+#: its bound names it in ``truncated_fields``.
+GROUP_ROW_TITLE_MAX = 300
+GROUP_ROW_PATH_MAX = 1024
+GROUP_ROW_URL_MAX = 2048
+GROUP_ROW_NAME_MAX = 255
+GROUP_ROW_TIMESTAMP_MAX = 64
+
+
+def build_group_pr_search_query(group: str, *, reviewer: str) -> str:
+    """The query string for the open merge requests awaiting ``reviewer`` in a group.
+
+    The state mapping, ``scope=all`` and the username check are
+    :func:`build_pr_search_query`'s own; this adds ``include_subgroups=true`` so
+    the search covers the whole group tree. ``group`` is validated first, so a
+    malformed path is refused before any query is assembled.
+    """
+    _transport.validate_group_path(group)
+    query = build_pr_search_query("", "", state="open", review_requested=reviewer)
+    return f"{query}&include_subgroups=true"
+
+
+def _raise_if_group_missing(stderr_tail: str, host: str) -> None:
+    """Auth failures first, then GitLab's 404 as :class:`ProviderNotFoundError`."""
+    _raise_if_auth_failure(stderr_tail, host)
+    if _transport.is_not_found(stderr_tail):
+        raise ProviderNotFoundError("GitLab group not found, or not visible to this glab session")
+
+
+def _group_api(path: str, *, host: str, timeout: float, paginate: bool = False) -> object:
+    """``glab api`` for a group read: a 404 is a not-found answer, and a paginated
+    walk stops at :data:`GROUP_SEARCH_MAX_PAGES`."""
+    return _transport.glab_api(
+        path,
+        host=host,
+        timeout=timeout,
+        paginate=paginate,
+        method="GET",
+        body=None,
+        run=_glab_run,
+        page_size=_PAGE_SIZE,
+        max_pages=GROUP_SEARCH_MAX_PAGES,
+        stderr_tail=_stderr_tail,
+        raise_if_auth_failure=_raise_if_group_missing,
+        is_forbidden=_is_forbidden,
+    )
+
+
+def _mr_project_path(raw: dict) -> str:
+    """The full path of the project a merge request belongs to (``acme/web/api``)."""
+    refs = raw.get("references")
+    full = refs.get("full") if isinstance(refs, dict) else None
+    if isinstance(full, str) and "!" in full:
+        return full.rsplit("!", 1)[0]
+    web_url = raw.get("web_url")
+    if isinstance(web_url, str):
+        path = urlparse(web_url).path
+        marker = path.find("/-/merge_requests")
+        if marker > 0:
+            return path[:marker].strip("/")
+    return ""
+
+
+def _bounded(value: object, limit: int, name: str, cut: list[str]) -> str:
+    """``value`` as a string of at most ``limit`` characters; records ``name`` in
+    ``cut`` when it had to be shortened."""
+    text = value if isinstance(value, str) else ""
+    if len(text) > limit:
+        cut.append(name)
+        return text[:limit]
+    return text
+
+
+def _group_review_row(raw: dict) -> dict:
+    """One merge request of a group's review list, with every field bounded."""
+    cut: list[str] = []
+    iid = raw.get("iid")
+    title = _bounded(raw.get("title"), GROUP_ROW_TITLE_MAX, "title", cut)
+    url = _bounded(raw.get("web_url"), GROUP_ROW_URL_MAX, "url", cut)
+    project = _bounded(_mr_project_path(raw), GROUP_ROW_PATH_MAX, "project", cut)
+    author = _bounded(_username(raw.get("author")), GROUP_ROW_NAME_MAX, "author", cut)
+    updated = _bounded(raw.get("updated_at"), GROUP_ROW_TIMESTAMP_MAX, "updated_at", cut)
+    return {
+        "number": iid if isinstance(iid, int) and not isinstance(iid, bool) else None,
+        "title": title,
+        # A shortened link points somewhere else, so an over-long one is dropped.
+        "url": "" if "url" in cut else url,
+        "project": project,
+        "author": author or None,
+        "updated_at": updated or None,
+        "truncated_fields": cut,
+    }
+
+
+def verify_group_access(group: str, *, host: str = "", timeout: float = GL_TIMEOUT_SEC) -> None:
+    """Confirm the ``glab`` user can read ``group``, with one read-only
+    ``GET groups/:id``. Raises :class:`ProviderNotFoundError` when the group does
+    not exist or is not visible to the user."""
+    data = _obj(
+        _group_api(f"groups/{group_path(group)}?with_projects=false", host=host, timeout=timeout)
+    )
+    full_path = data.get("full_path")
+    if not isinstance(full_path, str) or not full_path:
+        raise ProviderNotFoundError("GitLab group not found, or not visible to this glab session")
+
+
+def search_group_reviews(
+    group: str, *, host: str = "", reviewer: str,
+    timeout: float = GL_PAGINATE_TIMEOUT_SEC, limit: int = PR_SEARCH_MAX,
+) -> list[dict]:
+    """The open merge requests in ``group`` and its subgroups awaiting ``reviewer``.
+
+    One paginated ``groups/:id/merge_requests`` read, walked for at most
+    :data:`GROUP_SEARCH_MAX_PAGES` pages and cut to ``limit`` rows (at most one
+    above :data:`PR_SEARCH_MAX`, the sentinel the route reports "capped" by).
+    Each row carries ``project``, because a group's rows come from many projects.
+    """
+    query = build_group_pr_search_query(group, reviewer=reviewer)
+    path = f"groups/{group_path(group)}/merge_requests?{query}&order_by=updated_at&sort=desc"
+    rows = _rows(_group_api(path, host=host, timeout=timeout, paginate=True))
+    capped = max(1, min(int(limit), PR_SEARCH_MAX + 1))
+    return [_group_review_row(row) for row in rows[:capped]]
 
 
 # ── merge-request actions (parity with github_client's PR action surface) ─────

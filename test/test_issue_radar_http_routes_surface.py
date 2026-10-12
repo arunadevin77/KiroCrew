@@ -81,6 +81,10 @@ MAIN_ROUTES = [
     ("GET", "/tagging", "_handle_get_tagging"),
     ("POST", "/tagging", "_handle_generate_tagging"),
     ("POST", "/labels/apply-bulk", "_handle_labels_apply_bulk"),
+    ("GET", "/gitlab-groups", "_handle_gitlab_groups"),
+    ("POST", "/gitlab-groups", "_handle_add_gitlab_group"),
+    ("DELETE", "/gitlab-groups", "_handle_remove_gitlab_group"),
+    ("GET", "/gitlab-groups/review-requests", "_handle_gitlab_group_reviews"),
 ]
 TAIL_ROUTES = [
     ("GET", "/crews"),

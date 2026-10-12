@@ -222,6 +222,7 @@ private `http_routes` module owns one responsibility:
 | `http_routes/issue_writes.py` | `/labels/apply`, `/issue/state`, `/issue/assignees` |
 | `http_routes/investigation.py` | `/investigation` (GET, PUT) |
 | `http_routes/pr_actions.py` | every `/pull/*` action, `/pull/runs`, `/pulls/bulk`, and the shared `_pr_action_preamble` / `_run_pr_action` |
+| `http_routes/gitlab_groups.py` | `/gitlab-groups` (GET, POST, DELETE) and `/gitlab-groups/review-requests` |
 
 The facade re-exports every name those modules define, so `routes.<name>` keeps
 resolving for the tests, for `crew_routes`' gate chain and for other modules' docs.
@@ -277,6 +278,10 @@ per-repo store-scoping rule.
 | GET | `/pull/runs` | The CI runs on a PR's head commit, each with its id plus server-computed `cancellable`/`rerunnable`, so the UI never offers an action the provider will refuse |
 | POST | `/pull/run` | Cancel or re-run one CI run (`failed_only` re-runs just the failed jobs) |
 | POST | `/pulls/bulk` | Apply ONE action to many PRs (`_BULK_PR_ACTIONS`: close, reopen, approve, comment, auto_merge, cancel_auto_merge; max `_BULK_PR_MAX` = 50). `approve` additionally requires a `head_shas` map keyed by PR number, covering EVERY number in the request (see rule 2). Sequential, because the PRs share one provider rate limit. Partial failure is reported per PR rather than failing the batch |
+| GET | `/gitlab-groups` | The followed GitLab groups as `[{host, path}]`. A local config read, no `glab` call — see "GitLab groups" |
+| POST | `/gitlab-groups` | Follow a GitLab group (owner only). Body `{group}`: a bare path (a gitlab.com group) or a pasted group link, whose host must be gitlab.com or in `dashboard.gitlab_hosts`. The path is validated, then one read-only `GET groups/:id` confirms it exists before it is stored; a malformed path is 400 `invalid_group` and an unknown group 404 `group_not_found`, and neither is stored. Answers `{host, path}` |
+| DELETE | `/gitlab-groups` | Stop following a group (owner only, `?host=&path=`). Local only |
+| GET | `/gitlab-groups/review-requests` | Open merge requests across a followed group and all its subgroups where the signed-in `glab` user is a requested reviewer: ONE paginated `groups/:id/merge_requests?…&reviewer_username=<me>&include_subgroups=true` search through the same query builder, username check and `PR_SEARCH_MAX` cap as `/pulls/search`, walking at most `GROUP_SEARCH_MAX_PAGES` pages, with `truncated` reported. Rows are bounded per field (see "GitLab groups"). A group that was never followed is 404 before any `glab` call. Every error carries a `code` (`group_not_found`, `group_forbidden`, `setup_required`, `no_login`, `provider_error`) |
 | GET/POST | `/crews` | List a repo's crews with their settings and on-duty/working/paused counts; POST creates a crew |
 | GET | `/crews/names` | Suggested names for a new crew |
 | GET/PUT | `/crews/settings` | Per-repo crew settings |
@@ -284,6 +289,82 @@ per-repo store-scoping rule.
 | GET | `/crew/fabric` | The crews pipeline view's whole payload (phases and items). Non-GitHub providers answer `items: []` |
 | PUT | `/crew/work` | Record one work-item step and its progress event (the write behind `issue_radar_crew_record`) |
 | POST | `/crew/pause` | Pause or resume a crew |
+
+## GitLab groups
+
+A user who reviews across a large GitLab group follows the GROUP instead of
+connecting each project. **A followed group is a path, never a project list.**
+`config.json` gains a `gitlab_groups` array of `{host, path}` only. The key is
+absent until the first group is added, and removing the last group removes it
+again, so an install that never follows a group keeps its config byte for byte.
+There is no token and no per-group setting.
+
+The group's review requests are one group-scoped search, so new projects and
+subgroups appear without any reconnect. Each refresh is one paginated
+`groups/:id/merge_requests` read with `include_subgroups=true`, `scope=all`,
+`state=opened` and `reviewer_username` set to the signed-in `glab` user.
+`build_group_pr_search_query` adds `include_subgroups` to
+`build_pr_search_query`'s own parameters, so the state mapping and the username
+charset check are the per-project search's own. The walk stops at
+`GROUP_SEARCH_MAX_PAGES` (the pages `PR_SEARCH_MAX` plus its sentinel row need),
+not at the generic `_MAX_PAGES`.
+
+**A group row bounds every field it keeps**, because the rows come from every
+project in the tree:
+
+- A row carries only `number`, `title`, `url`, `project`, `author`, `updated_at`
+  and `truncated_fields`. There is no description, label list or reviewer list.
+- Each string has its own `GROUP_ROW_*_MAX` bound, and a field cut to its bound
+  is named in `truncated_fields`.
+- An over-long `url` is dropped to `''` rather than cut, since a shortened link
+  points somewhere else.
+- `project` is read from GitLab's `references.full`, falling back to `web_url`.
+
+**A group read answers 404 only for GitLab's 404.** It uses
+`_raise_if_group_missing` in place of the auth check, and that raises
+`ProviderNotFoundError` only when the stderr tail carries both `404` and "not
+found". A group path or username can contain `404` but never a space, so an
+outage on group `team404` stays a 502.
+
+The path is validated before it reaches a request:
+
+- It has 1 to `MAX_NAMESPACE_SEGMENTS` segments.
+- Each segment passes the same shape check as a project URL's segments.
+- `.`, `..` and GitLab's system paths (`groups`, `api`, `-`, …) are refused.
+- It is percent-encoded as GitLab's single `:id` parameter.
+
+A malformed path is refused before any call, so it can never widen into a broader
+query. The host must be gitlab.com or allowlisted in `dashboard.gitlab_hosts`, the
+same rule as connecting a project, and `_resolve_host` re-checks it at spawn.
+Following and unfollowing are owner only. The read route serves only a followed
+`host` + `path`, compared exactly: that comparison is its authorization gate, the
+counterpart of `is_repo_connected`.
+
+The UI has three parts, sharing one react-query entry (`lib/gitlabGroups.ts`):
+
+- The "GitLab groups" section of General settings follows and unfollows groups.
+  Each followed group gets a labelled Unfollow button, and the Settings rail
+  lists the section under General.
+- The "Review requests" dashboard lists each group's merge requests. A group's
+  count reads "more than N" when the list is capped, with a "See all on GitLab"
+  link to the same search in GitLab's own merge-request list (built from the
+  response's `login`). Every group has its own `ErrorNotice`, and each error code
+  maps to a sentence that says what to do. The list refreshes on the list
+  cadence, but never faster than `GROUP_REVIEWS_MIN_POLL_MS`, because one refresh
+  walks up to four pages.
+- `DashboardsSection` lists that dashboard only while at least one group is
+  followed, or while it is the page on screen.
+
+With no group followed, the only new request is the local list read: there is no
+review-request call, and the dashboards rail is unchanged.
+
+This covers review requests, the issue's primary use case. It does not
+materialise every project as a connected repo: a scheduled recursive subgroup
+walk would hit rate limits and pagination on 100+ projects, flood the repo list,
+and need a policy for per-repo settings as projects join and leave. Nor is it a
+host-wide reviewer search: the unit the issue asks to connect is a group, and on
+gitlab.com one account reviews across unrelated groups that a group view keeps
+apart.
 
 ## Recording findings
 
@@ -374,7 +455,7 @@ output.
 All data under `app_data_dir("issue-radar")` (typically `~/.kiro/crew/apps/issue-radar/data/`):
 
 ```
-config.json                         # Connected repos, per-repo settings
+config.json                         # Connected repos, per-repo settings, followed GitLab groups
 repos/<owner>/<repo>/
   issues-cache.json                 # Open issues (schema-versioned, + poll probe)
   issues-closed-cache.json          # Closed issues (capped at 100)
