@@ -1,6 +1,6 @@
-"""The operator's self-managed GitLab/Jira allowlists and the session-card chip switch.
+"""The operator's GitHub Enterprise/GitLab/Jira allowlists and the session-card chip switch.
 
-All three come out of one ``dashboard`` config read, run off the event loop and
+All four come out of one ``dashboard`` config read, run off the event loop and
 cached for a short TTL, so URL validation and slot serialization -- both sync code
 on the loop -- read them with a pure attribute lookup. The allowlists fail CLOSED
 while cold; the chip switch fails OPEN.
@@ -27,6 +27,9 @@ _GITLAB_HOSTS_TTL_SECS = 30.0
 # fold a single generation into their cache key either way.
 _gitlab_hosts_snapshot: frozenset[str] = frozenset()
 _jira_hosts_snapshot: frozenset[str] = frozenset()
+# GitHub Enterprise hosts (``dashboard.github_hosts``) ride the same read, TTL,
+# lock and generation as the GitLab and Jira allowlists, for the same reasons.
+_github_hosts_snapshot: frozenset[str] = frozenset()
 # Whether the sidebar renders a session card's PR/issue chips at all
 # (``dashboard.session_card_source_links``). Same read, same TTL, same
 # generation as the allowlists above, for the same reason: it is another
@@ -58,13 +61,22 @@ def _gitlab_hosts_fresh() -> bool:
     )
 
 
-def _publish_provider_hosts(gitlab: frozenset[str], jira: frozenset[str]) -> None:
+def _publish_provider_hosts(
+    gitlab: frozenset[str],
+    jira: frozenset[str],
+    github: frozenset[str] = frozenset(),
+) -> None:
     """Install freshly loaded snapshots, bumping the generation on real change."""
-    global _gitlab_hosts_snapshot, _jira_hosts_snapshot
+    global _gitlab_hosts_snapshot, _jira_hosts_snapshot, _github_hosts_snapshot
     global _gitlab_hosts_loaded_at, _gitlab_hosts_generation
-    if gitlab != _gitlab_hosts_snapshot or jira != _jira_hosts_snapshot:
+    if (
+        gitlab != _gitlab_hosts_snapshot
+        or jira != _jira_hosts_snapshot
+        or github != _github_hosts_snapshot
+    ):
         _gitlab_hosts_snapshot = gitlab
         _jira_hosts_snapshot = jira
+        _github_hosts_snapshot = github
         _gitlab_hosts_generation += 1
     _gitlab_hosts_loaded_at = time.monotonic()
 
@@ -118,15 +130,15 @@ def session_card_source_links_enabled() -> bool:
     return _session_card_chips_snapshot
 
 
-def _load_source_link_settings() -> tuple[frozenset[str], frozenset[str], bool]:
-    """Read the source-link config: GitLab hosts, Jira hosts, chip switch.
+def _load_source_link_settings() -> tuple[frozenset[str], frozenset[str], bool, frozenset[str]]:
+    """Read the source-link config: GitLab hosts, Jira hosts, chip switch, GitHub hosts.
 
     BLOCKING -- never on the loop. ``KiroCrewConfig.load()`` stats, reads,
     parses, and validates config files, so a slow or network-backed config
     directory would stall the sole event loop. Callers reach this only through
     :func:`ensure_gitlab_hosts_loaded`.
 
-    One read for all three because they live in one file and are consumed by the
+    One read for all four because they live in one file and are consumed by the
     same synchronous slot serialization; a second read would double the cost of
     every refresh round and let the two halves disagree within one round.
     """
@@ -138,12 +150,13 @@ def _load_source_link_settings() -> tuple[frozenset[str], frozenset[str], bool]:
             frozenset(dashboard.gitlab_hosts),
             frozenset(dashboard.jira_hosts),
             bool(dashboard.session_card_source_links),
+            frozenset(dashboard.github_hosts),
         )
     except Exception:
         logger.debug("source-link settings unavailable", exc_info=True)
         # Hosts fail closed, the chip switch fails open: an unreadable config
         # must not blank a strip the user never asked to hide.
-        return frozenset(), frozenset(), True
+        return frozenset(), frozenset(), True, frozenset()
 
 
 async def ensure_gitlab_hosts_loaded() -> frozenset[str]:
@@ -166,8 +179,8 @@ async def ensure_gitlab_hosts_loaded() -> frozenset[str]:
         # Another waiter may have refreshed while this one queued.
         if _gitlab_hosts_fresh():
             return _gitlab_hosts_snapshot
-        gitlab, jira, chips = await asyncio.to_thread(_load_source_link_settings)
-        _publish_provider_hosts(gitlab, jira)
+        gitlab, jira, chips, github = await asyncio.to_thread(_load_source_link_settings)
+        _publish_provider_hosts(gitlab, jira, github)
         # Safe to install unconditionally: this lock is held across the load
         # above, so a config write that raced it waits and publishes after us
         # (see publish_session_card_chips_now).
@@ -196,3 +209,13 @@ def _allowed_jira_hosts() -> frozenset[str]:
     parsing has this snapshot warm too. Fails closed while cold.
     """
     return _jira_hosts_snapshot
+
+
+def _allowed_github_hosts() -> frozenset[str]:
+    """Return the cached GitHub Enterprise hosts. Same discipline as GitLab.
+
+    Loaded by the same :func:`ensure_gitlab_hosts_loaded` refresh, matched
+    exactly, and empty while cold, so a GitHub Enterprise URL fails closed until
+    the first load lands. github.com never needs an entry.
+    """
+    return _github_hosts_snapshot

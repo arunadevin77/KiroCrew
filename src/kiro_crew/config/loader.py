@@ -3612,6 +3612,8 @@ def _session_folder_root_or_empty(value: object) -> str:
 
 def _build_dashboard_config(_degraded: set[str], dashboard_data: dict) -> DashboardConfig:
     section = _sections.SectionReader(DashboardConfig, dashboard_data)
+    gitlab_hosts = _coerce_gitlab_hosts(section.get("gitlab_hosts"))
+    jira_hosts = _coerce_jira_hosts(section.get("jira_hosts"))
     return DashboardConfig(
         url=section.get("url"),
         tailscale=_tailscale_config_from(
@@ -3746,8 +3748,11 @@ def _build_dashboard_config(_degraded: set[str], dashboard_data: dict) -> Dashbo
         tips_recency_decay=section.read("tips_recency_decay", _safe_float, lo=0.0, hi=1.0),
         tips_model=str(section.get("tips_model")),
         tips_explore_ratio=section.read("tips_explore_ratio", _safe_float, lo=0.0, hi=1.0),
-        gitlab_hosts=_coerce_gitlab_hosts(section.get("gitlab_hosts")),
-        jira_hosts=_coerce_jira_hosts(section.get("jira_hosts")),
+        github_hosts=_sections._coerce_github_hosts(
+            section.get("github_hosts"), claimed=(*gitlab_hosts, *jira_hosts)
+        ),
+        gitlab_hosts=gitlab_hosts,
+        jira_hosts=jira_hosts,
         # These two parse raw JSON entries into DTOs, so they are handed only a
         # stored value; an omitted key is the field default as built.
         link_patterns=(
