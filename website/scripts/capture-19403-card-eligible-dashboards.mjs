@@ -157,6 +157,45 @@ try {
   await page.screenshot({ path: join(OUT, 'card-eligible-gallery.png'), fullPage: true })
   await page.locator('[data-testid="session-dashboard-card"][data-slot="chat-11"]').screenshot({ path: join(OUT, 'dispatched-conductor-board.png') })
   await inbox.screenshot({ path: join(OUT, 'needs-you-keeps-the-adopted-worker.png') })
+
+  // Second scene, the one iamwhatever's review named: every open session is one this
+  // page draws no card for. The empty state must say THAT, never "No sessions", and
+  // the muted line must still account for the sessions that are open.
+  const hidden = await context.newPage()
+  logPageProblems(hidden)
+  await stubDashboardApi(hidden, {
+    slots: SLOTS.filter(slot => !CARDED.includes(slot.key)),
+    localStorageEntries: { 'mc-lang': 'en', 'mc-preview-dashboard': '1' },
+    extra: async (path, route) => {
+      if (path === '/api/ask-question/pending') {
+        await json(route, [QUESTION])
+        return true
+      }
+      if (path === '/api/approvals') {
+        await json(route, [])
+        return true
+      }
+      if (path === '/api/workflows/runs') {
+        await json(route, { runs: [] })
+        return true
+      }
+      return false
+    },
+  })
+  await hidden.goto(`${base}/session-dashboards`)
+  const emptyTitle = hidden.locator('[data-testid="empty-state-title"]')
+  await emptyTitle.waitFor({ timeout: 10_000 }).catch(() => failures.push('no empty state rendered for an all-withheld fleet'))
+  const emptyText = await emptyTitle.innerText().catch(() => '')
+  if (emptyText !== 'None of your open sessions has a status card.') {
+    failures.push(`empty title reads ${JSON.stringify(emptyText)}`)
+  }
+  if (!await hidden.getByText('3 sessions without a status card are not shown.').isVisible()) {
+    failures.push('the withheld-session count is missing')
+  }
+  if (await hidden.locator('[data-testid="session-dashboard-card"]').count()) {
+    failures.push('a card rendered for a session with no card to show')
+  }
+  await hidden.screenshot({ path: join(OUT, 'all-withheld-empty-state.png'), fullPage: true })
 } finally {
   await browser.close()
   srv.close()
@@ -167,4 +206,4 @@ if (failures.length) {
   for (const line of failures) console.error(` - ${line}`)
   process.exit(1)
 }
-console.log(`wrote 3 frames to ${OUT}; dashboard-card read for: ${cardReads.join(', ')}`)
+console.log(`wrote 4 frames to ${OUT}; dashboard-card read for: ${cardReads.join(', ')}`)

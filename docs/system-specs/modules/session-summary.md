@@ -320,7 +320,24 @@ retry, and a user correction is the highest-value signal per character in the fi
 
 With the dashboard preview flag on, the Sessions three-dot menu also opens `/session-dashboards`: a read-only
 summary gallery alongside each session's model-authored Dynamic Dashboards.
-A centralized Needs you inbox precedes the gallery, including on phones. Each
+The gallery cards the sessions that have a CARD to show, by `canCarryCard` — not
+private, not remote, no session-tree `parent` — which is the same predicate
+`SessionStatusFrame` fetches on, so the list and the frame cannot disagree about who
+has a board. That is deliberately NOT the root test: `GET .../dashboard-card` has no
+root test, so a session another session DISPATCHED still owns a derived board and the
+route serves it, and this gallery is that board's only mount. What a non-root session
+does not own is the dashboard PACKAGE (`GET .../dashboard`, 404 `not_root_session`,
+and the side panel's Overview), so the page's own wording names what an entry carries
+— a saved summary and a status card — rather than promising each session a dashboard
+of its own.
+Sessions the gallery withholds are SAID, not silently dropped: a muted line under the
+list counts them (`commandCenter.cards_withheld`), and when the open sessions have no
+card between them the empty state says that (`commandCenter.no_cards`) rather than "No
+sessions", which would tell someone with open sessions that their sessions were gone.
+"No sessions" is kept for the one case where it is true, no open session at all.
+A centralized Needs you inbox precedes the gallery, including on phones. It covers
+every open session, carded or not: an adopted worker's question is answered here,
+and the search and Needs you filter reach those items. Each
 native question or approval has one control there, labeled with its human
 session name and current task context when available; session cards do not
 duplicate those controls. Search filters both sections, but the summary page
