@@ -67,10 +67,17 @@ export const isNotFoundError = (e: unknown): boolean =>
  * on this instead of matching the human `error` text, which is prose and may be
  * localized or reworded.
  */
-export const apiErrorCode = (e: unknown): string => {
-  if (!(e instanceof ApiError)) return ''
+export const apiErrorCode = (e: unknown): string =>
+  e instanceof ApiError ? errorBodyCode(e.body) : ''
+
+/**
+ * The `code` a raw refusal body names, or `''`. The body-level half of
+ * {@link apiErrorCode}, for readers that run before an ApiError exists --
+ * `friendlyErrText` builds the ApiError's message from the raw body.
+ */
+const errorBodyCode = (body: string): string => {
   try {
-    const parsed = JSON.parse(e.body) as unknown
+    const parsed = JSON.parse(body) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return ''
     const code = (parsed as { code?: unknown }).code
     return typeof code === 'string' ? code : ''
@@ -114,14 +121,8 @@ export const isEdgeChallengeError = (e: unknown): boolean =>
  */
 export const isSlotCapError = (status: number, body: string): boolean => {
   if (status !== 429) return false
-  const t = body.trim()
-  if (!t.startsWith('{')) return false
-  try {
-    const code = (JSON.parse(t) as { code?: unknown }).code
-    return code === 'slot_cap_reached' || code === 'creator_slot_cap_reached'
-  } catch {
-    return false
-  }
+  const code = errorBodyCode(body)
+  return code === 'slot_cap_reached' || code === 'creator_slot_cap_reached'
 }
 
 /**
