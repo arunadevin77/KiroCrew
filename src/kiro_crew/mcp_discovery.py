@@ -1547,8 +1547,10 @@ def _is_first_party_managed_argv(
     unequal and keeps the full fail-close + opt-in behavior.
 
     *env* must equal the package-derived managed env too
-    (:func:`kiro_crew.agent._managed_mcp_env` — ``{}`` on a default install, the
-    ``KIROCREW_HOME`` pin under an override home). ``probe_server`` merges the
+    (:func:`kiro_crew.agent._managed_mcp_env` — ``{}`` on a default install with
+    no live listener recorded, the ``KIROCREW_HOME`` pin under an override home,
+    and the ``KIROCREW_PORT`` pin whenever the gateway has exported
+    ``KIROCREW_BOUND_PORT``). ``probe_server`` merges the
     spec's ``env`` into the child environment, and env is an execution vector in
     its own right (``LD_PRELOAD``/``LD_LIBRARY_PATH`` change WHAT CODE runs for
     the same argv), so a spec carrying any key this package did not derive is

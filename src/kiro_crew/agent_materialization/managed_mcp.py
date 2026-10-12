@@ -8,14 +8,15 @@ spec writers and for the dashboard's merge-on-write host set, and
 entry may carry, applied identically by the fresh build (:func:`emit_managed_servers`)
 and the refresh (:func:`refresh_managed_servers`) so the two cannot drift.
 
-The data-home pin (:func:`_managed_mcp_env`) and the enterprise registry marker are
-re-derived on every pass: both describe the gateway that is running, never what an
-earlier writer left in the file.
+The data-home and live-listener pins (:func:`_managed_mcp_env`) and the enterprise
+registry marker are re-derived on every pass: both describe the gateway that is
+running, never what an earlier writer left in the file.
 """
 
 from __future__ import annotations
 
 import math
+import os
 from typing import Any
 
 from kiro_crew import agent as agent_mod
@@ -43,15 +44,41 @@ def _managed_mcp_env() -> dict[str, str]:
     not propagated to children that would then disagree with the gateway in the
     other direction.
 
-    Returns ``{}`` on a default install, which keeps the emitted spec
-    byte-for-byte what it is today (``_prune_empty`` drops an empty ``env``).
-    That is safe only because a default-install child DERIVES the same home the
-    gateway did, from an inherited ``HOME``. Preserving a user's ``env`` puts
-    that inheritance in reach of a config, so the companion control lives in
-    ``_enforce_managed_mcp_ownership``: see ``_HOME_DERIVING_ENV_KEYS``.
+    Pins ``KIROCREW_PORT`` to the gateway's live listener for the same reason,
+    read from ``KIROCREW_BOUND_PORT``: an MCP child launched by a gateway that
+    was itself started in a shell already exporting ``KIROCREW_PORT`` (an agent
+    shell always carries one) inherits BOTH variables, and
+    ``port_resolution.resolve_client_port_src`` consults ``KIROCREW_PORT``
+    before ``KIROCREW_BOUND_PORT`` — so the child resolves the OTHER gateway's
+    port, presents THIS gateway's credential to it, and every tool call fails
+    ``internal_auth_mismatch``. The projection mirrors the KAS harness's
+    (``acp/kas_agents.py``, "Take the live listener from the gateway, never
+    from an editable spec or process discovery"), with the same shape gate: a
+    value that is not 1–5 ASCII decimal digits below 65536 is never copied —
+    ``KIROCREW_BOUND_PORT`` is written only by the gateway's own listener, so
+    anything else is foreign and is dropped rather than forwarded.
+
+    Returns ``{}`` on a default install with no live listener recorded, which
+    keeps the emitted spec byte-for-byte what it is today (``_prune_empty``
+    drops an empty ``env``). That is safe only because a default-install child
+    DERIVES the same home the gateway did, from an inherited ``HOME``.
+    Preserving a user's ``env`` puts that inheritance in reach of a config, so
+    the companion control lives in ``_enforce_managed_mcp_ownership``: see
+    ``_HOME_DERIVING_ENV_KEYS``.
     """
+    env: dict[str, str] = {}
     override = agent_mod._valid_override_home()
-    return {"KIROCREW_HOME": str(override)} if override else {}
+    if override:
+        env["KIROCREW_HOME"] = str(override)
+    bound_port = os.environ.get("KIROCREW_BOUND_PORT", "")
+    if (
+        1 <= len(bound_port) <= 5
+        and bound_port.isascii()
+        and bound_port.isdecimal()
+        and 0 < int(bound_port) < 65536
+    ):
+        env["KIROCREW_PORT"] = bound_port
+    return env
 
 
 # Declaration discriminator kiro-cli reads for enterprise MCP governance. It is
@@ -386,7 +413,8 @@ def _gated_off_servers() -> frozenset[str]:
 def managed_mcp_spec_entry(name: str, *, include_opt_in: bool = False) -> dict[str, Any] | None:
     """The kiro-spec ``mcpServers`` entry a fresh build would emit for *name*.
 
-    One entry, resolved live (``invocation_fn`` + the pinned data home), for a
+    One entry, resolved live (``invocation_fn`` + the pinned data home and
+    listener), for a
     consumer that needs a single managed server without rebuilding the whole
     config. ``None`` when *name* is not managed, when it is ``opt_in`` (an
     assignable set is granted by a spec, never minted here) or when its

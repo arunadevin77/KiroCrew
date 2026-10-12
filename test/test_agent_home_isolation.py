@@ -2894,3 +2894,93 @@ class TestTheRebuildsOwnDecisionCoversItsDerivedSpecs:
         )
         _pretend_target_is_shared(monkeypatch, agent_mod, shared)
         return shared
+
+
+# --------------------------------------------------------------------------
+# The live-listener pin — a gateway started under a foreign KIROCREW_PORT must
+# pin its own bound port into every managed MCP entry, or the child resolves
+# the OTHER gateway and presents this gateway's credential to it.
+# --------------------------------------------------------------------------
+def _clear_home_and_port_env(monkeypatch) -> None:
+    """Strip every variable the pin reads, for a from-scratch assertion."""
+    monkeypatch.delenv("KIROCREW_HOME", raising=False)
+    monkeypatch.delenv("KIROCREW_PORT", raising=False)
+    monkeypatch.delenv("KIROCREW_BOUND_PORT", raising=False)
+
+
+def test_managed_env_pins_the_live_listener_over_a_foreign_port(monkeypatch):
+    """A gateway started under a foreign KIROCREW_PORT pins its real listener.
+
+    The gateway records its bound port in ``KIROCREW_BOUND_PORT`` but leaves an
+    inherited ``KIROCREW_PORT`` in place, and
+    ``port_resolution.resolve_client_port_src`` consults the env var FIRST — so
+    without this pin an MCP child launched by the gateway inherits both and
+    resolves the OTHER gateway's port, reads THIS gateway's credential, and
+    every tool call fails ``internal_auth_mismatch``. The emitted spec must
+    carry the live listener so the child resolves the gateway that launched it.
+    """
+    from kiro_crew.agent import _managed_mcp_env, managed_mcp_spec_entry
+
+    _clear_home_and_port_env(monkeypatch)
+    monkeypatch.setenv("KIROCREW_PORT", "7790")  # foreign: some other gateway
+    monkeypatch.setenv("KIROCREW_BOUND_PORT", "35705")  # this gateway's listener
+
+    env = _managed_mcp_env()
+    assert env == {
+        "KIROCREW_PORT": "35705"
+    }, "the child must resolve the live listener, never the inherited env port"
+
+    entry = managed_mcp_spec_entry("kirocrew-core")
+    assert entry is not None
+    assert entry["env"]["KIROCREW_PORT"] == "35705"
+
+
+def test_managed_env_without_a_live_listener_emits_no_port_key(monkeypatch):
+    """No ``KIROCREW_BOUND_PORT`` recorded — the emitted spec stays as it was.
+
+    A rebuild with no gateway listener behind it (a fresh install, an offline
+    repair) must not invent a port from the inherited variable: without bound
+    truth the child derives everything exactly as the gateway did, and adding a
+    key would change every spec written that way.
+    """
+    from kiro_crew.agent import _managed_mcp_env, managed_mcp_spec_entry
+
+    _clear_home_and_port_env(monkeypatch)
+    monkeypatch.setenv("KIROCREW_PORT", "7790")  # inherited, but no bound truth
+
+    assert _managed_mcp_env() == {}
+    entry = managed_mcp_spec_entry("kirocrew-core")
+    assert entry is not None
+    assert "env" not in entry
+
+
+@pytest.mark.parametrize("port", ["", "auto", "secret", "0", "-1", "65536", "123456", "１２３"])
+def test_managed_env_never_copies_an_ill_formed_bound_port(monkeypatch, port):
+    """``KIROCREW_BOUND_PORT`` is gateway-written truth, so a value that is not
+    1–5 ASCII decimal digits below 65536 is foreign and is dropped rather than
+    forwarded — the same shape gate the KAS projection applies."""
+    from kiro_crew.agent import _managed_mcp_env
+
+    _clear_home_and_port_env(monkeypatch)
+    monkeypatch.setenv("KIROCREW_BOUND_PORT", port)
+    assert "KIROCREW_PORT" not in _managed_mcp_env()
+
+
+def test_managed_env_pins_home_and_listener_together(monkeypatch, tmp_path):
+    """An override-home gateway under a foreign port pins BOTH values.
+
+    The two pins answer the two halves of one question — WHICH install and
+    WHICH instance — and a gateway can need both at once: started under an
+    override home from an agent shell, so the foreign port is inherited too.
+    """
+    from kiro_crew.agent import _managed_mcp_env
+
+    _clear_home_and_port_env(monkeypatch)
+    monkeypatch.setenv("KIROCREW_HOME", str(tmp_path / "override-home"))
+    monkeypatch.setenv("KIROCREW_PORT", "7790")
+    monkeypatch.setenv("KIROCREW_BOUND_PORT", "35705")
+
+    assert _managed_mcp_env() == {
+        "KIROCREW_HOME": str((tmp_path / "override-home").resolve()),
+        "KIROCREW_PORT": "35705",
+    }
