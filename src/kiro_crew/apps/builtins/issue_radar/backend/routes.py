@@ -121,6 +121,12 @@ from .http_routes.ai import (  # noqa: F401
     _run_oneshot_model,
     _ui_language,
 )
+from .http_routes.ci_runs import (  # noqa: F401
+    _CONCURRENCY,
+    CI_RUNS_MAX_REPOS,
+    _handle_ci_runs,
+    _repo_runs,
+)
 from .http_routes.deps import (  # noqa: F401
     _DEPS_REBUILD_LOCKS_APP_KEY,
     _DEPS_REFRESH_TASKS_APP_KEY,
@@ -730,6 +736,7 @@ def register_routes(app: web.Application) -> None:
         "/api/apps/issue-radar/pull/auto-merge", _require_enabled(_handle_pull_auto_merge)
     )
     app.router.add_get("/api/apps/issue-radar/pull/runs", _require_enabled(_handle_pull_runs))
+    app.router.add_get("/api/apps/issue-radar/ci-runs", _require_enabled(_handle_ci_runs))
     app.router.add_post("/api/apps/issue-radar/pull/run", _require_enabled(_handle_pull_run_action))
     app.router.add_post("/api/apps/issue-radar/pulls/bulk", _require_enabled(_handle_pulls_bulk))
     app.router.add_get(

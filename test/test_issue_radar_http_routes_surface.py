@@ -70,6 +70,7 @@ MAIN_ROUTES = [
     ("POST", "/pull/merge", "_handle_pull_merge"),
     ("POST", "/pull/auto-merge", "_handle_pull_auto_merge"),
     ("GET", "/pull/runs", "_handle_pull_runs"),
+    ("GET", "/ci-runs", "_handle_ci_runs"),
     ("POST", "/pull/run", "_handle_pull_run_action"),
     ("POST", "/pulls/bulk", "_handle_pulls_bulk"),
     ("GET", "/investigation", "_handle_get_investigation"),

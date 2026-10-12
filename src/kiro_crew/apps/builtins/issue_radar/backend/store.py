@@ -21,6 +21,7 @@ import contextlib
 import json
 import logging
 import shutil
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -734,19 +735,25 @@ def set_repo_permissions(
 #   unlabeled_is_untriaged   also treat issues with no labels as needing triage
 #   good_first_issue_labels  names of labels that mark newcomer-friendly issues
 #   notify_on_new_issue      push a KiroCrew notification when a new issue opens
+#   notify_on_own_pr_ci_failure
+#                            push a Kiro Crew notification when a GitHub Actions
+#                            run fails on an open pull request the signed-in
+#                            ``gh`` user authored
 #
 # Different repos use different conventions (``needs-triage`` vs ``status: triage``
 # vs just "no label"; ``good first issue`` vs ``help wanted`` vs ``beginner``),
 # so every field is per-repo and defaults to a safe, backwards-compatible value
 # (empty label sets + "unlabeled == untriaged", which is exactly the heuristic
-# the dashboards used before settings existed). ``notify_on_new_issue`` is
-# opt-in (default off): the background watcher only polls repos that turn it on.
+# the dashboards used before settings existed). Both ``notify_on_*`` toggles are
+# opt-in (default off): the background watcher makes a toggle's provider calls
+# only for the repos that turn it on.
 
 DEFAULT_REPO_SETTINGS: dict[str, Any] = {
     "triage_labels": [],
     "unlabeled_is_untriaged": True,
     "good_first_issue_labels": [],
     "notify_on_new_issue": False,
+    "notify_on_own_pr_ci_failure": False,
     # Local absolute path to this repo's working copy. Empty string means "use
     # the gateway's default cwd" (the pre-workspace behavior). Local-only, like
     # every other field here -- never written back to the source host. The
@@ -797,6 +804,7 @@ def _normalize_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
         "unlabeled_is_untriaged": bool(raw.get("unlabeled_is_untriaged", True)),
         "good_first_issue_labels": _labels("good_first_issue_labels"),
         "notify_on_new_issue": bool(raw.get("notify_on_new_issue", False)),
+        "notify_on_own_pr_ci_failure": raw.get("notify_on_own_pr_ci_failure") is True,
         "workspace_path": workspace_path,
         # Monotonic per-repo counter, bumped by every write. A full-document PUT
         # carries the revision it read, so a write built on a snapshot that has
@@ -844,8 +852,10 @@ def write_repo_settings(
     Raises ``KeyError`` if the repo is not connected. When ``expected_revision``
     is given and does not match what is stored, raises :class:`SettingsConflict`
     rather than overwriting — this is what stops a stale tab from erasing a label
-    appended meanwhile. Returns the normalized object that was stored, with its
-    revision bumped."""
+    appended meanwhile. Turning ``notify_on_own_pr_ci_failure`` on clears the
+    repo's CI-watch record, so the next read seeds it again and the red runs
+    left from while it was off are not announced. Returns the normalized object
+    that was stored, with its revision bumped."""
     normalized = _normalize_settings(settings)
     with _config_lock(root):
         config = read_config(root)
@@ -857,6 +867,13 @@ def write_repo_settings(
                 normalized["revision"] = current["revision"] + 1
                 r["settings"] = normalized
                 write_config(config, root)
+                key = "notify_on_own_pr_ci_failure"
+                if normalized[key] and not current[key]:
+                    scope = provider_root(root=root, provider=provider, host=host)
+                    try:
+                        reset_ci_watch_state(owner, repo, scope)
+                    except OSError:
+                        logger.warning("could not reset the CI-watch record for %s/%s", owner, repo)
                 return normalized
         raise KeyError(f"{owner}/{repo} is not connected")
 
@@ -938,6 +955,114 @@ def write_watch_state(
             indent=2,
         ),
     )
+
+
+# ── CI-failure watch state (own-PR workflow-run alerts) ────────────────────────
+#
+# For a repo with ``notify_on_own_pr_ci_failure`` on, the watcher records which
+# workflow-run attempts it has already reported, as ``{run_id: attempt}``. A run
+# notifies when its failed attempt is higher than the recorded one, so a re-run
+# that fails again notifies again and a repeated read of the same failure does
+# not. ``seeded`` is false until the first successful read, which records the
+# failures already present WITHOUT notifying, so turning the setting on does not
+# announce every red run already sitting on the user's open PRs.
+#
+# A separate file from ``watch-state.json``: that file is rewritten whole by the
+# new-issue pass, and the two passes are independent opt-ins.
+
+#: Most run ids remembered per repo. The watcher keeps only the failed runs on
+#: the user's open PR heads, and skips a repo whose live failures exceed this
+#: rather than forgetting some of them; the slice below is a last-resort bound.
+CI_WATCH_MAX_RUNS = 500
+
+
+def ci_watch_state_path(owner: str, repo: str, root: Path | None = None) -> Path:
+    return repo_data_dir(owner, repo, root) / "ci-watch-state.json"
+
+
+def read_ci_watch_state(owner: str, repo: str, root: Path | None = None) -> dict[str, Any]:
+    """Return ``{"seeded": bool, "notified": {run_id: attempt}}`` for a repo.
+
+    An absent, unreadable or malformed file reads as unseeded with nothing
+    notified, so the next successful read seeds instead of announcing.
+    """
+    path = ci_watch_state_path(owner, repo, root)
+    data: Any = {}
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+    raw = data.get("notified")
+    notified: dict[str, int] = {}
+    if isinstance(raw, dict):
+        for run_id, attempt in raw.items():
+            if isinstance(run_id, str) and isinstance(attempt, int) and not isinstance(attempt, bool):
+                notified[run_id] = attempt
+    return {"seeded": data.get("seeded") is True, "notified": notified}
+
+
+def write_ci_watch_state(
+    owner: str,
+    repo: str,
+    notified: dict[str, int],
+    root: Path | None = None,
+    *,
+    generation: int | None = None,
+) -> bool:
+    """Persist the reported run attempts for a repo and mark it seeded.
+
+    Keeps only the newest :data:`CI_WATCH_MAX_RUNS` entries (insertion order).
+    With ``generation``, writes only while the repo's opt-in generation still
+    equals it (see :func:`reset_ci_watch_state`) and returns whether it wrote.
+    """
+    items = list(notified.items())[-CI_WATCH_MAX_RUNS:]
+    with _ci_watch_lock:
+        if generation is not None and generation != ci_watch_generation(owner, repo, root):
+            return False
+        atomic_write(
+            ci_watch_state_path(owner, repo, root),
+            json.dumps(
+                {"owner": owner, "repo": repo, "seeded": True, "notified": dict(items)},
+                indent=2,
+            ),
+        )
+    return True
+
+
+# In-process opt-in generation per repo record. Turning the setting on bumps it
+# and deletes the record under ``_ci_watch_lock``; a watcher pass reads it with
+# the record under the same lock, and neither notifies nor writes once it has
+# moved, so a pass that started before the reset cannot restore the old record.
+_ci_watch_lock = threading.Lock()
+_ci_watch_generations: dict[tuple[str, str, str], int] = {}
+
+
+def ci_watch_generation(owner: str, repo: str, root: Path | None = None) -> int:
+    """The repo's current opt-in generation. Pure in-memory read, no I/O."""
+    return _ci_watch_generations.get((str(root), owner.lower(), repo.lower()), 0)
+
+
+def reset_ci_watch_state(owner: str, repo: str, root: Path | None = None) -> None:
+    """Forget a repo's reported attempts, so the next read seeds it again."""
+    with _ci_watch_lock:
+        key = (str(root), owner.lower(), repo.lower())
+        _ci_watch_generations[key] = _ci_watch_generations.get(key, 0) + 1
+        ci_watch_state_path(owner, repo, root).unlink(missing_ok=True)
+
+
+def read_ci_watch_record(
+    owner: str, repo: str, root: Path | None = None
+) -> tuple[dict[str, Any], int]:
+    """The repo's record and the opt-in generation it belongs to, read together.
+
+    Taken under the same lock as :func:`reset_ci_watch_state`, so a generation
+    is never paired with the record a reset was about to delete.
+    """
+    with _ci_watch_lock:
+        return read_ci_watch_state(owner, repo, root), ci_watch_generation(owner, repo, root)
 
 
 def remove_connected_repo(
