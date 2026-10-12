@@ -43,7 +43,7 @@ let refreshSeqCounter = 0
 const nextRefreshSeq = (): number => ++refreshSeqCounter
 
 export const refreshSlot = createAsyncThunk<
-  (Awaited<ReturnType<typeof fetchSlotDetail>> & { refreshSeq: number; liveFrameSeqAtDispatch: number }) | null,
+  (Awaited<ReturnType<typeof fetchSlotDetail>> & { refreshSeq: number; liveFrameSeqAtDispatch: number; liveFromAtDispatch: number }) | null,
   string | { key: string; onlyIfUnchanged?: boolean; reachTs?: string },
   { fulfilledMeta: { recoveryRevision?: number } }
 >(
@@ -57,10 +57,15 @@ export const refreshSlot = createAsyncThunk<
     // Sampled before the first await: the walk below declines when a live frame
     // reduced into the view at any point since (see `liveFrameSeq`).
     const liveAtStart = state.liveFrameSeq ?? 0
+    // Rows past this count were appended LIVE while this refresh's fetch was in
+    // flight -- a send into the slot being refreshed (reconnect / chat_done).
+    // `refreshSlot.fulfilled` keeps the user's own bubbles among them, the way
+    // `switchSlot` keeps the ones past its `_switchLiveFrom` baseline.
+    const liveFromAtDispatch = state.messages.length
     // Dispatch order, captured before any await (see `refreshAppliedSeq`).
     const refreshSeq = nextRefreshSeq()
     const finish = (page: Awaited<ReturnType<typeof fetchSlotDetail>> | null) =>
-      fulfillWithValue(page ? { ...page, refreshSeq, liveFrameSeqAtDispatch: liveAtStart } : null,
+      fulfillWithValue(page ? { ...page, refreshSeq, liveFrameSeqAtDispatch: liveAtStart, liveFromAtDispatch } : null,
         onlyIfUnchanged ? { recoveryRevision: state.recoveryRevision ?? 0 } : {})
     const isStale = () => onlyIfUnchanged &&
       ((getState() as { chat: ChatState }).chat.recoveryRevision ?? 0) !== (state.recoveryRevision ?? 0)
@@ -411,12 +416,30 @@ export function addSlotRefreshCases(builder: ActionReducerMapBuilder<ChatState>)
        */
       const priorServerRows = state.messages.filter(m => m.role !== 'thinking' && m.role !== 'permission')
       const { olderHead } = olderHeadAbovePage(priorServerRows, messages)
+      /* The user's own sends that landed while this refresh's fetch was in
+       * flight. The refresh fires on reconnect and on `chat_done`; a send made
+       * in that window sits in `state.messages` past the dispatch-time baseline
+       * (`liveFromAtDispatch`) -- the optimistic bubble, or its echo once that
+       * gave it the server `mid` -- and the page, read BEFORE the send, does not
+       * carry it. Unlike a prior head, these rows are NEWER than the page's last
+       * row, so `olderHeadAbovePage` does not keep them and the wholesale rebuild
+       * would drop the user's message until the next refresh. Keep exactly those
+       * rows, the way `switchSlot.fulfilled` keeps the ones past `_switchLiveFrom`
+       * (#18658): live (past the baseline), the user's (a `sendId` only a send
+       * mints), not already on the page by identity (`tailNotInPage`), so a page
+       * that caught the send cannot double it. They go after the page in send
+       * order. */
+      const liveFrom = Math.min(action.payload.liveFromAtDispatch ?? state.messages.length, state.messages.length)
+      const liveSends = tailNotInPage(
+        state.messages.slice(liveFrom).filter(m => m.role === 'user' && typeof m.meta?.sendId === 'string' && m.meta.sendId),
+        messages,
+      )
       /* The cursor is a row OFFSET, so a kept head shifts it down by its own
        * server-row count. Both boundary cases (head proves completeness / the two
        * counts disagree) are owned by `pagingCursorAfterKeptHead`, not clamped. */
       const keptCursor = pagingCursorAfterKeptHead(
         hasMore, nextBefore, serverRowCount(olderHead))
-      const merged = [...olderHead, ...messages.filter(m => m.role !== 'permission'), ...statePerms.values()]
+      const merged = [...olderHead, ...messages.filter(m => m.role !== 'permission'), ...liveSends, ...statePerms.values()]
       const mergedWithPastes = mergePreservedPastes(state.messages, merged)
       // Only sort if permissions were re-injected (they need positional merge).
       // Backend messages arrive in order; sorting with mixed ts formats reorders them.
@@ -460,36 +483,54 @@ export function addSlotRefreshCases(builder: ActionReducerMapBuilder<ChatState>)
       // syncSlotRunningFromServer; the hand-back in `enterActiveSlot` reads
       // the epoch to tell a turn that ran on screen from a slot that saw
       // nothing.
-      if (running && !state.slotRunning) bumpRunEpoch(state, key)
-      state.slotRunning = running
-      state.slotStopping = action.payload.stopping ?? false
-      /* A snapshot that says the slot is NOT running settles the stream state
-       * too, not only `slotRunning`. A turn that dies with the gateway sends no
-       * `_done`, so the tab that watched it stream still holds
-       * `slotState === 'streaming'` when the socket reconnects. Left there,
-       * `selectComposerBusy` keeps the composer on Stop and the Resume button
-       * for the restart's interruption row never renders, though the row and
-       * its card did arrive. The live-frame counter guards the one case where
-       * the snapshot is stale: a frame of a NEW turn reduced after this fetch
-       * was dispatched, which owns the stream state from then on. */
-      const noLiveFrameSince = (state.liveFrameSeq ?? 0) === action.payload.liveFrameSeqAtDispatch
-      if (!running && (action.meta?.recoveryRevision !== undefined || noLiveFrameSince)) {
-        state.slotState = 'idle'
-        state.slotStopping = false
-        finalizeTrailingStreaming(state.messages)
+      /* The page's run verdict. An idle page that does not carry a send made
+       * while it was in flight (`liveSends`) was read BEFORE that send, so its
+       * `running: false` describes the slot as it was before the turn the send
+       * opened -- stale, not an observation. Taking it idled the slot
+       * (`slotRunning`, `pendingTurnSlot`) under a turn the server had already
+       * started, and nothing re-asserted the run until its first chunk; for
+       * those seconds the transcript read "user row last, slot idle" -- the
+       * shape `selectContinuable` offers Resume on, so the composer swapped its
+       * placeholder for the interrupted-turn one. Keep the local run state the
+       * send established; a page that caught the send, or one that reports
+       * running, is current and lands as before. (The existing `liveFrameSeq`
+       * guard below only protects `slotState`, never `slotRunning` /
+       * `pendingTurnSlot`, which is why this case idled the slot despite it.) */
+      const pagePredatesLiveSend = !running && liveSends.length > 0
+      if (!pagePredatesLiveSend) {
+        if (running && !state.slotRunning) bumpRunEpoch(state, key)
+        state.slotRunning = running
+        state.slotStopping = action.payload.stopping ?? false
+        /* A snapshot that says the slot is NOT running settles the stream state
+         * too, not only `slotRunning`. A turn that dies with the gateway sends no
+         * `_done`, so the tab that watched it stream still holds
+         * `slotState === 'streaming'` when the socket reconnects. Left there,
+         * `selectComposerBusy` keeps the composer on Stop and the Resume button
+         * for the restart's interruption row never renders, though the row and
+         * its card did arrive. The live-frame counter guards the one case where
+         * the snapshot is stale: a frame of a NEW turn reduced after this fetch
+         * was dispatched, which owns the stream state from then on. */
+        const noLiveFrameSince = (state.liveFrameSeq ?? 0) === action.payload.liveFrameSeqAtDispatch
+        if (!running && (action.meta?.recoveryRevision !== undefined || noLiveFrameSince)) {
+          state.slotState = 'idle'
+          state.slotStopping = false
+          finalizeTrailingStreaming(state.messages)
+        }
+        state.pendingTurnSlot = null
       }
-      state.pendingTurnSlot = null
       // Same seeding as switchSlot: this refresh is the reconnect recovery,
       // and the frames that raced it are exactly the ones it must not let
       // through a second time (the duplicated leading fragment).
       // A snapshot of a slot that is NOT running says no stream is in flight:
       // the floor is cleared, so a lost `_done` cannot leave the closed
-      // turn's seq in place to swallow the next turn's opening chunks.
+      // turn's seq in place to swallow the next turn's opening chunks. A page
+      // that predates a live send has no say on that stream either: the floor
+      // its chunks raised stays.
       if (running) {
         const snapGen = snapshotChunkGen(messages)
         state.lastChunkSeq = raiseChunkSeq(floorForGen(state.lastChunkSeq, state.lastChunkGen, snapGen), snapshotChunkSeq(messages))
         if (snapGen !== undefined) state.lastChunkGen = snapGen
-      } else {
+      } else if (!pagePredatesLiveSend) {
         state.lastChunkSeq = undefined
       }
       setPagingCursor(state, keptCursor.hasMore, keptCursor.nextBefore)
