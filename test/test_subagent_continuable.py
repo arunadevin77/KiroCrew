@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,6 +26,7 @@ import pytest
 from kiro_crew.subagent import SUCCESSOR_UNKNOWN, SubagentInfo, SubagentManager
 from kiro_crew.subagent_manager.continuation import ContinuationCoordinator
 from kiro_crew.subagent_persistence import create_agent_folder, write_run_agent
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 # ``SubagentManager.spawn`` refuses -- registering no task -- while the host
 # looks short of memory, which is the runner's state, not this test's input.
@@ -96,6 +98,13 @@ def _manager(sessions: MagicMock | None = None) -> SubagentManager:
     )
 
 
+async def _close_all(sessions: Any) -> None:
+    """Close every session with no drain, under the lost-run bound (a hang fails by name)."""
+    await await_until(
+        asyncio.create_task(sessions.close_all(drain_timeout=0)), what="the sessions closing"
+    )
+
+
 def _stop_reason(info: SubagentInfo) -> str:
     """Every marker that says WHY a run stopped, for an assertion message.
 
@@ -151,8 +160,11 @@ async def test_run_execution_publication_is_off_loop(monkeypatch, continuation):
     monkeypatch.setattr(execution_context, "read_session_execution", read)
     monkeypatch.setattr(execution_context, "bind_session_execution", bind)
     with pytest.raises(Published):
-        await asyncio.wait_for(
-            manager._run_events._run_inner_impl(info, key, _RunCreditAccounting(info)), 10
+        await await_until(
+            asyncio.create_task(
+                manager._run_events._run_inner_impl(info, key, _RunCreditAccounting(info))
+            ),
+            what="the run reaching its publication",
         )
     assert [operation[0] for operation in operations] == (
         ["read", "bind"] if continuation else ["bind"]
@@ -509,7 +521,7 @@ class TestContinuationAgentInheritance:
                 "original task", parent_session_key="dashboard:owner", keep=True
             )
             assert original is not None and not original.error
-            await asyncio.wait_for(manager._tasks[original.id], timeout=10)
+            await await_until(manager._tasks[original.id], what="the original run finishing")
             assert not original.error
             target = original
             for override in ("other-worker", "", ""):
@@ -525,7 +537,7 @@ class TestContinuationAgentInheritance:
                     target.id, "next turn", parent_session_key="dashboard:owner", agent=override
                 )
                 assert followup is not None and not followup.error
-                await asyncio.wait_for(manager._tasks[followup.id], timeout=10)
+                await await_until(manager._tasks[followup.id], what="the follow-up run finishing")
                 assert not followup.error
                 call = sessions.get_or_create.call_args
                 assert call.args[0] == f"subagent:{target.id}"
@@ -615,7 +627,7 @@ class TestContinuationAgentInheritance:
                 agent="other-worker",
             )
             assert override is not None and not override.error
-            await asyncio.wait_for(manager._tasks[override.id], timeout=10)
+            await await_until(manager._tasks[override.id], what="the override run finishing")
             assert not override.error
             assert sessions.get_or_create.call_args.kwargs["agent"] == "other-worker"
             assert (await asyncio.to_thread(sp.read_run_agent_selection, override.id))[
@@ -626,7 +638,7 @@ class TestContinuationAgentInheritance:
                 override.id, "next task", parent_session_key="dashboard:owner"
             )
             assert followup is not None and not followup.error
-            await asyncio.wait_for(manager._tasks[followup.id], timeout=10)
+            await await_until(manager._tasks[followup.id], what="the follow-up run finishing")
         assert sessions.get_or_create.await_count == 1
         if refusal == "removed-template":
             assert followup.error_code == "agent_not_found"
@@ -685,7 +697,7 @@ class TestContinuationAgentInheritance:
                 keep=True,
             )
             assert original is not None and not original.error
-            await asyncio.wait_for(manager._tasks[original.id], timeout=10)
+            await await_until(manager._tasks[original.id], what="the original run finishing")
             assert not original.error
             target = original
             for override in ("other-worker", ""):
@@ -702,7 +714,7 @@ class TestContinuationAgentInheritance:
                     target.id, "private follow-up", parent_session_key=parent, agent=override
                 )
                 assert followup is not None and not followup.error
-                await asyncio.wait_for(manager._tasks[followup.id], timeout=10)
+                await await_until(manager._tasks[followup.id], what="the follow-up run finishing")
                 assert not followup.error
                 assert sessions.get_or_create.call_args.kwargs["agent"] == (override or "worker")
                 assert followup.memory_store == store
@@ -729,7 +741,7 @@ class TestContinuationAgentInheritance:
             )
             assert refused is not None
             if not refused.done:
-                await asyncio.wait_for(manager._tasks[refused.id], timeout=10)
+                await await_until(manager._tasks[refused.id], what="the refused run finishing")
             assert not refused.error
             assert refused.memory_store == peer
             assert sessions.get_or_create.await_count == allocated + 1
@@ -768,7 +780,7 @@ class TestContinuationAgentInheritance:
             else:
                 info = manager.spawn("task", parent_session_key="dashboard:owner", keep=True)
             assert info is not None and not info.error
-            await asyncio.wait_for(manager._tasks[info.id], timeout=10)
+            await await_until(manager._tasks[info.id], what="the run finishing")
         assert "worker denied" in info.error
         governance.assert_any_call("dashboard:owner", "worker", app="")
         sessions.get_or_create.assert_not_awaited()
@@ -800,7 +812,7 @@ class TestContinuationAgentInheritance:
                 "original", "follow-up", parent_session_key="dashboard:owner", agent=override
             )
             assert info is not None and not info.error
-            await asyncio.wait_for(manager._tasks[info.id], timeout=10)
+            await await_until(manager._tasks[info.id], what="the run finishing")
         assert not info.error
         call = sessions.get_or_create.call_args
         assert call.args[0] == "subagent:original"
@@ -819,7 +831,7 @@ class TestContinuationAgentInheritance:
         with patch("kiro_crew.subagent.Stats"), patch("kiro_crew.subagent.sel"):
             info = manager.spawn("first task", parent_session_key="dashboard:worker", keep=True)
             assert info is not None and not info.error
-            await asyncio.wait_for(manager._tasks[info.id], timeout=10)
+            await await_until(manager._tasks[info.id], what="the run finishing")
         assert not info.error
         state = await asyncio.to_thread(sp.read_state, info.id)
         assert state is not None and state["agent"] == "worker"
@@ -842,7 +854,7 @@ class TestContinuationAgentInheritance:
                 info.id, "follow-up after restart", parent_session_key="dashboard:owner"
             )
             assert followup is not None and not followup.error
-            await asyncio.wait_for(restored._tasks[followup.id], timeout=10)
+            await await_until(restored._tasks[followup.id], what="the follow-up run finishing")
         assert not followup.error
         assert restored_sessions.get_or_create.call_args.kwargs["agent"] == "worker"
 
@@ -864,7 +876,7 @@ class TestContinuationAgentInheritance:
                 "original", "follow-up", parent_session_key="dashboard:owner"
             )
             assert info is not None and not info.error
-            await asyncio.wait_for(manager._tasks[info.id], timeout=10)
+            await await_until(manager._tasks[info.id], what="the run finishing")
         assert not info.error
         assert sessions.get_or_create.call_args.kwargs["agent"] is None
 
@@ -890,7 +902,7 @@ class TestContinuationAgentInheritance:
                 "original", "follow-up", parent_session_key="dashboard:owner"
             )
             assert info is not None and not info.error
-            await asyncio.wait_for(manager._tasks[info.id], timeout=10)
+            await await_until(manager._tasks[info.id], what="the run finishing")
         assert "removed-worker" in info.error
         assert info.error_code == "agent_not_found"
         sessions.get_or_create.assert_not_awaited()
@@ -916,7 +928,7 @@ class TestContinuationAgentInheritance:
                 "original", "follow-up", parent_session_key="dashboard:owner", agent=override
             )
             assert info is not None and not info.error
-            await asyncio.wait_for(manager._tasks[info.id], timeout=10)
+            await await_until(manager._tasks[info.id], what="the run finishing")
         assert not info.error
         assert sessions.get_or_create.call_args.kwargs["agent"] == (override or "conductor")
 
@@ -953,7 +965,7 @@ class TestContinuationAgentInheritance:
                     agent="other-worker",
                 )
             assert info is not None and not info.error
-            await asyncio.wait_for(manager._tasks[info.id], timeout=10)
+            await await_until(manager._tasks[info.id], what="the run finishing")
         assert "protected template unavailable" in info.error
         sessions.get_or_create.assert_not_awaited()
 
@@ -1208,7 +1220,7 @@ class TestContinuationTemplateNamespace:
                     cwd=world.project,
                 )
                 assert original is not None and not original.error
-                await asyncio.wait_for(manager._tasks[original.id], timeout=10)
+                await await_until(manager._tasks[original.id], what="the original run finishing")
                 assert not original.error
                 key = f"subagent:{original.id}"
                 first = world.made[-1]
@@ -1221,7 +1233,7 @@ class TestContinuationTemplateNamespace:
                 generation, peer_store = await asyncio.to_thread(world.enroll_collision)
                 assert peer_store != world.store
                 if restart:
-                    await asyncio.wait_for(sessions.close_all(drain_timeout=0), timeout=10)
+                    await _close_all(sessions)
                     sessions, manager = world.new_manager()
                     assert not manager._agents
                 followup = manager.continue_conversation(
@@ -1231,7 +1243,7 @@ class TestContinuationTemplateNamespace:
                     cwd=world.project,
                 )
                 assert followup is not None and not followup.error
-                await asyncio.wait_for(manager._tasks[followup.id], timeout=10)
+                await await_until(manager._tasks[followup.id], what="the follow-up run finishing")
                 assert not followup.error
                 resumed = world.made[-1]
                 assert resumed is not first and resumed.messages
@@ -1249,7 +1261,7 @@ class TestContinuationTemplateNamespace:
                     f"{resumed.template}; crew_agent={resumed.crew_agent!r}"
                 )
         finally:
-            await asyncio.wait_for(sessions.close_all(drain_timeout=0), timeout=10)
+            await _close_all(sessions)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("fallback", [False, True], ids=["dedicated", "shared-fallback"])
@@ -1274,7 +1286,7 @@ class TestContinuationTemplateNamespace:
                     keep=not fallback,
                 )
                 assert child is not None and not child.error
-                await asyncio.wait_for(manager._tasks[child.id], timeout=10)
+                await await_until(manager._tasks[child.id], what="the child run finishing")
                 assert not child.error
             if fallback:
                 shared.assert_awaited_once()
@@ -1286,7 +1298,7 @@ class TestContinuationTemplateNamespace:
                 f"{provider.template}; crew_agent={provider.crew_agent!r}"
             )
         finally:
-            await asyncio.wait_for(sessions.close_all(drain_timeout=0), timeout=10)
+            await _close_all(sessions)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("override", ["", "worker"])
@@ -1315,12 +1327,12 @@ class TestContinuationTemplateNamespace:
                     assert manager._queue[0]["crew"] == "worker"
                     manager._running_count = 0
                     manager._drain_queue()
-                    for _ in range(100):
-                        if child.id in manager._tasks:
-                            break
-                        await asyncio.sleep(0.01)
+                    await async_wait_until(
+                        lambda: child.id in manager._tasks,
+                        describe=lambda: f"queue={manager._queue!r}",
+                    )
                     child = manager._agents[child.id]
-                await asyncio.wait_for(manager._tasks[child.id], timeout=10)
+                await await_until(manager._tasks[child.id], what="the child run finishing")
                 assert not child.error
                 provider = world.made[-1]
                 assert provider.template == (override or generation)
@@ -1329,7 +1341,7 @@ class TestContinuationTemplateNamespace:
                     "member",
                     "worker",
                 )
-                await asyncio.wait_for(sessions.close_all(drain_timeout=0), timeout=10)
+                await _close_all(sessions)
                 sessions, manager = world.new_manager()
                 followup = manager.continue_conversation(
                     child.id,
@@ -1337,7 +1349,7 @@ class TestContinuationTemplateNamespace:
                     cwd=world.project,
                 )
                 assert followup is not None and not followup.error
-                await asyncio.wait_for(manager._tasks[followup.id], timeout=10)
+                await await_until(manager._tasks[followup.id], what="the follow-up run finishing")
                 assert not followup.error
                 assert world.made[-1].crew_agent == "worker"
                 assert world.made[-1].template == generation
@@ -1347,7 +1359,7 @@ class TestContinuationTemplateNamespace:
                 )
         finally:
             manager._running_count = 0
-            await asyncio.wait_for(sessions.close_all(drain_timeout=0), timeout=10)
+            await _close_all(sessions)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("override", ["", "worker"])
@@ -1387,7 +1399,7 @@ class TestContinuationTemplateNamespace:
                 )
                 assert response.status == 200, response.text
                 child = manager._agents[json.loads(response.text)["id"]]
-                await asyncio.wait_for(manager._tasks[child.id], timeout=10)
+                await await_until(manager._tasks[child.id], what="the child run finishing")
                 assert not child.error
                 assert child.memory_store == store
                 assert world.made[-1].template == (override or generation)
@@ -1397,7 +1409,7 @@ class TestContinuationTemplateNamespace:
                     "worker",
                 )
         finally:
-            await asyncio.wait_for(sessions.close_all(drain_timeout=0), timeout=10)
+            await _close_all(sessions)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("override", ["", "worker"])
@@ -1442,7 +1454,7 @@ class TestContinuationTemplateNamespace:
                 child = manager.spawn(**params, _from_queue=True)
                 assert child is not None
                 if child.id in manager._tasks:
-                    await asyncio.wait_for(manager._tasks[child.id], timeout=10)
+                    await await_until(manager._tasks[child.id], what="the child run finishing")
                 if fault == "governance" or (fault == "removed" and not override):
                     assert child.error
                     assert not world.made, "ordinary policy refusal must precede allocation"
@@ -1453,7 +1465,7 @@ class TestContinuationTemplateNamespace:
                     assert world.made[-1].template == (override or _generation)
         finally:
             manager._running_count = 0
-            await asyncio.wait_for(sessions.close_all(drain_timeout=0), timeout=10)
+            await _close_all(sessions)
 
     @pytest.mark.asyncio
     async def test_initial_implicit_parent_keeps_crew_alias_resolution(self, continuation_runtime):
@@ -1466,8 +1478,11 @@ class TestContinuationTemplateNamespace:
         await asyncio.to_thread(bind_private_session_store, parent, peer_store)
         await asyncio.to_thread(world.history.update_metadata, parent, {"memory_store": peer_store})
         try:
-            await asyncio.wait_for(
-                sessions.get_or_create(parent, agent="worker", cwd=world.project), timeout=10
+            await await_until(
+                asyncio.create_task(
+                    sessions.get_or_create(parent, agent="worker", cwd=world.project)
+                ),
+                what="the parent session starting",
             )
             sessions.release(parent)
             assert sessions.get_agent(parent) == "worker"
@@ -1480,12 +1495,12 @@ class TestContinuationTemplateNamespace:
                     cwd=world.project,
                 )
                 assert child is not None and not child.error
-                await asyncio.wait_for(manager._tasks[child.id], timeout=10)
+                await await_until(manager._tasks[child.id], what="the child run finishing")
                 assert not child.error
             assert world.made[-1].template == generation
             assert world.made[-1].crew_agent == "worker"
         finally:
-            await asyncio.wait_for(sessions.close_all(drain_timeout=0), timeout=10)
+            await _close_all(sessions)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("fallback", [False, True], ids=["dedicated", "shared-fallback"])
@@ -1528,7 +1543,7 @@ class TestContinuationTemplateNamespace:
                     keep=not fallback,
                 )
                 assert child is not None and not child.error
-                await asyncio.wait_for(manager._tasks[child.id], timeout=10)
+                await await_until(manager._tasks[child.id], what="the child run finishing")
                 assert not child.error
             if fallback and not override:
                 shared.assert_awaited_once()
@@ -1545,7 +1560,7 @@ class TestContinuationTemplateNamespace:
             )
             assert resolved == (override or template_model or "global-model")
         finally:
-            await asyncio.wait_for(sessions.close_all(drain_timeout=0), timeout=10)
+            await _close_all(sessions)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("restart", [False, True], ids=["live-manager", "restart"])
@@ -1568,8 +1583,11 @@ class TestContinuationTemplateNamespace:
         await asyncio.to_thread(bind_private_session_store, parent, store)
         await asyncio.to_thread(world.history.update_metadata, parent, {"memory_store": store})
         try:
-            await asyncio.wait_for(
-                sessions.get_or_create(parent, agent="worker", cwd=world.project), timeout=10
+            await await_until(
+                asyncio.create_task(
+                    sessions.get_or_create(parent, agent="worker", cwd=world.project)
+                ),
+                what="the parent session starting",
             )
             sessions.release(parent)
             assert sessions.get_agent_selection(parent) == ("member", "worker")
@@ -1583,7 +1601,7 @@ class TestContinuationTemplateNamespace:
                     "member task", parent_session_key=parent, memory_store=store, cwd=world.project
                 )
                 assert original is not None and not original.error
-                await asyncio.wait_for(manager._tasks[original.id], timeout=10)
+                await await_until(manager._tasks[original.id], what="the original run finishing")
                 assert not original.error
                 shared.assert_not_awaited()
                 first = world.made[-1]
@@ -1601,7 +1619,7 @@ class TestContinuationTemplateNamespace:
                 target = original
                 for override in ("worker", ""):
                     if restart:
-                        await asyncio.wait_for(sessions.close_all(drain_timeout=0), timeout=10)
+                        await _close_all(sessions)
                         sessions, manager = world.new_manager()
                     key = f"subagent:{target.id}"
                     followup = manager.continue_conversation(
@@ -1612,7 +1630,9 @@ class TestContinuationTemplateNamespace:
                         cwd=world.project,
                     )
                     assert followup is not None and not followup.error
-                    await asyncio.wait_for(manager._tasks[followup.id], timeout=10)
+                    await await_until(
+                        manager._tasks[followup.id], what="the follow-up run finishing"
+                    )
                     assert not followup.error
                     provider = world.made[-1]
                     assert provider.key == followup.conversation_key == key
@@ -1640,7 +1660,7 @@ class TestContinuationTemplateNamespace:
                     assert await asyncio.to_thread(sp.read_run_memory_store, followup.id) == store
                     target = followup
         finally:
-            await asyncio.wait_for(sessions.close_all(drain_timeout=0), timeout=10)
+            await _close_all(sessions)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("fault", ["removed", "rebound", "governance"])
@@ -1678,7 +1698,7 @@ class TestContinuationTemplateNamespace:
             followup = manager.continue_conversation("member-run", "follow-up", cwd=world.project)
             assert followup is not None
             if not followup.done:
-                await asyncio.wait_for(manager._tasks[followup.id], timeout=10)
+                await await_until(manager._tasks[followup.id], what="the follow-up run finishing")
         if fault == "rebound":
             assert not followup.error
             assert followup.memory_store == store
@@ -1728,22 +1748,24 @@ class TestContinuationTemplateNamespace:
         await asyncio.to_thread(configure_member)
         sessions, _ = world.new_manager()
         try:
-            provider, _, _ = await asyncio.wait_for(
-                sessions.get_or_create(
-                    "member-session",
-                    agent="member-parent",
-                    crew_agent="worker",
-                    cwd=world.project,
-                    model=override,
+            provider, _, _ = await await_until(
+                asyncio.create_task(
+                    sessions.get_or_create(
+                        "member-session",
+                        agent="member-parent",
+                        crew_agent="worker",
+                        cwd=world.project,
+                        model=override,
+                    )
                 ),
-                timeout=10,
+                what="the member session starting",
             )
             assert provider.template == "member-parent"
             assert provider.model_override == (override or "member-model")
             assert sessions.get_agent_selection("member-session") == ("member", "worker")
             sessions.release("member-session")
         finally:
-            await asyncio.wait_for(sessions.close_all(drain_timeout=0), timeout=10)
+            await _close_all(sessions)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("legacy", ["worker", ""])
@@ -1771,7 +1793,7 @@ class TestContinuationTemplateNamespace:
             for override in ("", "other-worker", ""):
                 followup = manager.continue_conversation(target, "next turn", agent=override)
                 assert followup is not None and not followup.error
-                await asyncio.wait_for(manager._tasks[followup.id], timeout=10)
+                await await_until(manager._tasks[followup.id], what="the follow-up run finishing")
                 assert not followup.error
                 assert sessions.get_or_create.call_args.kwargs["agent"] == (
                     override or legacy or None
@@ -3096,7 +3118,7 @@ class TestContinuationMemoryMode:
         info = await manager.continue_conversation_async(conv_id, "follow up")
         assert info is not None and not info.error
         assert not info._memory_mode_ready
-        await asyncio.wait_for(manager._tasks[info.id], timeout=5)
+        await await_until(manager._tasks[info.id], what="the run finishing")
         expected = strictest((original, requested)) or "persistent"
         assert not info.error, info.error
         # A cancelled run publishes no mode, which the mode assertion below
@@ -3129,7 +3151,7 @@ class TestContinuationMemoryMode:
         restarted = _manager(_mock_sessions(resumed=True))
         resumed = await restarted.continue_conversation_async(conv_id, "another turn")
         assert resumed is not None and not resumed.error
-        await asyncio.wait_for(restarted._tasks[resumed.id], timeout=5)
+        await await_until(restarted._tasks[resumed.id], what="the resumed run finishing")
         assert not resumed.error, resumed.error
         assert not resumed._cancel_retry_used, f"run cancelled: {_stop_reason(resumed)}"
         assert resumed.memory_mode == expected
@@ -3171,7 +3193,7 @@ class TestContinuationMemoryMode:
         # already recorded on ``info``, which is what the assertions below read.
         task = manager._tasks.get(info.id)
         if task is not None:
-            await asyncio.wait_for(task, timeout=5)
+            await await_until(task, what="the run finishing")
         # A cancelled run carries no error at all, so the membership check below
         # would read "the refusal was worded differently" for a run that never
         # reached the allocation boundary.
@@ -3209,7 +3231,7 @@ async def test_cancelled_resume_drains_mode_publication_before_returning(monkeyp
     info._memory_mode_ready = False
     task = asyncio.create_task(manager._run_inner(info, info.conversation_key))
     try:
-        assert await asyncio.wait_for(asyncio.to_thread(entered.wait, 3), timeout=4)
+        await async_wait_until(entered.is_set)
         task.cancel()
         await asyncio.sleep(0)
         task.cancel()
@@ -3217,13 +3239,13 @@ async def test_cancelled_resume_drains_mode_publication_before_returning(monkeyp
         assert not task.done(), "cancellation escaped while the protected writer was active"
         release.set()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=5)
+            await await_until(task, what="the cancelled resume ending")
         assert persistence.read_run_memory_mode("cancel-mode-original") == "temporary"
         assert persistence.read_run_memory_mode("cancel-mode-current") == "temporary"
         sessions.get_or_create.assert_not_awaited()
     finally:
         release.set()
-        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=5)
+        await await_until(asyncio.gather(task, return_exceptions=True), what="the resume ending")
 
 
 @pytest.mark.asyncio
@@ -3259,9 +3281,13 @@ async def test_the_continuation_path_takes_no_store_call_on_the_loop(monkeypatch
     assert info is not None and not info.error, getattr(info, "error", None)
     task = manager._tasks.get(info.id)
     if task is not None:
-        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=20)
-    for _ in range(40):
-        await asyncio.sleep(0.01)  # let the posted writes land, still under the guard
+        await await_until(asyncio.gather(task, return_exceptions=True), what="the run finishing")
+    # The posted store writes join ``_report_tasks``; they land still under the guard.
+    while manager._report_tasks:
+        await await_until(
+            asyncio.gather(*manager._report_tasks, return_exceptions=True),
+            what="the posted store writes landing",
+        )
     assert store.loop_thread_calls == before  # the reads below are the test's own
     monkeypatch.delenv(store_mod.STRICT_ON_LOOP_ENV)
     # The run really ran: a refusal or a cancellation would take no store call
@@ -3352,14 +3378,20 @@ async def test_the_followup_watcher_dispatches_no_store_call_on_the_loop(monkeyp
     manager._agents["followup-conv"] = done
     before = store.loop_thread_calls
     monkeypatch.setenv(store_mod.STRICT_ON_LOOP_ENV, "1")
-    await asyncio.wait_for(manager._deliver_followups(done), timeout=20)
+    await await_until(
+        asyncio.create_task(manager._deliver_followups(done)), what="the watcher dispatching"
+    )
     child = next((a for a in manager._agents.values() if a.id != "followup-conv"), None)
     assert child is not None, "the watcher dispatched no continuation"
     task = manager._tasks.get(child.id)
     if task is not None:
-        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=20)
-    for _ in range(40):
-        await asyncio.sleep(0.01)  # let the posted writes land, still under the guard
+        await await_until(asyncio.gather(task, return_exceptions=True), what="the run finishing")
+    # The posted store writes join ``_report_tasks``; they land still under the guard.
+    while manager._report_tasks:
+        await await_until(
+            asyncio.gather(*manager._report_tasks, return_exceptions=True),
+            what="the posted store writes landing",
+        )
     assert store.loop_thread_calls == before  # the reads below are the test's own
     monkeypatch.delenv(store_mod.STRICT_ON_LOOP_ENV)
     # The dispatch really happened (a settled queue with no child would pass a
@@ -3395,7 +3427,7 @@ async def test_default_cwd_continuation_does_not_request_override(tmp_path, move
     with patch("kiro_crew.subagent.Stats"), patch("kiro_crew.subagent.sel"):
         original = manager.spawn("first task", keep=True)
         assert original is not None and not original.error
-        await asyncio.wait_for(manager._tasks[original.id], 10)
+        await await_until(manager._tasks[original.id], what="the original run finishing")
         assert not original.error
         sessions.get_or_create.return_value = (provider, True, True)
         if moved_pool:
@@ -3409,7 +3441,7 @@ async def test_default_cwd_continuation_does_not_request_override(tmp_path, move
             assert sessions.get_or_create.await_count == 1
         else:
             assert recorded == "" and not followup.error
-            await asyncio.wait_for(manager._tasks[followup.id], 10)
+            await await_until(manager._tasks[followup.id], what="the follow-up run finishing")
             assert not followup.error
             assert sessions.get_or_create.await_count == 2
 
@@ -3427,8 +3459,9 @@ async def test_channel_spawn_carries_verified_member_store(continuation_runtime,
     await asyncio.to_thread(bind_private_session_store, parent, store)
     await asyncio.to_thread(world.history.update_metadata, parent, {"memory_store": store})
     try:
-        await asyncio.wait_for(
-            sessions.get_or_create(parent, agent="worker", cwd=world.project), 10
+        await await_until(
+            asyncio.create_task(sessions.get_or_create(parent, agent="worker", cwd=world.project)),
+            what="the parent session starting",
         )
         sessions.release(parent)
         assert sessions.get_agent_selection(parent) == ("member", "worker")
@@ -3439,14 +3472,16 @@ async def test_channel_spawn_carries_verified_member_store(continuation_runtime,
         with patch("kiro_crew.subagent.Stats"), patch("kiro_crew.subagent.sel"):
             child = await _spawn_off_loop(manager, "delegated task", parent)
             assert child is not None and not child.error
-            await asyncio.wait_for(manager._tasks[child.id], 10)
+            await await_until(manager._tasks[child.id], what="the child run finishing")
         assert not child.error
         assert child.memory_store == store
         assert world.made[-1].template == generation
         assert world.made[-1].crew_agent == "worker"
         assert world.made[-1]._private_memory
     finally:
-        await asyncio.wait_for(sessions.close_all(drain_timeout=0), 10)
+        await await_until(
+            asyncio.create_task(sessions.close_all(drain_timeout=0)), what="the sessions closing"
+        )
 
 
 class TestRestrictedRunStateLifetime:
@@ -3491,10 +3526,10 @@ class TestRestrictedRunStateLifetime:
         task = asyncio.create_task(manager._run(info))
         manager._tasks[run_id] = task
         try:
-            await asyncio.wait_for(entered.wait(), 5)
+            await await_until(entered, what="the report entering")
             assert persistence.read_state(run_id) is not None
             finish.set()
-            await asyncio.wait_for(task, 5)
+            await await_until(task, what="the teardown finishing")
             await asyncio.sleep(0)
             assert (persistence.read_state(run_id) is not None) == (kept and not followup)
             if kept:
@@ -3554,7 +3589,7 @@ class TestRestrictedRunStateLifetime:
         ):
             writer = asyncio.create_task(manager._write_state_off_loop(info, "late", turns=3))
             try:
-                assert await asyncio.to_thread(entered.wait, 5)
+                await async_wait_until(entered.is_set)
                 writer.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await writer
@@ -3566,11 +3601,10 @@ class TestRestrictedRunStateLifetime:
                 finish.set()
                 await asyncio.gather(writer, return_exceptions=True)
 
-            async def drained():
-                while info.id in manager._abandoned_state_writers:
-                    await asyncio.sleep(0)
-
-            await asyncio.wait_for(drained(), 5)
+            await async_wait_until(
+                lambda: info.id not in manager._abandoned_state_writers,
+                describe=lambda: f"abandoned writers: {sorted(manager._abandoned_state_writers)}",
+            )
         assert persistence.read_state(info.id) is None
         assert not (persistence._subagents_dir() / info.id).exists()
 

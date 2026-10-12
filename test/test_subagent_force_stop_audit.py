@@ -51,6 +51,7 @@ from kiro_crew.subagent_persistence import (
     read_tombstone,
     update_state,
 )
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 # The start id the fake client records at spawn (``platform_compat.get_process_start_id``
 # reads ``/proc/<pid>/stat`` field 22 on Linux); the kill re-reads it before signalling.
@@ -1045,9 +1046,10 @@ class TestTheRunsOwnReportWaitsForItsTeardown:
             # it; its reset completes but the process stands and the kill is
             # refused.
             _session_with_pid(manager, f"subagent:{info.id}", 9911)
-            await asyncio.wait_for(manager._tasks[info.id], timeout=10)
-            await asyncio.wait_for(
-                asyncio.gather(*manager._report_tasks, return_exceptions=True), timeout=10
+            await await_until(manager._tasks[info.id], what="the run finishing")
+            await await_until(
+                asyncio.gather(*manager._report_tasks, return_exceptions=True),
+                what="the report tasks finishing",
             )
 
         assert len(seen) == 1, f"the parent received {len(seen)} completions"
@@ -1085,9 +1087,10 @@ class TestTheRunsOwnReportWaitsForItsTeardown:
             info = manager.spawn("finish cleanly", keep=True)
             assert info is not None and not info.error
             _session_with_pid(manager, f"subagent:{info.id}", 9912)
-            await asyncio.wait_for(manager._tasks[info.id], timeout=10)
-            await asyncio.wait_for(
-                asyncio.gather(*manager._report_tasks, return_exceptions=True), timeout=10
+            await await_until(manager._tasks[info.id], what="the run finishing")
+            await await_until(
+                asyncio.gather(*manager._report_tasks, return_exceptions=True),
+                what="the report tasks finishing",
             )
 
         assert seen == [None] or seen == [""], f"a clean completion carried an error: {seen!r}"
@@ -1199,13 +1202,14 @@ class TestTheRunsOwnReportWaitsForItsTeardown:
             info = manager.spawn("finish, then be cancelled in the teardown", keep=True)
             assert info is not None and not info.error
             _session_with_pid(manager, f"subagent:{info.id}", 9913)
-            await asyncio.wait_for(reset_entered.wait(), timeout=10)
+            await await_until(reset_entered, what="the reset entering")
             # A gateway shutdown: the run task is cancelled while its reset hangs.
             manager._shutting_down = True
             manager._tasks[info.id].cancel()
             await asyncio.gather(manager._tasks[info.id], return_exceptions=True)
-            await asyncio.wait_for(
-                asyncio.gather(*manager._report_tasks, return_exceptions=True), timeout=10
+            await await_until(
+                asyncio.gather(*manager._report_tasks, return_exceptions=True),
+                what="the report tasks finishing",
             )
 
         group_kill.assert_not_called()  # the kill never ran: nothing was signalled
@@ -1271,14 +1275,13 @@ class TestTheRunsOwnReportWaitsForItsTeardown:
             assert info is not None and not info.error
             run_task = manager._tasks[info.id]  # popped by the run's own finally later
             _session_with_pid(manager, f"subagent:{info.id}", 9914)
-            for _ in range(1200):  # the report publishes once its grace runs out
-                if seen:
-                    break
-                await asyncio.sleep(0.05)
-            published = seen[0] if seen else None
-            await asyncio.wait_for(run_task, timeout=60)
-            await asyncio.wait_for(
-                asyncio.gather(*manager._report_tasks, return_exceptions=True), timeout=60
+            # The report publishes once its grace runs out.
+            await async_wait_until(lambda: seen, describe=lambda: f"error={info.error!r}")
+            published = seen[0]
+            await await_until(run_task, what="the run finishing")
+            await await_until(
+                asyncio.gather(*manager._report_tasks, return_exceptions=True),
+                what="the report tasks finishing",
             )
 
         assert len(seen) == 1, f"the parent received {len(seen)} completions"
@@ -1433,7 +1436,7 @@ class TestTheRetainedHandleOutlivesThePop:
         ):
             teardown = asyncio.create_task(manager._teardown_run_session(info, key))
             manager._tasks["race1"] = teardown
-            await asyncio.wait_for(popped.wait(), timeout=5)
+            await await_until(popped, what="the pop landing")
             assert key not in manager._sessions._sessions
             assert manager._process_handles["race1"][0].pid == 8181, "the pop site retained nothing"
 
@@ -1488,14 +1491,14 @@ class TestTheRetainedHandleOutlivesThePop:
             patch("kiro_crew.platform_compat.kill_process_group", group_kill),
         ):
             reap = asyncio.create_task(manager._force_reap("race2", info, 7200.0))
-            await asyncio.wait_for(popped.wait(), timeout=5)
+            await await_until(popped, what="the pop landing")
             assert manager._process_handles["race2"][0].pid == 8282
 
             await manager._teardown_run_session(info, key)
             group_kill.assert_called_once_with(8282, platform_compat.SIGKILL)
 
             hang.set()
-            await asyncio.wait_for(reap, timeout=5)
+            await await_until(reap, what="the reap finishing")
 
         # The reaper's own survivor check found the process gone: one kill, not two.
         group_kill.assert_called_once()
@@ -1563,7 +1566,7 @@ class TestEveryCandidateUnderTheKeyIsKilledOnItsOwnHandle:
         ):
             teardown = asyncio.create_task(manager._teardown_run_session(info, key))
             manager._tasks["shared1"] = teardown
-            await asyncio.wait_for(popped.wait(), timeout=5)
+            await await_until(popped, what="the pop landing")
             # A successor registered under the key while the run's teardown hangs.
             _session_with_pid(manager, key, 9292)
 
@@ -1603,7 +1606,7 @@ class TestEveryCandidateUnderTheKeyIsKilledOnItsOwnHandle:
         ):
             teardown = asyncio.create_task(manager._teardown_run_session(info, key))
             manager._tasks["shared2"] = teardown
-            await asyncio.wait_for(popped.wait(), timeout=5)
+            await await_until(popped, what="the pop landing")
             _session_with_pid(manager, key, 9494)
 
             await manager._force_reap("shared2", info, 7200.0)
@@ -2242,7 +2245,9 @@ class TestTheRecordCarriesTheKillBeforeItIsPublished:
             await manager._force_reap("pub1", info, 7200.0)
 
             hang.set()
-            await asyncio.wait_for(asyncio.gather(run_task, return_exceptions=True), timeout=5)
+            await await_until(
+                asyncio.gather(run_task, return_exceptions=True), what="the run finishing"
+            )
 
         assert _audit(mock_sel, "reaper_force_kill")["outcome"] == "failed"
         # ONE terminal report, published after the kill decided, naming the failure.
@@ -2318,8 +2323,9 @@ class TestADeliveredRecordIsNotRewrittenByTheReap:
             ),
         ):
             await manager._force_reap("late1", info, 7200.0)
-            await asyncio.wait_for(
-                asyncio.gather(*manager._report_tasks, return_exceptions=True), timeout=5
+            await await_until(
+                asyncio.gather(*manager._report_tasks, return_exceptions=True),
+                what="the report tasks finishing",
             )
 
         # The delivered record stands: no failure appended, no tombstone written
@@ -2368,8 +2374,9 @@ class TestADeliveredRecordIsNotRewrittenByTheReap:
             ),
         ):
             await manager._force_reap("late2", info, 7200.0)
-            await asyncio.wait_for(
-                asyncio.gather(*manager._report_tasks, return_exceptions=True), timeout=5
+            await await_until(
+                asyncio.gather(*manager._report_tasks, return_exceptions=True),
+                what="the report tasks finishing",
             )
 
         assert "; kill failed: ValueError: kill_process_group: refusing" in info.error
@@ -2482,7 +2489,9 @@ class TestAStopCancelledMidTeardownStillReports:
             manager._reaper_task = reap
             # The run's arm has written its record and its own teardown has
             # finished; the reap is still parked in its reset.
-            await asyncio.wait_for(asyncio.gather(run_task, return_exceptions=True), timeout=5)
+            await await_until(
+                asyncio.gather(run_task, return_exceptions=True), what="the run finishing"
+            )
             assert info.done and not reap.done()
             # The report already exists while the reap sits inside its window --
             # the task a cancellation anywhere in that window has to complete --
@@ -2493,13 +2502,16 @@ class TestAStopCancelledMidTeardownStillReports:
             assert _done_events(manager) == []
             tombstones_before_shutdown = tombstones.call_count
 
-            await asyncio.wait_for(manager.cancel_all(), timeout=5)
+            await await_until(
+                asyncio.create_task(manager.cancel_all()), what="the shutdown finishing"
+            )
 
             # The cancellation still goes through the reap.
             with pytest.raises(asyncio.CancelledError):
                 await reap
-            await asyncio.wait_for(
-                asyncio.gather(*manager._report_tasks, return_exceptions=True), timeout=5
+            await await_until(
+                asyncio.gather(*manager._report_tasks, return_exceptions=True),
+                what="the report tasks finishing",
             )
 
         # The parent still receives the ONE terminal report, and it names the
@@ -2578,19 +2590,24 @@ class TestAStopCancelledMidTeardownStillReports:
 
             reap = asyncio.create_task(manager._force_reap("shut3", info, 7200.0))
             manager._reaper_task = reap
-            await asyncio.wait_for(kill_started.wait(), timeout=5)
+            await await_until(kill_started, what="the kill starting")
             assert not info.done and not reap.done()
             assert _pending_reports_for(
                 manager, "shut3"
             ), "no terminal report task exists while the reap sits inside its kill"
 
-            await asyncio.wait_for(manager.cancel_all(), timeout=5)
+            await await_until(
+                asyncio.create_task(manager.cancel_all()), what="the shutdown finishing"
+            )
 
             with pytest.raises(asyncio.CancelledError):
                 await reap
-            await asyncio.wait_for(asyncio.gather(run_task, return_exceptions=True), timeout=5)
-            await asyncio.wait_for(
-                asyncio.gather(*manager._report_tasks, return_exceptions=True), timeout=5
+            await await_until(
+                asyncio.gather(run_task, return_exceptions=True), what="the run finishing"
+            )
+            await await_until(
+                asyncio.gather(*manager._report_tasks, return_exceptions=True),
+                what="the report tasks finishing",
             )
 
         done_events = _done_events(manager)
@@ -2642,16 +2659,21 @@ class TestAStopCancelledMidTeardownStillReports:
 
             reap = asyncio.create_task(manager._force_reap("shut2", info, 7200.0))
             manager._reaper_task = reap
-            await asyncio.wait_for(reset_started.wait(), timeout=5)
+            await await_until(reset_started, what="the reset starting")
             assert not info.done and not reap.done()
 
-            await asyncio.wait_for(manager.cancel_all(), timeout=5)
+            await await_until(
+                asyncio.create_task(manager.cancel_all()), what="the shutdown finishing"
+            )
 
             with pytest.raises(asyncio.CancelledError):
                 await reap
-            await asyncio.wait_for(asyncio.gather(run_task, return_exceptions=True), timeout=5)
-            await asyncio.wait_for(
-                asyncio.gather(*manager._report_tasks, return_exceptions=True), timeout=5
+            await await_until(
+                asyncio.gather(run_task, return_exceptions=True), what="the run finishing"
+            )
+            await await_until(
+                asyncio.gather(*manager._report_tasks, return_exceptions=True),
+                what="the report tasks finishing",
             )
 
         done_events = _done_events(manager)
@@ -2716,7 +2738,9 @@ class TestAStopCancelledMidTeardownStillReports:
             # The dashboard Stop: ``cancel()`` awaits the reap inside the request's
             # own task; ``_reaper_task`` is not involved.
             stop = asyncio.create_task(manager.cancel("shut4"))
-            await asyncio.wait_for(asyncio.gather(run_task, return_exceptions=True), timeout=5)
+            await await_until(
+                asyncio.gather(run_task, return_exceptions=True), what="the run finishing"
+            )
             assert info.done and not stop.done()
             assert _pending_reports_for(
                 manager, "shut4"
@@ -2724,15 +2748,18 @@ class TestAStopCancelledMidTeardownStillReports:
             assert _done_events(manager) == []
             tombstones_before_shutdown = tombstones.call_count
 
-            await asyncio.wait_for(manager.cancel_all(), timeout=5)
+            await await_until(
+                asyncio.create_task(manager.cancel_all()), what="the shutdown finishing"
+            )
 
             done_events = _done_events(manager)
             if not stop.done():
                 stop.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await stop
-            await asyncio.wait_for(
-                asyncio.gather(*manager._report_tasks, return_exceptions=True), timeout=5
+            await await_until(
+                asyncio.gather(*manager._report_tasks, return_exceptions=True),
+                what="the report tasks finishing",
             )
 
         assert (
@@ -2794,9 +2821,12 @@ class TestConcurrentStopsCoalesceIntoOneReap:
             # The user presses Stop while it is in flight.
             stop = asyncio.create_task(manager.cancel("race1"))
 
-            await asyncio.wait_for(asyncio.gather(deadline, stop), timeout=5)
-            await asyncio.wait_for(
-                asyncio.gather(*manager._report_tasks, return_exceptions=True), timeout=5
+            await await_until(
+                asyncio.gather(deadline, stop), what="the reap and the stop finishing"
+            )
+            await await_until(
+                asyncio.gather(*manager._report_tasks, return_exceptions=True),
+                what="the report tasks finishing",
             )
 
         assert stop.result() is True
@@ -2864,12 +2894,13 @@ class TestConcurrentStopsCoalesceIntoOneReap:
             assert info._reap_started and not deadline.done()
             stop = asyncio.create_task(manager.cancel("race3"))
             # The first reap has written its record and is inside the delivery.
-            await asyncio.wait_for(delivering.wait(), timeout=5)
+            await await_until(delivering, what="the delivery starting")
             assert info.done and info.reaped and not deadline.done()
 
             try:
-                await asyncio.wait_for(asyncio.shield(stop), timeout=1)
-            except asyncio.TimeoutError:
+                # The delivery is still held: a stop that waited for it never returns.
+                await await_until(stop, what="the stop that joined the reap returning")
+            except AssertionError:
                 delivered.set()
                 pytest.fail(
                     "the stop that joined the reap waited for the report's delivery, "
@@ -2878,9 +2909,10 @@ class TestConcurrentStopsCoalesceIntoOneReap:
             assert stop.result() is True
 
             delivered.set()
-            await asyncio.wait_for(deadline, timeout=5)
-            await asyncio.wait_for(
-                asyncio.gather(*manager._report_tasks, return_exceptions=True), timeout=5
+            await await_until(deadline, what="the deadline reap finishing")
+            await await_until(
+                asyncio.gather(*manager._report_tasks, return_exceptions=True),
+                what="the report tasks finishing",
             )
 
         assert (info.error or "").count("kill failed:") == 1
@@ -3355,7 +3387,8 @@ class TestTheOrphanKillLeavesTheLoopRunning:
         async def clock() -> None:
             nonlocal ticks
             while True:
-                await asyncio.sleep(0.01)
+                # The tick is the instrument: a blocked loop serves none of them.
+                await asyncio.sleep(0.01)  # flake-ok: the loop-liveness probe
                 ticks += 1
 
         ticking = asyncio.create_task(clock())
@@ -3626,7 +3659,7 @@ class TestTheReapFencesTheKey:
         mgr = SessionManager(KiroCrewConfig(), provider_factory=_factory)
         key = "subagent:fence2"
         cold_start = asyncio.create_task(mgr.get_or_create(key))
-        await asyncio.wait_for(inside_start.wait(), timeout=2)
+        await await_until(inside_start, what="start() being entered")
         assert not mgr.has_session(key), "nothing is published while start() runs"
 
         manager = SubagentManager(
@@ -3666,7 +3699,7 @@ class TestTheReapFencesTheKey:
             # start return: refused at registration, its provider hard-killed,
             # and the call allocates again -- the caller lands after the record.
             gate.set()
-            provider, is_new, _ = await asyncio.wait_for(cold_start, timeout=5)
+            provider, is_new, _ = await await_until(cold_start, what="the cold start landing")
 
         group_kill.assert_not_called()  # nothing was published for the passes to kill
         assert (

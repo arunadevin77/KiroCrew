@@ -46,6 +46,7 @@ from kiro_crew.dashboard.state import TOOL_STALL_RECOVERY_PREFIX
 from kiro_crew.providers.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from kiro_crew.subagent import SubagentInfo, SubagentManager
 from kiro_crew.taskrunner import Step, StepStatus, TaskRun, TaskRunner
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 pytestmark = pytest.mark.usefixtures("healthy_host_memory")
 
@@ -415,12 +416,9 @@ async def test_exhausted_stream_without_complete_is_not_marked_result_complete()
 _ANSWER = "THE WHOLE FINISHED ANSWER. "
 
 
-async def _wait_until(predicate, what: str, timeout: float = 15.0) -> None:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while not predicate():
-        assert loop.time() < deadline, f"timed out waiting for {what}"
-        await asyncio.sleep(0.02)
+async def _wait_until(predicate, what: str) -> None:
+    """Wait for *predicate* under the lost-run bound; the failure names *what*."""
+    await async_wait_until(predicate, describe=lambda: f"waiting for {what}")
 
 
 async def _wait_settled(mgr: SubagentManager, info: SubagentInfo) -> None:
@@ -645,11 +643,11 @@ async def test_an_ending_that_never_reaches_the_tail_caps_what_streamed_too(
                 if deadline is not None:
                     deadline.fire.set()
                 elif ending == "user stop":
-                    assert await asyncio.wait_for(mgr.cancel(info.id), 5) is True
+                    stop = asyncio.create_task(mgr.cancel(info.id))
+                    assert await await_until(stop, what="the Stop returning") is True
                 else:
                     await asyncio.wait_for(mgr.cancel_all(), 60)
-            done, _ = await asyncio.wait({run}, timeout=15)
-            assert run in done, "the run task never finished"
+            await await_until(asyncio.gather(run, return_exceptions=True), what="the run finishing")
     finally:
         hold.set()
 
@@ -718,15 +716,17 @@ async def test_a_claimed_result_write_that_hangs_is_bounded(monkeypatch: pytest.
             info = mgr.spawn("do work", parent_session_key="dashboard:p")
             assert info is not None
             run = mgr._tasks[info.id]
-            await asyncio.wait_for(gate.entered.wait(), 10)
-            await asyncio.wait_for(drain.parked.wait(), 10)
+            await await_until(gate.entered, what="the result write being entered")
+            await await_until(drain.parked, what="the drain parking")
             assert info._ending_claimed and not info.done
             assert await mgr.cancel(info.id) is False
             assert await mgr.settle_before_delete(info.id) == "pending"
             assert info.id in mgr._agents
             drain.start_bound()
-            done, _ = await asyncio.wait({run}, timeout=15)
-            assert run in done, "a hung claimed write held the run past its bound"
+            await await_until(
+                asyncio.gather(run, return_exceptions=True),
+                what="the run ending at its claimed write's bound",
+            )
             assert info.done and info.outcome == "completed"
             assert mgr._running_count == 0
             assert info.id in mgr._abandoned_state_writers
@@ -757,7 +757,7 @@ async def test_the_final_cap_of_a_done_run_holds_its_conversation(
         with patch("kiro_crew.subagent.Stats"), patch("kiro_crew.subagent.sel"):
             info = mgr.spawn("do work", parent_session_key="dashboard:p")
             assert info is not None
-            await asyncio.wait_for(gate.entered.wait(), 10)
+            await await_until(gate.entered, what="the result write being entered")
             assert gate.texts == [None] and info.done and not info._ending_claimed
             busy = mgr._conversation_busy(f"subagent:{info.id}")
             assert busy is not None and busy._state_writer_abandoned
@@ -930,7 +930,7 @@ async def test_whatever_lands_after_the_claim_the_run_is_completed_once(
             info = mgr.spawn("do work", parent_session_key="dashboard:p")
             assert info is not None
             run = mgr._tasks[info.id]
-            await asyncio.wait_for(gate.entered.wait(), 10)
+            await await_until(gate.entered, what="the result write being entered")
             assert info._ending_claimed and not info.done
             shutdown = None
             if ending == "unexpected cancel":
@@ -944,23 +944,29 @@ async def test_whatever_lands_after_the_claim_the_run_is_completed_once(
                 deadline.fire.set()
                 await _wait_until(lambda: info._state_drain_active, "the deadline to land")
             elif ending == "user stop":
-                assert await asyncio.wait_for(mgr.cancel(info.id), 5) is False
+                stop = asyncio.create_task(mgr.cancel(info.id))
+                assert await await_until(stop, what="the Stop returning") is False
             elif ending == "deadline reap":
                 # The reaper's own call: no reason, so the record would be ``reaped``.
-                await asyncio.wait_for(
-                    mgr._force_reap(info.id, info, _time.time() - info.started), 5
+                await await_until(
+                    asyncio.create_task(
+                        mgr._force_reap(info.id, info, _time.time() - info.started)
+                    ),
+                    what="the deadline reap finishing",
                 )
             else:
-                await asyncio.wait_for(
-                    mgr.cancel_for_teardown([info.id], parent_session_key="dashboard:p"), 5
+                await await_until(
+                    asyncio.create_task(
+                        mgr.cancel_for_teardown([info.id], parent_session_key="dashboard:p")
+                    ),
+                    what="the teardown cancel finishing",
                 )
             assert not (info.user_stopped or info._reap_started or info._reap_reason)
             await asyncio.sleep(0.05)
             gate.release()
             if shutdown is not None:
                 await asyncio.wait_for(shutdown, 60)
-            done, _ = await asyncio.wait({run}, timeout=15)
-            assert run in done, "the run task never finished"
+            await await_until(asyncio.gather(run, return_exceptions=True), what="the run finishing")
             await _wait_settled(mgr, info)
     finally:
         gate.release()
@@ -1027,9 +1033,8 @@ async def test_a_stop_that_got_there_first_owns_the_ending_and_no_flag_is_writte
             complete_go.set()
             await _wait_until(lambda: info.done, "the run's own ending")
             reset_go.set()
-            await asyncio.wait_for(stopping, 15)
-            done, _ = await asyncio.wait({run}, timeout=15)
-            assert run in done, "the run task never finished"
+            await await_until(stopping, what="the Stop returning")
+            await await_until(asyncio.gather(run, return_exceptions=True), what="the run finishing")
             await _wait_settled(mgr, info)
     finally:
         complete_go.set()
@@ -1091,7 +1096,7 @@ async def test_a_deadline_reap_that_got_there_first_owns_the_ending():
             complete_go.set()
             await _wait_until(lambda: run.done(), "the run's own ending")
             reset_go.set()
-            await asyncio.wait_for(reaping, 15)
+            await await_until(reaping, what="the reap finishing")
             await _wait_settled(mgr, info)
     finally:
         complete_go.set()
@@ -1156,7 +1161,7 @@ async def test_a_reap_in_flight_names_whether_the_answer_had_finished(
             complete_go.set()
             await _wait_until(lambda: run.done(), "the run's own ending")
             reset_go.set()
-            await asyncio.wait_for(reaping, 15)
+            await await_until(reaping, what="the reap finishing")
             await _wait_settled(mgr, info)
     finally:
         complete_go.set()
@@ -1213,9 +1218,8 @@ async def test_a_user_stop_no_reap_has_reached_yet_records_the_neutral_stop():
             await _wait_until(lambda: info.done, "the run's own ending")
             assert not info._reap_started, "the reap was meant to be held"
             reap_go.set()
-            await asyncio.wait_for(stopping, 15)
-            done, _ = await asyncio.wait({run}, timeout=15)
-            assert run in done, "the run task never finished"
+            await await_until(stopping, what="the Stop returning")
+            await await_until(asyncio.gather(run, return_exceptions=True), what="the run finishing")
             await _wait_settled(mgr, info)
     finally:
         complete_go.set()
@@ -1318,8 +1322,8 @@ async def test_the_usage_row_never_holds_an_ending(monkeypatch: pytest.MonkeyPat
         with patch("kiro_crew.subagent.Stats"), patch("kiro_crew.subagent.sel"):
             info = mgr.spawn("do work")
             assert info is not None
-            await asyncio.wait_for(entered.wait(), 10)
-            await asyncio.wait_for(mgr._tasks[info.id], 10)
+            await await_until(entered, what="the run being entered")
+            await await_until(mgr._tasks[info.id], what="the run finishing")
             assert info.done and info.outcome == "completed"
             rows = [t for t in mgr._report_tasks if not t.done()]
             assert rows, "the usage row is held by the manager while it runs"
@@ -1357,13 +1361,12 @@ async def test_a_cancel_during_a_non_whole_ending_cap_keeps_the_recorded_ending(
             info = mgr.spawn("do work")
             assert info is not None
             run = mgr._tasks[info.id]
-            await asyncio.wait_for(gate.entered.wait(), 10)
+            await await_until(gate.entered, what="the result write being entered")
             assert info.done and not info._ending_claimed
             run.cancel()
             await asyncio.sleep(0.05)
             gate.release()
-            done, _ = await asyncio.wait({run}, timeout=15)
-            assert run in done, "the run task never finished"
+            await await_until(asyncio.gather(run, return_exceptions=True), what="the run finishing")
             await _wait_settled(mgr, info)
     finally:
         gate.release()
@@ -1447,12 +1450,13 @@ def _respawn_stream(second: tuple[str, ...], *, second_ends: bool = True):
 async def _respawned(mgr: SubagentManager, stream) -> tuple[SubagentInfo, asyncio.Task]:
     info = mgr.spawn("do work")
     assert info is not None
-    await asyncio.wait_for(stream.first_streaming.wait(), 10)
+    await await_until(stream.first_streaming, what="the first attempt streaming")
     first = mgr._tasks[info.id]
     first.cancel()
-    done, _ = await asyncio.wait({first}, timeout=10)
-    assert first in done, "the cancelled first attempt never finished"
-    await asyncio.wait_for(stream.second_started.wait(), 15)
+    await await_until(
+        asyncio.gather(first, return_exceptions=True), what="the cancelled first attempt ending"
+    )
+    await await_until(stream.second_started, what="the respawn starting")
     respawn = mgr._tasks[info.id]
     assert respawn is not first
     return info, respawn
@@ -1478,14 +1482,14 @@ async def test_a_respawn_keeps_the_partial_until_it_has_text_and_never_glues():
             assert tombstone_recovery_action(info.id, state) == "partial_result"
 
             stream.goes[0].set()
-            await asyncio.wait_for(stream.landed[0].wait(), 10)
+            await await_until(stream.landed[0], what="the chunk landing")
             await _wait_until(lambda: "opening" in info.streaming_text, "the live partial")
             on_disk = (folder / "result.txt").read_text(encoding="utf-8")
             assert on_disk == "attempt-2 opening sentence that "
             assert info.streaming_text == on_disk
 
             stream.goes[1].set()
-            await asyncio.wait_for(respawn, 10)
+            await await_until(respawn, what="the respawn finishing")
             await _wait_settled(mgr, info)
     finally:
         for go in stream.goes:
@@ -1511,10 +1515,12 @@ async def test_a_cut_off_respawn_delivers_the_partial_it_left_on_disk():
         with patch("kiro_crew.subagent.Stats"), patch("kiro_crew.subagent.sel"):
             info, respawn = await _respawned(mgr, stream)
             stream.goes[0].set()
-            await asyncio.wait_for(stream.landed[0].wait(), 10)
+            await await_until(stream.landed[0], what="the chunk landing")
             await _wait_until(lambda: info.streaming_text, "the live partial")
             respawn.cancel()  # the one-shot recovery is spent: this one is terminal
-            await asyncio.wait({respawn}, timeout=10)
+            await await_until(
+                asyncio.gather(respawn, return_exceptions=True), what="the terminal respawn ending"
+            )
             await _wait_settled(mgr, info)
     finally:
         for go in stream.goes:
@@ -1551,7 +1557,7 @@ async def test_a_partial_result_txt_cannot_hold_is_still_delivered_whole(
         assert info is not None
         await _wait_until(lambda: "gamma" in info.streaming_text, "the last chunk")
         assert info.streaming_text == "".join(chunks)
-        await asyncio.wait_for(mgr.cancel(info.id), 15)
+        await await_until(asyncio.create_task(mgr.cancel(info.id)), what="the Stop returning")
         await _wait_settled(mgr, info)
 
     assert info.outcome == "stopped"
@@ -1603,7 +1609,7 @@ async def test_the_live_partial_takes_a_chunk_before_its_file_write_starts(
             stop = asyncio.ensure_future(mgr.cancel(info.id))
             await _wait_until(lambda: info.user_stopped, "the Stop")
             release_write.set()
-            await asyncio.wait_for(stop, 15)
+            await await_until(stop, what="the Stop returning")
             await _wait_settled(mgr, info)
     finally:
         release_write.set()
@@ -1656,7 +1662,7 @@ async def test_a_refused_write_leaves_no_hole_in_result_txt(
         assert info is not None
         await _wait_until(lambda: len(writes) == len(chunks), "the last chunk's write")
         on_disk = (sp._agent_dir(info.id) / "result.txt").read_text(encoding="utf-8")
-        await asyncio.wait_for(mgr.cancel(info.id), 15)
+        await await_until(asyncio.create_task(mgr.cancel(info.id)), what="the Stop returning")
         await _wait_settled(mgr, info)
 
     assert on_disk == "".join(chunks)
@@ -1674,7 +1680,7 @@ async def test_a_textless_whole_answer_leaves_no_result_file():
     mgr = _manager(_mock_sessions(stream.factory))
     with patch("kiro_crew.subagent.Stats"), patch("kiro_crew.subagent.sel"):
         info, respawn = await _respawned(mgr, stream)
-        await asyncio.wait_for(respawn, 10)
+        await await_until(respawn, what="the respawn finishing")
         await _wait_settled(mgr, info)
 
     assert len(stream.calls) == 2 and info.outcome == "completed"

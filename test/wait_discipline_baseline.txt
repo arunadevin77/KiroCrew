@@ -444,11 +444,9 @@
   2 test_stub_writer_death.py
   5 test_subagent.py
   4 test_subagent_config_hot_reload.py
- 64 test_subagent_continuable.py
   1 test_subagent_coverage.py
   6 test_subagent_delivery_ttl_anchor.py
   1 test_subagent_error_detail.py
- 38 test_subagent_force_stop_audit.py
   3 test_subagent_memory_bounds_concurrency.py
   5 test_subagent_memory_wake.py
   1 test_subagent_no_tool_calls_note.py
@@ -464,10 +462,8 @@
   1 test_subagent_sizing.py
   1 test_subagent_stall_activity_scope.py
  11 test_subagent_startup_pressure.py
- 25 test_subagent_stop_reason_consistency.py
   1 test_subagent_tool_approval_crew_log.py
   1 test_subagent_turn_identity.py
- 20 test_subagent_turn_resilience.py
  12 test_subprocess_pool.py
   2 test_tag_session.py
   1 test_task_runner_compaction.py
