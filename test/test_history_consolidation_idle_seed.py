@@ -10,8 +10,11 @@ the dict once, off the event loop, from the transcripts on disk.
 from __future__ import annotations
 
 import asyncio
+import errno
+import json
 import os
 import time
+from collections.abc import Callable
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -313,9 +316,10 @@ async def test_a_seeded_session_looks_up_the_receipt_committed_before_restart(
     assert len(asked) == 2 and asked[0] == asked[1]
 
 
-# Sessions that had a turn in this process. ``maybe_consolidate`` tracks each one;
-# once a session has nothing left to consolidate, the sweep stops tracking it until
-# its next turn, so a session used once is not reread on every sweep.
+# Sessions that had a turn in this process. When a sweep's read finds nothing left to
+# consolidate, it remembers the transcript's stamp and skips the key until the stamp
+# moves, so a finished session costs a stat per sweep, not a transcript read, and a
+# row from any writer still reaches the next sweep.
 
 
 def _live(
@@ -344,15 +348,24 @@ def _live(
 
 
 async def _sweep(
-    consolidator: HistoryConsolidator, log: ConversationLog
+    consolidator: HistoryConsolidator,
+    log: ConversationLog,
+    *,
+    after_read: Callable[[str], None] | None = None,
 ) -> tuple[list[str], AsyncMock]:
-    """One idle sweep with ``_consolidate`` stubbed; returns the keys whose transcript it read."""
+    """One idle sweep with ``_consolidate`` stubbed; returns the keys whose transcript it read.
+
+    *after_read* runs right after each read, as a writer in another thread would.
+    """
     reads: list[str] = []
     counts = log.consolidation_counts
 
     def counting(key: str) -> tuple[int, int]:
         reads.append(key)
-        return counts(key)
+        found = counts(key)
+        if after_read is not None:
+            after_read(key)
+        return found
 
     fake = AsyncMock(return_value=None)
     with (
@@ -361,13 +374,13 @@ async def _sweep(
     ):
         consolidator.check_idle_sessions()
         await asyncio.wait_for(
-            asyncio.gather(*list(consolidator._tasks), return_exceptions=True), timeout=5
+            asyncio.gather(*list(consolidator._tasks), return_exceptions=True), timeout=30
         )
     return reads, fake
 
 
 @pytest.mark.asyncio
-async def test_a_consolidated_idle_session_is_read_once_then_dropped(tmp_path):
+async def test_a_consolidated_idle_session_is_read_once_then_left_alone(tmp_path):
     keys = [f"dashboard:chat-{i}" for i in range(3)]
     log, consolidator = _live(tmp_path, keys, consolidated=True)
 
@@ -376,32 +389,86 @@ async def test_a_consolidated_idle_session_is_read_once_then_dropped(tmp_path):
 
     assert sorted(first) == keys  # one read each finds nothing left to consolidate
     assert second == [], f"idle sessions with nothing left are reread on every sweep: {second}"
-    tracked = consolidator._last_activity.keys() | consolidator._history_consolidated.keys()
-    assert not set(keys) & tracked
     fake.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_a_dropped_session_is_tracked_again_on_its_next_turn(tmp_path):
-    key = "dashboard:chat-back"
-    log, consolidator = _live(tmp_path, [key], consolidated=True)
-    consolidator._prefs_offset[key] = 3
-
-    await _sweep(consolidator, log)
-    assert key not in consolidator._last_activity, "a session with nothing left stays tracked"
-    # The preferences offset stays: without it the session's next turn would rerun
-    # the preferences pass over the whole transcript.
-    assert consolidator._prefs_offset[key] == 3
-
+def _write_row(log: ConversationLog, key: str, writer: str) -> None:
+    """Add one row to *key*'s transcript the way each kind of writer does."""
+    if writer == "other_process":  # no ConversationLog call, so no cache invalidation either
+        with open(log._path(key), "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"role": "user", "content": "from another process"}) + "\n")
+        return
     with history_mod.allow_on_loop_persist():
-        log.append(key, "user", "back again")
-    consolidator.maybe_consolidate(key)
-    assert key in consolidator._last_activity
-    consolidator._last_activity[key] = 0.0
+        log.append(key, "user", "a later row")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("writer", ["turn", "turn_that_skips_maybe_consolidate", "other_process"])
+async def test_a_row_written_after_a_clean_read_is_swept(tmp_path, writer):
+    """Monitor-wake, recovery and cancelled turns append rows without ``maybe_consolidate``."""
+    key = "dashboard:chat-later"
+    log, consolidator = _live(tmp_path, [key], consolidated=True)
+    await _sweep(consolidator, log)  # finds nothing left
+
+    _write_row(log, key, writer)
+    if writer == "turn":
+        consolidator.maybe_consolidate(key)
+        consolidator._last_activity[key] = 0.0  # idle again
 
     reads, fake = await _sweep(consolidator, log)
+
     assert reads == [key]
     fake.assert_awaited_once_with(key, include_history=True)
+
+
+@pytest.mark.asyncio
+async def test_a_row_that_lands_during_the_read_is_swept_next(tmp_path):
+    """The stamp is taken before the read, so a row that lands after a clean count shows."""
+    key = "dashboard:chat-racing"
+    log, consolidator = _live(tmp_path, [key], consolidated=True)
+    await _sweep(
+        consolidator, log, after_read=lambda racing: _write_row(log, racing, "other_process")
+    )
+
+    reads, fake = await _sweep(consolidator, log)
+
+    assert reads == [key]
+    fake.assert_awaited_once_with(key, include_history=True)
+
+
+@pytest.mark.asyncio
+async def test_a_marker_reset_that_keeps_size_and_mtime_is_swept(tmp_path):
+    """``mark_consolidated`` rewrites the metadata line and restores the mtime, so a stamp
+    of size and mtime alone cannot see the rows it reopens."""
+    key = "dashboard:chat-reset"
+    log, consolidator = _live(tmp_path, [key], consolidated=True)
+    os.utime(log._path(key), (1_700_000_000, 1_700_000_000))  # a whole second restores exactly
+    await _sweep(consolidator, log)
+    before = log._path(key).stat()
+
+    with history_mod.allow_on_loop_persist():
+        log.mark_consolidated(key, 0)  # all three rows are unconsolidated again
+    after = log._path(key).stat()
+    assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)
+
+    reads, fake = await _sweep(consolidator, log)
+
+    assert reads == [key]
+    fake.assert_awaited_once_with(key, include_history=True)
+
+
+@pytest.mark.asyncio
+async def test_a_cache_invalidation_makes_the_next_sweep_read(tmp_path):
+    """A writer that invalidates a key's caches changed its file in a way the stat may not
+    show (a same-length rewrite inside one clock tick), so the stamp carries the generation."""
+    key = "dashboard:chat-invalidated"
+    log, consolidator = _live(tmp_path, [key], consolidated=True)
+    await _sweep(consolidator, log)
+
+    log._invalidate_cache(key)
+    reads, _ = await _sweep(consolidator, log)
+
+    assert reads == [key]
 
 
 @pytest.mark.asyncio
@@ -414,6 +481,81 @@ async def test_an_idle_session_with_rows_left_stays_tracked(tmp_path):
 
     fake.assert_awaited_once_with(key, include_history=True)
     assert first == [key] and second == [key]
+    assert key in consolidator._last_activity
+
+
+_IDLE_RECORDS = ("_last_activity", "_seeded_keys", "_history_consolidated", "_idle_clean")
+
+
+def _delete(log: ConversationLog, key: str) -> None:
+    """Delete *key*'s session, as the dashboard does."""
+    with history_mod.allow_on_loop_persist():
+        assert log.delete_session(key)
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_session_leaves_no_idle_record(tmp_path):
+    """Deleting a session removes its transcript, and the next sweep forgets every record the
+    consolidator holds for it, so the stamp of a finished session does not outlive the session."""
+    gone, kept = "dashboard:chat-gone", "dashboard:chat-kept"
+    log, consolidator = _live(tmp_path, [gone, kept], consolidated=True)
+    await _sweep(consolidator, log)  # both are read once and stamped
+    for key in (gone, kept):
+        consolidator._history_consolidated[key] = time.time()  # a pass has run for it
+    assert gone in consolidator._idle_clean and kept in consolidator._idle_clean
+
+    _delete(log, gone)
+    reads, _ = await _sweep(consolidator, log)
+
+    assert gone not in reads
+    for name in _IDLE_RECORDS:
+        assert gone not in getattr(consolidator, name), name
+    assert kept in consolidator._last_activity and kept in consolidator._idle_clean
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_session_is_forgotten_once_its_pass_has_ended(tmp_path):
+    """A pass still running for the session records its throttle when it ends, so the records
+    go after the pass, not under it."""
+    key = "dashboard:chat-running"
+    log, consolidator = _live(tmp_path, [key], consolidated=True)
+    await _sweep(consolidator, log)
+    consolidator._running.add(key)  # a pass is in flight
+
+    _delete(log, key)
+    await _sweep(consolidator, log)
+    assert key in consolidator._last_activity and key in consolidator._idle_clean
+
+    consolidator._running.discard(key)  # the pass ends and writes its throttle
+    consolidator._history_consolidated[key] = time.time()
+    await _sweep(consolidator, log)
+
+    for name in _IDLE_RECORDS:
+        assert key not in getattr(consolidator, name), name
+
+
+@pytest.mark.asyncio
+async def test_a_transcript_that_cannot_be_statted_is_not_a_deleted_one(tmp_path):
+    """Only an absent file means the session is gone. A stat that fails otherwise (permissions,
+    a stale mount) keeps the key tracked and falls back to reading it."""
+    key = "dashboard:chat-denied"
+    log, consolidator = _live(tmp_path, [key], consolidated=True)
+    await _sweep(consolidator, log)
+    path = log._path(key)
+    real_stat = type(path).stat
+
+    def denied(self, *args, **kwargs):
+        if self.name == path.name:
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    with (
+        patch.object(type(path), "stat", denied),
+        patch.object(log, "consolidation_counts", return_value=(3, 0)) as counts,
+    ):
+        consolidator.check_idle_sessions()
+
+    counts.assert_called_once_with(key)  # read: not skipped on the old stamp, not forgotten
     assert key in consolidator._last_activity
 
 

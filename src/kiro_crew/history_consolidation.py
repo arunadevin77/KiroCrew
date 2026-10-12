@@ -52,7 +52,7 @@ from kiro_crew.vector_memory_constants import (
 )
 
 if TYPE_CHECKING:
-    from kiro_crew.history import ConversationLog
+    from kiro_crew.history import CacheIdentity, ConversationLog
     from kiro_crew.learn import LessonStore
     from kiro_crew.memory import MemoryStore
     from kiro_crew.memory_schema import MemoryFacets
@@ -1083,6 +1083,10 @@ class HistoryConsolidator:
         self._seeded_keys: set[str] = set()
         self._seed_task: "asyncio.Task[None] | None" = None
         self._history_consolidated: dict[str, float] = {}  # key → last history consolidation time
+        # key → the transcript stamp at its latest idle read that found nothing left to
+        # consolidate; check_idle_sessions skips the key while the stamp is unchanged.
+        # _forget_key drops it with the key, so it never holds more than _last_activity.
+        self._idle_clean: dict[str, tuple[CacheIdentity, int]] = {}
         # Separate offset for prefs-only consolidation (doesn't advance main offset)
         self._prefs_offset: dict[str, int] = {}
         # Session length at the last skill-detection pass, so an unchanged
@@ -1369,6 +1373,31 @@ class HistoryConsolidator:
         target = self._log._path(key).name
         return any(self._log._path(running).name == target for running in self._running)
 
+    def _transcript_stamp(self, key: str) -> tuple[CacheIdentity, int] | None:
+        """Return *key*'s transcript stamp from a stat with no read, or ``None``.
+
+        The pair ``_read_messages`` checks before it serves a cached parse: the file's
+        stat identity (mtime, ctime, size and inode, so a rewrite that restores the
+        mtime still shows) and the key's invalidation generation. While it is unchanged
+        a read would return the same rows. ``None`` when the file cannot be stat'ed, so
+        the caller reads instead of skipping. A transcript that does not exist raises
+        ``FileNotFoundError``: the session was deleted, which is not a failed stat.
+        """
+        try:
+            identity = self._log._cache_identity(self._log._path(key).stat())
+        except FileNotFoundError:
+            raise
+        except OSError:
+            return None
+        return identity, self._log._cache_gen(key)
+
+    def _forget_key(self, key: str) -> None:
+        """Stop tracking *key* in the idle sweep, dropping every record held for it."""
+        self._last_activity.pop(key, None)
+        self._seeded_keys.discard(key)
+        self._history_consolidated.pop(key, None)
+        self._idle_clean.pop(key, None)
+
     def _scan_unconsolidated_transcripts(self) -> dict[str, float]:
         """Map each transcript's LIVE session key to its file mtime, for unconsolidated tails.
 
@@ -1491,20 +1520,32 @@ class HistoryConsolidator:
                 self._last_activity[key] = self._last_activity.pop(key)
             # A seed's transcript may be cold and large, so it is never read here on the
             # loop: ``_consolidate`` snapshots it off the loop and enforces the backoff.
-            total, unconsolidated = (0, 1) if seeded else self._log.consolidation_counts(key)
-            if unconsolidated < 1:
-                # Nothing is left to consolidate: stop tracking the session until its next
-                # turn tracks it again through ``maybe_consolidate``, or every session ever
-                # used costs a transcript read on every sweep. A key with its own pass in
-                # flight waits a sweep, because that pass writes the throttle when it ends.
-                # ``_prefs_offset`` stays: without it the next turn would rerun the
-                # preferences pass over the whole transcript.
-                if key not in self._running:
-                    self._last_activity.pop(key, None)
-                    self._history_consolidated.pop(key, None)
+            #
+            # A key whose last read found nothing left is skipped while its transcript's
+            # stamp is unchanged, so a finished session costs a stat, not a read, per
+            # sweep. The stamp is taken before the read, so a row that lands in between
+            # makes the next sweep read again. The key stays tracked: turns that skip
+            # ``maybe_consolidate`` (monitor wakes, recoveries, cancelled turns) and other
+            # processes append rows too, and the stamp sees all of them. A key whose
+            # transcript is gone was deleted: it is forgotten once no pass for it is
+            # running, because a running pass records its throttle when it ends.
+            try:
+                stamp = None if seeded else self._transcript_stamp(key)
+            except FileNotFoundError:
+                if not self._busy(key):
+                    self._forget_key(key)
                 continue
+            if stamp is not None and self._idle_clean.get(key) == stamp:
+                continue
+            total, unconsolidated = (0, 1) if seeded else self._log.consolidation_counts(key)
+            if stamp is not None:
+                if unconsolidated < 1:
+                    self._idle_clean[key] = stamp
+                else:
+                    self._idle_clean.pop(key, None)
             if (
-                now - self._history_consolidated.get(key, 0) < self._history_idle_secs
+                unconsolidated < 1
+                or now - self._history_consolidated.get(key, 0) < self._history_idle_secs
                 or self._busy(key)
                 # Durable backoff, checked last so it only costs a metadata read
                 # once the cheap conditions pass. The in-memory throttle above is
@@ -1762,8 +1803,7 @@ class HistoryConsolidator:
             unconsolidated = copy.deepcopy(unconsolidated)
             if not unconsolidated:
                 if key in self._seeded_keys:  # a finished seed stops being re-read
-                    self._seeded_keys.discard(key)
-                    self._last_activity.pop(key, None)
+                    self._forget_key(key)
                 return None
             # Display-only rows (``notice``) are text drawn for the person
             # reading the transcript, not conversation: the Slack thread-parent
