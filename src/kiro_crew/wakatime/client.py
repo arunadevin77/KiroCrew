@@ -71,8 +71,12 @@ _DEFAULT_TIMEOUT_SECS = 30
 _SINGLE_DAY_RANGES = {"today": "Today", "yesterday": "Yesterday"}
 
 
-def _merge_entries(days: list[dict], key: str) -> list[dict[str, Any]]:
-    """Sum one summaries breakdown (``languages``, ``projects``) by name."""
+def sum_seconds_by_name(days: list[dict], key: str) -> list[tuple[str, float]]:
+    """Sum one summaries breakdown (``languages``, ``projects``) by name.
+
+    Returns ``(name, seconds)`` pairs, largest first. Shared by the stats fold
+    below and the dashboard's billable-hours export.
+    """
     totals: dict[str, float] = {}
     for day in days:
         for entry in day.get(key) or []:
@@ -82,8 +86,12 @@ def _merge_entries(days: list[dict], key: str) -> list[dict[str, Any]]:
             seconds = entry.get("total_seconds")
             if isinstance(name, str) and isinstance(seconds, (int, float)):
                 totals[name] = totals.get(name, 0.0) + float(seconds)
-    ranked = sorted(totals.items(), key=lambda kv: kv[1], reverse=True)
-    return [{"name": name, "total_seconds": secs} for name, secs in ranked]
+    return sorted(totals.items(), key=lambda kv: kv[1], reverse=True)
+
+
+def _merge_entries(days: list[dict], key: str) -> list[dict[str, Any]]:
+    """The stats-shaped ``[{name, total_seconds}]`` form of one breakdown."""
+    return [{"name": name, "total_seconds": secs} for name, secs in sum_seconds_by_name(days, key)]
 
 
 def _stats_from_summaries(days: list[dict]) -> dict[str, Any]:
@@ -335,6 +343,10 @@ class WakaTimeClient:
         params = {"start": start, "end": end}
         if project:
             params["project"] = project
+        return await self._fetch_summary_days(params)
+
+    async def _fetch_summary_days(self, params: dict[str, str]) -> list[dict]:
+        """GET summaries for ``params``; raise unless the body has a data list."""
         result = await self._api("GET", "/users/current/summaries", params=params)
         data = result.get("data") if isinstance(result, dict) else None
         if not isinstance(data, list):
@@ -371,15 +383,8 @@ class WakaTimeClient:
         if summaries_range is not None:
             # The stats endpoint rejects single-day ranges with a 400, so a
             # day comes from summaries, folded into the stats shape.
-            result = await self._api(
-                "GET", "/users/current/summaries", params={"range": summaries_range}
-            )
-            days = result.get("data") if isinstance(result, dict) else None
-            if not isinstance(days, list):
-                raise WakaTimeUnavailableError(
-                    "WakaTime summaries request failed or returned no data"
-                )
-            return _stats_from_summaries([d for d in days if isinstance(d, dict)])
+            days = await self._fetch_summary_days({"range": summaries_range})
+            return _stats_from_summaries(days)
         result = await self._api("GET", f"/users/current/stats/{wakatime_range}")
         data = result.get("data") if isinstance(result, dict) else None
         if not isinstance(data, dict):
