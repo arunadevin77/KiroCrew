@@ -566,12 +566,16 @@ class TaskRunner:
         git-coordinated, so its checkpoint is the last committed step) is
         resumed through ``execute_plan``, which re-runs only the steps that
         did not PASS. One that is not safe stays ``paused`` for a human and
-        its row is settled ``unknown_side_effect``. A row that was only ever
-        ACCEPTED (``queued``: the crash landed while it waited for a lane slot)
-        is settled ``cancelled`` -- a resume is a NEW row, so nothing is lost,
-        and no dispatcher exists for this kind to pick the old one up. One sweep
-        at a time: a call that overlaps the sweep ``attach_task_admission``
-        started joins it instead of adopting the same rows twice.
+        its row is settled ``unknown_side_effect``. A safe row that
+        ``RECOVERY_MAX_ATTEMPTS`` earlier gateway lives already resumed is
+        settled ``failed`` instead of being resumed again: the run stays
+        ``paused`` and a notice says that the limit counts every gateway stop,
+        not only a crash. A row that was only ever ACCEPTED (``queued``: the
+        crash landed while it waited for a lane slot) is settled ``cancelled``
+        -- a resume is a NEW row, so nothing is lost, and no dispatcher exists
+        for this kind to pick the old one up. One sweep at a time: a call that
+        overlaps the sweep ``attach_task_admission`` started joins it instead
+        of adopting the same rows twice.
         """
         inflight = self._adopt_inflight
         if inflight is not None and not inflight.done() and inflight is not asyncio.current_task():
@@ -620,6 +624,21 @@ class TaskRunner:
                     "\u23f8\ufe0f Run not auto-resumed",
                     "The interrupted step may have had a side effect (no git worktree "
                     "to checkpoint against). Review the workspace and resume manually.",
+                    run=run,
+                )
+        for rec_id in report.lost_owner_limit:
+            # ``owner_of`` drops the ``~N`` of the row a manual resume opens once the
+            # run's earlier row has ended, which slicing the prefix off would keep.
+            owner = _runner_adapter.owner_of(rec_id)
+            run = self._runs.get(owner[1]) if owner is not None else None
+            if run is not None and run.status == "paused":
+                await self._notify(
+                    "\u23f8\ufe0f Run not auto-resumed",
+                    f"This run was resumed automatically {_taskq_model.RECOVERY_MAX_ATTEMPTS} "
+                    "times after the gateway stopped, and the gateway stopped again before it "
+                    "finished, so it is not resumed again. The limit counts every gateway stop, "
+                    "a routine restart as much as a crash. Steps that passed are kept: resume "
+                    "the run by hand to continue it.",
                     run=run,
                 )
         return report

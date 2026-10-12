@@ -27,6 +27,12 @@ from kiro_crew.recovery.policy import (
 #: boot forever.
 RECOVERY_MAX_ATTEMPTS = 3
 
+#: Event a runner kind's adoption sweep records each time it hands a row whose
+#: owner died to the runner's resume, with ``incarnation`` naming the gateway
+#: life that did. ``TaskStore.lost_owner_recoveries`` counts these beside the
+#: reconciler's transitions, so the limit above bounds runner rows too.
+ADOPTED_RESUME_EVENT = "adopted_resume"
+
 #: The bare shared schedule (no layer specialisation): the store retries a row,
 #: it does not own a rung of the ladder.
 _RECOVERY_SCHEDULE = LayerPolicy(

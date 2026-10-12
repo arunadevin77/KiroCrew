@@ -556,6 +556,7 @@ already handed back to its run:
 |---|---|
 | run row, `is_safe_retry` (`params.safe_retry`, i.e. the run had a git worktree, or class `none` / `idempotent_key`) | `recovering`, then `execute_plan(task_id)` -- only steps that did not PASS re-run (`runs.json` / `progress.md` is the checkpoint) |
 | run row, not safe (legacy import, no worktree) | `unknown_side_effect`; the run stays `paused`, a "Run not auto-resumed" notice tells the operator to review and resume by hand |
+| run row, safe, that `model.RECOVERY_MAX_ATTEMPTS` (3) earlier gateway lives already resumed | `failed` (`adopted: lost_owner_limit`, listed in `AdoptReport.lost_owner_limit`); the run stays `paused`, a "Run not auto-resumed" notice says the limit counts every gateway stop, a routine restart as much as a crash, and the operator resumes by hand (which opens a new `~N` row) |
 | step row, safe | `failed` ("interrupted by a gateway restart; re-run on resume") -- the resume creates a fresh `~N` row for it |
 | step row, not safe | `unknown_side_effect` |
 | any row still `queued` (accepted, never claimed: the crash landed while it waited for a lane slot) whose `params.accepted_by` is a DEAD incarnation | `cancelled` ("never started") -- nothing ran under it, and a resume re-accepts a new row, so leaving it claimable would only park it forever: `taskrunner_step` has no dispatcher |
