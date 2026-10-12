@@ -191,12 +191,16 @@ async def api_terminal_external_grant(request: web.Request) -> web.Response:
     Body: ``{"grant": "…"}``. Answers ``{"app": "<id>", "cwd": "<realpath>"}``
     once per grant. Refused without a verified internal secret on loopback, for
     an unknown, spent or expired grant, and when the picked app has changed or
-    been cleared since the grant was minted.
+    been cleared since the grant was minted. Every outcome is audited, naming the
+    refusal code or the app and never the directory.
     """
+
+    def refuse(status: int, code: str, error: str) -> web.Response:
+        _audit(request, "terminal.external.redeem", "denied", code)
+        return web.json_response({"error": error, "code": code}, status=status)
+
     if request.get("internal_auth") is not True or not is_loopback(request.remote or ""):
-        return web.json_response(
-            {"error": "forbidden", "code": "internal_secret_required"}, status=403
-        )
+        return refuse(403, "internal_secret_required", "forbidden")
     try:
         body = await request.json()
     except (ValueError, UnicodeDecodeError):
@@ -204,16 +208,12 @@ async def api_terminal_external_grant(request: web.Request) -> web.Response:
     grant = body.get("grant") if isinstance(body, dict) else None
     entry = _take_grant(grant) if isinstance(grant, str) else None
     if entry is None:
-        return web.json_response(
-            {"error": "no such grant", "code": "external_terminal_no_grant"}, status=404
-        )
+        return refuse(404, "external_terminal_no_grant", "no such grant")
     app, cwd = entry
     if (
         not terminal._is_enabled(request)
         or configured_app(await asyncio.to_thread(terminal._get_config, request)) != app
     ):
-        return web.json_response(
-            {"error": "the picked app changed", "code": "external_terminal_not_configured"},
-            status=409,
-        )
+        return refuse(409, "external_terminal_not_configured", "the picked app changed")
+    _audit(request, "terminal.external.redeem", "ok", f"app={app}")
     return web.json_response({"app": app, "cwd": cwd})

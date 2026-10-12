@@ -255,12 +255,14 @@ contextBridge.exposeInMainWorld("folderPickAPI", {
 });
 
 // External terminal bridge for the Files tab's "Open in external terminal" row
-// and its Settings picker. `detect` resolves { apps: [{id, label}] }, the
-// allowlisted terminal apps installed on this machine. `open` hands the main
-// process the opaque grant the gateway answered POST /api/terminal/external
-// with, and resolves { ok, app?, error? }; the main process redeems the grant at
-// the gateway and starts nothing without it, so no app name, path or argument
-// crosses this bridge. Both reject for a window whose gateway is not this
+// and its Settings picker. `detect` resolves { apps: [{id, label}], capable },
+// the allowlisted terminal apps installed on this machine; for a window whose
+// gateway is not this machine's it resolves { apps: [], capable: false }, so the
+// row and the picker stay hidden there. `open` hands the main process the
+// opaque grant the gateway answered POST /api/terminal/external with, and
+// resolves { ok, app?, error? }; the main process redeems the grant at the
+// gateway and starts nothing without it, so no app name, path or argument
+// crosses this bridge. `open` rejects for a window whose gateway is not this
 // machine's. Absent in a plain browser and the PWA, where the row is hidden.
 contextBridge.exposeInMainWorld("externalTerminalAPI", {
   detect: () => ipcRenderer.invoke("external-terminal:detect"),

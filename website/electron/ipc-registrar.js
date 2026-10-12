@@ -489,9 +489,21 @@ function createIpcRegistrar({
     // gateway redeems it. The app id and the directory come from that
     // redemption, the binary and argv from the allowlist in
     // external-terminal.js, and no OS opener is involved at any step.
+    //
+    // `detect` answers a refused window `{ apps: [], capable: false }` instead
+    // of rejecting, as `dashboard:can-pick-folder` answers false: a desktop
+    // window reaching a remote crew through an SSH tunnel is an ordinary
+    // window that can never launch here, not a failed check, so the renderer
+    // hides the row and the picker rather than reporting an error a Retry
+    // cannot clear. The gate still runs (and logs) before any probe, so a
+    // refused window learns only this one bit, and `open` keeps rejecting.
     ipcMain.handle("external-terminal:detect", async (event) => {
-      await assertLocalDashboard(event, "external-terminal:detect");
-      return { apps: externalTerminal.detectTerminals() };
+      try {
+        await assertLocalDashboard(event, "external-terminal:detect");
+      } catch {
+        return { apps: [], capable: false };
+      }
+      return { apps: externalTerminal.detectTerminals(), capable: true };
     });
     ipcMain.handle("external-terminal:open", async (event, grant) => {
       await assertLocalDashboard(event, "external-terminal:open");

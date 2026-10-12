@@ -244,6 +244,41 @@ def test_outstanding_grants_are_bounded():
     assert len(ext._grants) == ext._MAX_GRANTS
 
 
+@pytest.mark.asyncio
+async def test_every_redemption_outcome_is_audited_by_app_only(monkeypatch, tmp_path):
+    # Each refusal and the success of the redemption route writes one SEL event,
+    # naming the refusal code or the app and never the directory.
+    sel = MagicMock()
+    monkeypatch.setattr(terminal, "_sel", lambda: sel)
+
+    def redeems():
+        return [
+            (c.kwargs["outcome"], c.kwargs["resources"])
+            for c in sel.log_api_access.call_args_list
+            if c.kwargs["operation"] == "terminal.external.redeem"
+        ]
+
+    cfg = {"enabled": True, "external_app": "kitty"}
+    async with TestClient(TestServer(_app(monkeypatch, cfg=cfg))) as client:
+        grant = (await (await _open(client, str(tmp_path))).json())["grant"]
+        assert (
+            await client.post("/api/terminal/external-grant", json={"grant": grant})
+        ).status == 403
+        assert (await _redeem(client, "x" * 43)).status == 404
+        assert (await _redeem(client, grant)).status == 200
+        lapsed = (await (await _open(client, str(tmp_path))).json())["grant"]
+        cfg["external_app"] = "wezterm"
+        assert (await _redeem(client, lapsed)).status == 409
+    assert redeems() == [
+        ("denied", "internal_secret_required"),
+        ("denied", "external_terminal_no_grant"),
+        ("ok", "app=kitty"),
+        ("denied", "external_terminal_not_configured"),
+    ]
+    for c in sel.log_api_access.call_args_list:
+        assert str(tmp_path) not in repr(c), "the audit names the app only, never the directory"
+
+
 # ── config and the desktop allowlist ──────────────────────────────────────
 
 

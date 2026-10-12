@@ -480,13 +480,13 @@ test("registerShell owns the exact shell channel set and is idempotent", () => {
 
   assert.deepEqual([...h.handlers.keys()].sort(), SHELL_HANDLES);
   assert.deepEqual([...h.listeners.keys()].sort(), SHELL_LISTENERS);
-  assert.equal(h.handlers.size + h.listeners.size, 38);
+  assert.equal(h.handlers.size + h.listeners.size, 40);
 
   // boot-complete is a further non-update host channel, but it is deliberately
   // gateway-owned and scoped to a single connecting WebContents. Registering it
   // globally here would weaken its sender check and leak listeners.
   assert.match(GATEWAY_SOURCE, /ipcMain\.on\("boot-complete", onComplete\)/);
-  assert.equal(h.handlers.size + h.listeners.size + 1, 39);
+  assert.equal(h.handlers.size + h.listeners.size + 1, 41);
   assert.equal(h.handlers.has("boot-complete"), false);
   assert.equal(h.listeners.has("boot-complete"), false);
 
@@ -1223,42 +1223,49 @@ function fakeExternalTerminal({ installed = ["kitty", "wezterm"], launchResult =
 
 const GRANT = "g".repeat(43);
 
-const EXTERNAL_TERMINAL_CHANNELS = [
-  ["external-terminal:detect", []],
-  ["external-terminal:open", [GRANT]],
+// The three ways a window fails the local-dashboard gate, each as harness
+// options plus the event it sends.
+const NOT_LOCAL_WINDOWS = [
+  // Wrong origin: a connection window pointed at a remote gateway.
+  ["a remote origin", {}, () => wslEvent("https://remote.example/chat")],
+  // Right origin but the window's gateway is remote (an SSH tunnel on loopback).
+  ["a remote gateway behind a tunnel", { wslGatewayLocal: false }, () => wslEvent()],
+  // The primary port is held by something other than this shell's gateway.
+  ["a foreign port holder", { primaryPortOwner: "foreign" }, () => wslEvent()],
 ];
 
-test("external-terminal channels reject a sender that is not the local dashboard", async () => {
-  for (const [channel, args] of EXTERNAL_TERMINAL_CHANNELS) {
-    // Wrong origin: a connection window pointed at a remote gateway.
-    const wrong = fakeExternalTerminal();
-    const h1 = harness({ externalTerminal: wrong });
-    h1.registrar.registerShell();
+test("external-terminal:open rejects a sender that is not the local dashboard", async () => {
+  for (const [why, opts, event] of NOT_LOCAL_WINDOWS) {
+    const ext = fakeExternalTerminal();
+    const h = harness({ externalTerminal: ext, ...opts });
+    h.registrar.registerShell();
     await assert.rejects(
-      () => h1.handlers.get(channel)(wslEvent("https://remote.example/chat"), ...args),
-      { message: `${channel} is restricted to the local dashboard` },
+      () => h.handlers.get("external-terminal:open")(event(), GRANT),
+      { message: "external-terminal:open is restricted to the local dashboard" },
     );
-    assert.deepEqual(wrong.calls, [], `${channel}: a rejected sender reaches no detection or launch`);
+    assert.deepEqual(ext.calls, [], `${why}: a rejected sender reaches no launch`);
+  }
+});
 
-    // Right origin but the window's gateway is remote (an SSH tunnel on loopback).
-    const remote = fakeExternalTerminal();
-    const h2 = harness({ externalTerminal: remote, wslGatewayLocal: false });
-    h2.registrar.registerShell();
-    await assert.rejects(
-      () => h2.handlers.get(channel)(wslEvent(), ...args),
-      { message: `${channel} is restricted to the local dashboard` },
+// A desktop window reaching a remote crew through an SSH tunnel reads as a
+// direct-local request to that crew, so the renderer does ask. The answer is
+// "not capable", not a rejection: a rejection reads as a failed check, whose
+// notice and Retry could never clear for that window.
+test("external-terminal:detect answers a window that is not the local dashboard as not capable", async () => {
+  for (const [why, opts, event] of NOT_LOCAL_WINDOWS) {
+    const ext = fakeExternalTerminal();
+    const h = harness({ externalTerminal: ext, ...opts });
+    h.registrar.registerShell();
+    assert.deepEqual(
+      await h.handlers.get("external-terminal:detect")(event()),
+      { apps: [], capable: false },
+      `${why}: answered as not capable`,
     );
-    assert.deepEqual(remote.calls, []);
-
-    // The primary port is held by something other than this shell's gateway.
-    const foreign = fakeExternalTerminal();
-    const h3 = harness({ externalTerminal: foreign, primaryPortOwner: "foreign" });
-    h3.registrar.registerShell();
-    await assert.rejects(
-      () => h3.handlers.get(channel)(wslEvent(), ...args),
-      { message: `${channel} is restricted to the local dashboard` },
+    assert.deepEqual(ext.calls, [], `${why}: a refused window reaches no detection`);
+    assert.ok(
+      h.logs.some((line) => line.startsWith("external-terminal:detect rejected")),
+      `${why}: the refusal is still logged`,
     );
-    assert.deepEqual(foreign.calls, []);
   }
 });
 
@@ -1267,8 +1274,17 @@ test("external-terminal:detect lists the installed allowlisted apps only", async
   h.registrar.registerShell();
   assert.deepEqual(await h.handlers.get("external-terminal:detect")(wslEvent()), {
     apps: [{ id: "kitty", label: "kitty" }, { id: "wezterm", label: "WezTerm" }],
+    capable: true,
   });
   assert.equal(h.store.writes.length, 0, "the pick lives in gateway config, not the shell's store");
+});
+
+test("external-terminal:detect still rejects when detection itself fails on a local window", async () => {
+  const ext = fakeExternalTerminal();
+  ext.detectTerminals = () => { throw new Error("probe failed"); };
+  const h = harness({ externalTerminal: ext });
+  h.registrar.registerShell();
+  await assert.rejects(() => h.handlers.get("external-terminal:detect")(wslEvent()), { message: "probe failed" });
 });
 
 test("external-terminal:open launches only through a gateway grant redeemed with the internal secret", async () => {

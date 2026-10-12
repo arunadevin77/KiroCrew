@@ -1943,6 +1943,18 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     }
   },
   {
+    "id": "display.external-terminal-app",
+    "label": "External terminal app",
+    "labelKey": "pages.settings.displayPanel.terminal_external_app",
+    "tab": "display",
+    "type": "select",
+    "occurrence": 1,
+    "params": {
+      "sub": "terminal"
+    },
+    "configKey": "dashboard.terminal.external_app"
+  },
+  {
     "id": "display.font",
     "label": "Font",
     "labelKey": "pages.settings.displayPanel.terminal_font_family",

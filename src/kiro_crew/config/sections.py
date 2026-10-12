@@ -3941,7 +3941,7 @@ class DashboardConfig:
                         "label": "External terminal app",
                         "help": (
                             "Desktop app only, on the machine running the gateway: adds "
-                            '"Open in external terminal" to the Files tab\'s Project '
+                            '"Open in <your terminal app>" to the Files tab\'s Project '
                             "actions menu, which opens this app in the project directory. "
                             "Empty = no external terminal; the built-in terminal is "
                             "unaffected either way."

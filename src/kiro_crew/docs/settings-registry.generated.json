@@ -1148,6 +1148,13 @@
       "hint": "Render programming ligatures (=>, !=, ->) when the custom font has them. Code and diffs in messages are unaffected."
     },
     {
+      "id": "display.external-terminal-app",
+      "label": "External terminal app",
+      "tab": "display",
+      "route": "/settings/display/terminal?highlight=key%3Adashboard.terminal.external_app",
+      "configKey": "dashboard.terminal.external_app"
+    },
+    {
       "id": "display.font",
       "label": "Font",
       "tab": "display",
