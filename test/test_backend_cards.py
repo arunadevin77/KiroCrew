@@ -704,6 +704,3 @@ def test_the_payload_is_json_native() -> None:
 
     for backend in sorted(sdk_backends.ACP_BACKENDS_KNOWN):
         json.dumps(cards_mod.card_payload(backend))
-
-
-# ── 8. the complete list ───────────────────────────────────────────────────

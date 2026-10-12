@@ -306,9 +306,8 @@ USER_FACING_LINES: Tuple[_LineSpec, ...] = (
 #: Each is a real capability -- a membership whose absence is a loss -- but not one a
 #: user weighs when picking a harness: it is a detail of how a saved spec loads, an
 #: agent-side orchestration verb, or an agent-file format. Kept as lines so the
-#: complete list scores them per harness and the panel can show them behind a
-#: folded disclosure, and kept OUT of the card's count so "supports N of M" is a
-#: number over the core set alone.
+#: panel can show them behind a folded disclosure, and kept OUT of the card's
+#: count so "supports N of M" is a number over the core set alone.
 DETAIL_LINES: Tuple[_LineSpec, ...] = (
     # Only kiro-cli loads an enrolled member's whole saved spec at spawn. The
     # question a user asks -- does a crewmate get Crew's tools here? -- is the
