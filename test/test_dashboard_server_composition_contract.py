@@ -2188,7 +2188,7 @@ async def test_a_blocked_loop_is_logged_and_a_dead_heartbeat_reports_itself(
 
     clock = iter([0.0, 10.0, 10.0, 15.5])
     monkeypatch.setattr(asyncio, "sleep", _sleep)
-    monkeypatch.setattr(server, "time", types.SimpleNamespace(monotonic=lambda: next(clock)))
+    monkeypatch.setattr(server.platform_compat, "awake_now", lambda: next(clock))
     state = MagicMock()
     state.resource_pressure_notifier.maybe_sample = AsyncMock(
         side_effect=[None, RuntimeError("notifier gone")]

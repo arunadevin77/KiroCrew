@@ -12,12 +12,16 @@ syscall, one holding the GIL.
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import signal
 import subprocess
 import sys
 import textwrap
 import threading
+import time
+import types
+import typing
 from pathlib import Path
 
 import pytest
@@ -589,6 +593,91 @@ def test_suspend_clock_none_disables_the_comparison() -> None:
         clock.advance(5.0)
         assert wd.check() is False
     assert not any("suspend" in m for m in handler.messages)
+
+
+class _UnbiasedInterruptTime:
+    """A stand-in ``kernel32`` whose ``QueryUnbiasedInterruptTime`` reports :attr:`t`
+    seconds as 100 ns ticks: the Windows clock a sleep does not advance.  ``ok=False``
+    makes the call fail the way the API reports a failure (a zero return)."""
+
+    def __init__(self) -> None:
+        self.t = 1000.0
+        self.ok = True
+
+    def QueryUnbiasedInterruptTime(self, ref: typing.Any) -> int:  # noqa: N802 - Win32 name
+        ref._obj.value = round(self.t * 10_000_000)
+        return 1 if self.ok else 0
+
+
+def _simulate_windows(monkeypatch: pytest.MonkeyPatch) -> _UnbiasedInterruptTime:
+    clock = _UnbiasedInterruptTime()
+    monkeypatch.setattr(platform_compat, "IS_WINDOWS", True)
+    monkeypatch.setattr(ctypes, "windll", types.SimpleNamespace(kernel32=clock), raising=False)
+    return clock
+
+
+def test_awake_now_reads_the_unbiased_interrupt_time_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows' ``time.monotonic()`` counts a sleep, so there the awake clock is the
+    unbiased interrupt time; a failed call falls back to ``time.monotonic()``."""
+    unbiased = _simulate_windows(monkeypatch)
+    unbiased.t = 4321.5
+    assert platform_compat.awake_now() == 4321.5
+    unbiased.ok = False
+    before = time.monotonic()
+    fallback = platform_compat.awake_now()
+    assert before <= fallback <= time.monotonic()
+
+
+def test_a_windows_resume_is_not_silence_and_a_real_hang_still_dumps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On Windows the watchdog's default clock is the unbiased interrupt time.  A beat
+    before the host sleeps and a poll 5 awake seconds after it wakes see 5 s of
+    silence, however long the sleep was, so nothing is enriched or dumped.  A loop that
+    then stays silent for ``stall_after`` awake seconds is still a stall."""
+    unbiased = _simulate_windows(monkeypatch)
+    dumps: list[float] = []
+    enriched: list[float] = []
+    wd = LoopStallWatchdog(
+        stall_after=30.0,
+        exit_after=None,
+        poll_interval=5.0,
+        suspend_clock=lambda: None,
+        dump=lambda: dumps.append(unbiased.t),
+        enrich=lambda silence: enriched.append(silence) or [],
+        arm_later=lambda _t: None,
+        cancel_later=lambda: None,
+        log=logging.getLogger("test.loop_watchdog.windows"),
+    )
+    wd.beat()
+    unbiased.t += 5.0  # the sleep itself does not advance this clock
+    assert wd.check() is False
+    assert (dumps, enriched) == ([], [])
+    unbiased.t += 30.0  # no beat after the resume: a real stall
+    assert wd.check() is True
+    assert dumps == [unbiased.t]
+    assert enriched == [35.0]
+
+
+def test_awake_now_reads_the_platform_awake_clock() -> None:
+    """``awake_now`` returns a reading of the clock a suspend does not advance on this
+    host, bracketed by two direct reads of it: the real ``QueryUnbiasedInterruptTime``
+    on Windows, ``time.monotonic()`` elsewhere.  Nothing is stubbed, so the Windows
+    runner is where the real API is called."""
+    ticks = ctypes.c_ulonglong(0)
+
+    def platform_clock() -> float:
+        if platform_compat.IS_WINDOWS:
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            assert kernel32.QueryUnbiasedInterruptTime(ctypes.byref(ticks))
+            return ticks.value / 10_000_000
+        return time.monotonic()
+
+    before = platform_clock()
+    reading = platform_compat.awake_now()
+    assert before <= reading <= platform_clock()
 
 
 class _AlarmSeam:

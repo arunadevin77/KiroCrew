@@ -10264,6 +10264,28 @@ def boottime_now() -> float | None:
         return None
 
 
+def awake_now() -> float:
+    """Now, in seconds, on a clock that stands still while the host is suspended.
+
+    ``time.monotonic()`` is that clock on Linux (``CLOCK_MONOTONIC``) and macOS
+    (the mach timebase). On Windows it counts a sleep, so there this reads the
+    unbiased interrupt time (``QueryUnbiasedInterruptTime``, in 100 ns units,
+    which leaves out sleep and hibernation) and falls back to
+    ``time.monotonic()`` only if that call fails. Liveness checks measure
+    silence on it, so a resume does not read as the whole sleep having passed
+    without a heartbeat.
+    """
+    if IS_WINDOWS:
+        ticks = ctypes.c_ulonglong(0)
+        try:
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            if kernel32.QueryUnbiasedInterruptTime(ctypes.byref(ticks)):
+                return ticks.value / 10_000_000
+        except (AttributeError, OSError):
+            pass
+    return time.monotonic()
+
+
 def process_start_boot_secs(starttime_ticks: float) -> float | None:
     """A process's ``starttime`` ticks as seconds on the :func:`boottime_now` clock.
 

@@ -43,10 +43,7 @@ things turn the silence that follows a wedge into an actionable artifact:
    and fires any pending deadline the instant the host wakes, whatever its
    budget (portable interpreter builds and every macOS build take that
    branch).  Windows has no process alarm, so there that timer carries the
-   exit at the same budget (:func:`exit_mechanism`): Windows'
-   ``time.monotonic()`` counts a sleep as well, so a sleep already reads as
-   silence on that platform and the timer's wall-clock deadline adds nothing
-   new.
+   exit at the same budget (:func:`exit_mechanism`), re-armed by every beat.
 
    **Journal visibility:** the dump lands in the dedicated file only (not
    stderr/journal) because faulthandler targets a single fd.  On the next
@@ -56,7 +53,8 @@ things turn the silence that follows a wedge into an actionable artifact:
    exactly when they are investigating why the gateway died.
 
 2. **Soft observability (the daemon thread).**  A daemon thread measures the
-   silence since the last beat on the **monotonic clock** and, in order:
+   silence since the last beat on the clock a suspend does not advance
+   (:func:`kiro_crew.platform_compat.awake_now`) and, in order:
    emits stall enrichment (the stall timestamp, this process's established
    TCP sockets, and where the loop thread is, with the callback its current
    asyncio handle is running) to the logger at WARNING at ``enrich_after``;
@@ -72,10 +70,13 @@ things turn the silence that follows a wedge into an actionable artifact:
    a thread holding the GIL inside a long C call, which is one more reason
    the exit decision does not live on it.
 
-**A suspend is not a stall.**  ``CLOCK_MONOTONIC`` does not count time the
-host spends suspended, so across a laptop sleep neither the heartbeat nor
-the daemon thread sees silence.  Each poll also samples the
-suspend-inclusive clock :func:`kiro_crew.platform_compat.boottime_now`
+**A suspend is not a stall.**  The heartbeat and the daemon thread both read
+:func:`kiro_crew.platform_compat.awake_now`, which does not count time the
+host spends suspended (``CLOCK_MONOTONIC`` on Linux, the mach timebase on
+macOS, and on Windows, where ``time.monotonic()`` counts a sleep, the
+unbiased interrupt time), so across a laptop sleep neither sees silence.
+Each poll also samples the suspend-inclusive clock
+:func:`kiro_crew.platform_compat.boottime_now`
 (``CLOCK_BOOTTIME`` on Linux, the wall clock on macOS, ``None`` where no
 such clock exists); when it advances :data:`SUSPEND_SKEW_MIN_SECS` further
 than the monotonic clock did since the last poll, the host slept for that
@@ -94,12 +95,16 @@ import logging
 import signal
 import sys
 import threading
-import time
 import typing
 from collections.abc import Callable
 
 from kiro_crew.dashboard.stall_enrichment import collect_stall_enrichment, describe_loop_thread
-from kiro_crew.platform_compat import arm_process_alarm, boottime_now, process_alarm_available
+from kiro_crew.platform_compat import (
+    arm_process_alarm,
+    awake_now,
+    boottime_now,
+    process_alarm_available,
+)
 
 logger = logging.getLogger("kiro_crew.dashboard.loop_watchdog")
 
@@ -142,9 +147,7 @@ def exit_mechanism() -> str:
     cancelling it from here would silently remove that owner's deadline; the
     watchdog then leaves both alone and uses faulthandler's own
     ``dump_traceback_later`` thread at the same budget.  Windows has no such
-    timer, so faulthandler's thread stands in there as well.  Its wall-clock
-    deadline is no new false exit on Windows: ``time.monotonic()`` counts a
-    sleep there too, so a sleep already reads as silence on that platform.
+    timer, so faulthandler's thread stands in there as well.
     faulthandler's own ``SIGALRM`` registration is not a Python-level handler,
     so the check keeps answering ``alarm`` once the watchdog holds the signal.
     Asked once per arm by :func:`_default_arm_later`, which latches the answer
@@ -291,7 +294,9 @@ class LoopStallWatchdog:
             up to one heartbeat interval.  ``None`` disables the exit (only
             the soft dump remains).
         poll_interval: How often the daemon thread evaluates liveness.
-        now: Monotonic clock, injectable for tests.
+        now: Clock the silence is measured on, injectable for tests.  Defaults
+            to :func:`kiro_crew.platform_compat.awake_now`, which a host
+            suspend does not advance on any platform.
         suspend_clock: Suspend-inclusive clock read beside ``now`` on every
             poll to recognise a resume, ``None`` where the platform has none;
             injectable for tests.  Defaults to
@@ -334,7 +339,7 @@ class LoopStallWatchdog:
         stall_after: float = 30.0,
         exit_after: float | None = 25.0,
         poll_interval: float = 5.0,
-        now: Callable[[], float] = time.monotonic,
+        now: Callable[[], float] = awake_now,
         suspend_clock: Callable[[], float | None] | None = None,
         dump: Callable[[], None] | None = None,
         arm_later: Callable[[float], None] | None = None,
