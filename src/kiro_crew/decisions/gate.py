@@ -787,6 +787,19 @@ def model_route_map(config: Any | None = None) -> dict[str, str]:
     }
 
 
+def model_route_derive(config: Any | None = None) -> bool:
+    """``decisions.model_route_derive``: whether empty tiers are derived. Never raises.
+
+    ``False`` for an absent, unreadable or non-bool value, so every failure keeps
+    the shipped behaviour where an unpinned tier applies nothing.
+    """
+    try:
+        raw = getattr(_decisions_config(config), "model_route_derive", False)
+    except Exception:
+        return False
+    return raw is True
+
+
 def _budget(name: str, default: int, config: Any | None = None) -> int:
     """One bounded integer knob off the decisions section, or *default*."""
     try:

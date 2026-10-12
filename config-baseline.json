@@ -4354,6 +4354,7 @@
           "medium": "",
           "complex": ""
         },
+        "model_route_derive": false,
         "provider": {
           "endpoint": "https://api.typesafe.ai/v1/systemone",
           "api_key": "secret://TYPESAFE_API_KEY",
@@ -4426,6 +4427,20 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": null
+    },
+    {
+      "path": "decisions.model_route_derive",
+      "kind": "core",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Derive tier models",
+      "help": "Fill each EMPTY tier of 'Model per difficulty tier' from the models your account is offered right now, using their credit multipliers: 'simple' runs on the cheapest model priced below the session's own model, 'medium' keeps the session's own model, and 'complex' runs on the dearest model priced above it. A tier you pinned always wins. With this on, a sub-agent spawned with no model of its own is routed the same way, and a turn or sub-agent retried after a failure runs one tier higher. Off by default. No model id is written for you: the targets are read from the live model list each time, and a tier with no price to compare (a cold list, a tie) keeps the session's model. The decision log marks every derived choice 'derived'.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": false
     },
     {
       "path": "decisions.provider",

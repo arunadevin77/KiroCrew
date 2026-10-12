@@ -139,6 +139,19 @@ MIN_DOWNGRADE_P = 0.80
 #: and recorded, and applies nothing.
 DEFAULT_TIER_MODELS: dict[str, str] = {tier: "" for tier in TIERS}
 
+#: The credit multiplier the picker's cost badges are relative to -- Auto's own
+#: rate. A derived tier is priced against the session's own model, and against
+#: this when that model has no known price (the backend's default, a cold list).
+BASELINE_MULTIPLIER = 1.0
+
+#: The backend's own-default sentinel. Never a derived target: it names no model,
+#: so routing a tier to it would hand the choice to the service-side router.
+AUTO_MODEL = "auto"
+
+#: ``source`` on a route record whose model was derived rather than pinned. Absent
+#: on every other record, so a record with derivation off is shaped as it always is.
+SOURCE_DERIVED = "derived"
+
 #: What the log row and the strip carry for ``model_chosen`` when the answered tier
 #: is unpinned. A NAMED value rather than an absent field: "Jev said complex and
 #: nothing was applied" is a real outcome an owner acts on by pinning that tier, and
@@ -188,6 +201,122 @@ def tier_models(config: Any | None = None) -> dict[str, str]:
         logger.debug("model.route: tier map unreadable; every tier unpinned", exc_info=True)
         return dict(DEFAULT_TIER_MODELS)
     return {tier: str(configured.get(tier) or "").strip() for tier in TIERS}
+
+
+def derive_enabled(config: Any | None = None) -> bool:
+    """Whether ``decisions.model_route_derive`` is on. Never raises; off on failure."""
+    try:
+        from kiro_crew.decisions.gate import model_route_derive
+
+        return model_route_derive(config)
+    except Exception:
+        logger.debug("model.route: derive switch unreadable; off", exc_info=True)
+        return False
+
+
+def _price(rate_of: Callable[[str], float | None], model_id: str) -> float | None:
+    """*model_id*'s multiplier through *rate_of*, or ``None`` when it has no price."""
+    try:
+        rate = rate_of(model_id)
+    except Exception:
+        return None
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)) or rate <= 0:
+        return None
+    return float(rate)
+
+
+def _sole_extreme(candidates: Sequence[tuple[str, float]], *, cheapest: bool) -> str:
+    """The one candidate at the extreme price, or ``""`` when no single one is.
+
+    A price tie goes to the larger KNOWN context window, so a 1M sibling of the
+    same model wins over its 200K spelling and the window guard has nothing to
+    refuse. A tie that survives that -- same price, same or unknown window --
+    inherits rather than picking by list order, which is not a fact about either
+    model.
+    """
+    if not candidates:
+        return ""
+    prices = [rate for _, rate in candidates]
+    best = min(prices) if cheapest else max(prices)
+    names = [name for name, rate in candidates if rate == best]
+    if len(names) == 1:
+        return names[0]
+    windows = {name: known_window(name) or 0 for name in names}
+    widest = max(windows.values())
+    winners = [name for name in names if windows[name] == widest]
+    return winners[0] if widest > 0 and len(winners) == 1 else ""
+
+
+def derive_tier_models(
+    advertised: Sequence[str],
+    baseline_model: str = "",
+    rate_of: Callable[[str], float | None] | None = None,
+) -> dict[str, str]:
+    """Tier targets read off the live advertised list and its credit multipliers.
+
+    ``simple`` is the cheapest advertised model priced BELOW the baseline,
+    ``medium`` is the baseline itself (``""``: the session keeps its own model),
+    and ``complex`` is the dearest advertised model priced ABOVE it. So a derived
+    ``simple`` never costs more than the session's own model and a derived
+    ``complex`` never costs less. The baseline's price is *baseline_model*'s, or
+    :data:`BASELINE_MULTIPLIER` when that model has none.
+
+    Every id comes from *advertised*, the account's own live list, so nothing here
+    names a model. An empty list, a list with no prices, and an unbroken tie each
+    leave the tier ``""``, which inherits. *rate_of* defaults to the catalog's
+    multipliers (:func:`kiro_crew.model_registry.rate_multiplier`).
+    """
+    derived = dict(DEFAULT_TIER_MODELS)
+    lookup = rate_of if rate_of is not None else model_registry.rate_multiplier
+    priced: list[tuple[str, float]] = []
+    seen: set[str] = set()
+    for raw in advertised:
+        name = str(raw or "").strip()
+        if not name or name.lower() == AUTO_MODEL or name in seen:
+            continue
+        seen.add(name)
+        rate = _price(lookup, name)
+        if rate is not None:
+            priced.append((name, rate))
+    if not priced:
+        return derived
+    baseline = str(baseline_model or "").strip()
+    reference = _price(lookup, baseline) if baseline and baseline.lower() != AUTO_MODEL else None
+    if reference is None:
+        reference = BASELINE_MULTIPLIER
+    derived[TIER_SIMPLE] = _sole_extreme(
+        [entry for entry in priced if entry[1] < reference], cheapest=True
+    )
+    derived[TIER_COMPLEX] = _sole_extreme(
+        [entry for entry in priced if entry[1] > reference], cheapest=False
+    )
+    return derived
+
+
+def effective_tier_models(
+    mapping: Mapping[str, str],
+    *,
+    advertised: Sequence[str],
+    baseline_model: str = "",
+    derive: bool = False,
+    rate_of: Callable[[str], float | None] | None = None,
+) -> tuple[dict[str, str], frozenset[str]]:
+    """The tier map a route applies, and which of its tiers were derived.
+
+    With *derive* off this is *mapping* unchanged and no tier is derived. With it
+    on, each tier the owner left EMPTY takes :func:`derive_tier_models`' target; a
+    tier the owner pinned keeps the pin whatever the derivation says.
+    """
+    effective = {tier: str(mapping.get(tier, "") or "").strip() for tier in TIERS}
+    if not derive:
+        return effective, frozenset()
+    targets = derive_tier_models(advertised, baseline_model, rate_of)
+    derived: set[str] = set()
+    for tier in TIERS:
+        if not effective[tier] and targets.get(tier):
+            effective[tier] = targets[tier]
+            derived.add(tier)
+    return effective, frozenset(derived)
 
 
 def questions() -> list[Question]:
@@ -434,6 +563,12 @@ async def routed_model(
     # tier unpinned is NOT a reason to skip the question: the answer is what tells
     # an owner which tier their turns land in, which is how they decide what to pin.
     mapping = tier_models(config)
+    mapping, derived_tiers = effective_tier_models(
+        mapping,
+        advertised=advertised,
+        baseline_model=current_model,
+        derive=derive_enabled(config),
+    )
     turn_id = uuid.uuid4().hex[:16]
     trace: dict[str, Any] = {}
     # Bound before the try so the latency below is always measurable, including
@@ -486,7 +621,7 @@ async def routed_model(
             error=ERROR_UNKNOWN_MODEL,
         )
         return None
-    return {
+    routed: dict[str, Any] = {
         "turn_id": turn_id,
         "tier": tier,
         "p": probability_of(answers),
@@ -494,6 +629,9 @@ async def routed_model(
         "baseline_model": current_model or "",
         "latency_ms": latency_ms,
     }
+    if chosen and tier in derived_tiers:
+        routed["source"] = SOURCE_DERIVED
+    return routed
 
 
 def build_outcome(routed: Mapping[str, Any]) -> dict[str, Any]:
@@ -510,6 +648,10 @@ def build_outcome(routed: Mapping[str, Any]) -> dict[str, Any]:
         "model_chosen": routed.get("model_chosen"),
         "baseline_model": routed.get("baseline_model") or "",
     }
+    # Present only on a derived choice, so a record with derivation off keeps the
+    # shape it has always had.
+    if routed.get("source"):
+        row["source"] = str(routed.get("source"))
     # Present only on an APPLY: an unpinned tier switches nothing, so a row saying
     # "not applied" there would name a failure where the shipped state is no pin.
     if "applied" in routed:
