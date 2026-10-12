@@ -60,6 +60,7 @@ def _item(item_id: str, state: str = "open", **over: Any) -> WorkBoardItem:
         "last_report_at": None,
         "created_at": ENTRY_AT,
         "closed_at": None,
+        "decided_at": None,
         "events": [],
     }
     base.update(over)  # type: ignore[typeddict-item]
@@ -318,6 +319,13 @@ def test_an_item_stamp_is_the_fallback_when_the_fold_carries_no_entry_stamp() ->
     view = _view([_item("it_0"), _item("it_1", last_report_at="2026-09-27T12:30:00+00:00")])
     view["conductor"]["last_entry_at"] = ""
     assert _build(view)["meta"]["age_seconds"] == 1800
+
+
+def test_a_decision_stamp_counts_in_the_item_fallback() -> None:
+    """A conductor's ``decide`` is a board move, so its stamp ages the fallback too."""
+    view = _view([_item("it_0", decided_at="2026-09-27T12:45:00+00:00")])
+    view["conductor"]["last_entry_at"] = ""
+    assert _build(view)["meta"]["age_seconds"] == 900
 
 
 def test_a_board_with_no_items_is_not_a_board_of_zeros() -> None:

@@ -3438,3 +3438,90 @@ def test_a_new_board_generation_starts_its_age_over() -> None:
     assert state["last_entry_at"] == projection._work_iso(
         fresh
     ), "a new generation's age is its own, not the purged board's"
+
+
+# ---------------------------------------------------------------------------
+# decided_at: the conductor's hand-back stamp survives the record
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_decide_entry_carries_decided_at_and_the_probe_covers_it(recorded, monkeypatch):
+    probes = _capture_probes(monkeypatch)
+    status, body = await _record(
+        CONDUCTOR, {"action": "create", "title": "t", "acceptance": ACCEPTANCE}
+    )
+    assert status == 200, body
+    item_id = body["item"]["item_id"]
+    status, body = await _record(
+        CONDUCTOR, {"action": "decide", "item_id": item_id, "decision": "go ahead"}
+    )
+    assert status == 200, body
+    _unit, entry = recorded[-1]
+    stored = wl.read_work_item(CONDUCTOR, item_id)
+    assert stored is not None and stored.decided_at
+    assert entry["decided_at"] == stored.decided_at
+    assert set(entry) <= set(probes[-1]), set(entry) - set(probes[-1])
+    assert _width(probes[-1]) >= _width(entry)
+
+
+def test_the_fold_applies_decided_at_from_a_decide_entry() -> None:
+    state = projection._work_start()
+    projection._work_step(
+        state,
+        _work_entry(
+            seq=1,
+            time_ms=1790000000000,
+            actor="conductor",
+            action="create",
+            item_id="it_0000abcd",
+            title="t",
+        ),
+    )
+    assert state["items"]["it_0000abcd"]["decided_at"] is None
+    projection._work_step(
+        state,
+        _work_entry(
+            seq=2,
+            time_ms=1790000060000,
+            actor="conductor",
+            action="decide",
+            item_id="it_0000abcd",
+            decision="go ahead",
+            decided_at="2026-09-20T10:06:00+00:00",
+        ),
+    )
+    assert state["items"]["it_0000abcd"]["decided_at"] == "2026-09-20T10:06:00+00:00"
+
+
+def test_a_baseline_entry_keeps_the_committed_decided_at() -> None:
+    state = projection._work_start()
+    projection._work_step(
+        state,
+        _work_entry(
+            seq=1,
+            time_ms=1790000000000,
+            actor="conductor",
+            action="verdict",
+            item_id="it_0000abcd",
+            baseline=True,
+            title="t",
+            verdict="fail",
+            decided_at="2026-09-20T10:06:00+00:00",
+        ),
+    )
+    assert state["items"]["it_0000abcd"]["decided_at"] == "2026-09-20T10:06:00+00:00"
+
+
+def test_rebuild_carries_decided_at_from_the_fold(monkeypatch):
+    item_id = "it_0000abcd"
+    rendered = _rendered(CONDUCTOR, item_id)
+    rendered["items"][0]["decided_at"] = "2026-09-20T10:06:00"
+    monkeypatch.setattr(
+        projection,
+        "read_slot_projection",
+        lambda slot, name, **_kw: SimpleNamespace(value=rendered if name == "work" else {}),
+    )
+    wl.rebuild_from_projection(CONDUCTOR)
+    item = wl.read_work_item(CONDUCTOR, item_id)
+    assert item is not None and item.decided_at == "2026-09-20T10:06:00"

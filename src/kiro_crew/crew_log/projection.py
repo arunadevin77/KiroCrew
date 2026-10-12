@@ -6204,6 +6204,7 @@ def _work_new_item(item_id: str, stamp_ms: int) -> dict[str, Any]:
         "last_report_at": None,
         "created_at": _work_iso(stamp_ms),
         "closed_at": None,
+        "decided_at": None,
         "events": [],
     }
 
@@ -6343,7 +6344,7 @@ def _work_step(state: dict[str, Any], entry: Entry) -> None:
                 item[name] = _work_field(name, data[name])
         # The committed stamps ride along: an item with a report or a close from
         # before the projection keeps them across a rebuild.
-        for name in ("last_report_at", "closed_at"):
+        for name in ("last_report_at", "closed_at", "decided_at"):
             if isinstance(data.get(name), str) and data[name]:
                 item[name] = _work_stamp(data[name], entry.time)
         # The baseline carries the board's lineage and goal too, whoever wrote it.
@@ -6443,6 +6444,8 @@ def _work_apply(item: dict[str, Any], data: Mapping[str, Any], stamp_ms: int) ->
                 item[name] = _work_field(name, data[name])
         if action == "close":
             item["closed_at"] = _work_stamp(data.get("closed_at"), stamp_ms)
+        elif action == "decide":
+            item["decided_at"] = _work_stamp(data.get("decided_at"), stamp_ms)
     kind = _as_str(data.get("event_kind"))
     if not kind:
         return

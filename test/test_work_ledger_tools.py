@@ -935,6 +935,34 @@ async def test_a_reported_worker_whose_session_closed_is_stale_at_once(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_a_worker_parked_in_its_own_loop_is_not_stale_on_the_ledger_read(monkeypatch):
+    """``stale`` on the ledger read asks the wake gate's own looping resolver, so the
+    badge and the stall wake agree about a worker waiting inside its monitor loop."""
+    ids = await two_by_two()
+    status, _ = await _report(WORKER_A, {"status": "progress", "summary": "waiting on CI"})
+    assert status == 200
+    real = wl.is_stale
+    seen: list[str] = []
+
+    def _past_the_window(item, **kwargs):
+        return real(item, **{**kwargs, "window_secs": 0})
+
+    def _looping(_svc: Any, key: str) -> bool:
+        seen.append(key)
+        return key == WORKER_A
+
+    monkeypatch.setattr(routes.work_ledger, "is_stale", _past_the_window)
+    _, body = await _read(CONDUCTOR_A)
+    row = next(r for r in body["items"] if r["item_id"] == ids["item_a"])
+    assert row["stale"] is True
+    monkeypatch.setattr(routes.ledger_wake, "worker_looping", _looping)
+    _, body = await _read(CONDUCTOR_A)
+    row = next(r for r in body["items"] if r["item_id"] == ids["item_a"])
+    assert row["stale"] is False
+    assert WORKER_A in seen
+
+
+@pytest.mark.asyncio
 async def test_a_running_worker_is_never_stale(monkeypatch):
     """The conjunction is the point: silence alone does not flag an item."""
     ids = await two_by_two()

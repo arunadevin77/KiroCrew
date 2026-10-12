@@ -377,7 +377,7 @@ class TestLivenessIsNotReimplemented:
         """
         assert callable(work_ledger.is_stale)
         assert callable(work_ledger._worker_owns_next_move)
-        assert work_ledger.STALE_ELIGIBLE_STATUSES == {"progress", "blocked", "question"}
+        assert work_ledger.STALE_ELIGIBLE_STATUSES == {"progress"}
 
     def test_a_done_item_is_not_stale_eligible_on_its_own(self):
         """After ``done`` the move is the conductor's, so silence there is expected."""
@@ -908,6 +908,178 @@ def test_a_silent_worker_wakes_only_while_its_session_is_not_running(monkeypatch
     # The probe asks with the RESOLVER's answer rather than deciding liveness
     # itself; the conjunction stays the store's.
     assert seen == [False, True]
+
+
+def test_the_probe_hands_the_looping_resolvers_answer_to_is_stale(monkeypatch):
+    from kiro_crew.probes.work_ledger import WorkLedgerProbe
+
+    _open_ledger()
+    item = _create()
+    asked: list[str] = []
+    seen: list[bool] = []
+
+    def _looping(key: str) -> bool:
+        asked.append(key)
+        return True
+
+    def _stale(_item, *, worker_looping=False, **_kw):
+        seen.append(worker_looping)
+        return not worker_looping
+
+    monkeypatch.setattr(work_ledger, "is_stale", _stale)
+    looping = _observe(WorkLedgerProbe(worker_looping=_looping), _ctx())
+    assert "reason=stall" not in _briefs(looping)
+    # The default resolver answers "not looping", so an unwired probe still flags.
+    unwired = _observe(_probe(), _ctx())
+    assert "reason=stall" in _briefs(unwired)
+    assert item in _briefs(unwired)
+    assert seen == [True, False]
+    assert asked == [""]
+
+
+def test_a_quiet_progress_item_whose_worker_is_looping_raises_no_stall(monkeypatch):
+    """The real rule end to end: past the window, not running, but its loop is active."""
+    from kiro_crew.probes.work_ledger import WorkLedgerProbe
+
+    _open_ledger()
+    item = _create()
+    _report(item, "progress", summary="waiting on CI")
+    real_list = work_ledger.list_work_items
+
+    def _aged(key):
+        rows = real_list(key)
+        for row in rows:
+            row.last_report_at = "2000-01-01T00:00:00+00:00"
+        return rows
+
+    monkeypatch.setattr(work_ledger, "list_work_items", _aged)
+    looping = _observe(WorkLedgerProbe(worker_looping=lambda _k: True), _ctx())
+    idle = _observe(WorkLedgerProbe(worker_looping=lambda _k: False), _ctx())
+    assert "reason=stall" not in _briefs(looping)
+    assert "reason=stall" in _briefs(idle)
+    assert item in _briefs(idle)
+
+
+class _Loop:
+    def __init__(self, slot_key: str, **fields) -> None:
+        self.slot_key = slot_key
+        self.active = fields.pop("active", True)
+        self.max_cycles = fields.pop("max_cycles", 24)
+        self.cycle_count = fields.pop("cycle_count", 0)
+        self.max_runtime_secs = fields.pop("max_runtime_secs", 0)
+        self.created_ts = fields.pop("created_ts", 0.0)
+        self.approval_stalled = fields.pop("approval_stalled", False)
+        assert not fields
+
+
+class _Service:
+    def __init__(self, *loops: _Loop) -> None:
+        self._loops = {loop.slot_key: loop for loop in loops}
+
+    def get_by_slot(self, slot_key: str):
+        return self._loops.get(slot_key)
+
+
+def test_build_passes_the_looping_resolver_to_the_work_ledger_probe():
+    from kiro_crew import probes
+    from kiro_crew.probes.work_ledger import WorkLedgerProbe
+
+    probe = probes.build(probes.WORK_LEDGER, worker_looping=lambda _k: True)
+    assert probe is not None
+    assert probe._worker_looping("chat-1") is True
+    assert WorkLedgerProbe()._worker_looping("chat-1") is False
+
+
+def test_the_service_answers_looping_from_its_own_loops():
+    """The service owns the loop table, so it answers without an injected resolver."""
+    import time
+
+    from kiro_crew.autonudge import AutoNudgeService, NudgeLoop
+
+    svc = AutoNudgeService.__new__(AutoNudgeService)
+    svc._loops = {
+        "a": NudgeLoop(
+            id="a", slot_key="chat-live", message="m", max_cycles=24, created_ts=time.time()
+        ),
+        "b": NudgeLoop(id="b", slot_key="chat-stopped", message="m", active=False),
+    }
+    assert svc._worker_looping("chat-live") is True
+    assert svc._worker_looping("chat-stopped") is False
+    assert svc._worker_looping("chat-none") is False
+    assert svc._worker_looping("") is False
+
+
+class TestWorkerLooping:
+    """``ledger_wake.worker_looping``: an ACTIVE loop on the worker's own session."""
+
+    def test_an_active_loop_on_the_worker_session_is_alive(self):
+        assert lw.worker_looping(_Service(_Loop("chat-1")), "chat-1") is True
+
+    def test_the_dashboard_prefixed_spelling_finds_the_same_loop(self):
+        assert lw.worker_looping(_Service(_Loop("chat-1")), "dashboard_chat-1") is True
+
+    def test_a_stopped_loop_is_not_alive(self):
+        assert lw.worker_looping(_Service(_Loop("chat-1", active=False)), "chat-1") is False
+
+    def test_a_loop_past_its_runtime_budget_is_not_alive(self):
+        import time
+
+        spent = _Loop("chat-1", max_runtime_secs=60, created_ts=time.time() - 3600)
+        assert lw.worker_looping(_Service(spent), "chat-1") is False
+        fresh = _Loop("chat-1", max_runtime_secs=3600, created_ts=time.time() - 60)
+        assert lw.worker_looping(_Service(fresh), "chat-1") is True
+
+    def test_a_loop_at_its_cycle_cap_is_not_alive(self):
+        capped = _Loop("chat-1", max_cycles=5, cycle_count=5)
+        assert lw.worker_looping(_Service(capped), "chat-1") is False
+
+    def test_a_loop_held_on_an_approval_is_not_alive(self):
+        held = _Loop("chat-1", approval_stalled=True)
+        assert lw.worker_looping(_Service(held), "chat-1") is False
+
+    def test_a_stopped_loop_under_one_spelling_does_not_hide_an_active_one(self):
+        svc = _Service(_Loop("dashboard_chat-1", active=False), _Loop("chat-1"))
+        assert lw.worker_looping(svc, "dashboard_chat-1") is True
+
+    def test_an_unbounded_loop_is_not_alive(self):
+        """A loop with no cycle cap and no runtime budget would hide a stall for as
+        long as it exists, so it does not count; either bound alone is enough."""
+        import time
+
+        unbounded = _Loop("chat-1", max_cycles=0, max_runtime_secs=0)
+        assert lw.worker_looping(_Service(unbounded), "chat-1") is False
+        budget_only = _Loop("chat-1", max_cycles=0, max_runtime_secs=3600, created_ts=time.time())
+        assert lw.worker_looping(_Service(budget_only), "chat-1") is True
+
+    def test_an_aged_progress_item_with_an_unbounded_loop_goes_stale(self):
+        _open_ledger()
+        item_id = _create()
+        _report(item_id, "progress", summary="waiting on CI")
+        item = work_ledger.read_work_item(CONDUCTOR, item_id)
+        assert item is not None
+        item.last_report_at = "2000-01-01T00:00:00+00:00"
+        unbounded = _Service(_Loop("chat-1", max_cycles=0, max_runtime_secs=0))
+        bounded = _Service(_Loop("chat-1"))
+        looping = lw.worker_looping(unbounded, "chat-1")
+        assert work_ledger.is_stale(item, worker_running=False, worker_looping=looping) is True
+        looping = lw.worker_looping(bounded, "chat-1")
+        assert work_ledger.is_stale(item, worker_running=False, worker_looping=looping) is False
+
+    def test_the_ledger_key_fold_finds_a_colon_prefixed_spelling(self):
+        assert lw.worker_looping(_Service(_Loop("chat-1")), "dashboard:chat-1") is True
+
+    def test_another_sessions_loop_does_not_count(self):
+        assert lw.worker_looping(_Service(_Loop("chat-2")), "chat-1") is False
+
+    def test_unknown_reads_as_not_alive(self):
+        class _Broken:
+            def get_by_slot(self, _key):
+                raise RuntimeError("store unreadable")
+
+        assert lw.worker_looping(None, "chat-1") is False
+        assert lw.worker_looping(_Service(_Loop("chat-1")), "") is False
+        assert lw.worker_looping(object(), "chat-1") is False
+        assert lw.worker_looping(_Broken(), "chat-1") is False
 
 
 def test_every_item_closed_is_terminal_but_an_empty_ledger_is_not():

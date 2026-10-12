@@ -131,6 +131,8 @@ class WorkBoardItem(TypedDict):
     last_report_at: str | None
     created_at: str
     closed_at: str | None
+    #: When the conductor last wrote ``decide`` on the item, or unset.
+    decided_at: str | None
     events: list[WorkBoardEvent]
 
 

@@ -113,6 +113,15 @@ def _always_open(_session_key: str) -> bool:
     return False
 
 
+def _never_looping(_session_key: str) -> bool:
+    """Default loop resolver: no worker holds an active loop.
+
+    Not ``True``, for :func:`_always_idle`'s reason: this input only ever SUPPRESSES a
+    stall wake, so an unknown answer must not be able to.
+    """
+    return False
+
+
 class WorkLedgerProbe(irq.Probe):
     """Watch one conductor's work ledger.
 
@@ -122,6 +131,8 @@ class WorkLedgerProbe(irq.Probe):
         worker_closed: ``session_key -> its slot is gone``. Defaults to
             :func:`_always_open`, so a build with no resolver measures the staleness
             window exactly as it did before this input existed.
+        worker_looping: ``session_key -> its session holds an active loop``.
+            Defaults to :func:`_never_looping`, which flags as before.
     """
 
     def __init__(
@@ -129,9 +140,11 @@ class WorkLedgerProbe(irq.Probe):
         *,
         worker_running: Callable[[str], bool] | None = None,
         worker_closed: Callable[[str], bool] | None = None,
+        worker_looping: Callable[[str], bool] | None = None,
     ) -> None:
         self._worker_running = worker_running or _always_idle
         self._worker_closed = worker_closed or _always_open
+        self._worker_looping = worker_looping or _never_looping
         self._conductor = ""
         #: The polling driver's identity, read off the ctx each tick. The seen set
         #: is kept per driver; see ``ledger_wake._MAX_WATCHERS_PER_ITEM``.
@@ -322,6 +335,7 @@ class WorkLedgerProbe(irq.Probe):
             item,
             worker_running=self._worker_running(item.worker_session_key or ""),
             worker_closed=self._worker_closed(item.worker_session_key or ""),
+            worker_looping=self._worker_looping(item.worker_session_key or ""),
         ):
             # The whole liveness conjunction is ``is_stale``'s, not this module's:
             # quiet past the window -- or the worker's session gone, which needs no

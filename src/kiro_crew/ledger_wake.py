@@ -229,6 +229,92 @@ def worker_closed(slot_table: Any, session_key: str) -> bool:
     return True
 
 
+def _loop_keys(session_key: str) -> tuple[str, ...]:
+    """The spellings a worker's loop may be bound under, most specific first.
+
+    A dashboard loop binds to the bare slot key; a ledger may carry the prefixed
+    ``dashboard_`` spelling; a channel session binds under its channel key.
+    """
+    from kiro_crew.session_ledger import ledger_key
+
+    keys = [session_key, ledger_key(session_key)]
+    try:
+        from kiro_crew.autonudge import binding_key_for
+
+        channel = binding_key_for(session_key)
+    except Exception:
+        logger.debug("wake gate: binding key lookup failed for %s", session_key, exc_info=True)
+        channel = None
+    if channel:
+        keys.append(channel)
+    return tuple(dict.fromkeys(keys))
+
+
+def worker_looping(nudge_service: Any, session_key: str) -> bool:
+    """Whether *session_key*'s own session holds an ACTIVE loop that will wake it.
+
+    The third liveness input to ``work_ledger.is_stale``. A worker waiting on CI
+    inside its own ``monitor_start`` loop or structured monitor has no turn in flight
+    between cycles, so :func:`worker_running` reads it as idle -- yet the loop is
+    what resumes it. One loop table holds both kinds, so one lookup answers both.
+
+    ACTIVE and able to fire again. A stopped loop, one past its runtime budget or
+    cycle cap, and one held on an unanswered approval wake nobody, so each answers
+    False and the worker stays flaggable.
+
+    Anything unreadable answers False. Here the dangerous direction is True: a worker
+    read as looping has its stall wake SUPPRESSED, which an uncertain answer must not
+    do -- the same rule :func:`worker_running` keeps.
+    """
+    if nudge_service is None or not session_key:
+        return False
+    getter = getattr(nudge_service, "get_by_slot", None)
+    if not callable(getter):
+        return False
+    for candidate in _loop_keys(session_key):
+        try:
+            loop = getter(candidate)
+        except Exception:
+            logger.debug("wake gate: loop lookup failed for %s", candidate, exc_info=True)
+            return False
+        if loop is not None and _loop_can_fire(loop):
+            return True
+    return False
+
+
+def _loop_can_fire(loop: Any) -> bool:
+    """Whether *loop* is active, BOUNDED, and has budget left to wake its session again.
+
+    Bounded means a cycle cap or a wall-clock budget. An unbounded loop would hide a
+    stall for as long as it exists, so it is not counted: the exemption ends no later
+    than the loop's own bound does.
+    """
+    try:
+        from kiro_crew.autonudge_service.model import (
+            _positive_number,
+            budget_elapsed,
+            cap_reached,
+        )
+
+        bounded = bool(
+            _positive_number(getattr(loop, "max_cycles", 0))
+            or (
+                _positive_number(getattr(loop, "max_runtime_secs", 0))
+                and _positive_number(getattr(loop, "created_ts", 0))
+            )
+        )
+        return (
+            bounded
+            and getattr(loop, "active", False) is True
+            and not getattr(loop, "approval_stalled", False)
+            and not budget_elapsed(loop)
+            and not cap_reached(loop)
+        )
+    except Exception:
+        logger.debug("wake gate: loop state unreadable", exc_info=True)
+        return False
+
+
 def revision(newest_event_ids: dict[str, str]) -> str:
     """The epoch token for one tick: a digest over the newest event id per item.
 

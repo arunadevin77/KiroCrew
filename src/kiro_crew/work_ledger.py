@@ -118,11 +118,17 @@ WORKER_STATUSES: frozenset[str] = frozenset(WORK_WORKER_STATUSES)
 BLOCKED_REASONS: frozenset[str] = frozenset(WORK_BLOCKED_REASONS)
 
 #: The statuses from which a report gap still means "the WORKER went quiet", which is
-#: the only thing :func:`is_stale` exists to surface. ``done`` is deliberately absent:
-#: a worker that has claimed its bar is met has nothing left to report, and the next
-#: move belongs to the conductor (verify, promote, close) or to a human. Flagging it
-#: would point the flag at the reader instead of the worker.
-STALE_ELIGIBLE_STATUSES: frozenset[str] = frozenset({"progress", "blocked", "question"})
+#: the only thing :func:`is_stale` exists to surface. Only ``progress`` leaves the next
+#: move with the worker. ``done``, ``blocked`` and ``question`` each woke the conductor
+#: through the report itself and hand the next move to the conductor or to a person,
+#: so a worker that stays silent after one of them is waiting, not stalled. Flagging
+#: it would point the flag at the reader instead of the worker.
+STALE_ELIGIBLE_STATUSES: frozenset[str] = frozenset({"progress"})
+
+#: The statuses that wait on the conductor or a person. A conductor ``decide`` newer
+#: than such a report hands the move BACK to the worker, and from then on
+#: :func:`is_stale` measures the worker's silence from the decision.
+WAITING_STATUSES: frozenset[str] = frozenset({"blocked", "question"})
 
 #: Field values that mean "not filled in yet". A conductor legitimately opens an item
 #: whose bar is not knowable at dispatch time -- the worker is what learns the pull
@@ -460,7 +466,7 @@ class WorkItem:
     ``worker_session_key``, ``round``, ``fails``.
     Worker-owned: ``status``, ``reason``, ``summary``, ``artifacts``, ``pr``,
     ``last_report_at``.
-    Server-owned: ``item_id``, ``created_at``, ``closed_at``.
+    Server-owned: ``item_id``, ``created_at``, ``closed_at``, ``decided_at``.
 
     ``orphaned`` and ``stale`` are NOT fields. They are derived at read time by
     :func:`is_orphaned` and :func:`is_stale`, because a stamped flag would need
@@ -487,6 +493,10 @@ class WorkItem:
     last_report_at: str | None = None
     created_at: str = ""
     closed_at: str | None = None
+    #: When the conductor last wrote ``decide`` on this item, or ``None``. A ``decide``
+    #: newer than the last report hands a ``blocked`` / ``question`` item back to the
+    #: worker; see :func:`is_stale`.
+    decided_at: str | None = None
     schema: int = SCHEMA_VERSION
     #: When the crew log first held this item whole (its recorded create, or the
     #: baseline its first recorded mutation carried). Empty until then: the write
@@ -517,6 +527,7 @@ class WorkItem:
             "last_report_at": self.last_report_at,
             "created_at": self.created_at,
             "closed_at": self.closed_at,
+            "decided_at": self.decided_at,
             "recorded_at": self.recorded_at,
         }
 
@@ -553,6 +564,7 @@ class WorkItem:
             last_report_at=_as_opt_str(raw.get("last_report_at")),
             created_at=_as_str(raw.get("created_at")),
             closed_at=_as_opt_str(raw.get("closed_at")),
+            decided_at=_as_opt_str(raw.get("decided_at")),
             recorded_at=_as_str(raw.get("recorded_at")),
             schema=_as_int(raw.get("schema"), SCHEMA_VERSION),
         )
@@ -1470,6 +1482,7 @@ def is_stale(
     *,
     worker_running: bool,
     worker_closed: bool = False,
+    worker_looping: bool = False,
     now: datetime | None = None,
     window_secs: float = DEFAULT_STALE_WINDOW_SECS,
 ) -> bool:
@@ -1479,6 +1492,14 @@ def is_stale(
     in a thirty-minute build is running, so it is never flagged however long it stays
     silent. The window exists only to cover the gap between binding and the first
     report, and to catch a session that ended without reporting.
+
+    ``worker_looping`` says the worker's own session holds an ACTIVE loop -- a
+    ``monitor_start`` prompt loop or a structured monitor -- that will wake it. Such a
+    worker has no turn in flight between cycles and is still alive, the way a worker
+    in a long build is, so it is not flagged. A stopped or expired loop wakes nobody,
+    and the caller answers ``False`` for it. A closed session outranks a loop record:
+    the loop has no session left to wake. Defaults to ``False``, which is the answer
+    for "unknown" and keeps a caller that cannot read loops on the behaviour it had.
 
     ``worker_closed`` SKIPS THE WINDOW for an item that has REPORTED AT LEAST ONCE, and
     skips only the window. The window is there because "not running" is true of a worker
@@ -1494,9 +1515,15 @@ def is_stale(
     field existed.
 
     A terminal item is never stale — there is nothing left to report. Neither is one
-    whose last report was ``done``: the ball is in the conductor's court (verify,
-    promote, close) or a human's, and silence from a worker that has already claimed
-    its bar is met is the expected end of its work, not a gap worth waking anyone for.
+    whose last report was ``done``, ``blocked`` or ``question``: each of those already
+    woke the conductor, and the ball is in the conductor's court (verify, rule,
+    unblock) or a human's. Silence from a worker that is waiting on someone else is the
+    expected shape of that wait, not a gap worth waking anyone for. The conductor's
+    ``decide`` on such an item hands the move back: from a ``decided_at`` at or after the
+    last report, the worker owns the next move again and the window runs from the
+    decision. A ``blocked`` / ``question`` item whose worker session has CLOSED after
+    reporting is flagged at once, with or without a ``decide``: nobody is left to act on
+    the answer. A ``decide`` on any other status does not move the window.
     :data:`STALE_ELIGIBLE_STATUSES` names the statuses that do still count, and no
     report yet counts too — that is the bind-to-first-report gap.
 
@@ -1511,7 +1538,13 @@ def is_stale(
     """
     if item.is_terminal or worker_running:
         return False
+    if worker_closed and item.last_report_at and item.status in WAITING_STATUSES:
+        # Waiting on the conductor, but the worker the answer goes back to is gone, so
+        # no answer can be acted on. Flagged with or without a ``decide`` yet.
+        return True
     if not _worker_owns_next_move(item):
+        return False
+    if worker_looping and not worker_closed:
         return False
     if worker_closed and item.last_report_at:
         # Past both guards above, so this is an OPEN item whose next move is the
@@ -1527,7 +1560,8 @@ def is_stale(
         # and now it is not. With no report the two are indistinguishable, so the window
         # decides as it did before, which is the behaviour that gap always had.
         return True
-    reference = item.last_report_at or item.created_at
+    handed_back = _decided_after_report(item) if item.status in WAITING_STATUSES else None
+    reference = handed_back or item.last_report_at or item.created_at
     if not reference:
         return True
     # Through ``parse_stamp``, whose UTC fallback covers a stamp at either end of
@@ -1548,11 +1582,38 @@ def _worker_owns_next_move(item: WorkItem) -> bool:
     The half of :func:`is_stale` that keeps the flag pointed at a worker rather than at
     whoever is reading. No report yet counts (the worker owes the first one), and so
     does a ``done`` whose verdict came back ``fail`` on a still-open item — the
-    conductor handed that work back.
+    conductor handed that work back -- and so does a ``blocked`` / ``question`` the
+    conductor has answered with ``decide``.
     """
     if item.status is None or item.status in STALE_ELIGIBLE_STATUSES:
         return True
+    if item.status in WAITING_STATUSES:
+        return _decided_after_report(item) is not None
     return item.status == "done" and item.verdict == "fail"
+
+
+def _decided_after_report(item: WorkItem) -> str | None:
+    """*item*'s ``decided_at`` when it is at or after its last report, else ``None``.
+
+    "At or after" because both stamps are seconds-precision and a ``decide`` answers the
+    report it follows, so a decision in the report's own second is the answer to it.
+    An unreadable stamp reads as no hand-back, which leaves a waiting item unflagged
+    as it is without a decision.
+    """
+    if not item.decided_at:
+        return None
+    decided = parse_stamp(item.decided_at)
+    if decided is None:
+        return None
+    if not item.last_report_at:
+        return item.decided_at
+    reported = parse_stamp(item.last_report_at)
+    if reported is None:
+        return None
+    try:
+        return item.decided_at if decided >= reported else None
+    except TypeError:
+        return None
 
 
 def is_acceptance_concrete(acceptance: Any) -> bool:
@@ -2283,6 +2344,7 @@ def _write_item_action(
         elif action == "decide":
             assert checked_decision is not None
             item.decision = checked_decision
+            item.decided_at = _now_iso()
             event = _commit_item_locked(slot_key, item, "decision", checked_decision)
         elif action == "verdict":
             assert checked_verdict is not None

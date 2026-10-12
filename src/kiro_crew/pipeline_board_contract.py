@@ -492,7 +492,8 @@ def _derive_numbers(
     added = 0
     for item in items:
         by_state.setdefault(item["state"], []).append(item)
-        for stamp in (item["created_at"], item["last_report_at"], item["closed_at"]):
+        stamps = (item["created_at"], item["last_report_at"], item["closed_at"])
+        for stamp in (*stamps, item.get("decided_at")):
             if stamp and stamp > item_newest:
                 item_newest = stamp
         if item["round"] >= conductor["round"]:

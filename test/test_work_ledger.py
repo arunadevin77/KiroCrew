@@ -758,13 +758,146 @@ def test_a_done_item_is_never_stale_however_long_it_stays_quiet():
     assert item is not None
     much_later = datetime.now().astimezone() + timedelta(seconds=wl.DEFAULT_STALE_WINDOW_SECS * 10)
     assert wl.is_stale(item, worker_running=False, now=much_later) is False
-    for status in ("progress", "blocked", "question"):
-        wl.apply_worker_report(CONDUCTOR, item_id, status=status, summary="s")
-        still_working = wl.read_work_item(CONDUCTOR, item_id)
-        assert still_working is not None
-        assert wl.is_stale(still_working, worker_running=False, now=much_later) is True, status
+    wl.apply_worker_report(CONDUCTOR, item_id, status="progress", summary="s")
+    still_working = wl.read_work_item(CONDUCTOR, item_id)
+    assert still_working is not None
+    assert wl.is_stale(still_working, worker_running=False, now=much_later) is True
     assert "done" not in wl.STALE_ELIGIBLE_STATUSES
     assert wl.STALE_ELIGIBLE_STATUSES < wl.WORKER_STATUSES
+
+
+@pytest.mark.parametrize("status", ["blocked", "question"])
+def test_a_blocked_or_question_item_is_never_stale_however_long_it_stays_quiet(status):
+    """Both reports already woke the conductor, and the next move is the conductor's
+    or a person's. The worker waiting in silence is the expected shape of that wait,
+    so the flag must not point at it -- with the worker idle, closed or neither."""
+    item_id = _new_item(acceptance={"kind": "human_approval"})
+    wl.apply_worker_report(CONDUCTOR, item_id, status=status, summary="waiting")
+    item = wl.read_work_item(CONDUCTOR, item_id)
+    assert item is not None
+    much_later = datetime.now().astimezone() + timedelta(seconds=wl.DEFAULT_STALE_WINDOW_SECS * 10)
+    assert wl.is_stale(item, worker_running=False, now=much_later) is False
+    assert status not in wl.STALE_ELIGIBLE_STATUSES
+
+
+def test_decide_stamps_decided_at_and_it_round_trips():
+    item_id = _new_item(acceptance={"kind": "human_approval"})
+    fresh = wl.read_work_item(CONDUCTOR, item_id)
+    assert fresh is not None and fresh.decided_at is None
+    wl.apply_conductor_action(CONDUCTOR, "decide", item_id=item_id, decision="go ahead")
+    item = wl.read_work_item(CONDUCTOR, item_id)
+    assert item is not None and item.decided_at
+    assert wl.WorkItem.from_dict(item.to_dict()).decided_at == item.decided_at
+
+
+@pytest.mark.parametrize("status", ["blocked", "question"])
+def test_a_decide_hands_a_waiting_item_back_to_the_worker(status):
+    """After ``blocked`` / ``question`` the move is the conductor's. Its ``decide``
+    hands it back, so the worker's silence is measured again -- from the decision,
+    under every liveness rule a ``progress`` item gets."""
+    item_id = _new_item(acceptance={"kind": "human_approval"})
+    wl.apply_worker_report(CONDUCTOR, item_id, status=status, summary="waiting")
+    waiting = wl.read_work_item(CONDUCTOR, item_id)
+    assert waiting is not None
+    much_later = datetime.now(timezone.utc) + timedelta(seconds=wl.DEFAULT_STALE_WINDOW_SECS * 10)
+    assert wl.is_stale(waiting, worker_running=False, now=much_later) is False
+
+    wl.apply_conductor_action(CONDUCTOR, "decide", item_id=item_id, decision="go ahead")
+    item = wl.read_work_item(CONDUCTOR, item_id)
+    assert item is not None and item.status == status
+    decided = wl.parse_stamp(item.decided_at or "")
+    assert decided is not None
+    inside = decided + timedelta(seconds=wl.DEFAULT_STALE_WINDOW_SECS / 2)
+    past = decided + timedelta(seconds=wl.DEFAULT_STALE_WINDOW_SECS * 2)
+    # The window runs from the decision, not from the older report.
+    assert wl.is_stale(item, worker_running=False, now=inside) is False
+    assert wl.is_stale(item, worker_running=False, now=past) is True
+    assert wl.is_stale(item, worker_running=True, now=past) is False
+    assert wl.is_stale(item, worker_running=False, worker_looping=True, now=past) is False
+    # A worker gone after the hand-back is flagged without waiting out the window.
+    assert wl.is_stale(item, worker_running=False, worker_closed=True, now=inside) is True
+
+
+def test_a_report_after_the_decide_takes_the_move_back():
+    """The worker answering with ``question`` again hands the move to the conductor."""
+    item_id = _new_item(acceptance={"kind": "human_approval"})
+    wl.apply_worker_report(CONDUCTOR, item_id, status="question", summary="a or b?")
+    wl.apply_conductor_action(CONDUCTOR, "decide", item_id=item_id, decision="a")
+    item = wl.read_work_item(CONDUCTOR, item_id)
+    assert item is not None
+    item.last_report_at = "2999-01-01T00:00:00+00:00"
+    much_later = datetime(3000, 1, 1, tzinfo=timezone.utc)
+    assert wl.is_stale(item, worker_running=False, now=much_later) is False
+
+
+@pytest.mark.parametrize("status", ["blocked", "question"])
+def test_a_waiting_item_whose_worker_closed_is_stale_without_a_decide(status):
+    """A worker that died while waiting cannot act on any answer, so the conductor
+    learns of it at once -- whether or not it has written a ``decide`` yet."""
+    item_id = _new_item(acceptance={"kind": "human_approval"})
+    wl.apply_worker_report(CONDUCTOR, item_id, status=status, summary="waiting")
+    item = wl.read_work_item(CONDUCTOR, item_id)
+    assert item is not None and item.decided_at is None
+    assert wl.is_stale(item, worker_running=False, worker_closed=True) is True
+    # Open and silent, it stays the conductor's, so it is not flagged.
+    assert wl.is_stale(item, worker_running=False) is False
+    assert wl.is_stale(item, worker_running=True, worker_closed=True) is False
+
+
+def test_a_decide_on_a_progress_item_does_not_restart_its_window():
+    """The hand-back is for ``blocked`` / ``question``. A ``progress`` item already
+    belongs to the worker, so its silence is measured from its last report."""
+    item_id = _new_item(acceptance={"kind": "human_approval"})
+    wl.apply_worker_report(CONDUCTOR, item_id, status="progress", summary="half way")
+    wl.apply_conductor_action(CONDUCTOR, "decide", item_id=item_id, decision="carry on")
+    item = wl.read_work_item(CONDUCTOR, item_id)
+    assert item is not None and item.decided_at
+    item.last_report_at = "2026-01-01T00:00:00+00:00"
+    item.decided_at = "2026-01-01T00:20:00+00:00"
+    now = datetime(2026, 1, 1, 0, 25, tzinfo=timezone.utc)
+    assert wl.is_stale(item, worker_running=False, now=now, window_secs=900) is True
+
+
+def test_a_done_item_whose_worker_closed_is_still_not_stale():
+    item_id = _new_item(acceptance={"kind": "human_approval"})
+    wl.apply_worker_report(CONDUCTOR, item_id, status="done", summary="green")
+    item = wl.read_work_item(CONDUCTOR, item_id)
+    assert item is not None
+    assert wl.is_stale(item, worker_running=False, worker_closed=True) is False
+
+
+def test_a_worker_parked_in_its_own_loop_is_not_stale():
+    """A worker waiting on CI inside its own monitor loop has no turn in flight between
+    cycles, yet it is alive: the loop wakes it. Only a loop that is still ACTIVE counts,
+    and the caller answers that; ``False``, the default, flags as an unwired caller does."""
+    item_id = _new_item(acceptance={"kind": "human_approval"})
+    wl.apply_worker_report(CONDUCTOR, item_id, status="progress", summary="waiting on CI")
+    item = wl.read_work_item(CONDUCTOR, item_id)
+    assert item is not None
+    much_later = datetime.now(timezone.utc) + timedelta(seconds=wl.DEFAULT_STALE_WINDOW_SECS * 10)
+    assert wl.is_stale(item, worker_running=False, worker_looping=True, now=much_later) is False
+    assert wl.is_stale(item, worker_running=False, worker_looping=False, now=much_later) is True
+    assert wl.is_stale(item, worker_running=False, now=much_later) is True
+    # A session that is gone cannot be woken by a loop record it left behind.
+    assert (
+        wl.is_stale(
+            item, worker_running=False, worker_looping=True, worker_closed=True, now=much_later
+        )
+        is True
+    )
+
+
+def test_a_looping_worker_on_a_handed_back_item_is_not_stale():
+    """``verdict: fail`` hands the move back to the worker; a worker already looping on
+    that retry is alive, and one that is not is still flagged."""
+    item_id = _new_item(acceptance={"kind": "human_approval"})
+    wl.apply_worker_report(CONDUCTOR, item_id, status="done", summary="claimed")
+    wl.apply_conductor_action(CONDUCTOR, "verdict", item_id=item_id, verdict="fail", fails=1)
+    item = wl.read_work_item(CONDUCTOR, item_id)
+    assert item is not None
+    much_later = datetime.now(timezone.utc) + timedelta(seconds=wl.DEFAULT_STALE_WINDOW_SECS * 10)
+    assert wl.is_stale(item, worker_running=False, now=much_later) is True
+    assert wl.is_stale(item, worker_running=False, worker_looping=True, now=much_later) is False
 
 
 def test_a_done_item_the_conductor_handed_back_is_stale_again():
@@ -773,7 +906,7 @@ def test_a_done_item_the_conductor_handed_back_is_stale_again():
     again — otherwise a worker that vanished mid-retry could never be surfaced."""
     item_id = _new_item(acceptance={"kind": "human_approval"})
     wl.apply_worker_report(CONDUCTOR, item_id, status="done", summary="claimed")
-    much_later = datetime.now().astimezone() + timedelta(seconds=wl.DEFAULT_STALE_WINDOW_SECS * 10)
+    much_later = datetime.now(timezone.utc) + timedelta(seconds=wl.DEFAULT_STALE_WINDOW_SECS * 10)
     waiting = wl.read_work_item(CONDUCTOR, item_id)
     assert waiting is not None
     assert wl.is_stale(waiting, worker_running=False, now=much_later) is False

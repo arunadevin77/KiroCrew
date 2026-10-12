@@ -2075,6 +2075,7 @@ _SESSION_TYPES: tuple[EntryType, ...] = (
             Field("created_at", JSON_STRING, note="The item's committed creation stamp."),
             Field("last_report_at", JSON_STRING, note="The item's committed last-report stamp."),
             Field("closed_at", JSON_STRING, note="The item's committed close stamp."),
+            Field("decided_at", JSON_STRING, note="The item's committed decide stamp."),
             Field(
                 "board_round",
                 JSON_INT,

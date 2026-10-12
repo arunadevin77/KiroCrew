@@ -62,6 +62,9 @@ export interface WorkBoardItem {
   last_report_at: string | null
   created_at: string
   closed_at: string | null
+  /** When the conductor last answered with `decide`. A decision at or after the
+   *  last report hands a blocked or question item back to the worker. */
+  decided_at: string | null
   /** Nothing is left to read this item's reports. */
   orphaned: boolean
   /** The move is with the worker and it has gone quiet. */

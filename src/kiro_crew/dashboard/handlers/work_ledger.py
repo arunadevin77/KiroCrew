@@ -944,6 +944,7 @@ def _baseline_fields(item: Any, header: Any) -> dict[str, Any]:
         "created_at": item.created_at or None,
         "last_report_at": item.last_report_at or None,
         "closed_at": item.closed_at or None,
+        "decided_at": getattr(item, "decided_at", None) or None,
     }
 
 
@@ -1320,6 +1321,7 @@ def _row_with_flags(
         item,
         worker_running=_slot_running(state, item.worker_session_key or ""),
         worker_closed=_slot_closed(state, item.worker_session_key or ""),
+        worker_looping=_slot_looping(item.worker_session_key or ""),
     )
     row["acceptance_concrete"] = work_ledger.is_acceptance_concrete(item.acceptance)
     row["unpatrolled"] = item.state == "open" and not patrolled
@@ -1475,6 +1477,18 @@ def _slot_closed(state: DashboardState, key: str) -> bool:
     return ledger_wake.worker_closed(state, key)
 
 
+def _slot_looping(key: str) -> bool:
+    """Whether *key*'s session holds an active loop, read the way the wake gate reads it.
+
+    One resolver, :func:`ledger_wake.worker_looping`, answers both the badge and the
+    stall wake, so a worker waiting inside its own monitor loop reads the same on
+    both. No auto-nudge service, or anything unreadable, answers False.
+    """
+    from kiro_crew.autonudge import get_instance
+
+    return ledger_wake.worker_looping(get_instance(), key)
+
+
 def worker_holds_open_item(slot_key: str) -> bool:
     """Whether *slot_key* is a worker bound to an OPEN item that names it back. BLOCKING.
 
@@ -1610,6 +1624,7 @@ async def api_work_ledger_record(request: web.Request) -> web.Response:
         event_ts=_WIDEST_STAMP,
         created_at=_WIDEST_STAMP,
         closed_at=_WIDEST_STAMP,
+        decided_at=_WIDEST_STAMP,
     )
     if invalid is not None:
         return invalid
@@ -1635,6 +1650,7 @@ async def api_work_ledger_record(request: web.Request) -> web.Response:
             event_ts=_WIDEST_STAMP,
             created_at=_WIDEST_STAMP,
             closed_at=_WIDEST_STAMP,
+            decided_at=_WIDEST_STAMP,
         ):
             return _refuse_item_too_large(key, "work_ledger_record", str(cleaned.get("item_id")))
         _audit(key, "work_ledger_record", "denied", resources=action, error="work_entry_too_large")
@@ -1741,6 +1757,7 @@ async def api_work_ledger_record(request: web.Request) -> web.Response:
                 event_ts=getattr(event, "ts", None) or None,
                 created_at=getattr(item, "created_at", None) if action == "create" else None,
                 closed_at=getattr(item, "closed_at", None) if action == "close" else None,
+                decided_at=getattr(item, "decided_at", None) if action == "decide" else None,
             ),
         )
         if not landed:

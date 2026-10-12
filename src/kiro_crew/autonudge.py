@@ -1918,6 +1918,18 @@ class AutoNudgeService:
             logger.debug("AutoNudge: worker liveness read failed for %s", session_key)
             return False
 
+    def _worker_looping(self, session_key: str) -> bool:
+        """Whether *session_key*'s own session holds an active loop that will wake it.
+
+        Answered from this service's own loop table, so no resolver is injected: the
+        logic is ``ledger_wake.worker_looping``, which the dashboard's ``stale`` flag
+        reads too, and an unreadable answer is False -- the direction that cannot
+        suppress a stall wake.
+        """
+        from kiro_crew import ledger_wake
+
+        return ledger_wake.worker_looping(self, session_key)
+
     def _observes_work_ledger(self, loop: NudgeLoop) -> bool:
         """Whether *loop*'s monitor is a work-ledger watch THIS gateway may arm.
 

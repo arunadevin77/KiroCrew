@@ -343,8 +343,8 @@ Each cycle:
    |---|---|---|
    | `progress` | informational | nothing |
    | `done` | the worker CLAIMS acceptance is met | verify (step 3) |
-   | `blocked` | an external dependency stopped the work | clear it or re-plan around it |
-   | `question` | your own decision is needed | `session_send` the answer, `session_read_message` the reply |
+   | `blocked` | an external dependency stopped the work | clear it or re-plan around it; when you answer the worker, `session_send` it, then `work_ledger_record` `action=decide` |
+   | `question` | your own decision is needed | `session_send` the answer, then `work_ledger_record` `action=decide`; `session_read_message` the reply |
 
    `blocked` and `question` differ by who must act. That is why they are separate
    values, and why you must not treat one as the other.

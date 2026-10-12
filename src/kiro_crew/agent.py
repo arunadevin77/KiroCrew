@@ -5261,7 +5261,8 @@ three of them:
 - **`blocked`** — an external dependency stopped the work. Yours to clear or to
   re-plan around.
 - **`question`** — the worker needs a decision only you can make. Answer it with
-  `session_send`, and read the reply with `session_read_message`.
+  `session_send`, then record it with `work_ledger_record` `action=decide`, and
+  read the reply with `session_read_message`.
 - **`progress`** — informational. Do nothing.
 
 **A claimed `pr` is not an acceptance condition.** When a worker reports a pull
