@@ -18,6 +18,18 @@ and the harness renders one it finds in transcript text.
 
 from __future__ import annotations
 
+import pytest
+from turn_harness import APPROVED, SlotSpec, TurnScript, run_turn
+
+from kiro_crew.acp.types import (
+    EVENT_COMPACTION_STATUS,
+    EVENT_COMPLETE,
+    EVENT_PERMISSION_REQUEST,
+    EVENT_TEXT_CHUNK,
+    EVENT_TOOL_CALL,
+    STOP_REASON_END_TURN,
+    AcpEvent,
+)
 from kiro_crew.dashboard.chat_utils import open_construct_at_end
 
 _OPEN = "[" + "OPTIONS:"
@@ -103,3 +115,82 @@ class TestPlainText:
         Only constructs that render as a UNIT are protected.
         """
         assert open_construct_at_end("Rather than kill") == ""
+
+
+class TestCompactionBoundary:
+    """Through the real ``_run_chat``: a mid-turn compaction reset must not drop
+    text a segment cut was deferred over."""
+
+    @staticmethod
+    async def _turn(*middle: AcpEvent):
+        return await run_turn(
+            TurnScript(
+                events=[
+                    AcpEvent(kind=EVENT_TEXT_CHUNK, text="here:\n```python\nx = 1\n"),
+                    AcpEvent(
+                        kind=EVENT_TOOL_CALL, tool_call_id="t1", title="read_file", tool_kind="read"
+                    ),
+                    *middle,
+                    AcpEvent(kind=EVENT_COMPACTION_STATUS, text="started"),
+                    AcpEvent(kind=EVENT_COMPACTION_STATUS, text="completed"),
+                    AcpEvent(kind=EVENT_TEXT_CHUNK, text="after"),
+                    AcpEvent(kind=EVENT_COMPLETE, stop_reason=STOP_REASON_END_TURN),
+                ]
+            ),
+            slot=SlotSpec(rows=[("user", "earlier"), ("assistant", "earlier answer")]),
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_deferred_segment_whose_fence_closed_is_persisted(self):
+        record = await self._turn(AcpEvent(kind=EVENT_TEXT_CHUNK, text="```\ndone."))
+        assert record.stop_reason == STOP_REASON_END_TURN
+        persisted = [str(row.get("content")) for row in record.rows("assistant")]
+        assert any("x = 1" in text and "done." in text for text in persisted), persisted
+
+    @pytest.mark.asyncio
+    async def test_a_deferred_segment_still_open_is_persisted(self):
+        record = await self._turn(AcpEvent(kind=EVENT_TEXT_CHUNK, text="y = 2\n"))
+        persisted = [str(row.get("content")) for row in record.rows("assistant")]
+        assert any("x = 1" in text and "y = 2" in text for text in persisted), persisted
+
+
+class TestPermissionRequestCut:
+    """Through the real ``_run_chat``: an approval prompt that lands inside an
+    open construct must not split it, the same as a tool-call cut."""
+
+    @staticmethod
+    async def _turn(first: str, second: str):
+        return await run_turn(
+            TurnScript(
+                events=[
+                    AcpEvent(kind=EVENT_TEXT_CHUNK, text=first),
+                    AcpEvent(
+                        kind=EVENT_PERMISSION_REQUEST,
+                        request_id="req-1",
+                        title="fs_write",
+                        tool_kind="edit",
+                    ),
+                    AcpEvent(kind=EVENT_TEXT_CHUNK, text=second),
+                    AcpEvent(kind=EVENT_COMPLETE, stop_reason=STOP_REASON_END_TURN),
+                ],
+                answers={"req-1": APPROVED},
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_prompt_inside_an_open_fence_does_not_split_it(self):
+        record = await self._turn("here:\n```python\nx = 1\n", "y = 2\n```\ndone.")
+        assert record.stop_reason == STOP_REASON_END_TURN
+        persisted = [str(row.get("content")) for row in record.rows("assistant")]
+        assert any("x = 1" in text and "y = 2" in text for text in persisted), persisted
+        assert not any("x = 1" in text and "y = 2" not in text for text in persisted), persisted
+        # The approval card sits between the deferred chunks; none may strand
+        # beside it as a duplicate streaming bubble in the live window.
+        assert [r for r in record.window if r.get("role") == "chunk"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_prompt_after_plain_prose_still_cuts_the_segment(self):
+        record = await self._turn("Writing the file now.", "Written.")
+        persisted = [str(row.get("content")) for row in record.rows("assistant")]
+        cut = [t for t in persisted if "Writing the file now." in t and "Written." not in t]
+        assert cut, persisted
