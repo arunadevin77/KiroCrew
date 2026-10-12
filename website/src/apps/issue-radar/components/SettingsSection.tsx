@@ -1,4 +1,4 @@
-import { User, Library, Plus, type LucideIcon } from 'lucide-react'
+import { User, Library, Plus, FolderTree, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { ProviderLogo } from './ProviderBadge'
 import { type RepoRef } from '../api'
@@ -21,6 +21,7 @@ export default function SettingsSection({ onNavigate }: { onNavigate?: () => voi
   const generalItems: { key: GeneralAnchor; label: string; icon: LucideIcon }[] = [
     { key: 'account', label: 'Account', icon: User },
     { key: 'repos', label: 'Repositories', icon: Library },
+    { key: 'gitlabGroups', label: i18nT('apps.issueRadar.components.settingsSection.gitlab_groups'), icon: FolderTree },
   ]
 
   return (

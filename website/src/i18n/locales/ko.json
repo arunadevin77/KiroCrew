@@ -2426,7 +2426,8 @@
         "settingsSection": {
           "connect_repo": "저장소 연결",
           "general": "일반",
-          "repository_settings": "저장소 설정"
+          "repository_settings": "저장소 설정",
+          "gitlab_groups": "GitLab 그룹"
         },
         "depsSection": {
           "title": "의존성",
@@ -2495,6 +2496,14 @@
           "read_only_here_apply_in_provider": "여기서는 읽기 전용입니다 — {{provider}} 저장소는 {{productName}}에서 변경할 수 없습니다. {{provider}}에서 변경하세요",
           "tracked_items_work_items": "작업 항목",
           "tracked_items_issues": "이슈"
+        },
+        "gitlabGroups": {
+          "invalid_group": "GitLab 그룹 경로가 아닙니다. acme/platform 같은 경로를 쓰거나 그룹 링크를 붙여 넣으세요.",
+          "group_not_found": "GitLab에 그 경로의 그룹이 없거나 내 GitLab CLI(glab) 세션에서 볼 수 없습니다. 경로와 접근 권한을 확인하세요.",
+          "group_forbidden": "내 GitLab CLI(glab) 세션으로는 이 그룹을 읽을 수 없습니다. 그룹 소유자에게 접근 권한을 요청하세요.",
+          "setup_required": "GitLab CLI(glab)가 이 GitLab 인스턴스에 로그인되어 있지 않습니다. glab auth login을 실행한 다음 다시 시도하세요.",
+          "no_login": "GitLab CLI(glab)가 내 GitLab 사용자를 확인할 수 없습니다. glab auth status를 실행해 세션을 확인하세요.",
+          "unreachable": "GitLab에 연결할 수 없습니다 — {{error}}"
         }
       },
       "manifest": {
@@ -2716,7 +2725,8 @@
           "tagging": "태그 지정",
           "graph": "그래프",
           "pipeline": "파이프라인",
-          "ci_runs": "CI 실행"
+          "ci_runs": "CI 실행",
+          "reviews": "리뷰 요청"
         },
         "settings": {
           "generalSettings": {
@@ -2750,6 +2760,22 @@
             "agent_language": "에이전트 언어",
             "agent_language_hint": "에이전트가 조사 결과와 리뷰 제안을 작성하는 언어입니다. 레이블 이름, 코드, 파일 경로는 원문 그대로 유지됩니다. 변경 후 시작한 세션에 적용되며, 이어서 진행하는 조사는 시작할 때의 언어를 유지합니다.",
             "agent_language_follow": "대시보드와 동일({{language}})"
+          },
+          "gitlabGroups": {
+            "title": "GitLab 그룹",
+            "intro": "GitLab 그룹을 팔로우하면 그 그룹과 모든 하위 그룹에서 내 리뷰를 기다리는 merge request를 대시보드 › 리뷰 요청에서 볼 수 있습니다. 나중에 그룹에 추가된 프로젝트도 자동으로 포함됩니다.",
+            "list_error": "GitLab 그룹을 불러올 수 없습니다 — {{error}}",
+            "empty": "아직 팔로우하는 GitLab 그룹이 없습니다.",
+            "group_label": "그룹 경로 또는 링크",
+            "group_placeholder": "예: acme/platform",
+            "follow": "그룹 팔로우",
+            "following": "팔로우하는 중…",
+            "group_hint": "경로만 입력하면 gitlab.com에서 찾습니다. 자체 관리형 인스턴스라면 그룹 링크를 붙여 넣으세요.",
+            "open_reviews": "리뷰 요청 열기",
+            "unfollow": "팔로우 취소",
+            "unfollowing": "팔로우 취소하는 중…",
+            "unfollow_group": "{{path}} 팔로우 취소",
+            "unfollow_error": "이 그룹의 팔로우를 취소할 수 없습니다 — {{error}}"
           },
           "repoSettings": {
             "browse_for_workspace_folder": "작업 공간 폴더 찾아보기",
@@ -2930,6 +2956,19 @@
           "empty_unavailable_title": "의존성 데이터를 사용할 수 없음",
           "empty_unavailable_blurb": "그래프를 불러오지 못했습니다. 이 저장소에서 deps 라우트가 아직 활성화되지 않았을 수 있습니다. 활성화 후 다시 시도하세요.",
           "retry": "다시 시도"
+        },
+        "groupReviewsView": {
+          "title": "리뷰 요청",
+          "intro": "팔로우하는 GitLab 그룹과 하위 그룹에서 내 리뷰를 기다리는 열린 merge request입니다.",
+          "empty": "아직 팔로우하는 GitLab 그룹이 없습니다. 설정에서 그룹을 팔로우하면 그 그룹의 리뷰 요청이 여기에 표시됩니다.",
+          "follow_a_group": "GitLab 그룹 팔로우",
+          "loading": "불러오는 중…",
+          "count": "나를 기다리는 항목: {{total}}",
+          "count_capped": "나를 기다리는 항목: {{total}}개 초과",
+          "refresh_group": "{{path}} 새로고침",
+          "no_reviews": "이 그룹에는 내 리뷰를 기다리는 항목이 없습니다.",
+          "capped": "최신 {{limit}}개를 표시합니다.",
+          "see_all": "GitLab에서 모두 보기"
         },
         "pipelineDashboard": {
           "github_only": "분류 파이프라인은 GitHub 저장소만 지원합니다",

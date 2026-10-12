@@ -173,6 +173,64 @@ export interface PullsResponse {
   limit?: number
 }
 
+/** A GitLab group followed for review requests: an instance host and a group
+ * path, nothing else. Its projects are never listed or stored. */
+export interface GitLabGroup {
+  host: string
+  path: string
+}
+
+export interface GitLabGroupsResponse {
+  groups: GitLabGroup[]
+}
+
+/** One merge request in a group's review list. Every field is bounded by the
+ * server; `truncated_fields` names any it shortened (an over-long `url` is
+ * dropped to `''` instead). */
+export interface GitLabGroupReview {
+  number: number | null
+  title: string
+  url: string
+  /** Full path of the project the merge request belongs to, e.g. `acme/web/api`. */
+  project: string
+  author: string | null
+  updated_at: string | null
+  truncated_fields: string[]
+}
+
+export interface GitLabGroupReviewsResponse extends GitLabGroup {
+  /** The GitLab username the search ran as (the signed-in `glab` user). */
+  login: string
+  pulls: GitLabGroupReview[]
+  /** More matches exist than the `limit` newest shown. */
+  truncated: boolean
+  limit: number
+}
+
+/** A failed GitLab-group request, carrying the server's `code` so the UI can say
+ * what to do (`group_not_found`, `setup_required`, …) instead of echoing the
+ * provider's raw message. */
+export class GitLabGroupError extends Error {
+  readonly code: string
+
+  constructor(message: string, code: string) {
+    super(message)
+    this.name = 'GitLabGroupError'
+    this.code = code
+  }
+}
+
+async function gitlabGroupError(r: Response): Promise<GitLabGroupError> {
+  let body: { error?: unknown; code?: unknown } = {}
+  try {
+    body = (await r.json()) as typeof body
+  } catch {
+    // A non-JSON body still yields an error with the status as its message.
+  }
+  const message = typeof body.error === 'string' && body.error ? body.error : `HTTP ${r.status}`
+  return new GitLabGroupError(message, typeof body.code === 'string' ? body.code : '')
+}
+
 /** The full single-PR payload the detail pane renders — a superset of the list
  * `PullRequest` (adds diff stats, review/comment counts, mergeability, full
  * label objects, milestone). */
@@ -1763,6 +1821,44 @@ export const issueRadarApi = {
     const q = new URLSearchParams(repoQuery(ref))
     const r = await fetch(`${API}/repos?${q.toString()}`, { method: 'DELETE', credentials: 'same-origin' })
     if (!r.ok) throw new Error(await parseErrorBody(r))
+    return r.json()
+  },
+
+  /** The GitLab groups the user follows for review requests. A local read: the
+   * server answers from its config without calling GitLab. */
+  gitlabGroups: async (): Promise<GitLabGroupsResponse> => {
+    const r = await fetch(`${API}/gitlab-groups`, { credentials: 'same-origin' })
+    if (!r.ok) throw await gitlabGroupError(r)
+    return r.json()
+  },
+
+  /** Follow a GitLab group. `group` is a bare path such as `acme/platform` (a
+   * gitlab.com group) or a pasted group link, which names its own instance. */
+  addGitlabGroup: async (group: string): Promise<GitLabGroup> => {
+    const r = await fetch(`${API}/gitlab-groups`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group }),
+    })
+    if (!r.ok) throw await gitlabGroupError(r)
+    return r.json()
+  },
+
+  /** Stop following a GitLab group. Local only: nothing on GitLab changes. */
+  removeGitlabGroup: async (group: GitLabGroup): Promise<GitLabGroup> => {
+    const q = new URLSearchParams({ host: group.host, path: group.path })
+    const r = await fetch(`${API}/gitlab-groups?${q.toString()}`, { method: 'DELETE', credentials: 'same-origin' })
+    if (!r.ok) throw await gitlabGroupError(r)
+    return r.json()
+  },
+
+  /** Open merge requests across the group and every subgroup where the signed-in
+   * `glab` user is a requested reviewer. Capped like `searchPulls`. */
+  gitlabGroupReviews: async (group: GitLabGroup): Promise<GitLabGroupReviewsResponse> => {
+    const q = new URLSearchParams({ host: group.host, path: group.path })
+    const r = await fetch(`${API}/gitlab-groups/review-requests?${q.toString()}`, { credentials: 'same-origin' })
+    if (!r.ok) throw await gitlabGroupError(r)
     return r.json()
   },
 

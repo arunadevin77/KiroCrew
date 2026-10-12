@@ -2389,7 +2389,8 @@
         "settingsSection": {
           "connect_repo": "রিপো সংযুক্ত করুন",
           "general": "সাধারণ",
-          "repository_settings": "রিপোজিটরি সেটিংস"
+          "repository_settings": "রিপোজিটরি সেটিংস",
+          "gitlab_groups": "GitLab গ্রুপ"
         },
         "depsSection": {
           "title": "নির্ভরতা",
@@ -2458,6 +2459,14 @@
           "read_only_here_apply_in_provider": "এখানে শুধু পড়া যায় — {{provider}} রিপোজিটরি {{productName}} থেকে পরিবর্তন করা যায় না; পরিবর্তনটি {{provider}}-এ করুন",
           "tracked_items_work_items": "ওয়ার্ক আইটেম",
           "tracked_items_issues": "ইস্যু"
+        },
+        "gitlabGroups": {
+          "invalid_group": "এটি GitLab গ্রুপের পাথ নয়। acme/platform-এর মতো পাথ দাও, বা গ্রুপের লিংক পেস্ট করো।",
+          "group_not_found": "GitLab-এ এই পাথে কোনো গ্রুপ নেই, বা তোমার GitLab CLI (glab) সেশন সেটি দেখতে পায় না। পাথ আর তোমার অ্যাক্সেস যাচাই করো।",
+          "group_forbidden": "তোমার GitLab CLI (glab) সেশন এই গ্রুপ পড়তে পারে না। গ্রুপের মালিকের কাছে অ্যাক্সেস চাও।",
+          "setup_required": "GitLab CLI (glab) এই GitLab ইনস্ট্যান্সে সাইন ইন করা নেই। glab auth login চালাও, তারপর আবার চেষ্টা করো।",
+          "no_login": "GitLab CLI (glab) বুঝতে পারেনি তুমি কোন GitLab ব্যবহারকারী। তোমার সেশন যাচাই করতে glab auth status চালাও।",
+          "unreachable": "GitLab-এ পৌঁছানো গেল না — {{error}}"
         }
       },
       "manifest": {
@@ -2681,7 +2690,8 @@
           "tagging": "ট্যাগিং",
           "graph": "গ্রাফ",
           "pipeline": "পাইপলাইন",
-          "ci_runs": "CI রান"
+          "ci_runs": "CI রান",
+          "reviews": "রিভিউ অনুরোধ"
         },
         "settings": {
           "generalSettings": {
@@ -2715,6 +2725,22 @@
             "agent_language": "এজেন্টের ভাষা",
             "agent_language_hint": "এজেন্ট তার পর্যবেক্ষণ ও প্রস্তাবিত পর্যালোচনা মন্তব্য যে ভাষায় লেখে। লেবেলের নাম, কোড এবং ফাইল পাথ অপরিবর্তিত থাকে। পরিবর্তনের পরে শুরু হওয়া সেশনে প্রযোজ্য; আবার শুরু করা অনুসন্ধান তার শুরুর ভাষাই ধরে রাখে।",
             "agent_language_follow": "ড্যাশবোর্ডের মতো ({{language}})"
+          },
+          "gitlabGroups": {
+            "title": "GitLab গ্রুপ",
+            "intro": "কোনো GitLab গ্রুপ ফলো করো, যাতে সেই গ্রুপ আর তার সব সাবগ্রুপে তোমার রিভিউয়ের অপেক্ষায় থাকা merge request ড্যাশবোর্ড › রিভিউ অনুরোধে দেখা যায়। পরে গ্রুপে যোগ করা প্রজেক্টও নিজে থেকেই অন্তর্ভুক্ত হয়।",
+            "list_error": "তোমার GitLab গ্রুপ লোড করা গেল না — {{error}}",
+            "empty": "তুমি এখনও কোনো GitLab গ্রুপ ফলো করছ না।",
+            "group_label": "গ্রুপের পাথ বা লিংক",
+            "group_placeholder": "যেমন, acme/platform",
+            "follow": "গ্রুপ ফলো করো",
+            "following": "ফলো করা হচ্ছে…",
+            "group_hint": "শুধু পাথ দিলে সেটি gitlab.com-এ খোঁজা হয়। সেলফ-ম্যানেজড ইনস্ট্যান্সের জন্য গ্রুপের লিংক পেস্ট করো।",
+            "open_reviews": "রিভিউ অনুরোধ খোলো",
+            "unfollow": "আনফলো করো",
+            "unfollowing": "আনফলো করা হচ্ছে…",
+            "unfollow_group": "{{path}} আনফলো করো",
+            "unfollow_error": "এই গ্রুপ আনফলো করা গেল না — {{error}}"
           },
           "repoSettings": {
             "browse_for_workspace_folder": "ওয়ার্কস্পেস ফোল্ডার ব্রাউজ করুন",
@@ -2900,6 +2926,19 @@
           "empty_unavailable_title": "নির্ভরতার ডেটা অনুপলব্ধ",
           "empty_unavailable_blurb": "গ্রাফ লোড করা যায়নি। এই রিপোজিটরির জন্য deps রুট হয়তো এখনও চালু হয়নি। চালু হলে আবার চেষ্টা করুন।",
           "retry": "আবার চেষ্টা করুন"
+        },
+        "groupReviewsView": {
+          "title": "রিভিউ অনুরোধ",
+          "intro": "তোমার ফলো করা GitLab গ্রুপ আর তাদের সাবগ্রুপে তোমার রিভিউয়ের অপেক্ষায় থাকা খোলা merge request।",
+          "empty": "তুমি এখনও কোনো GitLab গ্রুপ ফলো করছ না। সেটিংসে একটি গ্রুপ ফলো করো, তাহলে তার রিভিউ অনুরোধ এখানে দেখা যাবে।",
+          "follow_a_group": "GitLab গ্রুপ ফলো করো",
+          "loading": "লোড হচ্ছে…",
+          "count": "তোমার অপেক্ষায়: {{total}}",
+          "count_capped": "তোমার অপেক্ষায়: {{total}}টির বেশি",
+          "refresh_group": "{{path}} রিফ্রেশ করো",
+          "no_reviews": "এই গ্রুপে কিছুই তোমার রিভিউয়ের অপেক্ষায় নেই।",
+          "capped": "সবচেয়ে নতুন {{limit}}টি দেখানো হচ্ছে।",
+          "see_all": "GitLab-এ সব দেখো"
         },
         "pipelineDashboard": {
           "github_only": "ট্রায়াজ পাইপলাইন কেবল GitHub রিপোজিটরিতে চলে",

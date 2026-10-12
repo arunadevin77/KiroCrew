@@ -2478,7 +2478,8 @@
         "settingsSection": {
           "connect_repo": "Repo verbinden",
           "general": "Allgemein",
-          "repository_settings": "Repository-Einstellungen"
+          "repository_settings": "Repository-Einstellungen",
+          "gitlab_groups": "GitLab-Gruppen"
         },
         "depsSection": {
           "title": "Abhängigkeiten",
@@ -2547,6 +2548,14 @@
           "read_only_here_apply_in_provider": "Hier schreibgeschützt — {{provider}}-Repositorys lassen sich nicht aus {{productName}} ändern; nimm die Änderung in {{provider}} vor",
           "tracked_items_work_items": "Arbeitselemente",
           "tracked_items_issues": "Issues"
+        },
+        "gitlabGroups": {
+          "invalid_group": "Das ist kein GitLab-Gruppenpfad. Verwende einen Pfad wie acme/platform oder füge den Link der Gruppe ein.",
+          "group_not_found": "GitLab hat keine Gruppe unter diesem Pfad, oder deine Sitzung der GitLab-CLI (glab) kann sie nicht sehen. Prüfe den Pfad und deinen Zugriff.",
+          "group_forbidden": "Deine Sitzung der GitLab-CLI (glab) kann diese Gruppe nicht lesen. Bitte einen Gruppen-Owner um Zugriff.",
+          "setup_required": "Die GitLab-CLI (glab) ist bei dieser GitLab-Instanz nicht angemeldet. Führe glab auth login aus und versuche es dann erneut.",
+          "no_login": "Die GitLab-CLI (glab) konnte nicht feststellen, welcher GitLab-Benutzer du bist. Führe glab auth status aus, um deine Sitzung zu prüfen.",
+          "unreachable": "GitLab ist nicht erreichbar — {{error}}"
         }
       },
       "manifest": {
@@ -2770,7 +2779,8 @@
           "tagging": "Verschlagwortung",
           "graph": "Graph",
           "pipeline": "Pipeline",
-          "ci_runs": "CI-Läufe"
+          "ci_runs": "CI-Läufe",
+          "reviews": "Review-Anfragen"
         },
         "settings": {
           "generalSettings": {
@@ -2804,6 +2814,22 @@
             "agent_language": "Agentensprache",
             "agent_language_hint": "Die Sprache, in der der Agent seine Ergebnisse und vorgeschlagenen Review-Kommentare schreibt. Labelnamen, Code und Dateipfade bleiben unverändert. Gilt für Sitzungen, die nach der Änderung beginnen; eine fortgesetzte Untersuchung behält ihre ursprüngliche Sprache.",
             "agent_language_follow": "Wie das Dashboard ({{language}})"
+          },
+          "gitlabGroups": {
+            "title": "GitLab-Gruppen",
+            "intro": "Folge einer GitLab-Gruppe, um unter Dashboards › Review-Anfragen die Merge-Requests zu sehen, die in der Gruppe und allen ihren Untergruppen auf dein Review warten. Projekte, die später zur Gruppe hinzukommen, sind automatisch enthalten.",
+            "list_error": "Deine GitLab-Gruppen konnten nicht geladen werden — {{error}}",
+            "empty": "Du folgst noch keiner GitLab-Gruppe.",
+            "group_label": "Gruppenpfad oder Link",
+            "group_placeholder": "Zum Beispiel acme/platform",
+            "follow": "Gruppe folgen",
+            "following": "Wird gefolgt…",
+            "group_hint": "Ein Pfad wird auf gitlab.com gesucht. Für eine selbst verwaltete Instanz füge den Link der Gruppe ein.",
+            "open_reviews": "Review-Anfragen öffnen",
+            "unfollow": "Entfolgen",
+            "unfollowing": "Wird entfolgt…",
+            "unfollow_group": "{{path}} entfolgen",
+            "unfollow_error": "Dieser Gruppe konnte nicht entfolgt werden — {{error}}"
           },
           "repoSettings": {
             "browse_for_workspace_folder": "Arbeitsbereichsordner durchsuchen",
@@ -2989,6 +3015,19 @@
           "empty_unavailable_title": "Abhängigkeitsdaten nicht verfügbar",
           "empty_unavailable_blurb": "Der Abhängigkeitsgraph konnte nicht geladen werden. Die deps-Route ist für dieses Repository womöglich noch nicht aktiv. Danach erneut versuchen.",
           "retry": "ERNEUT VERSUCHEN"
+        },
+        "groupReviewsView": {
+          "title": "Review-Anfragen",
+          "intro": "Offene Merge-Requests, die in den GitLab-Gruppen, denen du folgst, samt Untergruppen auf dein Review warten.",
+          "empty": "Du folgst noch keiner GitLab-Gruppe. Folge einer in den Einstellungen, um ihre Review-Anfragen hier zu sehen.",
+          "follow_a_group": "Einer GitLab-Gruppe folgen",
+          "loading": "Wird geladen…",
+          "count": "Warten auf dich: {{total}}",
+          "count_capped": "Warten auf dich: mehr als {{total}}",
+          "refresh_group": "{{path}} aktualisieren",
+          "no_reviews": "In dieser Gruppe wartet nichts auf dein Review.",
+          "capped": "Die neuesten {{limit}} werden angezeigt.",
+          "see_all": "Alle auf GitLab ansehen"
         },
         "pipelineDashboard": {
           "github_only": "Die Triage-Pipeline läuft nur mit GitHub-Repositorys",

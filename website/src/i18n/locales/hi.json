@@ -2389,7 +2389,8 @@
         "settingsSection": {
           "connect_repo": "रिपो कनेक्ट करें",
           "general": "सामान्य",
-          "repository_settings": "रिपॉज़िटरी सेटिंग"
+          "repository_settings": "रिपॉज़िटरी सेटिंग",
+          "gitlab_groups": "GitLab समूह"
         },
         "depsSection": {
           "title": "निर्भरताएँ",
@@ -2458,6 +2459,14 @@
           "read_only_here_apply_in_provider": "यहाँ केवल-पढ़ने योग्य — {{provider}} रिपॉज़िटरी को {{productName}} से नहीं बदला जा सकता; परिवर्तन {{provider}} में करो",
           "tracked_items_work_items": "वर्क आइटम",
           "tracked_items_issues": "इश्यू"
+        },
+        "gitlabGroups": {
+          "invalid_group": "यह GitLab समूह का पथ नहीं है। acme/platform जैसा पथ दो, या समूह का लिंक चिपकाओ।",
+          "group_not_found": "GitLab पर इस पथ का कोई समूह नहीं है, या तुम्हारा GitLab CLI (glab) सत्र उसे नहीं देख सकता। पथ और अपनी पहुँच जाँचो।",
+          "group_forbidden": "तुम्हारा GitLab CLI (glab) सत्र इस समूह को नहीं पढ़ सकता। समूह के मालिक से पहुँच माँगो।",
+          "setup_required": "GitLab CLI (glab) इस GitLab इंस्टेंस में साइन इन नहीं है। glab auth login चलाओ, फिर दोबारा कोशिश करो।",
+          "no_login": "GitLab CLI (glab) यह नहीं बता सका कि तुम कौन-से GitLab उपयोगकर्ता हो। अपना सत्र जाँचने के लिए glab auth status चलाओ।",
+          "unreachable": "GitLab तक नहीं पहुँच सके — {{error}}"
         }
       },
       "manifest": {
@@ -2523,7 +2532,8 @@
           "tagging": "टैगिंग",
           "graph": "ग्राफ़",
           "pipeline": "पाइपलाइन",
-          "ci_runs": "CI रन"
+          "ci_runs": "CI रन",
+          "reviews": "समीक्षा अनुरोध"
         },
         "settings": {
           "generalSettings": {
@@ -2557,6 +2567,22 @@
             "agent_language": "एजेंट की भाषा",
             "agent_language_hint": "वह भाषा जिसमें एजेंट अपने निष्कर्ष और प्रस्तावित समीक्षा टिप्पणियाँ लिखता है। लेबल नाम, कोड और फ़ाइल पथ अपरिवर्तित रहते हैं। यह बदलाव के बाद शुरू हुए सत्रों पर लागू होता है; फिर से शुरू की गई जाँच अपनी शुरुआती भाषा बनाए रखती है।",
             "agent_language_follow": "डैशबोर्ड जैसा ({{language}})"
+          },
+          "gitlabGroups": {
+            "title": "GitLab समूह",
+            "intro": "किसी GitLab समूह को फ़ॉलो करो, ताकि उस समूह और उसके सभी उपसमूहों में तुम्हारी समीक्षा का इंतज़ार कर रहे merge request डैशबोर्ड › समीक्षा अनुरोध में दिखें। बाद में समूह में जोड़े गए प्रोजेक्ट भी अपने-आप शामिल हो जाते हैं।",
+            "list_error": "तुम्हारे GitLab समूह लोड नहीं हो सके — {{error}}",
+            "empty": "तुम अभी किसी GitLab समूह को फ़ॉलो नहीं कर रहे हो।",
+            "group_label": "समूह का पथ या लिंक",
+            "group_placeholder": "उदाहरण के लिए, acme/platform",
+            "follow": "समूह फ़ॉलो करो",
+            "following": "फ़ॉलो किया जा रहा है…",
+            "group_hint": "सिर्फ़ पथ देने पर उसे gitlab.com पर खोजा जाता है। सेल्फ़-मैनेज्ड इंस्टेंस के लिए समूह का लिंक चिपकाओ।",
+            "open_reviews": "समीक्षा अनुरोध खोलो",
+            "unfollow": "अनफ़ॉलो करो",
+            "unfollowing": "अनफ़ॉलो किया जा रहा है…",
+            "unfollow_group": "{{path}} को अनफ़ॉलो करो",
+            "unfollow_error": "इस समूह को अनफ़ॉलो नहीं किया जा सका — {{error}}"
           },
           "repoSettings": {
             "browse_for_workspace_folder": "वर्कस्पेस फ़ोल्डर ब्राउज़ करें",
@@ -2900,6 +2926,19 @@
           "empty_unavailable_title": "निर्भरता डेटा उपलब्ध नहीं",
           "empty_unavailable_blurb": "ग्राफ़ लोड नहीं हो सका। संभव है इस रिपॉज़िटरी के लिए deps रूट अभी सक्षम न हो। उपलब्ध होने पर पुनः प्रयास करें।",
           "retry": "पुनः प्रयास"
+        },
+        "groupReviewsView": {
+          "title": "समीक्षा अनुरोध",
+          "intro": "तुम्हारे फ़ॉलो किए गए GitLab समूहों और उनके उपसमूहों में तुम्हारी समीक्षा का इंतज़ार कर रहे खुले merge request।",
+          "empty": "तुम अभी किसी GitLab समूह को फ़ॉलो नहीं कर रहे हो। सेटिंग्स में किसी समूह को फ़ॉलो करो, ताकि उसके समीक्षा अनुरोध यहाँ दिखें।",
+          "follow_a_group": "GitLab समूह फ़ॉलो करो",
+          "loading": "लोड हो रहा है…",
+          "count": "तुम्हारे इंतज़ार में: {{total}}",
+          "count_capped": "तुम्हारे इंतज़ार में: {{total}} से ज़्यादा",
+          "refresh_group": "{{path}} रीफ़्रेश करो",
+          "no_reviews": "इस समूह में कुछ भी तुम्हारी समीक्षा का इंतज़ार नहीं कर रहा है।",
+          "capped": "सबसे नए {{limit}} दिखाए जा रहे हैं।",
+          "see_all": "GitLab पर सब देखो"
         },
         "pipelineDashboard": {
           "github_only": "ट्राइएज पाइपलाइन केवल GitHub रिपॉज़िटरी पर चलती है",

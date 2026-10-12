@@ -2491,7 +2491,8 @@
         "settingsSection": {
           "connect_repo": "Подключить репозиторий",
           "general": "Общие",
-          "repository_settings": "Настройки репозитория"
+          "repository_settings": "Настройки репозитория",
+          "gitlab_groups": "Группы GitLab"
         },
         "depsSection": {
           "title": "Зависимости",
@@ -2560,6 +2561,14 @@
           "read_only_here_apply_in_provider": "Только чтение — репозитории {{provider}} нельзя изменить из {{productName}}; внесите изменение в {{provider}}",
           "tracked_items_work_items": "Рабочие элементы",
           "tracked_items_issues": "Задачи"
+        },
+        "gitlabGroups": {
+          "invalid_group": "Это не путь группы GitLab. Укажи путь вроде acme/platform или вставь ссылку на группу.",
+          "group_not_found": "В GitLab нет группы по этому пути, или твоя сессия GitLab CLI (glab) её не видит. Проверь путь и свой доступ.",
+          "group_forbidden": "Твоя сессия GitLab CLI (glab) не может читать эту группу. Попроси доступ у владельца группы.",
+          "setup_required": "GitLab CLI (glab) не вошёл в этот экземпляр GitLab. Выполни glab auth login и попробуй снова.",
+          "no_login": "GitLab CLI (glab) не смог определить, какой ты пользователь GitLab. Выполни glab auth status, чтобы проверить сессию.",
+          "unreachable": "Не получилось связаться с GitLab — {{error}}"
         }
       },
       "manifest": {
@@ -2787,7 +2796,8 @@
           "tagging": "Расстановка меток",
           "graph": "Граф",
           "pipeline": "Конвейер",
-          "ci_runs": "Запуски CI"
+          "ci_runs": "Запуски CI",
+          "reviews": "Запросы на ревью"
         },
         "settings": {
           "generalSettings": {
@@ -2821,6 +2831,22 @@
             "agent_language": "Язык агента",
             "agent_language_hint": "Язык, на котором агент пишет свои выводы и предлагаемые комментарии к проверке. Названия меток, код и пути к файлам остаются без изменений. Применяется к сеансам, начатым после изменения; возобновленное исследование сохраняет язык, на котором началось.",
             "agent_language_follow": "Как в панели ({{language}})"
+          },
+          "gitlabGroups": {
+            "title": "Группы GitLab",
+            "intro": "Подпишись на группу GitLab, чтобы в разделе «Дашборды › Запросы на ревью» видеть merge request’ы, которые ждут твоего ревью, во всей группе и всех её подгруппах. Проекты, добавленные в группу позже, включаются автоматически.",
+            "list_error": "Не получилось загрузить твои группы GitLab — {{error}}",
+            "empty": "Ты пока не подписан ни на одну группу GitLab.",
+            "group_label": "Путь или ссылка на группу",
+            "group_placeholder": "Например, acme/platform",
+            "follow": "Подписаться на группу",
+            "following": "Подписка…",
+            "group_hint": "Путь ищется на gitlab.com. Для собственного экземпляра GitLab вставь ссылку на группу.",
+            "open_reviews": "Открыть запросы на ревью",
+            "unfollow": "Отписаться",
+            "unfollowing": "Отписка…",
+            "unfollow_group": "Отписаться от {{path}}",
+            "unfollow_error": "Не получилось отписаться от этой группы — {{error}}"
           },
           "repoSettings": {
             "browse_for_workspace_folder": "Выбрать папку рабочей области",
@@ -3016,6 +3042,19 @@
           "empty_unavailable_title": "Данные о зависимостях недоступны",
           "empty_unavailable_blurb": "Не удалось загрузить граф. Возможно, маршрут deps ещё не включён для этого репозитория. Повторите позже.",
           "retry": "ПОВТОРИТЬ"
+        },
+        "groupReviewsView": {
+          "title": "Запросы на ревью",
+          "intro": "Открытые merge request’ы, которые ждут твоего ревью в группах GitLab, на которые ты подписан, включая подгруппы.",
+          "empty": "Ты пока не подписан ни на одну группу GitLab. Подпишись на группу в настройках, и её запросы на ревью появятся здесь.",
+          "follow_a_group": "Подписаться на группу GitLab",
+          "loading": "Загрузка…",
+          "count": "Ждут тебя: {{total}}",
+          "count_capped": "Ждут тебя: больше {{total}}",
+          "refresh_group": "Обновить {{path}}",
+          "no_reviews": "В этой группе ничего не ждёт твоего ревью.",
+          "capped": "Показаны {{limit}} самых новых.",
+          "see_all": "Смотреть все в GitLab"
         },
         "pipelineDashboard": {
           "github_only": "Конвейер сортировки работает только с репозиториями GitHub",

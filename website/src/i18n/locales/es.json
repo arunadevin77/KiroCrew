@@ -2440,7 +2440,8 @@
         "settingsSection": {
           "connect_repo": "Conectar repositorio",
           "general": "General",
-          "repository_settings": "Ajustes del repositorio"
+          "repository_settings": "Ajustes del repositorio",
+          "gitlab_groups": "Grupos de GitLab"
         },
         "depsSection": {
           "title": "Dependencias",
@@ -2509,6 +2510,14 @@
           "read_only_here_apply_in_provider": "Solo lectura aquí: los repositorios de {{provider}} no se pueden modificar desde {{productName}}; aplica el cambio en {{provider}}",
           "tracked_items_work_items": "Elementos de trabajo",
           "tracked_items_issues": "Incidencias"
+        },
+        "gitlabGroups": {
+          "invalid_group": "Eso no es una ruta de grupo de GitLab. Usa una ruta como acme/platform o pega el enlace del grupo.",
+          "group_not_found": "GitLab no tiene ningún grupo en esa ruta, o tu sesión de la CLI de GitLab (glab) no puede verlo. Revisa la ruta y tu acceso.",
+          "group_forbidden": "Tu sesión de la CLI de GitLab (glab) no puede leer este grupo. Pide acceso a un propietario del grupo.",
+          "setup_required": "La CLI de GitLab (glab) no tiene la sesión iniciada en esta instancia de GitLab. Ejecuta glab auth login y vuelve a intentarlo.",
+          "no_login": "La CLI de GitLab (glab) no pudo saber qué usuario de GitLab eres. Ejecuta glab auth status para revisar tu sesión.",
+          "unreachable": "No se pudo conectar con GitLab — {{error}}"
         }
       },
       "manifest": {
@@ -2734,7 +2743,8 @@
           "tagging": "Etiquetado",
           "graph": "Grafo",
           "pipeline": "Flujo",
-          "ci_runs": "Ejecuciones de CI"
+          "ci_runs": "Ejecuciones de CI",
+          "reviews": "Solicitudes de revisión"
         },
         "settings": {
           "generalSettings": {
@@ -2768,6 +2778,22 @@
             "agent_language": "Idioma del agente",
             "agent_language_hint": "El idioma en el que el agente escribe sus conclusiones y los comentarios de revisión propuestos. Los nombres de etiquetas, el código y las rutas de archivo se mantienen literales. Se aplica a las sesiones iniciadas después del cambio; una investigación reanudada conserva el idioma con el que empezó.",
             "agent_language_follow": "Igual que el panel ({{language}})"
+          },
+          "gitlabGroups": {
+            "title": "Grupos de GitLab",
+            "intro": "Sigue un grupo de GitLab para ver en Paneles › Solicitudes de revisión las merge requests que esperan tu revisión en el grupo y en todos sus subgrupos. Los proyectos que se añadan al grupo más adelante se incluyen automáticamente.",
+            "list_error": "No se pudieron cargar tus grupos de GitLab — {{error}}",
+            "empty": "Todavía no sigues ningún grupo de GitLab.",
+            "group_label": "Ruta o enlace del grupo",
+            "group_placeholder": "Por ejemplo, acme/platform",
+            "follow": "Seguir grupo",
+            "following": "Siguiendo…",
+            "group_hint": "Una ruta se busca en gitlab.com. Para una instancia autogestionada, pega el enlace del grupo.",
+            "open_reviews": "Abrir Solicitudes de revisión",
+            "unfollow": "Dejar de seguir",
+            "unfollowing": "Dejando de seguir…",
+            "unfollow_group": "Dejar de seguir {{path}}",
+            "unfollow_error": "No se pudo dejar de seguir este grupo — {{error}}"
           },
           "repoSettings": {
             "browse_for_workspace_folder": "Buscar carpeta del espacio de trabajo",
@@ -2958,6 +2984,19 @@
           "empty_unavailable_title": "Datos de dependencias no disponibles",
           "empty_unavailable_blurb": "No se pudo cargar el grafo. Puede que la ruta deps aún no esté habilitada para este repositorio. Reintenta cuando lo esté.",
           "retry": "REINTENTAR"
+        },
+        "groupReviewsView": {
+          "title": "Solicitudes de revisión",
+          "intro": "Merge requests abiertas que esperan tu revisión en los grupos de GitLab que sigues, subgrupos incluidos.",
+          "empty": "Todavía no sigues ningún grupo de GitLab. Sigue uno en Configuración para ver aquí sus solicitudes de revisión.",
+          "follow_a_group": "Seguir un grupo de GitLab",
+          "loading": "Cargando…",
+          "count": "Esperándote: {{total}}",
+          "count_capped": "Esperándote: más de {{total}}",
+          "refresh_group": "Actualizar {{path}}",
+          "no_reviews": "Nada en este grupo espera tu revisión.",
+          "capped": "Se muestran las {{limit}} más recientes.",
+          "see_all": "Ver todo en GitLab"
         },
         "pipelineDashboard": {
           "github_only": "El canal de triaje solo funciona con repositorios de GitHub",

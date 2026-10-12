@@ -1424,7 +1424,8 @@
         "settingsSection": {
           "connect_repo": "Connect repo",
           "general": "General",
-          "repository_settings": "Repository settings"
+          "repository_settings": "Repository settings",
+          "gitlab_groups": "GitLab groups"
         },
         "depsSection": {
           "title": "Dependencies",
@@ -1520,6 +1521,22 @@
             "settings": "Settings",
             "your": "Your"
           },
+          "gitlabGroups": {
+            "title": "GitLab groups",
+            "intro": "Follow a GitLab group to list the merge requests waiting for your review across the group and all its subgroups, under Dashboards › Review requests. Projects added to the group later are included automatically.",
+            "list_error": "Couldn't load your GitLab groups — {{error}}",
+            "empty": "You aren't following any GitLab groups yet.",
+            "group_label": "Group path or link",
+            "group_placeholder": "For example, acme/platform",
+            "follow": "Follow group",
+            "following": "Following…",
+            "group_hint": "A path is looked up on gitlab.com. For a self-managed instance, paste the group's link.",
+            "open_reviews": "Open Review requests",
+            "unfollow": "Unfollow",
+            "unfollowing": "Unfollowing…",
+            "unfollow_group": "Unfollow {{path}}",
+            "unfollow_error": "Couldn't unfollow this group — {{error}}"
+          },
           "repoSettings": {
             "browse_for_workspace_folder": "Browse for workspace folder",
             "browse": "Browse",
@@ -1606,7 +1623,8 @@
           "what_you_see_below_is_the_previous_result_not_th": "what you see below is the previous result, not the current state."
         },
         "registry": {
-          "graph": "Graph"
+          "graph": "Graph",
+          "reviews": "Review requests"
         },
         "graphView": {
           "header": "DEPENDENCIES",
@@ -1647,6 +1665,19 @@
           "empty_unavailable_title": "Dependency data unavailable",
           "empty_unavailable_blurb": "The dependency graph could not be loaded. The backend deps route may not be enabled yet on this repo. Retry once it is available.",
           "retry": "RETRY"
+        },
+        "groupReviewsView": {
+          "title": "Review requests",
+          "intro": "Open merge requests waiting for your review across the GitLab groups you follow, subgroups included.",
+          "empty": "You aren't following any GitLab groups yet. Follow one in Settings to see its review requests here.",
+          "follow_a_group": "Follow a GitLab group",
+          "loading": "Loading…",
+          "count": "Waiting for you: {{total}}",
+          "count_capped": "Waiting for you: more than {{total}}",
+          "refresh_group": "Refresh {{path}}",
+          "no_reviews": "Nothing in this group is waiting for your review.",
+          "capped": "Showing the newest {{limit}}.",
+          "see_all": "See all on GitLab"
         }
       },
       "welcomeCarousel": {
@@ -1664,6 +1695,16 @@
       },
       "api": {
         "assignees_changed_elsewhere": "The assignees changed elsewhere since you loaded this issue."
+      },
+      "lib": {
+        "gitlabGroups": {
+          "invalid_group": "That isn't a GitLab group path. Use a path like acme/platform, or paste the group's link.",
+          "group_not_found": "GitLab has no group at that path, or your GitLab CLI (glab) session can't see it. Check the path and your access.",
+          "group_forbidden": "Your GitLab CLI (glab) session can't read this group. Ask a group owner for access.",
+          "setup_required": "The GitLab CLI (glab) isn't signed in to this GitLab instance. Run glab auth login, then try again.",
+          "no_login": "The GitLab CLI (glab) couldn't tell which GitLab user you are. Run glab auth status to check your session.",
+          "unreachable": "Couldn't reach GitLab — {{error}}"
+        }
       }
     },
     "mdNotebook": {

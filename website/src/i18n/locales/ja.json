@@ -2426,7 +2426,8 @@
         "settingsSection": {
           "connect_repo": "リポジトリを接続",
           "general": "一般",
-          "repository_settings": "リポジトリ設定"
+          "repository_settings": "リポジトリ設定",
+          "gitlab_groups": "GitLab グループ"
         },
         "depsSection": {
           "title": "依存関係",
@@ -2495,6 +2496,14 @@
           "read_only_here_apply_in_provider": "ここでは読み取り専用です — {{provider}} のリポジトリは {{productName}} から変更できません。{{provider}} で変更してください",
           "tracked_items_work_items": "作業項目",
           "tracked_items_issues": "Issue"
+        },
+        "gitlabGroups": {
+          "invalid_group": "GitLab のグループパスではありません。acme/platform のようなパスを使うか、グループのリンクを貼り付けてください。",
+          "group_not_found": "そのパスのグループが GitLab にないか、GitLab CLI（glab）のセッションから見えません。パスとアクセス権を確認してください。",
+          "group_forbidden": "GitLab CLI（glab）のセッションではこのグループを読み取れません。グループのオーナーにアクセスを依頼してください。",
+          "setup_required": "GitLab CLI（glab）がこの GitLab インスタンスにサインインしていません。glab auth login を実行してから、もう一度お試しください。",
+          "no_login": "GitLab CLI（glab）が GitLab のユーザーを特定できませんでした。glab auth status を実行してセッションを確認してください。",
+          "unreachable": "GitLab に接続できませんでした — {{error}}"
         }
       },
       "manifest": {
@@ -2716,7 +2725,8 @@
           "tagging": "タグ付け",
           "graph": "グラフ",
           "pipeline": "パイプライン",
-          "ci_runs": "CI 実行"
+          "ci_runs": "CI 実行",
+          "reviews": "レビューリクエスト"
         },
         "settings": {
           "generalSettings": {
@@ -2750,6 +2760,22 @@
             "agent_language": "エージェントの言語",
             "agent_language_hint": "エージェントが調査結果とレビュー案を書く言語です。ラベル名、コード、ファイルパスは原文のままです。変更後に開始したセッションに適用され、再開した調査は開始時の言語を保ちます。",
             "agent_language_follow": "ダッシュボードと同じ（{{language}}）"
+          },
+          "gitlabGroups": {
+            "title": "GitLab グループ",
+            "intro": "GitLab グループをフォローすると、そのグループとすべてのサブグループで、あなたのレビューを待っている merge request をダッシュボードの「レビューリクエスト」で確認できます。後からグループに追加されたプロジェクトも自動的に含まれます。",
+            "list_error": "GitLab グループを読み込めませんでした — {{error}}",
+            "empty": "まだ GitLab グループをフォローしていません。",
+            "group_label": "グループのパスまたはリンク",
+            "group_placeholder": "例: acme/platform",
+            "follow": "グループをフォロー",
+            "following": "フォローしています…",
+            "group_hint": "パスだけを入力すると gitlab.com で検索します。セルフマネージドのインスタンスでは、グループのリンクを貼り付けてください。",
+            "open_reviews": "レビューリクエストを開く",
+            "unfollow": "フォロー解除",
+            "unfollowing": "フォローを解除しています…",
+            "unfollow_group": "{{path}} のフォローを解除",
+            "unfollow_error": "このグループのフォローを解除できませんでした — {{error}}"
           },
           "repoSettings": {
             "browse_for_workspace_folder": "ワークスペースフォルダーを参照",
@@ -2930,6 +2956,19 @@
           "empty_unavailable_title": "依存データを取得できません",
           "empty_unavailable_blurb": "依存グラフを読み込めませんでした。このリポジトリで deps ルートが未有効の可能性があります。利用可能になったら再試行してください。",
           "retry": "再試行"
+        },
+        "groupReviewsView": {
+          "title": "レビューリクエスト",
+          "intro": "フォロー中の GitLab グループ（サブグループを含む）で、あなたのレビューを待っているオープンな merge request です。",
+          "empty": "まだ GitLab グループをフォローしていません。設定でグループをフォローすると、そのレビューリクエストがここに表示されます。",
+          "follow_a_group": "GitLab グループをフォロー",
+          "loading": "読み込み中…",
+          "count": "あなたを待っている件数: {{total}}",
+          "count_capped": "あなたを待っている件数: {{total}} 件超",
+          "refresh_group": "{{path}} を更新",
+          "no_reviews": "このグループには、あなたのレビューを待っているものはありません。",
+          "capped": "最新の {{limit}} 件を表示しています。",
+          "see_all": "GitLab ですべて表示"
         },
         "pipelineDashboard": {
           "github_only": "トリアージパイプラインは GitHub リポジトリのみ対応しています",
