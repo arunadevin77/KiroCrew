@@ -88,6 +88,7 @@ from kiro_crew.config.integration_sections import (  # noqa: F401
     _DEFAULT_SSH_COMPRESSION,
     _DEFAULT_TUNNEL_BASE_PORT,
     _DEFAULT_WARM_SET_CAP,
+    AppSettingsConfig,
     AwsConfig,
 )
 from kiro_crew.config.migration import (  # noqa: F401
@@ -4131,6 +4132,10 @@ class KiroCrewConfig:
         default="default",
         metadata=_meta("Default Memory Store", "Fallback memory store name."),
     )
+    apps: dict[str, AppSettingsConfig] = field(
+        default_factory=dict,
+        metadata=_meta("Apps", "Per-app user settings, keyed by the app's manifest name."),
+    )
     auto_update: bool = field(
         default=True,
         metadata=_meta(
@@ -4390,6 +4395,7 @@ class KiroCrewConfig:
             "default_workspace": self.default_workspace,
             "memory_stores": {name: asdict(ms_cfg) for name, ms_cfg in self.memory_stores.items()},
             "default_memory_store": self.default_memory_store,
+            "apps": {name: asdict(app_cfg) for name, app_cfg in self.apps.items()},
             "stt": asdict(self.stt),
             "computer_use": asdict(self.computer_use),
             "aws": asdict(self.aws),
@@ -5555,6 +5561,30 @@ def read_config_document() -> ConfigDocument:
 _TOP_LEVEL_DEFAULTS: type[KiroCrewConfig] = KiroCrewConfig
 
 
+def _parse_app_settings(raw: Any) -> dict[str, AppSettingsConfig]:
+    """The ``apps`` table: one :class:`AppSettingsConfig` per app name.
+
+    A section that is not an object, a non-string name, or an entry that is not an
+    object reads as absent, which means every app inherits. A ``model`` that is not
+    a string reads as the empty INHERIT value. Names are kept as written: the
+    resolver looks an app up by its exact manifest name, so an entry for an app
+    that is not installed simply matches nothing.
+    """
+    if not isinstance(raw, dict):
+        logger.warning(
+            "Config 'apps' is not a JSON object (got %s); every app inherits its model",
+            type(raw).__name__,
+        )
+        return {}
+    apps: dict[str, AppSettingsConfig] = {}
+    for name, entry in raw.items():
+        if not isinstance(name, str) or not name or not isinstance(entry, dict):
+            continue
+        model = _sections.SectionReader(AppSettingsConfig, entry).get("model")
+        apps[name] = AppSettingsConfig(model=model if isinstance(model, str) else "")
+    return apps
+
+
 def build_config(
     doc: ConfigDocument, config_cls: type[KiroCrewConfig] = KiroCrewConfig
 ) -> KiroCrewConfig:
@@ -5855,6 +5885,8 @@ def build_config(
     if not memory_stores:
         memory_stores[DEFAULT_MEMORY_STORE] = MemoryStoreConfig()
 
+    apps = _parse_app_settings(data.get("apps", {}))
+
     # The top-level keys read against KiroCrewConfig's own fields, and the slack
     # keys that land on top-level fields under the same names. Against the base
     # config, not *config_cls*: an omitted key reads KiroCrewConfig's default even
@@ -5935,6 +5967,7 @@ def build_config(
         default_workspace=top.get("default_workspace"),
         memory_stores=memory_stores,
         default_memory_store=default_memory_store_val,
+        apps=apps,
         stt=_build_stt_config(stt_data),
         # Every numeric knob is clamped to the same ceiling the MCP tool
         # schemas enforce, so a hand-edited config.json cannot ask for an
@@ -7693,11 +7726,85 @@ def resolve_agent_bindings(
     )
 
 
+def app_model_pin(config: KiroCrewConfig, app_name: str | None) -> str:
+    """The user's model for the app *app_name* (``apps.<name>.model``), or ``""``.
+
+    ``""`` and ``"auto"`` both INHERIT, as for every other model tier. Total: a
+    config without the table, an unknown app, or a malformed entry reads ``""``.
+    """
+    if not app_name:
+        return ""
+    apps = getattr(config, "apps", None)
+    entry = apps.get(app_name) if isinstance(apps, dict) else None
+    return normalize_agent_model(getattr(entry, "model", ""))
+
+
+def _agent_tier_model(
+    config: KiroCrewConfig,
+    agent_name: str | None,
+    in_scope: Callable[[str], str],
+    *,
+    selection_kind: str = "",
+) -> str:
+    """The model the agent itself pins: its crew's ``model``, else its template's.
+
+    Tiers 1 and 2 of :func:`resolve_effective_model`. ``""`` when neither pins a
+    model the active harness can claim.
+    """
+    _, kiro_agent, model_pin = resolve_agent_identity(
+        config, agent_name, selection_kind=selection_kind
+    )
+    if in_scope(model_pin):
+        return model_pin
+    if kiro_agent and kiro_agent != "kirocrew":
+        pinned = normalize_agent_model(config._resolve_named_agent_model(kiro_agent))
+        if in_scope(pinned):
+            return pinned
+    return ""
+
+
+def _model_scope_filter(config: KiroCrewConfig) -> Callable[[str], str]:
+    namespace = capabilities_for(config.agent.acp_backend).model_id_namespace
+
+    def _in_scope(pin: str) -> str:
+        return model_scope.scoped_pin(
+            pin, namespace, source="resolve_effective_model", log_level=logging.DEBUG
+        )
+
+    return _in_scope
+
+
+def resolve_app_spawn_model(config: KiroCrewConfig, app_name: str, agent_name: str) -> str:
+    """The model an app's background spawn of *agent_name* runs on, or ``""``.
+
+    The app's own ``apps.<name>.model`` when the user set one, unless the agent
+    itself pins a model, which wins as it does for an app session. The agent tier
+    is the one the spawn's session resolves (``session._session_model``): the crew
+    of that name, when there is one, then the template's own pin. ``""`` leaves the
+    spawn exactly as it is without the setting.
+    """
+    in_scope = _model_scope_filter(config)
+    app_pin = in_scope(app_model_pin(config, app_name))
+    if not app_pin:
+        return ""
+    template = agent_name
+    crew = config.agents.get(agent_name) if agent_name else None
+    if crew is not None:
+        if in_scope(normalize_agent_model(crew.model)):
+            return ""
+        template = crew.kiro_agent or agent_name
+    if template and template != "kirocrew":
+        if in_scope(normalize_agent_model(config._resolve_named_agent_model(template))):
+            return ""
+    return app_pin
+
+
 def resolve_effective_model(
     config: KiroCrewConfig,
     agent_name: str | None = None,
     *,
     selection_kind: str = "",
+    app_name: str = "",
 ) -> str:
     """Return the model a new session on *agent_name* would start with.
 
@@ -7708,8 +7815,9 @@ def resolve_effective_model(
     1. the KiroCrew agent's own ``model``
     2. the bound kiro agent's pinned ``model`` (skipped for the built-in
        ``kirocrew`` agent, which tracks the global by design)
-    3. the global ``agent.model`` default
-    4. the installed ``kirocrew.json`` / bundled ``defaults.json`` model
+    3. for a session an app owns (*app_name*), the user's ``apps.<name>.model``
+    4. the global ``agent.model`` default
+    5. the installed ``kirocrew.json`` / bundled ``defaults.json`` model
 
     A per-session pick outranks all of these and is NOT considered here — the
     caller holds it. Returns ``""`` when every tier defers, meaning the backend
@@ -7723,22 +7831,14 @@ def resolve_effective_model(
     pin the active harness cannot claim is skipped, so the next tier down answers
     -- exactly as if that tier were unset.
     """
-    namespace = capabilities_for(config.agent.acp_backend).model_id_namespace
+    _in_scope = _model_scope_filter(config)
 
-    def _in_scope(pin: str) -> str:
-        return model_scope.scoped_pin(
-            pin, namespace, source="resolve_effective_model", log_level=logging.DEBUG
-        )
-
-    _, kiro_agent, model_pin = resolve_agent_identity(
-        config, agent_name, selection_kind=selection_kind
-    )
-    if _in_scope(model_pin):
-        return model_pin
-    if kiro_agent and kiro_agent != "kirocrew":
-        pinned = normalize_agent_model(config._resolve_named_agent_model(kiro_agent))
-        if _in_scope(pinned):
-            return pinned
+    agent_pin = _agent_tier_model(config, agent_name, _in_scope, selection_kind=selection_kind)
+    if agent_pin:
+        return agent_pin
+    app_pin = _in_scope(app_model_pin(config, app_name))
+    if app_pin:
+        return app_pin
 
     configured = normalize_agent_model(config.agent.model)
     if _in_scope(configured):

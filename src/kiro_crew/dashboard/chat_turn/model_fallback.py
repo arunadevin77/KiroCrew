@@ -79,11 +79,16 @@ def _default_session_model(
     """
     if slot.model or agent_model or cfg is None:
         return ""
+    # A slot an app owns starts on that app's own model setting when the agent
+    # pins none (``resolve_effective_model`` tier 3). Any other slot resolves
+    # through the same call it always has.
+    app_name = getattr(slot, "_app", "")
+    app_kw = {"app_name": app_name} if isinstance(app_name, str) and app_name else {}
     try:
         kind = session_agent_selection_kind(effective_session_key(slot), slot.agent)
         if kind == "template":
-            return resolve_effective_model(cfg, slot.agent or None, selection_kind=kind)
-        return resolve_effective_model(cfg, slot.agent or None)
+            return resolve_effective_model(cfg, slot.agent or None, selection_kind=kind, **app_kw)
+        return resolve_effective_model(cfg, slot.agent or None, **app_kw)
     except Exception:  # noqa: BLE001 — includes StopIteration; see docstring
         logger.warning("Failed to resolve the default model for slot %s", slot.key, exc_info=True)
         return ""

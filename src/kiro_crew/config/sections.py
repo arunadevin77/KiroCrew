@@ -72,6 +72,7 @@ from kiro_crew.config.integration_sections import (  # noqa: F401
     _WARM_SET_CAP_AUTO,
     FORWARD_DECLARED_ENV_DEFAULT,
     MANAGED_STUB_FOLLOWERS,
+    AppSettingsConfig,
     AwsConfig,
     ComputerUseConfig,
     ExternalRegistryConfig,

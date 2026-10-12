@@ -3067,6 +3067,31 @@ _EDITABLE_CONFIG["decisions.nudge_wake.llm_model"] = {
 }
 
 
+# ``apps.<name>.model``, the model each app's row in Settings → Apps writes. Apps
+# install and uninstall while the gateway runs, so the path is matched by the
+# manifest's kebab-case name grammar rather than listed. The value is the same kind
+# of pin as the ``agent.role_models.*`` rows, with the same grammar and entitlement
+# validation; ``""`` INHERITS. It grants nothing: the session layer withholds an id
+# the account cannot run, as it does for every other pin.
+_APP_MODEL_PATH_RE = re.compile(r"apps\.([a-z0-9]+(?:-[a-z0-9]+)*)\.model")
+_APP_MODEL_SPEC: dict = {
+    "type": "str",
+    "max_len": 64,
+    "pattern": _MODEL_PIN_PATTERN,
+    "validate_fn": _validate_role_model,
+}
+
+
+def _editable_config_spec(path_key: object) -> dict | None:
+    """The PATCH spec for *path_key*: a listed field, or a per-app model path."""
+    if not isinstance(path_key, str):
+        return None
+    spec = _EDITABLE_CONFIG.get(path_key)
+    if spec is None and _APP_MODEL_PATH_RE.fullmatch(path_key):
+        return _APP_MODEL_SPEC
+    return spec
+
+
 def _beacon_governance_pinned_off() -> bool:
     """Return whether a ceiling pins ``capabilities.telemetry`` off (blocking).
 
@@ -3155,7 +3180,7 @@ async def api_kirocrew_config_patch(request: web.Request) -> web.Response:
     value: Any = body.get("value")
     clamp_notice: dict | None = None
 
-    spec = _EDITABLE_CONFIG.get(path_key)
+    spec = _editable_config_spec(path_key)
     if not spec:
         # `agent.apps_allow_third_party` was deliberately REMOVED from the editable
         # set. It is not an ordinary preference: turning it off has to stop the code

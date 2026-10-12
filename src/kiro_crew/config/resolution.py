@@ -66,6 +66,7 @@ _KNOWN_CONFIG_SECTIONS: frozenset = frozenset(
         "default_workspace",
         "memory_stores",
         "default_memory_store",
+        "apps",
         "stt",
         "computer_use",
         "aws",
@@ -164,7 +165,7 @@ _SECTION_KEYS_DELIBERATELY_DROPPED: dict = {
 #: dropped on save just as ``agent.<key>`` was. Captured one level deeper, as
 #: ``{section: {record_name: {key: value}}}``. ``hooks`` is NOT here: it is
 #: emitted raw (``"hooks": self.hooks``) and round-trips whole.
-_RECORD_MAP_SECTIONS: frozenset = frozenset({"agents", "workspaces", "memory_stores"})
+_RECORD_MAP_SECTIONS: frozenset = frozenset({"agents", "workspaces", "memory_stores", "apps"})
 
 
 def _unknown_keys_of(raw: dict, obj: object, recognized_extra: frozenset) -> dict:

@@ -58,6 +58,23 @@ def _audit_spawn_denied(app: str, agent: str, reason: str) -> None:
 SpawnImpl = Callable[[str, str, bool, str, str], Awaitable[str]]
 
 
+def _app_spawn_model(app: str, agent: str) -> str:
+    """The user's ``apps.<name>.model`` for a spawn that picked no model, or ``""``.
+
+    ``""`` -- no setting, an agent that pins its own model, or a config that could
+    not be read -- leaves the spawn on the model it runs on without the setting.
+    Blocking (config load and agent JSON reads): call off the loop. Never raises.
+    """
+    try:
+        # Lazy: this SDK module imports no config at load time.
+        from kiro_crew.config.loader import KiroCrewConfig, resolve_app_spawn_model
+
+        return resolve_app_spawn_model(KiroCrewConfig.load(), app, agent)
+    except Exception:  # noqa: BLE001 — an unreadable setting must not refuse the spawn
+        logger.warning("Could not read the model setting for app %r", app, exc_info=True)
+        return ""
+
+
 class SpawnError(RuntimeError):
     """The host declined or could not start the requested agent.
 
@@ -129,7 +146,9 @@ class SpawnSDK:
         bypassed. The parameter keeps its ``""`` default only so the failure is a
         loud raise here rather than a TypeError. ``model`` overrides the agent's
         default model for this run — unattended work is where users most want a
-        cheaper model, since nobody is present to weigh cost against quality.
+        cheaper model, since nobody is present to weigh cost against quality. With
+        no ``model``, the user's own ``apps.<name>.model`` setting applies unless
+        the agent pins a model.
         """
         if not task.strip():
             raise SpawnError("spawn task is empty")
@@ -215,6 +234,10 @@ def build_spawn_impl(subagents: object) -> SpawnImpl:
             )
             _audit_spawn_denied(app, agent, reason)
             raise SpawnError(reason)
+        # An explicit per-spawn model wins; with none, the app's own model setting
+        # applies unless the agent pins a model of its own.
+        if not model:
+            model = await asyncio.to_thread(_app_spawn_model, app, agent)
         # ``app`` is forwarded so SubagentManager.spawn can resolve the calling
         # app's per-app governance profile — a profile that denies
         # ``capabilities.spawn`` for this app must win even when the policy

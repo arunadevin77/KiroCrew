@@ -9493,6 +9493,48 @@
       "defaultValue": "default"
     },
     {
+      "path": "apps",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Apps",
+      "help": "Per-app user settings, keyed by the app's manifest name.",
+      "hasChildren": true,
+      "enumValues": null,
+      "defaultValue": {}
+    },
+    {
+      "path": "apps.*",
+      "kind": "core",
+      "type": "object",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "*",
+      "help": "",
+      "hasChildren": true,
+      "enumValues": null,
+      "defaultValue": null
+    },
+    {
+      "path": "apps.*.model",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Model",
+      "help": "Model this app's sessions and background agents start on when nothing more specific picks one. Empty inherits, so the app runs exactly as it would without this setting. A model picked for the session, the app's own pick (a Research campaign, the Spec Builder default), and a model pinned on the agent or crew all win over it; it wins over the global default. A model this account cannot run is withheld like any other pin.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": ""
+    },
+    {
       "path": "auto_update",
       "kind": "core",
       "type": "boolean",

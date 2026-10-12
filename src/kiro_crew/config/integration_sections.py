@@ -2,7 +2,8 @@
 
 Owns the DTOs and defaults for ``mcp`` and ``mcp_gateway`` (including the MCP stub
 roster readers the gateway seed shares), ``instances``, ``tunnel``, ``publish``,
-``computer_use``, ``aws`` and the external app ``registries``. The computer-use and
+``computer_use``, ``aws``, the external app ``registries`` and the per-app user
+settings ``apps``. The computer-use and
 instance bounds come from ``computer_use.types`` and ``instances.constants``.
 ``config.sections`` re-exports every name; this module never imports it, the
 loader, schema or validation.
@@ -237,6 +238,25 @@ class PublishConfig:
             "The sensitive-path denylist (~/.aws, ~/.ssh, ~/.kiro/crew, …) still "
             "applies inside every allowed root.",
             tags=["artifacts"],
+        ),
+    )
+
+
+@dataclass
+class AppSettingsConfig:
+    """The user's own settings for one installed app, ``apps.<name>``."""
+
+    model: str = field(
+        default="",
+        metadata=_meta(
+            "Model",
+            "Model this app's sessions and background agents start on when nothing "
+            "more specific picks one. Empty inherits, so the app runs exactly as it "
+            "would without this setting. A model picked for the session, the app's "
+            "own pick (a Research campaign, the Spec Builder default), and a model "
+            "pinned on the agent or crew all win over it; it wins over the global "
+            "default. A model this account cannot run is withheld like any other "
+            "pin.",
         ),
     )
 
