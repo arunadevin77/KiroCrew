@@ -528,7 +528,7 @@ def learn_list(name: str, args: dict[str, Any]) -> str:
         )
         lines.append(
             f"[{le.get('category', '?')}] {le['rule']}{withheld}"
-            f"{_applies_suffix(le)}{_scope_suffix(le)}"
+            f"{_applies_suffix(le)}{_scope_suffix(le)}{_source_suffix(le)}"
         )
     text = "\n".join(lines)
     if len(text) > _LIST_RENDER_BUDGET:
@@ -604,6 +604,19 @@ def _applies_suffix(row: dict[str, Any]) -> str:
     """
     if row.get("applies") == "on_topic":
         return " (applies: on_topic)"
+    return ""
+
+
+def _source_suffix(row: dict[str, Any]) -> str:
+    """Render where the row came from, so a user-saved lesson reads apart from an extracted one.
+
+    ``user_explicit`` is a lesson the user saved; ``consolidation`` is one the
+    extractor inferred from chat history. An absent or blank key (a store that
+    records no origin, or an older gateway) renders nothing.
+    """
+    source = row.get("source")
+    if isinstance(source, str) and source.strip():
+        return f" (source: {source.strip()})"
     return ""
 
 

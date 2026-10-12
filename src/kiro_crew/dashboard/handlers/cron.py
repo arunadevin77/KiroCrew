@@ -3794,8 +3794,14 @@ async def api_lessons(request: web.Request) -> web.Response:
         *,
         tier: tuple[str, str | None] | None = None,
         applies: object = None,
+        source: object = None,
     ) -> dict:
         """One sanitization chokepoint for every branch of this endpoint.
+
+        *source* is the row's write origin (``user_explicit`` for a lesson the
+        user saved, ``consolidation`` for one extracted from chat history, and
+        so on). It is reported only when the store recorded one, so a reader can
+        tell a lesson the user approved from one the extractor inferred.
 
         *tier* names the JSONL file a row was read from -- ``("global", None)``
         or ``("workspace", <name>)`` -- and is emitted as the ``scope`` /
@@ -3840,6 +3846,8 @@ async def api_lessons(request: web.Request) -> web.Response:
         authored_applies = _authored_lesson_applies(applies)
         if authored_applies is not None:
             result["applies"] = authored_applies
+        if isinstance(source, str) and source.strip():
+            result["source"] = _redact_memory_field(source.strip()[:64])
         if contains_volatile_lesson_fact(rule, negative):
             result["withheld_reason"] = "volatile_session_fact"
         return result
@@ -3918,6 +3926,7 @@ async def api_lessons(request: web.Request) -> web.Response:
                 negative,
                 raw_scope,
                 applies=raw_applies,
+                source=e.get("source"),
             )
         )
     # The population is measured by the rows THIS list renders: everything
@@ -4002,6 +4011,7 @@ async def api_lessons(request: web.Request) -> web.Response:
                 # row written before the field existed is in -- the same policy
                 # the rule/scope reads above already apply to a malformed row.
                 applies=getattr(le, "applies", None),
+                source=getattr(le, "source", None),
             )
             for le, tier in tiered[max(0, end - limit) : end]
         ]
