@@ -56,12 +56,15 @@ const sourceLabelKey = (source: string) => {
   }
 }
 
-function RecordSource({ row }: { row: RecordOrigin }) {
+function RecordSource({ row, compact = false }: { row: RecordOrigin; compact?: boolean }) {
   const { t } = useTranslation()
   const source = row.source || ''
   const labelKey = sourceLabelKey(source)
   const label = labelKey ? t(labelKey) : source || t('memoryV2.source_unknown')
-  return <div className="flex min-w-0 flex-wrap items-center gap-2 text-[12px] text-muted"><Badge variant="muted">{label}</Badge>{row.updated_at && <time dateTime={row.updated_at} data-i18n-opaque>{fmtDateTimeNumeric(row.updated_at)}</time>}</div>
+  // An unmapped source is a raw tag with no spaces, and a nowrap badge would
+  // set the card's minimum width: the list cuts it to one line, details wrap it.
+  const fit = compact ? 'block max-w-full truncate' : 'max-w-full whitespace-normal [overflow-wrap:anywhere]'
+  return <div className="flex min-w-0 flex-wrap items-center gap-2 text-[12px] text-muted"><Badge variant="muted" className={fit} title={compact ? label : undefined}>{label}</Badge>{row.updated_at && <time dateTime={row.updated_at} data-i18n-opaque>{fmtDateTimeNumeric(row.updated_at)}</time>}</div>
 }
 
 function RecordProvenance({ row }: { row: RecordOrigin }) {
@@ -317,12 +320,12 @@ export default function MemoryRecordsEditor({ store, privateMemory = false, onDi
     </motion.div>
     {searching && <div role="status" aria-label={t('pages.overview.memoryTab.loading')} className="grid gap-3 lg:grid-cols-2">{[0, 1, 2, 3].map(index => <Skeleton key={index} className="h-36 rounded-xl motion-reduce:animate-none" />)}</div>}
     {!searching && !records.error && !rows.length && <Card className="mb-0 py-6"><EmptyState icon={<Search className="lucide-inline" />} title={search || kind !== 'all' ? t('memoryV2.no_matches') : t(privateMemory ? 'memoryV2.empty_title' : 'memoryV2.store_empty_title')} subtitle={search || kind !== 'all' ? t('memoryV2.no_matches_hint') : t(privateMemory ? 'memoryV2.empty_body' : 'memoryV2.store_empty_body')} />{!search && kind === 'all' && <div className="mt-3 flex flex-wrap justify-center gap-2">{emptyActions}</div>}</Card>}
-    <div className="grid min-w-0 gap-3 lg:grid-cols-2">{rows.map(row => { const Icon = ICONS[row.kind]; const chosen = isSelected(row); return <motion.div layout={!reduceMotion} key={identity(row)} initial={false}>
+    <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2">{rows.map(row => { const Icon = ICONS[row.kind]; const chosen = isSelected(row); return <motion.div layout={!reduceMotion} key={identity(row)} initial={false} className="min-w-0">
       <Card className={`mb-0 flex h-full min-w-0 flex-col py-4 transition-colors ${chosen ? 'border-accent bg-accent-subtle' : 'hover:border-border-strong'}`}>
         <div className="flex min-w-0 items-center gap-2.5"><input aria-label={t('memoryEditing.select_record', { text: memoryRecordBody(row) })} type="checkbox" className="h-4 w-4 shrink-0 accent-accent" checked={chosen} disabled={!row.revision || (!all && !chosen && selectedCount >= MANUAL_LIMIT) || (!!all && chosen && all.exclude.size >= MANUAL_LIMIT)} onChange={() => toggle(row)} /><span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-lg ${TINTS[row.kind]}`}><Icon className="lucide-inline" /></span><div className="min-w-0"><span className="block text-[12px] font-medium">{t(MEMORY_RECORD_LABELS[row.kind])}</span>{!privateMemory && row.key && <span className="block truncate text-[11px] text-muted" title={row.key}>{row.key}</span>}</div></div>
         <p className="my-3 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">{memoryRecordBody(row)}</p>
         {!!row.metadata?.email_addresses?.length && <div className="mb-3 flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-[12px] text-muted">{row.metadata?.email_addresses.slice(0, 3).map(email => <span key={email} className="inline-flex min-w-0 max-w-full items-start gap-1"><Mail className="lucide-inline shrink-0" aria-hidden="true" /><span className="break-all">{email}</span></span>)}</div>}
-        <RecordSource row={row} />{(row.metadata?.pending_conflicts || 0) > 0 && <Btn className="mt-2 min-h-11" onClick={() => setDetail(row)}><History className="lucide-inline" />{t('memoryEditing.review_proposals', { count: fmtNumber(row.metadata!.pending_conflicts!) })}</Btn>}
+        <RecordSource row={row} compact />{(row.metadata?.pending_conflicts || 0) > 0 && <Btn className="mt-2 min-h-11" onClick={() => setDetail(row)}><History className="lucide-inline" />{t('memoryEditing.review_proposals', { count: fmtNumber(row.metadata!.pending_conflicts!) })}</Btn>}
         <div className="mt-auto flex justify-between gap-2 border-t border-border pt-3"><Btn className="min-h-11" onClick={() => setDetail(row)}>{t('memoryV2.view_details')}<ArrowUpRight className="lucide-inline" /></Btn><Btn className="min-h-11" disabled={!row.revision} onClick={() => begin({ type: 'set', row })}><Pencil className="lucide-inline" />{editAction}</Btn></div>
       </Card>
     </motion.div> })}</div>

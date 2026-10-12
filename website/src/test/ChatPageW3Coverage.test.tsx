@@ -97,6 +97,7 @@ interface FollowupProps {
   items: FollowupItem[]
   onAddToSession: (item: FollowupItem) => void
   onStartInWorktree: (item: FollowupItem) => Promise<void>
+  onStartInNewChat: (item: FollowupItem) => Promise<void>
   onSkip: (index: number) => void
 }
 let followupProps: FollowupProps | null = null
@@ -955,6 +956,52 @@ describe('ChatPage — follow-up "start in worktree"', () => {
     // The switch resolves, but the committed active slot never becomes chat-2 —
     // prefilling here would drop the prompt into an unrelated conversation.
     await expect(followupProps!.onStartInWorktree(ITEM)).rejects.toThrow(/is not in focus/)
+  })
+
+  describe('the new-chat route (no repository to branch)', () => {
+    it('opens a chat in the origin project without git, hands the prompt over, and clears the card', async () => {
+      apiSpy('createChatSlot').mockResolvedValue({ key: 'chat-2' })
+      const { store } = await renderWithFollowup()
+      commitActiveSlot('chat-2')
+      await act(async () => { await followupProps!.onStartInNewChat(ITEM) })
+      expect(apiSpy('createWorktree')).not.toHaveBeenCalled()
+      // Scoped to the spawning session's own project directory.
+      expect(apiMocks.chatSlotProject).toHaveBeenCalledWith('chat-2', '/repo/main')
+      expect(JSON.parse(sessionStorage.getItem(PREFILL_STORAGE_KEY) || '{}')).toMatchObject({
+        slotKey: 'chat-2', prompt: 'add the retry guard',
+      })
+      expect(store.getState().chat.followups?.['chat-1']).toBeUndefined()
+    })
+
+    it('reports a chat that could not be created, and keeps the card', async () => {
+      apiSpy('createChatSlot').mockRejectedValue(new Error('slot service down'))
+      const { store } = await renderWithFollowup()
+      await expect(followupProps!.onStartInNewChat(ITEM)).rejects.toThrow(/new chat could not be opened/)
+      expect(apiSpy('createWorktree')).not.toHaveBeenCalled()
+      expect(store.getState().chat.followups?.['chat-1']).toBeDefined()
+    })
+
+    it('fails closed rather than prefilling the wrong session when no key came back', async () => {
+      apiSpy('createChatSlot').mockResolvedValue({})
+      await renderWithFollowup()
+      await expect(followupProps!.onStartInNewChat(ITEM)).rejects.toThrow(/new chat could not be opened/)
+      expect(sessionStorage.getItem(PREFILL_STORAGE_KEY)).toBeNull()
+    })
+
+    it('points at the sidebar when the created chat could not be switched to', async () => {
+      apiSpy('createChatSlot').mockResolvedValue({ key: 'chat-2' })
+      const { store } = await renderWithFollowup()
+      detailFailsFor('chat-2')
+      await expect(followupProps!.onStartInNewChat(ITEM)).rejects.toThrow(/Switch to it in the sidebar/)
+      expect(store.getState().chat.followups?.['chat-1']).toBeDefined()
+    })
+
+    it('refuses to prefill when the switch resolved but the chat never took focus', async () => {
+      apiSpy('createChatSlot').mockResolvedValue({ key: 'chat-2' })
+      const { store } = await renderWithFollowup()
+      await expect(followupProps!.onStartInNewChat(ITEM)).rejects.toThrow(/could not be brought into focus/)
+      expect(store.getState().chat.followups?.['chat-1']).toBeDefined()
+    })
   })
 
   it('adding to the session merges into the composer draft and clears the card', async () => {

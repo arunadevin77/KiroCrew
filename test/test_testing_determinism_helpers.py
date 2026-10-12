@@ -939,6 +939,183 @@ class TestDrainedProgress:
             asyncio.run(main())
 
 
+# ── await_until: the signal itself, under a lost-run bound ───────────────
+
+#: Bound for the real-time NEGATIVE cases below: the thing awaited never happens, so
+#: this is the ceiling under test, not a wait for anything that could arrive late.
+#: ``asyncio.wait`` reads the loop's own clock, which the ``virtual`` fixture does not
+#: reach, so these few cases take real time.
+_NEGATIVE_BOUND_SECS = 0.05
+
+
+class TestAwaitUntil:
+    @pytest.mark.asyncio
+    async def test_returns_when_an_event_is_set(self):
+        event = asyncio.Event()
+        asyncio.get_running_loop().call_soon(event.set)
+        assert await wait.await_until(event, what="the event") is True
+
+    @pytest.mark.asyncio
+    async def test_an_already_set_event_returns_at_once(self):
+        event = asyncio.Event()
+        event.set()
+        assert await wait.await_until(event) is True
+
+    @pytest.mark.asyncio
+    async def test_returns_a_futures_result(self):
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        loop.call_soon(future.set_result, "landed")
+        assert await wait.await_until(future) == "landed"
+
+    @pytest.mark.asyncio
+    async def test_a_futures_own_exception_propagates_as_itself(self):
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        loop.call_soon(future.set_exception, LookupError("its own"))
+        with pytest.raises(LookupError, match="its own"):
+            await wait.await_until(future)
+
+    @pytest.mark.asyncio
+    async def test_awaits_a_gather(self):
+        async def one():
+            return 1
+
+        assert await wait.await_until(asyncio.gather(one(), one())) == [1, 1]
+
+    @pytest.mark.asyncio
+    async def test_an_unset_event_fails_by_name_at_the_bound(self):
+        with pytest.raises(
+            AssertionError,
+            match=r"the gate had not happened after .*lost-run bound 0\.05s\); it is still clear",
+        ):
+            await wait.await_until(asyncio.Event(), timeout=_NEGATIVE_BOUND_SECS, what="the gate")
+
+    @pytest.mark.asyncio
+    async def test_a_pending_future_is_left_as_it_was_at_the_bound(self):
+        future = asyncio.get_running_loop().create_future()
+        with pytest.raises(
+            AssertionError, match="the future had not happened .*it is still pending"
+        ):
+            await wait.await_until(future, timeout=_NEGATIVE_BOUND_SECS)
+        assert not future.done(), "the test owns the future; the bound must not cancel it"
+        future.cancel()
+
+    @pytest.mark.asyncio
+    async def test_refuses_what_is_neither_an_event_nor_a_future(self):
+        with pytest.raises(TypeError, match=r"await_until\(\) takes .* not function"):
+            await wait.await_until(lambda: True)  # type: ignore[arg-type]
+
+        async def coroutine():
+            return 1
+
+        pending = coroutine()
+        try:
+            with pytest.raises(TypeError, match="not coroutine"):
+                await wait.await_until(pending)  # type: ignore[arg-type]
+        finally:
+            pending.close()
+
+    @pytest.mark.asyncio
+    async def test_the_bound_defaults_to_half_the_tests_timeout(self, monkeypatch):
+        monkeypatch.setattr(wait, "runner_timeout_secs", 80.0)
+        seen = []
+        real_wait = asyncio.wait
+
+        async def spy(fs, *, timeout=None, **kw):
+            seen.append(timeout)
+            return await real_wait(fs, timeout=timeout, **kw)
+
+        monkeypatch.setattr(asyncio, "wait", spy)
+        future = asyncio.get_running_loop().create_future()
+        future.set_result(None)
+        await wait.await_until(future)
+        assert seen == [40.0]
+
+
+class TestLoopHop:
+    @pytest.mark.asyncio
+    async def test_runs_a_coroutine_on_the_loop_from_another_thread(self):
+        loop = asyncio.get_running_loop()
+        loop_thread = threading.get_ident()
+        hop = wait.LoopHop(loop)
+        seen = []
+
+        async def on_loop():
+            seen.append(threading.get_ident())
+            hop.note("ran on the loop")
+            return "landed"
+
+        assert await asyncio.to_thread(hop.run, on_loop(), "the hop") == "landed"
+        assert seen == [loop_thread]
+        hop.check()
+        assert hop.steps == ["ran on the loop"]
+
+    @pytest.mark.asyncio
+    async def test_the_coroutines_own_exception_reaches_the_hook_as_itself(self):
+        hop = wait.LoopHop(asyncio.get_running_loop())
+
+        async def fails():
+            raise LookupError("its own")
+
+        with pytest.raises(LookupError, match="its own"):
+            await asyncio.to_thread(hop.run, fails(), "the failing hop")
+        hop.check()  # a failure of the coroutine is not an expired hop
+
+    @pytest.mark.asyncio
+    async def test_an_expired_hop_raises_in_the_hook_and_is_recorded_for_check(self, monkeypatch):
+        """Expiry is forced only AFTER the coroutine has entered: the hop's future is
+        stood in by one whose ``result()`` waits for the entry mark and then raises
+        the ``TimeoutError`` a real expiry raises, while ``cancel()`` reaches the real
+        task. A real short bound would race the loop's scheduling of the coroutine."""
+        monkeypatch.setattr(wait, "runner_timeout_secs", 2 * _JOIN_CEILING_SECS)
+        hop = wait.LoopHop(asyncio.get_running_loop())
+        entered = threading.Event()
+        cancelled = asyncio.Event()
+        real_run = asyncio.run_coroutine_threadsafe
+
+        class _ExpiringFuture:
+            def __init__(self, inner):
+                self._inner = inner
+
+            def result(self, timeout=None):
+                assert entered.wait(_JOIN_CEILING_SECS), "the coroutine never entered"
+                raise TimeoutError
+
+            def cancel(self):
+                return self._inner.cancel()
+
+        monkeypatch.setattr(
+            asyncio,
+            "run_coroutine_threadsafe",
+            lambda coro, loop: _ExpiringFuture(real_run(coro, loop)),
+        )
+
+        async def never():
+            hop.note("entered")
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        with pytest.raises(
+            AssertionError,
+            match=r"the stuck hop was still pending on the loop after .*lost-run ceiling 30s\); "
+            r"last step: entered",
+        ):
+            await asyncio.to_thread(hop.run, never(), "the stuck hop")
+        with pytest.raises(AssertionError, match="the stuck hop was still pending"):
+            hop.check()
+        assert await wait.await_until(cancelled, what="the expired hop's cancellation")
+
+    @pytest.mark.asyncio
+    async def test_the_ceiling_defaults_to_half_the_tests_timeout(self, monkeypatch):
+        monkeypatch.setattr(wait, "runner_timeout_secs", 80.0)
+        assert wait.LoopHop(asyncio.get_running_loop())._timeout == 40.0
+
+
 # ── ids ───────────────────────────────────────────────────────────────
 
 

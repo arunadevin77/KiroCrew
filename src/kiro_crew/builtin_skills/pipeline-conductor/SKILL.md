@@ -12,11 +12,14 @@ clean up. Every rule below closes a named failure mode.
 
 ## What you track: two columns
 
-For long runs, load the `artifacts` skill's Dynamic Dashboard contract. An
-authorized descendant may publish a `task-dashboard` HTML artifact tailored
-to this pipeline and update the same slug at milestones. Design is free; the
-two facts below remain the source of truth. The page is not a second status
-store, does not authorize reading more worker context, and cannot approve tools.
+You own your dashboard page; it shows ledger evidence; workers report to you and
+do not publish that page. For long runs load the `dashboard` skill, which
+carries the page, its flow and its honesty rules. Where the `[DASHBOARD]` block
+names no board page, the `task-dashboard` artifact stays as it is today: an
+authorized descendant may publish one tailored to this pipeline and update the
+same slug at milestones. Design is free; the two facts below remain the
+source of truth. The page is not a second status store, does not authorize
+reading more worker context, and cannot approve tools.
 The host's native approval inbox names each waiting session, including Normal
 permission mode. Never broaden your role or change permission mode to publish.
 
@@ -315,11 +318,21 @@ via `monitor_update`, see "Live steering"):
 
 ## Your panel: publish JUDGMENTS, never numbers
 
-The panel is STORED and read back through the panel route; the Dashboard tab beside
-your chat draws the crewmate's own dashboard instead. So an item under `you` reaches
-a reader only if you also write it to an agentic dashboard field with
-`dashboard_write`, where it appears under "Needs you" with the act it needs. Publish
-the panel for a reader who asks for it; write the dashboard for one who has not.
+The Dashboard tab beside your chat draws this panel while the "Dynamic Dashboard"
+Feature Preview is off, which is the default. With the preview on, it draws the
+crewmate's own dashboard instead, where an item reaches the reader only through an
+agentic field written with `dashboard_write` (it appears under "Needs you" with the
+act it needs). So publish every item under `you` here, and also write it to the
+dashboard field for readers who turned the preview on.
+
+`panel_publish` and `dashboard_write` belong to the `@kirocrew-panel` server,
+which is mounted only on a crew member's own chat session (with `agent.crew_panel`
+on). The `kirocrew-pipeline-conductor` agent spec mounts `@kirocrew-core`,
+`@kirocrew-dashboard` and `@kirocrew-work` and not that server, so in an ordinary
+dashboard chat neither tool exists. Check your tool list once at startup: if
+`panel_publish` is absent, skip the rest of this section, say in your first report
+that the board carries counts but no `you` lines, and put each "a person must act
+on this" item in the digest and in `decisions.md` instead.
 
 `panel_publish` with template `kirocrew-pipeline-conductor` takes exactly four keys,
 and nothing else — an unknown key is refused and the refusal names it:
@@ -1204,7 +1217,9 @@ of the two you are running rather than assuming the table applies.
 
 Never page through worker transcripts yourself, and never pull the whole
 fleet's state into context — the probe line is the interface. Quiet cycle:
-print nothing beyond the probe's own `OK` line, end the turn.
+print nothing beyond the probe's own `OK` line and end the turn with
+`nothing_to_do`, because a bare stop after the probe keeps the empty-response
+recovery.
 
 ## Independent green verification
 
@@ -1528,6 +1543,13 @@ honors it, and record the mode in the ledger. Canonical example — "stop taking
 new work": edit the instruction to `DRAIN MODE: no backfill, no new
 dispatches; patrol until in-flight items resolve; then final tally +
 autonudge_stop.`
+
+When that mode change invalidates what an in-flight worker is doing right now,
+forward it with `session_send` and `steer: true` so it lands in the worker's
+running turn rather than after it; a plain send waits out the whole turn. Keep
+`steer` off for rulings, nudges and anything that can wait for the turn
+boundary. A steer does not withdraw messages already queued (`queue_depth` from
+`session_read_message`), so name the instruction it supersedes.
 
 ## Merge, cleanup, reconcile
 

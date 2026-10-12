@@ -3,7 +3,7 @@
 **Local page, not a mirror.** Part of the [crew log reference](README.md), which is
 marked as a named exception in [the Reference index](../README.md).
 
-Thirty-five types. Read [envelope.md](envelope.md) first for the fields every entry
+Forty-four types. Read [envelope.md](envelope.md) first for the fields every entry
 carries; this page covers only each type's `data`.
 
 Session entries are written with `src` `gateway` or `acp` and nothing else. They
@@ -29,6 +29,7 @@ The **Emitter** column says whether this build writes the type. Every row below 
 | [`session/closed`](#sessionclosed) | The gateway stopped serving this session. | live | `gateway` | — |
 | [`session/adopted`](#sessionadopted) | Another session took this one over. | live | `gateway` | supersedes `session/opened.parent` |
 | [`session/released`](#sessionreleased) | This session's parent let it go. | live | `gateway` | retracts the parent edge |
+| [`session/spawned`](#sessionspawned) | This session created another one. | live | `gateway` | the creator's side of `session/opened.parent` |
 | [`turn/started`](#turnstarted) | A turn was authorized and is about to run. | live | `gateway` | opener of `turn/completed` |
 | [`turn/refused`](#turnrefused) | A gate refused to run a dispatched turn. | live | `gateway` | terminal on its own |
 | [`turn/completed`](#turncompleted) | A turn ended; its outcome and cost. | live | `acp`, `gateway` | closer, written last |
@@ -59,6 +60,14 @@ The **Emitter** column says whether this build writes the type. Every row below 
 | [`radar/recorded`](#radarrecorded) | One Issue Radar crew-ledger update: the work-item fields it set and the event explaining them. | live | `gateway` | — |
 | [`work/recorded`](#workrecorded) | One work-board mutation: who acted, on which item, and the fields it set. | live | `gateway` | — |
 | [`panel/published`](#panelpublished) | One publish of a crew's own webview: the data, and the template that renders it. | live | `gateway` | — |
+| [`dashboard/instance_changed`](#dashboardinstance_changed) | One crewmate dashboard-instance change: adopted, edited or rolled back. | live | `gateway` | — |
+| [`dashboard/agentic_value`](#dashboardagentic_value) | One agent-written dynamic dashboard value. | live | `gateway` | — |
+| [`dashboard/agentic_refused`](#dashboardagentic_refused) | A refused agentic dashboard write (the mistake book's input), or a correction. | live | `gateway` | — |
+| [`card/proposed`](#cardproposed) | The agent proposed a change card, at this point in the conversation. | live | `gateway` | opener of `card/finished` |
+| [`card/finished`](#cardfinished) | A change card reached a finished status. | live | `gateway` | closer, by `card_id`; may repeat |
+| [`guide/offered`](#guideoffered) | The agent offered a guide, at this point in the conversation. | live | `gateway` | opener of `guide/finished` |
+| [`guide/started`](#guidestarted) | The person started an offered guide. | live | `gateway` | — |
+| [`guide/finished`](#guidefinished) | A guide ended. | live | `gateway` | closer, by `guide_id` |
 
 ## Session and turn
 
@@ -257,7 +266,7 @@ The gateway stopped serving this session, for a stated reason.
 
 | Field | Type | Required | Meaning | Enum |
 |---|---|---|---|---|
-| `reason` | string | required | The gateway's own end reason, verbatim. | |
+| `reason` | string | required | The gateway's own end reason, verbatim. The format names these three without clamping them, so a reader handles an unlisted one. | `reset`, `destroyed`, `destroyed_sid_retained` |
 
 **Invariants** — **Not the end of the file.** Entries from turns already in flight
 may land after it.
@@ -336,6 +345,39 @@ retraction: it means that entry did not repeat a creator.
 `session/adopted` says otherwise.
 
 **Since** — #12962.
+
+### `session/spawned`
+
+This session created another one with `session_create` or `session_fork`.
+
+**Kind and `src`** — `session`; `src` is `gateway`.
+
+**When written** — When the create commits, on the CREATOR's log. Carries no
+`turn`. Not written when the creator has no ACP session yet, because it then has
+no log.
+
+**Pairing** — None. It is the creating edge as the creator records it. The child's
+own `session/opened.parent` states the same edge from the other side, once the
+child's first turn opens its log.
+
+| Field | Type | Required | Meaning | Enum |
+|---|---|---|---|---|
+| `child` | object | required | The session this one created. | |
+| `child.slot` | string | required inside `child` | The new session's slot key, minted by the gateway in the same call. The tree's own key. | |
+
+**Invariants** — The creator is not named in the entry: it is the session whose log
+holds it. Written because the child has no log until its first turn, so before this
+entry a gateway restart in between lost the edge.
+
+```json
+{"type":"session/spawned","seq":213,"time":1789000093000,"src":"gateway","data":{"child":{"slot":"chat-12-1789000093"}}}
+```
+
+**Reader hint** — Use it as the child's creating edge only when none of the child's
+own `session/opened` entries names a `parent`. A `session/adopted` or
+`session/released` on the child's log still wins over it.
+
+**Since** — #18341.
 
 ### `turn/started`
 
@@ -670,6 +712,7 @@ there are no blocks to tally.
 | `tokens_estimated` | bool | required | Always `true`. | `true` |
 | `step` | int | optional | Model call ordinal. Omitted when 0. A turn-opening composition is written before the first `step/started`, so it is step-less; join it to the turn's FIRST model call. | |
 | `phase` | string | optional | Which population this composition belongs to: the one-off session-start injection or a per-turn one. Absent when the composer does not state it. | `session_start`, `per_turn` |
+| `omitted` | object | optional | What the composer's budgets cut, keyed by block: `lesson_rules`, `lesson_findings`, `preference_facts`, `preferences_file`, `background`, `member_briefing`, `folder_steering`. Each entry carries a `reason` (`budget`, `cap` or `relevance`) and whichever of `omitted`, `total`, `budget_chars`, `omitted_chars` and `sections` that block's decision has. Counts and budgets only, never omitted content. Absent when nothing was cut. | |
 
 **Invariants** — `tokens` is an estimate derived from `chars`, which is why
 `tokens_estimated` is written on every entry rather than only when it is true.
@@ -1495,6 +1538,160 @@ best-effort, so a publish whose entry never landed leaves the fold with no recor
 the file still serves that crew's panel.
 
 **Since** — #13440.
+
+## Change cards and guides
+
+A change card or a guide offer is part of the conversation at the point the agent
+proposed it. The propose route appends one `card` row to the slot's transcript and
+writes the opener here in the same step; every outcome patches that row in place and
+writes a closer. The card and guide stores own the LIVE state (edits, apply steps,
+the tab that drives a guide); these entries are what the session's history keeps
+about each proposal once a store has pruned it.
+
+### `card/proposed`
+
+The agent proposed a change card, at this point in the conversation.
+
+**Kind and `src`** — `session`; `src` is `gateway`.
+
+**When written** — Once per card, when `POST /api/cards/agent/propose` lands, beside
+the append of the card's transcript row. The propose call is a tool call of the
+running turn, so `seq` orders the entry after that call's `tool/called`.
+
+**Pairing** — Opener of `card/finished`, matched by `card_id`.
+
+| Field | Type | Required | Meaning | Enum |
+|---|---|---|---|---|
+| `slot` | string | required | The slot whose chat shows the card. | |
+| `card_id` | string | required | The card's id in the card store. | |
+| `kind` | string | required | The card kind, e.g. `setting.change`. | |
+| `title` | string | required | The gateway's title for the change, redacted and clipped. Names only: a card's parameters are never recorded, and a secret card carries no value field at all. | |
+| `revision` | int | required | The card's revision when proposed. | |
+| `risk` | string | optional | The computed risk: `normal`, `tighten`, `widen`, `code_exec`. | |
+| `turn` | int | optional | The turn that proposed it; absent when no turn was live in this log. | |
+| `mid` | string | optional | Id of the transcript row the card is drawn at. The row and this entry are the same fact in the two records; the id joins them. | |
+
+**Invariants** — Never carries a parameter, an edit or a typed value. A re-preview
+(the person editing a field) changes the card's revision in the store and writes
+nothing here.
+
+```json
+{"type":"card/proposed","seq":91,"time":1789000004100,"src":"gateway","data":{"slot":"member-scout","card_id":"cc_0a1b2c3d4e5f","kind":"setting.change","title":"Change chat.verbosity to brief","revision":1,"risk":"normal","turn":3,"mid":"m-7f3a"}}
+```
+
+**Reader hint** — To rebuild the conversation, draw the card at its `mid`; its
+outcome is the newest `card/finished` with the same `card_id`, and a card with none
+is still open (or its closer was not written).
+
+**Since** — the change that moved change cards into the conversation.
+
+### `card/finished`
+
+A change card reached a finished status.
+
+**Kind and `src`** — `session`; `src` is `gateway`.
+
+**When written** — Each time the card store publishes a card entering a finished
+status it was not already recorded in: applied, partial, failed, cancelled, expired,
+undone. Written beside the in-place update of the card's transcript row.
+
+**Pairing** — Closer of `card/proposed`, by `card_id`. May repeat: `failed` is
+retryable, and an applied card can later be undone.
+
+| Field | Type | Required | Meaning | Enum |
+|---|---|---|---|---|
+| `card_id` | string | required | The card's id. | |
+| `status` | string | required | The status the card entered. Closed: the emitter refuses anything else. | `applied`, `partial`, `failed`, `cancelled`, `expired`, `undone` |
+| `revision` | int | required | The revision that finished. | |
+
+**Invariants** — No `turn`: a person confirms a card, usually between turns. Only a
+human click applies a card; this entry records the store's verdict, never a claim
+from the page.
+
+```json
+{"type":"card/finished","seq":97,"time":1789000004900,"src":"gateway","data":{"card_id":"cc_0a1b2c3d4e5f","status":"applied","revision":1}}
+```
+
+**Reader hint** — Take the newest entry per `card_id` as the outcome.
+
+**Since** — the change that moved change cards into the conversation.
+
+### `guide/offered`
+
+The agent offered a guide, at this point in the conversation.
+
+**Kind and `src`** — `session`; `src` is `gateway`.
+
+**When written** — Once per guide, when `POST /api/guide/agent/start` lands, beside
+the append of the offer's transcript row.
+
+**Pairing** — Opener of `guide/finished`, by `guide_id`.
+
+| Field | Type | Required | Meaning | Enum |
+|---|---|---|---|---|
+| `slot` | string | required | The slot whose chat shows the offer. | |
+| `guide_id` | string | required | The guide's id in the guide store. | |
+| `actions` | array[string] | required | The registered action ids, in order. Never their parameters. | |
+| `turn` | int | optional | The turn that offered it, when one was live. | |
+| `mid` | string | optional | Id of the transcript row the offer is drawn at. | |
+
+```json
+{"type":"guide/offered","seq":102,"time":1789000005200,"src":"gateway","data":{"slot":"member-scout","guide_id":"g_0a1b2c3d4e5f","actions":["crewmate.create"],"turn":4,"mid":"m-7f3b"}}
+```
+
+**Reader hint** — Draw the offer at its `mid`; its outcome is the `guide/finished`
+with the same `guide_id`.
+
+**Since** — the change that moved change cards into the conversation.
+
+### `guide/started`
+
+The person started an offered guide.
+
+**Kind and `src`** — `session`; `src` is `gateway`.
+
+**When written** — The first time a tab claims the guide after the person pressed
+Start. A tab re-claiming after its lease lapsed is not a second start.
+
+**Pairing** — None.
+
+| Field | Type | Required | Meaning | Enum |
+|---|---|---|---|---|
+| `guide_id` | string | required | The guide's id. | |
+
+```json
+{"type":"guide/started","seq":104,"time":1789000005400,"src":"gateway","data":{"guide_id":"g_0a1b2c3d4e5f"}}
+```
+
+**Reader hint** — Its absence before a `guide/finished {cancelled}` means the
+person dismissed the offer without starting it.
+
+**Since** — the change that moved change cards into the conversation.
+
+### `guide/finished`
+
+A guide ended.
+
+**Kind and `src`** — `session`; `src` is `gateway`.
+
+**When written** — When the guide store publishes the guide in a terminal status.
+
+**Pairing** — Closer of `guide/offered`, by `guide_id`.
+
+| Field | Type | Required | Meaning | Enum |
+|---|---|---|---|---|
+| `guide_id` | string | required | The guide's id. | |
+| `status` | string | required | How it ended. Closed: the emitter refuses anything else. | `completed`, `cancelled`, `expired` |
+| `reason` | string | optional | Why, when the status alone misleads: a cancelled guide whose save went through. Closed: an unknown reason is left out. | `saved_without_guide` |
+
+```json
+{"type":"guide/finished","seq":109,"time":1789000006100,"src":"gateway","data":{"guide_id":"g_0a1b2c3d4e5f","status":"completed"}}
+```
+
+**Reader hint** — A guide finishes once; the store holds no terminal-to-terminal
+transition.
+
+**Since** — the change that moved change cards into the conversation.
 
 ## Removed types
 

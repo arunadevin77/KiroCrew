@@ -350,7 +350,9 @@ test('an empty private memory opens its exact member conversation and reuses the
   expect(binding.slot_key).not.toBe('')
   await expect(page).toHaveURL(url => url.pathname === '/members' && url.searchParams.get('member') === owner.name)
   const memberHeader = page.getByTestId('member-thread-header')
-  await expect(memberHeader.getByText(owner.name, { exact: true })).toBeVisible()
+  // The pill folds to its face at rest; the crewmate still names it.
+  await expect(memberHeader.getByTestId('member-identity-pill')).toBeVisible()
+  await expect(memberHeader.getByTestId('member-identity-pill')).toContainText(owner.name)
   // The identity pill opens the crewmate's Profile card: a button NAMED by the
   // crewmate (its content) whose tooltip says what it opens.
   const identityPill = memberHeader.getByTestId('member-identity-pill')
@@ -384,7 +386,8 @@ test('an empty private memory opens its exact member conversation and reuses the
   const reloadedResponse = await reopened
   expect(reloadedResponse.ok(), await reloadedResponse.text()).toBeTruthy()
   expect(await reloadedResponse.json()).toEqual(binding)
-  await expect(memberHeader.getByText(owner.name, { exact: true })).toBeVisible()
+  await expect(memberHeader.getByTestId('member-identity-pill')).toBeVisible()
+  await expect(memberHeader.getByTestId('member-identity-pill')).toContainText(owner.name)
   await expect(page.getByPlaceholder(/message/i)).toBeVisible()
   expect(await rows(request, owner.store)).toEqual([])
 })
@@ -467,8 +470,10 @@ test('a legacy configured default member keeps V1 while new members receive inde
     await expect(editor.getByText('This crewmate has its own memory (V2).', { exact: true })).toBeVisible()
     await expect(editor.getByRole('button', { name: 'Create private memory', exact: true })).toHaveCount(0)
     await expect(editor.getByRole('button', { name: 'Manage memory', exact: true })).toBeEnabled()
+    // A new member is created on a workspace of its own, named after it.
+    const own = `member-${newOwner.name}`
     const workspace = editor.getByRole('combobox', { name: 'Workspace', exact: true })
-    await expect(workspace).toContainText('default')
+    await expect(workspace).toContainText(own)
     await workspace.click()
     await page.getByRole('option', { name: 'extra', exact: true }).click()
     const manage = editor.getByRole('button', { name: 'Manage memory', exact: true })
@@ -479,7 +484,7 @@ test('a legacy configured default member keeps V1 while new members receive inde
     await expect(manage).toBeInViewport({ ratio: 1 })
     await page.screenshot({ path: testInfo.outputPath('member-memory-manage-disabled-draft.png'), fullPage: false, animations: 'disabled' })
     await workspace.click()
-    await page.getByRole('option', { name: 'default', exact: true }).click()
+    await page.getByRole('option', { name: own, exact: true }).click()
     await expect(manage).toBeEnabled()
     await expect(disabledReason).toHaveCount(0)
     await editor.getByRole('button', { name: 'Manage memory', exact: true }).click()
@@ -495,7 +500,8 @@ test('a legacy configured default member keeps V1 while new members receive inde
     const fresh = await freshResponse.json() as { slot_key: string }
     expect(fresh.slot_key).not.toBe(slotKey)
     await expect(page).toHaveURL(url => url.pathname === '/members' && url.searchParams.get('member') === newOwner!.name)
-    await expect(page.getByTestId('member-thread-header').getByText(newOwner.name, { exact: true })).toBeVisible()
+    await expect(page.getByTestId('member-identity-pill')).toBeVisible()
+    await expect(page.getByTestId('member-identity-pill')).toContainText(newOwner.name)
     await expect(page.getByPlaceholder(/message/i)).toBeVisible()
     await expect.poll(() => readOwner(newOwner!.name)).toMatchObject({
       slot_key: fresh.slot_key, memory_store: store, memory_version: 2, memory_owner: newOwner.name,

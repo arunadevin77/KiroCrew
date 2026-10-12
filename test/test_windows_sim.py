@@ -17,6 +17,7 @@ from windows_sim import (
     open_sharing_violation,
     read_sharing_violation,
     replace_sharing_violation,
+    same_tick_file_stat,
     unlink_sharing_violation,
     windows_text_mode_write,
 )
@@ -299,3 +300,35 @@ class TestWindowsTextModeWrite:
             finally:
                 os.close(fd)
         assert n == len(self._PAYLOAD)
+
+
+class TestSameTickFileStat:
+    def test_timestamps_pin_while_size_stays_live(self, tmp_path):
+        p = tmp_path / "t.jsonl"
+        p.write_text("a\n", encoding="utf-8", newline="\n")
+        with same_tick_file_stat(match="t.jsonl") as seen:
+            first = p.stat()
+            os.utime(p, ns=(first.st_mtime_ns + 5_000_000_000,) * 2)
+            p.write_text("a\nbb\n", encoding="utf-8", newline="\n")
+            second = p.stat()
+            assert (second.st_mtime_ns, second.st_ctime_ns) == (
+                first.st_mtime_ns,
+                first.st_ctime_ns,
+            )
+            assert second.st_mtime == first.st_mtime  # the float view pins with the ns one
+            assert second.st_size == len("a\nbb\n") > first.st_size
+            assert second.st_ino == first.st_ino
+            assert seen["n"] == 2
+            os.utime(p, ns=(first.st_mtime_ns + 7_000_000_000,) * 2)
+        assert (
+            p.stat().st_mtime_ns == first.st_mtime_ns + 7_000_000_000
+        ), "the pin outlived the block"
+
+    def test_non_matching_path_unaffected(self, tmp_path):
+        other = tmp_path / "other.txt"
+        other.write_text("x")
+        with same_tick_file_stat(match="t.jsonl") as seen:
+            before = other.stat().st_mtime_ns
+            os.utime(other, ns=(before + 5_000_000_000,) * 2)
+            assert other.stat().st_mtime_ns == before + 5_000_000_000
+            assert seen["n"] == 0

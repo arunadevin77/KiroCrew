@@ -1015,14 +1015,14 @@ _WRITE_PROTECTED_HOME_PATHS += [
     for prefix in _CREW_HOME_PREFIXES
 ]
 _WRITE_PROTECTED_HOME_PATHS += [
-    # MCP launch approval and resolved launcher artifacts. gatewayd spawns a
-    # stubbed server's backend OUTSIDE the sandbox, as the user. The approval
-    # directory records which launch each name may run; ``mcp/resolved`` supplies
-    # an executable substituted for an approved npm launcher. Every writer runs
-    # in the gateway. Reading either path decides nothing inside the sandbox.
+    # Gateway-written inputs to decisions made outside the sandbox. gatewayd spawns a stubbed
+    # server's backend as the user: ``mcp-launch-approvals`` records which launch each name may
+    # run and ``mcp/resolved`` supplies the substituted executable. ``gateway_id`` is the id the
+    # Remote Crew cycle guard compares; a write would choose whether a loop is detected. All
+    # are written by the gateway, and reading them decides nothing inside the sandbox.
     f"{prefix}/{leaf}"
     for prefix in _CREW_HOME_PREFIXES
-    for leaf in ("mcp-launch-approvals", "mcp/resolved")
+    for leaf in ("mcp-launch-approvals", "mcp/resolved", "gateway_id")
 ]
 _WRITE_PROTECTED_HOME_PATHS += [
     # The cloud launcher's LAUNCH RECORD (``cloud/launch_state.py``): the profile, region
@@ -2706,14 +2706,9 @@ _TTL_COST_RATIO_MIN = 0.0
 _TTL_COST_RATIO_MAX = 1000.0
 _TTL_MAX_SECS_ENV = "KIROCREW_PATH_GATE_TTL_MAX_SECS"
 _TTL_MAX_SECS_DEFAULT = 30.0
-#: The ceiling an operator may raise the ceiling TO. The measurement justifies
-#: nothing above about a minute -- that is the longest expiry the default ratio
-#: asks for at the heaviest load the gate can still serve, and past that load no
-#: expiry helps at all -- so 300s leaves generous headroom while refusing a value
-#: that could only widen the stale window. The floor is the shipped floor: a
-#: ceiling below it would invert the clamp.
+#: Floor on the ceiling: a ceiling below the expiry floor would invert the clamp.
 _TTL_MAX_SECS_MIN = 0.1
-_TTL_MAX_SECS_MAX = 300.0
+_TTL_MAX_SECS_MAX = 60.0
 
 
 def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
@@ -2761,14 +2756,18 @@ _HOME_TARGETS_TTL_COST_RATIO = _env_float(
     _TTL_COST_RATIO_ENV, _TTL_COST_RATIO_DEFAULT, _TTL_COST_RATIO_MIN, _TTL_COST_RATIO_MAX
 )
 
-#: Hard ceiling on the expiry, and therefore THE WORST-CASE STALE WINDOW for the
-#: deeper-leaf residual described above: 30 seconds, and never longer by any
-#: path through this module. Deliberately NOT derived from the ratio: at high
-#: contention the ratio asks for minutes (a 7.5s rebuild wants 375s), and this
-#: gives up the 2% share there rather than give up the freshness bound. Sized to
-#: cover what the load levels the gate can still SERVE actually ask for -- a 0.4s
-#: rebuild under two contending threads asks for 20s -- so the clamp binds only
-#: where a single cold rebuild is already at its own budget and no expiry helps.
+#: Hard ceiling on the EXPIRY, bounding the deeper-leaf residual stale window
+#: described above. The worst-case data age served is this ceiling PLUS the
+#: rebuild that measured the entry (expiry starts at the clock read AFTER the
+#: build), not the ceiling alone. A BOUNDED rebuild (pooled ``mc-pathres``) can
+#: run its full 12s deadline -- the 8s ``_PATH_RESOLVE_REBUILD_TIMEOUT_SECS`` budget
+#: plus its ``min(budget*1.5, 4.0)`` = 4s grace -- so the worst case is ~42s for
+#: the shipped default, not 30s; an INLINE rebuild
+#: (``_cached_home_dir_targets(inline=True)`` off the loop) has no such deadline,
+#: so a slow one adds its own unbounded duration -- the ceiling bounds the expiry,
+#: not that build's wall time. The two ceilings are separate: DEFAULT 30s
+#: (``_TTL_MAX_SECS_DEFAULT``), operator max 60s (``_TTL_MAX_SECS_MAX``); NOT
+#: derived from the ratio, which asks for minutes (375s for a 7.5s rebuild).
 _HOME_TARGETS_TTL_MAX_SECS = _env_float(
     _TTL_MAX_SECS_ENV, _TTL_MAX_SECS_DEFAULT, _TTL_MAX_SECS_MIN, _TTL_MAX_SECS_MAX
 )

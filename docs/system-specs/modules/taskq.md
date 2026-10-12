@@ -209,7 +209,9 @@ recovery ladder's DEFAULT schedule from `recovery/policy.py`, bound at import:
 deterministic because `next_run_at` orders rows (the dispatcher jitters on
 wake), and pure, so it is the one wait that does NOT follow the
 `agent.recovery_backoff_*` snapshot the process ladder takes at boot
-([session.md](session.md) § Recovery ladder)); `unknown`
+([session.md](session.md) § Recovery ladder)), at most `model.RECOVERY_MAX_ATTEMPTS`
+(3) times per row, after which the next lost owner ends the row `failed`
+(§ Reconcile-first boot); `unknown`
 rows go to `unknown_side_effect`. Every terminal `transition()` and every
 `cancel()` emits `kirocrew.taskq.completions{outcome=<state>}`. A
 subagent run is `unknown` unless its caller says otherwise: its task is
@@ -627,7 +629,7 @@ at warning level and records the fact on `TaskStore.quarantined_to` /
 `warnings`; `kirocrew doctor` reports any quarantined copy beside the live
 file. Work accepted only into the old file is not recovered. Locked, busy,
 disk-full, read-only, `unable to open` and a schema NEWER than this build stay
-refusals (`_is_corruption` matches only those exact phrases), and doctor's
+refusals (`sqlite_quarantine.is_damaged_database_error` matches only those exact phrases), and doctor's
 diagnostic open never moves anything.
 
 **An enabled queue never falls back.** With `agent.task_queue_enabled` on, a
@@ -1040,7 +1042,7 @@ rows this incarnation has since claimed are skipped.
 | `admitted` | `queued` — claimed, never started, no side effect. The verdict is blind on purpose (no class, no probe), and what makes it sound is the claim/start boundary above: on the RUNNER path no executor holds a row that has not left `admitted`, because the `starting` write is a fence and no handle exists until it commits. The subagent path posts its mark instead, so its residual — a row whose start mark was refused AND that never reached a later mark (§ The claim/start boundary) — is exactly the row this verdict is blind about, and closes only with a durable pre-start marker |
 | kind without a recovery adapter (today: everything but `subagent`) | state kept, lease dropped, `awaiting_adapter` event |
 | class `unknown` | `unknown_side_effect` |
-| class `none` / `idempotent_key` | `recovering`, `next_run_at = now + backoff(attempts)` (`2·2^attempts`, cap 120s); the dispatcher re-claims it |
+| class `none` / `idempotent_key` | `recovering`, `next_run_at = now + backoff(attempts)` (`2·2^attempts`, cap 120s); the dispatcher re-claims it. A row this table already sent to `recovering` `model.RECOVERY_MAX_ATTEMPTS` (3) times goes to `failed` instead, with `reconciled: lost_owner_limit`, the count and a readable `error` on its transition event, so a run that takes its gateway down cannot restart it on every boot. The count is `store.lost_owner_recoveries`, read from the row's `reconciled: lost_owner` transitions into `recovering`, never `attempts`, which also counts `retry_wait` re-dispatches |
 
 The reconciler deliberately still examines only `ACTIVE` rows: it is
 kind-agnostic, and a CLAIMABLE row is normally its dispatcher's — a `queued`
@@ -1287,23 +1289,29 @@ staged wake (that eligibility is the safety net for a process that dies before
 `rebuild()` runs).
 
 **The verdict says where the wait landed, and whether it landed at all.** The
-wait write has three outcomes and the caller acts on a different one in each:
+wait write has four outcomes and the caller acts on a different one in each:
 `Verdict(wait, state=waiting_dependency)` (a live run entered the wait),
 `Verdict(wait, state=retry_wait)` (the row was not live and is re-dispatched
-later), and `Verdict(unpersisted)` — the store took NEITHER write, so NO row
-records the wait. A caller must not park on that last one: `rebuild()` cannot
-restore a wait no row is in, no boot sweep sees it, and the row is left in the
-state it was reported from (`running`), so nothing outside that caller's own
-process knows a wait is in progress at all. `unpersisted` still carries the
-scope's `retry_at`, so a caller can retry locally the way the coordinator-less arm
-of `RunnerAdmission.yield_dependency` already does with an `enter_wait` that did
-not land. A store OUTAGE is never answered
+later), and two that are not a wait, told apart by re-reading the row's state
+after both writes were refused (`_row_after_refusal`), never by the boolean alone:
+`Verdict(unpersisted)` — the store took NEITHER write, so NO row records the wait
+(the row is another owner's or has ended, or the store could not say what it is);
+and `Verdict(no_row)` — the store holds no row for the task at all (a run whose
+memory mode keeps none), so nothing records the wait and nothing else owns the
+work. A caller must not
+park on either: `rebuild()` cannot restore a wait no row is in, no boot
+sweep sees it, and the row is left in the state it was reported from (`running`),
+so nothing outside that caller's own process knows a wait is in progress at all.
+`unpersisted` and `no_row` still carry the scope's `retry_at`, so a caller can
+retry locally the way the coordinator-less arm of
+`RunnerAdmission.yield_dependency` already does with an `enter_wait` that did not
+land; the sub-agent run does so only for `no_row`. A store OUTAGE is never answered
 with a park: `retry_wait` has an edge to neither `running` nor `done`, so a live
 run parked there would have its own terminal write refused too. The waiter is
 dropped from the schedule with the verdict, because a schedule holding a waiter
 its caller was told to abandon would wake a row this coordinator never wrote.
 One consequence to keep in mind when writing a test: a `report()` for a task id
-with NO row is `unpersisted`, not a wait — the coordinator refuses to schedule a
+with NO row is `no_row`, not a wait — the coordinator refuses to schedule a
 caller that holds no task row, as `shared_retry_at` already states.
 
 Persistence: the schedule is in memory; every entry appends

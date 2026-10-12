@@ -351,8 +351,8 @@ def _normalize_surface(
     default_rule: str,
 ) -> dict | None:
     """Coerce one agent-emitted record into the canonical surface-dict shape
-    ``{target, rule, message, file, line, symbol, hypothesis}`` (identical to what
-    ``build_gate.discover_defect_surfaces`` returns), or None if it lacks a usable file.
+    ``{target, rule, message, file, line, symbol, hypothesis}`` (the shape
+    ``_candidate_from`` consumes), or None if it lacks a usable file.
 
     Defensive: the agent controls these strings, so we validate the file is a real
     repo-relative source path (and, when scoped, inside the change set) before trusting
@@ -601,8 +601,8 @@ def discover_surfaces_via_agent(
     cycle — coverage rotates across all files over the loop's cycles (operator directive:
     do not limit the search space; rotate rather than cut).
 
-    Same return shape as ``build_gate.discover_defect_surfaces`` so the caller treats both
-    sources identically: ``{target, rule, message, file, line, symbol, hypothesis}``.
+    The surface dicts the caller (``_candidate_from``) consumes, in the shape every
+    discovery source emits: ``{target, rule, message, file, line, symbol, hypothesis}``.
 
     Args:
       runner: an AgentRunner / SessionAgentRunner (anything with ``.run(prompt, ...)``

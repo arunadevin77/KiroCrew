@@ -38,7 +38,17 @@ import types
 from asyncio import subprocess as aio_subprocess
 from ctypes import wintypes  # type aliases only; imports cleanly on every platform
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, Mapping, NamedTuple, Optional, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Coroutine,
+    Iterator,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Sequence,
+)
 
 # Loaded with this module, so each owner is complete before the forwarding at the end of
 # this file is installed and before any reader can reach it (see ``_owner``).
@@ -286,10 +296,14 @@ async def exit_after_failed_restart_exec(target: str | None) -> None:
     wedged disk must delay this exit, never hold it" true of the wait and not only of
     the work.
 
-    The ``gateway.log`` tail is not spelled out again here.
-    :func:`kiro_crew.cli.drain_log_queue_before_hard_exit` is the shared async
-    hard-exit drain for that queue -- same pool, its own outer deadline, and it never
-    raises -- so every hard-exit path keeps one spelling and one ceiling for it.
+    The queued SEL audit tail is drained first, then the ``gateway.log`` tail --
+    the order :mod:`kiro_crew.slack.events` uses, so a SEL write failure's own log
+    line still reaches a live listener. Neither is spelled out again here:
+    :func:`kiro_crew.sel.flush_audit_queue_before_hard_exit` and
+    :func:`kiro_crew.cli.drain_log_queue_before_hard_exit` are the shared async
+    hard-exit drains for those two queues -- same pool, each its own outer
+    deadline, and neither raises -- so every hard-exit path keeps one spelling and
+    one ceiling for each.
     """
     logger.critical(
         "Gateway restart could not replace this process (target %r); exiting instead of "
@@ -299,6 +313,7 @@ async def exit_after_failed_restart_exec(target: str | None) -> None:
         exc_info=True,
     )
     from kiro_crew.cli import drain_log_queue_before_hard_exit
+    from kiro_crew.sel import flush_audit_queue_before_hard_exit
 
     try:
         await asyncio.wait_for(
@@ -311,6 +326,15 @@ async def exit_after_failed_restart_exec(target: str | None) -> None:
         # Also the deadline: TimeoutError is an Exception, and a fatal exit must never
         # be blocked by bookkeeping or logging.
         pass
+    # The queued SEL audit tail -- the restart's own security-of-record event among
+    # it -- dies with the os._exit below unless it is drained first. This is a gateway
+    # hard exit like the normal shutdown, so it drains SEL
+    # the same bounded way. Flush SEL BEFORE the gateway.log tail (the order
+    # ``slack/events.py`` already uses): a SEL write failure logs its "dropped N events"
+    # line, and draining gateway.log first would stop the listener that line needs, so
+    # the audit loss would leave no trace. The shared helper offloads to this pool under
+    # its own deadline and never raises.
+    await flush_audit_queue_before_hard_exit()
     # The gateway.log tail has its own async hard-exit drain, which already offloads to
     # this pool under its own deadline and already never raises. Calling it keeps one
     # spelling and one ceiling for that queue across every hard-exit path.
@@ -6189,6 +6213,18 @@ def process_owner_uid(pid: int) -> int | None:
     return None
 
 
+def effective_uid() -> int | None:
+    """Return this process's effective uid, or ``None`` where there is no uid concept.
+
+    Windows has no ``os.geteuid``; a caller that formats a per-user path from the
+    uid (``/run/user/<uid>``) must treat ``None`` as "no such path on this
+    platform" rather than guess a number.
+    """
+    if not IS_POSIX:
+        return None
+    return os.geteuid()
+
+
 # Tri-state liveness results for pid_liveness().
 PID_DEAD = "dead"  # confirmed not running -> safe to prune
 PID_ALIVE = "alive"  # confirmed running
@@ -6682,7 +6718,7 @@ def flock_owner_pid(path: str | os.PathLike | os.stat_result) -> int | None:
     and no ``/proc`` surface names the inheritor: use
     :func:`pids_holding_file` for candidates and do not present them as owners.
 
-    Returns ``None`` on non-Linux, when ``/proc/locks`` is unreadable, or when no
+    Returns ``None`` on non-Linux, when ``/proc`` is unreadable, or when no
     ``FLOCK`` entry matches the file. Blocked waiters (``->`` rows) are skipped.
 
     Matching is on the full ``major:minor:inode`` triple that ``/proc/locks``
@@ -6694,6 +6730,22 @@ def flock_owner_pid(path: str | os.PathLike | os.stat_result) -> int | None:
     overlayfs use anonymous devices) the triple will not match and this returns
     ``None``. That is the safe direction to fail: the caller degrades to its
     "holder could not be identified" wording instead of naming a wrong process.
+
+    Two kernel surfaces are read, because the first is not a snapshot.
+    ``/proc/locks`` is a ``seq_file`` over a per-cpu list that the kernel hands
+    out one page (~65 rows) per ``read()`` and resumes BY ORDINAL INDEX: a lock
+    that any process on the host releases between two of those reads shifts
+    every later row down by one, and the row that lands on the resume index is
+    never printed. A lock that is held the whole time therefore goes missing
+    from one scan in a while -- measured at 7.7% of scans on a 32-cpu host with
+    four processes churning flocks beside a held one -- and a startup refusal
+    that names "a running gateway" instead of its pid, or a ``stop`` that
+    cannot say who holds the home, is the user-visible result. So a scan that
+    finds no row is corroborated by ``/proc/<pid>/fdinfo/<fd>`` of every
+    descriptor open on the inode (:func:`_descriptors_on`): its ``lock:`` rows
+    are one atomic record per descriptor, in the same format, matched on the
+    same triple. That walk costs one ``stat`` per open descriptor on the host
+    and reaches only processes of this user, so it runs on a miss, not first.
     """
     if sys.platform != "linux":
         return None
@@ -6701,24 +6753,70 @@ def flock_owner_pid(path: str | os.PathLike | os.stat_result) -> int | None:
     if info is None:
         return None
     want = (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino)
+    pid = _flock_acquirer_in_proc_locks(want)
+    if pid is None:
+        pid = _flock_acquirer_in_fdinfo(info, want)
+    return pid
+
+
+def _flock_acquirer_row(fields: list[str], want: tuple[int, int, int]) -> int | None:
+    """The acquirer pid of a ``/proc/locks``-format row on the *want* triple, else ``None``.
+
+    *fields* is the row split on whitespace, starting at its ordinal:
+    ``"23: FLOCK ADVISORY WRITE 39542 103:01:146872 0 EOF"``. A blocked waiter is
+    ``"23: -> FLOCK ..."`` and owns nothing; other lock types, short rows and
+    unparsable fields are skipped the same way.
+    """
+    if len(fields) < 6 or "->" in fields[:2] or fields[1] != "FLOCK":
+        return None
+    try:
+        pid = int(fields[4])
+        major, minor, ino = fields[5].split(":")
+        found = (int(major, 16), int(minor, 16), int(ino))
+    except (ValueError, IndexError):
+        return None
+    return pid if found == want else None
+
+
+def _flock_acquirer_in_proc_locks(want: tuple[int, int, int]) -> int | None:
+    """First ``FLOCK`` acquirer ``/proc/locks`` prints on *want*; ``None`` on a miss or an unreadable file."""
     try:
         # Streamed, not slurped: /proc/locks is unbounded (one row per lock
         # system-wide) and this runs on a startup failure path.
         with open("/proc/locks", encoding="utf-8") as handle:
             for row in handle:
-                fields = row.split()
-                # "23: FLOCK ADVISORY WRITE 39542 103:01:146872 0 EOF"; a blocked
-                # waiter is "23: -> FLOCK ..." and owns nothing.
-                if len(fields) < 6 or "->" in fields[:2] or fields[1] != "FLOCK":
-                    continue
-                try:
-                    pid = int(fields[4])
-                    major, minor, ino = fields[5].split(":")
-                    found = (int(major, 16), int(minor, 16), int(ino))
-                except (ValueError, IndexError):
-                    continue
-                if found == want:
+                pid = _flock_acquirer_row(row.split(), want)
+                if pid is not None:
                     return pid
+    except OSError:
+        return None
+    return None
+
+
+def _flock_acquirer_in_fdinfo(target: os.stat_result, want: tuple[int, int, int]) -> int | None:
+    """First ``FLOCK`` acquirer any ``/proc/<pid>/fdinfo/<fd>`` on *target*'s inode prints on *want*.
+
+    ``fdinfo`` prints the locks taken THROUGH that one open file description as
+    ``"lock:\t1: FLOCK ADVISORY WRITE 39542 103:01:146872 0 EOF"``, the
+    ``/proc/locks`` row behind a ``lock:`` tag, written in one record and so
+    immune to the page-boundary skip of the global list. The triple is still
+    checked: the descriptor can be closed and reused for another file between
+    the ``stat`` that selected it and the read. ``None`` when ``/proc`` cannot
+    be listed or no readable descriptor carries a matching row.
+    """
+    try:
+        for pid, fd_name in _descriptors_on(target):
+            try:
+                with open(f"/proc/{pid}/fdinfo/{fd_name}", encoding="utf-8") as handle:
+                    for row in handle:
+                        if not row.startswith("lock:"):
+                            continue
+                        acquirer = _flock_acquirer_row(row.split()[1:], want)
+                        if acquirer is not None:
+                            return acquirer
+            except OSError:
+                # Closed, or the process is gone, between the listing and here.
+                continue
     except OSError:
         return None
     return None
@@ -6760,21 +6858,38 @@ def pids_holding_file(path: str | os.PathLike | os.stat_result) -> list[int] | N
     target = _file_identity(path)
     if target is None:
         return None
-    key = (target.st_dev, target.st_ino)
     holders: list[int] = []
     try:
-        entries = os.listdir("/proc")
+        for pid, _fd_name in _descriptors_on(target):
+            # Descriptors arrive grouped by pid, so one pid is named once.
+            if not holders or holders[-1] != pid:
+                holders.append(pid)
     except OSError:
         return None
-    for entry in entries:
+    return holders
+
+
+def _descriptors_on(target: os.stat_result) -> Iterator[tuple[int, str]]:
+    """``(pid, fd)`` for every descriptor open on *target*'s inode, via ``/proc/*/fd``.
+
+    Yielded grouped by pid, in ``/proc`` order. Matching is by
+    ``(st_dev, st_ino)`` of the descriptor's link target, so a bind mount (a
+    jailed gateway sees a different path for the same inode) still resolves. A
+    pid whose ``fd`` directory cannot be read -- dead between the listing and
+    here, or another user's process -- is skipped, as is a descriptor that
+    closes under the ``stat``; raises ``OSError`` only when ``/proc`` itself
+    cannot be listed. ``/proc/<pid>/fd`` is enumerated by descriptor NUMBER,
+    not by ordinal, so a neighbouring close does not hide an open descriptor
+    the way a released lock hides a ``/proc/locks`` row.
+    """
+    key = (target.st_dev, target.st_ino)
+    for entry in os.listdir("/proc"):
         if not entry.isdigit():
             continue
-        pid = int(entry)
         fd_dir = f"/proc/{entry}/fd"
         try:
             fds = os.listdir(fd_dir)
         except OSError:
-            # Dead between listdir and here, or another user's process.
             continue
         for fd_name in fds:
             try:
@@ -6782,9 +6897,7 @@ def pids_holding_file(path: str | os.PathLike | os.stat_result) -> list[int] | N
             except OSError:
                 continue
             if (st.st_dev, st.st_ino) == key:
-                holders.append(pid)
-                break
-    return holders
+                yield int(entry), fd_name
 
 
 def _raise_taskkill_error(pid: int, rc: int, stderr: bytes) -> None:
@@ -7316,7 +7429,9 @@ def terminate_and_reap_sync(
     stdio use the async helper, which drains them; this one is for a child
     writing to the caller's own terminal. Otherwise (Windows, a child already
     reaped, or one that does not lead its own group) it is killed outright the
-    way :func:`kill_and_reap` kills: its tree, unless it shares our group.
+    way :func:`kill_and_reap` kills: its tree, unless it shares our group or
+    has already been reaped -- a reaped child's pid may belong to another
+    process by now.
 
     A Ctrl-C landing mid-stop does not abandon it: KeyboardInterrupt is held
     until the stop has finished, then re-raised once.
@@ -7351,7 +7466,14 @@ def terminate_and_reap_sync(
             with contextlib.suppress(Exception):
                 kill_process_group(pgid, SIGKILL)
     else:
-        if type(proc.pid) is int and not _shares_own_process_group(proc.pid):
+        # ``poll()`` reaps an exited child, which frees its pid for reuse, so a
+        # pid-addressed tree kill is only safe while it still answers ``None``:
+        # a child exiting after that stays an unreaped zombie holding its pid.
+        if (
+            type(proc.pid) is int
+            and proc.poll() is None
+            and not _shares_own_process_group(proc.pid)
+        ):
             with contextlib.suppress(Exception):
                 kill_process_tree(proc.pid, SIGKILL)
     if proc.poll() is None:
@@ -9141,6 +9263,7 @@ class ProcStat(NamedTuple):
     session: int | None = None
     start_ticks: int | None = None
     rss_pages: int | None = None
+    cpu_ticks: int | None = None
 
 
 def _linux_proc_root(proc_root: "Path | None") -> "Path | None":
@@ -9162,7 +9285,9 @@ def read_proc_stat(pid: int, *, proc_root: "Path | None" = None) -> "ProcStat | 
     same read, so a caller needing several never mixes two processes behind a
     recycled pid. ``start_ticks`` is in clock ticks since boot;
     :func:`process_age_secs` turns it into an age. ``rss_pages`` is in pages of
-    ``SC_PAGE_SIZE``.
+    ``SC_PAGE_SIZE``. ``cpu_ticks`` is utime plus stime in clock ticks, so a
+    caller differencing two reads gets a CPU rate whose identity check
+    (``start_ticks``) came from the same read; it is None unless both are present.
 
     None when the file cannot be read (gone, permission, no ``/proc``) or the
     line has no ``)``; otherwise a :class:`ProcStat` whose fields may each be
@@ -9178,6 +9303,7 @@ def read_proc_stat(pid: int, *, proc_root: "Path | None" = None) -> "ProcStat | 
     tokens = _stat_tokens(raw)
     if tokens is None:
         return None
+    utime, stime = _stat_token_int(tokens, 11), _stat_token_int(tokens, 12)
     return ProcStat(
         state=tokens[0].decode("ascii", "replace") if tokens else None,
         ppid=_stat_token_int(tokens, 1),
@@ -9185,6 +9311,7 @@ def read_proc_stat(pid: int, *, proc_root: "Path | None" = None) -> "ProcStat | 
         session=_stat_token_int(tokens, 3),
         start_ticks=_stat_token_int(tokens, 19),
         rss_pages=_stat_token_int(tokens, 21),
+        cpu_ticks=None if utime is None or stime is None else utime + stime,
     )
 
 

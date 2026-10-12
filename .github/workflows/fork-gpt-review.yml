@@ -2275,7 +2275,18 @@ jobs:
           guarded_comment_upsert() {
             local marker="$1" stamp="$2" lane="$3" out_file="$4"
             local matches existing lookup_ok pr_head="" attempt withhold="" write_rc
-            local verdict_read_rc superseded=""
+            # What reached the slot is recorded as the step output `publication`,
+            # because every arm below returns 0 and the write status would
+            # otherwise end with this function. The fork Opus and GPT finalize
+            # steps read it: a verdict computed for this head is a pass there only
+            # once it is in the slot. `published` is this run's body in the slot,
+            # `superseded` a head this PR has moved past, and `not_published` every
+            # other arm. That includes an earlier run's sample for this head, which
+            # the PR then shows instead of this run's verdict, and an override note
+            # a repeat stopped at: that note names no head the repeat can check, and
+            # an override for THIS head is answered by the finalize step's own
+            # override input.
+            local verdict_read_rc superseded="" publication="not_published"
             # Find the bot's existing marker comment (first match wins) and
             # capture its id. Author filter: only a github-actions[bot]
             # comment can match, so a PR commenter cannot plant the marker and
@@ -2361,6 +2372,7 @@ jobs:
                 # publishes the verdict that counts, so a record here would
                 # point a reader at a revision nobody is reviewing.
                 superseded=1
+                publication="superseded"
                 withhold="$HEAD is no longer this PR's head ($pr_head)"
               fi
             fi
@@ -2394,6 +2406,7 @@ jobs:
                 if [ -z "$superseded" ]; then
                   retain_unpublished_verdict withheld none "$stamp $HEAD" "$out_file"
                 fi
+                printf 'publication=%s\n' "$publication" >> "${GITHUB_OUTPUT:-/dev/null}"
                 return 0
               fi
               if [ -n "$existing" ] && [ "$existing" != "null" ]; then
@@ -2401,6 +2414,7 @@ jobs:
                 if [ -z "$superseded" ]; then
                   retain_unpublished_verdict withheld none "$stamp $HEAD" "$out_file"
                 fi
+                printf 'publication=%s\n' "$publication" >> "${GITHUB_OUTPUT:-/dev/null}"
                 return 0
               fi
               # The lookup SUCCEEDED and found nothing, so there is no verdict
@@ -2419,6 +2433,11 @@ jobs:
               else
                 echo "::error::$lane could not post its $HEAD notice, so this PR carries no $stamp comment at all.${READ_FAILURE_NOTE:+ Cause of the failed comment read: $READ_FAILURE_NOTE}"
               fi
+              case "$write_rc" in
+                0) publication="published" ;;
+                4) publication="superseded" ;;
+              esac
+              printf 'publication=%s\n' "$publication" >> "${GITHUB_OUTPUT:-/dev/null}"
               return 0
             fi
             if [ "$lookup_ok" -eq 1 ] && [ -n "$existing" ] && [ "$existing" != "null" ]; then
@@ -2458,6 +2477,11 @@ jobs:
                 echo "::error::$lane produced a verdict for $HEAD but could not publish it, so this run's verdict is not in the slot.${READ_FAILURE_NOTE:+ Cause of the failed comment read: $READ_FAILURE_NOTE}"
               fi
             fi
+            case "$write_rc" in
+              0) publication="published" ;;
+              4) publication="superseded" ;;
+            esac
+            printf 'publication=%s\n' "$publication" >> "${GITHUB_OUTPUT:-/dev/null}"
           }
           # An accepted human override replaces whatever body the review steps
           # left (they were skipped for it) with the override note, through the
@@ -2536,6 +2560,7 @@ jobs:
           OVERRIDE_ACTOR: ${{ steps.human_override.outputs.actor }}
           ADJ_DECISION: ${{ steps.adj.outputs.decision }}
           ADJ_NOTE: ${{ steps.adj.outputs.note }}
+          PUBLICATION: ${{ steps.post.outputs.publication }}
         run: |
           set -uo pipefail
           lane_text="$(printf 'Lane run: %s/%s/actions/runs/%s\n\n<!-- ai-review-fork-lane run=%s -->' \
@@ -2560,6 +2585,23 @@ jobs:
             fi
           fi
           summary="Fork AI review for $HEAD. See the PR comment for details. $extra"
+          # The output file proves a verdict was COMPUTED, never that it reached
+          # the PR. A slot still holding another head's verdict, or an earlier
+          # run's sample for this one, is what every stamp-freshness reader
+          # sees, so a pass also needs the post step's record that this run's
+          # verdict is in the slot. A missing record -- that step failed or
+          # never ran -- fails closed with it. `superseded` keeps the verdict's
+          # own conclusion, because the newer head's run answers for the PR
+          # there.
+          case "${PUBLICATION:-}" in
+            published | superseded) ;;
+            *)
+              if [ "$conclusion" = "success" ]; then
+                conclusion="failure"; title="verdict not published"
+                summary="This run reached a verdict for $HEAD, but it is not in this lane's PR comment (publication: ${PUBLICATION:-unrecorded}), so the PR does not show it. Re-run this lane to publish it."
+              fi
+              ;;
+          esac
           # An accepted human override is this run's verdict, whatever the review
           # steps left behind: they were skipped for it. VERDICT is reassigned so
           # no verdict-specific summary below applies to a review that never ran.

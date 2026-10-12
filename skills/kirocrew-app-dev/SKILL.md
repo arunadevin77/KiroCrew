@@ -95,6 +95,7 @@ my-app/
 | `version` | Semver string | Used by the App Store registry to compute `updateAvailable` |
 | `crons[].timezone` | IANA zone name; omit it only when the hour is zone-agnostic | An empty timezone falls back to the gateway config's zone and then to **UTC**, so `"cron_expr": "0 6 * * *"` without it fires at 06:00 UTC — the wrong calendar day for most users. A per-USER zone is not manifest data: pass `timezone=` to `ctx.cron.add_job` instead |
 | `crons[].skip_dates` | Zero-padded `YYYY-MM-DD`, evaluated in `timezone` | `"2026-1-1"` parses but never matches the padded fire-time rendering, so the skip silently does nothing. Both fields are rejected at manifest validation, not at fire time |
+| `crons[].timeout` / `crons[].timeout_secs` | Set both on a `script` cron that runs longer than 30s, e.g. `"timeout": 60, "timeout_secs": 65` | Omitted, a script is killed at 30s and a command at 300s. `timeout_secs` must cover `timeout` plus 5s of cleanup; a pair the cron SDK would refuse is rejected at manifest validation |
 
 ## Lifecycle and Resource Registration (CRITICAL)
 
@@ -532,8 +533,8 @@ service, not the grant (#13788, which closed
 cron store is busy or unreadable, disable reports `cron_cleanup: failed ...`
 in its result instead of raising, so read the result rather than assuming.
 
-- Declare `permissions.cron` if you ship any cron at all, so the manifest
-  states the capability truthfully.
+- Declare `permissions.cron` if you ship any cron at all. Install, update and
+  self-registration refuse a manifest whose `crons` is non-empty without it.
 - Keep `permissions` truthful both ways. Declare what you use, drop what you no
   longer use. Grants are read at the gateway boundary, never inferred from your
   code, so an over-broad block is a real grant and a missing one is a real
@@ -807,35 +808,53 @@ grouping come for free and stay consistent with the main chat.
 
 ## Worker Slots — apps that own agent sessions
 
-**Stopgap — tracked in issue #509** (a supported `acquire_worker_slot(app,
-project, trust=…)` helper): these are underscore-private slot internals, not a
-promised API. Until #509 lands they are the only mechanism, but treat this
-recipe as scaffolding — re-check it against the SDK when you update an app.
-
 If your app creates chat slots for background/worker agents (spec writers,
-researchers), stamp these attributes — and re-stamp on EVERY acquisition, not
-just creation, because gateway restarts and other code paths (e.g. ChatEmbed's
-own POST) can recreate slots without them:
+researchers), acquire them through `kiro_crew.apps.worker_slots`:
 
-- `slot._app = "<app-name>"` — keeps the session out of the main chat sidebar.
-- **Trust — grant it BOUNDED, never blanket-forever.** Attended workers can use
-  ChatEmbed's approval cards. An unattended worker still needs a deliberately
-  scoped grant rather than a permanent one:
-  - *Preferred:* pattern-scoped trust via `slot._trusted_patterns` (supported
-    by `chat_runner`) — allowlist only the tool/command shapes your worker
-    actually needs.
-  - *If you must use blanket `slot._trust = True`:* time-box it. Mirror the
-    in-repo precedent (`auto_research`: 24h TTL, then trust expires and
-    re-authorization re-grants it) rather than re-stamping `True`
-    unconditionally forever. A permanent unscoped auto-approve worker silently
-    exempts a growing class of sessions from the interactive-approval layer —
-    a security regression that compounds as apps adopt the pattern.
-  - Always SEL-audit the grant, whichever form it takes.
-- `slot.project = <working_dir>` — sets the CLI process cwd (chat_runner runs
-  `cwd=slot.project`). Without it the agent prefixes every command with
-  `cd <long-path> && …`, which turns every tool pill in the transcript into
-  identical truncated noise; with it, commands are relative and readable, and
-  the worker inherits project-scoped steering files.
+```python
+from kiro_crew.apps.worker_slots import WorkerSlotTimeout, acquire_worker_slot
+
+try:
+    async with await acquire_worker_slot(
+        state, "<app-name>", "<app-name>-<entity>",
+        project=working_dir,
+        trusted_patterns=["npm test"],   # or trust=True; both expire
+        trust_ttl_secs=3600,             # at most 24h
+        timeout=30,                      # seconds to wait for a free slot
+    ) as lease:
+        ...  # drive lease.slot
+except WorkerSlotTimeout as exc:
+    ...  # tell the user the worker is busy; str(exc) says why
+```
+
+- **Re-stamped on every acquire.** The helper sets the slot's app owner (keeps
+  it out of the main chat sidebar) and its working directory every time, so a
+  slot another path created first (ChatEmbed's own POST, for one) is fixed on
+  the next acquire. Acquire again rather than reusing a slot object you kept.
+- **One at a time by default.** Each app may hold 1 lease at once, and one
+  slot key is leased by one lease at a time across all apps. A further acquire
+  waits up to `timeout` seconds, then raises `WorkerSlotTimeout` naming the
+  app, the limit and the wait. A slot owned by another app raises
+  `ValueError`, and so does a chat a person or a cron job opened; pick keys
+  prefixed with your app name. A lease whose slot was
+  deleted is freed by the next acquire. Call
+  `set_worker_slot_limit("<app-name>", n)` once at startup if your app really
+  runs several workers side by side. The limit lives in the gateway process
+  and starts fresh after a restart.
+- **Trust is bounded.** Attended workers should use ChatEmbed's approval cards
+  and pass no trust. For an unattended worker prefer `trusted_patterns` (only
+  the command shapes it needs) over blanket `trust=True`. Blanket trust is an
+  audited, expiring scoped grant, never the session's own trust flag, so
+  subagents the worker spawns do not inherit it. Either grant is withdrawn
+  when the lease is released or after `trust_ttl_secs` (default 1h, at most
+  24h), whichever is first. A grant whose audit cannot be written is not made:
+  check `lease.trust_granted`. A grant the slot already had is left alone.
+- **Working directory.** `project` becomes the CLI process cwd, so commands
+  are relative and readable and the worker inherits project-scoped steering
+  files.
+
+Do not stamp `slot._app`, `slot._trust`, `slot._trust_scope`,
+`slot._trusted_patterns` or `slot.project` by hand: they are private, and the helper is the supported way.
 
 ## Positioning — your app is NOT in an iframe
 

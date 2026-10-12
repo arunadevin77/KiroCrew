@@ -1049,6 +1049,26 @@ class TestStdioLoopBusyQueue:
             release.set()
             harness.close()
 
+    @pytest.mark.parametrize("method", ["server/discover", "resources/list"])
+    def test_unknown_method_gets_method_not_found_while_busy(self, monkeypatch, method):
+        call_tool, started, release = _slow_then_echo()
+        harness = _LoopHarness(monkeypatch, call_tool)
+        try:
+            harness.send(_tools_call(601, "slow"))
+            assert started.wait(timeout=5.0)
+            harness.send({"jsonrpc": "2.0", "id": 699, "method": method, "params": {}})
+            # Answered while the slow call still holds the worker, not after it.
+            assert harness.wait_for(lambda: any(r[0] == 699 for r in harness.responses))
+            assert not any(r[0] == 601 for r in harness.responses)
+            answer = next(r for r in harness.responses if r[0] == 699)
+            assert answer[2] is not None
+            assert answer[2]["code"] == mcp_shared.JSONRPC_METHOD_NOT_FOUND
+            release.set()
+            assert harness.wait_for(lambda: any(r[0] == 601 for r in harness.responses))
+        finally:
+            release.set()
+            harness.close()
+
 
 class _ReadSpy:
     """Wraps ``_read_message`` and records what each call returned.
@@ -1337,6 +1357,15 @@ class TestStdioLoopStrayFrames:
 
 
 # --- Caller-identity extension through the stdio loop -----------------------
+
+
+#: What the loop advertises under ``capabilities.experimental`` when it is
+#: started with ``reports_inflight=True`` (only ``kirocrew-core``), independent
+#: of the caller-identity opt-in: the in-flight report, on the POSIX path only
+#: (the Windows loop cannot send a frame mid-call).
+_LOOP_OWN_CAPABILITIES: dict = (
+    {mcp_shared.INFLIGHT_CAPABILITY_KEY: {}} if platform_compat.IS_POSIX else {}
+)
 
 
 def _initialize(req_id) -> dict:
@@ -1691,9 +1720,30 @@ class TestStdioLoopCallerIdentity:
         finally:
             harness.close()
 
+    def test_initialize_advertises_the_inflight_report_only_when_opted_in(self, monkeypatch):
+        # Exact pin: this dict is what gatewayd reads to decide pooling
+        # eligibility (caller identity) and the recycle ceiling (in-flight
+        # report), so an added or misspelled key must fail here.
+        harness = _LoopHarness(
+            monkeypatch,
+            lambda n, a: "ok",
+            {"advertise_caller_identity": True, "reports_inflight": True},
+        )
+        try:
+            harness.send(_initialize(1))
+            assert harness.wait_for(lambda: len(harness.responses) >= 1)
+            caps = harness.responses[0][1]["capabilities"]
+            assert caps["experimental"] == {
+                "kirocrew.caller-identity": {"schemaVersion": 1},
+                **_LOOP_OWN_CAPABILITIES,
+            }
+        finally:
+            harness.close()
+
     def test_initialize_omits_capability_by_default(self, monkeypatch):
         # kirocrew-cron does NOT consume per-call identity — it must stay
         # single-session (gatewayd refuses to pool non-advertising backends).
+        # Nor does it park calls, so it does not opt into the in-flight report.
         harness = _LoopHarness(monkeypatch, lambda n, a: "ok")
         try:
             harness.send(_initialize(1))

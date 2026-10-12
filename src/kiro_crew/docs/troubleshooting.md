@@ -235,6 +235,7 @@ A server that is genuinely broken reads **Error** with the reason next to it, no
 
 ```bash
 kirocrew status                          # is the gateway running?
+kirocrew logs -n 200                     # what did it log before it stopped?
 curl http://localhost:5476/api/status    # is it answering on the expected port?
 ```
 
@@ -405,6 +406,33 @@ Do not delete a directory whose `.owner` names a live process.
 ```bash
 du -sh ~/.kiro/crew/scratch/*/ | sort -h | tail
 ```
+
+#### Moving scratch off the system drive
+
+On Windows the scratch tree lives on `C:` by default and can hold bulky,
+disposable data (staged self-update installers, clones, build logs) that fills
+the system drive. To relocate the whole managed scratch root to a data drive,
+set `KIROCREW_SCRATCH_ROOT` to a real directory and restart the gateway:
+
+```bash
+# Windows (PowerShell), persisted for the user:
+setx KIROCREW_SCRATCH_ROOT "D:\kirocrew-scratch"
+```
+
+The path is used as the scratch root itself. A value naming a drive/filesystem
+root or a known system directory is refused and logged
+(`KIROCREW_SCRATCH_ROOT=… is a system directory, ignoring`), falling back to the
+default `~/.kiro/crew/scratch`. Redirecting the directory with an NTFS junction
+or symlink is refused for safety, so this env var is the supported way to move
+it. The target must be on a drive with access control (NTFS); a FAT/exFAT volume
+is refused (`KIROCREW_SCRATCH_ROOT=… volume has no access control (FAT/exFAT)`)
+because it cannot be locked to your account. `KIROCREW_SCRATCH_ROOT` is honoured on Windows only; it is ignored on Linux
+and macOS, where scratch stays at the default `~/.kiro/crew/scratch`. Note
+`KIROCREW_SCRATCH` (no `_ROOT`) is unrelated — it is an output written
+for child processes, and setting it yourself does nothing.
+
+Setting `KIROCREW_HOME` to a data drive relocates the whole data home,
+scratch included, if you want everything off `C:` rather than scratch alone.
 
 ### Subagent completion event seems cut off
 

@@ -149,8 +149,8 @@ constrains the envelope as well as `data`:
 **Invariants** — A report without a `ref` is invalid. `status: "progress"` may
 appear several times for one dispatch; a terminal status appears once.
 
-**Where the status vocabulary comes from** — The enum is the four statuses this
-page names plus every status the conductor work board's worker half can commit,
+**Where the status vocabulary comes from** — The enum is the crew spec's own four
+(`done`, `blocked`, `failed`, `progress`) plus every status the conductor work board's worker half can commit,
 read off that writer's own tuple (`work_vocab.WORK_WORKER_STATUSES`) rather than
 restated. A closed enum narrower than its writer would turn a status the board
 gains into a refused entry counted as a write loss, which destroys a record

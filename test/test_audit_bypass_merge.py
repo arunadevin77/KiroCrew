@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from kiro_crew.testing.clock import ManualClock
+
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "scripts"))
 
@@ -120,3 +122,38 @@ def test_an_unreadable_api_warns_under_annotate_and_exits_two_otherwise(
     assert mod.main(["--commit", _SHA_11594, "--annotate"]) == 0
     assert capsys.readouterr().out.startswith("::warning::could not read")
     assert mod.main(["--commit", _SHA_11594]) == 2
+
+
+def test_a_transient_read_failure_is_retried_before_it_is_reported(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[list[str]] = []
+
+    def flaky(argv, **kwargs):
+        calls.append(argv)
+        if len(calls) == 1:
+            raise subprocess.CalledProcessError(1, argv, "", "HTTP 422: No commit found")
+        return subprocess.CompletedProcess(argv, 0, "[[]]", "")
+
+    monkeypatch.setattr(mod.subprocess, "run", flaky)
+    clock = ManualClock()
+    clock.install(monkeypatch, mod)
+    assert mod.main(["--commit", _SHA_11594, "--annotate"]) == 0
+    assert len(calls) == 2
+    assert clock.sleeps == (mod.READ_RETRY_SECS,)
+    assert "::warning::" not in capsys.readouterr().out
+
+
+def test_a_read_that_keeps_failing_names_what_gh_said(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def down(argv, **kwargs):
+        raise subprocess.CalledProcessError(1, argv, "", "gh: HTTP 502: Bad Gateway")
+
+    monkeypatch.setattr(mod.subprocess, "run", down)
+    clock = ManualClock()
+    clock.install(monkeypatch, mod)
+    assert mod.main(["--commit", _SHA_11594, "--annotate"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("::warning::could not read") and "HTTP 502" in out
+    assert clock.sleeps == (mod.READ_RETRY_SECS,) * (mod.READ_ATTEMPTS - 1)

@@ -785,6 +785,119 @@ async def test_denied_monitor_update_is_surfaced_into_the_session(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_denied_arm_in_a_crewmate_session_is_queued_for_the_agent(tmp_path):
+    # A crewmate's DM draws messages only (crewmateBubbles.isCrewmateChatRow
+    # drops every notice) and never replays a notice row to the model, so the
+    # notice row written for a refused arm reaches NEITHER the person nor the
+    # crewmate. There the refusal is ALSO queued for the crewmate's next turn
+    # with a system-injection kind, so it drains as an inject row (never a user
+    # bubble) and the crewmate can stop and re-arm the loop itself.
+    from kiro_crew.dashboard import session_directive_apply as _sda
+    from kiro_crew.dashboard.chat_turn.steer_queue import _QUEUE_KIND_ACTORS
+    from kiro_crew.dashboard.chat_utils import (
+        AUTOMATION_NOTICE_KIND,
+        is_system_injection_item,
+    )
+
+    service = AutoNudgeService(base_dir=tmp_path)
+    loop = await service.add("member-helper", "watch the build", idle_secs=60)
+    await service.update(loop.id, active=False, stopped_reason=APPROVAL_STALL_REASON)
+    surfaced = MagicMock()
+    queued: list[dict] = []
+    state = SimpleNamespace(
+        _slots={
+            "member-helper": SimpleNamespace(
+                workspace="default", mode="", memory_mode="persistent", is_closing=False
+            )
+        },
+        sessions=None,
+        channel_transports={},
+    )
+    slot = SimpleNamespace(
+        key="member-helper",
+        _app="",
+        messages=[],
+        queue_append=lambda content, *a, **k: queued.append({"content": content, **k}) or "qid-1",
+    )
+    with (
+        patch("kiro_crew.autonudge.get_instance", return_value=service),
+        patch("kiro_crew.dashboard.state.append_and_surface", surfaced),
+    ):
+        result = await apply_session_directive(
+            state,
+            slot,
+            "dashboard:member-helper",
+            "monitor_update",
+            {"patch": {"message": "revised instruction"}},
+        )
+
+    assert "is PAUSED" in result
+    # The person-facing notice row is still written, tagged so the crewmate
+    # chat's allowlist can hide it (and only it, not person-actionable notices).
+    surfaced.assert_called_once()
+    _, _, role, notice_text, _ = surfaced.call_args.args
+    assert role == "notice"
+    assert surfaced.call_args.kwargs["meta"] == {"kind": _sda.ARM_REFUSAL_NOTICE_KIND}
+    # AND the refusal reaches the crewmate's next turn carrying the same text,
+    # stamped AUTOMATION_NOTICE_KIND so the drain treats it as a system
+    # injection (inject row, not a user follow-up) and never a person's bubble.
+    assert len(queued) == 1
+    assert queued[0]["content"].startswith("[Automation notice] ")
+    assert notice_text in queued[0]["content"]
+    assert queued[0]["kind"] == AUTOMATION_NOTICE_KIND
+    assert is_system_injection_item(
+        {"kind": AUTOMATION_NOTICE_KIND, "content": queued[0]["content"]}
+    )
+    assert _QUEUE_KIND_ACTORS[AUTOMATION_NOTICE_KIND] == "autonudge"
+    # A system-injection kind is orchestration (the user-follow-up guard is
+    # synthetic_payload OR system_injection), so the refusal is never mistaken
+    # for the person stepping in and never aborts a pending recovery.
+    service.stop()
+
+
+@pytest.mark.asyncio
+async def test_denied_arm_in_a_plain_session_is_notice_only(tmp_path):
+    # Every non-crewmate session keeps the notice row as its only surface: the
+    # notice draws for the person and nothing is queued to the agent.
+    service = AutoNudgeService(base_dir=tmp_path)
+    loop = await service.add("chat-1", "watch the build", idle_secs=60)
+    await service.update(loop.id, active=False, stopped_reason=APPROVAL_STALL_REASON)
+    surfaced = MagicMock()
+    queued: list[str] = []
+    state = SimpleNamespace(
+        _slots={
+            "chat-1": SimpleNamespace(
+                workspace="default", mode="", memory_mode="persistent", is_closing=False
+            )
+        },
+        sessions=None,
+        channel_transports={},
+    )
+    slot = SimpleNamespace(
+        key="chat-1",
+        _app="",
+        messages=[],
+        queue_append=lambda content, *a, **k: queued.append(content) or "qid-1",
+    )
+    with (
+        patch("kiro_crew.autonudge.get_instance", return_value=service),
+        patch("kiro_crew.dashboard.state.append_and_surface", surfaced),
+    ):
+        result = await apply_session_directive(
+            state,
+            slot,
+            "dashboard:chat-1",
+            "monitor_update",
+            {"patch": {"message": "revised instruction"}},
+        )
+
+    assert "is PAUSED" in result
+    surfaced.assert_called_once()
+    assert queued == []
+    service.stop()
+
+
+@pytest.mark.asyncio
 async def test_denied_monitor_update_names_the_consecutive_failure_bound(tmp_path):
     """A loop stopped on CONSECUTIVE_FAILURE_REASON names its own remedy.
 

@@ -23,6 +23,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -123,7 +124,17 @@ from kiro_crew.mcp_cron import (
     _vet_shell_command,
 )
 from kiro_crew.member_memory_auth import require_member_memory_creation
-from kiro_crew.members import MemberNameError, key_new_crew, validate_member_name
+from kiro_crew.member_workspace import (
+    MemberWorkspaceUnavailable,
+    provision_member_workspace,
+    retire_unpublished_workspace,
+)
+from kiro_crew.members import (
+    MemberNameError,
+    check_crew_label,
+    key_new_crew,
+    validate_member_name,
+)
 from kiro_crew.memory import MemoryStore
 from kiro_crew.memory_stores import (
     DEFAULT_MEMORY_STORE,
@@ -846,21 +857,48 @@ def _run_app_action_through_gateway(
     action: str, app_name: str, *, payload: dict[str, object] | None = None
 ) -> bool:
     """Return true when a live gateway handled an app lifecycle request."""
+    return _apply_through_gateway(
+        action,
+        app_name,
+        lambda: app_lifecycle_client.toggle_app(app_name, action, payload=payload),
+        hint="Toggle the app in the dashboard instead.",
+    )
+
+
+def _install_app_through_gateway(source: str) -> bool:
+    """Return true when a live gateway installed the app directory *source*."""
+    return _apply_through_gateway(
+        "install",
+        source,
+        lambda: app_lifecycle_client.install_app(source),
+        # The dashboard's install calls the same route, so pointing there would not
+        # help; the gateway opens the directory and its app.json as its own user.
+        hint="Nothing was installed; the gateway reads the app directory as its own user.",
+    )
+
+
+def _apply_through_gateway(
+    action: str,
+    subject: str,
+    send: Callable[[], dict[str, object] | None],
+    *,
+    hint: str,
+) -> bool:
+    """Run one gateway lifecycle request and render its outcome for the CLI."""
     try:
-        result = app_lifecycle_client.toggle_app(app_name, action, payload=payload)
+        result = send()
     except app_lifecycle_client.AppGatewayTimeout as exc:
         # The outcome is unknown, not negative: the gateway may still be applying
         # the action, so this is neither a refusal nor an invitation to retry.
         print(f"⏳ {exc}", file=sys.stderr)
         sys.exit(1)
     except app_lifecycle_client.AppGatewayError as exc:
-        print(
-            f"❌ gateway refused: {exc}. Toggle the app in the dashboard instead.",
-            file=sys.stderr,
-        )
+        print(f"❌ gateway refused: {exc}. {hint}", file=sys.stderr)
         sys.exit(1)
     if result is None:
         return False
+    name = result.get("name")
+    app_name = name if action == "install" and isinstance(name, str) and name else subject
     app_lifecycle_client.print_result(action, app_name, result)
     return True
 
@@ -1194,6 +1232,12 @@ def _handle_app(args: argparse.Namespace) -> None:
         return
 
     if action == "install":
+        # Ask a running gateway first, as enable, disable and uninstall do. Only
+        # the gateway can start the new app's backend and publish it to the
+        # dashboard it is serving; installing from files alone leaves a running
+        # gateway unaware of the app until it restarts.
+        if _install_app_through_gateway(args.source):
+            return
         result = install_app(args.source)
         if result.ok:
             print(f"✅ {result.message}")
@@ -1448,6 +1492,21 @@ def _finding_store_suffix(finding: dict) -> str:
     return f" (store {name})" if name else ""
 
 
+def _agent_list_label(label: str) -> str:
+    """*label* as one ``kirocrew agent list`` cell.
+
+    The label is written by the dashboard, the CLI and a crewmate's own
+    ``rename_self``, so it is printed confined to one line with no live
+    terminal controls, and a credential-shaped one is masked the way the
+    dashboard roster masks it.
+    """
+    if not label:
+        return ""
+    if external_text_requires_redaction(label):
+        return "(hidden: credential-shaped)"
+    return safe_terminal_line(label)
+
+
 def _handle_agent(args: argparse.Namespace) -> None:
     """Dispatch agent subcommands: list, create, update, delete."""
 
@@ -1458,14 +1517,15 @@ def _handle_agent(args: argparse.Namespace) -> None:
         default = cfg.default_agent
         print(
             f"{'NAME':<20} {'KIRO_AGENT':<20} {'WORKSPACE':<15} "
-            f"{'MEMORY_STORE':<15} {'SOURCE':<12}"
+            f"{'MEMORY_STORE':<15} {'SOURCE':<12} DISPLAY_NAME"
         )
         for name, agent in cfg.agents.items():
             marker = " *" if name == default else ""
             print(
                 f"{name + marker:<20} {agent.kiro_agent:<20} "
                 f"{agent.workspace:<15} {agent.memory_store:<15} "
-                f"{getattr(agent, 'source', 'kirocrew'):<12}"
+                f"{getattr(agent, 'source', 'kirocrew'):<12} "
+                f"{_agent_list_label(agent.display_name)}".rstrip()
             )
 
     elif action == "create":
@@ -1508,11 +1568,17 @@ def _handle_agent(args: argparse.Namespace) -> None:
         )
         previous_store = cfg.agents[args.name].memory_store
         previous_member_id = cfg.agents[args.name].member_id
+        previous_workspace = cfg.agents[args.name].workspace
+        new_workspace = ""
         try:
             require_member_memory_creation(args.name)
             provision_member_memory(cfg, args.name)
-            persist_member_config(cfg, args.name, create=True)
+            new_workspace = provision_member_workspace(cfg, args.name)
+            persist_member_config(cfg, args.name, create=True, new_workspace=new_workspace)
         except BaseException as exc:
+            retire_unpublished_workspace(
+                cfg, args.name, new_workspace, previous_workspace=previous_workspace
+            )
             allocated = cfg.agents[args.name].memory_store
             if allocated != previous_store:
                 retire_unpublished_allocation(
@@ -1531,14 +1597,16 @@ def _handle_agent(args: argparse.Namespace) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            if not isinstance(exc, (OSError, UnknownMemoryStore)):
+            if not isinstance(exc, (OSError, UnknownMemoryStore, MemberWorkspaceUnavailable)):
                 raise
             print(f"Error: {exc}", file=sys.stderr)
             sys.exit(1)
+        created = cfg.agents[args.name]
         if display_name:
             print(f"Created agent: {args.name} (display name: {display_name})")
         else:
             print(f"Created agent: {args.name}")
+        print(f"Workspace: {created.workspace}")
 
     elif action == "update":
         if args.name not in cfg.agents:
@@ -1556,10 +1624,17 @@ def _handle_agent(args: argparse.Namespace) -> None:
             agent.kiro_agent = args.kiro_agent
         if args.workspace is not None:
             agent.workspace = args.workspace
+        new_label = getattr(args, "display_name", None)
+        if new_label is not None:
+            try:
+                agent.display_name = check_crew_label(args.name, new_label.strip(), cfg.agents)
+            except MemberNameError as exc:
+                print(f"Error: invalid display name ({exc})", file=sys.stderr)
+                sys.exit(1)
         try:
             changed_fields = {
                 field
-                for field in ("kiro_agent", "workspace")
+                for field in ("kiro_agent", "workspace", "display_name")
                 if getattr(args, field, None) is not None
             }
             if agent.memory_store != prior_memory_store:
@@ -1575,7 +1650,11 @@ def _handle_agent(args: argparse.Namespace) -> None:
                 raise
             print(f"Error: {exc}", file=sys.stderr)
             sys.exit(1)
-        print(f"Updated agent: {args.name}")
+        if new_label is not None:
+            shown = agent.display_name or args.name
+            print(f"Updated agent: {args.name} (display name: {shown})")
+        else:
+            print(f"Updated agent: {args.name}")
 
     elif action == "delete":
         if args.name not in cfg.agents:
@@ -1792,6 +1871,14 @@ def _cron_add(svc: CronService, args: argparse.Namespace) -> None:
         _cron_add_fail("message is required for an agent job (only --script/--command may omit it)")
     if agent and not _AGENT_NAME_RE.match(agent):
         _cron_add_fail("invalid agent name (alphanumeric, hyphens, underscores; 1-64 chars)")
+    # ``--agent`` is the CLI's only field for naming either a provider template or
+    # a crew member. Resolve the split the same way every create surface does, so
+    # a member name is captured as a member selection (``member_id``) instead of a
+    # bare template id the cron chat's reply path cannot resolve. ``agent_id`` stays
+    # a pure template field, as the record contract requires.
+    from kiro_crew.cron_service.identity import split_cron_agent_member
+
+    agent, member_id = split_cron_agent_member(agent, "")
     if timeout is not None:
         if not zero_token:
             _cron_add_fail("--timeout applies only to a --script or --command job")
@@ -1976,6 +2063,12 @@ def _cron_add(svc: CronService, args: argparse.Namespace) -> None:
             timeout=int(timeout) if timeout else 0,
             timeout_secs=int(timeout_secs) if timeout_secs else 0,
         )
+        # ``member_id`` rides in the call ONLY when ``--agent`` resolved to a
+        # crew member; a non-member (template or default) agent keeps the exact
+        # add_job call shape the create contract pins, so no member kwarg leaks
+        # into the common path.
+        if member_id:
+            fields["member_id"] = member_id
         if managed_by is not None:
             job = svc.add_managed_job(managed_by, **fields)
         else:

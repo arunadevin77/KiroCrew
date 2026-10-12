@@ -48,10 +48,12 @@ const PAGE_ONLY_ENTRY_IDS: Record<string, string> = {
   // -- shared dashboard set (pages/chat/transcriptRenderers.tsx) --
   thinking_block: 'ThinkingBlock with disclosure state; the registry folds reasoning into the group summary',
   recovery_inject: 'RecoveryCard for gateway-authored inject rows; the registry renders inject as prose (resolveInjectCard decides, shared)',
+  automation_notice_inject: 'a re-routed automation refusal (injectKind=automation_notice) is model-only machinery; drawn nowhere (its notice bar already shows the person), suppressed with render:()=>null',
   workflow_completion: 'WorkflowCompletionCard needs session/folder/panel hand-offs the SDK has no seam for',
   workflow_run_tool: 'launch card refining the tool line; store-connected',
   subagent_run_tool: 'launch card refining the tool line; store-connected',
   tool_completion: 'the ✅/🚫 completion sibling draws nothing, claimed so no surface\'s unclaimed-role fallback prints it',
+  conversation_card: 'the change card / guide offer row; needs the card and guide stores, which the store-free registry has none of (it leaves the role undrawn)',
   // -- page-only --
   permission: 'undrawn here; the registry leaves it to GROUPED_ROLES',
   hidden_invisible_assistant: 'zero-width-space quiet-cycle rows; the registry applies the same skip inside its assistant entry',

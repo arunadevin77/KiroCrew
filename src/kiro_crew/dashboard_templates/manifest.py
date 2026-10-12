@@ -4,7 +4,7 @@ A template is a directory with two files:
 
 ``manifest.json``
     ``id``, ``version`` (positive int), ``title``, ``description``, ``source``
-    (``builtin`` | ``user`` | ``shared``) and ``fields``: field name -> field spec.
+    (one of :data:`SOURCES`) and ``fields``: field name -> field spec.
 ``template.html``
     A body fragment. Each value sits on an element carrying
     ``data-dashboard-field="<name>"``; scripts may read the same values from
@@ -14,8 +14,18 @@ A field spec is ``{"type": ..., "source": ...}``. ``type`` is one of
 :data:`FIELD_TYPES`. ``source`` says where the value comes from:
 
 ``{"fold": "<name>", "path": "a.b.c"}``
-    A crew-log fold (session or slot keyed) read through the bus subscription, never
-    by refolding the log. ``path`` walks the rendered fold value.
+    A crew-log fold, read through the bus subscription rather than by refolding the
+    log. ``path`` walks the rendered fold value.
+
+    One of the THREE key kinds -- session, slot or tree. A TREE-keyed fold is the one a
+    block binding a TREE reaches, and it is the one exception to the sentence above: it
+    joins the logs of many slots, so no bus scope keys it and it cannot be pushed, which
+    puts it on the page-load and refetch read instead. That read ships with the first
+    block that consumes it, so a tree binding validates and reports unavailable until
+    then (see
+    :data:`~kiro_crew.crew_log.projection.TREE_PROJECTION_NAMES` and
+    :func:`~kiro_crew.dashboard_feed.scope_for`). A block binds it exactly the same way;
+    what differs is when the value arrives.
 ``{"agentic": true}``
     The agent writes the value itself (an agentic fold). The page marks it.
 
@@ -69,7 +79,30 @@ __all__ = [
 #: list or an object where a name belongs, and an unhashable candidate raises out of
 #: the loader instead of being collected as one more refusal.
 FIELD_TYPES: Final[frozenset[str]] = frozenset({"number", "string", "boolean", "array", "object"})
+#: Every fold a block may bind, as the union of the kernel's key-kind sets rather than
+#: as a list here, so a fold added to a listed kind is bindable without this file being
+#: edited.
+#:
+#: :data:`TREE_PROJECTION_NAMES` is deliberately NOT one of them yet. A tree-keyed fold
+#: is registered in the kernel -- the key-kind machinery and the generalized placement
+#: rules are what this change is for -- but it has no bus scope, and on this base no
+#: read path either: its reader belongs with the page host that draws it. A name this
+#: set accepts is a name the save gate admits, so admitting one the feed can neither
+#: key nor read would hand a block author a binding that only ever draws the stale
+#: band. The tree set joins this union in the change that brings the read beside it,
+#: which is the one moment both halves exist; ``test_dynamic_dashboard`` pins both
+#: directions so neither can arrive alone.
 FOLD_NAMES: Final[frozenset[str]] = frozenset(SESSION_FOLD_NAMES) | frozenset(SLOT_PROJECTION_NAMES)
+#: Where a manifest came from. Every value names a template DIRECTORY, which is what
+#: lets two consumers read this word and both be right: ``instance.RENDERABLE_SOURCES``
+#: gates whether a page may EXECUTE, and the catalogue's scan checks a directory's
+#: declared source against where the directory actually sits.
+#:
+#: An agent-composed dashboard package gets a fourth value when a manifest is
+#: synthesized from one -- it has no directory and carries no page, so it has to be
+#: distinguishable from a template a person wrote. That value ships with the
+#: synthesis, because a source no manifest declares is a word both consumers would
+#: accept off disk and nothing would ever produce.
 SOURCES: Final[frozenset[str]] = frozenset({"builtin", "user", "shared"})
 #: ``\Z``, never ``$``: Python's ``$`` also matches just before a TRAILING NEWLINE, so
 #: ``"report\n"`` satisfies a ``$``-anchored id. That id becomes a user-template

@@ -61,9 +61,11 @@ if TYPE_CHECKING:
         append_cost_sample,
         asyncio,
         cap_buckets,
+        clear_leaked_process,
         compact_cost_log,
         consult_offloaded,
         has_dashboard_surface,
+        list_leaked_processes,
         list_orphans,
         logger,
         maintenance_executor,
@@ -430,23 +432,14 @@ class OrphanStallMonitor(ManagerComponent):
         restart cut off mid-turn.
         """
         try:
+            await self._manager._end_leaked_processes()
+        except Exception:
+            logger.warning("Ending leaked subagent processes failed", exc_info=True)
+        try:
 
             orphans = list_orphans()
             if not orphans:
                 return
-            # Imported HERE, not at this module's top, and structurally required
-            # rather than a style choice: ``bind_component_globals`` rebuilds every
-            # ``*_impl`` with ``subagent``'s module dict as its ``__globals__``
-            # (``subagent_manager/_component.py``), whose own docstring states the
-            # consequence -- "an import at the top of its defining module is inert
-            # for it. Every global it loads must resolve in ``namespace`` -- add the
-            # name there, or import it inside the function." A top-level import here
-            # would raise NameError at the first call. ABSOLUTE, because the rebound
-            # function's package is ``kiro_crew`` -- a relative import resolves
-            # against that and walks off the top of the package.
-            from kiro_crew.process_identity import teardown_barriers
-            from kiro_crew.runtime_ownership import authorize_runtime_kill
-
             logger.info("Reconciling %d orphaned subagent(s)", len(orphans))
             processed = 0
             # DM-fallback messages are DIGESTED: collected across the whole
@@ -455,6 +448,16 @@ class OrphanStallMonitor(ManagerComponent):
             # injection path batches naturally via the parent slot's pending-
             # failures drain.)
             dm_pending: list[str] = []
+            # Written after the scan: a DM-bound notice's tombstone waits for the
+            # digest DM below, and a run whose notifier raised is tombstoned with them.
+            held_tombstones: list[tuple[str, dict[str, Any]]] = []
+
+            def _tombstone_unless_present(agent_id: str, fields: dict[str, Any]) -> None:
+                from kiro_crew.subagent_persistence import read_tombstone
+
+                if read_tombstone(agent_id) is None:
+                    write_tombstone(agent_id, **fields)
+
             for state in orphans:
                 agent_id = state.get("id", "")
                 if not agent_id or agent_id in self._manager._agents:
@@ -463,91 +466,29 @@ class OrphanStallMonitor(ManagerComponent):
                     pid = state.get("pid")
                     recovery = tombstone_recovery_action(agent_id, state)
                     has_result = recovery != "notification_pending"
-                    if pid and self._manager._is_pid_alive(pid):
-                        # Use pid_recorded_at (when PID was actually written) instead of
-                        # started (folder creation time) to avoid false negatives under load
-                        pid_recorded_at = state.get("pid_recorded_at", state.get("started", 0))
-                        if self._manager._is_orphan_process(pid, pid_recorded_at):
-                            # ``state.json`` is a record this run wrote before the
-                            # restart, and it says nothing about who is using the
-                            # process NOW. A shared runtime carries the parent and
-                            # every sibling sub-agent on one pid, so a per-run file
-                            # naming it is not authority to end it: the lease table
-                            # is, and it is the only thing that can see the tenants
-                            # this file never knew about.
-                            #
-                            # A refused kill still tombstones below. That is the
-                            # point: this run is over either way, and the tombstone
-                            # is what tells the user so. What the refusal prevents
-                            # is ending a process the tombstone has no claim on.
-                            authorized = authorize_runtime_kill(
-                                pid,
-                                reason=f"orphaned subagent {agent_id} from a prior gateway run",
-                                caller="subagent_manager.reconcile_orphans",
-                            )
-                            # Awaited: the Windows arm is a taskkill spawn that
-                            # waits on the target, kept off the loop. Behind a barrier,
-                            # because the tree kill re-reads and walks before signalling
-                            # and a shared turn can claim a tenancy in that window.
-                            with teardown_barriers(
-                                [pid] if authorized else [], who="Reaper"
-                            ) as barriered:
-                                kill_failed = (
-                                    await self._manager._kill_orphan_pid(pid)
-                                    if authorized and barriered
-                                    else None
-                                )
-                            try:
-                                # Never ``killed`` for a process the kill
-                                # left standing: the folder is reconciled
-                                # below either way, so this row is the only
-                                # place the process's fate is recorded. A
-                                # refusal and a failed signal are separate
-                                # outcomes because only one of them means
-                                # something tried and could not.
-                                #
-                                # TWO ways to be refused, and both must read as
-                                # one: the gate declining, and the teardown
-                                # barrier declining because a tenant arrived
-                                # after it allowed. The second leaves
-                                # ``kill_failed`` None -- no signal was even
-                                # attempted -- which is indistinguishable from a
-                                # clean kill by that field alone.
-                                if not authorized or not barriered:
-                                    outcome = "refused"
-                                elif kill_failed is None:
-                                    outcome = "killed"
-                                else:
-                                    outcome = "failed"
-                                sel().log_tool_invocation(
-                                    session_key=f"subagent:{agent_id}",
-                                    source="subagent",
-                                    tool_name="orphan_reconcile_kill",
-                                    outcome=outcome,
-                                    error=kill_failed or "",
-                                    metadata={"subagent_id": agent_id, "pid": pid},
-                                )
-                            except Exception:
-                                logger.debug("SEL audit failed for orphan %s", agent_id)
-
-                    try:
-                        # Off the loop: this writes a file and reads any existing
-                        # tombstone to preserve a recorded terminal outcome, and
-                        # this call site is a coroutine on the gateway's loop.
-                        await asyncio.to_thread(
-                            write_tombstone,
+                    if pid:
+                        await self._manager._end_orphan_process(
                             agent_id,
-                            cause="gateway_restart",
-                            recovery_action=recovery,
-                            pid=pid,
-                            turns=state.get("turns", 0),
-                            last_tool=state.get("last_tool", ""),
-                            # A run that finished is completed, whichever reader
-                            # asks: the panel, this notice and the task queue.
-                            **({"outcome": "completed"} if result_is_whole(state) else {}),
+                            state,
+                            reason=f"orphaned subagent {agent_id} from a prior gateway run",
                         )
-                    except Exception:
-                        logger.debug("Failed to tombstone orphan %s", agent_id, exc_info=True)
+
+                    # The tombstone excludes the folder from every later
+                    # reconciliation, so it is written only once the notice is
+                    # recorded: by _notify_orphan when a slot took it, or after the
+                    # digest below for a notice bound for the owner DM. A notice
+                    # that is not recorded leaves the folder to the next start,
+                    # which announces the run again rather than never.
+                    tombstone: dict[str, Any] = {
+                        "cause": "gateway_restart",
+                        "recovery_action": recovery,
+                        "pid": pid,
+                        "turns": state.get("turns", 0),
+                        "last_tool": state.get("last_tool", ""),
+                        # A run that finished is completed, whichever reader
+                        # asks: the panel, this notice and the task queue.
+                        **({"outcome": "completed"} if result_is_whole(state) else {}),
+                    }
 
                     # Retain-by-default: session files are deliberately NOT
                     # deleted here — an orphaned run's transcript is still
@@ -571,8 +512,25 @@ class OrphanStallMonitor(ManagerComponent):
                         )
                         if undelivered:
                             dm_pending.append(undelivered)
+                            held_tombstones.append((agent_id, tombstone))
+                        else:
+                            # A slot took the notice: _notify_orphan writes its
+                            # delivered tombstone after the injection. When none
+                            # landed, this boot's own is written, as before.
+                            try:
+                                await asyncio.to_thread(
+                                    _tombstone_unless_present, agent_id, tombstone
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "Failed to tombstone orphan %s", agent_id, exc_info=True
+                                )
                     except Exception:
                         logger.debug("Notification failed for orphan %s", agent_id, exc_info=True)
+                        # A notifier that raises would raise again at every start,
+                        # so the run is tombstoned as before, after the scan; only a
+                        # process that dies first leaves it to the next start.
+                        held_tombstones.append((agent_id, tombstone))
                 except Exception:
                     logger.warning("Failed to reconcile orphan %s", agent_id, exc_info=True)
 
@@ -593,9 +551,186 @@ class OrphanStallMonitor(ManagerComponent):
                 try:
                     await self._manager._send_orphan_slack_dm(digest)
                 except Exception:
+                    # Raised rather than died: tombstoned as before. A process that
+                    # dies before the DM leaves these runs to the next start.
                     logger.debug("Orphan digest DM failed", exc_info=True)
+            for agent_id, tombstone in held_tombstones:
+                try:
+                    # Off the loop: this writes a file and reads any existing
+                    # tombstone to preserve a recorded terminal outcome.
+                    await asyncio.to_thread(write_tombstone, agent_id, **tombstone)
+                except Exception:
+                    logger.debug("Failed to tombstone orphan %s", agent_id, exc_info=True)
         except Exception:
             logger.warning("Orphan reconciliation failed", exc_info=True)
+
+    async def _end_leaked_processes_impl(self) -> None:
+        """End the processes a prior gateway run's kills left standing, without a notice.
+
+        A run whose own teardown (or reap) could not kill its process was
+        tombstoned with ``leaked_process``. A completed run gets that tombstone
+        only once the parent acknowledged its completion; any other ending's is
+        its terminal record, written before the report (a report the shutdown
+        drain abandons clears it, which hands the run to :func:`list_orphans`
+        instead). Either way the parent holds the outcome, and announcing it
+        here would hand over the same completion a second time. The process is still owed its end, so it gets the same
+        guarded kill an orphan gets. The flag is dropped once nothing is left
+        to try -- the kill landed, the process is gone, or the lease table
+        refused it because other tenants hold it -- and kept after a kill that
+        failed, so the next start tries again.
+        """
+        for state in await asyncio.to_thread(list_leaked_processes):
+            agent_id = state.get("id", "")
+            if not agent_id or agent_id in self._manager._agents:
+                continue
+            try:
+                outcome = await self._manager._end_orphan_process(
+                    agent_id,
+                    state,
+                    reason=f"subagent {agent_id}'s process outlived its kill in a prior gateway run",
+                )
+                if outcome == "unverified":
+                    # The pid is live but cannot be shown to be the run's (no
+                    # /proc, or a /proc entry newer than the recorded spawn).
+                    # Nothing was signalled, and the next start would read the
+                    # same answer, so the flag goes -- but the log says a
+                    # process may still be running rather than that none is.
+                    logger.warning(
+                        "Leaked process of subagent %s not ended: pid=%s is running but "
+                        "cannot be verified as the run's; it may still be running",
+                        agent_id,
+                        state.get("pid"),
+                    )
+                elif outcome == "failed":
+                    logger.warning(
+                        "Leaked process of subagent %s not ended: the kill of pid=%s failed; "
+                        "the next start tries again",
+                        agent_id,
+                        state.get("pid"),
+                    )
+                elif outcome == "refused":
+                    logger.info(
+                        "Leaked process of subagent %s left running: the lease table refused "
+                        "the kill of pid=%s because other tenants hold it",
+                        agent_id,
+                        state.get("pid"),
+                    )
+                elif outcome == "killed":
+                    logger.info(
+                        "Ended leaked process of subagent %s: pid=%s",
+                        agent_id,
+                        state.get("pid"),
+                    )
+                elif state.get("pid"):
+                    logger.info(
+                        "Leaked process of subagent %s already gone: pid=%s is not running",
+                        agent_id,
+                        state.get("pid"),
+                    )
+                else:
+                    logger.warning(
+                        "Leaked process of subagent %s cannot be ended: its state record "
+                        "names no pid; dropping the flag",
+                        agent_id,
+                    )
+                if outcome != "failed":
+                    await asyncio.to_thread(clear_leaked_process, agent_id)
+            except Exception:
+                logger.warning("Failed to end leaked process of %s", agent_id, exc_info=True)
+
+    async def _end_orphan_process_impl(
+        self, agent_id: str, state: dict, *, reason: str
+    ) -> str | None:
+        """End the process a prior gateway run's record names, and audit what happened.
+
+        Returns the audited outcome -- ``killed``, ``refused`` or ``failed`` --
+        ``unverified`` when the recorded pid is running but cannot be shown to be
+        the run's (``_is_orphan_process`` is False: no ``/proc`` on this
+        platform, a ``/proc`` entry newer than the recorded spawn, or a recycled
+        pid), so nothing was signalled, or None when the recorded pid is not
+        running, so there was nothing to end.
+        """
+        # Imported HERE, not at this module's top, and structurally required
+        # rather than a style choice: ``bind_component_globals`` rebuilds every
+        # ``*_impl`` with ``subagent``'s module dict as its ``__globals__``
+        # (``subagent_manager/_component.py``), whose own docstring states the
+        # consequence -- "an import at the top of its defining module is inert
+        # for it. Every global it loads must resolve in ``namespace`` -- add the
+        # name there, or import it inside the function." A top-level import here
+        # would raise NameError at the first call. ABSOLUTE, because the rebound
+        # function's package is ``kiro_crew`` -- a relative import resolves
+        # against that and walks off the top of the package.
+        from kiro_crew.process_identity import teardown_barriers
+        from kiro_crew.runtime_ownership import authorize_runtime_kill
+
+        pid = state.get("pid")
+        if not pid or not self._manager._is_pid_alive(pid):
+            return None
+        # Stays ``unverified`` unless the identity check below passes: a live
+        # pid it cannot vouch for was not signalled, which is not "not running".
+        outcome: str | None = "unverified"
+        # Use pid_recorded_at (when PID was actually written) instead of
+        # started (folder creation time) to avoid false negatives under load
+        pid_recorded_at = state.get("pid_recorded_at", state.get("started", 0))
+        if self._manager._is_orphan_process(pid, pid_recorded_at):
+            # ``state.json`` is a record this run wrote before the
+            # restart, and it says nothing about who is using the
+            # process NOW. A shared runtime carries the parent and
+            # every sibling sub-agent on one pid, so a per-run file
+            # naming it is not authority to end it: the lease table
+            # is, and it is the only thing that can see the tenants
+            # this file never knew about.
+            #
+            # A refused kill still leaves the run tombstoned by the
+            # caller. That is the point: this run is over either way,
+            # and the tombstone is what says so. What the refusal
+            # prevents is ending a process the tombstone has no claim on.
+            authorized = authorize_runtime_kill(
+                pid,
+                reason=reason,
+                caller="subagent_manager.reconcile_orphans",
+            )
+            # Awaited: the Windows arm is a taskkill spawn that
+            # waits on the target, kept off the loop. Behind a barrier,
+            # because the tree kill re-reads and walks before signalling
+            # and a shared turn can claim a tenancy in that window.
+            with teardown_barriers([pid] if authorized else [], who="Reaper") as barriered:
+                kill_failed = (
+                    await self._manager._kill_orphan_pid(pid) if authorized and barriered else None
+                )
+            try:
+                # Never ``killed`` for a process the kill
+                # left standing: the caller tombstones the
+                # run either way, so this row is the only
+                # place the process's fate is recorded. A
+                # refusal and a failed signal are separate
+                # outcomes because only one of them means
+                # something tried and could not.
+                #
+                # TWO ways to be refused, and both must read as
+                # one: the gate declining, and the teardown
+                # barrier declining because a tenant arrived
+                # after it allowed. The second leaves
+                # ``kill_failed`` None -- no signal was even
+                # attempted -- which is indistinguishable from a
+                # clean kill by that field alone.
+                if not authorized or not barriered:
+                    outcome = "refused"
+                elif kill_failed is None:
+                    outcome = "killed"
+                else:
+                    outcome = "failed"
+                sel().log_tool_invocation(
+                    session_key=f"subagent:{agent_id}",
+                    source="subagent",
+                    tool_name="orphan_reconcile_kill",
+                    outcome=outcome,
+                    error=kill_failed or "",
+                    metadata={"subagent_id": agent_id, "pid": pid},
+                )
+            except Exception:
+                logger.debug("SEL audit failed for orphan %s", agent_id)
+        return outcome
 
     async def _notify_orphan_impl(self, agent_id: str, state: dict, has_result: bool) -> str | None:
         """Notify user about an orphaned subagent.
@@ -638,10 +773,14 @@ class OrphanStallMonitor(ManagerComponent):
         else:
             glyph, note, outcome = "❌", "lost to gateway restart", OUTCOME_FAILED
             lines = ["No result was captured before the restart."]
-            # No result is not no work: when the run's conversation is still on
-            # disk the parent is told how far it got and how to resume it. The
-            # probe stats session files under KIRO_HOME, which can be network-
-            # backed, so it runs off the loop like this module's other file reads.
+        if not result_is_whole(state):
+            # An unfinished run is not no work, whether or not it streamed any
+            # text first: a long run cut off mid-turn has usually streamed some,
+            # and its conversation is exactly as resumable as one that streamed
+            # none. When it is still on disk the parent is told how far the run
+            # got and how to resume it. The probe stats session files under
+            # KIRO_HOME, which can be network-backed, so it runs off the loop
+            # like this module's other file reads.
             resume = await asyncio.get_running_loop().run_in_executor(
                 maintenance_executor(), orphan_resume_hint, agent_id, state
             )
@@ -688,6 +827,9 @@ class OrphanStallMonitor(ManagerComponent):
                             pid=state.get("pid"),
                             turns=state.get("turns", 0),
                             last_tool=state.get("last_tool", ""),
+                            # Written after the notice, so no earlier tombstone
+                            # carries the outcome forward: it is stated here.
+                            **({"outcome": "completed"} if result_is_whole(state) else {}),
                         )
                     except Exception:
                         pass
@@ -928,6 +1070,11 @@ class OrphanStallMonitor(ManagerComponent):
         while True:
             await asyncio.sleep(_REAPER_INTERVAL)
             now = time.time()
+            # The ages that decide a reap or a release are measured on the
+            # monotonic clock: a wall-clock step (an NTP correction, a manual
+            # change) must not reap every healthy run, spare a stuck one, or
+            # expire every continuable conversation at once.
+            mono_now = time.monotonic()
             if not self._manager._conv_registry_rebuilt:
                 # First pass after (re)start: re-seed the conversation TTL
                 # registry from state.json so promoted conversations survive
@@ -970,7 +1117,7 @@ class OrphanStallMonitor(ManagerComponent):
             except Exception:
                 logger.debug("Reaper: digest-hold sweep failed", exc_info=True)
             try:
-                await self._manager._sweep_conversations_async(now)
+                await self._manager._sweep_conversations_async(mono_now)
             except Exception:
                 logger.debug("Reaper: conversation sweep failed", exc_info=True)
             # Wait deadlines + due dependency scopes: the pump's own one-shot
@@ -999,6 +1146,23 @@ class OrphanStallMonitor(ManagerComponent):
                 await self._manager.retry_owed_teardown_sweeps()
             except Exception:
                 logger.debug("Reaper: teardown store-sweep retry failed", exc_info=True)
+            # A tombstone whose write failed (a full disk) is written once space
+            # returns, so a run already reported is not reported again at the next
+            # start. Off the loop: it writes files. Not during shutdown: cancel_all
+            # retries before it re-admits undelivered runs to orphan recovery, and
+            # a retry still writing when shutdown begins stops before its next write.
+            from functools import partial
+
+            from kiro_crew.subagent_persistence import has_owed_tombstones, retry_owed_tombstones
+
+            if has_owed_tombstones() and not self._manager._shutting_down:
+                try:
+                    await asyncio.get_running_loop().run_in_executor(
+                        maintenance_executor(),
+                        partial(retry_owed_tombstones, stop=lambda: self._manager._shutting_down),
+                    )
+                except Exception:
+                    logger.debug("Reaper: owed tombstone retry failed", exc_info=True)
             try:
                 compact_cost_log()  # periodic FIFO trim (also bounds a long-running gateway)
             except Exception:
@@ -1006,14 +1170,14 @@ class OrphanStallMonitor(ManagerComponent):
             for agent_id, info in list(self._manager._agents.items()):
                 if info.done or info._ending_claimed:
                     continue
-                elapsed = now - info.started
+                elapsed = mono_now - info._started_mono
                 # Startup watchdog: a subagent that entered execution but is
                 # still on turn 0 with no runtime PID after the startup window
                 # is wedged in startup (e.g. a hung provider/ACP handshake that
                 # never launches the child process). Reap it fast with a clear
                 # "failed to start" error instead of burning the full deadline
                 # and surfacing a misleading 30-minute turn-0 timeout.
-                queued_for = self._start_queue_saturated_secs(info, now)
+                queued_for = self._start_queue_saturated_secs(info, now, mono_now)
                 if queued_for:
                     logger.warning(
                         "Reaper: subagent %s never started: start queues saturated for %.0fs, "
@@ -1025,13 +1189,13 @@ class OrphanStallMonitor(ManagerComponent):
                         await self._manager._force_reap(
                             agent_id,
                             info,
-                            now - (info._exec_started or now),
+                            self._startup_elapsed(info, now, mono_now),
                             reason="start_queue_saturated",
                         )
                     except Exception:
                         logger.exception("Reaper: failed to reap %s", agent_id)
                     continue
-                if self._manager._is_startup_stalled(info, now):
+                if self._manager._is_startup_stalled(info, now, mono_now):
                     # The in-startup population is diagnostic only: the
                     # deadline is the fixed ``_startup_deadline`` whatever the
                     # crowd, on a clock paused while queued (``_gate_exit_reset``).
@@ -1048,13 +1212,13 @@ class OrphanStallMonitor(ManagerComponent):
                         await self._manager._force_reap(
                             agent_id,
                             info,
-                            now - (info._exec_started or now),
+                            self._startup_elapsed(info, now, mono_now),
                             reason="startup_timeout",
                         )
                     except Exception:
                         logger.exception("Reaper: failed to reap %s", agent_id)
                     continue
-                if self._is_first_prompt_silent(info, now):
+                if self._is_first_prompt_silent(info, now, mono_now):
                     # Imported here: this ``_impl`` resolves globals in ``subagent``.
                     from kiro_crew.subagent_manager.monitoring import _FIRST_PROMPT_SILENT_SECS
 
@@ -1068,7 +1232,7 @@ class OrphanStallMonitor(ManagerComponent):
                         await self._manager._force_reap(
                             agent_id,
                             info,
-                            now - (info._exec_started or now),
+                            self._startup_elapsed(info, now, mono_now),
                             reason="startup_timeout",
                         )
                     except Exception:
@@ -1107,7 +1271,9 @@ class OrphanStallMonitor(ManagerComponent):
             except Exception:
                 logger.debug("Reaper: tombstone pruning failed", exc_info=True)
 
-    def _is_startup_stalled_impl(self, info: SubagentInfo, now: float) -> bool:
+    def _is_startup_stalled_impl(
+        self, info: SubagentInfo, now: float, mono_now: float | None = None
+    ) -> bool:
         """True if a subagent is wedged in startup and should be reaped early.
 
         A subagent qualifies only once it has actually entered execution
@@ -1145,9 +1311,15 @@ class OrphanStallMonitor(ManagerComponent):
         exec_started = info._exec_started
         if exec_started is None:
             return False
+        gate_mark, queued_ms = info._gate_wait_started, info._start_queue_wait_ms
+        if mono_now is not None and info._exec_started_mono is not None:
+            # The run carries its monotonic stamps: measure on that clock, so a
+            # wall-clock step cannot reap a start in progress.
+            now, exec_started = mono_now, info._exec_started_mono
+            gate_mark, queued_ms = info._gate_wait_started_mono, info._start_queue_wait_mono_ms
         # Queued for a permit: the clock reads as it stood when the wait began.
-        clock_now = info._gate_wait_started if info._gate_wait_started is not None else now
-        starting = clock_now - exec_started - info._start_queue_wait_ms / 1000.0
+        clock_now = gate_mark if gate_mark is not None else now
+        starting = clock_now - exec_started - queued_ms / 1000.0
         return (
             info.turns == 0
             and info._pid is None
@@ -1155,7 +1327,9 @@ class OrphanStallMonitor(ManagerComponent):
             and starting > self._stamped_startup_deadline(info)
         )
 
-    def _is_first_prompt_silent(self, info: SubagentInfo, now: float) -> bool:
+    def _is_first_prompt_silent(
+        self, info: SubagentInfo, now: float, mono_now: float | None = None
+    ) -> bool:
         """True if *info* launched its runtime but nothing answered its first prompt.
 
         The complement of :meth:`_is_startup_stalled_impl`, which needs ``_pid is
@@ -1176,10 +1350,25 @@ class OrphanStallMonitor(ManagerComponent):
             and not self._manager._in_startup(info)
             and info._gate_wait_started is None
             and not info._awaiting_approval
-            and now - info.last_activity > _FIRST_PROMPT_SILENT_SECS
+            and self._idle_since_activity(info, now, mono_now) > _FIRST_PROMPT_SILENT_SECS
         )
 
-    def _start_queue_saturated_secs(self, info: SubagentInfo, now: float) -> float:
+    def _idle_since_activity(self, info: SubagentInfo, now: float, mono_now: float | None) -> float:
+        """Seconds since *info*'s last activity: on the monotonic clock when the
+        run carries its monotonic start stamp and *mono_now* is given."""
+        if mono_now is not None and info._exec_started_mono is not None:
+            return mono_now - info._last_activity_mono
+        return now - info.last_activity
+
+    def _startup_elapsed(self, info: SubagentInfo, now: float, mono_now: float) -> float:
+        """Seconds since *info* began executing, on the clock its watchdogs read."""
+        if info._exec_started_mono is not None:
+            return mono_now - info._exec_started_mono
+        return now - (info._exec_started or now)
+
+    def _start_queue_saturated_secs(
+        self, info: SubagentInfo, now: float, mono_now: float | None = None
+    ) -> float:
         """Seconds *info* has spent queued for start permits, when that is past
         :data:`_START_QUEUE_MAX_SECS` and it has still not started; else 0.
 
@@ -1192,9 +1381,13 @@ class OrphanStallMonitor(ManagerComponent):
         """
         if not self._manager._in_startup(info):
             return 0.0
-        queued = info._start_queue_wait_ms / 1000.0
-        if info._gate_wait_started is not None:
-            queued += max(0.0, now - info._gate_wait_started)
+        queued_ms, gate_mark = info._start_queue_wait_ms, info._gate_wait_started
+        if mono_now is not None and info._exec_started_mono is not None:
+            now = mono_now
+            queued_ms, gate_mark = info._start_queue_wait_mono_ms, info._gate_wait_started_mono
+        queued = queued_ms / 1000.0
+        if gate_mark is not None:
+            queued += max(0.0, now - gate_mark)
         return queued if queued > _START_QUEUE_MAX_SECS else 0.0
 
     def _stamped_startup_deadline(self, info: SubagentInfo) -> int:

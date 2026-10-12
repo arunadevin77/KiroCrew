@@ -198,14 +198,14 @@ async def test_a_pipeline_conductor_item_lands_on_a_workstreams_board(tmp_path, 
     assert "@kirocrew-work/work_ledger_record" in spec["allowedTools"]
 
     monkeypatch.setenv("KIROCREW_HOME", str(tmp_path / "home"))
-    routes._BOARD_LOCKS.clear()
+    routes._BOARD_LOCKS._locks.clear()
 
     async def _recognized(*a: Any, **k: Any) -> None:
         return None
 
     monkeypatch.setattr(routes, "_recognize_session", _recognized)
     monkeypatch.setattr(routes, "_is_restricted_session", lambda *a: False)
-    monkeypatch.setattr(routes, "_reaches_a_channel", lambda request, sk: False)
+    monkeypatch.setattr(routes, "reaches_a_channel", lambda state, sk: False)
     monkeypatch.setattr(routes.crew_log_emit, "enabled", lambda: True)
     monkeypatch.setattr(routes, "unit_for_session_key", lambda sessions, key: f"unit:{key}")
     recorded: list[dict[str, Any]] = []

@@ -1,4 +1,6 @@
 import { useRef, useEffect, useMemo, useCallback, useId, memo, lazy, Suspense } from 'react'
+import { GUIDE_KEEP_CLEAR } from '../guide/trustRoot'
+import { useGuidePredicate } from '../guide/guidePredicates'
 import { markComposerResize } from '../utils/composerResize'
 import { ArrowUp, Loader2, RotateCw, Sparkles, Target, CheckCircle, Lock, FolderOpen, ClipboardList, PenLine, MoreHorizontal, Terminal } from 'lucide-react'
 import SketchDialog from './SketchDialog'
@@ -41,6 +43,7 @@ import { useStopDeclinedHint } from '../hooks/useStopDeclinedHint'
 import { useScrollEdges } from '../hooks/useScrollEdges'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from './ui/dropdown-menu'
 import { i18nT } from '../i18n/t'
+import { uiLocation } from '../uiLocations/uiLocation'
 import { fmtDateFields } from '../i18n/format'
 import SessionRefStrip from './SessionRefStrip'
 import { Glass } from './Glass'
@@ -58,6 +61,7 @@ import { useAutoCompactThreshold } from './chat-input/autoCompact'
 import { AttachMenu, usePlusMenu } from './chat-input/attach'
 import { BusySendControls, CompactingIndicator, useComposerSend } from './chat-input/busySend'
 import { CollapsedComposerBar, collapseMenuRowElement, useComposerCollapse } from './chat-input/collapse'
+import { useGuideRevealScope } from '../guide/GuideRevealScope'
 import { useComposerFocus, useComposerKeyDown, useEditorInput } from './chat-input/keyboard'
 import { INPUT_DRAG_MIN_H, useManualHeight, useStripHeights, useTextareaAutosize } from './chat-input/sizing'
 import { usePromptHistory, useUndoHistory } from './chat-input/draftHistory'
@@ -177,6 +181,7 @@ function ChatInput({
   onFileSelect,
   onTreeEntryDrop,
   clampDropOffset,
+  onMentionKey,
   onFileOpen,
   project,
   projectBranch,
@@ -211,6 +216,7 @@ function ChatInput({
   autoFocusKey,
   inputAriaLabel,
   typedCommandMenus = true,
+  hiddenCommands,
   slotApprovalChrome = true,
   promptOptimizer = true,
   collapsible = false,
@@ -250,6 +256,7 @@ function ChatInput({
     onVoiceStop,
     voiceCaptureActive,
     voiceError = null,
+    voiceKeptRecording = null,
     voiceLevel = 0,
     voiceDeviceLabel = '',
     voiceDeviceId = '',
@@ -421,6 +428,8 @@ function ChatInput({
   const { botName } = useBranding()
   const isMobile = useIsMobile()
   const directFilePicker = isMobile || isTouchDevice()
+  // The "+" menu is drawn for a mouse; on touch the file picker opens directly.
+  useGuidePredicate('mouse_input', !isTouchDevice())
   const [attachControlRow, controlRowEdges, remeasureControlRow] = useScrollEdges<HTMLDivElement>()
   // The control row's chips are prop-driven (the auto-nudge loop chip, the
   // approval-mode picker) and appear or change label while the row keeps its
@@ -459,6 +468,9 @@ function ChatInput({
     : 'components.chatInput.continue_thread')
   const autoCompactThreshold = useAutoCompactThreshold({ activeSlot, ctxPopoverOpen, queryClient, dispatch })
   const { composerCollapsed, collapsedBarRef, collapseComposer, expandComposer, collapsedDraftLine } = useComposerCollapse({ collapsible, composerControl, value })
+  // The message box's guide scope (`composer.box`): a step through the
+  // collapsed bar completes the moment the box reads open again.
+  useGuideRevealScope('composer.box', !composerCollapsed)
   const collapseMenuRow = collapsible ? collapseMenuRowElement(() => { setPlusOpen(false); collapseComposer() }) : null
   // Refs mirror frequently-changing props/state read from inside the keydown handler
   // so it doesn't re-create on every keystroke.
@@ -544,7 +556,7 @@ function ChatInput({
     [promptOptimizer, connected, optimizePrompt],
   )
   const handleKeyDown = useComposerKeyDown({
-    rawPasteRef, handleUndoKey, endUndoBurst, handleTokenKey, promptOptimizer: promptOptimizer && !terminal.active, connected, optimizePrompt, sendOnEnter, onChange, optimizingRef,
+    rawPasteRef, handleUndoKey, endUndoBurst, handleTokenKey, onMentionKey, promptOptimizer: promptOptimizer && !terminal.active, connected, optimizePrompt, sendOnEnter, onChange, valueFromUserRef, optimizingRef,
     fireComposer, ime, sentMessages, onEditLastRequest, anyPickerOpenRef, promptHistory, valueRef, inputRef, pasteBlocksRef,
   })
   const { handleTextareaChange, handleLexicalChange } = useEditorInput({ onChange, valueFromUserRef, openPickersForText, recordCaret, lexicalControlRef, voiceCaretRef })
@@ -713,6 +725,7 @@ function ChatInput({
       <Glass
         radius={16}
         data-testid="composer-dock"
+        {...GUIDE_KEEP_CLEAR}
         className={hasApproval ? 'glass-shadow approval-glow' : 'glass-shadow'}
       >
       <AnimatePresence>
@@ -882,7 +895,7 @@ function ChatInput({
         <SketchDialog open={sketchOpen} onOpenChange={setSketchOpen} onInsert={onUploadFiles} returnFocusRef={composerAnchorRef} />
       )}
 
-      {!terminal.active && <ComposerPickerMenus pickers={pickers} value={value} onChange={onChange} composerAnchorRef={composerAnchorRef} sendOnEnter={sendOnEnter} typedCommandMenus={typedCommandMenus} project={project} agentName={agentName} onFileSelect={onFileSelect} onFileOpen={onFileOpen} />}
+      {!terminal.active && <ComposerPickerMenus pickers={pickers} value={value} onChange={onChange} composerAnchorRef={composerAnchorRef} sendOnEnter={sendOnEnter} typedCommandMenus={typedCommandMenus} hiddenCommands={hiddenCommands} project={project} agentName={agentName} onFileSelect={onFileSelect} onFileOpen={onFileOpen} />}
 
       {/* Unified input container — drag-to-resize targets the inner div. */}
       {/* The composer's SHOWN state is initial === animate ({opacity:1,height:auto}),
@@ -989,7 +1002,7 @@ function ChatInput({
         <VoiceCaptureStatus
           voiceHoldMode={voiceHoldMode} touchPtt={touchPtt} showDictation={showDictation} value={value} voicePartial={voicePartial}
           voiceDeviceLabel={voiceDeviceLabel} voiceDeviceId={voiceDeviceId} onSelectVoiceDevice={onSelectVoiceDevice} voiceDeviceSwitchIsLive={voiceDeviceSwitchIsLive}
-          voiceStreaming={voiceStreaming} voiceDownload={voiceDownload} voiceRecording={voiceRecording} voiceLevel={voiceLevel} voiceError={voiceError}
+          voiceStreaming={voiceStreaming} voiceDownload={voiceDownload} voiceRecording={voiceRecording} voiceLevel={voiceLevel} voiceError={voiceError} voiceKeptRecording={voiceKeptRecording}
           onClearVoiceError={onClearVoiceError} voiceDrainCancellable={voiceDrainCancellable} cancelVoiceDrain={cancelVoiceDrain} onVoiceToggle={onVoiceToggle}
           micHeldElsewhere={micHeldElsewhere} micHeldElsewhereLabel={micHeldElsewhereLabel} micHeldElsewhereAction={micHeldElsewhereAction} voiceHeldLanded={voiceHeldLanded}
         />
@@ -1307,6 +1320,7 @@ function ChatInput({
                 title={holdSend ? holdSendReason : undefined}
                 aria-label={i18nT('components.chatInput.send')}
                 {...offlineProps(connected, 'send', 'Send')}
+                {...uiLocation('composer.send')}
               >
                 <ArrowUp size={18} />
               </button>

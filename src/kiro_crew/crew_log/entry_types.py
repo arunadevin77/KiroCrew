@@ -66,6 +66,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from kiro_crew import context_omissions as _omissions
 from kiro_crew.crew_log.errors import CODE_BAD_DATA_FIELD, CrewLogError
 from kiro_crew.crew_log.schema import KIND_CREW, KIND_SESSION
 
@@ -158,6 +159,43 @@ class EntryType:
 
 def _turn(note: str = "Turn ordinal.") -> Field:
     return Field("turn", JSON_INT, required=True, note=note)
+
+
+#: One ``context/composed`` omission entry's members, shared by every block kind:
+#: a reason from a closed set, then whichever counts that block's decision has.
+_OMISSION_MEMBERS: tuple[Field, ...] = (
+    Field(
+        "reason",
+        JSON_STRING,
+        required=True,
+        enum=_omissions.REASONS,
+        enum_closed=True,
+        note="budget (a character budget), cap (a hard ceiling) or relevance (withheld).",
+    ),
+    Field("omitted", JSON_INT, note="Items left out."),
+    Field("total", JSON_INT, note="Items the block held before the cut."),
+    Field("budget_chars", JSON_INT, note="The budget or ceiling, in characters."),
+    Field("omitted_chars", JSON_INT, note="Characters left out, for a block cut by length."),
+    Field(
+        "sections",
+        JSON_ARRAY,
+        item_type=JSON_STRING,
+        note="Background sections left out: background_context, older_thread_history, skills.",
+    ),
+)
+
+_OMISSION_NOTES: dict[str, str] = {
+    _omissions.LESSON_RULES: "Standing lessons past the rule budget.",
+    _omissions.LESSON_FINDINGS: "Past findings past their budget, or withheld as off-topic.",
+    _omissions.PREFERENCE_FACTS: "pref.* memory rows past the startup budget.",
+    _omissions.PREFERENCES_FILE: "Preferences text past the protected-content ceiling.",
+    _omissions.BACKGROUND: "Background sections the admission pool had no room for.",
+    _omissions.MEMBER_BRIEFING: "A member briefing cut at its character cap.",
+    _omissions.FOLDER_STEERING: "Folder steering documents a collection or size ceiling left out.",
+}
+_OMISSION_KINDS: tuple[tuple[str, str], ...] = tuple(
+    (kind, _OMISSION_NOTES[kind]) for kind in _omissions.KINDS
+)
 
 
 #: The four billed token dimensions, each required INSIDE the mapping.
@@ -547,6 +585,37 @@ _PARENT_EDGE_FIELDS: tuple[Field, ...] = (
 OBJECT_PRODUCER_PROBE = "probe"
 OBJECT_PRODUCERS: tuple[str, ...] = (OBJECT_PRODUCER_PROBE,)
 
+#: What a change card can END as -- the card store's finished statuses. CLOSED: the
+#: store is the only writer and the emitter refuses anything else, so an entry
+#: naming another value is a bug at the call site rather than a vocabulary that grew.
+#: ``failed`` is finished but retryable, so a later ``applied`` can follow it.
+CARD_FINISHED_STATUSES: tuple[str, ...] = (
+    "applied",
+    "partial",
+    "failed",
+    "cancelled",
+    "expired",
+    "undone",
+)
+
+#: What a guide can END as, closed for the same reason.
+GUIDE_FINISHED_STATUSES: tuple[str, ...] = ("completed", "cancelled", "expired")
+#: Why a guide ended, when that is more than its status says. Closed.
+GUIDE_FINISHED_REASONS: tuple[str, ...] = ("saved_without_guide",)
+
+
+def _conversation_row(what: str) -> Field:
+    return Field(
+        "mid",
+        JSON_STRING,
+        note=(
+            f"Id of the transcript row the {what} is drawn at. The row and this entry are "
+            "the same fact in the two records; the id joins them. Absent when the "
+            "conversation had no live window to write the row into."
+        ),
+    )
+
+
 #: The conductor work board's vocabularies live in :mod:`kiro_crew.work_vocab`, a
 #: pure-data leaf outside this package, so the type declared below, the store and
 #: the tool schemas clamp to ONE set without the boot path loading this module.
@@ -807,6 +876,43 @@ _SESSION_TYPES: tuple[EntryType, ...] = (
             "edge away. A session/opened carrying no parent does not: it means the "
             "entry did not repeat a creator, which a reader must not read as a "
             "retraction, so the retraction needs a record of its own."
+        ),
+    ),
+    EntryType(
+        "session/spawned",
+        "This session created another one with session_create or session_fork.",
+        (
+            Field(
+                "child",
+                JSON_OBJECT,
+                required=True,
+                fields=(
+                    Field(
+                        "slot",
+                        JSON_STRING,
+                        required=True,
+                        note=(
+                            "The new session's slot key, minted by the gateway in the same "
+                            "call. The tree's own key, so this is the member a fold reads."
+                        ),
+                    ),
+                ),
+                note=(
+                    "The session this one created. The creator is not named in the "
+                    "entry: it is the session whose log holds it, which the log's own "
+                    "header states."
+                ),
+            ),
+        ),
+        note=(
+            "Recorded on the CREATOR's log at the moment of creation, because the "
+            "child has no log yet: its log is keyed by an ACP session id that only "
+            "exists after its first turn. Without this entry the creating edge lived "
+            "only in gateway memory until that turn, and a restart in between lost it.\n\n"
+            "A fold reads it as the child's creating edge only when none of the "
+            "child's own session/opened entries names a parent. A session/adopted or "
+            "session/released on the child's log still wins over it, the same way they "
+            "win over session/opened.parent."
         ),
     ),
     EntryType(
@@ -1081,6 +1187,19 @@ _SESSION_TYPES: tuple[EntryType, ...] = (
                     "describes neither. Absent on a log written before it was "
                     "recorded, and absent rather than guessed when the composer "
                     "does not state it."
+                ),
+            ),
+            Field(
+                "omitted",
+                JSON_OBJECT,
+                fields=tuple(
+                    Field(kind, JSON_OBJECT, fields=_OMISSION_MEMBERS, note=note)
+                    for kind, note in _OMISSION_KINDS
+                ),
+                note=(
+                    "What the composer's budgets cut, by block: counts, budgets and a "
+                    "reason, never the omitted content. Written only when something "
+                    "was cut, so an absent field means nothing was omitted."
                 ),
             ),
         ),
@@ -2245,6 +2364,113 @@ _SESSION_TYPES: tuple[EntryType, ...] = (
             "that was prevented. Best-effort like the publish entry -- the refusal is "
             "already on its way back to the caller, so a log that is off costs the "
             "mistake book this row and nothing else."
+        ),
+    ),
+    # -- Change cards and guides ---------------------------------------- #
+    EntryType(
+        "card/proposed",
+        "The agent proposed a change card, at this point in the conversation.",
+        (
+            Field("slot", JSON_STRING, required=True, note="The slot whose chat shows the card."),
+            Field("card_id", JSON_STRING, required=True, note="The card's id in the card store."),
+            Field("kind", JSON_STRING, required=True, note="The card kind, e.g. setting.change."),
+            Field(
+                "title",
+                JSON_STRING,
+                required=True,
+                note=(
+                    "The gateway's title for the change, redacted and clipped. Names only: "
+                    "a card's parameters are never recorded, and a secret card carries no "
+                    "value field at all."
+                ),
+            ),
+            Field("revision", JSON_INT, required=True, note="The card's revision when proposed."),
+            Field(
+                "risk", JSON_STRING, note="The computed risk: normal, tighten, widen, code_exec."
+            ),
+            Field(
+                "turn",
+                JSON_INT,
+                note="The turn that proposed it; absent when no turn was live in this log.",
+            ),
+            _conversation_row("card"),
+        ),
+        note=(
+            "Written when the propose call lands, in the same step that appends the card's "
+            "row to the transcript, so seq orders it against the tool call that made it. "
+            "The card's LIVE state stays the card store's; this log records the proposal "
+            "and each outcome, not the edits in between."
+        ),
+    ),
+    EntryType(
+        "card/finished",
+        "A change card reached a finished status.",
+        (
+            Field("card_id", JSON_STRING, required=True, note="The card's id."),
+            Field(
+                "status",
+                JSON_STRING,
+                required=True,
+                enum=CARD_FINISHED_STATUSES,
+                enum_closed=True,
+                note=(
+                    "The status the card entered. failed is retryable, so the newest entry "
+                    "per card_id is its outcome."
+                ),
+            ),
+            Field("revision", JSON_INT, required=True, note="The revision that finished."),
+        ),
+        note=(
+            "One entry per finished status the card ENTERS, written beside the in-place "
+            "update of its transcript row. No turn: a person confirms a card, usually "
+            "between turns."
+        ),
+    ),
+    EntryType(
+        "guide/offered",
+        "The agent offered a guide, at this point in the conversation.",
+        (
+            Field("slot", JSON_STRING, required=True, note="The slot whose chat shows the offer."),
+            Field(
+                "guide_id", JSON_STRING, required=True, note="The guide's id in the guide store."
+            ),
+            Field(
+                "actions",
+                JSON_ARRAY,
+                required=True,
+                item_type=JSON_STRING,
+                note="The registered action ids, in order. Never their parameters.",
+            ),
+            Field("turn", JSON_INT, note="The turn that offered it, when one was live."),
+            _conversation_row("offer"),
+        ),
+    ),
+    EntryType(
+        "guide/started",
+        "The person started an offered guide.",
+        (Field("guide_id", JSON_STRING, required=True, note="The guide's id."),),
+        note="Written the first time a tab claims the guide; a re-claim after a lapse is not.",
+    ),
+    EntryType(
+        "guide/finished",
+        "A guide ended.",
+        (
+            Field("guide_id", JSON_STRING, required=True, note="The guide's id."),
+            Field(
+                "status",
+                JSON_STRING,
+                required=True,
+                enum=GUIDE_FINISHED_STATUSES,
+                enum_closed=True,
+                note="How it ended.",
+            ),
+            Field(
+                "reason",
+                JSON_STRING,
+                enum=GUIDE_FINISHED_REASONS,
+                enum_closed=True,
+                note="Why, when the status alone misleads: a cancelled guide whose save went through.",
+            ),
         ),
     ),
 )

@@ -66,17 +66,16 @@ from kiro_crew.session_surface import has_dashboard_surface
 
 logger = logging.getLogger(__name__)
 
-QUESTION_CARD_SHOWN_PREFIX = "Question card shown in this session."
 QUIET_END_OUTCOME_PREFIX = "Nothing new to report."
 
 # The directives whose SUCCESSFUL application is the turn's intended terminal
-# output: the tool tells the model to end without a closing reply, so the
+# output: the model ends the turn without a closing reply, so the
 # runner must not read the textless end as a failed generation. Membership
 # here is documentation and a test pin; the runtime signal is
 # ``DirectiveOutcome.ends_turn``, set by the applier only on the path where the
-# effect actually landed (a card the user can see; a quiet end recorded), never
+# effect actually landed (a quiet end recorded), never
 # derived from the outcome prose.
-TERMINAL_DIRECTIVES = frozenset({"ask_question", "nothing_to_do"})
+TERMINAL_DIRECTIVES = frozenset({"nothing_to_do"})
 
 
 @dataclass(frozen=True)
@@ -97,8 +96,9 @@ class DirectiveOutcome:
 
 # Card directives require a connected dashboard surface. ``set_project`` is
 # admitted by the user-surface provenance gate below, then separately requires
-# the current turn to own the slot it would mutate.
-_DASHBOARD_ONLY_DIRECTIVES = frozenset({"suggest_followup", "ask_question"})
+# the current turn to own the slot it would mutate. (``ask_question`` is not a
+# directive: it blocks and returns the answers as its own tool result.)
+_DASHBOARD_ONLY_DIRECTIVES = frozenset({"suggest_followup"})
 _USER_SURFACE_DIRECTIVES = frozenset({"set_project", "reset_conversation", "chat_tag"})
 # Directives whose effect is "this session will be woken later". A refusal of
 # one of these is the failure the caller can least observe: the MCP tool has
@@ -130,6 +130,12 @@ _STOP_DIRECTIVES = frozenset({"monitor_stop", "autonudge_stop"})
 # Transcript row prefix for a refused arm. Fixed text so the frontend and tests
 # can match on it; the authorizer's reason follows the colon.
 ARM_REFUSAL_NOTICE_PREFIX = "⚠️ Automation loop NOT armed: "
+# ``meta.kind`` stamped on every arm/revision/stop refusal notice. The crewmate
+# chat's notice allowlist (``crewmateBubbles.CREWMATE_HIDDEN_NOTICE_KINDS``)
+# hides a notice ONLY by its kind, so a refusal must carry one to be dropped
+# there; every other notice (a dropped queued message, a model-fallback hint)
+# keeps drawing. Fixed string, mirrored by that allowlist and the tests.
+ARM_REFUSAL_NOTICE_KIND = "arm_refusal"
 ARM_SUCCESS_NOTICE_PREFIX = "✅ Automation loop armed: "
 # Same contract for a refused revision. Deliberately NOT the arm wording: a
 # denied monitor_update leaves a loop in place, so "NOT armed" would report the
@@ -142,6 +148,19 @@ REVISION_REFUSAL_NOTICE_PREFIX = (
 # armed and nothing was revised, and the loop the refusal names is untouched.
 STOP_REFUSAL_NOTICE_PREFIX = "⚠️ Automation loop NOT stopped: "
 
+# Live-only queue-entry meta keys that carry the ORIGINATING wake's provenance
+# across the re-routed refusal into the crewmate's successor turn. The refusal
+# enqueue is a system-injection kind, so the entry is NON-DURABLE
+# (`_is_durable_queue_entry` excludes any entry carrying a `kind`) and these
+# never reach disk — matching the rule that provenance flags grant authority
+# and are never persisted, so a hand-edited restored queue line cannot forge
+# self-wake authority. The drain reads them off the live entry and sets
+# `_run_chat`'s `_directive_self_wake` / `_directive_loop_id`, so a crewmate
+# that retries `monitor_stop` from this successor turn still hits the stale-wake
+# guard instead of removing a paused loop record a person kept.
+REFUSAL_SELF_WAKE_META_KEY = "refusalSelfWake"
+REFUSAL_WAKE_LOOP_ID_META_KEY = "refusalWakeLoopId"
+
 
 def _surface_arm_refusal(
     state: Any,
@@ -150,6 +169,9 @@ def _surface_arm_refusal(
     reason: str,
     *,
     prefix: str = ARM_REFUSAL_NOTICE_PREFIX,
+    session_key: str = "",
+    producer_is_self_wake: bool = False,
+    producer_wake_loop_id: str = "",
 ) -> None:
     """Append a ``notice`` row so a refused arm is VISIBLE where the session lives.
 
@@ -161,6 +183,17 @@ def _surface_arm_refusal(
     thread's reader, the next turn's transcript replay) is a row of its own, so
     a refusal gets one. Slot-less callers (a channel transport's TurnDriver)
     have no transcript window; the returned string is their only surface.
+
+    A crewmate's DM is the one surface where the ``notice`` row does not reach
+    its reader: that chat draws messages only (``crewmateBubbles.isCrewmateChatRow``
+    drops every ``notice``), and a ``notice`` row is not one of the roles the
+    history replay feeds back to the model either, so there a refused arm would
+    reach NEITHER the person nor the crewmate. For a member session the refusal
+    is therefore ALSO queued for the crewmate's next turn as an injected
+    message -- the same path a ``[Cron notification]`` takes -- so the crewmate
+    can stop and re-arm the loop itself. The person-facing ``notice`` row is
+    still written (it stays the surface for every non-crewmate session, and the
+    Sessions page keeps drawing it).
 
     ``prefix`` selects the wording for the class of directive that was refused
     (an arm by default, a revision for ``monitor_update``, a stop for
@@ -184,9 +217,72 @@ def _surface_arm_refusal(
         # transcript egress before it is persisted or broadcast.
         text, _ = redact_exfiltration_urls(f"{prefix}{reason}")
         text, _ = redact_credentials(text)
-        append_and_surface(state, slot, "notice", text, "msg msg-info")
+        append_and_surface(
+            state, slot, "notice", text, "msg msg-info", meta={"kind": ARM_REFUSAL_NOTICE_KIND}
+        )
+        _deliver_refusal_to_crewmate(
+            slot,
+            session_key,
+            text,
+            producer_is_self_wake=producer_is_self_wake,
+            producer_wake_loop_id=producer_wake_loop_id,
+        )
     except Exception:
         logger.debug("arm-refusal notice for %s could not be surfaced", kind, exc_info=True)
+
+
+def _deliver_refusal_to_crewmate(
+    slot: Any,
+    session_key: str,
+    text: str,
+    *,
+    producer_is_self_wake: bool = False,
+    producer_wake_loop_id: str = "",
+) -> None:
+    """Queue the refusal for a crewmate's next turn, so the agent still sees it.
+
+    A crewmate's DM draws messages only and never replays a ``notice`` row to
+    the model, so the ``notice`` written above reaches neither its reader nor
+    the crewmate. Only there is a second surface needed: the refusal is queued
+    with ``AUTOMATION_NOTICE_KIND`` so it drains as an ``inject`` row (never a
+    ``user`` row shown as the person's own bubble) that the crewmate's next turn
+    carries, and the crewmate can call ``monitor_stop`` + ``monitor_start``
+    itself. Every other session keeps the ``notice`` row as its only surface.
+
+    When the refused directive was itself delivered by the loop's own wake, the
+    originating ``producer_is_self_wake`` / ``producer_wake_loop_id`` are stamped
+    on the (non-durable) entry meta so the drain can rebuild them on the
+    successor turn: a crewmate that retries ``monitor_stop`` from that turn then
+    still passes the stale-wake guard rather than silently removing a paused loop
+    record a person kept. The entry carries a ``kind``, so it is never persisted
+    (`_is_durable_queue_entry`) and the authority these flags grant cannot be
+    forged by a hand-edited restored queue line.
+
+    Best-effort, like its caller: a delivery failure is telemetry about a
+    refusal already audited and must never fail the denial. The system-injection
+    kind makes an idle crewmate pick it up on its next drain, and keeps it out of
+    a user-message merge (``steer_queue``), so it is never counted as the person
+    stepping in.
+    """
+    from kiro_crew.dashboard.chat_utils import AUTOMATION_NOTICE_KIND
+    from kiro_crew.members import is_member_session_key
+
+    key = session_key or getattr(slot, "key", "") or ""
+    if not is_member_session_key(key):
+        return
+    append = getattr(slot, "queue_append", None)
+    if not callable(append):
+        return
+    meta: dict[str, Any] | None = None
+    if producer_is_self_wake:
+        # Carry the originating wake's provenance to the successor turn, so a
+        # retried stop from it still passes the stale-wake guard. Only when the
+        # refused directive was itself a self-wake, so an ordinary refusal does
+        # not fabricate wake authority.
+        meta = {REFUSAL_SELF_WAKE_META_KEY: True}
+        if producer_wake_loop_id:
+            meta[REFUSAL_WAKE_LOOP_ID_META_KEY] = producer_wake_loop_id
+    append(f"[Automation notice] {text}", kind=AUTOMATION_NOTICE_KIND, meta=meta)
 
 
 def _surface_arm_success(state: Any, slot: Any, summary: str) -> None:
@@ -238,6 +334,12 @@ def _describe_next_wake(loop: Any, *, verb: str = "first wake") -> str:
     remaining = max(0, int(round(due - time.time())))
     stamp = time.strftime("%H:%M:%S UTC", time.gmtime(due))
     return f"{verb} in ~{remaining}s ({stamp})"
+
+
+# The provenance gate's set: the user-surface directives plus ``suggest_followup``,
+# whose surface gate alone (``_DASHBOARD_ONLY_DIRECTIVES``) only asks whether a tab
+# exists -- which a cron or sub-agent turn riding a user's slot satisfies.
+_USER_ORIGIN_DIRECTIVES = _USER_SURFACE_DIRECTIVES | frozenset({"suggest_followup"})
 
 
 def _has_user_surface(session_key: str) -> bool:
@@ -380,19 +482,27 @@ async def apply_session_directive_outcome(
         and _has_user_surface(session_key)
     )
     if (
-        kind in _USER_SURFACE_DIRECTIVES
+        kind in _USER_ORIGIN_DIRECTIVES
         and not wake_reset
         and (not producer_is_user_facing or not _has_user_surface(session_key))
     ):
         # A cron turn can run on a user's slot and a sub-agent can share its
-        # parent's slot. Positive admission prevents either from silently
-        # retargeting the user's project/CWD.
+        # parent's slot, so both inherit a surface they never opened.
         _audit(session_key, kind, "denied")
+        if kind in _USER_SURFACE_DIRECTIVES:
+            # Unchanged wording: extending the set must not silently reword an
+            # unrelated tool's refusal.
+            return DirectiveOutcome(
+                f"Error: {kind} only works from a user-facing session (dashboard "
+                f"or a messaging channel); headless callers such as cron jobs and "
+                f"sub-agents are refused (this turn is {session_key!r}). "
+                "Nothing was changed."
+            )
         return DirectiveOutcome(
-            f"Error: {kind} only works from a user-facing session (dashboard "
-            f"or a messaging channel); headless callers such as cron jobs and "
-            f"sub-agents are refused (this turn is {session_key!r}). "
-            "Nothing was changed."
+            f"Error: {kind} only works from a turn a person sent; cron jobs, "
+            f"sub-agents, task-runner turns and this session's own wakes are "
+            f"refused even when this session has an open dashboard tab "
+            f"(this turn is {session_key!r}). Nothing was changed."
         )
     # SELF-ARM PROVENANCE: which turns count as "the session's own" for the
     # crew/member rule. Two producers, each named explicitly: a turn a HUMAN
@@ -483,8 +593,6 @@ async def apply_session_directive_outcome(
             result = await _apply_chat_tag(state, slot, session_key, args)
         elif kind == "suggest_followup":
             result = await _suggest_followup(state, slot, args)
-        elif kind == "ask_question":
-            result = await _ask_question(state, slot, args)
         elif kind == "nothing_to_do":
             result = _nothing_to_do(
                 args,
@@ -504,7 +612,15 @@ async def apply_session_directive_outcome(
             exc,
         )
         if kind in _ARMING_DIRECTIVES:
-            _surface_arm_refusal(state, slot, kind, str(exc))
+            _surface_arm_refusal(
+                state,
+                slot,
+                kind,
+                str(exc),
+                session_key=session_key,
+                producer_is_self_wake=producer_is_self_wake,
+                producer_wake_loop_id=producer_wake_loop_id,
+            )
         elif kind in _REVISION_DIRECTIVES:
             _surface_arm_refusal(
                 state,
@@ -512,6 +628,9 @@ async def apply_session_directive_outcome(
                 kind,
                 str(exc),
                 prefix=REVISION_REFUSAL_NOTICE_PREFIX,
+                session_key=session_key,
+                producer_is_self_wake=producer_is_self_wake,
+                producer_wake_loop_id=producer_wake_loop_id,
             )
         elif kind in _STOP_DIRECTIVES:
             _surface_arm_refusal(
@@ -520,6 +639,9 @@ async def apply_session_directive_outcome(
                 kind,
                 str(exc),
                 prefix=STOP_REFUSAL_NOTICE_PREFIX,
+                session_key=session_key,
+                producer_is_self_wake=producer_is_self_wake,
+                producer_wake_loop_id=producer_wake_loop_id,
             )
         return DirectiveOutcome(str(exc))
     except Exception as exc:  # never propagate into the turn loop
@@ -2061,41 +2183,20 @@ async def _suggest_followup(state: Any, slot: Any, args: dict[str, Any]) -> str:
             "restate the follow-ups in your reply text so they are not lost."
         )
     if not getattr(slot, "project", ""):
-        # The card renders "Start in new worktree" DISABLED when the slot has no
-        # project directory (FollowUpCard.tsx gates on projectDir), and this
-        # confirmation is the model's only window into that: without it the
-        # agent recommends the worktree route in sessions where it can never
-        # work — Research Lab worker slots, for one, are created unscoped
-        # (auto_research/handlers.py) — and steers the user into a dead button.
+        # With no project directory the card has no repository to branch, so
+        # its first button is "Start in new chat" (FollowUpCard.tsx gates on
+        # projectDir): a plain new chat with no worktree. This confirmation is
+        # the model's only window into that, so it can describe the card the
+        # user actually sees — Research Lab worker slots, for one, are created
+        # unscoped (auto_research/handlers.py).
         return (
             "Follow-up card shown below the composer. Note: this session has no "
-            "project directory, so the card's 'Start in new worktree' button is "
-            "disabled. Point the user at 'Add to this session' instead, or "
-            "suggest they scope a project first (the composer's Project chip)."
+            "project directory, so the card offers 'Start in new chat' (a new "
+            "chat with no worktree) instead of 'Start in new worktree', beside "
+            "'Add to this session'. For isolated git work, suggest the user "
+            "scope a git repository first (the composer's Project chip)."
         )
     return "Follow-up card shown below the composer."
-
-
-async def _ask_question(state: Any, slot: Any, args: dict[str, Any]) -> DirectiveOutcome:
-    """Post a NON-BLOCKING question card to this session's slot. The card
-    carries no ask_id, so the frontend submit sends the answers as an ordinary
-    next message that resumes the session — the agent must END its turn now.
-    Only the SHOWN path ends the turn: a dropped card leaves the model owing a
-    plain-text question, so the empty-response recovery stays armed."""
-    post = getattr(state, "post_question_card", None)
-    if post is None:
-        return DirectiveOutcome("Question card could not be delivered (no card channel).")
-    clients = int(await post(slot.key, args.get("questions") or []))
-    if clients == 0:
-        return DirectiveOutcome(
-            "Question posted, but no dashboard client is attached to see it — "
-            "ask in plain text and end your turn instead."
-        )
-    return DirectiveOutcome(
-        f"{QUESTION_CARD_SHOWN_PREFIX} End your turn now — the user's "
-        "answer will arrive as your next message; do not re-ask or guess.",
-        ends_turn=True,
-    )
 
 
 QUIET_END_REFUSED_USER_TURN = (

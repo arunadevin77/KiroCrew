@@ -2229,6 +2229,162 @@ test("linux refuses the respawn too, where unverifiedIncumbent is false by desig
   assert.deepStrictEqual(quits, []);
 });
 
+// A same-version gateway that answers /api/status but reports shutting-down on
+// /api/ready is waited out, never adopted. On Windows a socket lookup that names
+// no PID hands the decision to the `kirocrew gateway-pid` lock probe. The probe
+// answer is scripted per test; `quits` records a backoff cancellation, because
+// the harness reports the app quitting as soon as the probe has answered once
+// (so a transient miss stops at the first backoff check instead of sleeping).
+function drainingGatewayHarness({ isPackaged = false, gatewayPid }) {
+  const state = { held: true, failNetstatCall: 2, gatewayPidCalls: 0 };
+  const ownerExecFile = windowsOwnerExecFile(state);
+  const quits = [];
+  let built = null;
+  built = harness({
+    app: { getVersion: () => PROD_VERSION, isPackaged },
+    httpMod: {
+      get(url, _options, callback) {
+        const request = new EventEmitter();
+        request.destroy = () => {};
+        queueMicrotask(() => {
+          const ready = String(url).includes("/api/ready");
+          const response = new EventEmitter();
+          response.statusCode = ready ? 503 : 200;
+          response.resume = () => {};
+          callback(response);
+          response.emit("data", ready
+            ? JSON.stringify({ ready: false, shutting_down: true })
+            : JSON.stringify({ ok: true, app: "kirocrew", version: PROD_VERSION }));
+          response.emit("end");
+        });
+        return request;
+      },
+    },
+    execFileFn: (file, args, options, callback) => {
+      if (Array.isArray(args) && args.includes("gateway-pid")) {
+        state.gatewayPidCalls += 1;
+        gatewayPid(callback);
+        return;
+      }
+      ownerExecFile(file, args, options, callback);
+    },
+    isQuitting: () => Boolean(built) && built.logs.some((line) => line.includes("lock probe") || line.includes("gateway-pid")),
+    requestQuit: () => quits.push("quit"),
+    processRef: {
+      platform: "win32",
+      arch: "x64",
+      env: { KIROCREW_HOME: "/virtual/kirocrew-home" },
+      resourcesPath: "/virtual/resources",
+      kill() { /* the incumbent stays alive */ },
+    },
+  });
+  return { ...built, state, quits };
+}
+
+test("win32 drain: an indeterminate lock ends the launch on the probe-failed error, without backing off", async () => {
+  const { supervisor, logs, spawnCalls, state, quits } = drainingGatewayHarness({
+    gatewayPid: (callback) => {
+      const error = new Error("Command failed: kirocrew gateway-pid");
+      error.code = 2;
+      callback(error, `${JSON.stringify({ holder: "indeterminate", reason: "lock file unreadable" })}\n`, "");
+    },
+  });
+
+  assert.strictEqual(await supervisor.start(), false);
+  assert.strictEqual(spawnCalls.length, 0, "nothing is spawned over a lock that could not be read");
+  assert.strictEqual(state.gatewayPidCalls, 1, "the refusal is not retried");
+  assert.ok(logs.some((line) => line.includes("lock probe is indeterminate (lock file unreadable)")));
+  assert.ok(logs.some((line) => line.includes("drain: could not verify the incumbent on :5476")));
+  assert.ok(!logs.some((line) => line.includes("trying again in")), "no backoff for a refusal");
+  assert.deepStrictEqual(quits, [], "the launch ends on its error, not on a cancelled backoff");
+});
+
+test("win32 drain: a packaged app with no bundled backend ends on the probe-failed error, without backing off", async () => {
+  const { supervisor, logs, spawnCalls, state, quits } = drainingGatewayHarness({
+    isPackaged: true,
+    gatewayPid: () => { throw new Error("a packaged app must not run kirocrew from PATH"); },
+  });
+
+  assert.strictEqual(await supervisor.start(), false);
+  assert.strictEqual(spawnCalls.length, 0);
+  assert.strictEqual(state.gatewayPidCalls, 0, "the PATH fallback is refused before anything runs");
+  assert.ok(logs.some((line) => line.includes("lock probe REFUSED: no bundled backend")));
+  assert.ok(logs.some((line) => line.includes("drain: could not verify the incumbent on :5476")));
+  assert.ok(!logs.some((line) => line.includes("trying again in")), "no backoff for a refusal");
+  assert.deepStrictEqual(quits, []);
+});
+
+test("win32 drain: a lock probe that times out is backed off, not ended on the error", async () => {
+  const { supervisor, logs, spawnCalls, state, quits } = drainingGatewayHarness({
+    gatewayPid: (callback) => {
+      const error = new Error("Command failed: kirocrew gateway-pid");
+      error.killed = true;
+      error.signal = "SIGTERM";
+      callback(error, "", "");
+    },
+  });
+
+  assert.strictEqual(await supervisor.start(), false);
+  assert.strictEqual(spawnCalls.length, 0, "a transient miss never spawns blind");
+  assert.strictEqual(state.gatewayPidCalls, 1);
+  assert.ok(logs.some((line) => line.includes("gave no usable answer")));
+  assert.ok(!logs.some((line) => line.includes("could not verify the incumbent")), "a timeout is not a refusal");
+  assert.deepStrictEqual(quits, ["quit"], "the miss reached the backoff, which the quitting app cancelled");
+});
+
+test("win32 drain: a lock probe reporting ETIMEDOUT is backed off as a timeout", async () => {
+  const { supervisor, logs, spawnCalls, state, quits } = drainingGatewayHarness({
+    gatewayPid: (callback) => {
+      const error = new Error("Command failed: kirocrew gateway-pid ETIMEDOUT");
+      error.code = "ETIMEDOUT";
+      callback(error, "", "");
+    },
+  });
+
+  assert.strictEqual(await supervisor.start(), false);
+  assert.strictEqual(spawnCalls.length, 0);
+  assert.strictEqual(state.gatewayPidCalls, 1);
+  assert.ok(!logs.some((line) => line.includes("could not verify the incumbent")), "a timeout is not a refusal");
+  assert.deepStrictEqual(quits, ["quit"], "the miss reached the backoff, which the quitting app cancelled");
+});
+
+// A probe that could not be started, or that ran to completion without
+// printing an answer, gets the same result on every later attempt: a missing
+// or unexecutable interpreter, or a backend that fails on import. Backing off
+// on it would keep the retry status up for good, so it ends on the
+// probe-failed error like any other refusal, and nothing is spawned.
+for (const [label, reply] of [
+  ["the interpreter is missing (ENOENT)", { code: "ENOENT", errno: -2, syscall: "spawn python.exe" }],
+  ["the interpreter is not executable (EACCES)", { code: "EACCES", errno: -13, syscall: "spawn python.exe" }],
+  ["the backend exits non-zero without printing", { code: 1, stderr: "Traceback (most recent call last):\nImportError: no module\n" }],
+  ["the backend exits 0 with no JSON on stdout", { ok: true, stdout: "not json\n" }],
+]) {
+  test(`win32 drain: a lock probe that gives no answer because ${label} ends on the probe-failed error, without backing off`, async () => {
+    const { supervisor, logs, spawnCalls, state, quits } = drainingGatewayHarness({
+      gatewayPid: (callback) => {
+        if (reply.ok) {
+          callback(null, reply.stdout, "");
+          return;
+        }
+        const error = new Error(`spawn failed: ${reply.code}`);
+        error.code = reply.code;
+        if (reply.errno !== undefined) error.errno = reply.errno;
+        if (reply.syscall) error.syscall = reply.syscall;
+        error.killed = false;
+        error.signal = null;
+        callback(error, "", reply.stderr || "");
+      },
+    });
+
+    assert.strictEqual(await supervisor.start(), false);
+    assert.strictEqual(spawnCalls.length, 0, "nothing is spawned without a lock answer");
+    assert.strictEqual(state.gatewayPidCalls, 1, "a probe that cannot answer is not retried");
+    assert.ok(logs.some((line) => line.includes("drain: could not verify the incumbent on :5476")));
+    assert.ok(!logs.some((line) => line.includes("trying again in")), "no backoff when the probe cannot answer");
+    assert.deepStrictEqual(quits, [], "the launch ends on its error, not on a cancelled backoff");
+  });
+}
+
 // ---------------------------------------------------------------------------
 // "Installation still finishing" dialog: auto-retry while the bundle lands.
 // ---------------------------------------------------------------------------
@@ -3114,8 +3270,14 @@ function stuckHolderHarness({
   owner = OWN_GATEWAY_COMMAND, healthy = false, lockPid = 4242, holdsLock = true,
   response = 0, ppid = 500, stopFails = false, rebinds = false, swapAfterDialog = false,
   replacedBy = 0, pidAfterDialog = 0, lockRealPath = "", exitsDuringDialog = false,
-  refusedForPid = 0, platform = "linux",
+  refusedForPid = 0, platform = "linux", env = { KIROCREW_PORT: "9999" },
+  bundledBin = false,
 } = {}) {
+  // The one bundled launcher candidate findKirocrewBin probes first for this
+  // harness's arch (arm64) + resourcesPath. When bundledBin is set, accessSync
+  // answers X_OK for it, so resolveGatewayBin returns the bundled binary and
+  // both the stop and the follow-on spawn run it (the real stuck-restart flow).
+  const BUNDLED_STUCK_BIN = "/virtual/resources/backend-dist/kirocrew-backend-arm64/bin/kirocrew";
   const execCalls = [];
   const dialogs = [];
   const state = { listening: true, quits: 0 };
@@ -3140,7 +3302,7 @@ function stuckHolderHarness({
     : rejectingHttp();
   const instance = harness({
     processRef: {
-      platform, arch: "arm64", env: { KIROCREW_PORT: "9999" }, resourcesPath: "/virtual/resources",
+      platform, arch: "arm64", env, resourcesPath: "/virtual/resources",
       kill(_pid, signal) {
         if (signal === 0) { const error = new Error("gone"); error.code = "ESRCH"; throw error; }
         throw new Error("the supervisor must never signal the stuck gateway itself");
@@ -3149,7 +3311,10 @@ function stuckHolderHarness({
     fsMod: {
       constants: { X_OK: 1 },
       mkdirSync() {},
-      accessSync() { const error = new Error("not found"); error.code = "ENOENT"; throw error; },
+      accessSync(target) {
+        if (bundledBin && target === BUNDLED_STUCK_BIN) return;
+        const error = new Error("not found"); error.code = "ENOENT"; throw error;
+      },
       existsSync() { return false; },
       openSync() { return 41; },
       closeSync() {},
@@ -3258,6 +3423,37 @@ test("a stuck gateway for this data folder is stopped through the CLI, then the 
   assert.equal(stops[0].options.env.KIROCREW_PORT, undefined);
   assert.equal(built.spawnCalls.length, 1, "the bundled backend starts after the stop");
   assert.deepEqual(built.spawnCalls[0][1].slice(0, 4), ["gateway", "--no-open", "--port", "5476"]);
+});
+
+test("the stuck-gateway stop strips PYTHONPATH/PYTHONHOME from the bundled binary's env", async () => {
+  // runGatewayStop execFile's the SAME bundled binary the launch path spawns, so
+  // it must inherit the same scrubbed environment. A bundled Python left with an
+  // inherited PYTHONPATH/PYTHONHOME from a dev shell would import checkout code
+  // instead of its packaged tree -- the override isolation this PR exists to
+  // enforce, applied only to the launch path, left a hole on the stop path.
+  const built = stuckHolderHarness({
+    bundledBin: true,
+    env: {
+      KIROCREW_PORT: "9999",
+      PYTHONPATH: "/home/dev/checkout/src",
+      PYTHONHOME: "/home/dev/other-python",
+      PATH: "/usr/bin",
+    },
+  });
+  assert.equal(await built.supervisor.start(), true);
+  const stops = built.stopCalls();
+  assert.equal(stops.length, 1, "the lock-checked CLI stop ran once");
+  // The binary it stops is the bundled one (under backend-dist), so the scrub
+  // applies -- the same bin the follow-on spawn uses.
+  assert.ok(stops[0].file.includes("backend-dist"), "the stop runs the bundled binary");
+  const stopEnv = stops[0].options.env;
+  assert.equal(stopEnv.PYTHONPATH, undefined, "PYTHONPATH must be stripped for the bundled stop");
+  assert.equal(stopEnv.PYTHONHOME, undefined, "PYTHONHOME must be stripped for the bundled stop");
+  // The scrub is narrow: KIROCREW_HOME is still set, KIROCREW_PORT still dropped,
+  // and an unrelated inherited var (PATH) is preserved.
+  assert.equal(stopEnv.KIROCREW_HOME, "/virtual/kirocrew-home");
+  assert.equal(stopEnv.KIROCREW_PORT, undefined);
+  assert.equal(stopEnv.PATH, "/usr/bin", "an unrelated inherited var is preserved");
 });
 
 test("declining the stuck-gateway restart quits without stopping or spawning", async () => {

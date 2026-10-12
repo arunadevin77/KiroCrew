@@ -240,10 +240,15 @@ that.
   DIRECT settings hit (the query is a substring of the title) is the user naming the setting, so
   it ranks up to `PER_GROUP_LIMIT` like any row and searching settings on their own name surfaces
   every one of them. The full settings corpus stays one `view` row away regardless.
-  **Known gap:** rows past a root cap are dropped silently. The artifacts view does not share
-  that gap — it renders a `+N more` line under its list, outside the listbox so it cannot become
-  an option that Enter does nothing with — and that line is the shape to copy when this one is
-  closed.
+  **Known gap:** rows past a root cap are dropped silently for the `commands`, `apps` and
+  `settings` groups. The `attention` group no longer shares it (#12622): a session waiting on
+  the reader has no `view` to recover it from, so past `PER_GROUP_LIMIT` `rankRootRows` counts
+  the held-back rows and ends the group on a `+N more blocked` overflow row
+  (`attentionOverflowRow`, id `attention:more`); pressing it sets `attentionExpanded`, which
+  lifts the cap for that group in place without recording frecency or closing the bar. The
+  artifacts view does not share the remaining gap either — it renders a `+N more` line under its
+  list, outside the listbox so it cannot become an option that Enter does nothing with — and that
+  line is the shape to copy when the other root caps are closed.
 - `idleDemote` sorts a row to the end of its group while the query is EMPTY, at a cost sized
   to lose to a single real use. The empty-query order is frecency, so on a cold install every
   score is zero and the alphabet alone decides what the launcher opens on. It is DERIVED, not

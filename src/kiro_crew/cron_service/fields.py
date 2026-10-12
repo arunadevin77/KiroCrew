@@ -117,6 +117,52 @@ def _validate_cron_string_fields(
                 raise ValueError(f"{field_name} exceeds max length {cap}")
 
 
+def _check_timeout_secs_range(timeout_secs: int) -> None:
+    if not 1 <= timeout_secs <= 86400:
+        raise ValueError(f"timeout_secs must be within 1..86400, got {timeout_secs}")
+
+
+def _check_timeout_range(timeout: int) -> None:
+    if not 0 <= timeout <= 86400:
+        raise ValueError(f"timeout must be within 0..86400, got {timeout}")
+
+
+def validate_create_timeouts(
+    timeout: int, timeout_secs: int, *, command: str = "", script: str = ""
+) -> None:
+    """Refuse a create-time ``timeout``/``timeout_secs`` pair :func:`build_job` would refuse.
+
+    The one owner of the create-time rule: :func:`build_job` calls it, and so
+    does app-manifest validation, so an ``app.json`` cron is held to exactly the
+    check its job will meet at registration. ``0`` means the default for both.
+    ``timeout`` must be within 0..86400 and ``timeout_secs`` within 1..86400
+    (the same ranges :func:`apply_job_update` applies). On a command or script
+    job ``timeout_secs`` must also cover the subprocess timeout (``timeout``,
+    else 30s for a script and 300s for a command) plus the cleanup allowance.
+    Raises ``ValueError``.
+    """
+    if timeout:
+        _check_timeout_range(int(timeout))
+    if timeout_secs:
+        _check_timeout_secs_range(int(timeout_secs))
+    if timeout_secs and (command or script):
+        if timeout:
+            _eff_sub = int(timeout)
+        elif script:
+            _eff_sub = 30
+        else:
+            _eff_sub = 300
+        if int(timeout_secs) < _eff_sub + _SUBPROC_CLEANUP_ALLOWANCE_SECS:
+            raise ValueError(
+                "timeout_secs (wake budget) must cover the command/script "
+                f"subprocess timeout plus cleanup: need >= "
+                f"{_eff_sub + _SUBPROC_CLEANUP_ALLOWANCE_SECS}, got {timeout_secs}. "
+                "A shorter wake budget cancels only the executor future — "
+                "the subprocess keeps running while the next wake launches "
+                "a duplicate."
+            )
+
+
 def build_job(
     name: str,
     message: str,
@@ -209,24 +255,7 @@ def build_job(
     )
     if chat_folder_id and not persistent_session:
         raise ValueError(_CHAT_FOLDER_NEEDS_PERSISTENT)
-    if timeout_secs and not 1 <= int(timeout_secs) <= 86400:
-        raise ValueError(f"timeout_secs must be within 1..86400, got {timeout_secs}")
-    if timeout_secs and (command or script):
-        if timeout:
-            _eff_sub = int(timeout)
-        elif script:
-            _eff_sub = 30
-        else:
-            _eff_sub = 300
-        if int(timeout_secs) < _eff_sub + _SUBPROC_CLEANUP_ALLOWANCE_SECS:
-            raise ValueError(
-                "timeout_secs (wake budget) must cover the command/script "
-                f"subprocess timeout plus cleanup: need >= "
-                f"{_eff_sub + _SUBPROC_CLEANUP_ALLOWANCE_SECS}, got {timeout_secs}. "
-                "A shorter wake budget cancels only the executor future — "
-                "the subprocess keeps running while the next wake launches "
-                "a duplicate."
-            )
+    validate_create_timeouts(timeout, timeout_secs, command=command, script=script)
     if timezone and not is_valid_timezone(timezone):
         raise ValueError(f"Invalid timezone: {timezone!r}")
     skip_dates = skip_dates or []
@@ -364,8 +393,7 @@ def apply_job_update(
             _tsecs = int(kwargs["timeout_secs"])
         except (ValueError, TypeError) as e:
             raise ValueError(f"Invalid timeout_secs: {kwargs['timeout_secs']!r}") from e
-        if not 1 <= _tsecs <= 86400:
-            raise ValueError(f"timeout_secs must be within 1..86400, got {_tsecs}")
+        _check_timeout_secs_range(_tsecs)
     # Script/command subprocess timeout. MCP cron_update passes this
     # field, so a branch has to consume it here — otherwise the
     # update is accepted and silently dropped.
@@ -375,8 +403,7 @@ def apply_job_update(
             _tsub = int(kwargs["timeout"])
         except (ValueError, TypeError) as e:
             raise ValueError(f"Invalid timeout: {kwargs['timeout']!r}") from e
-        if not 0 <= _tsub <= 86400:
-            raise ValueError(f"timeout must be within 0..86400, got {_tsub}")
+        _check_timeout_range(_tsub)
     # Vault secret grant: validated with the other pre-mutation
     # checks so a rejected grant cannot strand earlier field
     # mutations. An empty dict revokes (clears the pin too); a

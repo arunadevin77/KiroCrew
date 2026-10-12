@@ -44,6 +44,7 @@ logged.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import contextlib
 import enum
 import hashlib
@@ -140,9 +141,11 @@ from kiro_crew.instances.registry import (
     MAX_VIA_HOPS,
     SSM_TRANSPORT_METHODS,
     Instance,
+    InstanceDisabledError,
     InstancesRegistry,
     ancestor_ids,
     descendant_ids,
+    is_headless_provisioner,
     validate_ttl,
 )
 from kiro_crew.instances.ssm_token_mint import (
@@ -236,6 +239,16 @@ async def _upload_chunks(fh: Any, stall: asyncio.Timeout) -> Any:
 
 _LOOPBACK = "127.0.0.1"
 
+#: Stated-unsupported reason for the SSH tunnel transport on native Windows.
+#: The surface is documented "not yet" supported there (``docs/guides/
+#: windows-install.md``) and the argv builder notes it in a comment, but without
+#: a refusal at the point of use the ``ssh -N -L`` child is spawned anyway and a
+#: Windows host without ``ssh`` on PATH fails with a generic spawn error that
+#: reads as "ssh is missing" rather than "unsupported here". Refusing before the
+#: spawn with this reason mirrors the native-Windows refusal in
+#: ``apps/lifecycle_scripts.py``. The SSM/cloud transport is unaffected.
+_WINDOWS_SSH_TUNNEL_UNSUPPORTED = "SSH tunnel is not yet supported on Windows"
+
 #: The closed set of peer endpoints :meth:`SshTunnelManager.peer_capability` may
 #: read. Every one is a GET that reports what the peer gateway CAN do — its
 #: version, its agent roster, its model list, its effort levels, its workspaces —
@@ -258,6 +271,10 @@ _PEER_CAPABILITY_PATHS: frozenset[str] = frozenset(
 _READY_POLL_INTERVAL_SECS = 0.25
 # Bound on retained stderr so a chatty/looping ssh can't grow memory unbounded.
 _MAX_STDERR_CHARS = 2000
+#: How long an exit path waits for the stderr drain to reach EOF. A grandchild
+#: that inherited the pipe can hold it open after the child exits, so the wait
+#: is bounded; what the drain captured is kept either way.
+_STDERR_DRAIN_GRACE_SECS = 2.0
 
 # Bound on retained SSM stdout, at parity with the stderr cap. The SSM child's
 # stdout is drained concurrently for the whole session (see _drain_stdout), so
@@ -851,6 +868,10 @@ class _SshTunnel:
         # child that fills the OS buffer while still running.
         self._stdout_buf = ""
         self._stdout_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        # Both transports: stderr is drained concurrently from spawn by
+        # _stderr_task too. ssh writes a line there for every forwarded connection
+        # the far end refuses, so a long-lived tunnel fills the OS buffer.
+        self._stderr_task: asyncio.Task | None = None  # type: ignore[type-arg]
         self._child_path = ""  # the PATH the last spawned child was given
         self.status = TunnelStatus(
             instance_id=instance_id,
@@ -949,6 +970,25 @@ class _SshTunnel:
             )
         except OSError as e:
             self.status.state = TunnelState.ERROR
+            # The ssh tunnel is documented "not yet" supported on native Windows
+            # (``docs/guides/windows-install.md``): the ``ssh -N -L`` child needs
+            # the OpenSSH client on PATH, which is not guaranteed there, so the
+            # spawn fails with a generic OSError that reads as "ssh is missing"
+            # and never says the surface is unsupported. When the spawn is the
+            # one that failed on Windows, name the platform constraint instead of
+            # the opaque spawn error — mirroring the native-Windows refusal in
+            # ``apps/lifecycle_scripts.py``. This does NOT pre-empt a Windows host
+            # whose ``ssh`` IS on PATH: that spawn succeeds and never reaches here,
+            # so a tunnel that works today is untouched. SSM/POSIX are unaffected.
+            if self._transport == "ssh" and platform_compat.IS_WINDOWS:
+                self.status.error = f"{_WINDOWS_SSH_TUNNEL_UNSUPPORTED} ({e})"
+                logger.warning(
+                    "SSH tunnel spawn failed for %s on Windows: %s (%s)",
+                    self._id,
+                    _WINDOWS_SSH_TUNNEL_UNSUPPORTED,
+                    e,
+                )
+                return False
             self.status.error = f"failed to spawn {self._transport} tunnel: {e}"
             logger.error("Tunnel spawn failed for %s: %s", self._id, e)
             return False
@@ -958,10 +998,16 @@ class _SshTunnel:
         # via _failed_on_child_exit, which classifies on this buffer.
         if self._proc.stdout is not None:
             self._stdout_task = asyncio.create_task(self._drain_stdout())
+        if self._proc.stderr is not None:
+            self._stderr_task = asyncio.create_task(self._drain_stderr())
 
         ready = await self._wait_until_ready()
         if not ready:
             await self._terminate()
+            # The child is gone, and a timed-out start composes no exit error, so
+            # both drains are retired at once with what they captured.
+            await self._finish_stdout_drain(timeout=0)
+            await self._retire_stderr_drain(timeout=0)
             if self.status.state != TunnelState.ERROR:
                 self.status.state = TunnelState.ERROR
                 self.status.error = self.status.error or "tunnel did not become ready"
@@ -1372,17 +1418,75 @@ class _SshTunnel:
         """
         task = self._stdout_task
         self._stdout_task = None
+        await self._retire_drain(task, timeout)
+
+    @staticmethod
+    async def _retire_drain(task: asyncio.Task | None, timeout: float) -> None:  # type: ignore[type-arg]
+        """Give a pipe drain up to *timeout* seconds to reach EOF, then cancel it.
+
+        Shared by the stdout and stderr drains. A surviving grandchild can hold
+        the write end open, so the wait is bounded; ``timeout=0`` cancels at once.
+        What the drain captured is kept either way. The shield protects the drain
+        task from the bounded wait, not the caller from cancellation: a monitor
+        that ``stop()`` cancels while it waits here leaves through the
+        cancellation, so a deliberate stop is never reported as an unexpected
+        exit. The drain is retired on that path too.
+        """
         if task is None or task.done():
             return
-        with contextlib.suppress(asyncio.TimeoutError, asyncio.CancelledError, Exception):
+        try:
             await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-        if not task.done():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
+        except (asyncio.TimeoutError, Exception):
+            pass
+        finally:
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+
+    async def _drain_stderr(self) -> None:
+        """Continuously drain the child's stderr into a bounded buffer.
+
+        Runs for the child's whole life, on both transports, for the reason the
+        stdout drain does: a pipe read only after the child exits blocks the
+        child once the OS buffer fills, and ssh writes a stderr line for every
+        forwarded connection the far end refuses. A blocked ssh forwards nothing
+        while the tunnel still reads CONNECTED.
+
+        The buffer keeps the last ``_MAX_STDERR_CHARS`` of the whole stream,
+        which is what the exit classifiers read. The decoder is incremental, so
+        a multi-byte sequence split across two reads decodes as it does whole.
+        """
+        proc = self._proc
+        if proc is None or proc.stderr is None:
+            return
+        stream = proc.stderr
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        with contextlib.suppress(Exception):
+            while True:
+                data = await stream.read(_STDOUT_READ_CHUNK)
+                text = decoder.decode(data, final=not data)
+                if text:
+                    self._stderr_buf = (self._stderr_buf + text)[-_MAX_STDERR_CHARS:]
+                if not data:
+                    return
+
+    async def _retire_stderr_drain(self, *, timeout: float) -> None:
+        """Retire the stderr drain, keeping what it captured."""
+        task = self._stderr_task
+        self._stderr_task = None
+        await self._retire_drain(task, timeout)
 
     async def _capture_stderr(self) -> None:
-        """Drain whatever the ssh child wrote to stderr (bounded)."""
+        """Land whatever the child wrote to stderr in ``_stderr_buf`` (bounded).
+
+        A child :meth:`start` spawned is drained from spawn, so this lets that
+        drain reach EOF, which lands the last lines the child wrote, then
+        retires it. A child that runs without the drain is read to EOF here.
+        """
+        if self._stderr_task is not None:
+            await self._retire_stderr_drain(timeout=_STDERR_DRAIN_GRACE_SECS)
+            return
         proc = self._proc
         if proc is None or proc.stderr is None:
             return
@@ -1434,6 +1538,10 @@ class _SshTunnel:
             # close cause to name, so paying the drain's timeout buys nothing.
             await self._finish_stdout_drain(timeout=0)
             await self._terminate()
+            # The stderr drain runs through the terminate, so the child cannot
+            # block on a full pipe while it is being stopped; a stop composes no
+            # exit error, so it is then retired at once.
+            await self._retire_stderr_drain(timeout=0)
         except Exception:
             self.status.state = previous
             raise
@@ -1712,6 +1820,12 @@ class _TransportParams:
     #: chain exists.
     via_instance_id: str = ""
     via_remote_port: int = 0
+    #: Whether the crew at the far end serves a turn route and no dashboard, from
+    #: ``registry.is_headless_provisioner`` -- that function stays the one judge,
+    #: and this only CARRIES its answer to the sites where the instance row is not
+    #: in scope. :meth:`turn_url` is the reason it has to be carried at all: it
+    #: has ``self`` and a port and nothing else.
+    headless: bool = False
 
     @property
     def is_chained(self) -> bool:
@@ -1752,8 +1866,24 @@ class _TransportParams:
         }
 
     def turn_url(self, local_port: int) -> str:
-        """The local turn-API URL for a fargate forward, ``""`` otherwise."""
-        if self.method != "fargate":
+        """The local turn-API URL for a HEADLESS crew's forward, ``""`` otherwise.
+
+        Keyed on the crew, like the mint is, rather than on the method being
+        ``fargate``. A MicroVM crew IS headless and reaches its guest over
+        ``ssm``, so while this was method-keyed its status carried no turn URL and
+        two things downstream read the wrong thing from that silence:
+
+        * the forward's liveness probe went to ``/api/health`` instead of the
+          front's ``/health`` -- harmless today only because the probe accepts any
+          status line, and the front answers 403 there under the lane's strict
+          posture;
+        * ``status.turn_url`` stayed empty, so the pane's own ``_turn_target`` fell
+          through to composing the URL from the connected port. That fallback
+          works, which is why the pane was not broken -- but it means the value
+          the far end states about itself is unused for exactly the lane that has
+          one.
+        """
+        if self.method != "fargate" and not self.headless:
             return ""
         return f"http://{_LOOPBACK}:{local_port}{FARGATE_TURN_PATH}"
 
@@ -2497,6 +2627,7 @@ class SshTunnelManager:
                 ssm_target=target,
                 aws_profile=validate_aws_profile(inst.aws_profile),
                 aws_region=validate_aws_region(inst.aws_region),
+                headless=is_headless_provisioner(inst.provisioner_id),
             )
         if method == "ssm":
             target = validate_ssm_target(inst.ssm_target)
@@ -2517,11 +2648,13 @@ class SshTunnelManager:
                 aws_region=validate_aws_region(inst.aws_region),
                 ssm_run_as=validate_ssm_run_as(inst.ssm_run_as),
                 remote_bin=validate_remote_bin(inst.remote_bin),
+                headless=is_headless_provisioner(inst.provisioner_id),
             )
         return _TransportParams(
             method="ssh",
             ssh_host=validate_ssh_host(inst.ssh_host),
             remote_bin=validate_remote_bin(inst.remote_bin),
+            headless=is_headless_provisioner(inst.provisioner_id),
         )
 
     def _resolve_chained_transport(
@@ -2569,6 +2702,7 @@ class SshTunnelManager:
             ssh_host=validate_ssh_host(parent.ssh_host),
             via_instance_id=parent.id,
             via_remote_port=inst.via_remote_port,
+            headless=is_headless_provisioner(inst.provisioner_id),
         )
 
     async def _with_parent(self, inst: Instance) -> Instance | None:
@@ -3013,9 +3147,9 @@ class SshTunnelManager:
         """
         if params.is_chained:
             return await self._mint_through_parent(inst, params)
-        if params.method == "fargate":
+        if params.method == "fargate" or params.headless:
             raise TokenMintError(
-                "a fargate instance has no dashboard token: the task serves only its "
+                "a headless crew has no dashboard token: the far end serves only its "
                 "turn API, reached at the tunnel's turn_url"
             )
         if params.method == "ssm":
@@ -3334,9 +3468,9 @@ class SshTunnelManager:
         reach the lease and the answer. A default would let a future caller mint an
         uncapped credential without saying so.
         """
-        if params.method == "fargate":
+        if params.method == "fargate" or params.headless:
             raise TokenMintError(
-                "a fargate instance has no dashboard token: the task serves only its "
+                "a headless crew has no dashboard token: the far end serves only its "
                 "turn API, reached at the tunnel's turn_url"
             )
         if params.method == "ssm":
@@ -3403,6 +3537,12 @@ class SshTunnelManager:
         ``removeWarm`` then drops) or sees it gone and stands down; it can never
         re-open a tunnel the user just closed, which a probe-then-connect from
         the browser could.
+
+        A disabled crew raises :class:`InstanceDisabledError` and spawns nothing,
+        and so does a chained crew with a disabled crew anywhere up its chain.
+        The check reads the record under the same lock the disabling write is
+        made under (see :meth:`reconfigure`), so a connect racing a disable either
+        finishes first and is torn down by it, or starts after and is refused.
         """
         if rebuild and only_if_connected:
             raise ValueError("rebuild and only_if_connected are mutually exclusive")
@@ -3434,6 +3574,20 @@ class SshTunnelManager:
                     local_port=inst.local_port,
                     remote_port=inst.remote_port,
                 )
+            if inst.disabled:
+                raise InstanceDisabledError(f"crew {instance_id!r} is disabled")
+            if inst.via_instance_id:
+                # A chained crew's forward dials its parent's host, so a disabled
+                # crew anywhere up the chain keeps this one closed as well.
+                rows = await asyncio.to_thread(self._registry.list)
+                by_id = {row.id: row for row in rows}
+                off = [
+                    a for a in ancestor_ids(rows, instance_id) if a in by_id and by_id[a].disabled
+                ]
+                if off:
+                    raise InstanceDisabledError(
+                        f"crew {off[0]!r}, which {instance_id!r} rides, is disabled"
+                    )
             if rebuild and existing is not None:
                 logger.info(
                     "Rebuilding tunnel for %s on request (was %s on 127.0.0.1:%s)",
@@ -3712,10 +3866,19 @@ class SshTunnelManager:
                 return self._error_status(inst, cycle)
 
             # Mint a per-instance token over the same transport (never logged).
-            # A fargate forward reaches a turn API, not a dashboard: there is no
-            # token to mint and none to refresh, so the forward alone is the
+            # A HEADLESS crew's forward reaches a turn API, not a dashboard: there
+            # is no token to mint and none to refresh, so the forward alone is the
             # connection and the status carries the turn URL instead.
-            if params.method != "fargate":
+            #
+            # Keyed on the CREW, not on the transport. A headless crew reached
+            # over SSM is as headless as one reached over an ECS exec, and asking
+            # the transport instead mints a dashboard token against a crew that
+            # serves no dashboard: the mint fails, this method returns an error
+            # status, and the forward it already installed is torn down -- so the
+            # pane reports a crew that will not answer about a forward that is
+            # fine. This seam is owned elsewhere, so the change here is one
+            # condition.
+            if params.method != "fargate" and not is_headless_provisioner(inst.provisioner_id):
                 try:
                     # Already minted above for a chained crew, because its reply is
                     # what named the port this forward was allowed to dial.
@@ -4516,7 +4679,12 @@ class SshTunnelManager:
         # rebuild binds to below. A chained crew's tier 2 is the rebuild alone
         # too, for the opposite reason -- its mint runs at the top of this
         # recovery, seconds ago, and carries the hop port tier 1 dialled.
-        if params.method == "fargate" or params.is_chained:
+        # A HEADLESS crew belongs on the re-forward arm, not the re-mint arm.
+        # While this asked only about ``fargate``, a MicroVM crew took the else
+        # branch, tried to mint, and ``_mint_for`` raised -- so the recovery stood
+        # down and a dropped forward was never rebuilt. The connect path already
+        # asks about the crew; this is the same question on the healing path.
+        if params.method == "fargate" or params.headless or params.is_chained:
             logger.info("Self-heal tier 2 (re-forward) for %s", instance_id)
         else:
             logger.info("Self-heal tier 2 (re-mint token) for %s", instance_id)
@@ -4559,7 +4727,13 @@ class SshTunnelManager:
                         return
                     self._schedule_token_refresh(instance_id)
             await self._mark_recovered(instance_id, rebuilt, epoch + 2)
-            if params.method != "fargate":
+            # Same rule as the connect path's mint, and for the same reason: a
+            # headless crew has no dashboard session to prime, whatever transport
+            # reaches it. Leaving this one keyed on the transport would put the
+            # self-heal path on the transport while the connect path asks about
+            # the crew. This seam is owned elsewhere, so the change here is one
+            # condition.
+            if params.method != "fargate" and not is_headless_provisioner(inst.provisioner_id):
                 await self._prime_peer_session(instance_id)
             logger.info("Self-heal tier 2 finished for %s", instance_id)
         else:
@@ -4691,14 +4865,17 @@ class SshTunnelManager:
                     f"dashboard cannot run commands on it. Restart it from that crew."
                 ),
             }
-        if params.method == "fargate":
-            # Refused before any command is built: the task runs no kirocrew
-            # gateway, so a restart dispatched at it would only fail remotely.
+        if params.method == "fargate" or params.headless:
+            # Refused before any command is built: the far end runs no kirocrew
+            # gateway, so a restart dispatched at it would only fail remotely --
+            # and on the MicroVM lane it fails as ``sudo: unknown user``, which
+            # reads like a misconfigured row rather than a verb that does not
+            # apply to this crew.
             return {
                 "ok": False,
                 "message": (
-                    "a fargate instance runs no Kiro Crew gateway to restart; "
-                    "stop and relaunch the task instead"
+                    "a headless crew runs no Kiro Crew gateway to restart; "
+                    "stop and relaunch it instead"
                 ),
             }
         if params.method == "ssm":

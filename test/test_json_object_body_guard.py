@@ -166,6 +166,8 @@ _CAP_REGISTER: dict[str, tuple[str, str]] = {
     # A checklist tick is one task id and one boolean, so the shared default
     # ceiling is far above any legitimate body.
     "chat_todo.py::api_chat_slot_todo": ("<default>", _BOUNDED_BY_DEFAULT),
+    # Mate's one-line Global preference: a short sentence, so a 4 KB cap
+    # is well above any legitimate body and far below the shared default.
     # A thread reply is one text field (capped at 32 KiB by the handler) plus a
     # slot key, so the shared default ceiling is the right one.
     "chat_threads.py::api_chat_thread_reply": ("<default>", _BOUNDED_BY_DEFAULT),
@@ -298,9 +300,10 @@ _CAP_REGISTER: dict[str, tuple[str, str]] = {
         "_MAX_REORDER_BODY_BYTES",
         _BOUNDED_EXPLICIT,
     ),
-    # The mute-opened toggle carries a boolean and an optional expected_created
-    # stamp -- a fixed set of control fields, so the shared default cap is right.
-    "chat_folders.py::api_chat_slot_mutes_opened": ("<default>", _BOUNDED_CONTROL_FIELDS),
+    # The two mute toggles (mutes_opened, muted) share one body that carries a
+    # boolean and an optional expected_created stamp -- a fixed set of control
+    # fields, so the shared default cap is right.
+    "chat_folders.py::_toggle_slot_user_flag": ("<default>", _BOUNDED_CONTROL_FIELDS),
     # ---- tranche 3 ----
     # chat_handlers.py and its chat_api owners: control-field slot mutations take
     # the cap; the sites that carry a chat message, queued-edit text, follow-up
@@ -326,6 +329,7 @@ _CAP_REGISTER: dict[str, tuple[str, str]] = {
     ),
     "chat_handlers.py::api_chat_slot_workspace": ("<default>", _BOUNDED_CONTROL_FIELDS),
     "chat_handlers.py::api_chat_slot_project": ("<default>", _BOUNDED_CONTROL_FIELDS),
+    "chat_handlers.py::api_chat_slot_turn_timeout": ("<default>", _BOUNDED_CONTROL_FIELDS),
     "chat_handlers.py::api_favorite_project_add": ("<default>", _BOUNDED_CONTROL_FIELDS),
     "chat_handlers.py::api_chat_slot_followup": ("None", _UNBOUNDED_USER_CONTENT),
     "chat_api/resume.py::api_chat_slot_resume": ("<default>", _BOUNDED_CONTROL_FIELDS),
@@ -387,6 +391,8 @@ _CAP_REGISTER: dict[str, tuple[str, str]] = {
     "handlers/files.py::api_file_write": ("None", _UNBOUNDED_USER_CONTENT),
     # a root path and a query the handler caps at 200 characters
     "handlers/files.py::api_file_grep": ("<default>", _BOUNDED_CONTROL_FIELDS),
+    # a capped list of paths, each a FILE_READ_SCHEMA path
+    "file_api/pinned_io.py::api_file_kinds": ("<default>", _BOUNDED_CONTROL_FIELDS),
     "file_api/dashboard_config.py::api_dashboard_config": ("<default>", _BOUNDED_CONTROL_FIELDS),
 }
 

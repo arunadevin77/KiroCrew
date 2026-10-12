@@ -96,7 +96,8 @@ class CompactionState:
     cooldown_until: dict[str, float] = field(default_factory=dict)
     pending_verdict: dict[str, float] = field(default_factory=dict)
     #: Per-session threshold overrides (folded key -> pct). A key absent here
-    #: falls back to the published global (``cfg.session.autocompact_pct``).
+    #: falls back to the default its agent declares, then to the published
+    #: global (``cfg.session.autocompact_pct``).
     #: Deliberately independent of ``_sessions`` membership: an override is a
     #: user preference on the conversation, so it survives session resets and
     #: recycles, and is re-seeded from slot persistence after a restart.
@@ -138,6 +139,10 @@ class CompactionDeps:
     #: and how often it looks again while it waits.
     cotenant_wait_secs: float = 600.0
     cotenant_poll_secs: float = 2.0
+    #: The compaction threshold the agent a live session runs declares, or
+    #: ``None`` when it declares none (or there is no live session). Given the
+    #: ``_Session`` object, so this boundary needs no config import to answer.
+    agent_autocompact_pct: Callable[[Any], float | None] = lambda _session: None
 
 
 class _CompactionOwner(Protocol):
@@ -229,6 +234,18 @@ def _compaction_unmanaged_backend(provider: LLMProvider) -> str | None:
     have a truthy attribute mistaken for a positive claim that nothing compacts.
     """
     backend = getattr(provider, "compaction_unmanaged_backend", None)
+    return backend if isinstance(backend, str) and backend else None
+
+
+def _harness_managed_backend(provider: LLMProvider) -> str | None:
+    """Backend id this provider names as compacting on its own initiative.
+
+    The threshold leaves such a harness alone even when Crew could hand it a
+    manual ``/compact``: its own summarization bounds the context, and a
+    Crew compaction at ``session.autocompact_pct`` would only move that
+    point earlier. Same ``str`` contract as its siblings.
+    """
+    backend = getattr(provider, "harness_managed_compaction_backend", None)
     return backend if isinstance(backend, str) and backend else None
 
 
@@ -446,10 +463,26 @@ class CompactionCoordinator:
             self.state.pct_overrides[key] = pct
 
     def effective_autocompact_pct(self, key: str) -> float:
-        """This session's compaction threshold: its override, else the global."""
-        return self.state.pct_overrides.get(
-            self._owner._fold_key(key), self._owner._cfg.session.autocompact_pct
-        )
+        """This session's compaction threshold.
+
+        Precedence, highest first: the session's own override (the slider),
+        then the default the session's agent declares, then the global.
+        """
+        key = self._owner._fold_key(key)
+        override = self.state.pct_overrides.get(key)
+        if override is not None:
+            return override
+        agent_pct = self.agent_autocompact_pct(key)
+        if agent_pct is not None:
+            return agent_pct
+        return self._owner._cfg.session.autocompact_pct
+
+    def agent_autocompact_pct(self, key: str) -> float | None:
+        """The threshold the agent behind *key*'s live session declares, else ``None``."""
+        session = self._owner._sessions.get(self._owner._fold_key(key))
+        if session is None:
+            return None
+        return self._deps.agent_autocompact_pct(session)
 
     def _compaction_gate_decision(self, key: str, provider: LLMProvider, pct: float) -> str | None:
         """Return the first compaction gate decline, in lifecycle order.
@@ -501,7 +534,7 @@ class CompactionCoordinator:
             return "cc_managed"
         if pct < self.effective_autocompact_pct(key):
             return "below_threshold"
-        unsupported = _compact_unsupported_backend(provider)
+        unsupported = _compact_unsupported_backend(provider) or _harness_managed_backend(provider)
         if unsupported is not None and _compaction_unmanaged_backend(provider) is None:
             # Declining, not recycling, and ONLY for a harness that positively
             # claims the other side of the bargain. A member of
@@ -536,7 +569,7 @@ class CompactionCoordinator:
             if _compaction_harness_managed(provider):
                 self._deps.logger.info(
                     "Session %s context at %.0f%% -- %s manages compaction itself; "
-                    "skipping the /compact dispatch it cannot answer",
+                    "skipping Crew's /compact dispatch",
                     key,
                     pct,
                     unsupported,
@@ -988,12 +1021,30 @@ class CompactionCoordinator:
             await asyncio.wait_for(session.semaphore.acquire(), timeout=timeout)
         except asyncio.TimeoutError:
             return "busy"
+        # The same three guards as ``_compact_in_place``, for the same Stop. Read
+        # AFTER the permit is held: a Stop that ended the turn this waited behind
+        # is not this recycle's cancel.
+        stop_gen = self._stop_generation(key)
+        # Named where ``reset`` looks (``_orphan_turn_holder``), so a hard Stop
+        # during the wait below records this task as the holder of the permit it
+        # hands to a woken claimant.
+        session.turn_owner = asyncio.current_task()
         try:
             # The restart ends this process and every sub-agent that shares it.
-            await self._await_cotenants(key, pct)
+            if not await self._await_cotenants(
+                key, pct, stopped=lambda: self._stop_generation(key) > stop_gen
+            ):
+                # A Stop landed during the wait. A force Stop has already reset the
+                # parent and respawned its successor, so this restart is stale, and
+                # the sub-agents it would stop are the user's live work.
+                return await self._settle_cancelled(key, pct)
             await self._owner._recycle_held(key, session, pct, uncompactable=True)
         finally:
-            session.semaphore.release()
+            # Release ONLY a permit this task still owns. A hard Stop during the
+            # wait popped the session and handed its permit to a woken claimant;
+            # a second release here would raise in that claimant's own release.
+            if not self._owner.absorb_orphaned_release(key):
+                session.semaphore.release()
         return "recycled"
 
     async def _compact_in_place(self, key: str, session: Any, pct: float) -> str:

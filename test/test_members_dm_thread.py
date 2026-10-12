@@ -45,6 +45,7 @@ from kiro_crew.members import (
     slug_for_name,
     write_dm_binding,
 )
+from kiro_crew.testing.wait import LoopHop
 from kiro_crew.validation import normalize_unicode
 
 CREW = "code-reviewer"
@@ -1762,6 +1763,7 @@ class TestResumeGuards:
 
         loop = asyncio.get_running_loop()
         loop_thread = threading.get_ident()
+        hop = LoopHop(loop)
         # The handler's awaits and re-checks, in order, with the winner's publish in the
         # window it landed in. A re-check that answers with the winner's slot is a
         # "dedup"; one that finds nothing is a "check".
@@ -1775,7 +1777,7 @@ class TestResumeGuards:
             # Both seams run under asyncio.to_thread. From the loop thread, waiting on
             # the loop would deadlock instead of failing.
             assert threading.get_ident() != loop_thread, f"{where} ran on the loop thread"
-            asyncio.run_coroutine_threadsafe(_publish_winner(), loop).result(timeout=10)
+            hop.run(_publish_winner(), "the winner's publish")
             timeline.append("publish")
 
         real_agent = handlers._restored_agent_name
@@ -1807,6 +1809,7 @@ class TestResumeGuards:
             resp = await client.post(
                 f"/api/chat/slots/{member_slot_key(CREW)}/resume", json={"key": key}
             )
+            hop.check()
             assert resp.status == 200
         assert timeline == expected, (
             f"the winner's publish inside {window}, or the re-check that must see it, is "

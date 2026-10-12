@@ -16,12 +16,17 @@ Other ops: `snapshot` (get element refs), then `click` / `type` / `press_key` /
 `hover` / `select_option` / `screenshot` / `wait_for` / `back` / `console`. Call
 `snapshot` first to get refs before a `click`/`type`.
 
-**The tool opens PUBLIC `http(s)` URLs only.** A loopback, `.localhost`,
-private, link-local, CGNAT or metadata address is refused outright, with an
-error pointing at `playwright-cli open <url>` — the path that prompts for the
-approval such a target requires. So a local dev server is always the
-`playwright-cli` path (see the **web-verify** and **web-preview** skills), never
-this tool.
+**The tool opens PUBLIC `http(s)` URLs, plus loopback origins the operator
+listed.** A loopback, `.localhost`, private, link-local, CGNAT or metadata
+address is refused, with an error pointing at `playwright-cli open <url>` — the
+path that prompts for the approval such a target requires. The one exception is
+an exact `host:port` (`localhost`, `127.0.0.1` or `[::1]` plus a port) the
+operator listed in the dashboard's local-origins setting; the gateway's own port is
+refused even when listed, and you cannot edit that list. So a local dev server
+is the `playwright-cli` path (see the **web-verify** and **web-preview**
+skills) unless the operator told you its origin is listed: then `navigate` opens
+it in the panel, and a refusal means it is not listed, so fall back to
+`playwright-cli`.
 
 If the tool returns guidance that **no native panel is serving this session** (a
 remote gateway, or a plain-browser dashboard with no Electron panel), THEN fall
@@ -100,7 +105,8 @@ permission, is the thing to get right:
   action-shaped URLs (`/logout`, anything carrying a token) that you found rather
   than the user asked for.
 - `localhost` carries no third-party session, so the untrusted-page rules above
-  do not apply to it. It is still not a `browser`-tool target — drive it with
+  do not apply to it. It is still not a `browser`-tool target unless the operator
+  listed that exact origin (see the top of this skill) — otherwise drive it with
   `playwright-cli`.
 
 ## Your PROCESS owns its browser, and `attach` binds to it

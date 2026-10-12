@@ -28,8 +28,8 @@ from kiro_crew.hooks import FileTooLargeError
 
 
 def _hold_the_prune_clock(monkeypatch):
-    """Freeze ``time.monotonic`` for a test that asserts how many aliases one
-    prune walk RECLAIMS rather than how the time budget cuts it short.
+    """Freeze ``monotonic`` for a test that asserts how many aliases one prune
+    walk RECLAIMS rather than how the time budget cuts it short.
 
     Those counts only hold if the walk finishes. The budget is real wall-clock
     time, so on a slow CI runner it ends a nine-candidate walk one reclaim early
@@ -37,8 +37,21 @@ def _hold_the_prune_clock(monkeypatch):
     advances leaves the budget itself untouched and simply never spends it;
     the budget's own semantics are pinned by :func:`_prune_walk`, which drives
     this same clock one tick per candidate, and by the zero-budget tests.
+
+    Freeze ONLY the projection module's own ``monotonic`` reads: rebinding
+    ``projection.time`` to a delegating proxy overrides ``monotonic`` while every
+    other name (``sleep``, ``time``, ...) falls through to the real module. The
+    shared stdlib ``time.monotonic`` is left untouched, so unrelated readers --
+    asyncio's ``loop.time()`` among them -- keep the real clock.
     """
-    monkeypatch.setattr(projection.time, "monotonic", lambda: 0.0)
+
+    class _FrozenMonotonicTime:
+        monotonic = staticmethod(lambda: 0.0)
+
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+    monkeypatch.setattr(projection, "time", _FrozenMonotonicTime())
 
 
 def _alias_is_live(directory, alias):
@@ -155,6 +168,56 @@ def test_native_view_preserves_explicit_noninheritance_and_other_settings(native
     view = json.loads((agents / f"{prepared.agent('custom')}.json").read_text(encoding="utf-8"))
     assert view["resources"] == ["file://RULES.md"]
     assert json.loads(settings_path.read_text(encoding="utf-8"))["toolSearch.enabled"] is False
+
+
+def test_launch_record_resources_match_the_alias_file_kiro_cli_loads(native_tree):
+    """The runtime records the launch steering from the in-memory view while
+    kiro-cli loads the alias file, so a file holding fewer resources than the
+    view would make the folder skip a guide kiro-cli never loaded.
+    """
+    from kiro_crew import member_essential_context
+
+    _home, agents, project = native_tree
+    guides = {
+        ".kiro/steering/conventions.md": "# Conventions\n",
+        ".kiro/steering/nested/review.md": "# Review\n",
+        "notes/handbook.md": "# Handbook\n",
+        "AGENTS.md": "# Agents\n",
+    }
+    for relative, body in guides.items():
+        path = project / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    settings = project / ".kiro" / "settings" / "cli.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({projection._INHERIT_SETTING: True}), encoding="utf-8")
+    (agents / "custom.json").write_text(
+        json.dumps(
+            {
+                "name": "custom",
+                "resources": [
+                    "file://.kiro/steering/**/*.md",
+                    "file://notes/handbook.md",
+                    "file://AGENTS.md",
+                    "skill://skills/a/SKILL.md",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    prepared = projection.prepare_native_skill_projection(project)
+    assert projection.inherits_default_resources(project) is False
+    spec = prepared.specs["custom"]
+    published = json.loads(
+        (agents / f"{prepared.agent('custom')}.json").read_text(encoding="utf-8")
+    )
+    assert published["resources"] == spec["resources"]
+
+    recorded = member_essential_context.projected_launch_paths(spec, str(project))
+    loaded = member_essential_context.projected_launch_paths(published, str(project))
+    assert recorded == loaded
+    root = Path(os.path.realpath(project))
+    assert recorded == [str(root / relative) for relative in guides]
 
 
 def test_transport_keeps_original_agent_identity_and_rejects_unprepared_modes():
@@ -414,6 +477,30 @@ def test_spawn_passes_through_a_no_view_name_when_no_spec_was_refused(native_tre
 
     assert prepared.spawn_agent("genuinely-absent") == "genuinely-absent"
     assert prepared.spawn_agent("bar") == "bar"
+
+
+def test_the_spawned_view_keeps_the_specs_hooks(native_tree):
+    """kiro-cli runs the spec's ``hooks`` itself, from the view it is launched with.
+
+    So the ``--agent`` view a spawn resolves to carries the source's ``hooks``
+    unchanged; a view without them would leave a hook-gated agent with no hooks
+    on any backend.
+    """
+    home, agents, project = native_tree
+    hooks = {
+        "agentSpawn": [{"command": "init.sh"}],
+        "userPromptSubmit": [{"command": "stamp.sh"}],
+        "preToolUse": [{"matcher": "execute_bash", "command": "guard.sh"}],
+        "stop": [{"command": "done.sh"}],
+    }
+    (agents / "custom.json").write_text(
+        json.dumps({"name": "custom", "hooks": hooks}), encoding="utf-8"
+    )
+    prepared = projection.prepare_native_skill_projection(project)
+    alias = prepared.spawn_agent("custom")
+    assert alias != "custom"
+    view = json.loads((agents / f"{alias}.json").read_text(encoding="utf-8"))
+    assert view["hooks"] == hooks
 
 
 def test_spawn_agent_keeps_the_authored_name_when_no_view_is_prepared():
@@ -3022,6 +3109,14 @@ def test_prune_scans_the_lease_directory_once_for_many_candidates(native_tree, m
     on fcef4c9a4 (four candidates -> four scans there, one here).
     """
     _home, agents, _project = native_tree
+    # The walk below must reach and reclaim every unleased candidate; that only
+    # holds if the real wall-clock prune budget is not spent mid-walk. A slow
+    # shared runner can spend it before the last candidate and leave the rest
+    # "for later spawns", which is correct product behaviour but reads here as a
+    # candidate that was not reclaimed. Freeze the clock so the reclaim is
+    # runner-speed independent; the scandir-count assertion the test is named for
+    # is unaffected either way.
+    _hold_the_prune_clock(monkeypatch)
     candidates = [_legacy_alias(agents, f"{index:024x}") for index in range(4)]
     walked = [_legacy_alias(agents, f"{index:024x}") for index in range(100, 104)]
     external = projection._acquire_projection_lease(agents, {p.stem for p in candidates})
@@ -4325,9 +4420,12 @@ async def test_set_mode_sends_the_fresh_alias_never_a_changed_spawn_one(
         assert sent == [] and terminated == ["sid"]
         assert stub._native_skill_projection is spawn
         return
-    await activate("sid", "crew", budget=5.0, payload_snapshot=None, wire_registered=False)
+    activated_alias = await activate(
+        "sid", "crew", budget=5.0, payload_snapshot=None, wire_registered=False
+    )
 
     assert not terminated
+    assert activated_alias == fresh.aliases["crew"]
     assert sent[0]["modeId"] == fresh.aliases["crew"]
     assert stub._native_skill_projection is fresh
     listed = fresh.frame({"availableModes": [{"id": SPAWN_ALIAS}]})

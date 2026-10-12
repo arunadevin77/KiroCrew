@@ -58,7 +58,7 @@ import time
 import traceback
 import weakref
 from collections import deque
-from collections.abc import Callable, Collection, Iterator
+from collections.abc import Callable, Collection, Container, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from functools import partial
@@ -2509,6 +2509,116 @@ def find_last_tree_edge(directory: Path) -> "Entry | None":
         if entry is not None:
             return entry
     return None
+
+
+#: The entry a creator's log carries for each session it created (see
+#: ``entry_types``). Read separately from :data:`_TREE_EDGE_TYPES`: a unit holds at most
+#: one decision that matters -- its newest -- but one ``session/spawned`` per child.
+_SPAWNED_TYPE = "session/spawned"
+#: The marker a raw record must contain before it is parsed. Every other line in a
+#: busy log is skipped without a JSON parse, which is most of the cost of this read.
+_SPAWNED_NEEDLE = b'"session/spawned"'
+
+
+def _spawned_child_slot(entry: "Entry") -> "str | None":
+    """The child slot a ``session/spawned`` entry names, or ``None`` when it is shaped
+    wrong. Mirrors the field :func:`session_tree.spawned_record` keys the edge on, so
+    the two agree about which child an entry is about."""
+    child = entry.data.get("child")
+    if not isinstance(child, dict):
+        return None
+    slot = child.get("slot")
+    return slot if isinstance(slot, str) and slot else None
+
+
+def find_spawned_entries(
+    directory: Path, limit: int, self_parented: "Container[str]" = frozenset()
+) -> "tuple[list[Entry], bool, bool]":
+    """The NEWEST *limit* ``session/spawned`` entries in *directory*'s surviving log,
+    oldest first, plus two flags: whether any older LOAD-BEARING one was left out
+    (``cut``), and whether the per-unit cap was hit at all (``hit_cap``).
+
+    The whole log, every segment, because a creator records its children over its
+    whole life and any of them may still be waiting for a first turn. The newest are
+    kept because the newest children are the ones most likely to have no log of their
+    own yet. A reader holds what it returns, so the bound is the caller's.
+
+    The held set is ALWAYS the newest *limit* spawns of every child, independent of
+    *self_parented* -- a pure function of this log, so a caller may cache it by this
+    log's identity.
+
+    *self_parented* names child slots the caller already knows have a parent edge of
+    their OWN -- the child opened a log that names a parent, which the fold applies
+    instead of this spawn (:func:`session_tree.fold_tree`: a spawn fills a child's
+    citation "only when none of the child's own records names a parent"). It affects
+    ONLY the ``cut`` flag: an evicted spawn whose child is self-parented is not counted
+    lost, since the fold would discard it anyway. Without this, a long-running creator
+    that evicted more than *limit* children over its life -- all long since started and
+    self-recorded -- would report ``cut`` on every scan, which the fold's reader turns
+    into "lineage unknown" and uses to refuse adopt/release authority checks
+    gateway-wide until retention pruned the log, though no evicted spawn was
+    load-bearing. The default empty set keeps the plain "every eviction counts".
+
+    ``hit_cap`` is the RAW fact that the cap evicted at least one spawn, self-parented
+    or not. A caller caches a scan by this log's identity, but a self-parented child
+    whose spawn was evicted can later have its OWN log removed WITHOUT changing this
+    creator's identity -- at which point that evicted spawn becomes load-bearing and the
+    cached "complete" answer is wrong. So a caller must refuse to cache (and re-read
+    next time) whenever ``hit_cap`` is set, even when ``cut`` was suppressed.
+
+    Both flags are load-bearing. A cut answer is not the unit's whole answer, so a
+    caller must not report a reading built from it as complete, and a capped scan must
+    not be cached as the unit's whole answer.
+
+    Raises what the reads raise, as ``OSError`` or ``ValueError``, for the reason
+    :func:`find_last_tree_edge` does: "no child recorded" and "the bytes were not seen"
+    are different answers, and only the first may be cached.
+    """
+    found = [
+        (first, child)
+        for child in directory.iterdir()
+        if (first := _segment_first_seq(child)) is not None
+    ]
+    found.sort(key=lambda pair: pair[0])
+    kept: "deque[Entry]" = deque(maxlen=max(limit, 0))
+    # The held set is the newest *limit* spawns of EVERY child, independent of
+    # *self_parented*: it is cached by the creator log's own identity, so it must stay a
+    # pure function of that log. Filtering the held set by the children's logs would let
+    # a later change to a child's log (its deletion, a retracted parent) leave a stale
+    # cache missing a now-needed edge. *self_parented* instead relaxes only the cut flag:
+    # a dropped spawn is counted lost only when its child is NOT self-parented, since the
+    # fold would discard a self-parented child's spawn anyway.
+    cut = False
+    hit_cap = False
+    for _first, segment in found:
+        if segment.stat().st_size == 0:
+            continue
+        with open(segment, "rb") as handle:
+            try:
+                for raw in strict_raw_records(handle, segment, cap=MAX_ENTRY_BYTES):
+                    if _SPAWNED_NEEDLE not in raw:
+                        continue
+                    parsed = _parses_to_object(raw.strip())
+                    if parsed is None:
+                        continue
+                    entry = Entry.from_dict(parsed)
+                    if entry is not None and entry.type == _SPAWNED_TYPE:
+                        # Appending to a full maxlen deque evicts the oldest. The cap
+                        # was hit either way (hit_cap, which gates CACHING); the eviction
+                        # is only a lost answer -- cut, which gates the INCOMPLETE
+                        # signal -- when the evicted child is not self-parented.
+                        if kept.maxlen and len(kept) == kept.maxlen:
+                            hit_cap = True
+                            if _spawned_child_slot(kept[0]) not in self_parented:
+                                cut = True
+                        kept.append(entry)
+            except UnreadableRecord as exc:
+                # Same conversion :func:`_scan_whole_for_types` makes, so every caller
+                # guards one pair of exception types.
+                raise ValueError(
+                    f"crew log segment {segment.name} holds an unreadable record"
+                ) from exc
+    return list(kept), cut, hit_cap
 
 
 def _scan_whole_for_types(segment: Path, types: "frozenset[str]") -> "Entry | None":

@@ -36,7 +36,7 @@ import time
 import uuid
 from collections.abc import Sequence  # noqa: F401
 from pathlib import Path  # noqa: F401
-from typing import Any
+from typing import Any, cast  # noqa: F401  (cast: crew_records reads it)
 
 from aiohttp import BodyPartReader, web  # noqa: F401
 
@@ -176,7 +176,6 @@ from kiro_crew.dashboard.agent_admin.avatars import (  # noqa: F401
     _avatar_variant_paths,
     _avatars_dir,
     _carry_motions_through_motionless_save,
-    _carry_pack_through_faceless_save,
     _commit_promoted_avatar,
     _discard_pending_avatar,
     _image_body_complete,
@@ -209,6 +208,7 @@ from kiro_crew.dashboard.agent_admin.capabilities import (  # noqa: F401
     api_capability_skills_uninstall,
 )
 from kiro_crew.dashboard.agent_admin.crew_records import (  # noqa: F401
+    _api_kirocrew_agents_create,
     _crew_effort_rejected,
     _crew_memory_store_rejected,
     _refresh_session_defaults,
@@ -259,10 +259,12 @@ from kiro_crew.dashboard.agent_admin.template_lineage import (  # noqa: F401
     _ForeignPrivateCopy,
     _ForkBookkeepingFailed,
     _is_reserved_basename,
+    _lineage_unverifiable_error,
     _load_template_specs,
     _PublishNameBound,
     _rebind_crew_locked,
     _reserved_binding_names,
+    _sidecar_unverifiable,
     _spec_stem_on_disk,
     _StaleBinding,
     _unlink_copy_unless_referenced,
@@ -305,6 +307,12 @@ from kiro_crew.executors import discovery_executor, maintenance_executor, subpro
 from kiro_crew.external_text import redact_external_text as _redact_external  # noqa: F401
 from kiro_crew.kiro_prerequisite import spawn_supervised_oneshot
 from kiro_crew.loop_lock import LoopBoundLock
+from kiro_crew.member_workspace import (  # noqa: F401
+    AUTO_WORKSPACE,
+    MemberWorkspaceUnavailable,
+    provision_member_workspace,
+    retire_unpublished_workspace,
+)
 from kiro_crew.members import MemberNameError, key_new_crew, validate_member_name  # noqa: F401
 from kiro_crew.memory_stores import (  # noqa: F401
     DEFAULT_MEMORY_STORE,

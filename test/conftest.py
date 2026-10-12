@@ -1773,11 +1773,20 @@ def _clean_slack_thread_state():
     scheduling. Idempotent with per-file fixtures that already clear a subset.
     """
     from kiro_crew.slack import handler as _h
+    from kiro_crew.slack import thread_override_slots as _slots
 
-    for _m in (_h._thread_temporary, _h._thread_incognito, _h._titled_threads, _h._thread_agents):
+    _maps = (
+        _h._thread_temporary,
+        _h._thread_incognito,
+        _h._titled_threads,
+        _h._thread_agents,
+        _slots._order,
+        _slots._pinned,
+    )
+    for _m in _maps:
         _m.clear()
     yield
-    for _m in (_h._thread_temporary, _h._thread_incognito, _h._titled_threads, _h._thread_agents):
+    for _m in _maps:
         _m.clear()
 
 
@@ -2224,6 +2233,34 @@ def isolate_mcp_host_paths(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPat
     global_mcp = tmp_path / "host-kiro-settings" / "mcp.json"
     monkeypatch.setattr(mcp_handlers, "_GLOBAL_MCP_JSON", global_mcp)
     monkeypatch.setattr(mcp_handlers, "_MCP_LOCK_PATH", global_mcp.with_suffix(".lock"))
+
+
+@pytest.fixture
+def ample_host_free_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the free-memory reading behind the memory posture to a healthy host.
+
+    ``resource_status._read_available_gb`` is the live input of the posture
+    that ``admission_check`` and ``prewarm_allowance`` act on. While it reads
+    critical, the cron due-scan defers interval and one-shot firings and the
+    chat runner holds no eager pre-warm session. A test that fires a cron job
+    or an eager spawn then fails on a runner with 2 GB or less free, with no
+    hint that memory is involved: ``svc._claims[job_id]`` raises a bare
+    ``KeyError``, a wait times out, or ``get_or_create`` is awaited 0 times.
+    Seen on the v0.9.0-insider.1 release run (8 failures that pass on a host
+    with free memory).
+
+    The reading is pinned, not ``probe`` itself, because ``prewarm_allowance``
+    reads it without going through ``probe``. Only this reading is pinned: a
+    test about the slice, cgroup or host readers below it must not opt in,
+    since this hides them. A test about the posture patches the reader in its
+    own body, on top of this.
+
+    Opt in per module with
+    ``pytestmark = pytest.mark.usefixtures("ample_host_free_memory")``.
+    """
+    import kiro_crew.resource_status as resource_status
+
+    monkeypatch.setattr(resource_status, "_read_available_gb", lambda: _HEALTHY_AVAILABLE_GB)
 
 
 @pytest.fixture

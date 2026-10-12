@@ -465,6 +465,38 @@ class _GatedResultWrite:
         self._release.set()
 
 
+class _HeldResultDrain:
+    """Parks the bounded drain of a claimed result write until the test
+    starts its bound.
+
+    The bound counts wall-clock from the drain's first await, while
+    :class:`_GatedResultWrite` can report ``entered`` only once a pool thread
+    has picked the write up and the loop has run two more callbacks. Timed
+    against each other, a late executor lets the bound expire first and the
+    run is ``done`` before the test looks at it. Parked here, "claimed, write
+    pending, not done" lasts until :meth:`start_bound`, and the bound then
+    expires against a write the gate still holds.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from kiro_crew.subagent_manager.run import RunEventCoordinator
+
+        self.parked = asyncio.Event()
+        self._go = asyncio.Event()
+        real = RunEventCoordinator._drain_state_writer_impl
+
+        async def _held(coordinator, info, what, writer, *, bound=None):
+            if bound is not None:
+                self.parked.set()
+                await self._go.wait()
+            return await real(coordinator, info, what, writer, bound=bound)
+
+        monkeypatch.setattr(RunEventCoordinator, "_drain_state_writer_impl", _held)
+
+    def start_bound(self) -> None:
+        self._go.set()
+
+
 @pytest.mark.asyncio
 async def test_the_finished_result_is_written_after_post_processing_from_memory(
     monkeypatch: pytest.MonkeyPatch,
@@ -674,8 +706,11 @@ async def test_a_claimed_result_write_that_hangs_is_bounded(monkeypatch: pytest.
     import kiro_crew.subagent as subagent
     import kiro_crew.subagent_persistence as sp
 
+    # The write is held by the gate, so the bound always expires; shrinking it
+    # only shortens the wait for that.
     monkeypatch.setattr(subagent, "_STATE_DRAIN_TIMEOUT", 0.5)
     gate = _GatedResultWrite(monkeypatch)
+    drain = _HeldResultDrain(monkeypatch)
     factory, _calls = _answer_stream()
     mgr = _manager(_mock_sessions(factory))
     try:
@@ -684,16 +719,19 @@ async def test_a_claimed_result_write_that_hangs_is_bounded(monkeypatch: pytest.
             assert info is not None
             run = mgr._tasks[info.id]
             await asyncio.wait_for(gate.entered.wait(), 10)
+            await asyncio.wait_for(drain.parked.wait(), 10)
             assert info._ending_claimed and not info.done
             assert await mgr.cancel(info.id) is False
             assert await mgr.settle_before_delete(info.id) == "pending"
             assert info.id in mgr._agents
+            drain.start_bound()
             done, _ = await asyncio.wait({run}, timeout=15)
             assert run in done, "a hung claimed write held the run past its bound"
             assert info.done and info.outcome == "completed"
             assert mgr._running_count == 0
             assert info.id in mgr._abandoned_state_writers
     finally:
+        drain.start_bound()
         gate.release()
     await _wait_until(
         lambda: info.id not in mgr._abandoned_state_writers, "the detached write to land"

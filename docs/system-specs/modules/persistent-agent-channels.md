@@ -65,6 +65,7 @@ If the wedge survives the replacement, or the replacement lease is unobtainable,
 3. A thread reply without an @mention goes to the parent sender; a human reply to a system or otherwise unowned parent falls back to the orchestrator.
 4. `ListenMode.SILENT` prevents inbox delivery, including @mentions, and terminal agents do not receive work; a mention of a terminal target produces a system bounce.
 5. Agent-to-agent delivery has a directed exchange budget that a human message resets, preventing an autonomous pair from consuming the channel indefinitely. `test/test_channel.py::TestChannelRouting::test_human_message_resets_exchange_counts` and `test_configurable_max_exchanges` pin that rule.
+6. `Channel.post(..., notify_members=False)` records, broadcasts and saves a message without queueing it for any member. It carries display-only notices for the human reader, which must not wake the agent whose thread they land in.
 
 `run_channel_agent` keeps coordination in a thread. The orchestrator posts at the top level only for a top-level human request or when reporting back after threaded agent work, which preserves a readable human-facing summary without suppressing specialist work.
 
@@ -109,6 +110,7 @@ No lock guards any of this. What makes the pair decidable against the index the 
 ## Security
 
 - `_stream_task` redacts credentials and exfiltration URLs from streamed agent output, tool status, and approval content before channel publication.
+- A reply that carries a redaction placeholder is followed by the shared `messaging.renderer.redaction_notice`, counted with `count_redaction_tags` over the posted reply, so a reader learns a pasted command or link will not work as-is. The notice is a `system` message in the reply's thread, posted with `notify_members=False`, and is best-effort: a failed post is logged and the reply stands. `test/test_channel_redaction_notice.py` pins it.
 - `CHANNEL_AGENT_BLOCKED_TOOLS` and `_blocked_tool_named` contain direct-to-user messaging, session-control, and work-ledger operations so a channel agent cannot move channel content into a private dashboard session, take control of one, or write into another dispatch's decision record.
 - `api_channel_approve_agent` validates the decision allowlist. Per-command trust requires a pattern matching the server-bound pending command, records grants as opaque literals, audits both grants and refusals, and resolves the current request as a one-time approval. `_stream_task` repeats the result allowlist check before acting on the approval future.
 - `_json_object` rejects invalid JSON and non-object request bodies before channel handlers read fields.

@@ -31,7 +31,7 @@ from typing import Any, Final, cast
 
 from aiohttp import web
 
-from kiro_crew import agent_panel, dashboard_agentic
+from kiro_crew import agent_panel, dashboard_agentic, dashboard_package, dashboard_types
 from kiro_crew import members as members_mod
 from kiro_crew import pipeline_board_contract
 from kiro_crew.config.loader import KiroCrewConfig
@@ -99,11 +99,16 @@ def _live_session_key(state: DashboardState, sk: str) -> str:
 
 
 async def _resolve_publishing_crew(
-    request: web.Request, operation: str
+    request: web.Request, operation: str, *, root_session: bool = False
 ) -> tuple[tuple[str, str], None] | tuple[None, web.Response]:
     """Vet the caller and resolve it to the crew whose panel it may write.
 
     Returns ``((slug, crew_name), None)`` or ``(None, refusal)``.
+
+    With *root_session*, a caller bound to no crew that is a ROOT session resolves to
+    ``(session store key, "")``: its own dashboard instance, keyed by its own slot. The
+    dynamic dashboard's routes pass it; the panel publish routes do not, so a crew
+    webview is still published only from a crew's own thread.
 
     The crew comes from the session's own agent binding, never from the body: a
     body-supplied name would let one crew publish a webview that presents as
@@ -288,6 +293,40 @@ async def _resolve_publishing_crew(
                 "code": "session_not_resolved",
             },
             status=400,
+        )
+    if not crew_name and root_session:
+        # A ROOT session writing ITS OWN page. Only the dynamic dashboard's routes ask
+        # for this, and every gate above has already passed: the internal secret, the
+        # operator switch, the app-caller denial, the strict session identity, the
+        # restricted-mode block and the slot check.
+        #
+        # The page is named by the CALLER's own slot and never by the body, so a session
+        # can reach no instance but its own. A dispatched or adopted session is refused
+        # here: its records belong to whoever dispatched it, and the side panel shows it
+        # no page to write to. The root test is `is_root_session`, the one the
+        # automatic card applies, which fails closed on an unseeded session tree.
+        from kiro_crew.dashboard.card_lifecycle import is_root_session
+        from kiro_crew.dashboard_templates import instance as instance_store
+
+        if is_root_session(slot):
+            return (instance_store.session_instance_key(str(slot.key)), ""), None
+        sel().log_api_access(
+            caller=sk,
+            operation=operation,
+            outcome="denied",
+            source="dashboard",
+            resources=request.path,
+            error="caller is not a root session and not bound to a crew",
+        )
+        return None, web.json_response(
+            {
+                "error": (
+                    "only a root session or a crew has a dashboard to write to; this "
+                    "session was dispatched or adopted, so its page is its dispatcher's"
+                ),
+                "code": "not_root_session",
+            },
+            status=403,
         )
     if not crew_name:
         # No agent binding means no crew, and a panel has nowhere to go. Said
@@ -1564,11 +1603,16 @@ async def _resolve_dashboard_caller(
     surface reaches the same files through MCP and therefore owes the same refusal.
     It is asked HERE rather than per route so a route added later inherits it.
     """
-    resolved, refusal = await _resolve_publishing_crew(request, operation)
+    resolved, refusal = await _resolve_publishing_crew(request, operation, root_session=True)
     if refusal is not None:
         return None, refusal
     assert resolved is not None
     slug, crew_name = resolved
+    if not crew_name:
+        # A root session's own page. Its slot is the caller's, and the store key was
+        # derived from it, so no slug can be shared and there is no owner to ask about.
+        sk = request.headers.get("X-Session-Key", "")
+        return (slug, "", _normalize_slot_key(sk)), None
 
     def _owners_then_slot() -> tuple[list[str], str]:
         # ONE config load for both answers, and the OWNERS question first: an
@@ -1622,7 +1666,9 @@ async def api_dashboard_fields(request: web.Request) -> web.Response:
     # know its fields, the rows are capped at ten, and a second round trip for ten rows
     # is a cycle spent on a payload that fits in this one.
     rows, retained = await asyncio.to_thread(_instance_history, slug, slot)
-    values, written_at = await asyncio.to_thread(_current_values, slug, crew_name, instance)
+    values, written_at = await asyncio.to_thread(
+        _current_values, slug, crew_name, instance, "" if crew_name else slot
+    )
     return web.json_response(
         dashboard_agentic.fields_for_agent(
             instance,
@@ -1635,10 +1681,91 @@ async def api_dashboard_fields(request: web.Request) -> web.Response:
     )
 
 
+async def api_dashboard_types(request: web.Request) -> web.Response:
+    """GET /api/agent-panel/dashboard/types -- the data-type catalog, READ ONLY.
+
+    What a dashboard block can be bound to: every fold the crew log registers, its
+    field shape, the fold the value comes from, and how far that fold has been folded
+    for THIS caller. Nothing is written, nothing is staged, and the catalog of shapes
+    is the same for every caller -- the per-caller half is only the seq numbers.
+
+    On the strict-internal prefix with its siblings, and through the same
+    ``_resolve_dashboard_caller`` gate, for two reasons. The seqs are facts about this
+    crewmate's own logs, so they are no more public than its mistake book. And the
+    route must resolve a slot at all to read them.
+
+    A fold that could not be read comes back as ``folded_through: null`` rather than
+    ``0``: zero is a fold that has consumed nothing, which is a different answer, and a
+    composing agent that cannot tell them apart would read an unreadable fold as an
+    empty one and bind a block to it.
+    """
+    resolved, refusal = await _resolve_dashboard_caller(request, "dashboard_types")
+    if refusal is not None:
+        return refusal
+    assert resolved is not None
+    _slug, _crew_name, slot = resolved
+    state: DashboardState = request.app["state"]
+    unit = _session_unit(state, request.headers.get("X-Session-Key", ""))
+    reached = await asyncio.to_thread(_folded_through, slot, unit)
+    return web.json_response(dashboard_types.describe(reached))
+
+
+def _folded_through(slot: str, unit: str) -> dict[str, int | None]:
+    """How far each registered fold has been folded, for *slot* and *unit*.
+
+    Two reads, not fourteen: the session-keyed folds come back from ONE
+    ``fold_session`` pass over the unit's log, and each slot-keyed fold is a warm memo
+    lookup on an eager fold that walks nothing.
+
+    What the session pass costs depends on what is already on disk. It is called with no
+    ``since``, so it resumes from the unit's newest savepoint and walks only the entries
+    past it -- and for a unit that has none, which is every unit this route reaches
+    before its first eager fold lands, it walks the log from the beginning. That is one
+    pass for all seven session folds either way, and it is bounded by the log rather than
+    by the number of folds.
+
+    Every omission is deliberate and each is ``None`` rather than ``0``:
+
+    * ``radar`` is :data:`~kiro_crew.crew_log.projection.OWNER_SERVED_SLOT_PROJECTION`
+      -- its owner orders the slot's units itself and a generic read would serve part
+      of the record as the whole, so this route does not make one;
+    * a caller with no slot, or whose slot has no live unit, has nothing to read the
+      session folds against;
+    * a fold whose read RAISES is logged and reported unread, because a catalog of
+      shapes is still worth serving when one seq cannot be fetched.
+    """
+    reached: dict[str, int | None] = {name: None for name in projection.FOLD_NAMES}
+    if unit:
+        try:
+            bundle = projection.fold_session(unit, projection.SESSION_FOLD_NAMES)
+            for name, checkpoint in bundle.checkpoints.items():
+                # The CHECKPOINT's seq, not ``bundle.projection(name).seq``: both
+                # answer the same number, and this one reads it without rendering
+                # fourteen values the caller asked nothing about.
+                reached[name] = checkpoint.last_seq
+        except Exception:
+            logger.warning("dashboard types: session folds for %s are unreadable", unit)
+    if slot:
+        for name in projection.SLOT_PROJECTION_NAMES:
+            if name == projection.OWNER_SERVED_SLOT_PROJECTION:
+                continue
+            try:
+                reached[name] = projection.read_slot_projection(slot, name).seq
+            except Exception:
+                logger.warning("dashboard types: the %s fold for %s is unreadable", name, slot)
+    return reached
+
+
 def _current_values(
-    slug: str, crew_name: str, instance: dashboard_agentic.Instance | None
+    slug: str,
+    crew_name: str,
+    instance: dashboard_agentic.Instance | None,
+    session_slot: str = "",
 ) -> tuple[dict[str, Any] | None, dict[str, str]]:
     """The page's current field values, read the way the page reads them.
+
+    *session_slot* is set for a root session's own page, whose folds are read from that
+    slot rather than from a crewmate's DM slot.
 
     ``(None, {})`` when there is no instance or the read fails, so the listing still
     answers with the fields and their shapes rather than failing the whole read.
@@ -1648,7 +1775,10 @@ def _current_values(
     try:
         from kiro_crew.dashboard.handlers.member_dashboard import read_fields
 
-        read = read_fields(slug, crew_name, instance.manifest)
+        if session_slot:
+            read = read_fields(slug, crew_name, instance.manifest, slot=session_slot)
+        else:
+            read = read_fields(slug, crew_name, instance.manifest)
     except Exception:
         logger.warning("dashboard values for %s are unreadable", slug, exc_info=True)
         return None, {}
@@ -1696,11 +1826,56 @@ async def api_dashboard_write(request: web.Request) -> web.Response:
 
     field = str(args.get("field") or "")
     value = args.get("value")
-    instance = await asyncio.to_thread(read_instance, slug, crew_name)
-    mistakes = await asyncio.to_thread(_mistake_book, slot) if slot else {}
-    owner_key = agent_panel.crew_key(crew_name)
+    # THE MODEL COMES FROM THE PACKAGE, through the one reader that knows where a
+    # package lives. The check is against the Model this crewmate is actually running
+    # rather than a builtin manifest a caller names -- which is the whole of the v3
+    # change on this route, and why nothing else here reaches a template store.
+    #
+    # NO ARTIFACT SLUG IS PASSED. This route is keyed by the MEMBER, and `slug` here is
+    # the member's own slug, not the package artifact's; handing it over as one would
+    # name a package that does not exist. The reader resolves the artifact from the
+    # member's binding, which is why its first argument is optional.
     try:
-        entry = dashboard_agentic.check_write(instance, field, value, mistakes)
+        package = await asyncio.to_thread(dashboard_package.read_package_model, slug)
+    except dashboard_package.PackageReadError as exc:
+        # NOT a refusal. A read that failed says nothing about the write, so there is
+        # no lesson to record and no field to blame.
+        logger.warning("dashboard package for %s is unreadable", slug, exc_info=True)
+        return web.json_response({"error": str(exc), "code": "package_unreadable"}, status=503)
+    mistakes = await asyncio.to_thread(_mistake_book, slot) if slot else {}
+    owner_key = _writer_key(crew_name, slot)
+    try:
+        # The package's own state first, because every later question presumes a Model:
+        # "is this a declared field" cannot be asked of a package that is absent,
+        # broken, or another member's. Raised rather than returned so all four refusals
+        # leave by one path and are recorded once, below.
+        unusable = dashboard_agentic.package_refusal(package.state, package.state_reason, field)
+        if unusable is not None:
+            raise unusable
+        # AND a Model that came from the PACKAGE is refused too, on this base. The
+        # decision is HERE rather than in the mapping above because it is not about the
+        # package's state: it is about the DISPLAY. This route's sibling
+        # ``api_member_dashboard`` renders the template instance and reads no package,
+        # so checking the write against the package's Model while the page draws a
+        # different one lets a value land that the page cannot draw -- a string where it
+        # reads a list renders as nothing, and the cards already there disappear with no
+        # error raised anywhere.
+        #
+        # Keyed on WHERE THE READ CAME FROM, not on the state: `read_package_model`
+        # answers `live` for a template instance as well, because it falls through to
+        # one when no package is bound. Refusing every `live` would refuse every write
+        # this product already serves. Only a read of a real PACKAGE names the half the
+        # display cannot draw yet.
+        #
+        # Fails CLOSED, and it costs no crewmate anything today: a package exists only
+        # once an agent composes one through the gate on this stack, so the population
+        # this refuses is empty until the display can draw it. The change that makes
+        # the display read the same package is what lifts this, and it is also where
+        # the package's field table is first translated into something to check against
+        # -- which is why a package read carries no Model here.
+        if package.from_package:
+            raise dashboard_agentic.display_pending_refusal(field)
+        entry = dashboard_agentic.check_write(package.model, field, value, mistakes)
     except dashboard_agentic.WriteRefused as refused:
         # RECORDED BEFORE THE RESPONSE. The refusal is already decided, so this
         # append costs the caller nothing it was going to get, and it is the only
@@ -1778,10 +1953,32 @@ async def api_dashboard_write(request: web.Request) -> web.Response:
     # Tell an open dashboard a value changed. The fold's own bus event is what
     # drives the frame's refill; this frame is for a client watching the panel
     # surface, and it carries the SLUG only, like the publish broadcast.
-    state.broadcast_ws("dashboard_value_written", {"slug": slug})
+    _broadcast_changed(state, "dashboard_value_written", slug, crew_name, slot)
     return web.json_response(
         {"ok": True, "written": {"field": field, "type": entry["type"]}, "corrected": corrected}
     )
+
+
+def _writer_key(crew_name: str, slot: str) -> str:
+    """The ownership digest a dashboard entry carries: the crew's, or the root session's."""
+    return agent_panel.crew_key(crew_name if crew_name else f"session:{slot}")
+
+
+def _broadcast_changed(
+    state: DashboardState, msg_type: str, slug: str, crew_name: str, slot: str
+) -> None:
+    """Tell an open dashboard to re-read, without telling an app which slot changed.
+
+    A crewmate's page is named by its SLUG and broadcast as before. A root session's
+    page -- the caller bound to no crew -- is named by its SLOT, which is what the
+    side panel holds; its store key is a digest no client can match. A slot key is
+    hidden from an app socket unless it holds slot visibility, and these frames are
+    scoped as global ``panels`` events, so the slot frame goes to owner sockets only.
+    """
+    if crew_name:
+        state.broadcast_ws(msg_type, {"slug": slug})
+    else:
+        state.broadcast_ws_owners(msg_type, {"slot": slot})
 
 
 def _record_refusal(state: DashboardState, sk: str, entry: dict[str, Any]) -> bool:
@@ -2006,7 +2203,7 @@ async def api_dashboard_preview(request: web.Request) -> web.Response:
     if refusal is not None:
         return refusal
     assert resolved is not None
-    slug, _crew_name, _slot = resolved
+    slug, crew_name, slot = resolved
     body = await _instance_body(request)
     if isinstance(body, web.Response):
         return body
@@ -2024,7 +2221,12 @@ async def api_dashboard_preview(request: web.Request) -> web.Response:
         preview = instance_store.stage_preview(
             slug, template_id=template_id, html=html, manifest=manifest
         )
-        return preview.wire()
+        wire = preview.wire()
+        if not crew_name:
+            # A session's page is read by its SLOT, and the store key is a one-way
+            # digest of it, so the link is built from the slot this caller resolved to.
+            wire["preview_url"] = instance_store.session_preview_url(slot)
+        return wire
 
     try:
         staged = await asyncio.to_thread(_stage)
@@ -2046,7 +2248,7 @@ async def api_dashboard_apply(request: web.Request) -> web.Response:
     if refusal is not None:
         return refusal
     assert resolved is not None
-    slug, _crew_name, slot = resolved
+    slug, crew_name, slot = resolved
 
     from kiro_crew.dashboard_templates import instance as instance_store
 
@@ -2060,7 +2262,7 @@ async def api_dashboard_apply(request: web.Request) -> web.Response:
     # Tell an open dashboard its page changed, the same one-key frame the agentic
     # write broadcasts. The tab refetches the page; this carries the slug only.
     state: DashboardState = request.app["state"]
-    state.broadcast_ws("dashboard_instance_changed", {"slug": slug})
+    _broadcast_changed(state, "dashboard_instance_changed", slug, crew_name, slot)
     return web.json_response(
         {
             "ok": True,
@@ -2082,7 +2284,7 @@ async def api_dashboard_rollback(request: web.Request) -> web.Response:
     if refusal is not None:
         return refusal
     assert resolved is not None
-    slug, _crew_name, slot = resolved
+    slug, crew_name, slot = resolved
     body = await _instance_body(request)
     if isinstance(body, web.Response):
         return body
@@ -2103,7 +2305,7 @@ async def api_dashboard_rollback(request: web.Request) -> web.Response:
     except Exception as exc:
         return _instance_refusal(exc)
     state: DashboardState = request.app["state"]
-    state.broadcast_ws("dashboard_instance_changed", {"slug": slug})
+    _broadcast_changed(state, "dashboard_instance_changed", slug, crew_name, slot)
     return web.json_response(
         {
             "ok": True,
@@ -2124,6 +2326,10 @@ def register_agent_panel_routes(app: web.Application) -> None:
     # much as for publish -- a write lands in the crewmate's own crew log, so a
     # caller holding only a dashboard cookie must not reach it.
     app.router.add_get("/api/agent-panel/dashboard/fields", api_dashboard_fields)
+    # The data-type catalog, a pure read and on this prefix anyway: it answers how far
+    # the calling crewmate's own folds have been folded, which is state about that
+    # crewmate and nobody else's to read.
+    app.router.add_get("/api/agent-panel/dashboard/types", api_dashboard_types)
     app.router.add_post("/api/agent-panel/dashboard/write", api_dashboard_write)
     # The page's own four, under the same prefix and so with the same auth. A preview
     # and an apply reach a crewmate's instance store and its crew log, so a caller

@@ -9,6 +9,7 @@ still hold the old credential.
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import os
@@ -42,6 +43,81 @@ def _private_sel_root_per_test(sel_private_root):
     per-worker directory nothing else writes.
     """
     yield
+
+
+def _simulate_unsearchable_directory(monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
+    """Answer for every path inside ``directory`` as the OS does when the gateway may not look in it.
+
+    A stub rather than ``chmod(0)``, so the scenario also runs as root and on Windows, where a
+    mode-0 directory blocks nothing. ``Path.exists`` and ``Path.is_symlink`` answer through
+    ``os.path`` as CPython 3.14's do; 3.12 and 3.13 raise there instead.
+    """
+
+    denied_directory = os.path.normcase(os.path.abspath(os.fsdecode(directory)))
+
+    def is_strictly_inside(candidate: object) -> bool:
+        try:
+            candidate_path = os.fspath(candidate)
+        except TypeError:
+            return False
+        try:
+            candidate_name = os.path.normcase(os.path.abspath(os.fsdecode(candidate_path)))
+            return (
+                candidate_name != denied_directory
+                and os.path.commonpath((candidate_name, denied_directory)) == denied_directory
+            )
+        except (OSError, TypeError, ValueError):
+            return False
+
+    real_stat = os.stat
+    real_lstat = os.lstat
+    real_exists = os.path.exists
+    real_lexists = os.path.lexists
+    real_islink = os.path.islink
+    real_open_identity_db_readonly = kp._open_identity_db_readonly
+
+    def permission_denied(candidate: object) -> PermissionError:
+        return PermissionError(
+            errno.EACCES,
+            os.strerror(errno.EACCES),
+            os.fspath(candidate),
+        )
+
+    def stat(candidate: object, *args: object, **kwargs: object) -> os.stat_result:
+        if is_strictly_inside(candidate):
+            raise permission_denied(candidate)
+        return real_stat(candidate, *args, **kwargs)
+
+    def lstat(candidate: object, *args: object, **kwargs: object) -> os.stat_result:
+        if is_strictly_inside(candidate):
+            raise permission_denied(candidate)
+        return real_lstat(candidate, *args, **kwargs)
+
+    def exists(candidate: object) -> bool:
+        return False if is_strictly_inside(candidate) else real_exists(candidate)
+
+    def lexists(candidate: object) -> bool:
+        return False if is_strictly_inside(candidate) else real_lexists(candidate)
+
+    def islink(candidate: object) -> bool:
+        return False if is_strictly_inside(candidate) else real_islink(candidate)
+
+    def path_exists(self: Path, *, follow_symlinks: bool = True) -> bool:
+        return os.path.exists(self) if follow_symlinks else os.path.lexists(self)
+
+    def open_identity_db_readonly(path: Path):
+        if is_strictly_inside(path):
+            return None
+        return real_open_identity_db_readonly(path)
+
+    monkeypatch.setattr(os, "stat", stat)
+    monkeypatch.setattr(os, "lstat", lstat)
+    monkeypatch.setattr(os.path, "exists", exists)
+    monkeypatch.setattr(os.path, "lexists", lexists)
+    monkeypatch.setattr(os.path, "islink", islink)
+    monkeypatch.setattr(Path, "exists", path_exists)
+    monkeypatch.setattr(Path, "is_symlink", lambda self: os.path.islink(self))
+    monkeypatch.setattr(kp, "_open_identity_db_readonly", open_identity_db_readonly)
 
 
 def _write_store(
@@ -741,6 +817,228 @@ class TestApiKeyIdentity:
         )
         assert kp.identity_store_is_relocated("linux", tmp_path, service._environ)
         assert await service.current_identity_fingerprint(allow_cached=False) == ""
+
+    @pytest.mark.asyncio
+    async def test_an_empty_store_proves_nobody_is_signed_in(self, tmp_path: Path) -> None:
+        """No credential row, no key, no vault identity: a sign-out, not a guess."""
+
+        self._write_empty_store(tmp_path)
+        service = self._service(tmp_path, {})
+
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_is_definitive is True
+
+    @pytest.mark.asyncio
+    async def test_a_social_login_reads_absent_without_proving_a_sign_out(
+        self, tmp_path: Path
+    ) -> None:
+        """Its row carries no stable claim, so someone is signed in behind an empty
+        fingerprint: a caller that takes this for a sign-out recycles healthy work."""
+
+        self._write_empty_store(tmp_path)
+        con = sqlite3.connect(str(kp.kiro_identity_store_path("linux", tmp_path, {})))
+        with con:
+            con.execute(
+                "INSERT INTO auth_kv (key, value) VALUES (?, ?)",
+                ("kirocli:social:token", json.dumps({"access_token": "social-a"})),
+            )
+        con.close()
+        service = self._service(tmp_path, {})
+
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_is_definitive is False
+
+    @pytest.mark.asyncio
+    async def test_a_relocated_store_reads_absent_without_proving_a_sign_out(
+        self, tmp_path: Path
+    ) -> None:
+        service = self._service(tmp_path, {"XDG_DATA_HOME": str(tmp_path / "elsewhere")})
+
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_is_definitive is False
+
+    @pytest.mark.asyncio
+    async def test_a_signed_in_store_is_no_absence(self, tmp_path: Path) -> None:
+        _write_store(kp.kiro_identity_store_path("linux", tmp_path, {}))
+        service = self._service(tmp_path, {})
+
+        assert await service.current_identity_fingerprint(allow_cached=False) != ""
+        assert service.identity_absence_is_definitive is False
+
+    @pytest.mark.asyncio
+    async def test_an_env_file_that_will_not_read_proves_no_sign_out(self, tmp_path: Path) -> None:
+        """The key reader reports an unreadable .env as holding no key, so an empty
+        store beside one is no sign-out: the key may be in it."""
+
+        self._write_empty_store(tmp_path)
+        # A directory where the .env belongs: no platform will read it as a file.
+        (tmp_path / ".kiro" / "crew" / ".env").mkdir(parents=True)
+        service = self._service(tmp_path, {})
+
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_is_definitive is False
+
+    @pytest.mark.asyncio
+    async def test_a_failed_env_read_is_no_proof_even_when_a_reread_would_find_the_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The proof comes from the key claim's own read: a later read that succeeds
+        cannot vouch for the one that failed, because the key may be in the file."""
+
+        from kiro_crew.config import loader
+
+        self._write_empty_store(tmp_path)
+        env_file = tmp_path / ".kiro" / "crew" / ".env"
+        env_file.parent.mkdir(parents=True, exist_ok=True)
+        env_file.write_text(f"KIRO_API_KEY={self._KEY_1}\n")
+        real_read = loader.read_env_text
+        reads: list[Path] = []
+
+        def _fails_once(ep: Path, encoding: str | None = None) -> str:
+            reads.append(ep)
+            if len(reads) == 1:
+                raise PermissionError("transient")
+            return real_read(ep, encoding)
+
+        monkeypatch.setattr(loader, "read_env_text", _fails_once)
+        service = self._service(tmp_path, {})
+
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_is_definitive is False
+
+    @pytest.mark.asyncio
+    async def test_a_vault_that_will_not_read_proves_no_sign_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The token store reads a corrupt vault as empty; the proof must not."""
+
+        from kiro_crew.auth import bridge
+        from kiro_crew.auth.store import TokenStore
+
+        vault = TokenStore(tmp_path / "vault-home")
+        entries = tmp_path / "vault-home" / "kas" / ".vault" / "secrets.enc"
+        entries.parent.mkdir(parents=True)
+        entries.write_text("not a vault")
+        monkeypatch.setattr(bridge, "default_token_store", lambda: vault)
+        # The reader the fingerprint uses takes this vault for an empty one.
+        assert vault.resolve() is None
+        self._write_empty_store(tmp_path)
+        service = self._service(tmp_path, {})
+
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_is_definitive is False
+
+    @pytest.mark.asyncio
+    async def test_a_store_the_gateway_may_not_look_at_proves_no_sign_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``os.path.lexists`` answers False for a missing store and for one it may not see."""
+
+        store_dir = self._write_empty_store(tmp_path).parent
+        service = self._service(tmp_path, {})
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_is_definitive is True
+
+        _simulate_unsearchable_directory(monkeypatch, store_dir)
+        denied_service = self._service(tmp_path, {})
+        assert await denied_service.current_identity_fingerprint(allow_cached=False) == ""
+        assert denied_service.identity_absence_is_definitive is False
+
+    @pytest.mark.asyncio
+    async def test_a_windows_store_the_gateway_may_not_look_at_proves_no_sign_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Windows chooses between two store anchors; skipping one it cannot see is no proof."""
+
+        roaming = tmp_path / "AppData" / "Roaming" / "kiro-cli" / "data.sqlite3"
+        roaming.parent.mkdir(parents=True)
+        con = sqlite3.connect(str(roaming))
+        with con:
+            con.execute("CREATE TABLE auth_kv (key TEXT PRIMARY KEY, value BLOB)")
+        con.close()
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="win32")
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_is_definitive is True
+
+        _simulate_unsearchable_directory(monkeypatch, roaming.parent)
+        denied_service = kp.KiroPrerequisiteService(
+            home=tmp_path, environ={}, platform_name="win32"
+        )
+        # The store choice reads the missing Local anchor, which says "no store file".
+        assert await denied_service.current_identity_fingerprint(allow_cached=False) == ""
+        assert denied_service.identity_absence_is_definitive is False
+
+    @pytest.mark.asyncio
+    async def test_two_windows_stores_prove_no_sign_out(self, tmp_path: Path) -> None:
+        """With both stores present the choice rests on write times that may not read."""
+
+        def write_empty(path: Path) -> None:
+            path.parent.mkdir(parents=True)
+            con = sqlite3.connect(str(path))
+            with con:
+                con.execute("CREATE TABLE auth_kv (key TEXT PRIMARY KEY, value BLOB)")
+            con.close()
+
+        write_empty(tmp_path / "AppData" / "Local" / "kiro-cli" / "data.sqlite3")
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="win32")
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_is_definitive is True
+
+        write_empty(tmp_path / "AppData" / "Roaming" / "kiro-cli" / "data.sqlite3")
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_is_definitive is False
+
+    @pytest.mark.asyncio
+    async def test_a_vault_the_gateway_may_not_look_at_proves_no_sign_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Only a missing entry map is an empty vault, not one the gateway may not see."""
+
+        from kiro_crew.auth import bridge
+        from kiro_crew.auth.store import TokenStore
+
+        vault = TokenStore(tmp_path / "vault-home")
+        vault_dir = tmp_path / "vault-home" / "kas" / ".vault"
+        vault_dir.mkdir(parents=True)
+        (vault_dir / "secrets.enc").write_text('{"version": 1, "backend": "file", "entries": {}}')
+        monkeypatch.setattr(bridge, "default_token_store", lambda: vault)
+        self._write_empty_store(tmp_path)
+        service = self._service(tmp_path, {})
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_is_definitive is True
+
+        _simulate_unsearchable_directory(monkeypatch, vault_dir)
+        denied_service = self._service(tmp_path, {})
+        assert await denied_service.current_identity_fingerprint(allow_cached=False) == ""
+        assert denied_service.identity_absence_is_definitive is False
+
+    @pytest.mark.asyncio
+    async def test_a_finished_sweep_covers_one_unbroken_sign_out(self, tmp_path: Path) -> None:
+        """Any other reading in between makes the next sign-out a new one to sweep."""
+
+        self._write_empty_store(tmp_path)
+        environ: dict[str, str] = {}
+        service = self._service(tmp_path, environ)
+
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_already_swept is False
+        service.note_absence_swept(service.identity_absence_run)
+        await service.current_identity_fingerprint(allow_cached=False)
+        assert service.identity_absence_already_swept is True
+
+        environ["KIRO_API_KEY"] = self._KEY_1
+        assert await service.current_identity_fingerprint(allow_cached=False) != ""
+        assert service.identity_absence_already_swept is False
+        del environ["KIRO_API_KEY"]
+        assert await service.current_identity_fingerprint(allow_cached=False) == ""
+        assert service.identity_absence_is_definitive is True
+        assert service.identity_absence_already_swept is False
+
+        newer = service.identity_absence_run
+        service.note_absence_swept(newer)
+        # A slower sweep that began under the earlier sign-out finishes last.
+        service.note_absence_swept(newer - 1)
+        assert service.identity_absence_already_swept is True
 
     @pytest.mark.asyncio
     async def test_a_key_host_with_no_store_file_at_all_fingerprints(self, tmp_path: Path) -> None:
@@ -1494,7 +1792,9 @@ class TestLatchNarrowingPolicy:
             self._complete = complete
             self.calls = 0
 
-        async def retire_kiro_identity_sessions(self, fingerprint: str = ""):
+        async def retire_kiro_identity_sessions(
+            self, fingerprint: str = "", *, spare_children: bool = False
+        ):
             self.calls += 1
             return ([], self._complete)
 
@@ -1666,11 +1966,15 @@ class TestReturnToBaselineAfterIncompleteSweep:
             self._complete = complete
             self.calls = 0
             self.swept_with: list[str] = []
+            self.spare_children_calls: list[bool] = []
             self.pending_identity_sweep_fingerprint = ""
 
-        async def retire_kiro_identity_sessions(self, fingerprint: str = ""):
+        async def retire_kiro_identity_sessions(
+            self, fingerprint: str = "", *, spare_children: bool = False
+        ):
             self.calls += 1
             self.swept_with.append(fingerprint)
+            self.spare_children_calls.append(spare_children)
             # Kept while a sweep stays incomplete; cleared the moment one completes.
             self.pending_identity_sweep_fingerprint = "" if self._complete else fingerprint
             return ([], self._complete)
@@ -1693,7 +1997,9 @@ class TestReturnToBaselineAfterIncompleteSweep:
         state = self._State(service, sessions)
         await chat_runner._retire_sessions_on_identity_change(state)
         assert sessions.calls == 1
-        # Incomplete, so the baseline stayed at A while B is outstanding.
+        # The per-turn identity-change path opts into the live-children deferral
+        # (sign-out keeps the default and cancels).
+        assert sessions.spare_children_calls == [True]
         assert service._session_identity == fp_a
         pending_b = sessions.pending_identity_sweep_fingerprint
         assert pending_b and pending_b != fp_a
@@ -1719,6 +2025,130 @@ class TestReturnToBaselineAfterIncompleteSweep:
         assert sessions.calls == 2, "the B holders were left serving under B"
         # The retry is captured afresh under the account now in use, not B's.
         assert sessions.swept_with[-1] != pending_b
+
+    @pytest.mark.asyncio
+    async def test_an_external_logout_cancels_children_on_the_per_turn_path(
+        self, tmp_path: Path
+    ) -> None:
+        """An external ``kiro-cli logout`` is the fail-safe case, not a defer.
+
+        The per-turn sweep is the only path that catches an external logout (it
+        never goes through the sign-out handler). There the live fingerprint is
+        empty, the account is gone, and an idle parent's children MUST be
+        cancelled rather than deferred -- so the per-turn caller passes
+        ``spare_children=bool(live)``, which is False here. Only a switch
+        between two real accounts (non-empty live) defers.
+        """
+
+        from kiro_crew.dashboard import chat_runner
+
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        _write_store(db)
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+        fp_a = await service.current_identity_fingerprint()
+        service._stamp_probe(fp_a)
+        service.note_sessions_reconciled(fp_a)
+
+        # External logout: the store is wiped, so the live read is empty.
+        con = sqlite3.connect(str(db))
+        with con:
+            con.execute("DELETE FROM auth_kv")
+            con.execute("DELETE FROM state")
+        con.close()
+        _expire_identity_cache(service)
+
+        changed, live = await service.identity_changed_since_sessions()
+        assert changed is True and live == ""
+
+        sessions = self._Sessions(complete=True)
+        state = self._State(service, sessions)
+        await chat_runner._retire_sessions_on_identity_change(state)
+
+        assert sessions.calls == 1
+        assert sessions.swept_with == [""]
+        # Empty live => the deferral is NOT requested => children are cancelled.
+        assert sessions.spare_children_calls == [False]
+
+    def test_identity_component_dropped_detects_a_partial_logout(self, tmp_path: Path) -> None:
+        """A credential source present in the baseline but EMPTY in live dropped.
+
+        An external ``kiro-cli logout`` wipes the store component while the Crew
+        vault stays populated, so the combined live fingerprint is still nonempty
+        but its store half is gone. That is a credential loss, not a switch.
+        """
+        sep, vault = kp._API_KEY_FINGERPRINT_SEP, kp._CREW_VAULT_FINGERPRINT_SEP
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+
+        # Baseline: store s1 + vault v1. Live: store gone, vault still v1.
+        service._session_identity = f"s1{vault}v1"
+        assert service.identity_component_dropped(f"{vault}v1") is True
+        # The vault itself dropping (store kept) is also a drop.
+        assert service.identity_component_dropped("s1") is True
+        # The API-key component dropping is a drop too.
+        service._session_identity = f"s1{sep}k1"
+        assert service.identity_component_dropped("s1") is True
+
+    def test_identity_component_added_is_not_a_drop(self, tmp_path: Path) -> None:
+        """A component that APPEARS or merely CHANGES is a switch, not a loss, so
+        the children are still spared.
+        """
+        vault = kp._CREW_VAULT_FINGERPRINT_SEP
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+
+        # A vault component appears on top of the same store: nothing dropped.
+        service._session_identity = "s1"
+        assert service.identity_component_dropped(f"s1{vault}v1") is False
+        # A plain account switch (store changes, nothing lost): not a drop.
+        service._session_identity = "s1"
+        assert service.identity_component_dropped("s2") is False
+        # Both present, both changed (a two-account switch): not a drop.
+        service._session_identity = f"s1{vault}v1"
+        assert service.identity_component_dropped(f"s2{vault}v2") is False
+
+    def test_identity_component_dropped_is_false_with_no_baseline(self, tmp_path: Path) -> None:
+        """An unset baseline answers False: nothing was there to drop, and that
+        case already sweeps once on its own.
+        """
+        vault = kp._CREW_VAULT_FINGERPRINT_SEP
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+        assert service._session_identity is None
+        assert service.identity_component_dropped("") is False
+        assert service.identity_component_dropped(f"s1{vault}v1") is False
+
+    @pytest.mark.asyncio
+    async def test_a_partial_logout_cancels_children_like_main(self, tmp_path: Path) -> None:
+        """The gate's fail-safe: a dropped credential source forces the cancel path.
+
+        When a source present in the baseline is gone from live (a partial
+        external logout), the per-turn caller passes ``spare_children=False`` even
+        though ``live`` is nonempty, so an idle parent with live children is
+        retired and its children cancelled, exactly as the sign-out path does.
+        """
+        from kiro_crew.dashboard import chat_runner
+
+        db = kp.kiro_identity_store_path("linux", tmp_path, {})
+        _write_store(db)
+        service = kp.KiroPrerequisiteService(home=tmp_path, environ={}, platform_name="linux")
+        fp_a = await service.current_identity_fingerprint()
+        service._stamp_probe(fp_a)
+        # Baseline carries BOTH the store and a vault component.
+        vault = kp._CREW_VAULT_FINGERPRINT_SEP
+        service.note_sessions_reconciled(f"{fp_a}{vault}v1")
+
+        # The store is unchanged, so the live read is still fp_a -- but the vault
+        # component that was in the baseline is gone, so a source dropped.
+        _expire_identity_cache(service)
+        _, live = await service.identity_changed_since_sessions()
+        assert live == fp_a  # nonempty: bool(live) alone would wrongly spare
+        assert service.identity_component_dropped(live) is True
+
+        sessions = self._Sessions(complete=True)
+        state = self._State(service, sessions)
+        await chat_runner._retire_sessions_on_identity_change(state)
+
+        assert sessions.calls == 1
+        # A dropped source forces the cancel path even though live is nonempty.
+        assert sessions.spare_children_calls == [False]
 
     @pytest.mark.asyncio
     async def test_an_incomplete_sweep_retries_even_for_the_live_account(

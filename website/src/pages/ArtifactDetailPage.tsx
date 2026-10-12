@@ -5,7 +5,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import WebAppArtifactCard from '../components/WebAppArtifactCard'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
-import { ArrowLeft, ArrowUp, Camera, Check, Copy, ExternalLink, Download, GitFork, Pencil, RefreshCw, X, AlertCircle, AlertTriangle, RotateCcw, Plus, Sparkles, MessageSquare, Monitor, Undo2, Upload, Star, Folder as FolderIcon } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Camera, Check, Copy, ExternalLink, Download, GitFork, Globe, Pencil, RefreshCw, X, AlertCircle, AlertTriangle, RotateCcw, Plus, Sparkles, MessageSquare, Monitor, Undo2, Upload, Star, Folder as FolderIcon } from 'lucide-react'
 import { copyToClipboard } from '../utils/clipboard'
 import { useTheme } from '../hooks/useTheme'
 import { type IframeSelection } from '../hooks/useCommentBridge'
@@ -55,6 +55,8 @@ import { PublishHub, publishNoticeKey } from '../components/PublishHub'
 import type { Artifact, ArtifactEvent, ArtifactComment, CommentAnchor, ChatSlot } from '../types'
 
 import { i18nT } from '../i18n/t'
+import { uiLocation } from '../uiLocations/uiLocation'
+import { useGuideSelection } from '../guide/guidePredicates'
 import { errMessage } from '../utils/thunkError'
 import { byRecentActivity } from '../utils/slotRecency'
 import { fmtDateFields } from '../i18n/format'
@@ -122,6 +124,7 @@ function FolderChip({ artifact }: { artifact: Artifact }) {
           }`}
           title={current ? i18nT('pages.artifactDetailPage.filed_in_click_to_move', { path }) : i18nT('pages.artifactDetailPage.not_in_a_folder_click_to_file')}
           aria-label={current ? i18nT('pages.artifactDetailPage.folder_move_to_folder', { path }) : i18nT('pages.artifactDetailPage.move_to_folder')}
+          {...uiLocation('artifacts.detail.move-to-folder')}
         >
           <FolderIcon size={10} className={current ? 'text-accent' : undefined} />
           {current ? current.name : 'folder'}
@@ -555,6 +558,9 @@ export default function ArtifactDetailPage({ popout = false }: { popout?: boolea
   // historical view still tracks the pointer it will return to. This also covers
   // /popout/artifact/:slug, which renders this page in its own window.
   useArtifactLiveReload(slug, detailQuery.data?.source_path)
+  // The open artifact is the guide's pick (artifact_open), named as its card
+  // in the library names it, so later steps stay about this one artifact.
+  useGuideSelection('artifact_open', { selected: !popout && !!detailQuery.data, available: true, name: popout ? undefined : detailQuery.data?.name })
 
   const versions = versionsQuery.data?.versions || []
   const effectiveVersion = selectedVersion ?? detailQuery.data?.version ?? null
@@ -1395,6 +1401,7 @@ export default function ArtifactDetailPage({ popout = false }: { popout?: boolea
       const res = await api.createChatSlot(
         undefined, undefined, undefined, undefined, undefined,
         i18nT('pages.artifactDetailPage.session_title', { name: artifact.name }), artifact.slug,
+        undefined, undefined, true,
       )
       if (prefillText) writePrefill(res.key, prefillText)
       dispatch(addSlotOptimistic({
@@ -1998,6 +2005,7 @@ export default function ArtifactDetailPage({ popout = false }: { popout?: boolea
               // Named so it is distinguishable from the document-type control
               // beside it -- both for assistive tech and for tests.
               aria-label={i18nT('pages.artifactDetailPage.version')}
+              {...uiLocation('artifacts.detail.versions')}
               disabled={saving}
               options={versionOptions}
               optionLabels={versionOptionLabels}
@@ -2144,6 +2152,7 @@ export default function ArtifactDetailPage({ popout = false }: { popout?: boolea
               title={panel === 'comments' ? i18nT('pages.artifactDetailPage.hide_comments') : i18nT('pages.artifactDetailPage.show_comments')}
               aria-label={i18nT('pages.artifactDetailPage.toggle_comments')}
               aria-pressed={panel === 'comments'}
+              {...uiLocation('artifacts.detail.comments')}
             >
               <span className="inline-flex items-center gap-1">
                 <MessageSquare size={13} />
@@ -2647,6 +2656,15 @@ function UpstreamSyncBanner({ artifact, busy = false, onPulled, onBeforeMutate }
   // hardcoded vendor string.
   const provLabel = providers.find((p) => p.name === pub?.provider)?.display_name
     || pub?.provider || 'the remote'
+  // The publication's own link, scheme-checked before it becomes clickable so a
+  // provider cannot smuggle a javascript:/file: URL into it. Worded like the
+  // Publish panel's link to a public-web copy, since both open the published page.
+  const publishedUrl = safeHttpUrl(pub?.view_url || '')
+  const publishedLink = publishedUrl && (
+    <a href={publishedUrl} target="_blank" rel="noopener noreferrer" className="underline hover:no-underline">
+      {i18nT('pages.artifactDetailPage.open_published_page')}
+    </a>
+  )
 
   // Local edits not yet published, with no remote drift: a visible prompt to
   // publish them. (When the remote is ALSO ahead, the pull/overwrite banner
@@ -2655,7 +2673,10 @@ function UpstreamSyncBanner({ artifact, busy = false, onPulled, onBeforeMutate }
     return (
       <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-md border text-[13px] border-warn/40 bg-warn-subtle text-warn">
         <Camera size={14} className="lucide-inline shrink-0" />
-        <span className="flex-1">{i18nT('pages.artifactDetailPage.local_changes_not_yet_published_to')} {provLabel}.</span>
+        <span className="flex-1">
+          {i18nT('pages.artifactDetailPage.local_changes_not_yet_published_to')} {provLabel}.
+          {publishedLink && <>{' · '}{publishedLink}</>}
+        </span>
         {/* No hand-off: editor buffer editedContent may be dirty */}
         <ErrorNotice variant="inline" message={error} />
         <Btn
@@ -2672,8 +2693,20 @@ function UpstreamSyncBanner({ artifact, busy = false, onPulled, onBeforeMutate }
     )
   }
 
-  // Nothing to surface: not a fork and the remote copy isn't ahead.
-  if (!fm && !upstreamAhead) return null
+  // Not a fork and the remote copy isn't ahead: nothing to sync, so a published
+  // artifact shows only where its published copy lives.
+  if (!fm && !upstreamAhead) {
+    if (!pub || !publishedLink) return null
+    const info = _SYNC_TONES.info
+    return (
+      <div className={`mb-3 flex items-center gap-2 px-3 py-2 rounded-md border text-[13px] ${info.wrap}`}>
+        <Globe size={14} className="lucide-inline shrink-0" />
+        <span className="flex-1">
+          {i18nT('pages.artifactDetailPage.published_to_provider', { provider: provLabel })}{' · '}{publishedLink}
+        </span>
+      </div>
+    )
+  }
 
   const tone = _SYNC_TONES[upstreamAhead ? 'warn' : 'info']
   // Provider-supplied (fork/publication metadata) — validate the scheme before

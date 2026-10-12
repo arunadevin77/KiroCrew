@@ -17,6 +17,23 @@ import { selectSlotSubagentsActive } from './subagents'
 const EMPTY_MESSAGES: ChatMessage[] = []
 export const selectSlotMessages = (state: RootState, slot: string): ChatMessage[] =>
   slot === state.chat.activeSlot ? state.chat.messages : (state.chat.slotMessages[slot] ?? EMPTY_MESSAGES)
+/** Whether `slot`'s newest turn was opened by a background wake, not by the
+ *  user: a monitor loop's cycle row (`nudge`) or a worker's completion row
+ *  (`subagent`). The first such row, a user row or a dispatching inject row
+ *  from the end decides; the opener roles mirror `_TURN_OPENER_ROLES` in
+ *  `dashboard/chat_handlers.py`. A wake turn is the crewmate's own bookkeeping,
+ *  not its reply to the person reading. */
+export const selectSlotTurnFromWake = (state: RootState, slot: string): boolean => {
+  const msgs = selectSlotMessages(state, slot)
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i]
+    if (!m.content) continue
+    if (m.role === 'nudge' || m.role === 'subagent') return true
+    if (m.role === 'user') return false
+    if (m.role === 'inject' && TURN_INJECT_KINDS.has((m.meta as { injectKind?: unknown } | undefined)?.injectKind)) return false
+  }
+  return false
+}
 /** Only a server-confirmed row for THIS send proves delivery, even if the POST
  *  subsequently fails. An optimistic bubble or identical text proves nothing. */
 export const selectSendConfirmed = (state: RootState, slot: string, sendId: string): boolean =>
@@ -85,6 +102,7 @@ const TURN_INJECT_DISPATCHED: Readonly<Record<InjectKind, boolean>> = {
   recovery: true,
   synthesis: true,
   user_replay: true,
+  automation_notice: true,
 }
 const TURN_INJECT_KINDS: ReadonlySet<unknown> = new Set<string>(
   (Object.keys(TURN_INJECT_DISPATCHED) as InjectKind[]).filter((k) => TURN_INJECT_DISPATCHED[k]),

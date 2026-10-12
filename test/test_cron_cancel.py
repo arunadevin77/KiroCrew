@@ -8,8 +8,13 @@ run_command_sandboxed, and the POST /api/crons/{id}/cancel handler.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import errno
+import re
 import threading
 import time
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -24,8 +29,9 @@ from test_cron_reaper import (
     _retain_torn_down,
 )
 
+from kiro_crew import cron as cron_module
 from kiro_crew import platform_compat
-from kiro_crew.cron import CronJob, CronSchedule, CronService, _RunClaim
+from kiro_crew.cron import CronJob, CronSchedule, CronService, CronStoreBusy, _RunClaim
 from kiro_crew.cron_history import CronHistoryStore
 from kiro_crew.cron_script import (
     _CANCELLED_PROC_JOBS,
@@ -790,3 +796,561 @@ class TestApiCronCancel:
             assert resp.status == 409
             data = await resp.json()
         assert "not running" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_cancel_whose_pause_was_not_saved_409(self) -> None:
+        state = _make_state(_make_job("j3"))
+        state.crons.cancel = AsyncMock(
+            side_effect=cron_module.CronPauseNotSaved("this one-shot may run again")
+        )
+        async with TestClient(TestServer(_make_app(state))) as client:
+            resp = await client.post("/api/crons/j3/cancel")
+            assert resp.status == 409
+            data = await resp.json()
+        assert data == {
+            "error": "this one-shot may run again",
+            "code": "cron_pause_not_saved",
+            "retryable": False,
+        }
+        state.push_refresh.assert_called_with("crons")
+
+
+_ADMITTED = SimpleNamespace(admitted=True, reason="")
+
+
+async def _start_without_timer(svc: CronService) -> None:
+    """Start ``svc`` with its real timer retired, so the test's own ticks are the only ones."""
+    await svc.start()
+    svc._arm_timer = lambda: None  # type: ignore[method-assign]
+    task, svc._timer_task = svc._timer_task, None
+    if task is not None:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=5.0)
+
+
+async def _cancel_mid_run_then_tick(svc: CronService, job_id: str, started: asyncio.Event) -> None:
+    """Tick once, cancel the run while its callback is blocked, then tick again.
+
+    The tick takes a run's claim before it returns, so the claim table is the
+    dispatch record: a second claim after the cancel is the job running again.
+    """
+    with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+        await svc._on_timer()
+        await asyncio.wait_for(started.wait(), timeout=5.0)
+        assert await svc.cancel(job_id) is True
+        assert job_id not in svc._claims, "cancel left the first run's claim in place"
+        await svc._on_timer()  # the next tick
+        _assert_not_redispatched(svc, job_id)
+
+
+def _assert_not_redispatched(svc: CronService, job_id: str) -> None:
+    """The tick takes a run's claim before it returns, so a claim here is a re-run."""
+    assert job_id not in svc._claims, "the tick after the cancel dispatched the one-shot again"
+
+
+_HELD_MESSAGE = (
+    "The run was cancelled, but its pause could not be saved, so this one-shot may run again"
+    " once the cron store is reloaded or the gateway restarts. Delete it if it must not run"
+    " again."
+)
+_UNREAD_NOTE = (
+    "; the pause could not be saved (the cron store could not be read),"
+    " so this one-shot may run again"
+)
+_NEWER_RUN = "the cron store already holds a newer run of the job"
+_NOT_ONE_SHOT = "the job is no longer a one-shot in the cron store"
+_ENOSPC = "OSError: [Errno 28] No space left on device"
+_ON_SCHEDULE_MESSAGE = (
+    "The run was cancelled, but its pause could not be saved: a newer run of the job was"
+    " recorded meanwhile, so the job is back on its schedule now. Pause or delete it if it"
+    " must not run again."
+)
+_RECURRING_MESSAGE = (
+    "The run was cancelled, but its pause could not be saved: the job was changed to a"
+    " recurring schedule meanwhile and runs on that schedule now. Pause or delete it if it"
+    " must not run again."
+)
+
+
+def _on_schedule(reason: str) -> tuple[str, str, tuple[str, bool, bool]]:
+    note = f"; the pause could not be saved ({reason}), so the job is back on its schedule now"
+    return note, _ON_SCHEDULE_MESSAGE, ("at", True, False)
+
+
+def _recurring(reason: str) -> tuple[str, str, tuple[str, bool, bool]]:
+    note = (
+        f"; the pause could not be saved ({reason}), so the job runs on its recurring schedule now"
+    )
+    return note, _RECURRING_MESSAGE, ("every", True, False)
+
+
+def _paused(reason: str, kind: str) -> tuple[str, None, tuple[str, bool, bool]]:
+    return (
+        f"; the pause could not be saved ({reason}), and the job is paused",
+        None,
+        (kind, False, True),
+    )
+
+
+def _held(reason: str) -> tuple[str, str, tuple[str, bool, bool]]:
+    note = f"; the pause could not be saved ({reason}), so this one-shot may run again"
+    return note, _HELD_MESSAGE, ("at", False, False)
+
+
+_BUSY = "CronStoreBusy: cron store busy"
+_REMOVED = ("; the job was removed from the cron store meanwhile", None, None)
+
+
+# For each end of the cancel's save: the history entry after "Cancelled by user after
+# Ns", the ``CronPauseNotSaved`` message (None: ``cancel`` returns True), and the live
+# job's (kind, enabled, user_paused) after the cancel (None: gone from memory). The
+# texts follow the live job, whichever process wrote the store meanwhile.
+_CANCEL_REPORTS: dict[str | None, tuple[str, str | None, tuple[str, bool, bool] | None]] = {
+    None: ("", None, ("at", False, True)),
+    "malformed": (_UNREAD_NOTE, _HELD_MESSAGE, None),
+    "unreadable": (_UNREAD_NOTE, _HELD_MESSAGE, ("at", False, False)),
+    "removed": _REMOVED,
+    "newer_run": _on_schedule(_NEWER_RUN),
+    "recurring": _recurring(_NOT_ONE_SHOT),
+    "write_error": _held(_ENOSPC),
+    "manual_run": _paused(_NEWER_RUN, "at"),
+    "newer_run_here": _on_schedule(_NEWER_RUN),
+    "recurring_here": _recurring(_NOT_ONE_SHOT),
+    "recurring_paused": _paused(_NOT_ONE_SHOT, "every"),
+    "paused_then_write_error": _paused(_ENOSPC, "at"),
+    "recurring_then_write_error": _recurring(_ENOSPC),
+    "recurring_here_then_write_error": _recurring(_ENOSPC),
+    # A busy store raises before the merge runs, so ``cancel`` applies its rules.
+    "recurring_here_then_busy": _recurring(_BUSY),
+    "removed_here_then_busy": _REMOVED,
+    "resumed_here_then_busy": _held(_BUSY),
+    "newer_run_here_then_busy": _on_schedule(_BUSY),
+    "reloaded_then_busy": _held(_BUSY),
+    # A failed park answers success only when the saved store shows the job cannot
+    # run again: a pause or a removal this process could not save is not proof.
+    "pause_unsaved_then_write_error": (_held(_ENOSPC)[0], _HELD_MESSAGE, ("at", False, True)),
+    "paused_here_then_write_error": _paused(_ENOSPC, "at"),
+    "removed_unsaved_then_busy": (_held(_BUSY)[0], _HELD_MESSAGE, None),
+    "paused_here_then_unreadable": (_UNREAD_NOTE, _HELD_MESSAGE, ("at", False, True)),
+}
+# Ends where another writer paused the job meanwhile: ``user_paused`` on disk is theirs.
+_PAUSED_MEANWHILE = (
+    "manual_run",
+    "recurring_paused",
+    "paused_then_write_error",
+    "paused_here_then_write_error",
+    "paused_here_then_unreadable",
+)
+# Ends where the store changes in the gap and the cancel's save then fails.
+_THEN_WRITE_ERROR = (
+    "paused_then_write_error",
+    "recurring_then_write_error",
+    "recurring_here_then_write_error",
+)
+# Ends where this process changes the job, or reloads the store, in the gap, and
+# the cancel's merge then meets a busy store.
+_THEN_BUSY = (
+    "recurring_here_then_busy",
+    "removed_here_then_busy",
+    "resumed_here_then_busy",
+    "newer_run_here_then_busy",
+    "reloaded_then_busy",
+)
+
+
+class TestCancelledOneShotIsParked:
+    """A cancelled one-shot ``at`` job is parked disabled, so the next tick does not run it again."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("delete_after_run", "pause"),
+        # (enabled, auto_paused, user_paused) on disk after the cancel. A
+        # delete_after_run one-shot is left to main's failed-run auto-pause,
+        # which races the cancel's store write, so it is not a case here.
+        [(False, (False, False, True))],
+    )
+    async def test_cancelled_one_shot_does_not_run_again(
+        self, tmp_path, delete_after_run: bool, pause: tuple[bool, bool, bool]
+    ) -> None:
+        runs: list[str] = []
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def on_job(job: CronJob) -> None:
+            runs.append(job.id)
+            started.set()
+            await asyncio.wait_for(release.wait(), timeout=5.0)
+
+        svc = CronService(base_dir=tmp_path, on_job=on_job)
+        await _start_without_timer(svc)
+        job = await svc.add_job_async(
+            "remind-once", "msg", at_ts=time.time() - 1, delete_after_run=delete_after_run
+        )
+        try:
+            await _cancel_mid_run_then_tick(svc, job.id, started)
+        finally:
+            release.set()
+            await svc.stop()
+        assert runs == [job.id], f"cancelled one-shot ran {len(runs)} times"
+
+        # Parked on disk, not deleted: a fresh service finds it disabled and paused
+        # by the user, and its tick does not run it.
+        reloaded = CronService(base_dir=tmp_path, on_job=on_job)
+        await _start_without_timer(reloaded)
+        try:
+            parked = reloaded.get_job(job.id)
+            assert parked is not None
+            assert (parked.enabled, parked.auto_paused, parked.user_paused) == pause
+            assert parked.last_error.startswith("Cancelled by user")
+            with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+                await reloaded._on_timer()
+            assert job.id not in reloaded._claims
+        finally:
+            await reloaded.stop()
+        assert runs == [job.id]
+
+    @staticmethod
+    def _busy_lock(svc: CronService, busy_calls: list[int], timeouts: list[float]) -> None:
+        """Make ``svc``'s store lock raise the real ``CronStoreBusy`` while ``busy_calls[0]`` > 0.
+
+        Each refused entry uses up one call; ``-1`` keeps the store busy until the
+        test sets it to 0. Every entry's lock wait is recorded in ``timeouts``.
+        """
+        real_lock = svc._file_lock
+
+        @contextlib.contextmanager
+        def _lock(*args: Any, **kwargs: Any):
+            timeouts.append(kwargs.get("timeout", cron_module._FILE_LOCK_TIMEOUT_SECS))
+            if busy_calls[0]:
+                busy_calls[0] -= busy_calls[0] > 0
+                raise CronStoreBusy("cron store busy")
+            with real_lock(*args, **kwargs):
+                yield
+
+        svc._file_lock = _lock  # type: ignore[method-assign]
+
+    @staticmethod
+    def _on_disk(tmp_path, job_id: str) -> tuple[bool, bool]:
+        """(enabled, user_paused) as a fresh service reads the store file."""
+        fresh = CronService(base_dir=tmp_path)
+        fresh._load()
+        stored = fresh.get_job(job_id)
+        assert stored is not None
+        return stored.enabled, stored.user_paused
+
+    @pytest.mark.asyncio
+    async def test_a_busy_store_reports_the_pause_not_saved(self, tmp_path) -> None:
+        """A busy store: one save at the store's standard lock wait, with no retry.
+        ``user_paused`` stays off, the caller and the history say the pause was not
+        saved, the hold keeps the next tick off, and no later tick writes the park."""
+        runs: list[str] = []
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def on_job(job: CronJob) -> None:
+            runs.append(job.id)
+            started.set()
+            await asyncio.wait_for(release.wait(), timeout=5.0)
+
+        svc = CronService(base_dir=tmp_path, on_job=on_job)
+        await _start_without_timer(svc)
+        job = await svc.add_job_async("remind-once", "msg", at_ts=time.time() - 1)
+        busy_calls, timeouts = [0], []
+        self._busy_lock(svc, busy_calls, timeouts)
+        try:
+            with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+                await svc._on_timer()
+                await asyncio.wait_for(started.wait(), timeout=5.0)
+                busy_calls[0], timeouts[:] = -1, []
+                with pytest.raises(cron_module.CronPauseNotSaved, match="may run again"):
+                    await asyncio.wait_for(svc.cancel(job.id), timeout=10.0)
+                one_try = [cron_module._FILE_LOCK_TIMEOUT_SECS]
+                assert timeouts == one_try, f"one save at the standard lock wait, not {timeouts}"
+                assert job.id not in svc._claims, "cancel left the first run's claim in place"
+                live = svc.get_job(job.id)
+                assert live is not None
+                assert live.user_paused is False, "a pause the store did not save is reported"
+                assert self._on_disk(tmp_path, job.id) == (True, False)
+                history, _total = await svc._history.get_job_history(job.id)
+                error = history[0]["error"]
+                assert error.startswith("Cancelled by user"), error
+                assert "the pause could not be saved (CronStoreBusy" in error, error
+                assert "may run again" in error, error
+                await svc._on_timer()  # the store is still busy: the hold keeps the job off
+                _assert_not_redispatched(svc, job.id)
+                busy_calls[0] = 0
+                await svc._on_timer()  # this tick reaches the store, and writes no park
+                _assert_not_redispatched(svc, job.id)
+        finally:
+            release.set()
+            await svc.stop()
+        assert runs == [job.id], f"cancelled one-shot ran {len(runs)} times"
+        assert self._on_disk(tmp_path, job.id) == (True, False), "a later write parked the job"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("change", "reason"),
+        # What happens to the store just before the cancel's save, and why the
+        # pause is then reported not saved (None: a write holding it returned).
+        [
+            (None, None),
+            ("malformed", "the cron store could not be read"),
+            ("unreadable", "the cron store could not be read"),
+            ("removed", "the job is no longer in the cron store"),
+            ("newer_run", _NEWER_RUN),
+            ("recurring", _NOT_ONE_SHOT),
+            ("write_error", _ENOSPC),
+            ("manual_run", _NEWER_RUN),
+            ("newer_run_here", _NEWER_RUN),
+            ("recurring_here", _NOT_ONE_SHOT),
+            ("recurring_paused", _NOT_ONE_SHOT),
+            ("paused_then_write_error", _ENOSPC),
+            ("recurring_then_write_error", _ENOSPC),
+            ("recurring_here_then_write_error", _ENOSPC),
+            ("recurring_here_then_busy", _BUSY),
+            ("removed_here_then_busy", _BUSY),
+            ("resumed_here_then_busy", _BUSY),
+            ("newer_run_here_then_busy", _BUSY),
+            ("reloaded_then_busy", _BUSY),
+            ("pause_unsaved_then_write_error", _ENOSPC),
+            ("paused_here_then_write_error", _ENOSPC),
+            ("removed_unsaved_then_busy", _BUSY),
+            ("paused_here_then_unreadable", "the cron store could not be read"),
+        ],
+    )
+    async def test_the_pause_is_reported_saved_only_once_a_write_holding_it_returned(
+        self, tmp_path, change: str | None, reason: str | None
+    ) -> None:
+        """Every way the cancel's save can end. Only a store write that holds the park
+        and returned counts as a saved pause. Every other end is worded from the live
+        job after the merge: a job removed or paused meanwhile has nothing left to
+        pause, so that cancel is not reported as a failed pause."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+        calls: list[str] = []
+
+        async def on_job(job: CronJob) -> None:
+            calls.append(job.id)
+            if len(calls) == 1:  # the run the test cancels; a manual Run returns at once
+                started.set()
+                await asyncio.wait_for(release.wait(), timeout=5.0)
+
+        svc = CronService(base_dir=tmp_path, on_job=on_job)
+        await _start_without_timer(svc)
+        job = await svc.add_job_async("remind-once", "msg", at_ts=time.time() - 1)
+        store = tmp_path / "crons.json"
+        real_merge = svc._merge_terminal_state_locked
+        real_read = Path.read_bytes
+
+        def unreadable(path: Path) -> bytes:
+            if path == store:
+                raise OSError(errno.EIO, "Input/output error")
+            return real_read(path)
+
+        real_read_text = Path.read_text
+        faults = contextlib.ExitStack()
+
+        def unreadable_text(path: Path, *args: Any, **kwargs: Any) -> str:
+            if path == store:
+                raise OSError(errno.EIO, "Input/output error")
+            return real_read_text(path, *args, **kwargs)
+
+        def merge_after_the_change(*args: Any, **kwargs: Any) -> Any:
+            # On the cancel's worker thread, just before its own save.
+            if change == "malformed":
+                store.write_text("{not json", encoding="utf-8")
+            elif change == "removed":
+                other = CronService(base_dir=tmp_path)
+                assert other.remove_job(job.id, actor="test", source="test")
+            elif change == "newer_run":
+                CronService(base_dir=tmp_path)._merge_terminal_state_locked(
+                    job.id, last_status="ok", last_error="", last_run_ts=1.0, run_generation=10**6
+                )
+            elif change == "recurring":
+                assert CronService(base_dir=tmp_path).update_job(job.id, every_secs=3600)
+            elif change == "unreadable":
+                with patch.object(Path, "read_bytes", unreadable):
+                    return real_merge(*args, **kwargs)
+            elif change == "write_error":
+                with patch.object(svc, "_save", side_effect=OSError(28, "No space left on device")):
+                    return real_merge(*args, **kwargs)
+            elif change == "manual_run":
+                # A manual Run in this process, accepted once the cancel released
+                # the claim, completes and merges its record first.
+                assert asyncio.run_coroutine_threadsafe(manual(), loop).result(timeout=10)
+            elif change == "newer_run_here":
+                # A newer terminal record merged by this process, as its reaper writes.
+                real_merge(
+                    job.id,
+                    last_status="error",
+                    last_error="",
+                    last_run_ts=1.0,
+                    run_generation=10**6,
+                )
+            elif change == "recurring_here":
+                assert svc.update_job(job.id, every_secs=3600)
+            elif change == "recurring_paused":
+                other = CronService(base_dir=tmp_path)
+                assert other.update_job(job.id, every_secs=3600)
+                assert other.enable_job(job.id, False)
+            elif change in _THEN_WRITE_ERROR:
+                # The store changes in the gap, the merge reloads it (or, for this
+                # process's own change, already holds it), and then its save fails.
+                if change == "paused_then_write_error":
+                    assert CronService(base_dir=tmp_path).enable_job(job.id, False)
+                elif change == "recurring_then_write_error":
+                    assert CronService(base_dir=tmp_path).update_job(job.id, every_secs=3600)
+                else:
+                    assert svc.update_job(job.id, every_secs=3600)
+                with patch.object(svc, "_save", side_effect=OSError(28, "No space left on device")):
+                    return real_merge(*args, **kwargs)
+            elif change in _THEN_BUSY:
+                # This process changes the job, or reloads a store another process
+                # wrote, in the gap; then the lock is busy, so the merge never runs.
+                if change == "recurring_here_then_busy":
+                    assert svc.update_job(job.id, every_secs=3600)
+                elif change == "removed_here_then_busy":
+                    assert svc.remove_job(job.id, actor="test", source="test")
+                elif change == "resumed_here_then_busy":
+                    assert svc.enable_job(job.id, True)
+                elif change == "newer_run_here_then_busy":
+                    real_merge(
+                        job.id,
+                        last_status="error",
+                        last_error="",
+                        last_run_ts=1.0,
+                        run_generation=10**6,
+                    )
+                else:
+                    CronService(base_dir=tmp_path).add_job("unrelated", "msg", every_secs=3600)
+                    svc._tick_scan_locked()  # the tick's reload drops the in-memory hold
+                with patch.object(svc, "_file_lock", side_effect=CronStoreBusy("cron store busy")):
+                    return real_merge(*args, **kwargs)
+            elif change == "pause_unsaved_then_write_error":
+                # This process's pause fails to save, and so does the cancel's park.
+                with patch.object(svc, "_save", side_effect=OSError(28, "No space left on device")):
+                    with pytest.raises(OSError):
+                        svc.enable_job(job.id, False)
+                    return real_merge(*args, **kwargs)
+            elif change == "paused_here_then_write_error":
+                assert svc.enable_job(job.id, False)
+                with patch.object(svc, "_save", side_effect=OSError(28, "No space left on device")):
+                    return real_merge(*args, **kwargs)
+            elif change == "removed_unsaved_then_busy":
+                with patch.object(svc, "_save", side_effect=OSError(28, "No space left on device")):
+                    with pytest.raises(OSError):
+                        svc.remove_job(job.id, actor="test", source="test")
+                with patch.object(svc, "_file_lock", side_effect=CronStoreBusy("cron store busy")):
+                    return real_merge(*args, **kwargs)
+            elif change == "paused_here_then_unreadable":
+                # A saved pause, then the store cannot be read, through the cancel's end.
+                assert svc.enable_job(job.id, False)
+                faults.enter_context(patch.object(Path, "read_bytes", unreadable))
+                faults.enter_context(patch.object(Path, "read_text", unreadable_text))
+            return real_merge(*args, **kwargs)
+
+        async def manual() -> bool:
+            return await svc.run_job(job.id)
+
+        loop = asyncio.get_running_loop()
+        svc._merge_terminal_state_locked = merge_after_the_change  # type: ignore[method-assign]
+        note, message, live_after = _CANCEL_REPORTS[change]
+        try:
+            with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+                await svc._on_timer()
+                await asyncio.wait_for(started.wait(), timeout=5.0)
+                if message is None:
+                    assert await asyncio.wait_for(svc.cancel(job.id), timeout=10.0) is True
+                else:
+                    with pytest.raises(cron_module.CronPauseNotSaved) as raised:
+                        await asyncio.wait_for(svc.cancel(job.id), timeout=10.0)
+                    assert str(raised.value) == message
+            live = svc.get_job(job.id)
+            history, _total = await svc._history.get_job_history(job.id)
+        finally:
+            faults.close()
+            release.set()
+            await svc.stop()
+        error = history[0]["error"]
+        assert re.fullmatch(r"Cancelled by user after \d+s" + re.escape(note), error), error
+        if reason is None:
+            assert self._on_disk(tmp_path, job.id) == (False, True)
+        elif change == "malformed":
+            assert store.read_text(encoding="utf-8") == "{not json", "a write replaced the store"
+        elif change in ("removed", "removed_here_then_busy"):
+            assert CronService(base_dir=tmp_path).get_job(job.id) is None
+        else:
+            paused_meanwhile = change in _PAUSED_MEANWHILE
+            assert self._on_disk(tmp_path, job.id)[1] is paused_meanwhile, "the park is on disk"
+        live_state = None if live is None else (live.schedule.kind, live.enabled, live.user_paused)
+        assert live_state == live_after, f"{change}: the report does not match the live job"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("enabled", [True, False])
+    async def test_another_process_s_choice_after_a_failed_cancel_is_kept(
+        self, tmp_path, enabled: bool
+    ) -> None:
+        """A CLI-style service resumes or pauses the job after a cancel whose park did not
+        land; the gateway's next store pass and its next save keep that choice."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def on_job(job: CronJob) -> None:
+            started.set()
+            await asyncio.wait_for(release.wait(), timeout=5.0)
+
+        svc = CronService(base_dir=tmp_path, on_job=on_job)
+        await _start_without_timer(svc)
+        job = await svc.add_job_async("remind-once", "msg", at_ts=time.time() - 1)
+        busy_calls: list[int] = [0]
+        self._busy_lock(svc, busy_calls, [])
+        try:
+            with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+                await svc._on_timer()
+                await asyncio.wait_for(started.wait(), timeout=5.0)
+                busy_calls[0] = -1
+                # Test B checks the report; this one checks only what the store keeps.
+                with contextlib.suppress(RuntimeError):
+                    await asyncio.wait_for(svc.cancel(job.id), timeout=10.0)
+                busy_calls[0] = 0
+                cli = CronService(base_dir=tmp_path)
+                cli._load()
+                assert await asyncio.to_thread(cli.enable_job, job.id, enabled) is True
+                await asyncio.to_thread(svc._tick_scan_locked)
+                await svc.add_job_async("unrelated", "msg", every_secs=3600)
+        finally:
+            release.set()
+            await svc.stop()
+        assert self._on_disk(tmp_path, job.id) == (enabled, not enabled)
+
+    @pytest.mark.asyncio
+    async def test_cancelled_recurring_job_keeps_its_schedule(self, tmp_path) -> None:
+        """Only a one-shot is parked: a cancelled ``every`` job stays enabled for its next slot."""
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def on_job(job: CronJob) -> None:
+            started.set()
+            await asyncio.wait_for(release.wait(), timeout=5.0)
+
+        svc = CronService(base_dir=tmp_path, on_job=on_job)
+        await _start_without_timer(svc)
+        job = await svc.add_job_async("every-hour", "msg", every_secs=3600, strict_schedule=True)
+        live = svc.get_job(job.id)
+        assert live is not None
+        live.created_ts = live.last_run_ts = time.time() - 7200  # due on the first tick
+        try:
+            with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+                await svc._on_timer()
+                await asyncio.wait_for(started.wait(), timeout=5.0)
+                assert await svc.cancel(job.id) is True
+        finally:
+            release.set()
+            await svc.stop()
+
+        reloaded = CronService(base_dir=tmp_path, on_job=on_job)
+        reloaded._load()
+        kept = reloaded.get_job(job.id)
+        assert kept is not None
+        assert (kept.enabled, kept.user_paused) == (True, False)

@@ -133,7 +133,7 @@ _LOADER_MEMBERS = {
         _scoped_entries _served_key_by_realpath _snapshot_admitted_roots
         _trusted_project_key _usage_fields _user_first _validate_and_redact_candidate
         _versions_root _vet_unconfined_path
-        approve_pending_skill approve_pending_skill_checked approve_pending_update
+        approve_pending_skill_checked
         approve_pending_update_checked archive_auto_skill catalog_project_skills
         catalog_status close confined_triggered create_auto_skill create_skill credit_skill_reads
         delete_skill dismiss_all_pending dismiss_pending_skill dismiss_pending_slugs
@@ -242,9 +242,7 @@ _LOADER_SIGNATURES = {
     "_vet_unconfined_path": "(self, path: 'Path') -> 'bool'",
     "_versions_root": "(self, target_slug: 'str') -> 'Path'",
     "_write_skill_md": "(skill_file: 'Path', content: 'str', *, dir_fd: 'int | None') -> 'bool'",
-    "approve_pending_skill": "(self, slug: 'str') -> 'str | None'",
     "approve_pending_skill_checked": "(self, slug: 'str') -> 'str'",
-    "approve_pending_update": "(self, slug: 'str') -> 'str | None'",
     "approve_pending_update_checked": "(self, slug: 'str') -> 'str'",
     "archive_auto_skill": "(self, name: 'str') -> 'bool'",
     "catalog_project_skills": "(self, project_dir: 'str | Path') -> 'list[dict]'",
@@ -314,8 +312,9 @@ _CRON_SOURCE_MAX_BYTES _DIR_FD_SUPPORTED _DISCOVERY_IN_PROGRESS_NOTICE
 _DOLLAR_SKILL_PATTERN _FAMILY_LINE_MAX_LABELS _FINGERPRINT_MAX_BYTES
 _FINGERPRINT_MAX_ENTRIES _ITER_CACHE_TTL_SECS _MAPPED_BLOCK_OVERHEAD_BYTES
 _MAX_DOLLAR_SKILLS _MIN_TRIGGER_OVERLAP _NEW_SKILL_BOOST_WINDOW_SECS
-_PENDING_CONSUMED_HOOK _PENDING_SCRIPT_MAX_DEPTH _PENDING_SCRIPT_MAX_ENTRIES
-_PENDING_STAGED_HOOK _PROJECT_DIR_OPEN_FLAGS _PROJECT_SKILL_MAX_DEPTH _PROVENANCE_FORMAT
+_PENDING_CONSUMED_HOOK _PENDING_DOCUMENT_MAX_BYTES _PENDING_SCRIPT_MAX_DEPTH
+_PENDING_SCRIPT_MAX_ENTRIES _PENDING_STAGED_HOOK _PROJECT_DIR_OPEN_FLAGS
+_PROJECT_SKILL_MAX_DEPTH _PROVENANCE_FORMAT
 _PROVENANCE_MARKER _RELOCATED_SKILLS _RETIRED_CONDUCTOR_SKILL_MAX_BYTES
 _SHELL_READ_VERBS _SHELL_SEGMENT_RE _SHELL_SKILL_PATH_RE _SHORT_DESC_CHARS _SKILL_FILE
 _ScopedSkillEntry _TOOL_READ_PATH_KEYS _VALIDATION_REPORT_MAX_FINDINGS
@@ -1457,10 +1456,20 @@ class TestThePinnedPendingRead:
         assert detail is not None and detail["meta"] == {} and detail["kind"] == "new"
 
     def test_an_oversized_body_refuses_the_candidate(self, make_loader) -> None:
+        """The DOCUMENT cap bounds ``SKILL.md``, not the bundled-script cap.
+
+        A body over ``MAX_SCRIPT_BYTES`` is a document, not a script, and is served;
+        one over ``_PENDING_DOCUMENT_MAX_BYTES``, derived from the generator's
+        procedure limit, refuses the candidate whole.
+        """
         from kiro_crew.skills_script_validator import MAX_SCRIPT_BYTES
 
         loader, pdir = self._candidate(make_loader)
-        (pdir / "SKILL.md").write_text("# pad\n" * (MAX_SCRIPT_BYTES // 6 + 10), encoding="utf-8")
+        over_script_cap = "# pad\n" * (MAX_SCRIPT_BYTES // 6 + 10)
+        assert len(over_script_cap) > MAX_SCRIPT_BYTES
+        (pdir / "SKILL.md").write_text(over_script_cap, encoding="utf-8")
+        assert loader.get_pending_skill("cand") is not None, "a document was read as a script"
+        (pdir / "SKILL.md").write_text("x" * (sk._PENDING_DOCUMENT_MAX_BYTES + 1), encoding="utf-8")
         assert loader.get_pending_skill("cand") is None
 
     def test_staged_probe_only_names_a_candidate_by_its_safe_slug(self, make_loader) -> None:

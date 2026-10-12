@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import ParamSpec, TypeVar
 
 from kiro_crew.acp.types import PROVIDER_LABEL_DEFAULT
+from kiro_crew.atomic_write import replace_with_retry
 from kiro_crew.config.paths import config_dir, kiro_sessions_dir
 from kiro_crew.messaging.link import (
     SLACK_NAMESPACE,
@@ -141,11 +142,15 @@ _DURABLE_FLAGS = frozenset({MIRROR_OPT_OUT_FLAG, SUPPRESS_REPLAY_FLAG})
 # ``privacy_mode.strictest`` uses; pinned by the same test). A privacy flag
 # keeps its entry through BOTH stale paths (``prune`` and the per-read repair
 # clear only a dead ``sid``), and no collection step removes such a row
-# either: the flag is the record the channel's inbound gate reads --
-# ``privacy_mode.hydrate`` restores the trackers from this map alone, never
-# from the transcript header -- so a row removed for any reason, however
-# complete the header, leaves that gate reading the thread as persistent after
-# the next restart: its turns persisted and agent memory writes admitted again.
+# either. The flag is a record the channel gates read: the sync gates restore
+# the trackers from this map alone (``privacy_mode.hydrate``), the async
+# inbound gates from this map AND the transcript header together
+# (``privacy_mode.hydrate_inbound``, the stricter of the two standing). The
+# header alone is not enough to retire a row on: a transcript can be deleted
+# or recreated apart from its row, and the sync gates never read it -- so a
+# row removed for any reason, however complete the header, can leave a gate
+# reading the thread as persistent after the next restart: its turns persisted
+# and agent memory writes admitted again.
 # The transcript header (``memory_mode``, the field every memory reader refuses
 # on) is still ENSURED for every flagged row whose transcript exists, off the
 # event loop and off the map lock, by :meth:`SessionMap.stamp_privacy_headers`,
@@ -158,9 +163,8 @@ _DURABLE_FLAGS = frozenset({MIRROR_OPT_OUT_FLAG, SUPPRESS_REPLAY_FLAG})
 # is refused fail-closed (``set_flag`` raises :class:`PrivacyRowRefused`; the
 # modifier tells the user the message was not processed), while every row
 # already retained stays -- evicting one would run that thread as persistent,
-# the leak the flag closes. Retiring rows once the header carries the mode
-# needs that gate to read the header, a separate change; until then a row's
-# removal is a privacy leak, not housekeeping, and nothing here performs one.
+# the leak the flag closes. A row's removal is a privacy leak, not
+# housekeeping, and nothing here performs one.
 _PRIVACY_STRICTNESS = ("temporary", "incognito")
 
 #: How many privacy-flagged rows the map RETAINS -- the same bound the
@@ -987,7 +991,7 @@ class SessionMap:
             try:
                 with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
                     f.write(payload)
-                os.replace(tmp_path, str(self._path))
+                replace_with_retry(tmp_path, str(self._path))
             except Exception:
                 try:
                     os.unlink(tmp_path)

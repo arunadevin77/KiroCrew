@@ -1256,6 +1256,28 @@ def test_no_blocks_writes_nothing():
     assert len(_body()) == before
 
 
+def test_budget_cuts_ride_beside_the_blocks_and_pass_the_declaration():
+    # The entry is validated against its declaration on write; an undeclared member
+    # would refuse the WHOLE entry and lose the block sizes too.
+    _open_session()
+    cut = {
+        "lesson_rules": {"reason": "budget", "omitted": 23, "total": 92, "budget_chars": 37000},
+        "background": {"reason": "budget", "sections": ["skills"]},
+    }
+    emit.on_context_composed(SESSION, 1, blocks={"lessons": 400}, omitted=cut)
+    assert emit.flush()
+    data = _body()[-1]["data"]
+    assert data["sources"] == [{"kind": "lessons", "chars": 400, "tokens": 100}]
+    assert data["omitted"] == cut
+
+
+def test_a_composition_that_cut_nothing_carries_no_omitted_field():
+    _open_session()
+    emit.on_context_composed(SESSION, 1, blocks={"lessons": 400}, omitted={})
+    assert emit.flush()
+    assert "omitted" not in _body()[-1]["data"]
+
+
 # --- model-call steps -----------------------------------------------------
 
 

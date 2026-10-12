@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useId } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Trans } from 'react-i18next'
 import { SettingsCard, SettingsToggle, SettingsSelect, SettingsInput, SettingsButtonGroup, SettingsField, SettingsMultiSelect, SettingsStepper } from '../../components/settings'
@@ -33,6 +33,9 @@ import { normalizeHiddenModels } from '../../hooks/useInteractiveModels'
 
 import { i18nT } from '../../i18n/t'
 import ErrorNotice from '../../components/ErrorNotice'
+import { useImeGuard } from '../../hooks/useImeGuard'
+import { apiErrorCode } from '../../api/apiError'
+import { reportForError, type ErrorReport } from '../../utils/errorReport'
 import { type KiroCrewAgent } from '../../components/AgentSelector'
 import { fetchDashboardConfig } from '../../api/dashboardConfigQuery'
 /**
@@ -89,6 +92,12 @@ const SOFT_STOP_MIN = 0.5
 const SOFT_STOP_MAX = 60
 const SOFT_STOP_DEFAULT = 10.0
 
+/** `agent.chat_turn_timeout_secs` bounds and default, mirroring
+ *  config/sections.py CHAT_TURN_TIMEOUT_MIN / _MAX and the field default. */
+const TURN_LIMIT_MIN = 300
+const TURN_LIMIT_MAX = 86400
+const TURN_LIMIT_DEFAULT = 14400
+
 /** `dashboard.title_refresh_every_turns`: 0 is the built-in schedule, any other
  *  value is MIN..MAX (config/sections.py TITLE_REFRESH_EVERY_TURNS_MIN / _MAX). */
 const TITLE_REFRESH_PATH = 'dashboard.title_refresh_every_turns'
@@ -114,6 +123,9 @@ const LEGACY_VERBOSITY: Record<string, VerbosityLevel> = { ultra: 'answer_only' 
 
 const MEMORY_MODE_OPTIONS: MemoryMode[] = ['persistent', 'incognito', 'temporary']
 const DEFAULT_MEMORY_MODE_PATH = 'dashboardConfig.default_memory_mode'
+// The New Session Folders placeholder's example root. A home-relative path reads
+// the same on every platform, and the server expands `~` before it validates.
+const FOLDER_ROOT_EXAMPLE = '~/chats'
 
 function memoryModeLabels(): string[] {
   return [
@@ -172,6 +184,7 @@ type KirocrewConfigShape = {
     role_efforts?: { background?: string; subagent?: string }
     reasoning_effort?: string
     soft_stop_budget_secs?: number
+    chat_turn_timeout_secs?: number
     completion_keep?: CompletionKeepMode
     completion_keep_chars?: number
     fallback_model?: string
@@ -542,7 +555,7 @@ export function ChatPanel({ basePath }: { basePath?: string } = {}) {
   // second toggle during a save carries the first one's value forward.
   const dashCfg = overlay.shown(
     'dashboardConfig',
-    dashQ.data ?? { restore_sessions: false, restore_window_minutes: 30, merge_queued_messages: false, default_memory_mode: 'persistent' as const, widget_density: 'more' as const, verbosity: 'answer_only' as const, quick_send: false, session_grid: false, tail_fork_enabled: false, link_previews: false, link_patterns: [], mcp_app_panel: false, auto_open_git_panel: false, session_card_source_links: true, folder_suggestions_enabled: true, use_builtin_browser: true, model_picker_hidden_models: [] },
+    dashQ.data ?? { restore_sessions: false, restore_window_minutes: 30, merge_queued_messages: false, default_memory_mode: 'persistent' as const, widget_density: 'more' as const, verbosity: 'answer_only' as const, quick_send: false, session_grid: false, tail_fork_enabled: false, link_previews: false, link_patterns: [], mcp_app_panel: false, auto_open_git_panel: false, session_card_source_links: true, folder_suggestions_enabled: true, topic_tags_enabled: false, use_builtin_browser: true, model_picker_hidden_models: [] },
   )
   const shownDefaultMemoryMode = overlay.shown(
     DEFAULT_MEMORY_MODE_PATH,
@@ -893,6 +906,72 @@ export function ChatPanel({ basePath }: { basePath?: string } = {}) {
       )
     },
   })
+
+  // ── Turn time limit (agent.chat_turn_timeout_secs) ──
+  // Same follow-the-server rule as the compaction budget below: an untouched
+  // field tracks every refetch, and a blur without an edit saves nothing.
+  const [localTurnLimit, setLocalTurnLimit] = useState('')
+  const turnLimitEditedRef = useRef(false)
+  const serverTurnLimit = mcQ.data?.agent?.chat_turn_timeout_secs
+  useEffect(() => {
+    if (mcQ.isSuccess && !turnLimitEditedRef.current) {
+      setLocalTurnLimit(String(serverTurnLimit ?? TURN_LIMIT_DEFAULT))
+    }
+  }, [mcQ.isSuccess, serverTurnLimit])
+
+  const turnLimitMut = useMutation({
+    mutationFn: (n: number) => api.patchConfig('agent.chat_turn_timeout_secs', n),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kirocrewConfig'] }),
+    onError: () => {
+      setSaveError(i18nT('pages.settings.chatPanel.failed_to_save_turn_time_limit'))
+      setLocalTurnLimit(String(mcCfg?.agent?.chat_turn_timeout_secs ?? TURN_LIMIT_DEFAULT))
+    },
+  })
+
+  // ── New session folders (dashboard.session_folder_root) ──
+  // Same follow-the-server rule as the turn limit: an untouched field tracks
+  // every refetch, and a blur without an edit saves nothing. A refused path
+  // keeps the typed text on screen with the reason under the field, so it can
+  // be corrected rather than retyped; the server names the resolved path it saved.
+  const [localFolderRoot, setLocalFolderRoot] = useState('')
+  const [folderRootError, setFolderRootError] = useState<{ message: string; report?: ErrorReport } | null>(null)
+  // Set by a save that landed, cleared by the next edit: the field saves on its
+  // own (blur or Enter) with no button, so this is the only sign it took.
+  const [folderRootSaved, setFolderRootSaved] = useState(false)
+  const folderRootErrorId = useId()
+  const folderRootEditedRef = useRef(false)
+  const folderRootIme = useImeGuard()
+  const serverFolderRoot = dashQ.data?.session_folder_root ?? ''
+  useEffect(() => {
+    if (dashQ.isSuccess && !folderRootEditedRef.current) setLocalFolderRoot(serverFolderRoot)
+  }, [dashQ.isSuccess, serverFolderRoot])
+  const folderRootMut = useMutation({
+    mutationFn: (root: string) => api.updateDashboardConfig({ session_folder_root: root }),
+    onSuccess: () => {
+      folderRootEditedRef.current = false
+      setFolderRootError(null)
+      setFolderRootSaved(true)
+      return qc.invalidateQueries({ queryKey: ['dashboardConfig'] })
+    },
+    // Only the server's own refusal of the path gets the "pick another folder"
+    // copy; a write failure or a dropped connection is not the path's fault.
+    onError: (err: unknown) => setFolderRootError({
+      message: apiErrorCode(err) === 'invalid_session_folder_root'
+        ? i18nT('pages.settings.chatPanel.session_folder_root_invalid')
+        : i18nT('pages.settings.chatPanel.failed_to_save_dashboard_config'),
+      report: reportForError(err),
+    }),
+  })
+  const commitFolderRoot = () => {
+    if (!folderRootEditedRef.current) return
+    const next = localFolderRoot.trim()
+    if (next === serverFolderRoot) {
+      folderRootEditedRef.current = false
+      setFolderRootError(null)
+      return
+    }
+    folderRootMut.mutate(next)
+  }
 
   // ── Compaction wait budget ──
   // The server clamps an out-of-range value instead of refusing it (0 keeps
@@ -1328,6 +1407,7 @@ export function ChatPanel({ basePath }: { basePath?: string } = {}) {
     <SettingsSubNav
       items={railItems}
       basePath={basePath}
+      guideTargetPrefix="settings.sub.chat."
       railWidth={220}
       listLabel={i18nT('pages.settings.chatPanel.rail_label')}
       backLabel={i18nT('settings.tabs.chat.label')}
@@ -1584,8 +1664,42 @@ export function ChatPanel({ basePath }: { basePath?: string } = {}) {
       </div>
 
       <div className="mb-8">
-        <h4 className="text-base font-semibold text-text-strong mb-1">{i18nT('pages.settings.chatPanel.context')}</h4>
+        <h4 className="text-base font-semibold text-text-strong mb-1">{i18nT('pages.settings.chatPanel.turns')}</h4>
         <SettingsCard index={1}>
+          <SettingsInput
+            label={i18nT('pages.settings.chatPanel.turn_time_limit')}
+            description={i18nT('pages.settings.chatPanel.turn_time_limit_description')}
+            hint={i18nT('pages.settings.chatPanel.turn_time_limit_hint')}
+            type="number"
+            value={localTurnLimit}
+            min={TURN_LIMIT_MIN}
+            max={TURN_LIMIT_MAX}
+            step={300}
+            onChange={v => {
+              turnLimitEditedRef.current = true
+              setLocalTurnLimit(v)
+            }}
+            onBlur={() => {
+              if (!turnLimitEditedRef.current) return
+              turnLimitEditedRef.current = false
+              const saved = mcCfg?.agent?.chat_turn_timeout_secs ?? TURN_LIMIT_DEFAULT
+              const n = Number(localTurnLimit)
+              if (localTurnLimit.trim() === '' || !Number.isInteger(n) || n < TURN_LIMIT_MIN || n > TURN_LIMIT_MAX) {
+                setLocalTurnLimit(String(saved))
+                return
+              }
+              if (n === saved) return
+              turnLimitMut.mutate(n)
+            }}
+            disabled={!mcQ.isSuccess || turnLimitMut.isPending}
+            configKey="agent.chat_turn_timeout_secs"
+          />
+        </SettingsCard>
+      </div>
+
+      <div className="mb-8">
+        <h4 className="text-base font-semibold text-text-strong mb-1">{i18nT('pages.settings.chatPanel.context')}</h4>
+        <SettingsCard index={2}>
           <SettingsSelect
             label={i18nT('pages.settings.chatPanel.auto_compact_threshold')}
             hint={i18nT('pages.settings.chatPanel.context_usage_at_which_auto_compaction_triggers')}
@@ -1637,7 +1751,7 @@ export function ChatPanel({ basePath }: { basePath?: string } = {}) {
 
       <div>
         <h4 className="text-base font-semibold text-text-strong mb-1">{i18nT('pages.settings.chatPanel.subagents')}</h4>
-        <SettingsCard index={2}>
+        <SettingsCard index={3}>
           <SettingsSelect
             label={i18nT('pages.settings.chatPanel.completion_event_truncation')}
             hint={i18nT('pages.settings.chatPanel.which_part_of_a_subagent_s_stream_to_keep_when_i')}
@@ -1758,6 +1872,7 @@ export function ChatPanel({ basePath }: { basePath?: string } = {}) {
           <SettingsToggle label={i18nT('pages.settings.chatPanel.show_thinking_inline')} hint={i18nT('pages.settings.chatPanel.show_intermediate_reasoning_text_between_tool_ca')} checked={!chatCfg.collapseAllSteps} onChange={v => setChat('collapseAllSteps', !v)} />
           <SettingsToggle label={i18nT('pages.settings.chatPanel.pin_last_prompt')} hint={i18nT('pages.settings.chatPanel.pin_last_prompt_desc')} checked={chatCfg.pinLastPrompt} onChange={v => setChat('pinLastPrompt', v)} />
           <SettingsToggle label={i18nT('pages.settings.chatPanel.simplified_tool_call_names')} hint={i18nT('pages.settings.chatPanel.when_enabled_inline_tool_pills_show_simplified_t')} checked={chatCfg.simplifiedToolNames} onChange={v => setChat('simplifiedToolNames', v)} />
+          <SettingsToggle label={i18nT('pages.settings.chatPanel.tool_calls_start_expanded')} hint={i18nT('pages.settings.chatPanel.tool_calls_start_expanded_desc')} checked={chatCfg.toolCallsStartExpanded} onChange={v => setChat('toolCallsStartExpanded', v)} />
           <SettingsSelect label={i18nT('pages.settings.chatPanel.file_change_chips')} hint={i18nT('pages.settings.chatPanel.how_file_diff_chips_appear_below_assistant_messa')} value={chatCfg.fileChipStyle} options={['expanded', 'minimal']} optionLabels={[i18nT('pages.settings.chatPanel.expanded_icon_name_stats'), i18nT('pages.settings.chatPanel.minimal_stats_only_name_on_hover')]} onChange={v => setChat('fileChipStyle', v as ChatConfig['fileChipStyle'])} />
           {/* Sits beside File change chips because it governs the same surface —
               how a diff reads in the transcript. Phrased as "plain diffs ON"
@@ -1883,6 +1998,33 @@ export function ChatPanel({ basePath }: { basePath?: string } = {}) {
             disabled={dashDisabled || defaultModeMut.isPending}
             configKey="dashboard.default_memory_mode"
           />
+          <SettingsInput
+            label={i18nT('pages.settings.chatPanel.session_folder_root')}
+            description={i18nT('pages.settings.chatPanel.session_folder_root_desc')}
+            hint={i18nT('pages.settings.chatPanel.session_folder_root_hint')}
+            value={localFolderRoot}
+            placeholder={i18nT('pages.settings.chatPanel.session_folder_root_placeholder', { path: FOLDER_ROOT_EXAMPLE })}
+            onChange={v => {
+              folderRootEditedRef.current = true
+              setFolderRootError(null)
+              setFolderRootSaved(false)
+              setLocalFolderRoot(v)
+            }}
+            {...folderRootIme.bindEnter<HTMLInputElement | HTMLTextAreaElement>({ onEnter: commitFolderRoot, onBlur: commitFolderRoot })}
+            disabled={dashDisabled || folderRootMut.isPending}
+            invalidMessageId={folderRootError ? folderRootErrorId : undefined}
+            after={
+              <>
+                {/* No hand-off: the typed path is an unsaved draft in this field,
+                    and leaving the page to ask the agent would discard it. */}
+                <ErrorNotice id={folderRootErrorId} variant="inline" message={folderRootError?.message} report={folderRootError?.report} />
+                {folderRootSaved && !folderRootError && (
+                  <span role="status" className="text-[12px] text-muted">{i18nT('pages.settings.chatPanel.session_folder_root_saved')}</span>
+                )}
+              </>
+            }
+            configKey="dashboard.session_folder_root"
+          />
           <SettingsToggle label={i18nT('pages.settings.chatPanel.tail_only_fork')} description={i18nT('pages.settings.chatPanel.fork_keeps_only_the_messages_after_the_chosen_po')} checked={dashCfg.tail_fork_enabled} onChange={v => setDash({ tail_fork_enabled: v })} disabled={dashDisabled} />
           <SettingsToggle label={i18nT('pages.settings.chatPanel.restore_sessions')} hint={i18nT('pages.settings.chatPanel.re_open_recently_active_sessions_on_startup')} checked={dashCfg.restore_sessions} onChange={v => setDash({ restore_sessions: v })} disabled={dashDisabled} />
           {dashCfg.restore_sessions && (
@@ -1907,6 +2049,7 @@ export function ChatPanel({ basePath }: { basePath?: string } = {}) {
           />
           <SettingsToggle label={i18nT('pages.settings.chatPanel.session_card_source_links')} description={i18nT('pages.settings.chatPanel.session_card_source_links_desc')} checked={dashCfg.session_card_source_links} onChange={v => setDash({ session_card_source_links: v })} disabled={dashDisabled} />
           <SettingsToggle label={i18nT('pages.settings.chatPanel.folder_suggestions')} description={i18nT('pages.settings.chatPanel.offer_to_file_a_new_session_into_a_matching_fold')} checked={dashCfg.folder_suggestions_enabled} onChange={v => setDash({ folder_suggestions_enabled: v })} disabled={dashDisabled} />
+          <SettingsToggle label={i18nT('pages.settings.chatPanel.topic_tags')} description={i18nT('pages.settings.chatPanel.topic_tags_desc')} checked={dashCfg.topic_tags_enabled ?? false} onChange={v => setDash({ topic_tags_enabled: v })} disabled={dashDisabled} />
         </SettingsCard>
           )
 

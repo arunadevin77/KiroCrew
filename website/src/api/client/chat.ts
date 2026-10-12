@@ -10,8 +10,12 @@ import type { SessionSummary } from '../../types/sessionSummary'
 import type { DynamicDashboardCard } from '../../types/dynamicDashboard'
 import { getStoredConsent } from '../../utils/themeConsent'
 import { chatSlotDetailPath } from '../chatSlotPaths'
+import { isLookPreviewFrame } from '../../utils/lookPreview'
+import { lookPreviewSlotDetail, lookPreviewSlots } from '../../utils/lookPreviewFixtures'
 import { resolveDefaultMemoryMode } from '../queryClient'
 import { TAB_ID } from '../tabId'
+import { takeSessionFolderNotice } from '../../lib/sessionFolderNotice'
+import { activeLocale } from '../../i18n/format'
 import type { ClientTransport } from './transport'
 
 /**
@@ -63,7 +67,9 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
   }
 
   const slotList = {
-    chatSlots: () => fetch('/api/chat/slots').then(j),
+    // The look-preview frame (utils/lookPreview.ts) shows one demo session in
+    // place of the user's own: fixtures answer both reads below.
+    chatSlots: () => isLookPreviewFrame() ? Promise.resolve(lookPreviewSlots()) : fetch('/api/chat/slots').then(j),
   }
 
   const slots = {
@@ -87,6 +93,7 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
       del('/api/chat/slots/' + encodeURIComponent(slot) + '/source-links/' + encodeURIComponent(identity)
         + '?expect=' + encodeURIComponent(expect)).then(j),
     chatSlotDetail: (slot: string, limit?: number, before?: number, signal?: AbortSignal) => {
+      if (isLookPreviewFrame()) return Promise.resolve(lookPreviewSlotDetail())
       const p = new URLSearchParams()
       if (limit) p.set('limit', String(limit))
       if (before !== undefined) p.set('before', String(before))
@@ -94,7 +101,7 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
     },
     /** Create a chat slot on this machine. A session on a connected crew is
      *  created on that crew and opened through its window, never here. */
-    createChatSlot: async (name?: string, agent?: string, model?: string, mode?: string, memory_mode?: string, title?: string, artifact?: string, folder_id?: string, agent_kind?: 'member' | 'template') => {
+    createChatSlot: async (name?: string, agent?: string, model?: string, mode?: string, memory_mode?: string, title?: string, artifact?: string, folder_id?: string, agent_kind?: 'member' | 'template', no_session_folder?: boolean) => {
       const resolvedMemoryMode = memory_mode ?? await resolveDefaultMemoryMode(
         () => fetch('/api/dashboard/config').then(j),
       )
@@ -109,7 +116,10 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
         ...(title ? { title } : {}),
         ...(artifact ? { artifact } : {}),
         ...(folder_id ? { folder_id } : {}),
-      }).then(j) as Promise<ChatSlot>
+        // No fresh session folder: the caller sets the project right after the
+        // create, or opens a purpose-built chat that keeps the default project.
+        ...(no_session_folder ? { no_session_folder: true } : {}),
+      }).then(j).then(takeSessionFolderNotice) as Promise<ChatSlot>
     },
     /** Inject silent background context into a slot — consumed on the next user
      * message. Used by the artifact companion chat to name the bound artifact so
@@ -210,7 +220,11 @@ export function createChatEndpoints({ post, put, del, patch, j, jfetch: fetch, s
       // stale-owner session as a bare "refused" send. The steer helper this
       // replaced went through `j` and had both; the transport must not lose them.
       const themeConsent = themeConsentSha(colorTheme)
-      return fetch('/api/chat?ws=1', { method: 'POST', headers: { 'Content-Type': 'application/json', ..._sk }, body: JSON.stringify({ message, slot, ...(colorTheme ? { color_theme: colorTheme } : {}), ...(themeConsent ? { theme_consent_sha: themeConsent } : {}), ...(meta ? { meta } : {}), ...(steer ? { steer: steer === 'auto' ? 'auto' : true } : {}) }), signal }).then(sendResponseAuthRecovery)
+      // `X-Guide-Tab` names this tab as the one talking in *slot*, so a live
+      // guide observation before Start asks this tab and no other. `X-UI-Lang`
+      // is the language this tab renders, so the agent quotes dashboard labels
+      // as this screen spells them (the gateway keeps only a shipped tag).
+      return fetch('/api/chat?ws=1', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Guide-Tab': TAB_ID, 'X-UI-Lang': activeLocale(), ..._sk }, body: JSON.stringify({ message, slot, ...(colorTheme ? { color_theme: colorTheme } : {}), ...(themeConsent ? { theme_consent_sha: themeConsent } : {}), ...(meta ? { meta } : {}), ...(steer ? { steer: steer === 'auto' ? 'auto' : true } : {}) }), signal }).then(sendResponseAuthRecovery)
     },
   }
 

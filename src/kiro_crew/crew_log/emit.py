@@ -95,7 +95,7 @@ import threading
 import time
 import traceback
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final
 
 from kiro_crew.constants import CREW_LOG_ENV, crew_log_enabled
@@ -1598,6 +1598,82 @@ def on_session_released(
     )
 
 
+def on_session_spawned(
+    creator_sid: str,
+    *,
+    creator_slot: str,
+    child_slot: str,
+    on_settled: "Callable[[bool], None] | None" = None,
+) -> None:
+    """Record, on the CREATOR's log, that *creator_slot* created *child_slot*.
+
+    The child has no log yet -- its log is keyed by an ACP session id that only exists
+    after its first turn -- so this is the only durable record of the creating edge
+    before that turn. Without it a gateway restart in between lost the edge for good.
+
+    The creator is the session whose log holds the entry, so the entry names only the
+    child. A creator with no ACP session has no log to write to; ``_handle`` then
+    answers None and nothing is written, which leaves today's in-memory witness as the
+    only record, as before.
+
+    Returns without waiting, and the projection is advanced inside the job AFTER the
+    append succeeds. ``on_settled`` reports the durable outcome the way it does on
+    :func:`on_session_adopted`: called once, off the caller's thread, ``True`` when the
+    entry is on disk and ``False`` when it was given up on or there was no log.
+    """
+    if not creator_sid or not creator_slot or not child_slot or creator_slot == child_slot:
+        if on_settled is not None:
+            on_settled(False)
+        return
+    data: dict[str, Any] = {"child": {"slot": child_slot}}
+
+    settle = _tree_settle_hooks(on_settled)
+
+    def _job() -> None:
+        log = _handle(creator_sid)
+        if log is None:
+            settle.fail()
+            return
+        written = log.append("session/spawned", data, src=_SRC_GATEWAY)
+        settle.wrote()
+        _record_session_tree_spawn(creator_sid, creator_slot, child_slot, written)
+
+    _submit(
+        _job,
+        "appending session/spawned",
+        creator_sid,
+        after=settle.after,
+        on_permanent_drop=settle.fail,
+    )
+
+
+def _record_session_tree_spawn(
+    creator_sid: str, creator_slot: str, child_slot: str, entry: Any
+) -> None:
+    """Fold a just-committed ``session/spawned`` into the in-memory session tree.
+
+    Same contract as :func:`_record_session_tree_decision`: called after the append
+    succeeded, takes ``seq`` and ``time`` from the written line, never raises.
+    """
+    try:
+        from kiro_crew.crew_log.session_tree_projection import record_spawned
+
+        raw = getattr(entry, "time", 0)
+        at = raw if isinstance(raw, int) and not isinstance(raw, bool) else 0
+        raw_seq = getattr(entry, "seq", 0)
+        seq = raw_seq if isinstance(raw_seq, int) and not isinstance(raw_seq, bool) else 0
+        record_spawned(creator_sid, creator_slot, child_slot, at, seq)
+    except Exception:  # pragma: no cover -- defensive; the door guards itself
+        # Rendered text, never ``exc_info``: the caller is the writer job holding the
+        # live handle (see ``_record_session_tree_decision``).
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "session tree projection not advanced for a spawn by %s:\n%s",
+                creator_sid,
+                traceback.format_exc().rstrip(),
+            )
+
+
 def _parent_citation(slot: str, sid: str) -> "dict[str, str]":
     """One ``{slot, sid?}`` citation, or ``{}`` when there is no slot to cite.
 
@@ -2961,6 +3037,7 @@ def on_context_composed(
     blocks: "dict[str, int] | None" = None,
     total_chars: int = 0,
     phase: str = "",
+    omitted: "dict[str, dict[str, Any]] | None" = None,
 ) -> None:
     """Record what the gateway put in front of the model, block by block.
 
@@ -2987,6 +3064,12 @@ def on_context_composed(
     knows which it built, so the field is recorded here and DERIVED nowhere: an
     unstated phase is left absent, because the nearest available guess -- the first
     composition in a unit -- is wrong for the rebuild a replay triggers mid-session.
+
+    ``omitted`` is what the composer's budgets CUT from this composition, keyed by
+    block kind, as :func:`kiro_crew.context_omissions.collect` gathered it from the
+    decisions that wrote the prompt's omission notices: counts, budgets and a reason,
+    never omitted content. It is written only when something was cut, so a reader
+    treats an absent field as "nothing omitted".
     """
     if not session_id or not enabled() or not blocks:
         return
@@ -3018,6 +3101,10 @@ def on_context_composed(
         data["step"] = int(step)
     if phase:
         data["phase"] = str(phase)
+    if omitted:
+        # ``context_omissions.record`` is the only writer of this mapping and admits
+        # only the vocabulary the entry declares, so it passes through as recorded.
+        data["omitted"] = {str(kind): dict(entry) for kind, entry in omitted.items()}
     _write(session_id, "context/composed", data, src=_SRC_GATEWAY)
 
 
@@ -4346,6 +4433,131 @@ def on_dashboard_instance_changed(session_id: str, data: dict[str, Any]) -> None
     _write(session_id, "dashboard/instance_changed", data, src=_SRC_GATEWAY)
 
 
+#: A card title or reason is display text a person reads, never an identity, so a
+#: bounded slice of it is enough for a reader to name the card.
+_CARD_TEXT_MAX = 300
+_CARD_ID_MAX = 64
+
+
+def _card_id(value: Any) -> str:
+    return value if isinstance(value, str) and 0 < len(value) <= _CARD_ID_MAX else ""
+
+
+def on_card_proposed(
+    session_id: str,
+    *,
+    slot: str,
+    card_id: str,
+    kind: str,
+    title: str,
+    risk: str = "",
+    revision: int = 1,
+    mid: str = "",
+) -> None:
+    """The agent proposed a change card in this session's conversation.
+
+    Written at the point the proposal landed in the transcript, so the log orders it
+    against the tool call that made it. ``mid`` is the transcript row the card is
+    drawn at: the row and this entry are the same fact in the two records, and the
+    id is what lets a reader join them. Names only -- a card's parameters are never
+    recorded, and a secret card has no value field to record in the first place.
+    """
+    cid = _card_id(card_id)
+    if not cid:
+        return
+    data: dict[str, Any] = {
+        "slot": slot,
+        "card_id": cid,
+        "kind": str(kind)[:64],
+        "title": _clip(_safe_text(title), _CARD_TEXT_MAX),
+        "revision": int(revision) if isinstance(revision, int) and revision > 0 else 1,
+    }
+    if risk:
+        data["risk"] = str(risk)[:32]
+    turn = live_turn(session_id) if session_id else 0
+    if turn:
+        data["turn"] = turn
+    if mid:
+        data["mid"] = str(mid)[:64]
+    _write(session_id, "card/proposed", data, src=_SRC_GATEWAY)
+
+
+def on_card_finished(session_id: str, *, card_id: str, status: str, revision: int = 1) -> None:
+    """A change card reached a finished status: applied, undone, cancelled, expired...
+
+    One entry per status the card ENTERS, so a failed apply followed by a successful
+    retry is two entries and the newest is the card's outcome. No turn: a card is
+    confirmed by a person, usually between turns, and the turn that proposed it is
+    already on ``card/proposed``.
+    """
+    # Lazy, like OBJECT_PRODUCERS above: this module is the boot-path import gate.
+    from kiro_crew.crew_log.entry_types import CARD_FINISHED_STATUSES
+
+    cid = _card_id(card_id)
+    # Refused rather than coerced: the card store's finished statuses are the one
+    # vocabulary, and a value outside it is a bug at the call site.
+    if not cid or status not in CARD_FINISHED_STATUSES:
+        return
+    data = {
+        "card_id": cid,
+        "status": status,
+        "revision": int(revision) if isinstance(revision, int) and revision > 0 else 1,
+    }
+    _write(session_id, "card/finished", data, src=_SRC_GATEWAY)
+
+
+def on_guide_offered(
+    session_id: str,
+    *,
+    slot: str,
+    guide_id: str,
+    actions: Sequence[str],
+    mid: str = "",
+) -> None:
+    """The agent offered a guide in this session's conversation.
+
+    ``actions`` are the registered action ids only, never their parameters. ``mid``
+    joins the entry to its transcript row, as on ``card/proposed``.
+    """
+    gid = _card_id(guide_id)
+    if not gid:
+        return
+    data: dict[str, Any] = {
+        "slot": slot,
+        "guide_id": gid,
+        "actions": [str(a)[:64] for a in actions if isinstance(a, str)][:16],
+    }
+    turn = live_turn(session_id) if session_id else 0
+    if turn:
+        data["turn"] = turn
+    if mid:
+        data["mid"] = str(mid)[:64]
+    _write(session_id, "guide/offered", data, src=_SRC_GATEWAY)
+
+
+def on_guide_started(session_id: str, *, guide_id: str) -> None:
+    """The person pressed Start on an offered guide and a tab took it over."""
+    gid = _card_id(guide_id)
+    if gid:
+        _write(session_id, "guide/started", {"guide_id": gid}, src=_SRC_GATEWAY)
+
+
+def on_guide_finished(
+    session_id: str, *, guide_id: str, status: str, reason: str | None = None
+) -> None:
+    """A guide ended: completed, cancelled (by the person, the agent or a closed
+    conversation) or expired. *reason* is kept only when it is a known one."""
+    from kiro_crew.crew_log.entry_types import GUIDE_FINISHED_REASONS, GUIDE_FINISHED_STATUSES
+
+    gid = _card_id(guide_id)
+    if not gid or status not in GUIDE_FINISHED_STATUSES:
+        return
+    data: dict[str, Any] = {"guide_id": gid, "status": status}
+    if reason in GUIDE_FINISHED_REASONS:
+        data["reason"] = reason
+    _write(session_id, "guide/finished", data, src=_SRC_GATEWAY)
+
+
 def on_work_recorded(session_id: str, data: dict[str, Any], *, timeout: float = 5.0) -> bool:
     """One work-board mutation, appended to the ACTING session's log, acknowledged.
 
@@ -4689,8 +4901,9 @@ def on_session_closed(
     """Record a session teardown and drop its cached state.
 
     ``reason`` is the caller's own word for the teardown, recorded verbatim rather
-    than remapped onto a second vocabulary. Two routes call it: reset, and
-    destroy (``destroyed`` or ``destroyed_sid_retained``), each passing the same
+    than remapped onto a second vocabulary. Three routes call it: reset,
+    destroy (``destroyed`` or ``destroyed_sid_retained``), and the deliberate tab
+    close (``removed``, from ``_close_slot``), each passing the same
     ``end_reason`` it records elsewhere; another teardown path passing its own
     reason needs no change here.
 

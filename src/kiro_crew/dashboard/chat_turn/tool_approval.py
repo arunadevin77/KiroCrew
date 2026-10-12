@@ -72,6 +72,14 @@ def _spec_confirm_hooks_notice(agent: str, count: int) -> str:
     )
 
 
+def _spec_hooks_run_nowhere_notice(agent: str, events: list[str]) -> str:
+    """The session-start notice for spec hooks that nothing runs on this backend."""
+    return (
+        f"ℹ️ Agent {agent} has hooks on {', '.join(events)}. This backend does not run "
+        "an agent's hooks, so they have no effect in this session."
+    )
+
+
 #: Deny classes a credential-vending MCP server can actually resolve. Only these
 #: justify the capability-manager lookup: the hint is appended for them alone, so
 #: probing on any other refusal would spend a subprocess to produce a string

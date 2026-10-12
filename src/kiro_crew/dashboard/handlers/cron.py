@@ -22,6 +22,7 @@ from kiro_crew import model_registry
 from kiro_crew.config.loader import KiroCrewConfig, config_dir
 from kiro_crew.context import ContextBuilder
 from kiro_crew.cron import (
+    CronPauseNotSaved,
     CronPendingMismatch,
     CronStoreBusy,
     CronStoreUnreadable,
@@ -40,11 +41,13 @@ from kiro_crew.cron_script import (
 )
 from kiro_crew.dashboard.chat_persistence import _restore_dismissed_source_links
 from kiro_crew.dashboard.cron_inject import (
+    apply_cron_turn_timeout,
     chat_folder_exists,
     hydrate_slot_from_history,
     inject_cron_result_to_dashboard,
     move_cron_job_tab,
     prefetch_cron_dismissed,
+    restore_cron_turn_timeout,
 )
 from kiro_crew.dashboard.handlers._shared import (
     _owner_denial_response,
@@ -918,6 +921,13 @@ async def api_crons_create(request: web.Request) -> web.Response:
     # mutating the returned job and calling a bare, unlocked `_save()`) closes
     # the data-loss race: two concurrent creates could interleave at the
     # `await`, and the unlocked save could overwrite the other request's job.
+    # The UI resolves a member pick to ``member_id`` client-side, but a scripted
+    # POST can still send a member NAME in ``agent``; resolve the split here so
+    # that path records a member selection too, not a template id the cron chat's
+    # reply path cannot bind. An explicit ``member_id`` is left as the caller set it.
+    from kiro_crew.cron_service.identity import split_cron_agent_member
+
+    agent_id, member_id = split_cron_agent_member(agent_id or "", member_id or "")
     add_kwargs: dict[str, Any] = {
         "channel": channel,
         "agent_id": (agent_id or ""),
@@ -1015,8 +1025,37 @@ async def api_cron_delete(request: web.Request) -> web.Response:
     app_denied = await _refuse_foreign_app_job(request, state, [job_id], "crons.delete")
     if app_denied is not None:
         return app_denied
+    from kiro_crew.dashboard.handlers.change_cards import REQ_CARD_UNDO_CRON_EXPECT
+
+    expected_revision = request.get(REQ_CARD_UNDO_CRON_EXPECT)
     try:
-        ok = await state.crons.remove_job_async(job_id, actor="dashboard", source="api_cron_delete")
+        if isinstance(expected_revision, str):
+            # Card Undo of a schedule it created: delete only while the job
+            # still fingerprints to what the card left, compared under the
+            # cron store lock so an edit another tab landed after the Undo's
+            # snapshot check cannot be clobbered.
+            from kiro_crew.dashboard.change_cards import cron_job_revision
+
+            outcome = await state.crons.remove_job_if_async(
+                job_id,
+                expected_revision=expected_revision,
+                revision_of=cron_job_revision,
+                actor="dashboard",
+                source="api_cron_delete",
+            )
+            if outcome == "changed":
+                return web.json_response(
+                    {
+                        "error": "this changed after the card was applied; undo refused",
+                        "code": "changed_since_apply",
+                    },
+                    status=409,
+                )
+            ok = outcome == "removed"
+        else:
+            ok = await state.crons.remove_job_async(
+                job_id, actor="dashboard", source="api_cron_delete"
+            )
     except CronStoreBusy:
         return web.json_response(_CRON_BUSY_BODY, status=_CRON_BUSY_STATUS)
     except CronStoreUnreadable as exc:
@@ -2026,7 +2065,15 @@ async def api_cron_cancel(request: web.Request) -> web.Response:
     job = next((j for j in jobs if j.id == job_id), None)
     if not job:
         return web.json_response({"error": "job not found"}, status=404)
-    cancelled = await state.crons.cancel(job_id)
+    try:
+        cancelled = await state.crons.cancel(job_id)
+    except CronPauseNotSaved as exc:
+        # The run is cancelled; only the one-shot's pause did not reach the store.
+        state.push_refresh("crons")
+        return web.json_response(
+            {"error": str(exc), "code": "cron_pause_not_saved", "retryable": False},
+            status=409,
+        )
     if not cancelled:
         return web.json_response({"error": "job is not running"}, status=409)
     state.push_refresh("crons")
@@ -2072,6 +2119,7 @@ async def api_cron_to_chat(request: web.Request) -> web.Response:
             dismissed=await prefetch_cron_dismissed(state, job.id),
             include_prompt=False,
         )
+        await restore_cron_turn_timeout(state, job.id)
     else:
         # Job deleted (one-shot with delete_after_run). Create slot from history or notification.
         session_key = f"cron:{job_id}"
@@ -2108,6 +2156,10 @@ async def api_cron_to_chat(request: web.Request) -> web.Response:
                 slot._dismissed_source_links = set()
                 slot.invalidate_source_links()
                 slot._dismissed_hydrated = False
+                # The tab's own turn time limit is unread for the same reason:
+                # its saves carry the on-disk value until the read below lands.
+                slot.turn_timeout_secs = None
+                slot._turn_timeout_hydrated = False
                 if state.conversation_log is not None:
                     try:
                         _meta, _readable = await asyncio.to_thread(
@@ -2117,6 +2169,11 @@ async def api_cron_to_chat(request: web.Request) -> web.Response:
                         _meta, _readable = {}, False
                     if _readable:
                         _restore_dismissed_source_links(slot, _meta.get("dismissed_source_links"))
+                        # The read is a rebind window: a limit the user set while
+                        # it ran wins over the older line, and a tab now bound to
+                        # another transcript takes nothing from this one.
+                        if slot.linked_session_key == session_key:
+                            apply_cron_turn_timeout(slot, _meta)
         else:
             # No session log — fall back to notification body.
             notif = next(
@@ -2779,8 +2836,9 @@ def _load_workspace_lessons(state: DashboardState, workspace: str) -> list[Lesso
 
 async def _prepare_member_lesson_store(store: str) -> web.Response | None:
     """Prepare V2 before synchronous lesson readers can borrow a handle."""
-    import sqlite3
-
+    # The member database is opened through the shim, so its errors are the shim's
+    # classes; the stdlib ``sqlite3.Error`` would let them escape as a 500.
+    from kiro_crew._sqlite_compat import sqlite3
     from kiro_crew.memory_stores import memory_store_version
 
     try:

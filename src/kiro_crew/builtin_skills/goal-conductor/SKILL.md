@@ -36,15 +36,20 @@ patrol cycle.
 
 ### User-visible Dynamic Dashboard
 
-For a long run, load the `artifacts` skill's Dynamic Dashboard contract. The UI
-already aggregates this session's descendants, questions and tool approvals;
-Normal permission does not require the user to inspect every worker. An
-authorized descendant can publish a `task-dashboard` HTML artifact designed
-for this goal, with milestone updates to the same slug. Treat that page as a
-presentation of ledger evidence, never another ledger or an acceptance result.
-Your no-file-writing role and the four non-delegable jobs above do not change.
-Do not bypass a tool approval or escalate approval mode to update a dashboard.
-Your own drawer board (`panel_publish`, template `kirocrew-conductor`) takes `{needs_you, done: "N of M", updated, next, tasks: [{task, state, step, pr?}]}` -- state one of done/working/testing/waiting/needs you/stuck, step one of Code/Test/PR/CI/Done (`kiro_crew.conductor_board_contract`).
+You own your dashboard page; it shows ledger evidence; workers report to you and
+do not publish that page. For a long run load the `dashboard` skill, which
+carries the page, its flow and its honesty rules. The page is the one the
+`[DASHBOARD]` block names. Where no board page is named there is nothing for a
+reader to open, so the `task-dashboard` artifact stays as it is today: an
+authorized descendant publishes it for this goal, with milestone updates to the
+same slug, read as a presentation of ledger evidence and never another ledger or
+an acceptance result. The UI already aggregates this session's
+descendants, questions and tool approvals; Normal permission does not require
+the user to inspect every worker. Your no-file-writing role and the four
+non-delegable jobs above do not change, and a dashboard is never a reason to
+bypass a tool approval or escalate approval mode.
+Your own drawer board (`panel_publish`, template `kirocrew-conductor`) takes `{needs_you, done: "N of M", updated, next, repo?: "owner/name", tasks: [{task, state, step, pr?}]}` (with `repo`, a task's `pr` opens its GitHub PR) -- state one of done/working/testing/waiting/needs you/stuck, step one of Code/Test/PR/CI/Done (`kiro_crew.conductor_board_contract`).
+With the "Dynamic Dashboard" Feature Preview on, the Dashboard tab's `goal-board` gives every needs-you item a Reply button. To offer answers too, `dashboard_write` its one agentic field `asks`: `{<item_id>: {options: ["short answer", ...]}}`, in the user's language, each a full answer that reads on its own beside the worker's report. Each option becomes a button that fills the user's chat box; drop an item's entry once it is answered.
 
 ### Work-item qualification
 
@@ -236,6 +241,18 @@ misconfigured. `select_crew` and `session_create` are also **not wired**:
 `select_crew` returns a crew's resolved configuration and binds nothing, so you
 pass the agent name to `session_create` yourself.
 
+**A worker needs no memory of its own.** Always dispatch `kirocrew-worker` with
+`agent_kind: "template"`: the worker then runs the `kirocrew-worker` template on
+YOUR memory, which is what a one-item worker needs; nothing else about the
+dispatch changes. The reason is an install shape you cannot see from here: on
+some installs an older agent sync also enrolled `kirocrew-worker` as a crew
+member with private memory, and a bare `agent: "kirocrew-worker"` then selects
+that member. When your session may not bind that member's memory — you run as a
+crew member on the shared store, or a parent conductor created you —
+`session_create` refuses it with `memory_delegation_denied`, and that refusal is
+not a setting to change: a crew member's memory binding is immutable and
+Settings offers no control for it.
+
 ### Patrol
 
 After dispatching, arm a loop on your own session with `monitor_start`. Put the
@@ -244,10 +261,13 @@ check AND the exit condition in the message, and pass explicit positive
 
 **`watch="work-ledger"` is mandatory.** It gates the loop on the ledger you
 dispatched into: a cycle where no worker reported anything costs no turn, and a
-worker's report, a worker session closing, or a worker turn ending pulls the
-next cycle forward to within seconds. The interval then only sets how often a
-silent fleet is re-checked, not how fast a report reaches you. A loop armed
-without it is a plain timer that pays a turn every interval. If you find yours
+worker's report of `blocked`, `question` or `done` pulls the next cycle forward
+to within seconds. Nothing else pulls it forward — a `progress` report, a
+worker ending its turn, a worker's session closing — so a worker that stops to
+wait costs you nothing, and one that crashed or went silent is found by the
+item's `stale` or `orphaned` flag on an ordinary cycle. The interval therefore
+sets how often a silent fleet is re-checked, not how fast a report reaches you.
+A loop armed without it is a plain timer that pays a turn every interval. If you find yours
 without it, fix that FIRST, before anything else that cycle, with
 `monitor_update(watch="work-ledger")` rather than re-arming.
 
@@ -298,14 +318,22 @@ python3 <this skill's dir>/scripts/patrol_budget.py renew \
 
 Each cycle:
 
-1. **`work_ledger_read` with `compact=true` first, every cycle.** It returns the
+1. **Read the ledger first, every cycle.** A cycle a worker's report woke you
+   for arrives with a `[work-ledger wake]` line naming each item that moved and
+   a `[work-ledger]` line telling you to read. The wake is a notification, not
+   the state: it says WHICH item moved and nothing about the rest of the board.
+   So read before you act — `work_ledger_read` with `item_id=<id>` for the item
+   a wake named, or `work_ledger_read` with `compact=true` for the whole board
+   on a scheduled patrol tick.
+
+   The compact read returns the
    conductor record and, per item, the status columns plus the derived
    `orphaned`, `stale` and `acceptance_concrete` flags — no events, acceptance or
    `accept_batch`. This one read replaces the whole transcript-reading cycle, and
    it stays small however many items the board holds. The full read (no
    `compact`) adds every field, the newest events and a ready-to-pipe
-   `accept_batch`; take it, or `item_id=<id>` for one item, only when a `done`
-   item needs its bar (step 3). A full read too large for the tool-result limit
+   `accept_batch`; take it when a `done` item needs its bar (step 3). A full
+   read too large for the tool-result limit
    comes back trimmed with `truncated: true` and says what it left out. An item is never `stale` on the strength of silence alone: its worker
    also has to be not running, and its last word has to have left the next move
    with the worker, so a `done` item waiting on you is not flagged.
@@ -397,9 +425,9 @@ Each cycle:
    already-green pull request, which is exactly why the claim and the condition
    are separate fields.
 
-   **A `human_approval` item is verified by asking, and the ask is fragile.** The evaluator answers `pending` for it forever, so put the decision to the user with `ask_question`, which ends your turn. Leave the loop and its interval as they are: the `work-ledger` watch already makes a quiet cycle free, and the cycle after the user answers reads it.
+   **A `human_approval` item is verified by asking.** The evaluator answers `pending` for it forever, so put the decision to the user with `ask_question`. The call BLOCKS until the user responds and returns the answers as its tool result, so your turn does not end and no later patrol cycle has to pick the answer up: read the result and record the verdict in the same turn. The card waits up to 30 minutes; if the result says it expired, was dismissed, or that the user replied in chat instead, act on that outcome (re-ask, or read their next message) rather than inventing an answer.
 
-   If the user says the card is gone, re-issue it. A report that the card vanished is not an answer.
+   A result saying the card was withdrawn (dashboard restarted, tab reset) is not an answer: re-issue it.
 4. `work_ledger_record` `action=close` with the item's `state` when an item is
    finally done with — that is what ends it. **Closing the item and closing
    its session happen together.** When a work item reaches a terminal verdict
@@ -414,7 +442,9 @@ Each cycle:
    substance, a stall's shape. Never for a verdict, and never as the routine
    cycle read: the ledger is that.
 6. **Say nothing unless there is a real signal.** An item passing acceptance,
-   failing it, asking a question, or stalling. Never post "nothing changed".
+   failing it, asking a question, or stalling. Never post "nothing changed":
+   a cycle with no signal ends with a `nothing_to_do` call, because a turn
+   that stops bare after its tool calls keeps the empty-response recovery.
 
 **Shell exists for the two bundled scripts, not for work.** `execute_bash` is
 granted so patrol can run `accept_eval.py` and `patrol_budget.py`. Running a work item's build, test, or fix
@@ -492,8 +522,20 @@ finished work.
 
 One exception: if their message directly invalidates an item that is still
 running, deal with that item now — `session_stop` it and `close` its ledger item,
-or `session_send` the correction straight into it. Do not tear down the whole
-round for one item.
+or `session_send` the correction straight into it with `steer: true`. Do not
+tear down the whole round for one item.
+
+**Steer corrections, queue everything else.** A plain `session_send` to a busy
+worker waits for its current turn to end, so a correction sent that way arrives
+only after the worker has spent the whole turn — a build, a long investigation —
+going the wrong way. Pass `steer: true` for a correction, a changed direction,
+or "stop, that is already done": it lands in the running turn, and when the
+worker is idle or mid-turn injection is unavailable it starts or queues a turn
+exactly like a plain send, so it is never dropped. Leave `steer` off for answers
+to a `question`, seeds, and anything that can wait for the turn boundary.
+A steer does not withdraw what is already queued: if `session_read_message`
+reports a non-zero `queue_depth`, those messages still run after the turn, so
+say in the steered message which earlier instruction it supersedes.
 
 ## When a conductor dispatched you
 
@@ -634,7 +676,7 @@ what the composer renders:
 
 ## Known limits of this version
 
-- **A question card can be displaced by your own later turns.** `ask_question` posts a card into the dashboard transcript, and every patrol turn you take while it is outstanding can push it out of the user's view. A quiet cycle takes no turn under the `work-ledger` watch, but a worker's report does. So while any question is open, put it first in every turn that speaks to the user ("Needs you" on the task board), with the one answer that unblocks it.
+- **A question card holds your turn open.** `ask_question` blocks until the user responds, so nothing else runs in this session meanwhile; keep patrol work out of the turn that asks, and ask only when the goal genuinely cannot advance without the answer.
 - **The session and ledger tools may not be in your tool list yet.** With MCP
   Tool Search active their specs are deferred, so a first `session_create` fails
   with `A tool with the name 'session_create' does not exist`. That means
@@ -680,7 +722,7 @@ what the composer renders:
   `autonudge_stop`, `wait`, `resource_status`, `list_sessions`,
   `session_ledger_read`, `session_ledger_record`, `skill_search`, `skill_fetch`,
   `select_crew`, `send_message`, `send_notification`, `ask_question`,
-  `reset_conversation`. That covers
+  `nothing_to_do`, `reset_conversation`. That covers
   every core call this procedure asks you to make; **any other core tool is
   mounted but prompts**, including `task_run`, `workflow_run` and the `spawn_*`
   family, which this charter forbids you to route a work item to in the first

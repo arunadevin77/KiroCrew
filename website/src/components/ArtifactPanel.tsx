@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom'
 import DetailPanel from './DetailPanel'
 import Clickable from './Clickable'
 import SelectionToolbar, { type SelectionAction } from './SelectionToolbar'
+import { isTouchDevice } from '../utils/isTouchDevice'
 import { SendBtn } from './ui'
 import ErrorNotice from './ErrorNotice'
 import { ArtifactBodyNative, ArtifactBodyIframe, ArtifactBodyImage } from './ArtifactBody'
@@ -168,8 +169,10 @@ export default memo(function ArtifactPanel({ slug, kind, content, onClose, activ
   const artifact = detailQuery.data
   // File-backed artifacts: an agent rewriting the backing file never passes
   // through a handler, so the artifact_update WS event does not fire for it.
-  // Watch the live pointer and refetch through the shared cache instead.
-  useArtifactLiveReload(slug, artifact?.source_path)
+  // Watch the live pointer while this tab is the visible one and refetch
+  // through the shared cache; a hidden tab holds no stream and catches up
+  // when it is shown again.
+  useArtifactLiveReload(slug, artifact?.source_path, visible)
   const effectiveKind = artifact?.kind ?? kind
   const effectiveContent = artifact?.content ?? content
   const name = artifact?.name ?? slug
@@ -228,12 +231,16 @@ export default memo(function ArtifactPanel({ slug, kind, content, onClose, activ
   // Cmd/Ctrl+C while its input is empty.
   const selectionActions: SelectionAction[] = useMemo(() => [], [])
   // The kinds no anchor resolver can map (json, svg, …) get no composer — but
-  // they keep the Copy row the panel shipped before it: on touch there is no
-  // Cmd/Ctrl+C, so without a control a selection there has no reachable copy.
-  // One control, so the row is inside the two-per-row cap on its own.
+  // a pointer device keeps the Copy row the panel shipped before it. One
+  // control, so the row is inside the two-per-row cap on its own.
   const copyOnlyActions: SelectionAction[] = useMemo(() => [
     { id: 'copy', icon: <Copy size={12} />, label: i18nT('components.selectionToolbar.copy'), onClick: (text: string) => copyToClipboard(text) },
   ], [])
+  // On a touch device the platform draws its own handles and Copy callout
+  // around the selection, and a row floated there took the taps meant for the
+  // handles. Copy is the callout's job there, so the copy-only row is not
+  // mounted at all (the same call the chat reply makes for its Copy).
+  const showCopyOnlyToolbar = !canAnchorComments && !isTouchDevice()
 
   // ── submitted-to-chat tracking ──
   // Durable artifact comments survive a chat submission (unlike the local-file
@@ -490,7 +497,7 @@ export default memo(function ArtifactPanel({ slug, kind, content, onClose, activ
           selection open the box over the comments sidebar. Suspended with the
           tab so a hidden panel's open box does not stay on screen. */}
       {!fullscreen && canAnchorComments && <SelectionToolbar containerRef={usesIframe ? scrollRef : previewRef} actions={selectionActions} composer={fa.selectionComposer} externalSelection={fa.iframeSelection} externalOnly={usesIframe} suspended={!visible} />}
-      {!fullscreen && !canAnchorComments && <SelectionToolbar containerRef={scrollRef} actions={copyOnlyActions} suspended={!visible} />}
+      {!fullscreen && showCopyOnlyToolbar && <SelectionToolbar containerRef={scrollRef} actions={copyOnlyActions} suspended={!visible} />}
       {!fullscreen && fa.popovers}
     </DetailPanel>
     {fullscreen && createPortal(
@@ -545,7 +552,7 @@ export default memo(function ArtifactPanel({ slug, kind, content, onClose, activ
           </div>
         </div>
         {canAnchorComments && <SelectionToolbar containerRef={usesIframe ? fsScrollRef : fsPreviewRef} actions={selectionActions} composer={faFull.selectionComposer} externalSelection={faFull.iframeSelection} externalOnly={usesIframe} suspended={!visible} />}
-        {!canAnchorComments && <SelectionToolbar containerRef={fsScrollRef} actions={copyOnlyActions} suspended={!visible} />}
+        {showCopyOnlyToolbar && <SelectionToolbar containerRef={fsScrollRef} actions={copyOnlyActions} suspended={!visible} />}
         {faFull.popovers}
         {showSubmitBar && (
           <div className="shrink-0 px-16 pb-3">

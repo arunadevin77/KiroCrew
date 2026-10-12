@@ -432,6 +432,11 @@ def world(monkeypatch: pytest.MonkeyPatch, tmp_path):
         # the work in place: the order then depends on the code alone.
         return func(*args, **kwargs)
 
+    async def _inline_gate(func, /, *args, on_queue_timeout, **kwargs):
+        # The gate's queue-bound refusal is the pool's, not the gate's: in place,
+        # the call always gets a worker.
+        return func(*args, **kwargs)
+
     for name, value in {
         "sel": lambda: _Sel(log),
         "Stats": _StatsFactory(log),
@@ -468,7 +473,7 @@ def world(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setattr(asyncio, "to_thread", _inline)
     # The tool gate hops onto its own pool rather than through to_thread; the same
     # in-place run keeps the transcript order a property of the code.
-    monkeypatch.setattr(handler, "run_in_tool_gate_pool", _inline)
+    monkeypatch.setattr(handler, "run_in_tool_gate_pool", _inline_gate)
     handler._trusted_sessions.clear()
     log.monkeypatch = monkeypatch  # type: ignore[attr-defined]
     yield log
@@ -1132,6 +1137,10 @@ class _ConversationLog:
         self._log.add("history.get_metadata", key=session_key)
         return dict(self._meta)
 
+    def get_metadata_status(self, session_key):
+        # Hydration's read: the same metadata line as get_metadata, reported readable.
+        return self.get_metadata(session_key), True
+
     def update_metadata(self, session_key, values):
         self._log.add("history.update_metadata", key=session_key, values=values)
 
@@ -1514,7 +1523,7 @@ _GOLDEN_DIGESTS: dict[str, str] = {
     "error_from_trusted_bot": "f347570f5f67a5ca3659343ec439a0802b29970f757e66c3a5330e530afac193",
     "error_process_died": "d35a33b0b576068801e5fe522cc02df56a62acf4d66d4e58e7e294311cd15815",
     "error_prompt_busy": "3617d636151fb29f5ff88ac9e803a226a1f77bec56fc013e1bf32f9a65484de6",
-    "error_timeout": "0625bccb70ce8ed8e7e690e5a83b1aa394f5ef1d435188f58e1aa07d9deb2f80",
+    "error_timeout": "608f9764fe3ed40a4e758a69d881f2c829e08a6aa89302e9f007a1c1b463db44",
     "error_unexpected": "ae7bc265f3ffd8441f818df443f1586b1e0f3c6d2009d7b707220f0b6e92829a",
     "hook_auto_reply": "f976c5ff2c752a2259381bcfd9fbf6e2fb72ca95fcdb1bbfa53c5ddf98f68f53",
     "hook_deny_and_flag": "128570569dc7d30d1327ba223a903e3d1da2c190df536c018cc8555f04bfb1da",
@@ -1526,10 +1535,10 @@ _GOLDEN_DIGESTS: dict[str, str] = {
     "interactive_trust_in_dm": "d1f9b4ac5a71a94236bf697afab088161b9dd828f1aa8beee479ed6c02e76bbb",
     "keyword_commands": "0ef1fd95b16ed0bbdcce2999f6632c4be8acc92e943cd4a69c05ccd5ffb2fb73",
     "linked_approval": "8a85aaf602b5281707519634a49589c814694ac0f9c7b71164bbdaa2cc474bc9",
-    "linked_dashboard_session": "92bcfd061c91e4d37fbd3ab18668fc2105934993d1cf348c81ce523334815bc5",
+    "linked_dashboard_session": "224ca7d87df8c73e94811b56554a3000701402072c1dd2b46cb770803ccd24b0",
     "linked_thread_routes_to_slot": "ac7b70b93a3f485e84491edcac4cb8eb3e5aff6fa8a54a23846d8dae6be746af",
     "mention_prefixed_bang": "f6ba6be59eb71104d3fa7202fd9bbcf91a5a6376f253db3fda41a256d468ab1e",
-    "pinned_answer": "5b2f1d0f2c8c9d2fd561baa8e7c22df5831784437cdc7ec5f677279d4bb8cffd",
+    "pinned_answer": "c590ad8ef702c7284d257b0d486a8c6b69f76255d32a5d0ae4dd896ad6f549d5",
     "presentation_raises": "361a0de433fd48b58f859146ae2c68a7d9519ea8181399752673f044c299d2ce",
     "privacy_modifiers": "4061ede8e707257cf7903974e6de0a090562202d606bb78e60b2554d945ec8ba",
     "reasoning_only": "a18cd8aa10fbb3dcbb6897ce5fb316ec5ebc84acd12632c4570a295e7bf6721c",
@@ -1543,7 +1552,7 @@ _GOLDEN_DIGESTS: dict[str, str] = {
     "transport_floor_refusal": "8bc29ce9634f29549dbcab78cb139f12f0eb565ea92cc8a6856f6aa8eaae1803",
     "trusted_session": "33cdb5f7e51781f7636d4a8591bda14b7b57c094df5590633f5124d4bf05759d",
     "turn_ceiling_and_shutdown": "3ac9dcaeb5c6c42bf8886118f06df788a8b280da346addf25dbc811baf9e2c9d",
-    "turn_with_history": "8c45c5b3d4822c45a8429e1c60caa054a70675ff3ea4874c48c72ae9dd8cc611",
+    "turn_with_history": "bcc140758baf11312bd9e0bd2ec299c92cc4f51802eb5d8afb0e376d29799583",
     "unstreamed_long_reply": "a338e70172346e12ef9c1d2a7cc155041dfdb54d5e155bd5fb3aa56a58601a94",
     "unstreamed_tool_and_auto_approval": "a771de255da501fa0a5a7a2636fd02cfa115f6bd75e5fd0a058b891bf890acf8",
     "voice_reply_requested": "c7447016937c719eb3bbb1d9e0dc753256f7c4b910cdc450aa01efe6fbbb5f5c",

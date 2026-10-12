@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -287,6 +288,61 @@ def _write_all(fd: int, data: bytes, path: Path) -> None:
         view = view[written:]
 
 
+def append_line(
+    path: Path | str,
+    line: str,
+    *,
+    fsync: bool = False,
+    opener: Callable[[str, int], int] | None = None,
+) -> None:
+    """Append *line* and a line ending to *path*, or leave the file as it was.
+
+    A full disk keeps the bytes a failed ``write`` already accepted, so a bare
+    ``open(path, "a")`` leaves the start of the line with no newline, and the next
+    append lands on that same line: a line-per-record reader cannot parse it and
+    drops both records. This helper prevents that in two ways:
+
+    - On any failure it truncates the file back to its size before the write and
+      re-raises, so the caller still sees the error and the file holds whole lines.
+    - When the file does not end in a newline (a tail torn by a kill, where no
+      handler ran), it starts the new record on a fresh line.
+
+    The bytes are the ones ``open(path, "a")`` writes: UTF-8, with ``\\n``
+    translated to ``os.linesep``. The caller must serialize appends to *path*
+    (each caller holds a per-file lock), because the truncate would otherwise
+    cut a row a concurrent writer appended. *opener* replaces ``os.open`` the
+    way ``open(..., opener=)`` does; without it a new file gets ``0o666``
+    masked by the umask, as the builtin gives it.
+    """
+    target = Path(path)
+    data = _encode(line + "\n", newline=None)
+    flags = os.O_RDWR | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0)
+    if opener is not None:
+        fd = opener(os.fspath(target), flags)
+    else:
+        fd = os.open(target, flags, 0o666)
+    try:
+        size = os.fstat(fd).st_size
+        if size:
+            os.lseek(fd, size - 1, os.SEEK_SET)
+            if os.read(fd, 1) != b"\n":
+                data = _encode("\n", newline=None) + data
+        try:
+            _write_all(fd, data, target)
+            if fsync:
+                os.fsync(fd)
+        except BaseException:
+            try:
+                os.ftruncate(fd, size)
+            except OSError:
+                logger.warning(
+                    "append_line: could not take back a failed append to %s", target, exc_info=True
+                )
+            raise
+    finally:
+        os.close(fd)
+
+
 #: Bytes of randomness in a pinned-parent temp name. tempfile.mkstemp uses eight
 #: random characters; matching that entropy keeps the collision odds equivalent to
 #: the by-name floor while the O_EXCL create below is what actually makes the name
@@ -426,6 +482,50 @@ def _close_quietly(fd: int, path: Path | str) -> None:
         logger.warning("could not close the directory descriptor for %s", path, exc_info=True)
 
 
+def fsync_open_dir(dir_fd: int, path: Path | str, *, best_effort: bool = False) -> None:
+    """``fsync`` an ALREADY-OPEN directory descriptor the caller owns and will close.
+
+    The same durability guarantee as :func:`fsync_dir`, for a caller that already holds
+    the directory open — a pinned descendant descriptor, say — rather than a path to
+    open. The two differ only in who owns the descriptor: :func:`fsync_dir` opens and
+    closes its own, so it can report a deferred write error surfaced by ``close``; this
+    one must not close a descriptor it did not open, so the caller's ``finally`` closes
+    it and the deferred-close check does not apply here.
+
+    The unsupported-errno handling is identical and deliberately so. A bare
+    ``os.fsync`` on a directory descriptor raises on exactly the environments
+    :func:`fsync_dir` already tolerates — Windows has no directory descriptor to open
+    at all, and some filesystems (network mounts in particular) reject a directory
+    ``fsync`` with ``EINVAL``/``ENOTSUP``. There the atomic rename plus the file
+    ``fsync`` are the guarantee available, and raising would turn a completed write
+    into a reported failure. A genuine I/O failure such as ``EIO`` is NOT in that set,
+    so it still propagates: it means the device did not take the write, and a caller
+    whose next step destroys the only other copy must not read that as "synced".
+
+    ``best_effort=True`` downgrades even a genuine failure to a warning, for a caller
+    whose operation is already committed where the sync only firms up a step that has
+    happened; see :func:`fsync_dir` for why.
+    """
+    try:
+        os.fsync(dir_fd)
+    except OSError as exc:
+        if exc.errno in _DIR_SYNC_UNSUPPORTED:
+            logger.debug(
+                "this filesystem does not support syncing the directory %s (%s)",
+                path,
+                errno.errorcode.get(exc.errno or 0, exc.errno),
+            )
+            return
+        if best_effort:
+            logger.warning(
+                "could not sync the directory %s; its entries may not be durable",
+                path,
+                exc_info=True,
+            )
+            return
+        raise
+
+
 def fsync_dir(path: Path | str, *, best_effort: bool = False) -> None:
     """Force a directory's own entries out, so a create or rename survives a crash.
 
@@ -469,25 +569,11 @@ def fsync_dir(path: Path | str, *, best_effort: bool = False) -> None:
             return
         raise
     try:
-        os.fsync(dir_fd)
-    except OSError as exc:
-        # The fsync error is the informative one, so the close is quiet on every
-        # failing path here: raising a close error on top would mask the reason.
+        fsync_open_dir(dir_fd, path, best_effort=best_effort)
+    except OSError:
+        # The fsync error is the informative one, so the close is quiet here: raising a
+        # close error on top would mask the reason.
         _close_quietly(dir_fd, path)
-        if exc.errno in _DIR_SYNC_UNSUPPORTED:
-            logger.debug(
-                "this filesystem does not support syncing the directory %s (%s)",
-                path,
-                errno.errorcode.get(exc.errno or 0, exc.errno),
-            )
-            return
-        if best_effort:
-            logger.warning(
-                "could not sync the directory %s; its entries may not be durable",
-                path,
-                exc_info=True,
-            )
-            return
         raise
     # The sync reported success — but ``close`` can report a write error the kernel
     # deferred, which for a caller whose next step is to unlink the only other copy

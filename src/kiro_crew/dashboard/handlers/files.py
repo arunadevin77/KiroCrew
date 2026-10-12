@@ -152,6 +152,7 @@ from kiro_crew.dashboard.file_api.path_complete import (  # noqa: F401
 )
 from kiro_crew.dashboard.file_api.pinned_io import (  # noqa: F401
     _CheckedFile,
+    _classify_request_paths,
     _file_write_blocking,
     _open_checked,
     _open_checked_file,
@@ -162,6 +163,7 @@ from kiro_crew.dashboard.file_api.pinned_io import (  # noqa: F401
     _read_request_path,
     _resolve_project_relative,
     _TextRead,
+    api_file_kinds,
 )
 from kiro_crew.dashboard.file_api.project_dirs import (  # noqa: F401
     _git_head_path,
@@ -237,10 +239,16 @@ from kiro_crew.dashboard.handlers._shared import (
 )
 from kiro_crew.dashboard.handlers.messaging import _resolve_session_target
 from kiro_crew.dashboard.origin import is_direct_local_request
+from kiro_crew.dashboard.session_folders import (  # noqa: F401
+    SESSION_FOLDER_ROOT_MAX_CHARS,
+    validate_session_folder_root,
+)
+from kiro_crew.dashboard.slot_projection import summary_rows
 from kiro_crew.dashboard.state import (  # noqa: F401
     VALID_MEMORY_MODES,
     DashboardState,
     append_and_surface,
+    load_window_off_loop,
 )
 from kiro_crew.doc_blocks import extract_blocks  # noqa: F401
 from kiro_crew.doc_parser import extract_slides, extract_text, join_slides  # noqa: F401
@@ -273,6 +281,7 @@ from kiro_crew.sandbox import (  # noqa: F401
 )
 from kiro_crew.security import (  # noqa: F401
     BINARY_MIME_ALLOWLIST,
+    is_sensitive_canonical_path,
     is_sensitive_path,
     is_sensitive_resolved_path,
     path_contains_sensitive,
@@ -779,10 +788,19 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
     # webhook session that owns no chat, a closed tab); suppress the card rather
     # than surface it in an unrelated conversation.
     if not active and not session_key and state._slots:
+        # The summary rows, so picking the newest tab does not load every
+        # restored sidebar row's window to read one timestamp.
         active = max(
             state._slots.values(),
-            key=lambda s: s.messages[-1]["ts"] if s.messages else "",
+            key=lambda s: summary_rows(s)[-1]["ts"] if summary_rows(s) else "",
         )
+    if active is not None and getattr(active, "window_pending", False) is True:
+        # The card is appended to the destination's rows: a tab restored as a
+        # sidebar row loads its window first, with the read off the loop, and the
+        # destination is read again after the await.
+        await load_window_off_loop(active)
+        if state.get_slot(active.key) is not active:
+            active = None
     delivered = False
     if active is not None and (active.messages or header_targeted):
         delivered = True
@@ -2002,6 +2020,12 @@ def _probe_request_path(raw: str) -> _PathProbe:
     if not path:
         return _PathProbe("", False, False)
     return _PathProbe(path, os.path.isfile(path), os.path.isdir(path))
+
+
+#: Most paths one ``POST /api/file-kinds`` request may name. A transcript view
+#: asks for a few dozen; the cap bounds how long one request holds its probe
+#: worker, and the client splits a larger set across requests.
+_FILE_KINDS_MAX_PATHS = 100
 
 
 #: How much of a file /api/file-read returns, in CHARACTERS -- the unit matters,

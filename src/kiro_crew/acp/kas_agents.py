@@ -85,7 +85,7 @@ from kiro_crew.agent_discovery import (
     spec_by_declared_name,
     spec_welcome_message,
 )
-from kiro_crew.agent_files import KAS_RESERVED_AGENT_IDS
+from kiro_crew.agent_files import kas_wire_agent_id
 from kiro_crew.agent_sdk.spec_hooks import spec_script_hooks
 from kiro_crew.agent_spec_format import agent_spec_candidates, is_markdown_spec
 from kiro_crew.hooks import (
@@ -100,6 +100,10 @@ from kiro_crew.mcp_cleanup import (
     mcp_entry_is_registry_governed,
 )
 from kiro_crew.platform.governance import may_skip_gate_now
+from kiro_crew.platform.tool_names import (
+    expand_kiro_cli_tool_exclusions,
+    expand_kiro_cli_tool_names,
+)
 from kiro_crew.security import is_sensitive_path
 from kiro_crew.sel import sel
 
@@ -212,18 +216,6 @@ def spec_keys_without_carrier(spec: dict[str, Any]) -> list[str]:
 
 class KasAgentTranslationError(ValueError):
     """A spec cannot be projected onto KAS's schema at all."""
-
-
-class KasReservedAgentIdError(KasAgentTranslationError):
-    """The agent's id is one the KAS engine keeps for itself.
-
-    A translation error like its parent -- every caller that handles that
-    handles this -- but its message is already the user's whole instruction
-    (action first, in the dashboard's own labels), so the harness raises it as
-    is rather than behind the ``cannot project agent ... onto KAS`` prefix the
-    other translation failures get, which a blind reader rated as noise before
-    the remedy.
-    """
 
 
 #: System prompt fed to a prompt-less agent when projecting onto KAS. KAS
@@ -342,11 +334,41 @@ def resolve_prompt(
     return text
 
 
+# The kiro-cli -> KAS tool-name reading lives in ``platform.tool_names`` (a
+# stdlib-only leaf) because the PreToolUse gate reads the SAME table in the other
+# direction: a spec mounted here in KAS ids must be governed under the kiro-cli
+# names an operator's rules are written in. Imported above and applied here.
+#
+# Why the projection needs it at all: Crew's specs are written in kiro-cli's
+# vocabulary (``defaults.json`` mounts ``fs_read``, ``fs_write``, ``grep``,
+# ``glob``), and KAS's allowlist matcher (``tools/tool-filter.ts``
+# ``matchesPattern``) compares an entry against a tool's exact id or one of its
+# tags with no translation -- its only alias is the ``execute_bash`` <->
+# ``execute_pwsh`` shell pair. On KAS ``fs_read``, ``grep`` and ``glob`` are not
+# tool ids at all (``fs_read`` is only a policy CAPABILITY name there,
+# ``policy/capabilities.ts``), so each such entry mounted nothing; ``fs_write``
+# is BOTH a registered id (the create/overwrite tool) and the capability name
+# ``str_replace`` / ``fs_append`` / ``delete_file`` are filed under, so it
+# mounted one tool of its family and none of the rest. A stock Crew spec
+# projected verbatim therefore reached the engine holding only the names that
+# happen to match on both (``execute_bash``, ``fs_write``, ``code``,
+# ``web_fetch``) plus its MCP refs: no way to read a file, list a directory,
+# search, or edit in place, and the agent shelled out for every read.
+#
+# The expansion ADDS the family beside the entry as written, never substitutes
+# it: a name that matches on both engines keeps working, a KAS-native name a
+# spec already carries is not duplicated, and a reader in either vocabulary
+# recognises the list. Applied to ``tools`` and ``excludedTools`` alike, so a
+# spec that withholds ``fs_read`` on kiro-cli withholds the same reads here.
+
+
 def _project_tools(spec: dict[str, Any], agent_id: str) -> str | list[str]:
     """Resolve the tool allowlist, failing closed when the spec is silent.
 
     ``"*"`` anywhere in the list is KAS's all-tools literal, which is a
-    different type from a list, so it cannot simply be passed through.
+    different type from a list, so it cannot simply be passed through. A list
+    is spelled out in KAS's own tool ids as well as the spec's
+    (:func:`expand_kiro_cli_tool_names`), because the engine translates nothing.
     """
     raw = spec.get("tools")
     if raw == "*":
@@ -355,7 +377,7 @@ def _project_tools(spec: dict[str, Any], agent_id: str) -> str | list[str]:
         entries = [t for t in raw if isinstance(t, str) and t]
         if "*" in entries:
             return "*"
-        return entries
+        return expand_kiro_cli_tool_names(entries)
     # Absent or malformed: KAS would resolve this to zero tools anyway. Emit that
     # explicitly and say so, rather than inferring an allowlist nobody wrote.
     logger.warning(
@@ -817,22 +839,6 @@ def to_client_custom_agent(
     """
     if not agent_id:
         raise KasAgentTranslationError("agent id must be non-empty")
-    if agent_id in KAS_RESERVED_AGENT_IDS:
-        # Refused HERE, before the wire, because the engine does not refuse it:
-        # it accepts the batch and either drops this entry (``default``) or
-        # keeps its own built-in agent under the id (``vibe``, ``spec``, ...).
-        # The first would surface one step later as "mode not advertised" with
-        # a remedy (regenerate the spec) that cannot help -- the spec exists;
-        # the second would not surface at all, and the session would run the
-        # engine's agent with the crewmate's name on it.
-        raise KasReservedAgentIdError(
-            f"Rename this crewmate's template: “{agent_id}” is reserved for a built-in "
-            "agent, so the crewmate's own prompt and tools would not run under it. "
-            "Both fixes are on the crewmate's Agent Template tab: for the crewmate's own "
-            "copy, 'Save as new template…' under another name (it keeps its "
-            "customizations) or 'Reset my changes'; for a shared template, the template "
-            "picker at the top of the tab."
-        )
     if not prompt.strip():
         raise KasAgentTranslationError(f"agent {agent_id!r} prompt is empty")
 
@@ -933,7 +939,11 @@ def to_client_custom_agent(
     if isinstance(excluded, list):
         entries = [t for t in excluded if isinstance(t, str) and t]
         if entries:
-            out["excludedTools"] = entries
+            # Same vocabulary gap as ``tools``, in the restricting direction, and
+            # with the restricting direction's polarity: a spec that excludes
+            # ``fs_read`` for kiro-cli must not leave ``read_file`` mounted here,
+            # and one that excludes ``fs_write`` must not leave ``delete_file``.
+            out["excludedTools"] = expand_kiro_cli_tool_exclusions(entries)
 
     welcome = spec_welcome_message(spec)
     if welcome:
@@ -1052,12 +1062,12 @@ def load_agent_spec(agents_dir: Path, agent_id: str) -> dict[str, Any]:
     directory-revision memo, while the directory is unchanged: every KAS
     session start otherwise hardened-reads every spec in the directory to
     find one. That keeps the freshness contract above, because the revision
-    is a ``stat`` of the directory and of every spec entry in it, taken
-    before and after the read -- an edit changes it, and a directory
-    containing a symlinked spec, or one written inside the racy window, is
-    never memoized (:func:`kiro_crew.agent_discovery.agents_dir_revision`,
-    which also refuses a spec entry whose kind cannot be read and a directory
-    past its entry cap). The answer handed
+    is a ``stat`` of every spec entry in the directory, plus a digest of the
+    bytes of any entry written inside the racy window, taken before and after
+    the read -- an edit changes it, and a directory containing a symlinked
+    spec is never memoized (:func:`kiro_crew.agent_discovery.agents_dir_revision`,
+    which also refuses a spec entry whose kind cannot be read and a young
+    entry it cannot hash). The answer handed
     back is a deep copy, so it is still a parse the caller owns and a caller's
     mutation cannot reach a later session. The fallback read below is one file
     and is not memoized.
@@ -1165,14 +1175,18 @@ def projected_auto_approved(custom_agents: Any, agent_id: str) -> frozenset[str]
 def switched_auto_approved(custom_agents: Any, agent_id: str) -> frozenset[str]:
     """What the session auto-approves once a KAS mode switch moves it to *agent_id*.
 
-    ``set_mode`` activates a definition KAS already holds, so the answer is the
-    registered entry for *agent_id* when the batch carries one. A mode the batch
+    *agent_id* is the mode id the engine reported, so entries are matched by the
+    id they were sent under (``kas_wire_agent_id``). ``set_mode`` activates a
+    definition KAS already holds, so the answer is the registered entry for
+    *agent_id* when the batch carries one. A mode the batch
     does not carry (a KAS built-in) runs permissions Crew never projected, so every
     auto-approvable capability is assumed approved: any PreToolUse hook then reads
     the session as stale, which is the side that re-projects.
     """
     entries = [a for a in custom_agents if isinstance(a, dict)] if custom_agents else []
-    entry = next((a for a in entries if a.get("id") == agent_id), None)
+    entry = next(
+        (a for a in entries if kas_wire_agent_id(str(a.get("id") or "")) == agent_id), None
+    )
     if entry is None:
         return frozenset(AUTO_APPROVABLE_CAPABILITIES)
     return auto_approved_capabilities(entry.get("permissions"))

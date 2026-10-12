@@ -154,7 +154,7 @@ Declares what a channel can do. Defaults are deliberately conservative (the What
 | `max_buttons` | `3` | TOTAL interactive choices per prompt (the WhatsApp Business Cloud API's reply-button cap, which is where the default came from; the personal-account WhatsApp channel this repo ships declares 0); enforced via `apply_options_cap` -- overflow degrades to a numbered text list |
 | `mention_grammars` | `True` | ENFORCED — whether the platform parses a broadcast-mention grammar (`@everyone`, Slack's `<!channel>`) in a message body. `messaging.renderer.display_safe_for` reads it at the channel-NEUTRAL proactive sinks and applies the zero-width-space defang only where one exists. Default `True` because the directions are asymmetric: a needless defang mangles text cosmetically, a missing one lets a prompt-injected `@everyone` mass-notify. Webex declares `False` — no broadcast grammar, and its allow-list IS email addresses, so the defang makes every address the agent prints uncopyable |
 | `supports_proactive_send` | `True` | send-policy (the WhatsApp Business Cloud API is `False` outside its 24h window; the personal-account channel here has no such window and declares `True`) |
-| `returns_message_id` | `True` | ENFORCED — whether `send_message` answers with a real id, so a caller may read an EMPTY id as "refused". WeCom's proactive command and Feishu's reply carry none, so for them `""` is the SUCCESS value and failure RAISES; both declare `False`. Asked through `delivery_confirmed(capabilities, message_id)`, never re-derived per call site |
+| `returns_message_id` | `True` | ENFORCED — whether `send_message` answers with a real id, so a caller may read an EMPTY id as "refused". WeCom's proactive command and Feishu's reply carry none, and iMessage's bridge reports one only best-effort, so for them `""` is the SUCCESS value and failure RAISES; all three declare `False`. Asked through `delivery_confirmed(capabilities, message_id)`, never re-derived per call site |
 
 `to_dict()` serializes all fields. The integer *parameters* (not booleans) capture where channels differ quantitatively so the `Renderer` can chunk / degrade rather than assume a single shape.
 
@@ -350,7 +350,7 @@ and the durable write, so neither files an assistant row the other skipped.
 | `error:*`, after a tool call or reasoning | `EMPTY_TURN_NOTICE_ERROR_AFTER_WORK` — the same label, and the continue remedy: `tool stall` in particular is synthesised only after a tool ran, so its notice can never ask for a resend |
 | stream ended without a terminal | the same flush trio the terminal branch runs (compaction filter, steering filter, stream redactor — the redactor withholds a whole trailing letter run, so a last chunk of `Done` is still in its buffer) runs first, so the verdict reads the real text and a reply that ended in an exhausted stream is delivered and recorded as a reply; only a genuinely textless exhaustion takes `EMPTY_TURN_NOTICE_UNCLOSED`, or `EMPTY_TURN_NOTICE_UNCLOSED_AFTER_WORK` when the turn did work — no `DONE` reached the renderer, so the dispatcher hands it one (`stop_reason="error"`, the verdict riding it) BEFORE it judges delivery: the bubble carries the same sentence the row records, and `delivery_failed` reads the fate of that send rather than a turn that had not yet tried to say anything |
 | `cancelled` | `""` — the cancel is the answer; a notice would contradict it |
-| a terminal directive applied (`TurnDriver.terminal_directive_applied`) | `""` — the quiet end IS the reply. The injected `directive_consumer` answers `True` when the applied directive's structured `DirectiveOutcome.ends_turn` is set (`build_directive_consumer` reads it from `apply_session_directive_outcome`); today no directive reaches it on a channel turn: `ask_question` is refused slot-less, and `nothing_to_do` is refused because the channel driver cannot yet tell a human's message from a loop's wake (`producer_is_channel` with no self-wake provenance) — the conservative answer, so a channel patrol gets the pre-existing notice rather than silence until the driver carries that provenance. A consumer that answers anything else (`None` from an older one) leaves the verdict as it was. Only a CLEAN terminal consults the flag: a `refusal` or an `error:`-family terminal after the directive keeps its notice (`_is_fault_terminal`) because that fault is still the user's to hear, and a stream that ended without a terminal still takes the unclosed notice, because that fault is the transport's, not the model's |
+| a terminal directive applied (`TurnDriver.terminal_directive_applied`) | `""` — the quiet end IS the reply. The injected `directive_consumer` answers `True` when the applied directive's structured `DirectiveOutcome.ends_turn` is set (`build_directive_consumer` reads it from `apply_session_directive_outcome`); today no directive reaches it on a channel turn: `nothing_to_do` is refused because the channel driver cannot yet tell a human's message from a loop's wake (`producer_is_channel` with no self-wake provenance) — the conservative answer, so a channel patrol gets the pre-existing notice rather than silence until the driver carries that provenance. A consumer that answers anything else (`None` from an older one) leaves the verdict as it was. Only a CLEAN terminal consults the flag: a `refusal` or an `error:`-family terminal after the directive keeps its notice (`_is_fault_terminal`) because that fault is still the user's to hear, and a stream that ended without a terminal still takes the unclosed notice, because that fault is the transport's, not the model's |
 | any text at all | `""` |
 
 The sentences live in `messaging/empty_turn_copy.py`, and the dashboard runner's
@@ -919,7 +919,7 @@ Gateway shutdown runs channel teardown and `SessionManager.close_all()` concurre
 
 **The store.** One JSONL file, `<data_home>/inbound-spool/refused.jsonl`. A COUNT cap (`SPOOL_MAX_ENTRIES`, newest wins) and an AGE horizon (`SPOOL_MAX_AGE_SECS`) in one primitive — nothing else in the tree combined the two; both are applied on write and again on read. Per-entry text cap with visible truncation. Dedupe on the platform `message_id` ONLY: a body digest would collapse two identical messages on a channel with no id, which is data loss (repeating yourself is ordinary), so an identity-less entry is appended, never matched. The refusal write runs off-loop in `asyncio.to_thread` (it takes a file lock and does disk I/O, and a replay worker may hold the lock) and is wrapped in `asyncio.shield`: the handler that reached the refusal is a task `close_all` is about to cancel, and a bare `await` there would be a cancellation point that orphans the write. With the shield the caller is cancelled and the write is not. Shielded writers stay in a process registry counted by the updater census and drained before re-exec. After that drain the updater commits a yield-free restart fence: later refused callbacks write the same bounded record synchronously, so no new asynchronous writer can open between the final snapshot and `exec`. Slack Socket Mode reserves at the envelope boundary before ACK; a paused envelope is left unacknowledged for Slack to retry on the replacement gateway. An executor already shut down (`RuntimeError`) falls back to the same inline write. The whole read-modify-write is serialized by `platform_compat.file_lock` on a dedicated lock file (the spool itself is replaced by rename, so a lock on the old inode would not exclude a writer that opened the new one). **Not for a restricted session**: Slack uses `_is_slack_restricted(session_key)`. Telegram, Discord, and Teams pass a lazy restriction resolver to `admit_inbound_callback`: it runs only after reservation refusal, resolves the channel's full resume decision, and checks the native, resumed, expected, observed, and adopted session keys with the same predicate that gates durable-history writes. The upstream client handler task remains in `_handler_tasks` throughout those routing awaits, so restart cannot overtake the decision. Teams also carries the final answer as `ChannelTurn.inbound_restricted`, covering a shutdown-gate refusal after callback admission succeeded. An incognito or temporary conversation therefore skips both spool sites and persists nothing; the message degrades to the pre-feature loss. A read failure raises `SpoolUnreadable` rather than reading as empty, because every writer rewrites from what it read and the reader unlinks an empty file. Never raises to the caller: a write failure at shutdown degrades to the pre-feature loss; a read failure at boot leaves the file for the next start.
 
-**The notice pass is AT-LEAST-ONCE, one entry at a time.** `replay_spooled` runs as a detached boot task after the transports are up (`GatewayOrchestrator._replay_spooled_inbound`; `_shutdown` cancels it with a one-second budget). For each entry, oldest first: `peek_next` returns it WITHOUT removing it; the `channels` governance ceiling is asked through `vet_and_audit("channels", channel_type, tool_name="inbound_spool.notice", fail_closed=True)`, the same audited seam every other proactive-send site uses, and a denied channel is HELD (not dropped: the route is not revoked, the channel is governed off, and the horizon bounds it); `may_send_to(conversation_id, thread_id, principal=)` is re-decided (a spooled entry is not a standing grant; a transport with no gate, or one that raises, is read as revoked). **The principal is normally passed for a DM route only.** Slack is the sole sender-owned threaded route: it has no separate thread roster, so its pass-local replay adapter resolves the channel's home workspace, receives the stored owner id, rechecks the current owner roster, and still posts in the original Slack thread. Discord threads and Telegram Topics remain authorized by their thread route alone: Discord's `may_send_to` falls from a thread not in `_allowed_threads` to `principal in _allowed` on the assumption that a thread route names no principal, and a spooled thread entry does name one (the sender), so passing it there would let a still-allowed sender authorize a notice into a thread revoked while the gateway was down; a revoked route is DROPPED and removed with no notice; otherwise `send_message` posts `RESTART_NOTICE` quoting the entry (through `display_safe_for`, so a quoted broadcast mention cannot fire; sized to `capabilities.max_message_chars` with a VISIBLE truncation mark, because the prefix can push a message that fit on the way in over the cap and a transport that slices and still returns an id would otherwise confirm a silently cut notice) and names any dropped attachments; `remove_entry` runs only AFTER the send is confirmed. Confirmation is `messaging.transport.delivery_confirmed` (the shared predicate: a non-empty message id, or any return at all on a transport whose `capabilities.returns_message_id` is `False`, i.e. WeCom and Feishu, which return `""` on success and raise on failure). An UNCONFIRMED send (a raise, an empty id) leaves the entry on disk for the next start and the loop moves on, so one dead route cannot park the queue. **Once per entry per pass**: an entry the pass attempted and left on disk (unconfirmed, or noticed but `remove_entry` returned `False`) is never handed back to that pass, so an unwritable spool costs one notice per entry rather than `SPOOL_MAX_ENTRIES` per entry; an entry that was removed is not remembered, so an identical id-less twin sharing its `trace_id` is still noticed in the same pass. An entry whose channel is not connected THIS run is never touched (a startup blip is not the operator disabling the channel); the age horizon still bounds it. This direction is safe precisely because the only action is a notice: a crash between the send and the removal costs one repeated line, never a repeated side effect, which is the opposite of the tradeoff a re-dispatch would have to make. Removal is by ONE occurrence of the entry's `trace_id` and is always the atomic replace (never a bare unlink, which fails routinely on Windows under an AV handle and would re-notice the entry on every start).
+**The notice pass is AT-LEAST-ONCE, one entry at a time.** `replay_spooled` runs as a detached boot task after the transports are up (`GatewayOrchestrator._replay_spooled_inbound`; `_shutdown` cancels it with a one-second budget). For each entry, oldest first: `peek_next` returns it WITHOUT removing it; the `channels` governance ceiling is asked through `vet_and_audit("channels", channel_type, tool_name="inbound_spool.notice", fail_closed=True)`, the same audited seam every other proactive-send site uses, and a denied channel is HELD (not dropped: the route is not revoked, the channel is governed off, and the horizon bounds it); `may_send_to(conversation_id, thread_id, principal=)` is re-decided (a spooled entry is not a standing grant; a transport with no gate, or one that raises, is read as revoked). **The principal is normally passed for a DM route only.** Slack is the sole sender-owned threaded route: it has no separate thread roster, so its pass-local replay adapter resolves the channel's home workspace, receives the stored owner id, rechecks the current owner roster, and still posts in the original Slack thread. Discord threads and Telegram Topics remain authorized by their thread route alone: Discord's `may_send_to` falls from a thread not in `_allowed_threads` to `principal in _allowed` on the assumption that a thread route names no principal, and a spooled thread entry does name one (the sender), so passing it there would let a still-allowed sender authorize a notice into a thread revoked while the gateway was down; a revoked route is DROPPED and removed with no notice; otherwise `send_message` posts `RESTART_NOTICE` quoting the entry (through `display_safe_for`, so a quoted broadcast mention cannot fire; sized to `capabilities.max_message_chars` with a VISIBLE truncation mark, because the prefix can push a message that fit on the way in over the cap and a transport that slices and still returns an id would otherwise confirm a silently cut notice) and names any dropped attachments; `remove_entry` runs only AFTER the send is confirmed. Confirmation is `messaging.transport.delivery_confirmed` (the shared predicate: a non-empty message id, or any return at all on a transport whose `capabilities.returns_message_id` is `False`, i.e. WeCom, Feishu and iMessage, which return `""` on success and raise on failure). An UNCONFIRMED send (a raise, an empty id) leaves the entry on disk for the next start and the loop moves on, so one dead route cannot park the queue. **Once per entry per pass**: an entry the pass attempted and left on disk (unconfirmed, or noticed but `remove_entry` returned `False`) is never handed back to that pass, so an unwritable spool costs one notice per entry rather than `SPOOL_MAX_ENTRIES` per entry; an entry that was removed is not remembered, so an identical id-less twin sharing its `trace_id` is still noticed in the same pass. An entry whose channel is not connected THIS run is never touched (a startup blip is not the operator disabling the channel); the age horizon still bounds it. This direction is safe precisely because the only action is a notice: a crash between the send and the removal costs one repeated line, never a repeated side effect, which is the opposite of the tradeoff a re-dispatch would have to make. Removal is by ONE occurrence of the entry's `trace_id` and is always the atomic replace (never a bare unlink, which fails routinely on Windows under an AV handle and would re-notice the entry on every start).
 
 **Adopted:** Slack, Teams, Webex, WeCom, iMessage, Feishu, Telegram, Discord (with the thread), Weixin, and WhatsApp DMs. WhatsApp group routes remain outside this notice design; attachment re-download is tracked in #8911, and re-dispatch plus WhatsApp group routes in #9144.
 
@@ -1571,6 +1571,15 @@ opening the dashboard:
   a stale or ambiguous binding cannot block `/new`, `/unlink`, `/session`, `/help`,
   `/status`, `/ping`, `/cron`, `/yolo`, `/kirocrew dashboard`, `/voice`, or
   `/agent`.
+- **Channel `/agent` (Webex, Discord, Teams, Feishu)** is one handler,
+  `agent_switch_command.handle_channel_agent_command`. A pick lives in a
+  route-keyed `ChannelAgentPicks` (in memory, like Telegram's `_agent_pref`) and
+  feeds the dispatcher's `_resolve_agent(route)`, so it moves the session key. Only
+  Telegram's picker list (`_installed_agent_names`) is accepted; a switch is refused
+  while the current key is busy; the no-op test compares effective agents. On a
+  switch `ConversationState.reseed` re-reads the route's generation from the new
+  agent's bucket, so `/new` is always fresh. Discord passes the pick to the shared
+  pipeline as `Asker.agent`; a resumed dashboard session keeps its own agent.
 - `/new` and `/unlink` call `SessionBinder.release`, which atomically clears the
   inbound link and retires its durable expectation. `/new` then advances the native
   Telegram generation; `/unlink` returns to the existing native conversation. A
@@ -1584,7 +1593,7 @@ opening the dashboard:
   to the slot's own machinery (see "A busy RESUMED dashboard session takes the
   slot's own machinery"); when the slot has no dashboard turn to join (idle, or no
   tab open) the message runs as a fresh turn if the lease is free and is refused
-  while the chat's own turn holds it; a closing or remote-bound slot refuses it
+  while the chat's own turn holds it; a closing slot or a relay archive refuses it
   outright -- so the exception cannot strand resumed work.
 - Every `/model` picker records its exact target session and re-resolves the current
   binding on press. `/new`, `/unlink`, an agent switch, or any rebind invalidates the
@@ -2175,7 +2184,7 @@ reaches the model as literal text instead of executing on drain.
 A `steer` / `queue` directive prefix forces that one message down the
 corresponding path, overriding `queue_mode` for that message only.
 **Discord's text commands are `!`-prefixed** (`!new`, `!compact`, `!model`,
-`!status`, `!link`, `!unlink`, `!stop`, `!help`, `!sessions`, `!queue`,
+`!agent`, `!status`, `!link`, `!unlink`, `!stop`, `!help`, `!sessions`, `!queue`,
 `!steer`) because Discord's client swallows a bare `/`
 message into its own slash-command UI; the `/` forms are also accepted as message
 text for muscle-memory parity with Telegram, which uses `/` only. Since the
@@ -2336,7 +2345,14 @@ message to the dashboard slot instead (`_handle_resumed_busy` →
   arm on a user roster it was never checked against), on the queue entry directly — `queue_for_next_turn`'s singular
   `channel_recipient` parameter writes that one key beside the containment
   stamp, which nothing passed there can reach — and, for a steer, through the
-  admission dict the requeue copies. When the drain's re-validation drops the entry
+  admission dict the requeue copies. A turn that dies and is requeued verbatim by the
+  runner's recovery (`chat_runner._queue_recovery`) keeps both drop-notice addresses
+  (this one and the dashboard sender stamp), read only off the row the drain handed
+  that turn, never off a transcript row found by scanning, and only when the requeued text equals
+  that row's text (runner context prepended to the turn makes it someone else's words).
+  A merged row keeps an address only
+  when every entry it merges carries that same address, since the notice quotes the whole row.
+  When the drain's re-validation drops the entry
   (`chat_runner._drop_stale_admissions`), `notify_channel_recipient_dropped`
   schedules a notice into that conversation — the DM was told "queued" and reads
   neither the target's transcript nor the SEL — through the same cross-surface
@@ -2372,7 +2388,7 @@ if at all, through the dashboard's own cross-surface leg and not through this
 dispatcher, so a silent hand-off would read as a drop. The refusal (`⏳ That session is busy with a turn started elsewhere …`)
 stays for the cases the slot cannot take (`slot_unable_to_take`, fail-closed on
 an attribute the slot cannot answer): no open slot for the key, a closing slot, a
-remote-bound slot (no local drain), and a slot that is NOT itself driving the
+relay archive (`executor == "remote"`, no local drain), and a slot that is NOT itself driving the
 turn (`running` false while the lease is held — Discord's
 own turn on the resumed key is that case; the slot then has no client to steer
 into, no drain coming, and the queue-or-run admission would start a second turn
@@ -2384,7 +2400,7 @@ of being dropped or answered without. Discord-native conversations keep
 `_handle_busy` unchanged. Telegram and Teams take the same hand-off for their
 resumed sessions (`_handle_resumed_busy` on each dispatcher; one receipt wording
 for every outcome, `channel_handoff.resumed_busy_reply`; the refusals for a slot
-that cannot take the message -- none open, closing, remote-bound, idle -- keep
+that cannot take the message -- none open, closing, relay archive, idle -- keep
 each surface's own wording, which names its unlink command). Telegram's busy
 refusal therefore remains for exactly those cases and no longer answers a
 dashboard-held turn. Teams no longer queues the message into its own queue while
@@ -2699,13 +2715,30 @@ and composed onto it.
   class rather than any attribute: a `MagicMock` stand-in returns a **truthy mock**
   for every flag, which would mark every session both temporary and incognito —
   failing closed, but wrongly and silently.
+- **`hydrate_inbound(sessions, session_key)`** (async) is the restore the async
+  inbound gates run -- the Slack and Telegram inbound paths and the upload gate.
+  It runs `hydrate` and also reads the transcript header's `memory_mode` on a
+  worker thread, then marks that mode too, so the stricter of the two records
+  stands; a mark only adds a restriction. A thread whose row the map does not
+  hold (the map file could not be read at load, so the map started empty) stays
+  restricted when its header records the mode. The read and its mark run under
+  the session's durable-write lock (`_serialized`), so a release cannot restore
+  the header between them; a header mode whose commit is still landing is
+  skipped, like a landing row; a header that cannot be read adds nothing; no
+  `sessions` reads no header. Only a CHANNEL session key's header is read
+  (`messaging.link.is_channel_session_key`): a channel mark makes the channel
+  skip the transcript, and a private dashboard chat a channel thread is routed
+  into keeps its transcript and gates its derived reads on the header itself,
+  so its key restores from its row alone. The sync gates (the dashboard's restricted-session
+  predicates) keep `hydrate`, because they cannot read a transcript without
+  blocking the loop.
 - **Two durable records, two readers.** The `SessionMap` flag is what `hydrate`
-  restores the channel's own gate from on every inbound message, and it keeps
+  restores the channel's gates from on every inbound message, and it keeps
   the map entry alive through `SessionMap.prune` and the per-read repair (both
   loop-side and lock-held, so neither reads a transcript) -- and through every
-  other path: because this gate hydrates from the map alone, a flagged row is
-  never removed, however complete the transcript header, until the gate can
-  read the header (a separate change). `SessionMap.stamp_privacy_headers` --
+  other path: a flagged row is never removed, however complete the transcript
+  header, because the sync gates hydrate from the map alone and a transcript can
+  be deleted or recreated apart from its row. `SessionMap.stamp_privacy_headers` --
   awaited by `start_pool` right after `prune`, the header probes on a worker
   thread, the map-lock-held half touching no file, each row re-read and stamped
   under the session's durable-write lock (`_serialized`, below) so a release
@@ -2799,8 +2832,8 @@ and composed onto it.
   already-marked key. The shape is pinned structurally by
   `test_messaging_privacy_mode`: `set_flag` and `aflush` are called nowhere but
   `_land`; `_persist_transcript_mode` nowhere but `_commit_mode`, after `_land`
-  and before `mark`; `mark` nowhere but `_commit_mode`, `hydrate` and the
-  two in-memory wrappers; `_tracker(...).pop` nowhere but `_release_mode`; and no
+  and before `mark`; `mark` nowhere but `_commit_mode`, `hydrate`,
+  `hydrate_inbound` and the two in-memory wrappers; `_tracker(...).pop` nowhere but `_release_mode`; and no
   module outside `privacy_mode` calls a publication function or writes a privacy
   flag.
 - **`reserve(mode, session_key, …) -> Reservation`**, **`commit(reservation)`**,
@@ -2821,7 +2854,8 @@ and composed onto it.
   write AWAITED (`_land`), and only then is the tracker mark dropped and the
   reversal reported, one SEL `released` record beside the `allowed` one. The
   row goes LAST because it is the record a restart trusts -- `hydrate` restores
-  the mark from the map row alone, and the startup sweep re-stamps headers FROM
+  the mark from the map row alone, `hydrate_inbound` from the row and the header
+  together, and the startup sweep re-stamps headers FROM
   rows, never rows from headers -- so a sequence that stops anywhere leaves the
   next boot reading the mode. The
   header is restored to the STRICTEST claim still standing (`_restore_target`):
@@ -3355,6 +3389,7 @@ answer is not permission: a raised evaluation and a `Decision` without
 - **Block Kit media is refused at the client seam, because the unfurl flags do not govern it**: a `blocks` tree naming `image`/`video` blocks or `image_url`/`thumbnail_url`/`video_url` fields makes Slack's own servers fetch that media whatever `unfurl_media` says. The predicate and the refusal therefore live on `slack/client.py::post_blocks`, `update_message` and `post_ephemeral` (raising before any Slack call), not one layer above them: the gateway has roughly twenty direct `post_blocks` callers and a check above them is a check each of them can forget. The agent-facing `send_message`/`update_message` routes keep their own HTTP 400 with the machine-readable `blocks_remote_media_disabled` code and ask that one predicate. `get_user_profile`'s `image_url` is read-only profile metadata, not an outbound tree, so it is unaffected. Design record: `docs/request-for-change/rfc-redaction-explain-and-reveal.md`.
 - **The proactive PRODUCERS started Slack-shaped, and the parity claim tracks how far that has moved**: `api_send_message` (the LLM-facing `send_message` tool) began with exactly two legs — the origin dashboard slot and `state.slack_client` — and `file_send` still posts to the Slack upload route. The tool's own explicit addressing now exists for every registered channel and does consult `state.channel_transports`: `channel_type` (+ optional `target_id`) for the conversation the session belongs to, and `session="<channel>"` for that channel's configured owner. See § Proactive sends. What remains Slack-only is the shape of `channel`/`user`/`thread_ts`, whose allow-list and threading semantics are Slack concepts, and `file_send`'s upload route. The `unfurl_*` fields are Slack-shaped too but are no longer live send semantics: they are refused, not forwarded (see the preview invariant above). For a Slack-linked `file_send`, the native document-channel leg has no destination; its routine skip is omitted from the tool result, while a successful Slack upload is reported explicitly for every resolved identity (the endpoint answers ok-without-`skipped` only on delivery). A cron result also still reaches a non-Slack channel when its origin slot is MIRRORED there (`/link`).
 - **An opt-in deep-link button rides the Slack owner-DM leg only**: `send_message`'s `include_session_link` boolean (default false; declared in `SEND_MESSAGE_SCHEMA` because `validate_tool_args` rejects any descriptor field the schema does not declare) appends an "Open session" Block Kit button that deep-links to the CALLING session's dashboard tab. The URL is resolved server-side in `_resolve_session_link_url` from the verified caller identity (a cron links to its origin via `_channel_delivery_key`; every other caller via the kernel-attested `X-Session-Key`), so the agent never assembles it and the link can only name the session that sent the message. The button is built ONLY when the flag is `is True` AND the send reaches Slack AND there is no explicit `channel`/`user` target — i.e. the owner-DM fall-through — because the link carries a presigned `token_auth` click token (expiring with `LINK_WINDOW_SECS`) that must not reach a shared channel; it is silently omitted (message still delivered) for non-Slack delivery, a caller with no open dashboard tab (`dashboard_slot_key`/`state.get_slot`), or no usable origin. It rides the SAME Slack message whenever that message can carry Block Kit blocks — caller `blocks`, or a plain-text send upgraded to a `section` under `_SLACK_SECTION_TEXT_MAX` — so an opted-in send is one message and one notification; it posts as a trailing follow-up only when the primary cannot carry blocks (a caller using `options`) or when Slack rejects the combined post. The retry-without-button fallback keys on `SlackApiError` ALONE (Slack answered ok=false, so nothing landed and a second post cannot duplicate the caller's message); any other exception propagates to the delivery-failed path rather than risking a double post. The tunnel-vs-dashboard origin is the shared `dashboard_link_origin` / `tunnel_origin_if_opted_in` decision (`urls.py`), the same one the chat mirror, the Slack backfill marker and `slack.allowlist.send_dashboard_link` use, so a Slack→dashboard link cannot drift on which origin it names.
+- **The deep-link button's fallback runs only after an outright refusal**: slack_sdk raises `SlackApiError` for more than a refusal, so `_slack_rejected_outright` admits only an HTTP 200 answer with `ok: false` and an error other than `internal_error` or `fatal_error`, which Slack documents as possibly having partly succeeded. A 5xx, a gateway page and a body that is not JSON are unknown outcomes, like a timeout or a dropped connection: they propagate to the delivery-failed path, whose 502 says the delivery was not confirmed and the message may have been posted, so the caller checks the conversation before sending again. A 429 propagates as well, and because nothing was posted its 502 says the message was not posted because of a rate limit. The owner-DM and session-channel legs answer an unconfirmed send the same way: neither can tell a refusal from an answer lost after the platform stored the message, so the 502 keeps `channel_delivery_failed` and says the delivery was not confirmed.
 - **Configured outbound targets are transport-owned**: `MessagingTransport.configured_targets()` returns opaque `ConfiguredChannelTarget` records for the user-configured destinations a dashboard session may link to, including an explicit unavailable reason when a protocol needs prior inbound state or cannot send proactively. `resolve_configured_target()` revalidates the selected opaque id at the side-effect boundary and resolves it to `(conversation_id, thread_id)`; the browser never supplies an unchecked platform conversation id. Discord exposes configured users and threads, and fail-closes thread resolution unless Discord still reports the allow-listed id as an actual thread rather than a normal shared guild channel; Telegram exposes configured DMs; Webex exposes configured DMs plus, when `webex.allow_group_rooms` is on, each space in `webex.allowed_room_ids` as a `room:` target — and `resolve_configured_target` re-validates a `room:` id against BOTH the switch and the list, because an advertised target id travels through the browser and the LLM (it is the `target_id` an MCP send may name) and the config can narrow after one was minted; Weixin exposes allow-listed DMs plus authorized peers learned under its open policy; Teams destinations become available after an authorized inbound activity supplies a conversation/service URL; and WeCom advertises its allow-listed userids plus, under its allow-all policy, the peers it has learned — each either offered or listed with a reason, because `aibot_send_msg` needs no token but the platform only delivers into a conversation the user has already written to. Feishu destinations are visible but unavailable because replies are anchored to an inbound message (no proactive DM in v1).
 - **Configured-target egress is governed at every yield boundary**: the dashboard mirror-link endpoint enters the shared fail-closed `channels` governance ladder before resolving an opaque target (resolution may itself open a remote DM), rechecks before the initial link message, and rechecks before each historical-context message. A profile that narrows after transport startup therefore stops both target resolution and all subsequent sends.
 - **`/link` and `/unlink` are one pair with one location**: `rebind_conversation_location` claims what `release_conversation_location` frees, and both take the channel's single `_origin_mirror_link()` value — the release matches an occupied location by VALUE, so a second spelling of "this conversation" lets it miss the binding the bind wrote. Inside the rebind the **claim goes first**: `batched_save` writes on the way out even when the block raises, so an opt-out withdrawal ordered ahead of a refused claim would persist for a link that never happened and silently turn mirroring back on. The value match is the whole `ChannelLink` and nothing else: a `dashboard:`-keyed session mirroring into the DM is swept whatever its key spelling, whether or not it accepts inbound, and whether or not the dashboard has **paused** it — `mirror_paused` is a delivery mute, not a second location, and the sweep drops it with the binding, so one `/unlink` frees the conversation and lifts the session-control refusal that the retained binding would cause (pinned in `test_discord.py::test_unlink_frees_a_paused_two_way_dashboard_mirror` and, against the real store, `test_session_map_mirror.py::TestReleaseConversationLocation::test_a_paused_dashboard_mirror_into_this_dm_is_swept`). When the paused binding accepted inbound, the unlink takes the resumed-session exit ("Left the resumed session") and frees the location on that path; the dashboard is nudged either way so the chip and the menu stop describing a binding that is gone.
@@ -4093,7 +4128,7 @@ Slack settings API they are registered in the dashboard route block (NOT
 - `PUT /api/telegram/config` — requires a direct-local request (same gate as
   the Slack save); remote gets 403. Validate-first/commit-last. Pasted tokens
   are shape-checked (`<bot_id>:<secret>`) and verified against Telegram
-  `getMe` before storage; rejection returns 400 and writes nothing, network
+  `getMe` (through the same `_api_base` resolver the Telegram client uses, with redirects refused) before storage; rejection returns 400 and writes nothing, network
   failure saves with `verify_warning`. `bot_token_clear` must be a strict
   boolean. The secret lands in `config_dir/.env` as `TELEGRAM_BOT_TOKEN` via
   the same atomic 0600 write, and `os.environ` is synced afterward. Setting
@@ -4271,7 +4306,7 @@ default it.
 **Dispatch + rendering.** Turns ride the shared `drive_turn` / `TurnDriver`
 pipeline. `transport_dispatch.py` intercepts the command surface (`/new`,
 `/compact`, `/help`, `/stop` + `/cancel`, `/link`, `/unlink`, `/yolo`,
-`/kirocrew dashboard`, `/model`, `/sessions`, plus the `/queue` and `/steer`
+`/kirocrew dashboard`, `/model`, `/agent`, `/sessions`, plus the `/queue` and `/steer`
 per-message overrides),
 queues or steers mid-turn messages, drains the queue after the turn, runs
 `/compact` under atomic `try_acquire`, and posts soft/hard context-threshold
@@ -5204,7 +5239,7 @@ the operator's production bot and answer real people.
 `messaging/dispatch.py::drive_turn`. The command vocabulary lives in ONE table,
 `teams/commands.py::COMMAND_SPEC`, which drives both the parser and the `/help`
 card so the two cannot drift: `/new` (alias `/start`), `/compact`, `/stop` (alias `/cancel`),
-`/yolo`, `/link`, `/unlink`, `/sessions`, `/dashboard`, `/help`, plus the `/queue` and `/steer` per-message
+`/agent`, `/yolo`, `/link`, `/unlink`, `/sessions`, `/dashboard`, `/help`, plus the `/queue` and `/steer` per-message
 directives. A bare directive answers with usage rather than handing the
 literal `/queue` to the model, which would reply to it as chat text.
 `/dashboard [<N>h|<N>m]` MINTS a presigned dashboard login token for the asking
@@ -5519,8 +5554,21 @@ received a bare `/tmp` path and answered about nothing, silently. Two rules foll
 from the same place: an attachment-bearing message is never STEERED (a steer carries
 text only, so the files would be dropped while the user is told they were folded in)
 and never read as a COMMAND (Teams puts the caption in `text`, so "/stop here is the
-log" would cancel the turn AND discard the file). The queue entry carries the RAW
-descriptors and the drained turn re-ingests them, bounded by
+log" would cancel the turn AND discard the file). Everywhere the dispatcher asks
+whether a message carries a file (the command parse and intercept, the steer-or-queue
+choice, the `has_attachments` flag handed to a busy resumed session, the dropped
+count a spooled message reports, and the descriptors a queue entry carries)
+"attachment-bearing" means FILE-bearing by the ingest's own classification
+(`attachments.file_attachments`, the entries the ingest acts on), not
+`bool(activity.attachments)`: Teams attaches a `text/html` echo of the body to every
+rich-text message, so a gate reading the raw list would see an upload on every typed
+`/help`, recognizing no slash command in a 1:1 chat and queuing every mid-turn
+message rather than steering it. The helper and the ingest's skip
+set are one function, so whatever the ingest ignores in silence (the body echo, a
+card, an entry without a content type) cannot turn a command into a caption or a
+plain message into an upload, while a real upload, an inline image or an attachment
+of an unrecognized type still does. The queue entry
+carries those file descriptors and the drained turn re-ingests them, bounded by
 `IngestLimits().max_attachments` so a burst is answered across turns instead of
 having its surplus refused. Discord and Telegram draw every one of these lines in
 the same place.
@@ -5587,7 +5635,9 @@ that awaits the turn and unlinked in a worker once it returns.
   worker thread.
 - **What is not a file.** Teams echoes rich text as a `text/html` attachment on
   ordinary messages, and a card can ride an activity; both are skipped without a
-  note, because a per-message line would be pure noise. Any other unrecognized
+  note, because a per-message line would be pure noise, and neither counts as a file
+  anywhere the dispatcher asks (`file_attachments` reads the same skip decision).
+  Any other unrecognized
   content type is reported by TYPE — not by file name — and never fetched.
 
 `test/test_teams_attachments.py` pins the policy half (envelope mapping, the auth
@@ -5836,9 +5886,12 @@ routing it through `render_options_as_text` like the other four zero-widget
 channels, so a question whose choices live only in the trailer reaches the user
 without them. A tool approval is unaffected (`on_prompt_choice` builds its own
 numbered prompt). That half is a gap rather than a position, and
-`test_options_cap_contract.py` cannot see it: WhatsApp is absent from its
-`_all_channel_capabilities()` map, so the exhaustiveness ratchet judges nine
-channels in a ten-channel repo.
+`test_options_cap_contract.py` now sees WhatsApp: it is in the
+`_all_channel_capabilities()` map and pinned as the sole `STRIPS_NOT_NUMBERS`
+entry, so the exhaustiveness ratchet counts all ten channels. The ratchet
+records the strip as the current behaviour rather than asserting the lost
+choices are routed through `render_options_as_text`, so the gap itself goes
+unchecked.
 
 Declaring no widget at all is a conservative CHOICE, recorded as unverified rather
 than as a platform ceiling. The pinned wheel ships a complete interactive-message builder

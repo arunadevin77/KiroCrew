@@ -35,6 +35,7 @@ import {
   requestSlotReveal,
   requestFolderReveal,
   mcpAppKey,
+  resumeFromHistory,
   } from '../store/chatSlice'
 import { confirmedDelivered } from '../utils/sendDelivery'
 import { sendTurn } from '../chat-core/transport/sendTurn'
@@ -93,7 +94,8 @@ import { useFollowUpChips } from './chat/page/followUpChips'
 import { useComposerSessionControls, useSessionControlChips } from './chat/page/sessionControls'
 import { useComposerChips } from './chat/page/composerChips'
 import { useTurnRecovery } from './chat/page/turnRecovery'
-import { useComposerAboveBand, useComposerDockMetrics } from './chat/page/composerDock'
+import { useComposerAboveBand } from './chat/page/composerDock'
+import { DOCK_CLEARANCE_PX, useComposerDockMetrics } from './chat/composerDockMetrics'
 import { useStableRowKeys, useTranscriptRows } from './chat/page/transcriptRows'
 import { useBusyTurnControls } from './chat/page/busyTurnControls'
 import { slotBusySteer } from '../components/chat-input/busySend'
@@ -105,6 +107,7 @@ import EarlierMessagesBar from './chat/EarlierMessagesBar'
 import TranscriptScrollShell, { useTranscriptWidth } from './chat/TranscriptScrollShell'
 import { devLog, devWatchMessages, inspectorOn } from '../dev/scrollInspector'
 import TurnNavigationMinimap from './chat/TurnNavigationMinimap'
+import { useTurnStepper } from './chat/useTurnStepper'
 import { useVirtualChat } from '../hooks/virtualizer/useVirtualChat'
 import { carryPastes, expandAll as expandPasteTokens, mergeCarriedDraft } from '../utils/pasteTokens'
 import { extractPromptFromToken, extractSlackContextFromToken } from '../utils/tokenPrompt'
@@ -189,19 +192,6 @@ const REAL_GESTURE_AUTH_MS = 20000
 const TRANSCRIPT_TAIL_SPACER_PX = 16
 
 /**
- * Breathing room, in px, between the composer dock's top edge and the last line of
- * the transcript, on top of the dock's own measured height.
- *
- * The transcript scroller runs the full height of the pane and the dock floats
- * over its bottom edge (iOS toolbar layout), so the scroller's `paddingBottom` is
- * `dockH + this`: exactly the strip the dock covers, plus this margin, so the last
- * line stops clear of the glass instead of under it. There is no opaque fade band
- * between the two any more — the transcript scrolls under the glass and the
- * material's own blur and tint are what keep the dock legible over it.
- * ChatPage.dockClearance.test.tsx pins the wiring.
- */
-const DOCK_CLEARANCE_PX = 16
-/**
  * Strip of screen the mobile sessions drawer deliberately leaves uncovered, so a
  * sliver of the conversation behind it stays visible.
  *
@@ -274,13 +264,12 @@ import { prevUserTextFor } from './chat/share/shareSupport'
 import { turnHadPolicyBlock } from '../app-sdk/turnPolicyBlock'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { JiraHostsCtx } from '../lib/jiraHosts'
-import { SidebarFolderCtx, type SidebarFolderActions } from '../components/markdown/contexts'
+import { ClosedSessionCtx, SidebarFolderCtx, type ClosedSessionActions, type SidebarFolderActions } from '../components/markdown/contexts'
 import MessageErrorBoundary from '../components/MessageErrorBoundary'
 import SessionTitleControl from './chat/SessionTitleControl'
 import { useChatNavigation } from '../hooks/useChatNavigation'
 import { useChatPins } from '../hooks/useChatPins'
 import SubagentProgressBar from './chat/SubagentProgressBar'
-import CommandCenterDock from './chat/command-center/CommandCenterDock'
 import { usePreviewFlag } from '../hooks/usePreviewFlag'
 import { PREVIEW_DASHBOARD } from '../utils/previewFlags'
 import TaskProgressBar from './chat/TaskProgressBar'
@@ -336,6 +325,9 @@ import { closeCrewWindow, crewWindowShown, useCrewWindow } from './chat/crew-win
 
 
 import { i18nT } from '../i18n/t'
+import { uiLocation } from '../uiLocations/uiLocation'
+import { GuideRevealScope, useGuideRevealScope } from '../guide/GuideRevealScope'
+import { useGuidePredicate, useGuideSelection } from '../guide/guidePredicates'
 import { fmtDateFields } from '../i18n/format'
 import { fmtMessageTime, fmtMessageTimeFull } from './chat/messageTime'
 import { fetchDashboardConfig } from '../api/dashboardConfigQuery'
@@ -550,6 +542,11 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   )
   const filteredSlotsRef = useRef(filteredSlots)
   filteredSlotsRef.current = filteredSlots
+  // Live guide predicates the sessions sidebar toggle needs to be drawn (see
+  // `guide/guidePredicates.ts`): a guide step through it shows a blocker
+  // instead of pointing when either is unmet.
+  useGuidePredicate('has_open_sessions', filteredSlots.length > 0)
+  useGuidePredicate('full_dashboard', embedMode !== 'chat' && embedMode !== 'sessions')
   const unreadSlots = useAppSelector(s => s.dashboard.unreadSlots)
   // Unified view: unread keys for all chat-like slots.
   const surfaceUnreadSlots = useMemo(
@@ -577,6 +574,16 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   const unresumableResume = useAppSelector(s => s.chat.unresumableResume)
   const undeletableHistory = useAppSelector(s => s.chat.undeletableHistory)
   const activeSlot = useAppSelector(s => s.chat.activeSlot)
+  // The session picker's selection fact for a guide's "choose the session"
+  // step: whether one is open here, whether any is listed, and which one by
+  // its key, so a choice made there stays bound to that session. The key
+  // stays in this tab: only the selection's state is reported.
+  const sessionPicked = !!activeSlot && filteredSlots.some(s => s.key === activeSlot)
+  useGuideSelection('session_open', {
+    selected: sessionPicked,
+    available: filteredSlots.length > 0,
+    identity: sessionPicked ? activeSlot ?? undefined : undefined,
+  })
   // The store this page is rendered under (not the module singleton): the
   // opener reads live state after an await, and it must be the same store
   // its dispatches went to. Also read by the MCP-app openers below, so it is
@@ -730,6 +737,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // survey's baseline capture until the real transcript has settled.
   const slotSwitchTarget = useAppSelector(s => s.chat.slotSwitchTarget)
   const pendingQuestion = useAppSelector(s => pendingQuestionFor(s.chat.pendingQuestions, s.chat.activeSlot))
+  const restoredQuestionNotice = useAppSelector(s => (s.chat.activeSlot ? s.chat.restoredQuestionNotices?.[s.chat.activeSlot] : undefined))
   const pendingFollowup = useAppSelector(s => (s.chat.activeSlot ? s.chat.followups?.[s.chat.activeSlot] : undefined))
   const folderSuggestion = useAppSelector(s => (s.chat.activeSlot ? s.chat.folderSuggestions?.[s.chat.activeSlot] : undefined))
   const followupTsBySlot = useAppSelector(s => s.chat.followups) ?? EMPTY_FOLLOWUPS
@@ -816,6 +824,9 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // arrays here re-rendered this whole component per chunk for data it never
   // read.
   const activityOpen = useAppSelector(s => s.chat.activityOpen)
+  // The chat side panel's scope owner (`chat.side-panel`): a guide's step
+  // through its opener completes the moment it reads open.
+  useGuideRevealScope('chat.side-panel', activityOpen)
   const slotHasMore = useAppSelector(s => s.chat.slotHasMore)
   const slotOldestIndex = useAppSelector(s => s.chat.slotOldestIndex)
   const cursorIsForActiveSlot = useAppSelector(s => s.chat.slotCursorKey === s.chat.activeSlot)
@@ -862,6 +873,12 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // re-renders only when that fact changes.
   const composerDraft = useState(() => createComposerDraftStore(activeSlot ? drafts.current[activeSlot] ?? '' : ''))[0]
   const setInput = composerDraft.set
+  // A dashboard page's reply lands in this chat's composer, merged after anything
+  // already typed; the person reviews and sends it.
+  const insertDashboardReply = useCallback((text: string) => {
+    setInput(prev => mergeIntoDraft(prev, text))
+    focusComposer()
+  }, [setInput])
   const inputNonBlank = useComposerDraftSelector(composerDraft, isNonBlank)
 
   const sendingRef = useRef(false)
@@ -1053,9 +1070,9 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     // (`decisions/points/message_steer.py`). The receipt policy below is unchanged,
     // because the answer arrives as the `dispatched` of a steer or the `queued` of
     // a queue -- both rulings `applySteerReceipt` already owns.
-    mutationFn: ({ text, sendId, slot, auto, quote }: { text: string; sendId?: string; slot: string; auto?: boolean; quote?: MessageQuote | null }) =>
+    mutationFn: ({ text, sendId, slot, auto, quote }: { text: string; sendId?: string; slot: string; auto?: boolean; quote?: MessageQuote | null; askId?: string | null }) =>
       sendTurn({ message: text, slot, steer: auto ? 'auto' : true, ...(sendId ? { meta: { sendId, ...(quote ? { quote } : {}) } } : {}) }),
-    onSuccess: (receipt, { text, sendId, slot, quote }) => {
+    onSuccess: (receipt, { text, sendId, slot, quote, askId }) => {
       // Receipt policy for a steer, owned once in chat-core (issue #9457):
       // applySteerReceipt decides WHICH ruling applies; the adapter below is
       // ChatPage's HOW. The composer was cleared at submit and the optimistic
@@ -1125,6 +1142,10 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
         // demotion via the helper's queued path.
         stashDemoted: () => undefined,
       })
+      // Release a blocking card only once the gateway accepted the steer, so the agent is told to read a message that arrived.
+      if (askId && (receipt.status === 'dispatched' || receipt.status === 'queued')) {
+        void resolveAskAfterSend(receipt.body, askId, dispatch, slot)
+      }
     },
   })
   const {
@@ -1386,7 +1407,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
         // No targetSlot (or reconnect failed): create the session HERE and,
         // for a fresh thread, slack-link it so responses mirror to Slack.
         try {
-          const create = dispatch(createSlot({ mode }))
+          const create = dispatch(createSlot({ mode, sessionFolder: false }))
           noCarryCreateIdsRef.current.add(create.requestId)
           const slot = await create.unwrap()
           slotKey = slot?.key ?? null
@@ -1630,6 +1651,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     addSourceCommentToChat,
     colorThemeRef,
     handleFileOpen,
+    handleOpenWorkingTreeDiff,
     handleFolderOpen,
     handleArtifactOpen,
     handleOpenDiff,
@@ -1723,6 +1745,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     scrollTranscriptBy,
     updatePinnedPrompt,
     onScrollPin,
+    pinnedJumpChrome,
     scrollToPinnedPrompt,
   } = transcriptEarly
 
@@ -2127,7 +2150,9 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       // paste blocks and attachments, surface the failure, and bail.
       let created: { key: string } | null = null
       try {
-        created = await dispatch(createSlot({ agent: pendingAgentRef.current || defaultAgent || undefined, agent_kind: pendingAgentRef.current ? pendingAgentKindRef.current : undefined, model: pendingModelRef.current || undefined, mode: modeRef.current })).unwrap()
+        // A project picked on the fresh composer is applied right after the
+        // create below, so the server must not make a session folder for it.
+        created = await dispatch(createSlot({ agent: pendingAgentRef.current || defaultAgent || undefined, agent_kind: pendingAgentRef.current ? pendingAgentKindRef.current : undefined, model: pendingModelRef.current || undefined, mode: modeRef.current, ...(pendingProjectRef.current ? { sessionFolder: false } : {}) })).unwrap()
       } catch (e: unknown) {
         sendingRef.current = false
         if (isolated) {
@@ -2549,7 +2574,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     }
     // The user answered in the composer instead of the card; a blocking card
     // is resolved over the network, so this cannot be a store-only retirement.
-    void resolveAskAfterSend(body, slot === entrySendSlot ? askAtSend : null, dispatch)
+    void resolveAskAfterSend(body, slot === entrySendSlot ? askAtSend : null, dispatch, slot)
     // The delivery verdict (see the callback's doc above). Only an explicit
     // `refused` reads as not-delivered here; `unknown` (a 2xx whose body did
     // not parse) may have started a turn, so it counts as delivered for the
@@ -2772,22 +2797,10 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // Refs so the "run in terminal" listener (registered once) always sees the
   // live panel controller + this chat's working directory.
   const tabsCtlRef = useRef(tabsCtl); tabsCtlRef.current = tabsCtl
-  // Stable, so the memoized dock does not re-render on every streamed chunk.
-  // Close the find pane FIRST, as revealAppInPanel / handleFileOpen /
-  // handleOpenDiff do: the find pane owns the right-hand dock exclusively
-  // (shouldMountSidePanel returns false while it is open), so without the close
-  // the dashboard would open behind a pane the user cannot see past. `close()`
-  // is safe with nothing open.
   // The Dynamic Dashboard is a Feature Preview (Settings > Developer). While it
-  // is off there is no dock to open from, no menu entry to open with, and a
-  // persisted `command-center` tab is withheld from the strip (SidePanel), so
-  // the opener is absent rather than a path onto a view nothing else offers.
+  // is off a persisted `command-center` tab is withheld from the strip
+  // (SidePanel), and the menu offers no entry onto it.
   const dashboardPreview = usePreviewFlag(PREVIEW_DASHBOARD)
-  const openCommandCenterOn = useCallback(() => {
-    search.close(); dispatch(openActivityPanel()); tabsCtlRef.current.openView('command-center')
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `search.close` is a useCallback([]) in useMessageSearch; the object around it is rebuilt every render
-  }, [dispatch, search.close])
-  const openCommandCenter = dashboardPreview ? openCommandCenterOn : undefined
 
   /** Bring an app's panel tab back — focusing it if open, re-creating it if the
    *  user closed it (`openApp` upserts).
@@ -2828,7 +2841,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   const announceAttachmentChange = useCallback((text: string) => {
     setAttachmentAnnouncement(prev => ({ text, nonce: prev.nonce + 1 }))
   }, [])
-  const { clampOutOfTokens, handleAddToContext, removeFileChip, removeDirChip, selectPickedFile } = useFileMentionActions({
+  const { clampOutOfTokens, handleAddToContext, removeFileChip, removeDirChip, selectPickedFile, mentionKeyEdit } = useFileMentionActions({
     staging,
     inputRef,
     setInput,
@@ -2896,56 +2909,40 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     return `followup/${slug || 'suggestion'}`
   }, [])
 
-  const followupStartInWorktree = useCallback(async (item: FollowupItem) => {
-    const repo = currentSlot?.project
-    if (!repo) throw new Error(i18nT('pages.chatPage.this_session_has_no_project_directory_to_branch'))
-    const originSlot = activeSlot
-    // Inherit the spawning session's sidebar folder, so a worktree started from
-    // a session filed under a project folder lands in that same folder instead
-    // of at the sidebar's top level (#6347). `currentSlot` IS the spawning
-    // session (it already supplies `.project` above), and its `folder_id` is
-    // undefined when that session is itself unfiled — in which case the new
-    // session lands top-level, exactly today's behaviour. No default folder is
-    // invented; unfiled stays unfiled.
-    const originFolderId = currentSlot?.folder_id
-    // Capture the card's ts up front so completion clears only THIS card. A
-    // newer card can arrive for the same slot while the request is in flight;
-    // without the guard the older action's completion would clobber it.
-    const originTs = originSlot ? followupTsRef.current[originSlot]?.ts : undefined
-    // Create the worktree FIRST: if git refuses (branch exists, not a repo),
-    // we must not have already spawned an empty session the user has to clean
-    // up. The card surfaces the thrown message inline.
-    const res = await api.createWorktree(repo, followupBranchFor(item))
-    const path = res?.path
-    if (!path) throw new Error(res?.error || i18nT('pages.chatPage.worktree_creation_returned_no_path'))
+  // The post-create half both spawn routes share: open a session (scoped to
+  // `project` when there is one), hand it the prompt, take the user to it, and
+  // only then clear the card. Every step fails CLOSED with the caller's message
+  // for that step, so a route can name what it already left behind (the
+  // worktree route names the reusable worktree) and no failure ever prefills
+  // an unrelated conversation.
+  const openFollowupSession = useCallback(async (
+    item: FollowupItem,
+    target: {
+      project?: string
+      folderId?: string | null
+      originSlot: string | null
+      originTs: number | undefined
+      fail: { notCreated: string; noSession: string; notOpened: string; notFocused: string }
+    },
+  ) => {
+    const { project, folderId, originSlot, originTs, fail } = target
     let slotKey = ''
     try {
-      // `activate: false` on purpose: the slot must be SCOPED to the worktree
+      // `activate: false` on purpose: the slot must be SCOPED to its directory
       // before the user can type into it. Activating first (the default) leaves a
       // window where the composer is live but `chatSlotProject` is still pending,
       // so a turn sent in that window would run in the default directory — agent
       // tools writing to the wrong checkout. It also means a scoping failure can
       // render its error on the still-mounted card instead of unmounting it.
-      const slot = await dispatch(createSlot({ mode, project: path, folder_id: originFolderId, activate: false })).unwrap()
+      const slot = await dispatch(createSlot({ mode, project, folder_id: folderId, activate: false })).unwrap()
       slotKey = slot?.key || ''
     } catch {
-      // The worktree exists but the session does not. Say so, and name the path:
-      // the create endpoint is idempotent for its own destination, so pressing
-      // the button again reuses this worktree instead of 409-ing on it.
-      throw new Error(
-        `Worktree created at ${path}, but its session could not be opened and scoped. ` +
-        'Press the button again to retry — the existing worktree will be reused.',
-      )
+      throw new Error(fail.notCreated)
     }
     // A fulfilled thunk with no key would skip every guard below (scoping,
     // activation, focus verification) and prefill whatever session is on screen
     // — the exact fail-open the docs promise not to do. Fail closed instead.
-    if (!slotKey) {
-      throw new Error(
-        `Worktree created at ${path}, but no session was returned. ` +
-        'Press the button again to retry — the existing worktree will be reused.',
-      )
-    }
+    if (!slotKey) throw new Error(fail.noSession)
     // Scoping is NOT done here: `createSlot({ activate: false })` awaits the
     // project assignment before it publishes the slot, and deletes the session if
     // that fails, so the slot is never reachable in an unscoped state. A failure
@@ -2954,9 +2951,9 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     // if the user switched sessions while the create was in flight. The
     // prefill below writes to the *active* composer, so without this the
     // prompt would land in whatever unrelated session is on screen and the new
-    // worktree session would open empty. The user asked for this worktree by
-    // clicking; take them to it — and if that fails, surface the error and
-    // keep the card rather than prefilling the wrong conversation.
+    // session would open empty. The user asked for this session by clicking;
+    // take them to it — and if that fails, surface the error and keep the card
+    // rather than prefilling the wrong conversation.
     // Read the store directly, NOT activeSlotRef: the ref is refreshed by a
     // render, and `unwrap()` resolves as soon as the reducer ran — so a stale
     // ref would report a failure (and skip the prefill) on a switch that in
@@ -2973,21 +2970,71 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       try {
         await dispatch(switchSlot(slotKey)).unwrap()
       } catch {
-        throw new Error(
-          `Worktree ready at ${path}, but its session could not be opened. ` +
-          'Switch to it in the sidebar, or press the button again.',
-        )
+        throw new Error(fail.notOpened)
       }
     }
-    if (store.getState().chat.activeSlot !== slotKey) {
-      throw new Error(
-        `Worktree ready at ${path}, but its session is not in focus. ` +
-        'Switch to it in the sidebar, or press the button again.',
-      )
-    }
+    if (store.getState().chat.activeSlot !== slotKey) throw new Error(fail.notFocused)
     dispatch(setPendingInput(item.prompt))
     if (originSlot) dispatch(clearFollowupCard({ slot: originSlot, ts: originTs }))
-  }, [currentSlot?.project, currentSlot?.folder_id, followupBranchFor, dispatch, mode, activeSlot])
+  }, [dispatch, mode])
+
+  // Both spawn routes file the new session in the spawning session's sidebar
+  // folder, so a follow-up started from a session filed under a project folder
+  // lands in that same folder instead of at the sidebar's top level.
+  // `currentSlot` IS the spawning session, and its `folder_id` is undefined
+  // when that session is itself unfiled — in which case the new session lands
+  // top-level. No default folder is invented; unfiled stays unfiled. The card's
+  // ts is captured up front so completion clears only THIS card: a newer card
+  // can arrive for the same slot while the request is in flight, and the older
+  // action's completion must not clobber it.
+  const followupOrigin = useCallback(() => ({
+    originSlot: activeSlot,
+    originTs: activeSlot ? followupTsRef.current[activeSlot]?.ts : undefined,
+    folderId: currentSlot?.folder_id,
+  }), [activeSlot, currentSlot?.folder_id])
+
+  const followupStartInWorktree = useCallback(async (item: FollowupItem) => {
+    const repo = currentSlot?.project
+    if (!repo) throw new Error(i18nT('pages.chatPage.this_session_has_no_project_directory_to_branch'))
+    const origin = followupOrigin()
+    // Create the worktree FIRST: if git refuses (branch exists, not a repo),
+    // we must not have already spawned an empty session the user has to clean
+    // up. The card surfaces the thrown message inline.
+    const res = await api.createWorktree(repo, followupBranchFor(item))
+    const path = res?.path
+    if (!path) throw new Error(res?.error || i18nT('pages.chatPage.worktree_creation_returned_no_path'))
+    // The worktree exists from here on, so every failure names its path: the
+    // create endpoint is idempotent for its own destination, so pressing the
+    // button again reuses this worktree instead of refusing it.
+    await openFollowupSession(item, {
+      ...origin,
+      project: path,
+      fail: {
+        notCreated: i18nT('pages.chatPage.followup_worktree_session_not_created', { path }),
+        noSession: i18nT('pages.chatPage.followup_worktree_no_session_returned', { path }),
+        notOpened: i18nT('pages.chatPage.followup_worktree_session_not_opened', { path }),
+        notFocused: i18nT('pages.chatPage.followup_worktree_session_not_focused', { path }),
+      },
+    })
+  }, [currentSlot?.project, followupBranchFor, followupOrigin, openFollowupSession])
+
+  // The route for a session that has no repository to branch: a plain new chat
+  // in the spawning session's project directory (where a new chat starts by
+  // default when it has none), with no git call at all. Pressing the button
+  // again after a failure opens another chat, so the not-opened and
+  // not-focused messages point at the sidebar instead of a retry.
+  const followupStartInNewChat = useCallback(async (item: FollowupItem) => {
+    await openFollowupSession(item, {
+      ...followupOrigin(),
+      project: currentSlot?.project || undefined,
+      fail: {
+        notCreated: i18nT('pages.chatPage.followup_chat_not_created'),
+        noSession: i18nT('pages.chatPage.followup_chat_not_created'),
+        notOpened: i18nT('pages.chatPage.followup_chat_not_focused'),
+        notFocused: i18nT('pages.chatPage.followup_chat_not_focused'),
+      },
+    })
+  }, [currentSlot?.project, followupOrigin, openFollowupSession])
 
   // Outside events feeding the side panel, the dock terminal and the composer,
   // then the cold file tabs' reads.
@@ -3212,7 +3259,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // ---- Continue the thread ---------------------------------------------------
   const {
     continuable, interrupted, sendUnconfirmed, continuing, handleContinue,
-    openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities,
+    openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openTurnLimitSetting,
     featureRequestRefused, sessionStartRepeated,
   } = useTurnRecovery({
     activeSlot,
@@ -3985,6 +4032,19 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // landing history page by one deferred commit -- deliberate, and harmless for
   // a side panel.
   const chatNav = useChatNavigation(renderedTranscript.messages, messageToDisplayIdx)
+  // Alt+↑ / Alt+↓ step through the same turns by way of the pinned-prompt jump.
+  // Single chat only: split view draws its sessions as panes, a crew window
+  // covers this transcript, and an embedded chat is not the page the keyboard
+  // drives.
+  const turnStepAnnouncement = useTurnStepper({
+    active: !embedded && !(splitMode && splitFeatureEnabled) && !crewWindow && !isWelcomeState && !!activeSlot,
+    turns: chatNav.sections,
+    windowed: slotHasMore && cursorIsForActiveSlot,
+    scrollerRef,
+    landingInset: pinnedJumpChrome,
+    jump: scrollToPinnedPrompt,
+    setHighlightTs,
+  })
 
   // ── Chat Pins ──────────────────────────────────────────────────────────────
   const {
@@ -4462,6 +4522,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       onPickModel: openModelPickerFromError,
       onOpenDefaultModel: embedded || popout ? undefined : openDefaultModelSetting,
       onOpenSignIn: embedded || popout ? undefined : openKiroSignIn,
+      onOpenTurnLimit: embedded || popout ? undefined : openTurnLimitSetting,
       onOpenCapabilities: embedded || popout ? undefined : openMemberCapabilities,
       onSessionOpen: selectSessionTab,
       sessions: connected ? sessionTitles : undefined,
@@ -4500,7 +4561,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       bubble,
     ])
     return { renderers, fallback: bubble }
-  }, [slotRunning, handleFileOpen, handleArtifactOpen, selectSessionTab, sessionTitles, connected, handleFork, handleQuote, handleAsk, quoteWholeMessage, handleJumpToQuote, chatConfig, activeSlot, regenerating, activeSlotRemoteBound, handleRegenerate, handleEditResend, editLast, handleEditConsumed, slotHasMore, loadingOlder, cursorIsForActiveSlot, slotOldestIndex, handleLoadEarlier, renderUserContentCb, highlightTs, activeSlotTitle, mode, embedded, popout, handleOpenDiff, planTaskId, artifactPaths, automationId, toolDisclosure, setToolDisclosureFor, linkPreviewsOn, socialShareOn, voiceRecoverySlot, handleSubagentPanelOpen, isPinned, handleTogglePinForMessage, showRefusedPress, transcriptHot, revealAppInPanel, continuable, interrupted, continuing, handleContinue, openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, handleFolderOpen, handleSpeak, handleApplyPlan, mcpAppPanel, redactionCoachTs, setAutomationOpen])
+  }, [slotRunning, handleFileOpen, handleArtifactOpen, selectSessionTab, sessionTitles, connected, handleFork, handleQuote, handleAsk, quoteWholeMessage, handleJumpToQuote, chatConfig, activeSlot, regenerating, activeSlotRemoteBound, handleRegenerate, handleEditResend, editLast, handleEditConsumed, slotHasMore, loadingOlder, cursorIsForActiveSlot, slotOldestIndex, handleLoadEarlier, renderUserContentCb, highlightTs, activeSlotTitle, mode, embedded, popout, handleOpenDiff, planTaskId, artifactPaths, automationId, toolDisclosure, setToolDisclosureFor, linkPreviewsOn, socialShareOn, voiceRecoverySlot, handleSubagentPanelOpen, isPinned, handleTogglePinForMessage, showRefusedPress, transcriptHot, revealAppInPanel, continuable, interrupted, continuing, handleContinue, openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openTurnLimitSetting, handleFolderOpen, handleSpeak, handleApplyPlan, mcpAppPanel, redactionCoachTs, setAutomationOpen])
 
   const renderMessage = useCallback((i: number, m: ChatMessage) => {
     // Key identity rules (clientTs preference + streaming->assistant role
@@ -4763,6 +4824,34 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // the gateway. Provided once here rather than threaded through
   // MarkdownRenderer props, so subagent and workflow cards and system notices
   // offer the same chip as a message body.
+  // A link to a CLOSED session: probe that one key (`GET /api/sessions/{key}/meta`),
+  // and resume it the way the sidebar's Older-sessions row does (#9915). Only
+  // consulted while the open roster is wired, so offline it is off as well.
+  const closedSessionActions = useMemo<ClosedSessionActions>(() => ({
+    // Background: a failure leaves the text plain and says nothing, since the
+    // reader did not ask for anything yet.
+    lookup: async (key: string) => {
+      const row = await api.sessionMeta(key)
+      return row ? { key: row.key, title: row.title || row.key } : null
+    },
+    // The click: ask again, because the session may have been deleted since
+    // the chip appeared. A failed check is said by the chip itself, inline at
+    // the spot clicked, with a retry (`ClosedSessionNotice`).
+    open: async ({ key, title }) => {
+      let row: Awaited<ReturnType<typeof api.sessionMeta>>
+      try {
+        row = await api.sessionMeta(key)
+      } catch {
+        return 'failed'
+      }
+      if (!row) {
+        showActionError(i18nT('store.chatSlice.session_gone_open_failed_named', { name: title }))
+        return 'gone'
+      }
+      void dispatch(resumeFromHistory({ key: row.key, title: row.title || title }))
+      return 'opened'
+    },
+  }), [dispatch, showActionError])
   const sidebarFolderActions = useMemo<SidebarFolderActions>(() => ({
     folders: chatFolders,
     onFolderReveal: embedMode === 'chat' ? undefined : (folderId: string) => {
@@ -5226,7 +5315,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
    * held before it (page-layout.md, "The title belongs to the content column").
    */
   const topbarSessionsToggle = (
-    <button className="mc-touch-hit p-2 rounded-md text-text hover:text-text-strong hover:bg-bg-hover cursor-pointer bg-transparent border-none shrink-0" onClick={() => mobileSessions ? closeSidebar() : openSidebar()} aria-label={i18nT('pages.chatPage.toggle_sessions')} aria-expanded={mobileSessions} data-testid="mobile-topbar-sessions-toggle">
+    <button className="mc-touch-hit p-2 rounded-md text-text hover:text-text-strong hover:bg-bg-hover cursor-pointer bg-transparent border-none shrink-0" onClick={() => mobileSessions ? closeSidebar() : openSidebar()} aria-label={i18nT('pages.chatPage.toggle_sessions')} aria-expanded={mobileSessions} data-testid="mobile-topbar-sessions-toggle" {...uiLocation('chat.mobile-sessions-toggle')}>
       {mobileSessions ? <PanelLeftLight size={18} /> : <PanelLeftSolid size={18} />}
     </button>
   )
@@ -5357,6 +5446,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
         chips identically wherever it renders. Cloud URLs need no provider. */}
     <JiraHostsCtx.Provider value={jiraSourceHosts}>
     <SidebarFolderCtx.Provider value={sidebarFolderActions}>
+    <ClosedSessionCtx.Provider value={closedSessionActions}>
     <div
       ref={chatContainerRef}
       /* Both sides are this page's own: a rightward drag opens the sessions
@@ -5429,10 +5519,10 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
           hands that flyout's rect to the drawer so the panel grows out of it. */}
       {!isMobile && embedMode !== 'chat' && embedMode !== 'sessions' && filteredSlots.length > 0 && (
         <button
-          ref={flyoutTriggerRef}
           type="button"
           onClick={() => expandSidebar(flyout.open)}
           {...flyout.triggerProps}
+          {...uiLocation('chat.sessions-sidebar-toggle', flyoutTriggerRef)}
           aria-haspopup={flyoutEligible ? 'menu' : undefined}
           aria-expanded={flyoutEligible ? flyout.open : undefined}
           // Geometry mirrored by TOGGLE_RECT (chat/SessionFlyout) — every
@@ -5494,6 +5584,11 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
           />
         </div>
       ) : (
+      // The sessions sidebar's collapse owner (desktop) and the phone's
+      // sessions drawer owner: a guide's reveal step completes the moment
+      // this says open. Outside the drawer, so "closed" is said while the
+      // drawer's contents are unmounted.
+      <GuideRevealScope id={isMobile ? 'chat.sessions-drawer' : 'chat.sessions-sidebar'} open={sidebarOpen}>
       <OverlayDrawer open={isMobile ? drawerMounted : sidebarOpen} width={isMobile ? Math.max(0, winW - DRAWER_UNCOVERED_PX) : effectiveSidebarWidth} dragging={sidebarDragging} slideX={isMobile ? drawerX : undefined} slideRef={drawerPanelRef}
         // Mobile only: the same visible-band inset the scrim above carries, so the
         // two surfaces move together. Margins rather than restated edges is what
@@ -5566,6 +5661,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
         ) : sessionsPane
         })()}
       </OverlayDrawer>
+      </GuideRevealScope>
       )}
       <MobileTopBar
         topbarSlot={topbarSlot}
@@ -5746,6 +5842,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
             <Btn
               primary
               disabled={newSlotMutation.isPending}
+              {...uiLocation('chat.start-new-chat')}
               onClick={() => {
                 if (newSlotFailed) {
                   // Re-arm before state updates can let auto-selection run.
@@ -5878,6 +5975,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                   onClick={toggleAct}
                   title={i18nT('pages.chatPage.open_activity_panel')}
                   aria-label={i18nT('pages.chatPage.open_activity_panel')}
+                  {...uiLocation('chat.side-panel-open')}
                 >
                   <SidePanelGlyph size={15} />
                 </Clickable>
@@ -5963,6 +6061,8 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               </motion.div>
             ) : (
             <>
+            {/* Speaks the turn an Alt+↑ / Alt+↓ step landed on. */}
+            <span className="sr-only" aria-live="polite" aria-atomic="true">{turnStepAnnouncement}</span>
             <TurnNavigationMinimap
               items={chatNav.sections}
               scrollerRef={scrollerRef}
@@ -6225,7 +6325,6 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                   calls and goes stale when the user clicks a tab in the panel. */}
               {!(activityOpen && !search.isOpen && tabsCtl.tabs.find(t => t.id === tabsCtl.activeId)?.kind === 'subagents') && <SubagentProgressBar slot={activeSlot} />}
               {!(activityOpen && !search.isOpen && tabsCtl.tabs.find(t => t.id === tabsCtl.activeId)?.kind === 'workflows') && <WorkflowProgressBar slot={activeSlot} />}
-              {openCommandCenter && <CommandCenterDock slot={activeSlot} onOpen={openCommandCenter} />}
               <SubagentDeliveryProgress count={systemDeliveryCount} />
               <QueueStack messages={queuedMessages} onCancel={handleCancelQueued} onInterrupt={handleInterruptQueued} onEdit={handleEditQueued} onReorder={handleReorderQueued} pendingIds={queuePendingIds} fuseBelow={followUpOptions.length === 0 && !knowledgeFetch.pendingKnowledge} />
               </div>
@@ -6302,7 +6401,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                   onSkip={() => knowledgeFetch.clearResults()}
                 />
               ) : null}
-              {pendingQuestion && (
+              {(pendingQuestion || restoredQuestionNotice) && (
                 <div className="px-4 pb-2 mx-auto w-full" style={{ maxWidth: 'var(--mc-content-width, 900px)' }}>
                   <PendingQuestionCard
                     slotKey={activeSlot}
@@ -6319,6 +6418,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                     projectIsRepo={projectGitError ? undefined : projectGit?.repo}
                     onAddToSession={followupAddToSession}
                     onStartInWorktree={followupStartInWorktree}
+                    onStartInNewChat={followupStartInNewChat}
                     onSkip={(index) => dispatch(dismissFollowupItem({ slot: activeSlot, index, ts: pendingFollowup.ts }))}
                   />
                 </div>
@@ -6395,6 +6495,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               // A tree row dropped on the composer is "Add to chat" by drag.
               onTreeEntryDrop={handleAddToContext}
               clampDropOffset={clampOutOfTokens}
+              onMentionKey={mentionKeyEdit}
               project={currentSlot?.project || ''}
               projectBranch={projectBranch}
               projectDetached={!projectGitError && !!projectGit?.detached}
@@ -6727,7 +6828,8 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               panelHidden={isSidePanelHidden({ activityOpen, hasLiveAppTab, hasBrowserTab, hasTaskDashboard, searchOpen: search.isOpen })}
               onFileOpen={handleFileOpen}
               onArtifactOpen={handleArtifactOpen}
-              onAddToContext={handleAddToContext}
+              onAddToContext={handleAddToContext} onComposerInsert={insertDashboardReply}
+              onOpenWorkingTreeDiff={handleOpenWorkingTreeDiff}
               projectDir={currentSlot?.project || undefined} navLinks={chatNav.links} navResolving={chatNav.resolving}
               sources={panelSources} selectedSourceUrl={selectedSourceUrl} onSelectSource={selectSourceUrl} onReconcileSource={reconcileSourceUrl}
               issues={panelIssues} selectedIssueUrl={selectedIssueUrl} onSelectIssue={selectIssueUrl} onReconcileIssue={reconcileIssueUrl}
@@ -6768,7 +6870,8 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                 panelHidden={isSidePanelHidden({ activityOpen, hasLiveAppTab, hasBrowserTab, hasTaskDashboard, searchOpen: search.isOpen })}
                 onFileOpen={handleFileOpen}
                 onArtifactOpen={handleArtifactOpen}
-                onAddToContext={handleAddToContext}
+                onAddToContext={handleAddToContext} onComposerInsert={insertDashboardReply}
+                onOpenWorkingTreeDiff={handleOpenWorkingTreeDiff}
                 projectDir={currentSlot?.project || undefined} navLinks={chatNav.links} navResolving={chatNav.resolving}
                 sources={panelSources} selectedSourceUrl={selectedSourceUrl} onSelectSource={selectSourceUrl} onReconcileSource={reconcileSourceUrl}
               issues={panelIssues} selectedIssueUrl={selectedIssueUrl} onSelectIssue={selectIssueUrl} onReconcileIssue={reconcileIssueUrl}
@@ -6786,6 +6889,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
         activitySlot
       )}
     </div>
+    </ClosedSessionCtx.Provider>
     </SidebarFolderCtx.Provider>
     </JiraHostsCtx.Provider>
     </TagPopoverProvider>

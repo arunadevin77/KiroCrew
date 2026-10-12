@@ -683,6 +683,12 @@ jobs:
       # file assembled from the review text, so the verdict that gates this
       # file's travel has to reach it.
       scrub_ok: ${{ steps.scrub_review.outputs.scrub_ok }}
+      # The code a credential-shape refusal NAMES its cause with, for `publish` to
+      # hand to the shared conclusion table. Such a refusal dispatches no leg, so
+      # the fold reads `no-report` and, without the code, the table can only give
+      # the generic "no leg reported" sentence. At most one step writes it: the
+      # probe's refusal stops the job before the validate step runs.
+      refusal: ${{ steps.probe.outputs.refusal || steps.validate.outputs.refusal }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -869,6 +875,7 @@ jobs:
             # spelling, so a `[REDACTED-` grep misses exactly the credential class the
             # candidate set most needs caught.
             if [ "$probe" = "10" ]; then
+              echo "refusal=corpus-credential" >> "$GITHUB_OUTPUT"
               echo "::error::a candidate operation carries a credential shape (an access-key id, an ARN, an account id or a credential-bearing URL). The candidate set travels as a public artifact and must stay byte-faithful for the classifier, so it can be neither published nor rewritten. Re-run so the reviewer proposes the operation without the embedded credential."
             else
               echo "::error::the candidate set could not be checked for credential shapes, and it travels to the validation job as a public artifact. Refusing to upload it unchecked."
@@ -897,6 +904,7 @@ jobs:
               echo "::warning::a candidate row carried a credential shape (an access-key id, an ARN, an account id or a credential-bearing assignment) in a field the classifier does not read, and that FIELD was removed. Every row is still adjudicated, on the bytes the reviewer wrote; only the removed field's explanation is absent from this run's report. The count is above."
               ;;
             11)
+              echo "refusal=corpus-credential" >> "$GITHUB_OUTPUT"
               echo "::error::a candidate operation carries a credential shape (an access-key id, an ARN, an account id or a credential-bearing URL) in a field the classifier reads. The candidate set travels as a public artifact and must stay byte-faithful for the classifier, so that field can be neither published nor rewritten -- and dropping the row would silently remove the boundary it probes. Re-run so the reviewer proposes the operation without the embedded credential, or record a human override for this head with /ai-review override scope <sha>: <reason>, which skips this lane whole."
               exit 1
               ;;
@@ -1038,6 +1046,7 @@ jobs:
             rm -f scrub-probe.json
             if [ "$probe" != "0" ] && [ "$probe" != "10" ]; then
               echo "adjudicate=false" >> "$GITHUB_OUTPUT"
+              echo "refusal=corpus-uncheckable" >> "$GITHUB_OUTPUT"
               echo "::error::the normalized corpus could not be checked for credential shapes, and it travels to the legs as a public artifact. Refusing to upload it unchecked."
               exit 1
             fi
@@ -1048,6 +1057,7 @@ jobs:
             # exactly the credential class the corpus most needs refused.
             if [ "$probe" = "10" ]; then
               echo "adjudicate=false" >> "$GITHUB_OUTPUT"
+              echo "refusal=corpus-credential" >> "$GITHUB_OUTPUT"
               echo "::error::a candidate operation carries a credential shape (an access-key id, an ARN, an account id or a credential-bearing URL). The corpus travels to the adjudication legs as a public artifact and must stay byte-faithful for the classifier, so it can be neither published nor rewritten. Re-run so the reviewer proposes the operation without the embedded credential."
               exit 1
             fi
@@ -1492,17 +1502,6 @@ jobs:
             reports+=(--report "$leg=$f")
             found=$((found + 1))
           done
-          if [ "$found" -eq 0 ]; then
-            # No leg reported at all. That is a different fact from "one leg is
-            # missing" and the step below already scores it, so leave it to the
-            # ladder there rather than asserting legs against an empty set.
-            echo "folded=none" >> "$GITHUB_OUTPUT"
-            echo "No leg report to fold."
-            exit 0
-          fi
-          for leg in ${EXPECT_LEGS:-}; do
-            reports+=(--expect-leg "$leg")
-          done
           # THE FOLDER COMES FROM A COMMITTED BLOB, never from the checkout. This
           # job holds `pull-requests: write`, and on a `pull_request` event the
           # workspace is the PR merge ref -- so running the checked-out copy would
@@ -1510,6 +1509,12 @@ jobs:
           # this lane's comment is live. Same rule the base-owned prompt and corpus
           # follow. `deny_diff.py` is imported BESIDE `scope_candidates.py` by path,
           # so both must land in this directory.
+          #
+          # Staged BEFORE the no-report exit below, on every run: the post step and
+          # the per-head floor run the shared conclusion table from this copy, and a
+          # run with no leg report needs that table most. It is the only place a
+          # `validate` refusal gets its named cause and the nothing-new short circuit
+          # gets its green; an unstaged copy reads as "harness absent" instead.
           rm -rf "$HARNESS"
           mkdir -p "$HARNESS"
           bootstrap=""
@@ -1543,6 +1548,17 @@ jobs:
               echo "the base ref."
             } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           fi
+          if [ "$found" -eq 0 ]; then
+            # No leg reported at all. That is a different fact from "one leg is
+            # missing" and the step below already scores it, so leave it to the
+            # ladder there rather than asserting legs against an empty set.
+            echo "folded=none" >> "$GITHUB_OUTPUT"
+            echo "No leg report to fold."
+            exit 0
+          fi
+          for leg in ${EXPECT_LEGS:-}; do
+            reports+=(--expect-leg "$leg")
+          done
           rc=0
           python "$HARNESS/scope_candidates.py" verdict ${reports[@]+"${reports[@]}"} \
             --out-md verdict-body.md \
@@ -1639,6 +1655,9 @@ jobs:
           ADJUDICATED: ${{ needs.validate.outputs.adjudicate }}
           GENERATE_RESULT: ${{ needs.generate.result }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
+          # A credential-shape refusal's NAMED cause. Handed to the conclusion
+          # table as a key it matches exactly, never interpolated into the verdict.
+          VALIDATE_REFUSAL: ${{ needs.validate.outputs.refusal }}
           ADJUDICATE_RESULT: ${{ needs.adjudicate.result }}
           HUMAN_OVERRIDE: ${{ needs.generate.outputs.override }}
           OVERRIDE_ACTOR: ${{ needs.generate.outputs.override_actor }}
@@ -1743,7 +1762,8 @@ jobs:
             if [ -s "$SC" ]; then
               conc="$(python "$SC" conclude --lane same-repo \
                 --fold "$fold" --model "$model" --marker "$marker" \
-                --nothing-new "$nothing_new" --gap-script "$gap_script" --gap-model "$gap_model")"
+                --nothing-new "$nothing_new" --gap-script "$gap_script" --gap-model "$gap_model" \
+                --refusal "${VALIDATE_REFUSAL:-}")"
               token="$(printf '%s\n' "$conc" | sed -n 's/^conclusion=//p')"
               why="$(printf '%s\n' "$conc" | sed -n 's/^why=//p')"
             else
@@ -2346,7 +2366,18 @@ jobs:
           guarded_comment_upsert() {
             local marker="$1" stamp="$2" lane="$3" out_file="$4"
             local matches existing lookup_ok pr_head="" attempt withhold="" write_rc
-            local verdict_read_rc superseded=""
+            # What reached the slot is recorded as the step output `publication`,
+            # because every arm below returns 0 and the write status would
+            # otherwise end with this function. The fork Opus and GPT finalize
+            # steps read it: a verdict computed for this head is a pass there only
+            # once it is in the slot. `published` is this run's body in the slot,
+            # `superseded` a head this PR has moved past, and `not_published` every
+            # other arm. That includes an earlier run's sample for this head, which
+            # the PR then shows instead of this run's verdict, and an override note
+            # a repeat stopped at: that note names no head the repeat can check, and
+            # an override for THIS head is answered by the finalize step's own
+            # override input.
+            local verdict_read_rc superseded="" publication="not_published"
             # Find the bot's existing marker comment (first match wins) and
             # capture its id. Author filter: only a github-actions[bot]
             # comment can match, so a PR commenter cannot plant the marker and
@@ -2432,6 +2463,7 @@ jobs:
                 # publishes the verdict that counts, so a record here would
                 # point a reader at a revision nobody is reviewing.
                 superseded=1
+                publication="superseded"
                 withhold="$HEAD is no longer this PR's head ($pr_head)"
               fi
             fi
@@ -2465,6 +2497,7 @@ jobs:
                 if [ -z "$superseded" ]; then
                   retain_unpublished_verdict withheld none "$stamp $HEAD" "$out_file"
                 fi
+                printf 'publication=%s\n' "$publication" >> "${GITHUB_OUTPUT:-/dev/null}"
                 return 0
               fi
               if [ -n "$existing" ] && [ "$existing" != "null" ]; then
@@ -2472,6 +2505,7 @@ jobs:
                 if [ -z "$superseded" ]; then
                   retain_unpublished_verdict withheld none "$stamp $HEAD" "$out_file"
                 fi
+                printf 'publication=%s\n' "$publication" >> "${GITHUB_OUTPUT:-/dev/null}"
                 return 0
               fi
               # The lookup SUCCEEDED and found nothing, so there is no verdict
@@ -2490,6 +2524,11 @@ jobs:
               else
                 echo "::error::$lane could not post its $HEAD notice, so this PR carries no $stamp comment at all.${READ_FAILURE_NOTE:+ Cause of the failed comment read: $READ_FAILURE_NOTE}"
               fi
+              case "$write_rc" in
+                0) publication="published" ;;
+                4) publication="superseded" ;;
+              esac
+              printf 'publication=%s\n' "$publication" >> "${GITHUB_OUTPUT:-/dev/null}"
               return 0
             fi
             if [ "$lookup_ok" -eq 1 ] && [ -n "$existing" ] && [ "$existing" != "null" ]; then
@@ -2529,6 +2568,11 @@ jobs:
                 echo "::error::$lane produced a verdict for $HEAD but could not publish it, so this run's verdict is not in the slot.${READ_FAILURE_NOTE:+ Cause of the failed comment read: $READ_FAILURE_NOTE}"
               fi
             fi
+            case "$write_rc" in
+              0) publication="published" ;;
+              4) publication="superseded" ;;
+            esac
+            printf 'publication=%s\n' "$publication" >> "${GITHUB_OUTPUT:-/dev/null}"
           }
           guarded_comment_upsert "$MARKER" "[SCOPE-REVIEWED]" "Security Scope Review" "$OUT"
 

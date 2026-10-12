@@ -268,6 +268,7 @@ writes.
 | `kirocrew memory search "query"` | Search episodic memories |
 | `kirocrew memory stats` | Show memory statistics |
 | `kirocrew memory audit` | Scan memory for suspicious content |
+| `kirocrew memory create-store <name>` | Create the directory of a named V1 store declared in `memory_stores` (`use` never creates it; refuses the default store, an undeclared name and a V2 member store) |
 | `kirocrew memory export` | Export the default store's rows to JSON (stdout) |
 | `kirocrew memory export -o file.json` | Export to file |
 | `kirocrew memory export --store <name>` | Export a named store's rows instead |
@@ -313,6 +314,7 @@ LLM-generated UI components (widgets, HTML, markdown, SVG, JSON, text).
 | `kirocrew agent create --name NAME` | Create a new agent |
 | `kirocrew agent create --name NAME --kiro-agent kirocrew --workspace default` | Full options |
 | `kirocrew agent update NAME --kiro-agent new-agent` | Update agent settings |
+| `kirocrew agent update NAME --display-name "Label"` | Change the name the dashboard shows (`""` clears it); the agent name stays |
 | `kirocrew agent delete NAME` | Delete an agent |
 | `kirocrew agent reset-model [--agent kirocrew]` | Clear a pinned model so the agent tracks the shipped default |
 | `kirocrew workspace list` | List workspaces |

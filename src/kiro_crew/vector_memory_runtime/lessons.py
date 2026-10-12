@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from kiro_crew import context_omissions
 from kiro_crew.embeddings import PRIORITY_INTERACTIVE
 from kiro_crew.lesson_validation import (
     LESSON_APPLIES_ON_TOPIC,
@@ -1042,6 +1043,7 @@ def get_lessons_context(
         directive_block, directive_omitted = render_lesson_tier(
             directives,
             directive_room,
+            omission_kind=context_omissions.LESSON_RULES,
             **directive_tier,
         )
         # ``max(1, …)`` rather than the bare remainder: ``tighter_lesson_budget``
@@ -1072,6 +1074,7 @@ def get_lessons_context(
             # can act on rather than an absence it cannot see.
             experience_block = render_withheld_tier(
                 len(experiences),
+                omission_kind=context_omissions.LESSON_FINDINGS,
                 header="[Learned experience — past findings]",
                 footer="[End of learned experience]",
                 notice=(
@@ -1087,6 +1090,7 @@ def get_lessons_context(
             experience_block, experience_omitted = render_lesson_tier(
                 experiences,
                 experience_room,
+                omission_kind=context_omissions.LESSON_FINDINGS,
                 header=(
                     "[Learned experience — past findings, relevant ones first.\n"
                     "Reference material, not standing rules; call memory_recall for more.]"

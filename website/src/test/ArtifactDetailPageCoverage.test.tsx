@@ -1006,6 +1006,12 @@ describe('ArtifactDetailPage — upstream sync banner', () => {
     vi.restoreAllMocks()
   })
 
+  /** Bound for every wait on what the published-copy line renders. The banner
+   *  is a chained query: it mounts only once the artifact query has answered,
+   *  renders nothing until the publish-providers query lists a provider, and
+   *  only then enables the upstream-status query. */
+  const PUBLISHED_LINE_WAIT = { timeout: 5000 }
+
   const publication = {
     artifact_id: 'pub-1',
     view_url: 'https://remote.example.com/artifact/pub-1',
@@ -1169,6 +1175,40 @@ describe('ArtifactDetailPage — upstream sync banner', () => {
     await waitFor(() => expect(screen.getByText('CR Queue')).toBeInTheDocument())
     expect(screen.queryByText(/Local changes not yet published to/)).toBeNull()
     expect(screen.queryByTitle(/Pull the latest remote content/i)).toBeNull()
+  })
+
+  it('links the published copy when the artifact is neither a fork nor behind', async () => {
+    vi.mocked(api).upstreamStatus = vi.fn().mockResolvedValue({})
+    await mount(mkArtifact({ publication }))
+    const link = await screen.findByRole('link', { name: /Open published page/i }, PUBLISHED_LINE_WAIT)
+    expect(link).toHaveAttribute('href', publication.view_url)
+    expect(link).toHaveAttribute('target', '_blank')
+    // Names where the copy lives, as the unpublished-edits prompt does.
+    expect(screen.getByText(/Published to Companion Cloud/)).toBeInTheDocument()
+  })
+
+  it('links the published copy beside the unpublished-edits prompt', async () => {
+    vi.mocked(api).upstreamStatus = vi.fn().mockResolvedValue({ live_dirty: true })
+    await mount(mkArtifact({ publication, live_dirty: true }))
+    await screen.findByText(/Local changes not yet published to/, {}, PUBLISHED_LINE_WAIT)
+    expect(screen.getByRole('link', { name: /Open published page/i }))
+      .toHaveAttribute('href', publication.view_url)
+  })
+
+  it('never links a published copy whose URL is not http(s)', async () => {
+    vi.mocked(api).upstreamStatus = vi.fn().mockResolvedValue({})
+    await mount(mkArtifact({ publication: { ...publication, view_url: 'javascript:alert(1)' } }))
+    await waitFor(() => expect(vi.mocked(api).upstreamStatus).toHaveBeenCalled(), PUBLISHED_LINE_WAIT)
+    await waitFor(() => expect(screen.getByText('CR Queue')).toBeInTheDocument(), PUBLISHED_LINE_WAIT)
+    expect(screen.queryByRole('link', { name: /Open published page/i })).toBeNull()
+    expect(screen.queryByText(/Published to/)).toBeNull()
+  })
+
+  it('shows no published link when the publication carries no URL', async () => {
+    vi.mocked(api).upstreamStatus = vi.fn().mockResolvedValue({})
+    await mount(mkArtifact({ publication: { ...publication, view_url: '' } }))
+    await waitFor(() => expect(vi.mocked(api).upstreamStatus).toHaveBeenCalled(), PUBLISHED_LINE_WAIT)
+    expect(screen.queryByRole('link', { name: /Open published page/i })).toBeNull()
   })
 
   it('links the remote copy through the safe-URL guard', async () => {

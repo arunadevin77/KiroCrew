@@ -16,9 +16,8 @@ Crew's MCP servers under Tool Search).
 So these pages describe what upstream published on the fetch date recorded per
 row, not a supported-version contract.
 
-**Upstream is now on the CLI 3.0 line, and reorganised its information
-architecture again.** Feature pages that were CLI-scoped are now
-surface-agnostic: `/docs/cli/installation/` became
+**Upstream is on the CLI 3.0 line, whose information architecture is
+surface-agnostic.** The CLI-scoped paths feature pages once used redirect: `/docs/cli/installation/` became
 `/docs/getting-started/installation/`, `/docs/cli/custom-agents/**` became
 `/docs/custom-agents/**`, `/docs/cli/mcp/**` became `/docs/mcp/**`,
 `/docs/cli/reference/slash-commands/` became `/docs/reference/slash-commands/`,

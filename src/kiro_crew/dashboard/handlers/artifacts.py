@@ -120,8 +120,10 @@ _MAX_BODY_BYTES = MAX_CONTENT_BYTES + 8 * 1024 * 1024  # 25 MiB content + 8 MiB 
 # Publish-provider name grammar. Upstream imports this from ``validation`` where
 # it also backs the MCP publish-tool FieldSpecs; the public fork's validation
 # module doesn't carry those tools, so the constraint lives here at the sole
-# HTTP boundary that accepts a provider name.
-_ARTIFACT_PROVIDER_RE = re.compile(r"^[a-z0-9-]{1,32}$")
+# HTTP boundary that accepts a provider name. ``\Z``-anchored like
+# ``_SESSION_KEY_RE`` below: matched raw with ``.match``, so a ``$`` anchor would
+# admit a trailing newline.
+_ARTIFACT_PROVIDER_RE = re.compile(r"^[a-z0-9-]{1,32}\Z")
 
 # Upper bound (seconds) on any single awaited remote-publish-provider network
 # call. Without it a slow/hung provider would block the awaiting request (and
@@ -214,8 +216,10 @@ def _artifact_source_for_request(request: web.Request) -> str:
 #: opaque handles like ``chat-2`` / ``dashboard:chat-2`` / ``cron:foo`` / a Slack
 #: ``ts``; restrict to that charset so a malformed or hostile value (e.g. a JSON
 #: list, or injected markup) can neither poison persisted metadata nor reach the
-#: dashboard surface unsanitized.
-_SESSION_KEY_RE = re.compile(r"^[A-Za-z0-9:_.\-]{1,128}$")
+#: dashboard surface unsanitized. Anchored at ``\Z``, not ``$``: Python's ``$``
+#: also matches before a final newline, so a ``$`` anchor under ``.match`` admits
+#: ``"dashboard:abc\n"`` into the store, where keys compare exactly.
+_SESSION_KEY_RE = re.compile(r"^[A-Za-z0-9:_.\-]{1,128}\Z")
 
 
 def _clean_origin_session_key(raw: Any) -> str:
@@ -1516,29 +1520,35 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     # rather than stored as a raw string: an unvalidated project file outside
     # $HOME yields a pointer the store then refuses to read.
     try:
-        art = get_default_store().create(
-            name=body.get("name", ""),
-            content=(
-                promoted_content if promoted_content is not None else body.get("content", "")
-            ),
-            slug=body.get("slug"),
-            kind=body.get("kind"),
-            # Honor an explicitly-supplied source (MCP tool / import path); for
-            # UI saves that omit it, derive the ACTUAL session origin
-            # (dashboard/slack/cli/cron/subagent/...) rather than "manual".
-            source=(body.get("source") or _artifact_source_for_request(request)),
-            description=body.get("description", ""),
-            tags=body.get("tags") or [],
-            source_path=link_source_path,
-            source_root=link_source_root,
-            source_copy_only=link_copy_only,
-            folder_id=folder_id,
-            # Originating chat session for the Source column. Only a real slot
-            # key that passes the permitted grammar is stored (validated to
-            # prevent attribution spoofing / metadata poisoning); anything else
-            # collapses to "".
-            session_key=_clean_origin_session_key(body.get("origin_session_key")),
-            webapp_metadata=webapp_metadata_from_dict(body.get("webapp_metadata")),
+        # Off the loop: a create writes the record, its first version and the
+        # index, and each of those syncs its bytes to the device before it
+        # renames. On slow or busy storage that is long enough to stall chat
+        # turns and heartbeats if it runs here.
+        art = await _run_off_loop(
+            lambda: get_default_store().create(
+                name=body.get("name", ""),
+                content=(
+                    promoted_content if promoted_content is not None else body.get("content", "")
+                ),
+                slug=body.get("slug"),
+                kind=body.get("kind"),
+                # Honor an explicitly-supplied source (MCP tool / import path); for
+                # UI saves that omit it, derive the ACTUAL session origin
+                # (dashboard/slack/cli/cron/subagent/...) rather than "manual".
+                source=(body.get("source") or _artifact_source_for_request(request)),
+                description=body.get("description", ""),
+                tags=body.get("tags") or [],
+                source_path=link_source_path,
+                source_root=link_source_root,
+                source_copy_only=link_copy_only,
+                folder_id=folder_id,
+                # Originating chat session for the Source column. Only a real slot
+                # key that passes the permitted grammar is stored (validated to
+                # prevent attribution spoofing / metadata poisoning); anything else
+                # collapses to "".
+                session_key=_clean_origin_session_key(body.get("origin_session_key")),
+                webapp_metadata=webapp_metadata_from_dict(body.get("webapp_metadata")),
+            )
         )
     except ArtifactValidationError as exc:
         _audit(
@@ -2340,7 +2350,9 @@ async def api_artifact_delete(request: web.Request) -> web.Response:
 async def api_artifact_versions(request: web.Request) -> web.Response:
     slug = request.match_info.get("slug", "")
     try:
-        versions = get_default_store().list_versions(slug)
+        # Off the loop although it only reads: it takes the store's lock, and a
+        # writer holds that lock across the sync of every file it publishes.
+        versions = await _run_off_loop(lambda: get_default_store().list_versions(slug))
     except ArtifactNotFoundError as exc:
         return _err(str(exc), status=404)
     except ArtifactValidationError as exc:
@@ -2356,7 +2368,10 @@ async def api_artifact_version_detail(request: web.Request) -> web.Response:
     except ValueError:
         return _err(f"invalid version: {version_str}")
     try:
-        art = get_default_store().get(slug, version=version)
+        # A read that can write: an artifact stored before the event log existed
+        # gets its synthetic history backfilled and persisted on first read, so
+        # this reaches _write_meta and its sync.
+        art = await _run_off_loop(lambda: get_default_store().get(slug, version=version))
     except ArtifactNotFoundError as exc:
         return _err(str(exc), status=404)
     except ArtifactValidationError as exc:
@@ -2455,12 +2470,18 @@ async def api_artifact_record_event(request: web.Request) -> web.Response:
     if widget_index is not None and not isinstance(widget_index, int):
         return _err("metadata.widget_index must be an integer")
     try:
-        art, appended = get_default_store().record_impression(
-            slug,
-            by=actor,
-            session_id=session_id_hdr,
-            message_ts=message_ts,
-            widget_index=widget_index,
+        # Off the loop for the same reason as the create path: an impression
+        # appends to the event log and rewrites the record, both synced before
+        # their rename. This one fires per rendered widget, so it is the more
+        # frequent of the two.
+        art, appended = await _run_off_loop(
+            lambda: get_default_store().record_impression(
+                slug,
+                by=actor,
+                session_id=session_id_hdr,
+                message_ts=message_ts,
+                widget_index=widget_index,
+            )
         )
     except ArtifactNotFoundError as exc:
         return _err(str(exc), status=404)
@@ -4986,7 +5007,8 @@ async def api_remote_artifacts_browse(request: web.Request) -> web.Response:
     A non-empty ``q`` runs full-text ``search_remote`` (providers whose
     ``discovery_model().full_text_search`` is True); otherwise
     ``list_remote(scope)``. ``None`` from the provider means that discovery
-    primitive isn't supported (400). Gated like other reads-with-state. A
+    primitive isn't supported (400; an unsupported scope listing also carries
+    ``code: "scope_unsupported"``). Gated like other reads-with-state. A
     provider name with nothing registered under it answers 404; in the public
     edition the registry is empty, so every browse returns 404 — the surface is
     inert until a companion registers a provider. A registered provider that
@@ -5052,8 +5074,18 @@ async def api_remote_artifacts_browse(request: web.Request) -> web.Response:
         )
         return _err(reason, status=502)
     if result is None:
-        verb = "full-text search" if query else f"{scope} listing"
-        return _err(f"{provider_name} does not support {verb}", status=400)
+        if query:
+            return _err(f"{provider_name} does not support full-text search", status=400)
+        # A scope the provider does not list is not a failure: the code lets the
+        # browse UI move on to the next scope the provider advertises instead of
+        # rendering an error card, and keeps it apart from a provider that raised.
+        return _json_response(
+            {
+                "error": f"{provider_name} does not support {scope} listing",
+                "code": "scope_unsupported",
+            },
+            status=400,
+        )
     # Annotate on the UN-redacted rows (external_ids intact) using a single
     # off-loop store scan, THEN redact — annotating after redaction would look up
     # a credential-shaped external_id in its ``[REDACTED]`` form and miss the

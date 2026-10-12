@@ -38,6 +38,7 @@ import { useGuardedHistoryStep } from '../components/NavigationLeaveGuard'
 import { MOBILE_BREAKPOINT } from './useIsMobile'
 import { isEditableTarget } from '../utils/editableTarget'
 import { closeShownCrewWindow, crewWindowShown } from '../pages/chat/crew-window/crewWindowStore'
+import { stepTurn } from '../pages/chat/turnStep'
 
 /** Shortcuts scoped to the session on screen (see the crew-window guard). */
 const CREW_WINDOW_SCOPED: ReadonlySet<string> = new Set([
@@ -255,6 +256,8 @@ export const SHORTCUT_LABEL_KEY: Record<string, string> = {
   'chat-next-bracket': 'hooks.useKeyboardShortcuts.next_chat',
   'chat-mru': 'hooks.useKeyboardShortcuts.last_visited_chat_mru',
   'chat-mru-back': 'hooks.useKeyboardShortcuts.walk_back_mru_history',
+  'turn-prev': 'hooks.useKeyboardShortcuts.previous_prompt',
+  'turn-next': 'hooks.useKeyboardShortcuts.next_prompt',
   'nav-chat': 'hooks.useKeyboardShortcuts.chats_panel',
   'nav-notifications': 'hooks.useKeyboardShortcuts.notifications_panel',
   'nav-projects': 'hooks.useKeyboardShortcuts.projects_panel',
@@ -379,6 +382,11 @@ export const RESERVED_PANEL_CODES: ReadonlySet<string> = new Set<string>([
   'Backquote', // MRU toggle (Alt+`)
   'ArrowLeft',
   'ArrowRight', // prev/next chat
+  // prev/next turn of the open chat (Alt+↑/↓), read off the registry: a named
+  // key's chord token is its code
+  ...SHORTCUT_REGISTRY
+    .filter(e => e.id === 'turn-prev' || e.id === 'turn-next')
+    .flatMap(e => (e.defaults.other ? [e.defaults.other.key] : [])),
   'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
   'Digit6', 'Digit7', 'Digit8', 'Digit9', // chat jump
 ])
@@ -721,11 +729,6 @@ export function useKeyboardShortcuts({ onToggleShortcutsModal, onNewChat, onCycl
   const guardedHistoryStep = useGuardedHistoryStep()
   const appStore = useAppStore()
   const mruIndexRef = useRef(-1)
-  // Set true right after a char-producing Alt shortcut (Alt+`) fires inside a
-  // text field. On macOS those combos are dead keys (Option+` = grave accent),
-  // and keydown.preventDefault() cannot cancel the composed character — it
-  // arrives via beforeinput. The guard below eats it.
-  const suppressNextInputRef = useRef(false)
   const [enabled, setEnabled] = useState(() => localStorage.getItem(SHORTCUTS_ENABLED_KEY) !== '0')
   const [ctrlDigits, setCtrlDigits] = useState(() => getCtrlDigitsEnabled())
   // In state, not read per keystroke, to keep the hot keydown path off localStorage.
@@ -764,20 +767,6 @@ export function useKeyboardShortcuts({ onToggleShortcutsModal, onNewChat, onCycl
     return () => document.removeEventListener('keyup', onKeyUp)
   }, [])
 
-  // Cancel the stray character a macOS dead-key Alt shortcut would otherwise
-  // insert (e.g. Alt+` switching the slot AND typing a backtick). Capture phase
-  // so it runs before the focused field handles the input. No-op on
-  // Linux/Windows where keydown.preventDefault() already suppresses it.
-  useEffect(() => {
-    const onBeforeInput = (e: Event) => {
-      if (suppressNextInputRef.current) {
-        suppressNextInputRef.current = false
-        e.preventDefault()
-      }
-    }
-    document.addEventListener('beforeinput', onBeforeInput, true)
-    return () => document.removeEventListener('beforeinput', onBeforeInput, true)
-  }, [])
 
   /**
    * Panel-toggle id → the action that toggles it, or `undefined` when the host
@@ -1054,6 +1043,28 @@ export function useKeyboardShortcuts({ onToggleShortcutsModal, onNewChat, onCycl
       }
     }
 
+    // MRU walk: ⌃⌥` / ⌃⌥⇧` on macOS, Alt+` / Alt+Shift+` elsewhere (see the
+    // registry rows for why the Mac chord carries Control). Literal Control is
+    // REQUIRED on macOS and FORBIDDEN elsewhere, where Ctrl+Alt is AltGr. A
+    // plain Option+` on macOS falls through untouched so the accent composes.
+    // Before the Alt gate because the Mac chord carries Control.
+    if (code === 'Backquote' && e.altKey && !e.metaKey && e.ctrlKey === isMacPlatform()) {
+      if (!enabled || disabled) return
+      e.preventDefault()
+      if (e.shiftKey) {
+        // Walk back MRU history
+        if (slotHistory.length === 0) return
+        mruIndexRef.current = Math.min(mruIndexRef.current + 1, slotHistory.length - 1)
+        const target = slotHistory[slotHistory.length - 1 - mruIndexRef.current]
+        if (target) kbSwitch(target)
+        return
+      }
+      // MRU toggle (last visited)
+      const prev = slotHistory.length > 0 ? slotHistory[slotHistory.length - 1] : null
+      if (prev && prev !== activeSlot) kbSwitch(prev)
+      return
+    }
+
     // The code-driven families below all use Alt (Option on Mac)
     if (!e.altKey || e.ctrlKey || e.metaKey) return
 
@@ -1062,28 +1073,6 @@ export function useKeyboardShortcuts({ onToggleShortcutsModal, onNewChat, onCycl
 
     // Suppress all other shortcuts when disabled (e.g. modal open)
     if (disabled) return
-
-    // Alt+Shift+`: Walk back MRU history
-    if (e.shiftKey && code === 'Backquote') {
-      e.preventDefault()
-      suppressNextInputRef.current = true
-      setTimeout(() => { suppressNextInputRef.current = false }, 0)
-      if (slotHistory.length === 0) return
-      mruIndexRef.current = Math.min(mruIndexRef.current + 1, slotHistory.length - 1)
-      const target = slotHistory[slotHistory.length - 1 - mruIndexRef.current]
-      if (target) kbSwitch(target)
-      return
-    }
-
-    // Alt+`: MRU toggle (last visited)
-    if (code === 'Backquote' && !e.shiftKey) {
-      e.preventDefault()
-      suppressNextInputRef.current = true
-      setTimeout(() => { suppressNextInputRef.current = false }, 0)
-      const prev = slotHistory.length > 0 ? slotHistory[slotHistory.length - 1] : null
-      if (prev && prev !== activeSlot) kbSwitch(prev)
-      return
-    }
 
     // Alt+1-9 / Alt+letter: Jump to chat N (when NOT in Ctrl+digit mode).
     // Letters cover sessions 10+; an excluded letter (c/g/k/n/p/s or a
@@ -1130,6 +1119,18 @@ export function useKeyboardShortcuts({ onToggleShortcutsModal, onNewChat, onCycl
       return
     }
 
+    // Alt+↑/↓: previous/next turn of the open chat (turn-prev / turn-next).
+    // Kept out of text fields like Alt+←/→ (Option+↑/↓ moves the caret by
+    // paragraph on macOS) and out of a keystroke a focused control already
+    // claimed (the turn minimap steps its own selection on any ↑/↓).
+    // Claimed only when a transcript took the step, so on any other page the
+    // browser keeps the chord. The chat page does not register its stepper
+    // while a crew window covers its transcript. Shift is left free.
+    if ((code === 'ArrowUp' || code === 'ArrowDown') && !e.shiftKey && !isInput && !e.defaultPrevented) {
+      if (stepTurn(code === 'ArrowUp' ? -1 : 1)) e.preventDefault()
+      return
+    }
+
     // Skip remaining shortcuts if user is in an input field
     if (isInput) return
 
@@ -1150,8 +1151,8 @@ export function useKeyboardShortcuts({ onToggleShortcutsModal, onNewChat, onCycl
   // speech kept playing. Does NOT preventDefault/stopPropagation: Escape must
   // still close whatever it normally closes. Fires the existing `voice-stop`
   // window event (handled by useWebSocket's stopVoice: pause active <audio>,
-  // drop queued chunks, clear voicePlaying). No-op unless audio is actually
-  // playing and shortcuts are enabled; voicePlaying is read live from the store,
+  // drop queued chunks, clear voicePlaying). No-op unless speech is being
+  // prepared or played and shortcuts are enabled; both flags are read live from the store,
   // and this hook mounts once at the App root, so one listener covers every page.
   // Deliberately ignores `disabled` (set while the shortcuts modal is open):
   // Escape should stop speech consistently from any overlay, including the
@@ -1160,7 +1161,8 @@ export function useKeyboardShortcuts({ onToggleShortcutsModal, onNewChat, onCycl
     if (!enabled) return
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      if (!appStore.getState().chat.voicePlaying) return
+      const { voicePlaying, voicePreparing } = appStore.getState().chat
+      if (!voicePlaying && !voicePreparing) return
       window.dispatchEvent(new Event('voice-stop'))
     }
     document.addEventListener('keydown', onEsc, true)

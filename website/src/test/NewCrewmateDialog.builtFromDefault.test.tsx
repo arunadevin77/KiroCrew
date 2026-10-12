@@ -79,6 +79,19 @@ describe('NewCrewmateDialog — Built from is a default, not a required pick', (
     )
   })
 
+  it('asks for a workspace of the crewmate\'s own unless Advanced names one to share', async () => {
+    renderDialog()
+    fireEvent.change(nameInput(), { target: { value: 'researcher' } })
+    fireEvent.click(screen.getByTestId('crewmate-create-submit'))
+
+    // `''` is the create API's "allocate one of its own" value; a stored
+    // workspace name would be the explicit opt-in to share one.
+    await waitFor(() => expect(mockApi.createKirocrewAgent).toHaveBeenCalledTimes(1))
+    expect(mockApi.createKirocrewAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ workspace: '' }),
+    )
+  })
+
   it('still refuses a BLANK name — client-side name validation is independent of the retired template guard', async () => {
     renderDialog()
     // No name typed: this is the one thing create still refuses, and it refuses

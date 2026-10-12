@@ -20,10 +20,14 @@ from __future__ import annotations
 
 # Ensure SSL certs are found before any library caches its SSL context.
 # The ``kirocrew`` entry-point (console_scripts) bypasses ``__main__.py``,
-# so we must run this here as well.
+# so we must run this here as well. The inherited llama.cpp path is removed
+# before any thread or child process exists because a concurrent environment
+# snapshot can observe a removal between enumerating and reading the key.
+from kiro_crew._llama_lib_path import drop_inherited_lib_path
 from kiro_crew._ssl_compat import _ensure_ssl_certs
 
 _ensure_ssl_certs()
+drop_inherited_lib_path()
 
 import argparse
 import asyncio
@@ -2552,6 +2556,13 @@ Examples:
         ),
     )
 
+    # gateway-pid — read-only: print the PID holding this home's gateway.lock as
+    # JSON, resolved through the same socket-independent lock_holder oracle that
+    # `stop --expect-pid`/`restart` use. The desktop supervisor calls this when
+    # its listener snapshot cannot name a draining gateway (socket released, lock
+    # still held) so recovery can wait for that pid instead of giving up.
+    cli_help.add_command(sub, "gateway-pid")
+
     # service — install/uninstall/status as a system-level systemd unit (Linux,
     # /etc/systemd/system/, requires sudo) or launchd LaunchAgent (macOS,
     # ~/Library/LaunchAgents/, no sudo) so the gateway survives SSH disconnect,
@@ -2873,6 +2884,9 @@ Examples:
     # mcp-panel (MCP server -- an agent publishes its own dashboard panel).
     # Mounted only for an agent whose spec grants the opt-in set.
     sub.add_parser("mcp-panel")
+    # mcp-guide (MCP server -- the always-on platform guide server; today it
+    # carries ``rename_self``, a crewmate renaming itself in its own chat).
+    sub.add_parser("mcp-guide")
 
     # Builtin app MCP servers (spawned by the agent backend, not user-facing).
     # Only builtins that actually ship an ``mcp_server`` module get a verb —
@@ -3169,7 +3183,14 @@ Examples:
     )
     agent_create.add_argument("--display-name", default="", help="Label the dashboard shows")
     agent_create.add_argument("--kiro-agent", default="kirocrew", help="Kiro agent name")
-    agent_create.add_argument("--workspace", default="default", help="Workspace name")
+    agent_create.add_argument(
+        "--workspace",
+        default="",
+        help=(
+            "Share an existing workspace by name; omitted, the member gets a workspace "
+            "of its own (member-<slug>)"
+        ),
+    )
     agent_create.add_argument(
         "--memory-store",
         default="default",
@@ -3179,6 +3200,10 @@ Examples:
     agent_update.add_argument("name", help="Agent name to update")
     agent_update.add_argument("--kiro-agent", help="New kiro agent name")
     agent_update.add_argument("--workspace", help="New workspace name")
+    agent_update.add_argument(
+        "--display-name",
+        help='New label the dashboard shows; "" clears it back to the agent name',
+    )
     agent_update.add_argument(
         "--memory-store",
         help=(
@@ -3695,6 +3720,10 @@ env var overrides it.
         # Lazily imported like mcp-dashboard above: a default-off optional
         # subsystem must not be imported just to start the gateway.
         importlib.import_module("kiro_crew.mcp_panel").run_mcp_server()
+    elif args.command == "mcp-guide":
+        # Lazily imported for the same reason: an opt-in server must not be
+        # imported just to start the gateway.
+        importlib.import_module("kiro_crew.mcp_guide").run_mcp_server()
     elif args.command.startswith("mcp-") and args.command[4:] in _BUILTIN_NAMES:
         # Registration gates this verb on _builtin_mcp_server_available, and
         # _run_app_mcp_server is the ONE dispatch-time spelling of "import the
@@ -3768,6 +3797,10 @@ env var overrides it.
         from kiro_crew.cli_server import _restart
 
         _restart(args.port)
+    elif args.command == "gateway-pid":
+        from kiro_crew.cli_server import _gateway_pid
+
+        _gateway_pid()
     elif args.command == "service":
         from kiro_crew.cli_server import _service_cmd
 

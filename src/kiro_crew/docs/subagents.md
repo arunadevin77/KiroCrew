@@ -35,10 +35,11 @@ The `spawn_run` tool accepts:
 - `max_turns` — per-spawn tool-call budget override (0 = unset, max 1000)
 - `model` — model override for this spawn (e.g. `deepseek-3.2`)
 - `reasoning_effort` — `low` / `medium` / `high` / `xhigh` / `max`, batch-wide
+- `backend` — the agent harness the run starts on instead of the gateway default (`kiro`, `claude`, `codex`, or any other backend installed and allowed on this gateway), batch-wide. A `tasks` entry can set its own `backend` (and `model`) so one wave can send each task to a different harness. A backend that is not allowed here, not installed on this machine, or installed only after the gateway started (restart the gateway to use it), is refused at spawn time with the list of backends that can start (and, for an allowed one that is missing, the command that installs it) rather than replaced by the default. Pass `model` as an id from that backend's own list. A `spawn_continue` follow-up, and a retry, ask for the same backend as the original run
 - `keep` — make the run a continuable conversation with guaranteed resumability and longer retention
 - `cwd` — absolute launch directory, which must be under a configured `subagent_cwd_allowed_roots` entry
 
-Setting `model` or `reasoning_effort`, or `keep: true`, forces the
+Setting `model`, `reasoning_effort` or `backend`, or `keep: true`, forces the
 dedicated-process path instead of session sharing.
 
 #### When to delegate
@@ -50,8 +51,7 @@ distilled result is needed, when you need an independent review or reproduction
 whose result would be wrong if it saw this session's context, or when the user
 asks for delegation or the task needs a different agent, model or crew. A long task, empty slots or a different
 model name alone is not a reason to delegate. Guidance lives in the prompt; no
-runtime gate refuses a one-task call. (A solo-spawn gate shipped in #11710 and
-was removed after audit data showed it passed 33 of 34 one-task calls.)
+runtime gate refuses a one-task call.
 
 The spawn receipt says whether bounded parent work is supported (a
 dashboard-owned parent turn). When supported, the parent may finish at most one
@@ -69,7 +69,7 @@ The other spawn tools:
 - `spawn_sub_agents` — same fan-out as `spawn_run`, but BLOCKS and returns the collected results (a member the spawn gate deferred is reported with why it waits, and its result arrives later as a completion event); takes `agents` (array of `{agent_or_mode, prompt}`), `cwd`, and the same `include_*` switches
 - `spawn_continue` — dispatch a follow-up turn into a completed run's conversation (`conversation`, `task`, optional `agent` / `max_turns` / `model`); context scope is inherited, so the `include_*` flags are not accepted
 - `spawn_steer` — inject a message into a RUNNING subagent's in-flight turn (`agent_id`, `message`, `mode`: `interrupt` default or `follow_up`). A spawn that was accepted but has not started yet answers `queued — not started` (HTTP 409 `queued_not_started`)
-- `spawn_release` — end a continuable conversation (`conversation`) so it can no longer be continued
+- `spawn_release` — end a continuable conversation (`conversation`) so it can no longer be continued. On a run of yours that is still queued (accepted, not started) it cancels the run instead, so it never starts
 - `spawn_list` — list running, queued (accepted, not yet started) and completed subagents
 - `spawn_status` — read a run's transcript: the live partial view while it runs, the retained full transcript once complete (see below). A spawn that was accepted but has not started yet answers `QUEUED` with the reason it waits; it starts on its own, so do not spawn it again
 - `resource_status` — advisory host headroom (available memory, CPU load, posture, the current concurrent sub-agent cap, and the agent slice's task count against its `pids.max` ceiling)

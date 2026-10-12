@@ -201,12 +201,12 @@ unset here -- see "Reconnect is not resume" below for what it is for.
 | `tool/completed` | `EVENT_TOOL_RESULT` when `tool_final` | `call_id`, remembered `name` and `server`, `status`; optional `elapsed_ms`, `is_error`, `step`, `call_index`, and result digest/size |
 | `model/selected` | the fallback swap in `_run_chat`, after the pick lock is released | model id, source, turn |
 | `compaction/applied` | `_settle_compact_cooldown` when the after-reading is confirmed; `_compaction_gate_decision` when a deferred verdict settles | `pct_before`, `pct_after`, freed |
-| `session/closed` | `SessionLifecycle.reset` and `SessionLifecycle.destroy` | the gateway's own teardown reason |
+| `session/closed` | `SessionLifecycle.reset` and `SessionLifecycle.destroy`; `chat_api.slot_lifecycle._close_slot` for a deliberate tab close, awaited to commit (`awaiting_commit`) before the conductor is woken | the gateway's own teardown reason (`reset`, `destroyed`, `destroyed_sid_retained`, or `removed` for the tab close) |
 | `message/received` | `_run_chat`, before the dispatch gates | turn, role, redacted text, surface, attachment ids |
 | `message/sent` | `_flush_segment`, beside the assistant `slot.append`; `_persist_partial_reply` on a recovery path | turn, step, redacted text or cited `chunks`, `interrupted` |
 | `message/chunk` | the overflow split ONLY | turn, step, one slice of an already-redacted body |
 | `request/configured` | `_run_chat`, on change only | turn, model, provider, `context_window` |
-| `context/composed` | `_run_chat`, from `slot_ctx_blocks` | turn, per-block `sources`, chars, estimated tokens, and `phase` (`session_start` or `per_turn`) when known |
+| `context/composed` | `_run_chat`, from `slot_ctx_blocks` | turn, per-block `sources`, chars, estimated tokens, `phase` (`session_start` or `per_turn`) when known, and `omitted` (the budget cuts `context_omissions.collect` gathered around the build) when anything was cut |
 | `step/started` | the stream opening, and each tool-group-to-text transition | turn, step |
 | `step/completed` | the next transition, and `EVENT_COMPLETE` | turn, step, ms |
 | `message/queued` | `chat_delivery.queue_for_next_turn` | source, bytes, queue id -- no turn |
@@ -224,9 +224,21 @@ unset here -- see "Reconnect is not resume" below for what it is for.
 | `write/dropped` | writer recovery, before that session's next ordinary append | dropped count and bytes |
 | `session/adopted` | `on_session_adopted`, when a session is adopted under a new parent | the new `parent`, and `previous_parent` when there was one |
 | `session/released` | `on_session_released`, when a session is released from its parent | `previous_parent` when there was one |
+| `session/spawned` | `on_session_spawned`, from `session_control._record_spawn` when a minted create or fork commits, into the CREATOR's log; nothing when the creator has no ACP session yet | the child's slot |
 | `panel/published` | `on_panel_published`, from `panel_publish`, into the member's own DM session log | the published panel |
 | `crew/dispatch` / `crew/report` | `on_crew_dispatch` / `on_crew_report`, into the crew kind's log | the dispatch and the child's report |
 | `object/observed` | `monitoring.controller.MonitorController.tick`, after the service has published a probe's observation whose fingerprint differs from the one it held; into the log of the monitor's OWNER session, named by the host's resolver | `producer` (closed: `probe`), the monitored `kind`, the subject's full `target` URL, the probe's `fingerprint`, the canonical `facts` snapshot verbatim (short by named members in `facts_omitted` only when the line would not fit), `observed_at` -- no turn |
+| `card/proposed` | `dashboard.chat_cards.record_change_proposed`, called by `POST /api/cards/agent/propose` after the store accepted the card and beside the append of its `card` transcript row | slot, `card_id`, kind, redacted title, revision, risk, the live turn when one is, the row's `mid` -- never a parameter |
+| `card/finished` | `dashboard.chat_cards.record_change_status`, from the card routes' one `_broadcast`, when the store publishes a card ENTERING a finished status this process has not logged for it | `card_id`, `status` (closed: the store's finished statuses), revision -- no turn |
+| `guide/offered` | `dashboard.chat_cards.record_guide_offered`, called by `POST /api/guide/agent/start` beside the append of the offer's `card` row | slot, `guide_id`, the action ids, the live turn, the row's `mid` |
+| `guide/started` | `dashboard.chat_cards.record_guide_status`, from the guide routes' `_broadcast`, the first time the guide is published `active` | `guide_id` |
+| `guide/finished` | the same, when the guide is published terminal | `guide_id`, `status` (closed) |
+
+The four `card/*` / `guide/*` closers are written into the log of the session that
+PROPOSED, remembered in process at proposal time; the slot's live session is the
+fallback after a restart. The id is never read back from the transcript row, whose
+meta lives in an agent-writable file -- a session id taken from there would aim a
+gateway-authored entry at another conversation's log.
 
 `tool/called` and `tool/completed` gained payload accounting: `args_hash` and
 `args_bytes` on the call, `result_hash`, `result_bytes` and `is_error` on the

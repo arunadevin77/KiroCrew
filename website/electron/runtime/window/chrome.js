@@ -29,10 +29,26 @@ const TRAFFIC_LIGHT_Y_NUDGE = -4;
 // child WebContentsView is not something this app can verify.
 const WIN_CAPTION_RESERVE_CSS_PX = 142;
 
+// The width (CSS px) of the native caption-button overlay itself — the 138 half
+// of the 142 reserve above, without the 4px clearance. The injected
+// `#electron-drag-bar` clips its right edge to this so the drag region never
+// covers the caption buttons (a drag rectangle over Close moves the window
+// instead of closing it). Like the reserve, it is a CSS-px value that paints to
+// width*zoom DIP, so a static 138 CSS px shrinks below the fixed-DIP buttons
+// under 100% zoom and the drag strip creeps over them; the value that always
+// paints to 138 DIP is 138/zoom, pushed from here as `--mc-win-drag-reserve`.
+const WIN_CAPTION_OVERLAY_CSS_PX = 138;
+
 /** Reserve in CSS px that paints to WIN_CAPTION_RESERVE_CSS_PX DIP at `zoom`. */
 function winCaptionReserveForZoom(zoom) {
   const factor = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
   return Math.round(WIN_CAPTION_RESERVE_CSS_PX / factor);
+}
+
+/** Drag-strip inset in CSS px that paints to WIN_CAPTION_OVERLAY_CSS_PX DIP at `zoom`. */
+function winDragReserveForZoom(zoom) {
+  const factor = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  return Math.round(WIN_CAPTION_OVERLAY_CSS_PX / factor);
 }
 
 function trafficLightPositionForZoom(zoomFactor) {
@@ -106,15 +122,23 @@ function createWindowChrome({
   // padding is zoomed — and the authoritative zoom factor already lives here,
   // next to the overlay-height scaling. The CSS carries a 142px fallback for
   // the first paint before this runs and for non-Electron contexts.
+  //
+  // --mc-win-drag-reserve rides the same push: the injected #electron-drag-bar
+  // clips its right edge to it so the drag strip stays off the caption buttons
+  // at every zoom, the same fixed-DIP problem the content reserve has.
   function pushWinCaptionReserve(win) {
     if (!IS_WINDOWS || !win || win.isDestroyed() || !win._mcView) return;
     try {
       const wc = win._mcView.webContents;
       if (!wc || wc.isDestroyed()) return;
-      const reserve = winCaptionReserveForZoom(wc.getZoomFactor());
+      const zoom = wc.getZoomFactor();
+      const reserve = winCaptionReserveForZoom(zoom);
+      const dragReserve = winDragReserveForZoom(zoom);
       wc.executeJavaScript(
         `document.documentElement.style.setProperty(`
-          + `'--mc-win-caption-reserve', '${reserve}px')`,
+          + `'--mc-win-caption-reserve', '${reserve}px');`
+          + `document.documentElement.style.setProperty(`
+          + `'--mc-win-drag-reserve', '${dragReserve}px')`,
       ).catch(() => {});
     } catch {
       // Window is mid-teardown.
@@ -263,7 +287,9 @@ function createWindowChrome({
 module.exports = {
   HEADER_CSS_PX,
   WIN_CAPTION_RESERVE_CSS_PX,
+  WIN_CAPTION_OVERLAY_CSS_PX,
   winCaptionReserveForZoom,
+  winDragReserveForZoom,
   trafficLightPositionForZoom,
   createWindowChrome,
 };

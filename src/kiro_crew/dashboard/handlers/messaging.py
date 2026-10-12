@@ -134,6 +134,7 @@ from kiro_crew.dashboard.messaging_api.notifications import (  # noqa: F401
     api_notifications_clear,
 )
 from kiro_crew.dashboard.messaging_api.proactive_send import (  # noqa: F401
+    _SLACK_ERRORS_WITH_UNKNOWN_OUTCOME,
     _audit_send_message,
     _deliver_send_message_fallback,
     _post_send_message_to_slack,
@@ -146,6 +147,8 @@ from kiro_crew.dashboard.messaging_api.proactive_send import (  # noqa: F401
     _SendMessageBody,
     _SendMessageOutcome,
     _session_link_blocks,
+    _slack_rate_limited,
+    _slack_rejected_outright,
     api_delete_message,
     api_update_message,
 )
@@ -184,6 +187,7 @@ from kiro_crew.dashboard.messaging_api.slack_settings import (  # noqa: F401
 )
 from kiro_crew.dashboard.messaging_api.spawn import (  # noqa: F401
     _continue_on_loop,
+    _requested_backend,
     _slot_for_parent,
     _spawn_on_loop,
     _spawn_request_memory_mode,
@@ -224,6 +228,7 @@ from kiro_crew.dashboard.state import (  # noqa: F401
     PERSISTED_SUBAGENT_REPLAY_KEEP,
     PERSISTED_SUBAGENT_REPLAY_MAX_AGE_SECS,
     DashboardState,
+    load_window_off_loop,
 )
 from kiro_crew.dashboard.token_auth import (  # noqa: F401
     LINK_WINDOW_SECS,
@@ -237,6 +242,7 @@ from kiro_crew.dashboard.ws_event_scope import (  # noqa: F401
     persisted_snapshot_denial_reason,
     slot_owner_snapshot,
 )
+from kiro_crew.members import attributable_session_key, member_identity_for_session
 from kiro_crew.messaging.display_safety import redact_for_display
 from kiro_crew.messaging.link import SLACK_NAMESPACE, ChannelLink  # noqa: F401
 from kiro_crew.messaging.renderer import (  # noqa: F401
@@ -736,6 +742,10 @@ async def api_notification_agent_push(request: web.Request) -> web.Response:
     actions = body.get("actions")
     if actions is not None and not isinstance(actions, list):
         return web.json_response({"error": "actions must be a list"}, status=400)
+    # Attribution comes from an attested, non-app session header, never the
+    # body, so no caller can put another crewmate's face on its note.
+    attribution_key = await asyncio.to_thread(attributable_session_key, request)
+    member = await asyncio.to_thread(member_identity_for_session, attribution_key)
     payload = NotificationPayload(
         source="system",
         channel="system.agent",
@@ -746,6 +756,7 @@ async def api_notification_agent_push(request: web.Request) -> web.Response:
         url=body.get("url"),
         group_key=body.get("group_key"),
         actions=actions,
+        member=member,
     )
     try:
         note = state.notification_bus.push(payload)
@@ -1039,6 +1050,11 @@ async def api_send_message(request: web.Request) -> web.Response:
                 was_loaded = slot is not None
                 if slot is None:
                     slot = await rehydrate_slot_from_history_async(state, slot_key)
+                elif getattr(slot, "window_pending", False) is True:
+                    # A tab restored as a sidebar row loads its window before
+                    # the delivery below appends to it, with the read off the loop.
+                    await load_window_off_loop(slot)
+                    slot = state.get_slot(slot_key)
                 logger.info(
                     "send_message session=origin resolved slot_key=%s job=%s was_loaded=%s rehydrated=%s",
                     slot_key,
@@ -1126,6 +1142,7 @@ async def api_send_message(request: web.Request) -> web.Response:
                 channel_type=channel_type,
                 caller_session=caller_session,
                 declared_session=declared_session,
+                attribution_session=await asyncio.to_thread(attributable_session_key, request),
                 is_cron_caller=is_cron_caller,
                 send_to_slack=send_to_slack,
             )

@@ -96,6 +96,32 @@ export function canOpenFileInEditor(): boolean {
 }
 
 /**
+ * Extensions the desktop shell's open-file handler accepts — a renderer-side
+ * MIRROR of `OPENABLE_EXTS` in `electron/ipc-registrar.js` (the
+ * `dashboard:open-file` handler), which stays the security bar. The mirror only
+ * lets a surface skip offering a launch the shell is certain to refuse;
+ * `editorOpenerParity.test.ts` pins the two sets equal.
+ */
+export const EDITOR_OPENABLE_EXTS: ReadonlySet<string> = new Set([
+  '.md', '.markdown', '.txt', '.text', '.rst', '.org', '.log',
+  '.json', '.jsonc', '.json5', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.env',
+  '.css', '.graphql', '.proto',
+])
+
+/**
+ * Whether the shell's open-file handler would accept `filePath` by type: an
+ * absolute path (the handler resolves a relative one against its own working
+ * directory, not the gateway's project, and does not expand `~`) whose
+ * extension is in `EDITOR_OPENABLE_EXTS`.
+ */
+export function editorAcceptsPath(filePath: string): boolean {
+  if (!/^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(filePath)) return false
+  const base = filePath.split(/[\\/]/).pop() || ''
+  const dot = base.lastIndexOf('.')
+  return dot > 0 && EDITOR_OPENABLE_EXTS.has(base.slice(dot).toLowerCase())
+}
+
+/**
  * Hand a filesystem PATH to the desktop shell to open in the OS default handler
  * on the user's own machine (via shell.openPath in the main process) — never a
  * URL scheme. Resolves the main process's { ok, error? } verdict, or

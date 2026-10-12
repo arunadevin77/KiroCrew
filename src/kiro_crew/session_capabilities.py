@@ -28,6 +28,7 @@ class CapabilityPreparation:
     project: str = ""
     governance_generation: object = None
     mcp_servers: tuple[str, ...] = ()
+    tool_limited_servers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,7 @@ def prepare_runtime(
         str(Path(cwd).resolve()) if cwd else "",
         governance_answer_generation(),
         tuple(prepared.get("mcp_servers", ())),
+        tuple(prepared.get("tool_limited_servers", ())),
     )
 
 

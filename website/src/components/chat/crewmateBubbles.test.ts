@@ -44,10 +44,9 @@ describe('filterCrewmateChat', () => {
     ])
   })
 
-  it('keeps rows that need or inform the user: errors, notices, files, approvals, the live stream', () => {
+  it('keeps rows that need or inform the user: errors, files, approvals, the live stream', () => {
     const rows: ChatMessage[] = [
       { role: 'error', content: 'boom', cls: '', ts: at('2026-09-22T06:00:00Z') },
-      { role: 'notice', content: 'note', cls: '', ts: at('2026-09-22T06:00:01Z') },
       { role: 'file', content: '{"path":"/a.txt"}', cls: '', ts: at('2026-09-22T06:00:02Z') },
       { role: 'permission', content: 'approve?', cls: '', ts: at('2026-09-22T06:00:03Z'), meta: { approval_id: 'a1' } },
       { role: 'mcp_oauth', content: 'auth', cls: '', ts: at('2026-09-22T06:00:04Z') },
@@ -57,24 +56,36 @@ describe('filterCrewmateChat', () => {
     for (const m of rows) expect(isCrewmateChatRow(m)).toBe(true)
   })
 
-  it("drops the runner's empty-response recovery cards by their tag, not their words", () => {
-    // `chat_runner` tags its continue / give-up / post-compaction cards with
-    // `meta.kind = "empty_turn"` (chat_utils.EMPTY_TURN_NOTICE_KIND). They are
-    // machinery talking about itself; an untagged notice still draws.
-    const tagged: ChatMessage = {
+  it('hides only the machinery notice kinds (empty_turn, arm_refusal); every other notice draws', () => {
+    // A crewmate's chat drops a `notice` by an ALLOWLIST of machinery kinds,
+    // never by role: the empty-turn recovery card and the automation arm
+    // refusal are the runtime talking about itself and are hidden, while a
+    // notice the person must act on (a dropped queued message, a model-fallback
+    // hint) has no second route and still draws. Fails if the filter goes back
+    // to a blanket role drop OR to the old empty_turn-only tag.
+    const emptyTurn: ChatMessage = {
       role: 'notice', cls: 'msg msg-info', ts: at('2026-09-22T06:00:05Z'),
       content: 'ℹ️ The turn ended without a closing reply — continuing once from what already ran.',
       meta: { kind: 'empty_turn' },
     }
-    const untaggedSameWords: ChatMessage = { ...tagged, meta: undefined }
-    const otherNotice: ChatMessage = {
+    const armRefusal: ChatMessage = {
       role: 'notice', cls: 'msg msg-info', ts: at('2026-09-22T06:00:06Z'),
-      content: '⚠️ Automation loop NOT armed: not allowed here.', meta: { kind: 'arm_refusal' },
+      content: '⚠️ Automation loop NOT updated — it kept its previous instruction: a stopped loop cannot be restarted.',
+      meta: { kind: 'arm_refusal' },
     }
-    expect(isCrewmateChatRow(tagged)).toBe(false)
-    expect(isCrewmateChatRow(untaggedSameWords)).toBe(true)
-    expect(isCrewmateChatRow(otherNotice)).toBe(true)
-    expect(filterCrewmateChat([tagged, otherNotice])).toEqual([otherNotice])
+    const modelFallback: ChatMessage = {
+      role: 'notice', cls: 'msg msg-info', ts: at('2026-09-22T06:00:07Z'),
+      content: "That model isn't offered right now. Pick another model from the composer.",
+      meta: { kind: 'model_fallback' },
+    }
+    const untaggedNotice: ChatMessage = { role: 'notice', content: 'note', cls: '', ts: at('2026-09-22T06:00:08Z') }
+    expect(isCrewmateChatRow(emptyTurn)).toBe(false)
+    expect(isCrewmateChatRow(armRefusal)).toBe(false)
+    // Person-actionable notices keep drawing — no second route for them.
+    expect(isCrewmateChatRow(modelFallback)).toBe(true)
+    expect(isCrewmateChatRow(untaggedNotice)).toBe(true)
+    expect(filterCrewmateChat([emptyTurn, armRefusal, modelFallback, untaggedNotice]))
+      .toEqual([modelFallback, untaggedNotice])
   })
 
   it('an all-machinery transcript filters to nothing (so the empty hint can show)', () => {
@@ -149,6 +160,21 @@ describe('crewmateRunPosition', () => {
   it('a lone message is single', () => {
     const rows = [user(iso(-60_000)), said(iso(0)), user(iso(30_000))]
     expect(crewmateRunPosition(rows, 1)).toBe('single')
+  })
+
+  it("a change card joins the reply that explains it, so it sits under the crewmate's avatar", () => {
+    const card: ChatMessage = { role: 'card', content: 'Shorter replies', cls: 'msg msg-card', ts: iso(5_000) }
+    // Drawn: user, card, reply. The tool step that proposed the card is filtered.
+    const transcript = [user(iso(-60_000)), tool(iso(1_000)), card, said(iso(9_000))]
+    const rows = filterCrewmateChat(transcript)
+    expect(rows.map(r => r.role)).toEqual(['user', 'card', 'assistant'])
+    // The card opens the run (it carries the author line); the reply continues it.
+    expect(crewmateRunPosition(rows, 1, transcript)).toBe('start')
+    expect(crewmateRunPosition(rows, 2, transcript)).toBe('end')
+    // A short acknowledgement before the proposal keeps the author line on top.
+    const withAck = [user(iso(-60_000)), said(iso(0), 'Checking.'), tool(iso(1_000)), card, said(iso(9_000))]
+    const drawn = filterCrewmateChat(withAck)
+    expect(drawn.map((_, i) => crewmateRunPosition(drawn, i, withAck)).slice(1)).toEqual(['start', 'cont', 'end'])
   })
 
   it('a user message breaks the run', () => {
@@ -337,3 +363,4 @@ describe('crewmateRowClass', () => {
     expect(crewmateRowClass('single')).toBe('mt-3')
   })
 })
+

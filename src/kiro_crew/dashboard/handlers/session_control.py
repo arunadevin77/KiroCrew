@@ -250,6 +250,13 @@ async def api_session_control_create(request: web.Request) -> web.Response:
         dry_run = body.get("dry_run", False)
         if not isinstance(dry_run, bool):
             raise sc.SessionControlError("dry_run must be a boolean", code="invalid_field_type")
+        # The selection namespace for `agent`: "template", or absent for
+        # name-first resolution. Typed strictly here so a non-string never reaches
+        # the closed-set check in `create_session` as something that compares
+        # unequal and falls through.
+        agent_kind = body.get("agent_kind", "")
+        if not isinstance(agent_kind, str):
+            raise sc.SessionControlError("agent_kind must be a string", code="invalid_field_type")
         # Warmed AFTER the body read, which suspends: a config edit landing in that
         # window would change the fingerprint and leave `create_session`'s own
         # synchronous gate re-reading the file on the loop. Nothing suspends between
@@ -260,6 +267,7 @@ async def api_session_control_create(request: web.Request) -> web.Response:
             caller_session_key=_read_session_key(request),
             title=str(body.get("title") or ""),
             agent=str(body.get("agent") or ""),
+            agent_kind=agent_kind,
             folder_id=str(body.get("folder_id") or ""),
             model=str(body.get("model") or ""),
             dry_run=dry_run,
@@ -417,6 +425,30 @@ async def api_session_control_reload(request: web.Request) -> web.Response:
             state,
             caller_session_key=_read_session_key(request),
             target=_target(body),
+            caller_fenced=_carried_fence(request),
+        )
+    except sc.SessionControlError as exc:
+        return _refusal(exc)
+    return web.json_response(result)
+
+
+async def api_session_control_rename(request: web.Request) -> web.Response:
+    """POST /api/session-control/rename — rename the caller or a session it may control."""
+    refused = await _require_internal(request)
+    if refused is not None:
+        return refused
+    # No prewarm here, for the reason `api_session_control_stop` gives.
+    state: DashboardState = request.app["state"]
+    try:
+        body = await _body(request)
+        title = body.get("title")
+        if not isinstance(title, str):
+            raise sc.SessionControlError("title must be a string", code="bad_request")
+        result = await sc.rename_target(
+            state,
+            caller_session_key=_read_session_key(request),
+            target=_target(body),
+            title=title,
             caller_fenced=_carried_fence(request),
         )
     except sc.SessionControlError as exc:
@@ -641,8 +673,10 @@ async def api_session_control_read(request: web.Request) -> web.Response:
     # Stays at the top for read alone: everything between here and the gate is
     # synchronous query parsing (`request.query` is already available and
     # `read_messages` does not await), so there is no suspension to invalidate it.
-    await sc.prewarm_enabled_check()
+    # The target's window loads ahead of it, off the loop, for the same reason.
     state: DashboardState = request.app["state"]
+    await sc.load_target_window(state, request.query.get("target") or "")
+    await sc.prewarm_enabled_check()
     try:
         target = (request.query.get("target") or "").strip()
         if not target:

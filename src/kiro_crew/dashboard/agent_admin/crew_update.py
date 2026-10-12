@@ -16,7 +16,6 @@ if TYPE_CHECKING:
         _avatar_stem,
         _carries_mask,
         _carry_motions_through_motionless_save,
-        _carry_pack_through_faceless_save,
         _commit_promoted_avatar,
         _crew_effort_rejected,
         _crew_memory_store_rejected,
@@ -26,6 +25,7 @@ if TYPE_CHECKING:
         _ForeignPrivateCopy,
         _get_config_lock,
         _is_ghost_shaped,
+        _lineage_unverifiable_error,
         _live_avatar_file,
         _model_pin_rejected,
         _pin_entitlement_backend,
@@ -201,10 +201,10 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
                 },
                 status=409,
             )
-        except _UnverifiableLineage:
+        except _UnverifiableLineage as exc:
             return web.json_response(
                 {
-                    "error": f"Cannot verify whether '{new_target}' is a private copy; retry.",
+                    "error": _lineage_unverifiable_error(new_target, exc),
                     "code": "lineage_unverifiable",
                 },
                 status=409,
@@ -296,6 +296,25 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
                     {"error": model_reason, "code": "invalid_model"}, status=400
                 )
         agent = cfg.agents[name]
+        # A change card's Undo arms the crewmate its apply wrote to. A
+        # same-name recreate in another process is caught by
+        # ``persist_member_config``'s locked memory-store check below (a new
+        # crewmate gets a new store). An ordinary update carries no key.
+        from kiro_crew.dashboard.handlers.undo_identity_guard import (
+            REQ_CARD_UNDO_CREWMATE_EXPECT,
+            UNDO_IDENTITY_CHANGED_CODE,
+            UNDO_IDENTITY_CHANGED_MESSAGE,
+            identity_mismatch,
+        )
+
+        undo_expect = request.get(REQ_CARD_UNDO_CREWMATE_EXPECT)
+        if isinstance(undo_expect, str) and identity_mismatch(
+            undo_expect or None, getattr(agent, "member_id", None) or None
+        ):
+            return web.json_response(
+                {"error": UNDO_IDENTITY_CHANGED_MESSAGE, "code": UNDO_IDENTITY_CHANGED_CODE},
+                status=409,
+            )
         if "kiro_agent" in body and body["kiro_agent"] != agent.kiro_agent:
             new_target = body["kiro_agent"]
             if not isinstance(new_target, str) or not TEMPLATE_NAME_RE.fullmatch(new_target):
@@ -342,11 +361,10 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
                 owner = await asyncio.to_thread(
                     _foreign_private_copy_owner, name, body["kiro_agent"]
                 )
-            except _UnverifiableLineage:
+            except _UnverifiableLineage as exc:
                 return web.json_response(
                     {
-                        "error": f"Cannot verify whether '{body['kiro_agent']}' is a "
-                        "private copy; retry.",
+                        "error": _lineage_unverifiable_error(body["kiro_agent"], exc),
                         "code": "lineage_unverifiable",
                     },
                     status=409,
@@ -444,7 +462,6 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
                     },
                     status=400,
                 )
-            _av = _carry_pack_through_faceless_save(agent.avatar, _raw_av, _av)
             _av = _carry_motions_through_motionless_save(agent.avatar, _raw_av, _av)
             if _av.get("kind") == "image":
                 # THE commit point for pictures, under this same config lock.

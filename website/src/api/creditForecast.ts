@@ -6,7 +6,8 @@
  * - The account reading (`used` / `limit` / `resets`) gives the PACE: credits
  *   used this cycle divided by the days the cycle has run. It is the account's
  *   whole spend, every client included.
- * - This gateway's per-day credits (`/api/usage/daily-credits`) give the SHAPE
+ * - This gateway's per-day credits (the `daily_history` rows of `/api/usage/kiro`,
+ *   read through `providerUsageQuery`) give the SHAPE
  *   of a week: how much heavier a Tuesday is than a Sunday. It is NOT used for
  *   the pace, because it only sees turns this gateway ran -- an IDE signed in
  *   to the same account is invisible to it, so projecting from its numbers

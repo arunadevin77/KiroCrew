@@ -1510,6 +1510,31 @@ def _app_api_allowlist(app_name: str) -> tuple[str, ...]:
     return allow
 
 
+# A primed entry is refreshed this long before it expires, so the synchronous
+# read that follows the prime in the same request finds it fresh.
+_APP_PERMS_PRIME_MARGIN = 5.0
+
+
+async def _prime_app_api_allowlist(app_name: str) -> None:
+    """Refresh *app_name*'s allowlist cache OFF the event loop when it is stale.
+
+    A refresh reads the manifest, the install record and the app's directory
+    (``staged_app_grants``); the async middleware awaits this before the
+    synchronous ``_enforce_app_scope`` so that I/O never runs on the loop
+    (no-blocking-call-on-event-loop). An entry within the margin of expiry is
+    dropped first, so the scope check in the same request still finds it fresh.
+    """
+    if not app_name:
+        return
+    with _app_perms_lock:
+        entry = _app_perms_cache.get(app_name)
+        if entry is not None:
+            if time.time() - entry[0] < _APP_PERMS_TTL - _APP_PERMS_PRIME_MARGIN:
+                return
+            del _app_perms_cache[app_name]
+    await asyncio.to_thread(_app_api_allowlist, app_name)
+
+
 # Literal first path segments registered under ``/api/apps/`` that are NOT the
 # ``/api/apps/{name}`` catch-all. Source of truth is the route table in
 # ``kiro_crew.apps.routes.setup_routes`` (the ``add_get``/``add_post`` calls for
@@ -2760,21 +2785,27 @@ def token_auth_middleware(
 
     def _extract_and_validate_token(
         request: web.Request, _port: int
-    ) -> tuple[bool, str, str, str, str]:
+    ) -> tuple[bool, str, str, str, str, bool]:
         """Extract token from query param or cookie and validate it.
 
-        Returns ``(valid, user_id, reason, app_name, token)``. Used by
+        Returns ``(valid, user_id, reason, app_name, token, from_query)``. Used by
         internal-path browser/app auth (no secret header). The main auth flow
         has its own extraction with peer-binding and from_cookie tracking that
         this helper intentionally does not replicate — but its callers still
         run the peer-pin check on the returned token, so an internal path never
         accepts a session pin the main flow would refuse.
+
+        ``from_query`` names the credential the verdict belongs to: true for the
+        ``?token=`` query credential, false for the session cookie, including a
+        cookie adopted after a failed query token. It is the main flow's
+        ``not from_cookie``, so a caller can publish the same
+        ``auth_from_query_token`` mark from the credential actually validated.
         """
         cookie_name = f"mc_token_{_cookie_port_from_host(request, _port)}"
         query_token = request.query.get("token") or ""
         cookie_token = request.cookies.get(cookie_name, "")
         if not query_token and not cookie_token:
-            return False, "", "no token", "", ""
+            return False, "", "no token", "", "", False
         if query_token:
             valid, uid, reason, app = validate_token_with_app(query_token, use_session_exp=True)
             # A stale ``?token=`` must not veto a still-valid session cookie
@@ -2790,9 +2821,9 @@ def token_auth_middleware(
             # gate below. An expired app token must be refused as an expired
             # app token, so the caller re-exchanges its app secret.
             if valid or not cookie_token or claims_an_app_unverified(query_token):
-                return valid, uid, reason, app, query_token
+                return valid, uid, reason, app, query_token, True
         valid, uid, reason, app = validate_token_with_app(cookie_token, use_session_exp=True)
-        return valid, uid, reason, app, cookie_token
+        return valid, uid, reason, app, cookie_token, False
 
     @web.middleware
     async def middleware(request: web.Request, handler: object) -> web.StreamResponse:
@@ -3082,7 +3113,9 @@ def token_auth_middleware(
             # at the decision point rather than deferring to downstream.
             # NOTE: uses _extract_and_validate_token helper (defined above)
             # for cookie/query-param validation.
-            _valid, _uid, _reason, _app, _tok = _extract_and_validate_token(request, port)
+            _valid, _uid, _reason, _app, _tok, _from_query = _extract_and_validate_token(
+                request, port
+            )
             if not _valid:
                 _sel = _sel_fn()
                 _sel.log_api_access(
@@ -3111,10 +3144,15 @@ def token_auth_middleware(
             # POSITIVE dashboard-user signal for the WS scope gate: the WS
             # layer must never infer trust from a falsy app claim (CWE-269).
             request["is_dashboard_user"] = not _app
+            # WHICH credential authenticated, as the main path publishes it: the
+            # helper reports the one it validated, so a stale ``?token=`` beside
+            # a live cookie still reads as the cookie.
+            request["auth_from_query_token"] = _from_query
             # App tokens are confined to their declared scope even on internal
             # paths (e.g. /api/chat, /api/spawn are mixed_internal) — otherwise
             # an app token would reach them on loopback with NO app identity set
             # and be treated as the dashboard user (privilege escalation).
+            await _prime_app_api_allowlist(_app)
             _scope_deny = _enforce_app_scope(request, _app, path)
             if _scope_deny is not None:
                 return _scope_deny
@@ -3175,7 +3213,9 @@ def token_auth_middleware(
                         )
                         _log_auth(request, "internal", "denied", _detail)
                         return _deny(request, "Forbidden", "internal_auth_mismatch")
-                _valid, _uid, _reason, _app, _tok = _extract_and_validate_token(request, port)
+                _valid, _uid, _reason, _app, _tok, _from_query = _extract_and_validate_token(
+                    request, port
+                )
                 if not _valid:
                     _sel = _sel_fn()
                     _sel.log_api_access(
@@ -3208,6 +3248,9 @@ def token_auth_middleware(
                 # POSITIVE dashboard-user signal for the WS scope gate (see
                 # the loopback branch above).
                 request["is_dashboard_user"] = not _app
+                # WHICH credential authenticated (see the loopback branch's note).
+                request["auth_from_query_token"] = _from_query
+                await _prime_app_api_allowlist(_app)
                 _scope_deny = _enforce_app_scope(request, _app, path)
                 if _scope_deny is not None:
                     return _scope_deny
@@ -3591,6 +3634,7 @@ def token_auth_middleware(
         # its own namespace + its manifest ``permissions.api`` allowlist. This
         # is the primary enforcement point for the normal cookie/query-param
         # flow (e.g. /api/sessions, /api/config/*, the /apps/<other>/api proxy).
+        await _prime_app_api_allowlist(app_name)
         _scope_deny = _enforce_app_scope(request, app_name, path)
         if _scope_deny is not None:
             return _scope_deny

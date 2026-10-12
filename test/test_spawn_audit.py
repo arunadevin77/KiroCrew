@@ -252,6 +252,14 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # process-group supervisor and spawns through create_subprocess_limited
         # in a new session. Nothing agent-influenced reaches the argv here.
         "kiro_prerequisite.py::spawn_supervised_oneshot",
+        # The Windows off-loop one-shot for provider CLI reads. Its only caller,
+        # dashboard/source_providers/runner.py::_run_provider, has already
+        # OS-isolated and env-scrubbed the argv (through its own routed sandbox
+        # spawn-prep) before handing it over; this function only adds the
+        # resource-limit shim via popen_limited and drains the bounded spawn on a
+        # worker thread so CreateProcess leaves the gateway loop. Same pre-wrapped
+        # rationale as spawn_supervised_oneshot above.
+        "dashboard/source_providers/runner.py::_oneshot_drain_limited",
         # Eight pre-existing spawns in one app's own test module, invisible to this
         # audit until receivers were derived from each file's imports: they are
         # reached through a function-local ``import subprocess as sp``. Every one is
@@ -1227,7 +1235,7 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # Crew mints no KAS token anywhere; the relay resolves tokens
         # from kiro-cli's own store (see ``acp/kas_transport.py``), so the former
         # ``chat _ get-kas-token`` spawn is gone rather than moved.
-        "cli_doctor.py::_kas_relay_help",
+        "kiro_cli.py::kas_relay_help",
         # ``<kiro-cli> whoami`` sign-in probe for the declaration-driven auth row:
         # fixed argv (the binary name is a module constant and the subcommand is a
         # literal), 10s-capped, no shell, no agent-influenced argument. It reads only
@@ -1390,6 +1398,16 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         "dashboard/handlers_system.py::_scan_mcp_processes",
         "dashboard/handlers_system.py::_get_static_system_info",
         "dashboard/port_reclaim.py::_listeners_on_port",
+        # Bundle-freshness startup probe: fixed `git rev-parse HEAD:website`
+        # list-argv (no shell=True) with git PINNED via trusted_git_bin (fixed
+        # system dirs, never PATH; absent trusted git → skip, no spawn) under
+        # code_fingerprint.hardened_git_env (no planted config). `-C` is the
+        # package's OWN install directory, never a request- or agent-supplied
+        # path. Runs once at dashboard startup, only in a source checkout where
+        # the baked _build_info WEBSITE_TREE is absent, and its output is
+        # compared (read-only) against the dist's website/ tree stamp to log a
+        # staleness warning. No agent input reaches command, args, or cwd.
+        "dashboard/stale_bundle_guard.py::_backend_website_tree",
         "env.py::_run",
         "env.py::activate_mise",
         # Node bootstrap: runs the bundled ``ensure-node.sh`` (a fixed `bash

@@ -49,7 +49,7 @@ index, first-time setup, and connecting messaging channels.
 | [Artifacts](artifacts.md) | Save, version, and revert generated UI and documents so they outlive the chat scrollback |
 | [Monitor Loops](monitor-loops.md) | Keep one session checking something on an interval — a pull request, a CI run, a deployment — until an exit condition fires |
 | [Session Ledger](session-ledger.md) | A durable per-session record of goal, phase, and next step that survives context compaction |
-| [Session Control](session-control.md) | Let one chat session open, fork, seed, watch, broadcast to, stop, retry, switch models on, reload, close and revive another one — the 31 `kirocrew-dashboard` MCP tools, plus the sidebar folders, tags, board columns and pins that keep them findable |
+| [Session Control](session-control.md) | Let one chat session open, fork, seed, watch, broadcast to, stop, retry, switch models on, reload, rename, close and revive another one — the 32 `kirocrew-dashboard` MCP tools, plus the sidebar folders, tags, board columns and pins that keep them findable |
 | [Work Ledger](work-ledger.md) | Split a goal across one session per item: a conductor dispatches workers, reads their status as data, and settles every completion claim against an acceptance condition |
 | [Browser Control](browser-control.md) | Drive a real web page from the dashboard's Browser panel: navigate, snapshot, click, type, screenshot |
 | [Computer Use](computer-use.md) | Read and drive native desktop applications through the accessibility layer; opt-in and off by default |
@@ -65,7 +65,7 @@ index, first-time setup, and connecting messaging channels.
 | [Inbound Webhooks](inbound-webhooks.md) | Let an external system trigger an agent turn over HTTP — named tokens, HMAC request signing, a reversible off switch, ephemeral sessions, `register_hook` resume context |
 | [Feature Tips](feature-tips.md) | Occasional personalized tips above the composer pointing at features you have not used yet |
 | [Feature Videos](feature-videos.md) | Short recorded intro clips for features this install has not used yet, picked by a deterministic rule set |
-| [Follow-up Suggestions](followup-suggestions.md) | Agent-proposed next steps above the composer: start in a new git worktree, add to this session, or skip |
+| [Follow-up Suggestions](followup-suggestions.md) | Agent-proposed next steps above the composer: start in a new chat (in a new git worktree when the project is a git repository), add to this session, or skip |
 | [Queued-Message Editing](dashboard.md) | Edit, reorder, or cancel a chat message waiting in the queue before it runs |
 | [Cooperative Stop](dashboard.md) | Stop sends a cancel first and only hard-kills after a budget, so session state survives |
 | [Streaming Speech-to-Text](configuration.md) | Live transcription partials in the dashboard input, with local Whisper, the macOS on-device recognizer, or optional AWS Transcribe |

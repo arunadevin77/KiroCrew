@@ -319,9 +319,8 @@ describe('ArtifactPanel', () => {
 
     it('gives a json body a Copy-only toolbar and no composer, since no anchor resolver can map its selections', async () => {
       // The artifact page allows anchored comments on markdown and text only and
-      // the panel draws the same line — but the Copy row the panel shipped
-      // before the composer stays: on touch there is no Cmd/Ctrl+C, so without
-      // it a selection in a json or svg artifact would have no reachable copy.
+      // the panel draws the same line — but on a pointer device the Copy row
+      // the panel shipped before the composer stays.
       vi.mocked(api.artifact).mockResolvedValue(mkArtifact({ kind: 'json', content: '{"a":1}' }))
       renderPanel({ kind: 'json', content: '{"a":1}' })
       await screen.findByTestId('body-native')
@@ -330,6 +329,36 @@ describe('ArtifactPanel', () => {
       fireEvent.click(screen.getByRole('button', { name: 'selection copy' }))
       expect(copyToClipboard).toHaveBeenCalledWith(SELECTED_TEXT)
       expect(screen.queryByRole('button', { name: 'composer submit' })).toBeNull()
+    })
+
+    describe('on a touch device', () => {
+      // The platform draws its own handles and Copy callout around a touch
+      // selection, so a copy-only row floated there would take their taps.
+      beforeEach(() => {
+        vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+          matches: query === '(pointer: coarse)' || query === '(hover: none)',
+          media: query, onchange: null,
+          addListener: () => {}, removeListener: () => {},
+          addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
+        }) as MediaQueryList)
+      })
+      afterEach(() => { vi.mocked(window.matchMedia).mockRestore() })
+
+      it('mounts no copy-only toolbar over a json body, inline or fullscreen', async () => {
+        vi.mocked(api.artifact).mockResolvedValue(mkArtifact({ kind: 'json', content: '{"a":1}' }))
+        renderPanel({ kind: 'json', content: '{"a":1}' })
+        await screen.findByTestId('body-native')
+        expect(screen.queryByTestId('selection-toolbar')).toBeNull()
+        const dialog = await enterFullscreen()
+        expect(within(dialog).getAllByTestId('body-native').length).toBeGreaterThan(0)
+        expect(screen.queryByTestId('selection-toolbar')).toBeNull()
+      })
+
+      it('keeps the comment toolbar on a markdown body', async () => {
+        renderPanel()
+        await screen.findByTestId('body-native')
+        expect(screen.getByTestId('selection-toolbar').getAttribute('data-has-composer')).toBe('true')
+      })
     })
 
     it('renders the iframe body for a widget and keeps the toolbar for bridge selections', async () => {

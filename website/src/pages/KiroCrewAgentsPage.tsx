@@ -54,13 +54,19 @@ import { errMessage } from '../utils/thunkError'
 import NewCrewmateDialog, { type CreatedCrewmate } from './members/NewCrewmateDialog'
 import { EFFORT_LEVELS, effortLabel, modelSupportsEffort } from '../lib/effort'
 import { templateSourceLabel, type TemplateProvenance } from '../lib/templateSource'
+import { hideMateWithoutPreview, isAssistantMember } from '../lib/assistantMember'
+import { usePreviewFlag } from '../hooks/usePreviewFlag'
+import { PREVIEW_CREW } from '../utils/previewFlags'
 import { DEFAULT_CREWMATE_PATH } from './overview/defaultCrewmateLink'
 
 import { i18nT } from '../i18n/t'
+import { uiLocation } from '../uiLocations/uiLocation'
+import { useGuidePredicate, useGuideSelection } from '../guide/guidePredicates'
 
 // An example input value, independent of the display language.
 const HEX_COLOR_EXAMPLE = '#4f8ef7'
 import ErrorNotice from '../components/ErrorNotice'
+import { guidePick } from '../uiLocations/targetRegistry'
 /** Common shape returned by the agent/workspace mutation endpoints. */
 interface AgentMutationResult {
   error?: string
@@ -86,16 +92,20 @@ interface AgentUpdatePayload {
   reasoning_effort: string
   /** Default session color (#rrggbb hex) for new sessions. '' = no default. */
   session_color: string
-  /** The face this save commits. Three spellings the backend tells apart:
-   *  a record pins a face; `null` is an explicit RESET to the name-derived face;
-   *  `{}` says this save has no opinion about the face at all, and on a crew
-   *  wearing a pack the backend answers it by keeping the pack. */
+  /** The face this save commits: a record pins a face; `null` is an explicit
+   *  RESET to the name-derived face; `{}` is the record for a crew with no
+   *  override, which the backend also stores as no override. */
   avatar: CrewAvatarOverride | Record<string, unknown> | null
 }
 
 /** The stored spelling for "no per-agent pin, inherit the next tier down". The
  *  select shows this as a real option; the backend normalizes it back to ''. */
 export const INHERIT_MODEL = 'auto'
+
+/** The create API's "a workspace of its own" value (`member_workspace.AUTO_WORKSPACE`):
+ *  the member is bound to a fresh `member-<slug>` workspace made with its record.
+ *  Create-time only; a stored record never carries it. */
+export const OWN_WORKSPACE = ''
 
 /** Which crew the editor dialog is pointed at. `null` = closed. */
 type SheetTarget = { mode: 'edit'; name: string } | null
@@ -393,13 +403,20 @@ function withCurrent(opts: string[], cur: string): string[] {
  * `NewCrewmateDialog` composes them in its Advanced fold; the editor mounts them
  * individually, one per rail pane.
  */
-export function WorkspaceField({ options, value, onChange, onNewWorkspace, subject, hint }: {
+export function WorkspaceField({ options, value, onChange, onNewWorkspace, subject, hint, ownOption = false }: {
   options: string[]; value: string; onChange: (v: string) => void; onNewWorkspace: () => void; subject: FormSubject
   /** Replaces the subject's default hint. The defaults are EDIT-time copy
    *  ("new chats start fresh in the new folder"); a create form has no old
    *  chats to worry about, so it passes its own line. */
   hint?: string
+  /** Offer `OWN_WORKSPACE` ("its own workspace") as the first choice. Create
+   *  forms only: the API allocates on create and never on update, so the
+   *  editor must not show a choice it cannot save. */
+  ownOption?: boolean
 }) {
+  const choices = ownOption
+    ? [OWN_WORKSPACE, ...withCurrent(options, value).filter(o => o !== OWN_WORKSPACE)]
+    : withCurrent(options, value)
   return (
     <Field
       label={i18nT('pages.kiroCrewAgentsPage.workspace_2')}
@@ -407,7 +424,8 @@ export function WorkspaceField({ options, value, onChange, onNewWorkspace, subje
       info={i18nT('pages.kiroCrewAgentsPage.bindings_preview_info')}
     >
       <SimpleSelect
-        options={withCurrent(options, value)}
+        options={choices}
+        optionLabels={ownOption ? choices.map(o => (o === OWN_WORKSPACE ? i18nT('pages.kiroCrewAgentsPage.own_workspace_option') : o)) : undefined}
         value={value}
         onChange={onChange}
         action={{ label: i18nT('pages.kiroCrewAgentsPage.new_workspace_action'), onSelect: onNewWorkspace }}
@@ -456,7 +474,7 @@ export function MemoryStoreField({ value = '', member, memoryState = 'unavailabl
       {member && <span className="break-all font-mono text-[12px] text-muted">{isGlobal ? 'default' : value}</span>}
       <div className="flex flex-wrap gap-2">
         {(isGlobal || memoryState === 'private') && onManage && (
-          <Btn onClick={onManage} disabled={busy || manageDisabled}>
+          <Btn onClick={onManage} disabled={busy || manageDisabled} {...uiLocation('agents.manage-memory')}>
             {i18nT('pages.kiroCrewAgentsPage.manage_private_memory')}
           </Btn>
         )}
@@ -484,6 +502,7 @@ export function ModelField({ options, value, onChange, hint }: {
         value={value}
         onChange={onChange}
         aria-label={i18nT('pages.kiroCrewAgentsPage.edit_model')}
+        {...uiLocation('agents.model')}
       />
     </Field>
   )
@@ -534,6 +553,13 @@ export function DisplayNameField({ value, onChange, fallback }: { value: string;
       />
     </Field>
   )
+}
+
+/** What an empty display name falls back to: the crew's key, except for the
+ *  built-in Mate, whose empty label reads as its default name everywhere
+ *  else in the dashboard -- so its editor must not offer the internal key. */
+export function displayNameFallback(agent: KiroCrewAgent | null | undefined, key: string): string {
+  return isAssistantMember(agent) ? i18nT('components.assistantWelcome.default_name') : key
 }
 
 /** The routing-keyword input. Rendered by the create form and by the editor's
@@ -726,6 +752,7 @@ function CrewCard({ agent, isDefault, shared, onOpen }: {
       onClick={onOpen}
       aria-label={i18nT('pages.kiroCrewAgentsPage.edit_crew_named', { name: crewDisplayName(agent) })}
       data-testid="crew-card"
+      {...guidePick(crewDisplayName(agent))}
       className={`group flex flex-col gap-3 rounded-lg border bg-card p-3.5 transition-all
                   hover:border-border-strong hover:shadow-md focus-ring
                   ${isDefault ? 'border-accent-subtle' : 'border-border'}`}
@@ -746,11 +773,6 @@ function CrewCard({ agent, isDefault, shared, onOpen }: {
               badges hold their size, so the row can never wrap. */}
           <div className="flex items-center gap-2 min-w-0">
             <span className="min-w-[3rem] flex-1 truncate font-mono text-[14px] font-semibold text-text-strong">{crewDisplayName(agent)}</span>
-            {/* The ID stays discoverable when a label covers it — crons, spawn
-                params and the CLI address the ID, never the label. */}
-            {crewDisplayName(agent) !== agent.name && (
-              <span className="truncate font-mono text-[11px] text-muted max-w-[14rem]" title={i18nT('components.agentSelector.agent_id_tooltip', { name: agent.name })}>{agent.name}</span>
-            )}
             {isDefault && <DefaultBadge />}
             {showsCrewSourceBadge(agent.source) && <CrewSourceBadge source={agent.source} />}
           </div>
@@ -819,6 +841,7 @@ function CrewRow({ agent, isDefault, shared, onOpen }: {
   return (
     <TableRow
       data-testid="crew-row"
+      {...guidePick(crewDisplayName(agent))}
       className={`cursor-pointer ${isDefault ? 'bg-accent-subtle/30' : ''}`}
       // Convenience only: the whole row is a click target, but a click that
       // landed on the name control must not fire this too or the editor would be
@@ -914,7 +937,8 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
   // (`sharedTargets`). React Query's structural sharing keeps `agentsData`
   // identical until the roster actually changes, so this is stable between
   // fetches that return the same rows.
-  const agents = useMemo<KiroCrewAgent[]>(() => agentsData?.agents || [], [agentsData])
+  const crewPreview = usePreviewFlag(PREVIEW_CREW)
+  const agents = useMemo<KiroCrewAgent[]>(() => hideMateWithoutPreview(agentsData?.agents || [], crewPreview), [agentsData, crewPreview])
   const defaultAgent = agentsData?.default_agent || ''
 
   const { data: installedAgents, error: installedError } = useQuery({
@@ -1015,14 +1039,9 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
   const [retiredCarry, setRetiredCarry] = useState<RetiredCarry | null>(null)
   /** The builder committed an explicit RESET — the user pressed "Reset to default"
    *  and then Apply — as opposed to never having opened it. Both leave
-   *  `editAvatar` null, and the two must not send the same thing: `{}` is the
-   *  spelling a client uses when it has no opinion about the face, and the backend
-   *  answers it on a pack-wearing crew by keeping the pack
-   *  (`_carry_pack_through_faceless_save`), because the editor that shipped before
-   *  this picker could not see a pack and would otherwise have undressed one on
-   *  every unrelated save. `null` is the spelling reserved for a reset that is
-   *  MEANT, and this editor is now the client that can mean it. Without the
-   *  distinction, Reset → Save silently did nothing to a pack crew. */
+   *  `editAvatar` null. `{}` is the record for a crew that carries no override;
+   *  `null` is the reset spelling the backend documents for every tier, so a
+   *  reset the user meant goes on the wire as exactly that. */
   const [avatarReset, setAvatarReset] = useState(false)
   const [avatarBuilderOpen, setAvatarBuilderOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -1426,11 +1445,10 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
       reasoning_effort: editEffort,
       session_color: sessionColor,
     }
-    // Three spellings, and the difference between the last two is load-bearing:
-    // a draft the user built; `null` when they explicitly RESET (see
-    // `avatarReset`); `avatarPassthrough` before `{}` so a record this build did
-    // not understand is preserved rather than erased; and `{}` last, for a crew
-    // that really has no override and a save that says nothing about the face.
+    // Three spellings: a draft the user built; `null` when they explicitly RESET
+    // (see `avatarReset`); `avatarPassthrough` before `{}` so a record this build
+    // did not understand is preserved rather than erased; and `{}` last, for a
+    // crew that really has no override.
     let avatarPayload: CrewAvatarOverride | Record<string, unknown> | null = avatarReset
       ? null
       : (editAvatar ?? avatarPassthrough ?? {})
@@ -1922,6 +1940,20 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
   // built-in ✕ still closes it, and the pane surfaces its own errors.
   const templatePaneActive = pane === 'template'
 
+  // Guide facts (whether, never which): a crewmate's editor is open (the
+  // "choose the crewmate" step of a guide to an editor control), and, while
+  // it is, which section shows and whether its memory is one to manage. With
+  // the editor closed those read unknown rather than unmet.
+  useGuideSelection('crewmate_editor_open', { selected: !!editing, available: !!agentsData && agents.length > 0, name: editingAgent ? crewDisplayName(editingAgent) : undefined })
+  useGuidePredicate('crewmate_danger_zone_open', editing ? pane === 'danger' : null)
+  useGuidePredicate('crewmate_place_pane_open', editing ? pane === 'place' : null)
+  useGuidePredicate('crewmate_model_pane_open', editing ? pane === 'model' : null)
+  const editingMemory = editing && kirocrewCfg ? memberMemoryState(editing, memoryStore, kirocrewCfg.memory_stores) : null
+  useGuidePredicate(
+    'crewmate_memory_manageable',
+    editingMemory === null ? null : editingMemory === 'private' || (editing === 'default' && editingMemory === 'legacy'),
+  )
+
   return (
     <>
       {!embedded && <PageHeader title={i18nT('pages.kiroCrewAgentsPage.agents')} subtitle={i18nT('pages.kiroCrewAgentsPage.manage_agent_workspace_memory_store_bindings')} />}
@@ -2000,12 +2032,15 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
           <div className="flex min-w-0 flex-1 basis-0 items-center">
             {agents.length > 1 && <ChangeDefaultLink />}
           </div>
-          <SendBtn onClick={openCreate} data-testid="new-crew" className="shrink-0">
+          <SendBtn onClick={openCreate} data-testid="new-crew" className="shrink-0" {...uiLocation('agents.add')}>
             <Plus className="lucide-inline" aria-hidden="true" />
             {i18nT('pages.kiroCrewAgentsPage.add_crew_member')}
           </SendBtn>
         </div>
 
+        {/* The crewmate list, in either view: what a guide's "choose the
+            crewmate" step points at (picking one opens its editor). */}
+        <div role="group" aria-label={i18nT('pages.kiroCrewAgentsPage.agents')} {...uiLocation('agents.crew-list')}>
         {agents.length === 0 ? (
           <div className="flex flex-col items-center">
             <EmptyState
@@ -2015,7 +2050,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
             />
             {/* The call to action belongs where the explanation is, not only in
                 the toolbar above it. */}
-            <SendBtn onClick={openCreate}>{i18nT('pages.kiroCrewAgentsPage.create_your_first_crew')}</SendBtn>
+            <SendBtn onClick={openCreate} {...uiLocation('agents.create-first')}>{i18nT('pages.kiroCrewAgentsPage.create_your_first_crew')}</SendBtn>
           </div>
         ) : filtered.length === 0 ? (
           <EmptyState
@@ -2085,6 +2120,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
             </Clickable>
           </div>
         )}
+        </div>
       </div>
 
       <Dialog open={!!sheet} onOpenChange={next => { if (!next) requestClose() }}>
@@ -2096,7 +2132,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
              accessible name on its own — it has to say what you are doing to it.
              An explicit aria-label outranks Radix's aria-labelledby, and the
              DialogTitle still has to EXIST or Radix warns. */
-          aria-label={i18nT('pages.kiroCrewAgentsPage.edit_crew_named', { name: displayName.trim() || editing })}
+          aria-label={i18nT('pages.kiroCrewAgentsPage.edit_crew_named', { name: crewDisplayName({ name: editing, display_name: displayName, kiro_agent: editingAgent?.kiro_agent }) })}
           /* Radix closes on an outside pointerdown and on Escape. Dismissing
              mid-write is DELIBERATELY still allowed: the sheetEpoch/settleFor
              machinery below exists to make the abandoned write land harmlessly,
@@ -2138,12 +2174,12 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
               <DialogTitle className="flex-1 font-mono">
                 {/* The draft label, live: retitling the crew is the one edit
                     whose effect IS this text, so it previews before Save. */}
-                {displayName.trim() || editing}
+                {crewDisplayName({ name: editing, display_name: displayName, kiro_agent: editingAgent?.kiro_agent })}
               </DialogTitle>
               {showsCrewSourceBadge(editingAgent?.source) && <CrewSourceBadge source={editingAgent.source} />}
             </div>
             <div className="ml-auto flex items-center gap-2" data-testid="crew-editor-actions">
-              <Btn onClick={openAvatarBuilder} disabled={sheetBusy} data-testid="header-edit-avatar" title={i18nT('components.avatarBuilder.edit_avatar')} aria-label={i18nT('components.avatarBuilder.edit_avatar')}>
+              <Btn onClick={openAvatarBuilder} disabled={sheetBusy} data-testid="header-edit-avatar" title={i18nT('components.avatarBuilder.edit_avatar')} aria-label={i18nT('components.avatarBuilder.edit_avatar')} {...uiLocation('agents.edit-avatar')}>
                 <UserPen className="lucide-inline" aria-hidden="true" />
                 {/* Both header labels fold to their icon on a phone-width
                     header so the crew name keeps its room (with two labelled
@@ -2151,7 +2187,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
                     title truncated to "on…"); aria-label carries the name. */}
                 <span className="hidden sm:inline">{i18nT('components.avatarBuilder.edit_avatar')}</span>
               </Btn>
-              <Btn onClick={requestChat} title={i18nT('memoryV2.chat_member')} aria-label={i18nT('memoryV2.chat_member')}>
+              <Btn onClick={requestChat} title={i18nT('memoryV2.chat_member')} aria-label={i18nT('memoryV2.chat_member')} {...uiLocation('agents.chat')}>
                 <MessageSquare className="lucide-inline" aria-hidden="true" />
                 <span className="hidden sm:inline">{i18nT('memoryV2.chat_member')}</span>
               </Btn>
@@ -2182,6 +2218,13 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
                   unsavedLabel={i18nT('components.crewEditor.unsaved_changes')}
                   sharedLabel={i18nT('components.crewEditor.tag_shared')}
                   panelIdPrefix={panelId}
+                  // The sections a guide opens on the way to a control inside
+                  // them (Delete crewmate, the model, the memory).
+                  segments={[
+                    { key: 'model', label: i18nT('pages.kiroCrewAgentsPage.model'), ...uiLocation('agents.section-model') },
+                    { key: 'place', label: i18nT('components.crewEditor.pane_workspace_memory'), ...uiLocation('agents.section-place') },
+                    { key: 'danger', label: i18nT('pages.kiroCrewAgentsPage.danger_zone'), ...uiLocation('agents.section-danger') },
+                  ]}
                 />
                 {/* `tabIndex={-1}` so moving focus here after a rail change is
                     possible without adding a Tab stop. The pane scrolls, not the
@@ -2201,7 +2244,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
                         user opens to answer "who is this crew" — not under
                         routing (the UX lane's finding on this PR). The create
                         form keeps its copy beside Name for the same reason. */}
-                    <DisplayNameField value={displayName} onChange={setDisplayName} fallback={editing} />
+                    <DisplayNameField value={displayName} onChange={setDisplayName} fallback={displayNameFallback(editingAgent, editing)} />
                     <CrewOverviewPane
                       // The largest face in the editor opens the builder too, so
                       // the hub does not teach the opposite lesson from the
@@ -2455,7 +2498,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
                             </Btn>
                           </>
                         ) : (
-                          <Btn danger onClick={() => setConfirmDelete(true)} disabled={sheetBusy}>
+                          <Btn danger onClick={() => setConfirmDelete(true)} disabled={sheetBusy} {...uiLocation('agents.delete')}>
                             {i18nT('pages.kiroCrewAgentsPage.delete_crew')}
                           </Btn>
                         )}
@@ -2605,10 +2648,6 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
               // tier's retired cue still exists: the draft cannot carry one,
               // because the readers that build it are ghost-gated.
               retiredCue={retiredCueFrom(editingAgent?.avatar)}
-              // The STORED tier, not the drafted one: a faceless ghost result is
-              // read as "this client cannot see packs" by the backend's carry, so
-              // the builder has to know when that would swallow a tier change.
-              savedPack={packAvatarFrom(editingAgent?.avatar) !== null}
               // Also the STORED record: an emptied reaction map has to be NAMED
               // on the wire when the record carries one, and the draft forgets
               // that after the first Apply lands the empty map.
@@ -2623,9 +2662,8 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
                 // never saw must not ride along behind their choice.
                 setAvatarPassthrough(null)
                 // A null draft out of the builder is the Reset link having been
-                // pressed — an intent, not an absence. Recorded so Save can send
-                // the reset the backend honours instead of the "no opinion" `{}`
-                // that leaves a pack on.
+                // pressed — an intent, not an absence. Recorded so Save sends
+                // the reset spelling, `null`.
                 setAvatarReset(next === null)
                 setAvatarBuilderOpen(false)
               }}

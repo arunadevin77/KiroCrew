@@ -1761,6 +1761,7 @@ class TestUninstallPreview:
                 "agents": ["a1"],
                 "skills": ["s1"],
                 "crons": [{"name": "c1"}],
+                "permissions": {"cron": True},
             },
         )
         status, data = await self._preview("prev-app")

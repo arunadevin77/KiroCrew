@@ -179,8 +179,11 @@ web tools (every input is on disk or behind `gh`), and no cron, artifact, deploy
 `allowedTools` has no argument matching and this agent's whole safety story is that a human
 reads its diff before it lands.
 
-The spec is not registered in `OWNED_KIRO_AGENT_FILES`, so the runtime does not install
-or rebuild it.
+The spec is registered in `OWNED_KIRO_AGENT_FILES` as `kirocrew-dashboard-author.json`,
+so the runtime installs and rebuilds it: `rebuild_agent_config` calls
+`_install_dashboard_author_agent`, which writes the spec from the skill's
+`agent-spec.md` at every gateway start and re-filters its auto-approve grants through
+the governance ceiling (dropping `fs_read`).
 
 ## What a page may not contain
 

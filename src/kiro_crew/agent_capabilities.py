@@ -40,6 +40,7 @@ from kiro_crew.config.loader import (
     update_config_locked,
 )
 from kiro_crew.config.paths import project_agents_dir
+from kiro_crew.mcp_cleanup import mcp_entry_is_muted
 from kiro_crew.platform import redact_via_context
 from kiro_crew.platform.governance import sanitize_agent_config_governance
 from kiro_crew.platform.governance_profiles import governance_answer_generation
@@ -1609,6 +1610,17 @@ def prepare_member_capabilities(member: str, project_dir: str | Path | None = No
             name
             for name, server in spec.get("mcpServers", {}).items()
             if not server.get("disabled", False)
+        ),
+        # Launched servers whose entry turns single tools off. Not every member
+        # backend can carry that (``ACP_BACKENDS_MEMBER_TOOL_LIMITS``).
+        "tool_limited_servers": tuple(
+            sorted(
+                name
+                for name, server in spec.get("mcpServers", {}).items()
+                if isinstance(server, dict)
+                and server.get("disabledTools")
+                and not mcp_entry_is_muted(server)
+            )
         ),
     }
 

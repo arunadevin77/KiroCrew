@@ -15,6 +15,7 @@ import threading
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
+from kiro_crew import context_omissions
 from kiro_crew.atomic_write import atomic_write
 from kiro_crew.lesson_validation import (
     LESSON_APPLIES_ALWAYS,
@@ -568,12 +569,22 @@ class LessonStore:
         if self._cache and self._cache[0] == mtime:
             return self._cache[1]
         lessons: list[Lesson] = []
-        for line in self._path.read_text().splitlines():
+        # Non-blank lines that do not read as a lesson, with their line numbers.
+        # Each one costs only itself; the warning below counts them.
+        unreadable: list[tuple[int, str]] = []
+        for lineno, line in enumerate(self._path.read_text().splitlines(), start=1):
             line = line.strip()
             if not line:
                 continue
             try:
                 data = json.loads(line)
+                # Valid JSON is not yet a lesson. A row that is not an object, or
+                # whose rule is not text, would raise at ``data.get`` below or at
+                # ``rule.lower()`` in every later save and remove, taking every
+                # other lesson in the file down with it.
+                if not isinstance(data, dict) or not isinstance(data.get("rule", ""), str):
+                    unreadable.append((lineno, line))
+                    continue
                 raw_scope = data.get("repo_scope")
                 # A PRESENT but unusable scope is not "applies everywhere": the row
                 # meant to be scoped and cannot say where, so it is dropped rather
@@ -582,6 +593,7 @@ class LessonStore:
                 if raw_scope is not None and (
                     not isinstance(raw_scope, str) or not raw_scope.strip()
                 ):
+                    unreadable.append((lineno, line))
                     continue
                 lessons.append(
                     Lesson(
@@ -603,7 +615,20 @@ class LessonStore:
                     )
                 )
             except (json.JSONDecodeError, KeyError):
+                unreadable.append((lineno, line))
                 continue
+        if unreadable:
+            # The next save rewrites the file from the rows that loaded, so it drops
+            # these, as the cron store drops a skipped job record. This warning is
+            # the window to recover them, which is why it names their lines.
+            logger.warning(
+                "Skipped %d of %d rows in %s that do not read as a lesson (lines %s); "
+                "the next save removes them from the file",
+                len(unreadable),
+                len(unreadable) + len(lessons),
+                self._path,
+                ", ".join(str(n) for n, _ in unreadable[:5]),
+            )
         self._cache = (mtime, lessons)
         return lessons
 
@@ -703,6 +728,7 @@ class LessonStore:
         directive_block, _ = render_lesson_tier(
             ranked_directives,
             directive_room,
+            omission_kind=context_omissions.LESSON_RULES,
             header=(
                 "[Learned corrections — user-taught rules from past mistakes.\n"
                 "ALWAYS follow these. They override default behavior.]"
@@ -738,6 +764,7 @@ class LessonStore:
             # the next turn can act on rather than an absence it cannot see.
             experience_block = render_withheld_tier(
                 len(experience_entries),
+                omission_kind=context_omissions.LESSON_FINDINGS,
                 header="[Learned experience — past findings]",
                 footer="[End of learned experience]",
                 notice=(
@@ -752,6 +779,7 @@ class LessonStore:
             experience_block, _ = render_lesson_tier(
                 experiences,
                 experience_room,
+                omission_kind=context_omissions.LESSON_FINDINGS,
                 header=(
                     # "relevant ones first", matching the vector tier's wording, because
                     # ``order_by_request_relevance`` runs above: claiming "newest first"

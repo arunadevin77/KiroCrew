@@ -70,7 +70,7 @@ from typing import Any, Iterator
 
 from kiro_crew.atomic_write import atomic_write, read_bytes_with_retry
 from kiro_crew.config.paths import data_home
-from kiro_crew.platform_compat import file_lock, release_lock, try_acquire_lock
+from kiro_crew.platform_compat import file_lock, open_lock_file, release_lock, try_acquire_lock
 from kiro_crew.session_ledger import (
     _store_name,
     is_link,
@@ -741,16 +741,10 @@ def _open_lock(path: Path, *, create: bool = True) -> Iterator[None]:
     rather than entering the critical section unserialised — which is why nothing
     here has a lock-less fallback.
 
-    The lock file is created with ``touch`` and opened ``"r+"`` — WRITABLE, and
-    crucially WITHOUT truncation. ``msvcrt.locking`` needs a writable handle, so
-    ``"r"`` is not an option; but ``"w"`` TRUNCATES on open, and on Windows a
-    truncating open of a file whose first byte another thread or process already
-    holds under ``msvcrt.locking`` raises a sharing violation (``PermissionError``)
-    rather than waiting for the lock — so a second, contending acquirer crashes
-    before it ever reaches ``file_lock``, defeating the serialisation this lock
-    exists to provide. POSIX ``flock`` tolerates the truncate, which is why the bug
-    is Windows-only. Same reasoning, same fix as ``dashboard/handlers/mcp.py``'s
-    ``_McpFileLock``.
+    The lock file is opened through ``platform_compat.open_lock_file``: writable,
+    and never truncated, which is what keeps a contending acquirer on Windows
+    from crashing before it reaches ``file_lock``. Its docstring carries the
+    reasoning.
     """
     # ``create=False`` is the purge's form: a deleter must not bring a store
     # into being by locking it, or a second sweep racing the first recreates the
@@ -758,15 +752,14 @@ def _open_lock(path: Path, *, create: bool = True) -> Iterator[None]:
     # for a store that is gone, and the caller skips it.
     if create:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch(exist_ok=True)
-    with open(path, "r+") as handle:
-        with file_lock(handle.fileno(), exclusive=True):
+    with open_lock_file(path, create=create) as fd:
+        with file_lock(fd, exclusive=True):
             # A purge may have removed this store while the acquire waited. The
             # kernel still grants the lock on the detached inode, so without this
             # the queued writer would publish a torn store into a purged key. See
             # ``session_ledger.require_lock_inode``; the raise is the same
             # ``OSError`` a held lock produces, and the caller retries.
-            require_lock_inode(handle.fileno(), path)
+            require_lock_inode(fd, path)
             yield
 
 
@@ -846,7 +839,10 @@ def _recreate_item_lock_file(slot_key: str, item_id: str, lock_path: Path) -> No
             raise WorkLedgerError(
                 f"unknown item {item_id!r}", code=CODE_UNKNOWN_ITEM, field="item_id"
             )
-        lock_path.touch(exist_ok=True)
+        # Created through the same opener as every other ledger lock, so the
+        # restored file has the same owner-only mode.
+        with open_lock_file(lock_path):
+            pass
 
 
 @contextmanager
@@ -2638,27 +2634,20 @@ def _hold_every_item_lock(directory: Path) -> Iterator[None]:
         # (or, with allow_unreadable, the removal counts its own failure and
         # keeps the identity files). Either way this is not the place to decide.
         stems = []
-    handles: list[int] = []
-    try:
+    with ExitStack() as stack:
         for stem in stems:
             lock_path = items_dir_path / f"{stem}.lock"
-            lock_path.touch(exist_ok=True)
-            fd = os.open(str(lock_path), os.O_RDWR)
+            fd = stack.enter_context(open_lock_file(lock_path))
             if not try_acquire_lock(fd, exclusive=True):
-                os.close(fd)
                 raise WorkLedgerError(
                     f"item {stem!r} is being written right now; refusing to purge the ledger",
                     code=CODE_LEDGER_NOT_FINISHED,
                     field="state",
                 )
-            handles.append(fd)
+            # Registered after the open, so the unwind releases each lock before
+            # closing its descriptor, newest first.
+            stack.callback(release_lock, fd)
         yield
-    finally:
-        for fd in reversed(handles):
-            try:
-                release_lock(fd)
-            finally:
-                os.close(fd)
 
 
 def purge_conductor(slot_key: str, *, allow_unreadable: bool, idle_for: timedelta) -> bool:

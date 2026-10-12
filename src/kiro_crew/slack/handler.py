@@ -41,6 +41,7 @@ from kiro_crew.acp.types import (
     STOP_REASON_CANCELLED,
     STOP_REASON_COMPACTION_FAILED,
     STOP_REASON_END_TURN,
+    STOP_REASON_STALE_RECOVER,
 )
 from kiro_crew.agent_discovery import (
     SensitiveAgentSpecPathError,
@@ -87,7 +88,11 @@ from kiro_crew.dashboard.chat_utils import (  # noqa: F401 - read by the owners
     remember_slack_options,
     run_config_write,
 )
-from kiro_crew.dashboard.state import append_and_surface  # noqa: F401 - read by the owners
+from kiro_crew.dashboard.state import (  # noqa: F401 - read by the owners
+    append_and_surface,
+    load_window_off_loop,
+)
+from kiro_crew.dashboard.turn_dispatch import tool_approval_timeout_secs
 from kiro_crew.deny_notice import steer_refusal_notice
 from kiro_crew.executors import run_in_embed_pool, run_in_tool_gate_pool
 from kiro_crew.history import (  # noqa: F401 - read by the owners
@@ -97,8 +102,10 @@ from kiro_crew.history import (  # noqa: F401 - read by the owners
 )
 from kiro_crew.hooks import (
     HOOK_REPLY,
+    TOOL_ALLOW,
     TOOL_AUTO_APPROVE,
     TOOL_DENY,
+    ToolHookResult,
     event_is_spawn_run,
     hook_gate_kwargs,
     safe_read_file_bytes,
@@ -283,6 +290,7 @@ from kiro_crew.slack.handler_runtime.inbound import (  # noqa: F401
     _get_agent_for_session,
     _get_default_agent,
     _hydrate_conv_flags,
+    _hydrate_conv_header,
     _hydrate_thread_overrides,
     _is_slack_restricted,
     _persist_channel_config,
@@ -346,6 +354,7 @@ from kiro_crew.stats import Stats
 from kiro_crew.subagent import SubagentManager
 from kiro_crew.task import Task
 from kiro_crew.taskrunner import TaskRunner
+from kiro_crew.tool_gate_busy import hook_gate_busy
 from kiro_crew.voice_reply import (  # noqa: F401 - read by the owners
     DEFAULT_PROVIDER,
     PROVIDER_PIPER,
@@ -415,8 +424,9 @@ def _should_auto_approve_spawn(context_builder, event) -> bool:
 # Min interval between Slack message edits (avoid rate limits)
 _EDIT_INTERVAL = 1.0
 
-# Timeout for user to click approve/reject before auto-rejecting
-_APPROVAL_TIMEOUT = 120.0
+# Approve/reject window: agent.tool_approval_timeout_secs via the shared
+# resolver, unless a test pins _APPROVAL_TIMEOUT.
+_APPROVAL_TIMEOUT: float | None = None
 # Upper bound on the best-effort in-band deny notice steered into the running
 # turn before an expired approval prompt is rejected. The shared constant, so
 # this arm, the dashboard chat runner and the messaging TurnDriver cannot drift:
@@ -694,6 +704,14 @@ _COMPACTION_FAILED_RETRIES = 2
 # persists nothing and mirrors nothing, so the conversation log records the
 # message once, with the reply the replay produces.
 _COMPACTION_RETRY_NOTICE = "⟳ Compaction failed — retrying…"
+
+# Terminals the session handle synthesizes for a turn the backend never
+# finished: its own turn ceiling ("timeout") and a stale turn its probe
+# confirmed wedged. The runtime still reads alive after either one, so the turn
+# is failed, the thread is told, and the session is reset so the next message
+# starts a fresh runtime.
+_UNFINISHED_STOP_REASONS = frozenset({"timeout", STOP_REASON_STALE_RECOVER})
+_TIMEOUT_REPLY = "⏱️ Request timed out. Please try again."
 
 
 @dataclass(frozen=True)
@@ -1197,6 +1215,7 @@ async def handle_message(
         return
 
     await _hydrate_thread_overrides(session_key, conversation_log)
+    await _hydrate_conv_header(sessions, session_key)
     _hydrate_conv_flags(sessions, session_key)
 
     if not await admit_inbound_callback(
@@ -1421,10 +1440,23 @@ async def handle_message(
     # Post inline stop button (only in threaded conversations to avoid breaking tests)
     _working_ts: str | None = None
     if thread_ts:
+        # Same gate the timing footer applies at turn end (threaded, thread not
+        # already linked, dashboard present), evaluated NOW so the "Link to
+        # Dashboard" control exists for the whole turn rather than appearing
+        # only once the turn completes — on a long turn the footer arrives far
+        # too late to be the first chance to link. A click imports and links the
+        # thread via the existing command path; the next turn then mirrors
+        # through the normal pre-committed-link mirror below.
+        _early_link = (
+            not sessions.get_session_for_thread(reply_ts) and get_dashboard_state() is not None
+        )
         # Best-effort: a failed stop-button post must not drop the user's message.
         try:
             _working_ts = await slack.post_blocks(
-                channel, build_working_blocks(session_key), "Working…", reply_ts
+                channel,
+                build_working_blocks(session_key, include_dashboard_link=_early_link),
+                "Working…",
+                reply_ts,
             )
         except Exception:
             logger.warning("Failed to post inline stop button", exc_info=True)
@@ -1580,6 +1612,7 @@ async def handle_message(
                 candidate_key = thread_owner_key or canonical_key(reply_ts)
                 if candidate_key != session_key:
                     await _hydrate_thread_overrides(candidate_key, conversation_log)
+                    await _hydrate_conv_header(sessions, candidate_key)
                     if sessions.get_session_for_thread(reply_ts) != thread_owner_key:
                         continue
             # Both private identity hydration and store resolution can yield to
@@ -1870,6 +1903,9 @@ async def handle_message(
                     tool_result = await run_in_tool_gate_pool(
                         context_builder.hooks.on_tool_call,
                         event.title,
+                        # Unjudged, so nothing to warn about: this site only
+                        # warns on a deny and cannot stop the running tool.
+                        on_queue_timeout=lambda _waited: ToolHookResult(action=TOOL_ALLOW),
                         session_key=session_key,
                         agent=_agent or "",
                         command=event.shell_command,
@@ -1911,6 +1947,7 @@ async def handle_message(
                     tool_result = await run_in_tool_gate_pool(
                         context_builder.hooks.on_tool_call,
                         event.title,
+                        on_queue_timeout=hook_gate_busy,
                         session_key=session_key,
                         agent=_agent or "",
                         **hook_gate_kwargs(event),
@@ -2132,6 +2169,7 @@ async def handle_message(
                     # Expected terminal state after a failed auto-compaction;
                     # handled below with a session reset, so not "unexpected".
                     and _stop_reason != STOP_REASON_COMPACTION_FAILED
+                    and _stop_reason not in _UNFINISHED_STOP_REASONS
                 ):
                     logger.warning(
                         "Unexpected stop_reason %r for %s — treating as normal completion",
@@ -2143,6 +2181,36 @@ async def handle_message(
         if _stop_reason == STOP_REASON_CANCELLED:
             logger.info("Turn cancelled by user for %s", session_key)
             task.complete()
+        elif _stop_reason in _UNFINISHED_STOP_REASONS:
+            # Booked like a raised AcpTimeoutError (failed task, a failure
+            # toward the breaker), with the partial text kept and the timeout
+            # notice after it, so the thread does not read a half answer as the
+            # reply. The reset replaces the silent runtime and keeps the
+            # conversation, as the COMPACTION_FAILED branch below does.
+            logger.warning("Turn for %s ended unfinished (%s)", session_key, _stop_reason)
+            _had_error = True
+            answer.accumulated = (
+                f"{answer.accumulated}\n\n{_TIMEOUT_REPLY}"
+                if answer.accumulated
+                else _TIMEOUT_REPLY
+            )
+            task.fail("timeout")
+            # At its threshold the breaker resets the session inside
+            # record_failure and answers True. A same-key message can claim a
+            # successor while that reset is awaited, so a second reset here would
+            # end the successor mid-turn: reset only when it did not.
+            _breaker_reset = await sessions.record_failure(session_key)
+            Stats().inc_timeout()
+            Stats().inc_message_failed()
+            if _breaker_reset is not True:
+                try:
+                    await sessions.reset(session_key)
+                except Exception:
+                    logger.debug(
+                        "Failed to reset session %s after an unfinished turn",
+                        session_key,
+                        exc_info=True,
+                    )
         else:
             task.complete()
             # Success accounting is deferred to after the answer-carrying delivery
@@ -2228,7 +2296,7 @@ async def handle_message(
                 )
             else:
                 sessions.close_replay_gap(session_key)
-        else:
+        elif _stop_reason not in _UNFINISHED_STOP_REASONS:
             # Check context usage — fires background compaction at configured
             # threshold, never blocks. This runs AFTER ``_turn_completed_ok`` is
             # set (the model already finished cleanly), so a raise here must NOT
@@ -2251,11 +2319,25 @@ async def handle_message(
 
     except AcpTimeoutError as e:
         _had_error = True
-        answer.accumulated = e.partial_output or "⏱️ Request timed out. Please try again."
+        # The per-process client raises at its prompt deadline and leaves its
+        # process running, so this ending is handled like the stop-reason one:
+        # the text that streamed (or the partial output the error carries) is
+        # kept with the notice after it, and the session this turn held is reset.
+        _partial = e.partial_output or answer.accumulated
+        answer.accumulated = f"{_partial}\n\n{_TIMEOUT_REPLY}" if _partial else _TIMEOUT_REPLY
         task.fail("timeout")
-        await sessions.record_failure(session_key)
+        # As in the unfinished-turn branch: the breaker that trips here has reset
+        # the session already, and a second reset could end a successor.
+        _breaker_reset = await sessions.record_failure(session_key)
         Stats().inc_timeout()
         Stats().inc_message_failed()
+        if _acquired and _breaker_reset is not True:
+            try:
+                await sessions.reset(session_key)
+            except Exception:
+                logger.debug(
+                    "Failed to reset session %s after a timed-out turn", session_key, exc_info=True
+                )
     except AcpProcessDied:
         _had_error = True
         answer.accumulated = answer.accumulated or "💀 Agent process died. Please try again."
@@ -3040,11 +3122,20 @@ async def handle_message(
             if options and _turn_row_ts
             else None
         )
+        # Re-read the DASHBOARD link for the footer button only: a mid-turn
+        # click on the turn-start button may have linked the thread to a slot
+        # since turn start, and a second Link button would be redundant. (Not
+        # the session map: the turn's own self-link lands there mid-turn too.)
+        _ds_now = cast("DashboardState | None", _dashboard_state)
+        _footer_link_key = linked_session_key
+        if not _footer_link_key and thread_ts and _ds_now is not None:
+            _slot_now = _ds_now.get_linked_slot(reply_ts)
+            _footer_link_key = _slot_now.key if _slot_now is not None else None
         footer_blocks = _append_footer_actions(
             footer_blocks,
             options,
             thread_ts,
-            linked_session_key,
+            _footer_link_key,
             _dashboard_state,
             _options_token,
         )
@@ -3370,12 +3461,15 @@ async def _request_approval(
     key = f"{channel}:{approval_ts}"
     pending = _PendingApproval(provider, event.request_id, session_key)
     _pending_approvals[key] = pending
+    approval_timeout = (
+        _APPROVAL_TIMEOUT if _APPROVAL_TIMEOUT is not None else tool_approval_timeout_secs()
+    )
 
     try:
         # shield: on timeout, wait_for would otherwise CANCEL the future, and a
         # click that claimed the entry just before the deadline could then
         # never deliver its real outcome (its set_result guards on done()).
-        outcome = await asyncio.wait_for(asyncio.shield(pending.future), timeout=_APPROVAL_TIMEOUT)
+        outcome = await asyncio.wait_for(asyncio.shield(pending.future), timeout=approval_timeout)
     except asyncio.TimeoutError:
         outcome = _OUTCOME_REJECTED
         # Claim the decision BEFORE awaiting anything: while the entry stays
@@ -3404,7 +3498,7 @@ async def _request_approval(
                 provider,
                 event,
                 "the Slack approval prompt went unanswered for "
-                f"{max(1, round(_APPROVAL_TIMEOUT))}s",
+                f"{max(1, round(approval_timeout))}s",
                 cause=DENY_CAUSE_APPROVAL_TIMEOUT,
                 # The caller audits this outcome after the wire is answered;
                 # a cancellation here would skip that row, so the orphan

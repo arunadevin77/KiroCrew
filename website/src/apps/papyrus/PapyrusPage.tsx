@@ -759,6 +759,7 @@ export default function PapyrusPage() {
       const created = await api.createChatSlot(
         undefined, undefined, undefined, undefined, 'persistent',
         i18nT('apps.papyrus.workspace.session_title', { name: project }),
+        undefined, undefined, undefined, true,
       )
       const key = created.key as string
       dispatch(addSlotOptimistic({

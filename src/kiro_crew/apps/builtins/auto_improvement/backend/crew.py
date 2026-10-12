@@ -12,6 +12,11 @@ from typing import Any
 from kiro_crew.config import KiroCrewConfig
 from kiro_crew.config.sections import KiroCrewAgentConfig
 from kiro_crew.execution_context import member_config_for_id
+from kiro_crew.member_workspace import (
+    AUTO_WORKSPACE,
+    provision_member_workspace,
+    retire_unpublished_workspace,
+)
 from kiro_crew.memory_stores import (
     persist_member_config,
     provision_member_memory,
@@ -85,16 +90,25 @@ def ensure_team() -> dict[str, str]:
             if existing is None:
                 member = KiroCrewAgentConfig(
                     kiro_agent=spec.template,
+                    workspace=AUTO_WORKSPACE,
                     description=spec.description,
                     source=store.APP_NAME,
                 )
                 config.agents[spec.name] = member
                 previous_store = member.memory_store
                 previous_id = member.member_id
+                previous_workspace = member.workspace
+                new_workspace = ""
                 try:
                     provision_member_memory(config, spec.name)
-                    persist_member_config(config, spec.name, create=True)
+                    new_workspace = provision_member_workspace(config, spec.name)
+                    persist_member_config(
+                        config, spec.name, create=True, new_workspace=new_workspace
+                    )
                 except BaseException:
+                    retire_unpublished_workspace(
+                        config, spec.name, new_workspace, previous_workspace=previous_workspace
+                    )
                     if member.memory_store != previous_store:
                         retire_unpublished_allocation(
                             config,

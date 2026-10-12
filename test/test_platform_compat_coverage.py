@@ -423,9 +423,7 @@ class TestWindowsLocking:
                 with pc.file_lock(handle.fileno(), wait=False):
                     pytest.fail("body must not run without the lock")
 
-    def test_file_lock_names_the_callers_own_timeout_in_the_refusal(
-        self, monkeypatch, tmp_path
-    ):
+    def test_file_lock_names_the_callers_own_timeout_in_the_refusal(self, monkeypatch, tmp_path):
         """An explicit ``timeout`` is the ceiling the refusal must name.
 
         The message is the only evidence of WHY the critical section was declined,
@@ -495,13 +493,9 @@ def _bsdinfo(ppid: int = 0, sec: int = 0, usec: int = 0) -> bytes:
     """A synthetic ``struct proc_bsdinfo`` with the three fields we read."""
 
     buf = bytearray(pc._DARWIN_BSDINFO_SIZE)
-    buf[
-        pc._DARWIN_PBI_PPID_OFFSET : pc._DARWIN_PBI_PPID_OFFSET + 4
-    ] = ppid.to_bytes(4, "little")
+    buf[pc._DARWIN_PBI_PPID_OFFSET : pc._DARWIN_PBI_PPID_OFFSET + 4] = ppid.to_bytes(4, "little")
     buf[pc._DARWIN_OFF_START_TVSEC : pc._DARWIN_OFF_START_TVSEC + 8] = sec.to_bytes(8, "little")
-    buf[pc._DARWIN_OFF_START_TVUSEC : pc._DARWIN_OFF_START_TVUSEC + 8] = usec.to_bytes(
-        8, "little"
-    )
+    buf[pc._DARWIN_OFF_START_TVUSEC : pc._DARWIN_OFF_START_TVUSEC + 8] = usec.to_bytes(8, "little")
     return bytes(buf)
 
 
@@ -935,9 +929,7 @@ class TestWindowsHandleIdentity:
         # exit would never finish. The signalled process object is authoritative.
         _fake_windows(
             monkeypatch,
-            kernel32=_identity_kernel32(
-                exit_code=259, wait=0x00000000, exit_times=[777, 777]
-            ),
+            kernel32=_identity_kernel32(exit_code=259, wait=0x00000000, exit_times=[777, 777]),
         )
         assert pc._windows_process_handle_identity(5) == (4242, 100, 777)
 
@@ -1422,6 +1414,78 @@ class TestFlockOwnerPid:
         monkeypatch.setattr(pc, "open", _open, raising=False)
         assert pc.flock_owner_pid(lock) is None
 
+    def test_fdinfo_rows_are_read_like_proc_locks_rows(self, monkeypatch, tmp_path):
+        lock = tmp_path / "gateway.lock"
+        lock.write_text("")
+        info = os.stat(lock)
+        triple = f"{os.major(info.st_dev):02x}:{os.minor(info.st_dev):02x}:{info.st_ino}"
+        fdinfo = {
+            # The descriptor the kernel reports first is a waiter on the inode.
+            "/proc/41/fdinfo/3": f"pos:\t0\nflags:\t02\nlock:\t1: -> FLOCK ADVISORY WRITE 41 {triple} 0 EOF\n",
+            # A POSIX lock on the same inode is a different lock type.
+            "/proc/42/fdinfo/5": f"lock:\t1: POSIX ADVISORY WRITE 42 {triple} 0 EOF\n",
+            "/proc/43/fdinfo/7": f"pos:\t0\nlock:\t1: FLOCK ADVISORY WRITE 43 {triple} 0 EOF\n",
+        }
+        _fake_fdinfo(monkeypatch, [(41, "3"), (42, "5"), (43, "7")], fdinfo)
+        assert pc.flock_owner_pid(lock) == 43
+
+    def test_an_fdinfo_lock_with_the_same_inode_number_on_another_device_is_not_accepted(
+        self, monkeypatch, tmp_path
+    ):
+        # The descriptor can be closed and reused between the stat that selected
+        # it and the fdinfo read, so the row's own triple still decides.
+        lock = tmp_path / "gateway.lock"
+        lock.write_text("")
+        info = os.stat(lock)
+        fdinfo = {
+            "/proc/43/fdinfo/7": f"lock:\t1: FLOCK ADVISORY WRITE 43 fe:ff:{info.st_ino} 0 EOF\n"
+        }
+        _fake_fdinfo(monkeypatch, [(43, "7")], fdinfo)
+        assert pc.flock_owner_pid(lock) is None
+
+    def test_an_fdinfo_that_vanishes_under_the_read_is_skipped(self, monkeypatch, tmp_path):
+        lock = tmp_path / "gateway.lock"
+        lock.write_text("")
+        info = os.stat(lock)
+        triple = f"{os.major(info.st_dev):02x}:{os.minor(info.st_dev):02x}:{info.st_ino}"
+        fdinfo = {"/proc/44/fdinfo/9": f"lock:\t1: FLOCK ADVISORY WRITE 44 {triple} 0 EOF\n"}
+        _fake_fdinfo(monkeypatch, [(43, "7"), (44, "9")], fdinfo)  # 43 raises: gone
+        assert pc.flock_owner_pid(lock) == 44
+
+    def test_an_unlistable_proc_after_a_scan_miss_is_none(self, monkeypatch, tmp_path):
+        lock = tmp_path / "gateway.lock"
+        lock.write_text("")
+        _fake_proc_locks(monkeypatch, "")
+
+        def _boom(_path: Any) -> Any:
+            raise OSError("no /proc")
+
+        monkeypatch.setattr(pc.os, "listdir", _boom)
+        assert pc.flock_owner_pid(lock) is None
+
+
+def _fake_fdinfo(
+    monkeypatch: pytest.MonkeyPatch, descriptors: list[tuple[int, str]], files: dict[str, str]
+) -> None:
+    """An empty ``/proc/locks``, *descriptors* open on every inode, and *files* as ``fdinfo``.
+
+    A descriptor whose ``fdinfo`` is not in *files* reads as a process that is
+    gone (``OSError``), the way a real one does.
+    """
+
+    def _open(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if str(path) == "/proc/locks":
+            return io.StringIO("")
+        if str(path).startswith("/proc/"):
+            if str(path) in files:
+                return io.StringIO(files[str(path)])
+            raise FileNotFoundError(str(path))
+        return open(path, *args, **kwargs)
+
+    monkeypatch.setattr(pc.sys, "platform", "linux")
+    monkeypatch.setattr(pc, "open", _open, raising=False)
+    monkeypatch.setattr(pc, "_descriptors_on", lambda _target: iter(descriptors))
+
 
 # ---------------------------------------------------------------------------
 # Filesystem helpers
@@ -1826,9 +1890,7 @@ class TestRestrictToOwner:
             seen["sids"] = tuple(sids)
 
         monkeypatch.setattr(pc, "IS_POSIX", False)
-        monkeypatch.setattr(
-            pc, "current_user_sid", lambda: pc._OWNER_RIGHTS_SID.removeprefix("*")
-        )
+        monkeypatch.setattr(pc, "current_user_sid", lambda: pc._OWNER_RIGHTS_SID.removeprefix("*"))
         monkeypatch.setattr(pc.windows_acl, "apply_owner_only", _apply)
         pc.restrict_to_owner(tmp_path / "token.key")
         assert seen["sids"].count("S-1-3-4") == 1, seen
@@ -1906,9 +1968,7 @@ class TestExecutableDiscovery:
         hook.write_text("")
         assert pc.is_executable_file(hook, platform_name="win32") is False
 
-    def test_posix_target_accepts_any_regular_file_from_a_windows_host(
-        self, monkeypatch, tmp_path
-    ):
+    def test_posix_target_accepts_any_regular_file_from_a_windows_host(self, monkeypatch, tmp_path):
         hook = tmp_path / "pre.sh"
         hook.write_text("")
         monkeypatch.setattr(pc, "IS_POSIX", False)
@@ -2886,9 +2946,7 @@ class TestWindowsLineageLifetimes:
             101: (101, 15, 40),  # an immediate launcher that has already exited
             102: (102, 20, None),
         }
-        assert (
-            pc._windows_lineage_matches_lifetimes(102, self.ROOT, parent_map, identities) is True
-        )
+        assert pc._windows_lineage_matches_lifetimes(102, self.ROOT, parent_map, identities) is True
 
     def test_the_root_is_trivially_its_own_lineage(self):
         assert pc._windows_lineage_matches_lifetimes(self.ROOT, self.ROOT, {}, {}) is True
@@ -2973,9 +3031,7 @@ class TestDescendantHandleScanCleanup:
 
     def test_refuses_a_root_handle_that_names_another_process(self, monkeypatch):
         monkeypatch.setattr(pc, "IS_WINDOWS", True)
-        monkeypatch.setattr(
-            pc, "_windows_process_handle_identity", lambda _h: (999, 1, None)
-        )
+        monkeypatch.setattr(pc, "_windows_process_handle_identity", lambda _h: (999, 1, None))
         with pytest.raises(ValueError, match="root handle identity mismatch"):
             pc.descendant_termination_handles(100, {}, 8001)
 
@@ -3088,9 +3144,7 @@ class TestDuplicateAsyncioHandleFailure:
 
         _fake_windows(
             monkeypatch,
-            kernel32=types.SimpleNamespace(
-                GetCurrentProcess=_const(1), DuplicateHandle=_Fn(_boom)
-            ),
+            kernel32=types.SimpleNamespace(GetCurrentProcess=_const(1), DuplicateHandle=_Fn(_boom)),
         )
         assert pc.duplicate_asyncio_process_handle(process) is None
 

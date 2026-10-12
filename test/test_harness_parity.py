@@ -66,6 +66,7 @@ from kiro_crew.acp_backends import (
     ACP_BACKENDS_KIRO_SLASH_COMMANDS,
     ACP_BACKENDS_MCP_CONFIG_HOT_RELOAD,
     ACP_BACKENDS_MEMBER_CAPABILITIES,
+    ACP_BACKENDS_MEMBER_TOOL_LIMITS,
     ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS,
     ACP_BACKENDS_MODEL_VIA_CONFIG_OPTION,
     ACP_BACKENDS_SIDE_READONLY,
@@ -74,6 +75,7 @@ from kiro_crew.acp_backends import (
     selectable_backends,
 )
 from kiro_crew.agent_sdk import backends as acp_backends
+from kiro_crew.agent_sdk.capabilities import capabilities_for
 from kiro_crew.config.loader import AgentConfig, _normalize_acp_backend
 from kiro_crew.providers import acp as providers_acp
 from kiro_crew.providers import mirrors
@@ -272,8 +274,12 @@ def test_member_capabilities_are_opt_in() -> None:
     for provider in (providers_acp.AcpProvider, AcpSessionProvider):
         source = inspect.getsource(provider.member_capabilities_supported.fget)
         assert "in ACP_BACKENDS_MEMBER_CAPABILITIES" in source
-    assert ACP_BACKENDS_MEMBER_CAPABILITIES == frozenset({ACP_BACKEND_KIRO})
+    assert ACP_BACKENDS_MEMBER_CAPABILITIES == frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS})
     assert ACP_BACKENDS_MEMBER_CAPABILITIES is not ACP_BACKENDS_SESSION_SHARING
+    for provider in (providers_acp.AcpProvider, AcpSessionProvider):
+        source = inspect.getsource(provider.member_tool_limits_supported.fget)
+        assert "in ACP_BACKENDS_MEMBER_TOOL_LIMITS" in source
+    assert ACP_BACKENDS_MEMBER_TOOL_LIMITS == frozenset({ACP_BACKEND_KIRO})
 
 
 def test_steer_is_opt_in() -> None:
@@ -410,6 +416,7 @@ def test_capability_sets_are_subsets_of_known_backends() -> None:
         # arriving some other way still has to be a backend the code recognizes.
         ("selectable_backends()", selectable_backends()),
         ("ACP_BACKENDS_MEMBER_CAPABILITIES", ACP_BACKENDS_MEMBER_CAPABILITIES),
+        ("ACP_BACKENDS_MEMBER_TOOL_LIMITS", ACP_BACKENDS_MEMBER_TOOL_LIMITS),
         ("ACP_BACKENDS_SESSION_SHARING", ACP_BACKENDS_SESSION_SHARING),
         ("ACP_BACKENDS_STEER", ACP_BACKENDS_STEER),
         ("ACP_BACKENDS_INTERNAL_SANDBOX", ACP_BACKENDS_INTERNAL_SANDBOX),
@@ -677,8 +684,14 @@ def test_effort_channel_is_opt_in() -> None:
     """
     assert ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION <= ACP_BACKENDS_KNOWN
     assert ACP_BACKENDS_KIRO_SLASH_COMMANDS <= ACP_BACKENDS_KNOWN
-    # Disjoint: a harness must not be told to push effort down both channels.
-    assert not (ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION & ACP_BACKENDS_KIRO_SLASH_COMMANDS)
+    # A harness in both sets is told to push effort down ONE channel: KAS is
+    # kiro-family for its other slash commands but takes effort only as a config
+    # option, so the capability answers never name both channels.
+    assert ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION & ACP_BACKENDS_KIRO_SLASH_COMMANDS == {
+        ACP_BACKEND_KAS
+    }
+    caps = capabilities_for(ACP_BACKEND_KAS)
+    assert caps.effort_via_config_option and not caps.effort_via_slash_command
     assert ACP_BACKEND_KIRO in ACP_BACKENDS_KIRO_SLASH_COMMANDS
     assert ACP_BACKEND_CODEX in ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION
     assert ACP_BACKEND_CODEX not in ACP_BACKENDS_KIRO_SLASH_COMMANDS
@@ -767,7 +780,7 @@ def test_codex_resolves_its_own_adapter_and_declares_its_own_handshake() -> None
 #: harness. Declared rather than discovered so a DELETED splice fails the test below
 #: -- codex is absent because this PR moved its seam onto the harness, and kiro-cli
 #: has none (``--agent`` carries its servers).
-_MCP_SEAM_HOOKS = ["claude", "goose", "opencode"]
+_MCP_SEAM_HOOKS = ["claude", "deepseek", "goose", "opencode"]
 
 
 def test_each_mcp_seam_is_spliced_only_for_its_own_harness() -> None:
@@ -1036,6 +1049,12 @@ _DECLARED_IDENTITY_TESTS: dict[tuple[str, str], str] = {
     "Another host reaching it would have its resolved id rewritten from a list it did "
     "not author. KAS has its own narrower arm: it moves only an ``auto`` default its "
     "own ``model`` select does not list, onto an id that select does list.",
+    (
+        "src/kiro_crew/acp/session_handle.py",
+        "_kas_compact_request",
+    ): "``_kiro/session/compact`` is KAS's own extension verb, advertised in its "
+    "``initialize`` extensionMethods. Every other ``ACP_BACKENDS_COMPACT`` member "
+    "compacts on the ``/compact`` prompt, so the positive test keeps them on it.",
     (
         "src/kiro_crew/acp/session_handle.py",
         "_handle_update",

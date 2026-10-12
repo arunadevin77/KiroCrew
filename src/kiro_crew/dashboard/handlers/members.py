@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import Counter
+from datetime import datetime, timezone
 from typing import Any
 
 from aiohttp import web
@@ -628,6 +629,7 @@ async def api_members(request: web.Request) -> web.Response:
 
     observed_rosters = await asyncio.to_thread(_observe_rosters)
     tails = await asyncio.to_thread(_read_transcript_tails)
+    await asyncio.to_thread(_stamp_welcome_claimed, rows)
     # Slot keys whose speech-only read is trustworthy enough to correct the
     # member log with: a non-empty quote, or an empty one from a walk that
     # reached the start of the log -- and, either way, only for a slot whose
@@ -851,6 +853,11 @@ async def api_members(request: web.Request) -> web.Response:
 
     for row in rows:
         block = projections.get(row["slug"], {"asOfSeq": _SEQ_UNATTRIBUTABLE, "values": {}})
+        # Fresh start's fold boundary rides in here already: `reset_at` folds
+        # into the roster projection below, and `_roster_only` ships the whole
+        # roster view, so the client reads it off `row["projections"]` (and the
+        # same value arrives live over the `member_projection` WS frame) --
+        # no second, top-level copy of the field on the row.
         row["projections"] = _redact_projection_value(_roster_only(block))
         row["last_active_ts"] = _recency_for_row(block, row.get("last_active_ts"))
 
@@ -945,6 +952,32 @@ def _seed_from_dm_threads(
                 found[row["name"]] = max(found.get(row["name"], 0.0), ts)
             break
     return found
+
+
+def _stamp_welcome_claimed(rows: list[dict]) -> None:
+    """Mark Mate's row with whether its welcome is owed and its marker claimed.
+
+    The Crewmates page lands on Mate only while its welcome is still coming:
+    owed, the marker unclaimed, and the thread holding no row
+    (rfc-mate-landing-once). A welcome that was claimed and then failed leaves
+    the thread empty for good, and one that was never owed is refused before
+    the claim, so the row count alone would land the user on Mate on every
+    visit. Only Mate's row carries the fields; a marker that cannot be checked
+    leaves ``welcome_claimed`` off and an unreadable owed record reads as not
+    owed, both of which the page treats as "seen" (the ordinary landing).
+    Blocking IO.
+    """
+    from kiro_crew.agent_files import ASSISTANT_MEMBER_NAME
+    from kiro_crew.dashboard.mate_welcome import greeting_marker_path
+
+    for row in rows:
+        if row.get("name") != ASSISTANT_MEMBER_NAME:
+            continue
+        row["welcome_owed"] = members_mod.welcome_owed(row["slug"], row["name"])
+        try:
+            row["welcome_claimed"] = greeting_marker_path(row["slug"]).exists()
+        except (OSError, ValueError):
+            row.pop("welcome_claimed", None)
 
 
 def _is_human_row(msg: dict, marker: str) -> bool:
@@ -1651,6 +1684,208 @@ async def api_member_projections(request: web.Request) -> web.Response:
             {"error": "member slug logs another member", "code": "member_slug_foreign"}, status=409
         )
     return web.json_response(block)
+
+
+async def api_member_greet(request: web.Request) -> web.Response:
+    """POST /api/members/{slug}/greet — a crewmate's once-only first welcome.
+
+    The dashboard calls this after opening a member thread. It starts a turn
+    only for a crewmate's own pinned thread, only while that thread is empty, and
+    at most once ever (see :mod:`kiro_crew.dashboard.mate_welcome`). Every
+    other case answers 200 with the outcome that declined it, so the caller
+    never has to branch on errors for an ordinary "nothing to do".
+    """
+    from kiro_crew.dashboard.mate_welcome import maybe_start_first_greeting
+
+    denied = await _deny_app_caller(request, "members.greet")
+    if denied is not None:
+        return denied
+    owner_denied = await require_owner_dashboard_request(request, "members.greet")
+    if owner_denied is not None:
+        return owner_denied
+    state: DashboardState | None = request.app.get("state")
+    if state is None:
+        return web.json_response(
+            {"error": "dashboard state unavailable", "code": "state_unavailable"}, status=503
+        )
+    slug = request.match_info["slug"]
+    try:
+        members_mod.validate_slug(slug)
+    except MemberSlugError:
+        return web.json_response(
+            {"error": "invalid member slug", "code": "invalid_member_slug"}, status=400
+        )
+    try:
+        outcome = await maybe_start_first_greeting(state, slug)
+    except Exception:
+        logger.warning("first welcome failed to start for %r", slug, exc_info=True)
+        return web.json_response(
+            {"error": "could not start the greeting", "code": "member_greet_failed"}, status=500
+        )
+    return web.json_response({"outcome": outcome})
+
+
+#: How long each stop phase waits for the turn to end before moving on: the
+#: cooperative cancel first, then the hard-kill escalation.
+_FRESH_START_STOP_WAIT_SECS = 10.0
+_FRESH_START_POLL_SECS = 0.05
+
+
+def _turn_busy(state: DashboardState, slot: Any, key: str) -> bool:
+    """The reset route's two turn probes: the slot's own task, and the session's."""
+    provider = state.sessions.get_provider(key)
+    return bool(slot.running) or (provider is not None and provider.has_active_turn())
+
+
+def _work_pending(slot: Any) -> bool:
+    """Queued messages or unconsumed steers: work the runner starts on its own."""
+    return bool(slot.queue_depth) or bool(getattr(slot, "_pending_steers", None))
+
+
+def _queue_pending(name: str) -> web.Response:
+    return web.json_response(
+        {"error": "queued messages pending", "code": "slot_queue_pending", "slot": name},
+        status=409,
+    )
+
+
+async def _turn_ends_within(state: DashboardState, slot: Any, key: str) -> bool:
+    deadline = asyncio.get_running_loop().time() + _FRESH_START_STOP_WAIT_SECS
+    while _turn_busy(state, slot, key):
+        if asyncio.get_running_loop().time() >= deadline:
+            return False
+        await asyncio.sleep(_FRESH_START_POLL_SECS)
+    return True
+
+
+async def api_member_fresh_start(request: web.Request) -> web.Response:
+    """POST /api/members/{slug}/fresh-start — a clean context on the SAME thread.
+
+    Runs existing mechanisms in order and adds none:
+
+    1. A running turn is stopped with ``stop_slot_turn``, the Stop button's own
+       path. A second call while the first is still pending is that function's
+       hard-kill escalation, which is how a stuck process is freed.
+    2. The conversation is cleared through the typed ``/clear`` path
+       (``_answer_slash_without_channel``): discard with replay off, plan
+       dropped, eager respawn, and its transcript line. The discard shuts the
+       agent process down, so the next turn runs in a fresh process.
+
+    The slot key is never changed and no slot is created: monitor loops, the
+    work ledger and the crew log are bound to it. The transcript stays on disk.
+    Same gates as every member route: app tokens get 404, and only the owner's
+    dashboard passes.
+    """
+    from kiro_crew.dashboard import chat_handlers as ch
+    from kiro_crew.dashboard import chat_runner as runner
+
+    denied = await _deny_app_caller(request, "members.fresh_start")
+    if denied is not None:
+        return denied
+    owner_denied = await require_owner_dashboard_request(request, "members.fresh_start")
+    if owner_denied is not None:
+        return owner_denied
+    state: DashboardState | None = request.app.get("state")
+    if state is None:
+        return web.json_response(
+            {"error": "dashboard state unavailable", "code": "state_unavailable"}, status=503
+        )
+    slug = request.match_info["slug"]
+    try:
+        members_mod.validate_slug(slug)
+    except MemberSlugError:
+        return web.json_response(
+            {"error": "invalid member slug", "code": "invalid_member_slug"}, status=400
+        )
+    binding = await asyncio.to_thread(members_mod.read_dm_binding, slug)
+    slot = state._slots.get(binding.get("slot_key", "")) if binding else None
+    if (
+        binding is None
+        or slot is None
+        or slot.mode != members_mod.DM_SLOT_MODE
+        or slot.agent != binding.get("member")
+        or getattr(slot, "executor", "") == "remote"
+    ):
+        return web.json_response({"error": "not found", "code": "slot_not_found"}, status=404)
+    name = slot.key
+    key = effective_session_key(slot)
+
+    # A soft stop keeps the queue and the unconsumed steers, and the runner
+    # drains them the moment the turn ends: they would start on the conversation
+    # being dropped. Refused up front, and again after every stop wait, since a
+    # message can be queued while the stop waits.
+    if _work_pending(slot):
+        return _queue_pending(name)
+
+    if _turn_busy(state, slot, key):
+        for _attempt in range(2):
+            await ch.stop_slot_turn(
+                state, slot, cancel_key=ch._cancel_target(slot), source="members.fresh_start"
+            )
+            settled = await _turn_ends_within(state, slot, key)
+            if _work_pending(slot):
+                return _queue_pending(name)
+            if settled:
+                break
+        else:
+            return web.json_response(
+                {"error": "a turn is in flight", "code": "turn_in_flight", "slot": name},
+                status=409,
+            )
+        # The stop awaited; a rebind or replacement may have landed meanwhile.
+        if state._slots.get(name) is not slot or effective_session_key(slot) != key:
+            return web.json_response(
+                {"error": "slot changed during the stop", "code": "session_rebound"},
+                status=409,
+            )
+
+    # The same path a typed /clear takes: the discard with replay off, the plan
+    # dropped, the eager respawn, and the transcript line that says the agent no
+    # longer remembers what is above it. A session that still refuses the discard
+    # keeps it queued for its next turn boundary, as /clear does.
+    reset_at = datetime.now(timezone.utc).isoformat()
+    outcome = await runner._answer_slash_without_channel(state, slot, key, "/clear")
+    cleared = outcome == "discarded"
+    # Whether the fold boundary landed in the member's own log, so the client
+    # can tell "durable, survives a reload" from "this session's own fold
+    # only" instead of assuming the write always lands. The CLEAR itself is
+    # never retried on a write failure here: it already happened (the agent
+    # process is gone, the transcript already carries its line), and asking
+    # the client to redo it would discard a second turn's history for a
+    # boundary-recording fault that has nothing to do with the conversation.
+    reset_persisted = False
+    if cleared:
+        # Durable fold so the "earlier conversation" boundary survives a reload:
+        # the roster projection carries `reset_at`, which `GET /api/members`
+        # serves back to the page that otherwise only holds it in React state.
+        # Off-loop; a logging fault never turns a cleared conversation into an
+        # error response, since the clear itself already landed -- but the
+        # outcome IS inspected, so a failed append is reported rather than
+        # silently claimed as durable (the client still folds for this
+        # session from its own optimistic state either way).
+        member_name = binding.get("member") if binding else None
+
+        def _emit_reset() -> bool:
+            from kiro_crew import eventlog_hooks
+            from kiro_crew.eventlog.types import MEMBER_RESET
+
+            return eventlog_hooks.emit(slug, member_name, MEMBER_RESET, {"reset_at": reset_at})
+
+        reset_persisted = await asyncio.to_thread(_emit_reset)
+        if not reset_persisted:
+            logger.warning(
+                "fresh-start reset_at for %r did not persist to the member log; "
+                "the fold holds only for this client's current session",
+                slug,
+            )
+    return web.json_response(
+        {
+            "slot": name,
+            "reset_at": reset_at,
+            "outcome": "cleared" if cleared else "queued",
+            "reset_persisted": reset_persisted,
+        }
+    )
 
 
 async def api_member_activity(request: web.Request) -> web.Response:

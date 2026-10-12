@@ -139,7 +139,7 @@ A script can also drive dashboard sessions. Each method raises `RuntimeError` ca
 
 - `ctx.list_session_folders()` returns the dashboard's session folders.
 - `ctx.create_session_folder(name)` creates a folder and returns it.
-- `ctx.open_session(name, folder_id=..., agent=..., model=...)` opens a session and returns its slot key. Omitted arguments take the gateway's defaults.
+- `ctx.open_session(name, folder_id=..., agent=..., model=...)` opens a session and returns its slot key. Omitted arguments take the gateway's defaults. A non-empty `name` is also the session's title, so the sidebar shows it instead of an auto-generated one. The title is set only when the session is created; reopening the same name keeps its current title, including one you renamed.
 - `ctx.send_to_session(slot, message)` queues the message as that slot's next turn and returns at once: `{"ok": True, "slot": <key>}` when the slot was idle, or `{"ok": True, "queued": True, "queue_id": <id>}` when it was busy.
 - `ctx.set_session_mode(slot, mode)` sets that session's tool approval mode to `trust` or `trust_reads` and returns `{"ok": True, "mode": <mode>}`. Any other mode is refused with `mode_not_allowed` and an unnamed slot with `slot_required`.
 

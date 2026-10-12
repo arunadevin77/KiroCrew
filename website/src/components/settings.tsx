@@ -270,9 +270,15 @@ interface SettingsInputProps {
   'aria-label'?: string
   /** Backend config key this input writes. */
   configKey?: string
+  /** Id of the element explaining why the current value was refused. When set,
+   *  the control is marked invalid and described by that element. */
+  invalidMessageId?: string
+  /** Rendered under the control inside the row, e.g. the refusal notice
+   *  `invalidMessageId` names. */
+  after?: React.ReactNode
 }
 
-export function SettingsInput({ label, description, hint, value, onChange, onBlur, onKeyDown, onFocus, onCompositionStart, onCompositionEnd, placeholder, type = 'text', min, max, step, disabled, multiline, 'aria-label': ariaLabel, configKey }: SettingsInputProps) {
+export function SettingsInput({ label, description, hint, value, onChange, onBlur, onKeyDown, onFocus, onCompositionStart, onCompositionEnd, placeholder, type = 'text', min, max, step, disabled, multiline, 'aria-label': ariaLabel, configKey, invalidMessageId, after }: SettingsInputProps) {
   // Per-instance id pairing the caption's htmlFor with the control. This is
   // what gives the single-line branch an accessible name by DEFAULT: it used
   // to render aria-label={ariaLabel} with ariaLabel undefined unless a caller
@@ -280,6 +286,7 @@ export function SettingsInput({ label, description, hint, value, onChange, onBlu
   // An explicit aria-label still wins the name computation, so deliberate
   // overrides keep working.
   const controlId = React.useId()
+  const errorProps = invalidMessageId ? { 'aria-invalid': true, 'aria-describedby': invalidMessageId } : {}
   return (
     <SettingsField label={label} description={description} hint={hint} configKey={configKey} controlId={controlId}>
       {multiline ? (
@@ -296,6 +303,7 @@ export function SettingsInput({ label, description, hint, value, onChange, onBlu
           disabled={disabled}
           rows={3}
           aria-label={ariaLabel ?? label}
+          {...errorProps}
           className="w-full rounded border border-border bg-bg px-2 py-1 text-sm text-text focus-visible:border-accent focus:outline-hidden resize-y flex-none"
         />
       ) : (
@@ -315,9 +323,11 @@ export function SettingsInput({ label, description, hint, value, onChange, onBlu
           step={step}
           disabled={disabled}
           aria-label={ariaLabel}
-          className="flex-none"
+          {...errorProps}
+          className={invalidMessageId ? 'flex-none border-danger' : 'flex-none'}
         />
       )}
+      {after}
     </SettingsField>
   )
 }

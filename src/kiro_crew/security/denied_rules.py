@@ -2201,6 +2201,29 @@ def _exception_eligible(view: str) -> bool:
     return not _SHELL_ACTIVE_CHARS.intersection(view)
 
 
+#: kiro-cli's display prefix on a shell call's title, lowercased like the views.
+_SHELL_TITLE_PREFIX = "running: "
+
+
+def _exception_applies(view: str, exceptions: list[str]) -> bool:
+    """Whether one of *exceptions* exonerates the lowercased *view*.
+
+    The view must be eligible (:func:`_exception_eligible`), and the globs are
+    matched against the command behind ONE exact leading ``running: ``. kiro-cli
+    titles a shell call ``Running: <command>`` and the deny tiers judge that
+    title as a subject of its own, so a verb-anchored glob would otherwise never
+    match it and the title would be refused for a command that is exonerated.
+    Reading through the prefix keeps condition 1 above intact: the glob still
+    has to start at the command's first word, and the title gets the verdict of
+    the command it displays, never a weaker one.
+    """
+    if not exceptions or not _exception_eligible(view):
+        return False
+    if view.startswith(_SHELL_TITLE_PREFIX):
+        view = view[len(_SHELL_TITLE_PREFIX) :]
+    return any(fnmatch.fnmatch(view, e.lower()) for e in exceptions)
+
+
 # Maps a deny pattern to the globs that exonerate it.  When an input matches
 # a deny pattern AND one of that pattern's exceptions, the deny is skipped.
 # This avoids a blanket allowlist that could bypass unrelated deny rules.

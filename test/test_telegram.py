@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import html
+import json
 import re
 import threading
 import time
@@ -20,11 +21,17 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import aiohttp
 import pytest
 
 from conftest import CREDENTIAL_STRADDLE_SHAPES, assert_rejected_without_backtracking
 from kiro_crew.acp.client import AcpError
-from kiro_crew.acp.types import EVENT_COMPACTION_STATUS, EVENT_COMPLETE, EVENT_TEXT_CHUNK
+from kiro_crew.acp.types import (
+    EVENT_COMPACTION_STATUS,
+    EVENT_COMPLETE,
+    EVENT_TEXT_CHUNK,
+    STOP_REASON_STALE_RECOVER,
+)
 from kiro_crew.dashboard.token_auth import parse_duration
 from kiro_crew.messaging import driver as messaging_driver
 from kiro_crew.messaging.commands import parse_dashboard_ttl
@@ -2387,6 +2394,51 @@ class TestRenderer:
         labels = [b["text"] for row in final_kb["inline_keyboard"] for b in row]
         assert labels == ["A", "B"]
 
+    @staticmethod
+    def _parts_seen(fails: Any) -> list[str]:
+        # A three-part reply; ``fails(text, kwargs)`` says which sends fail.
+        class _Client(FakeClient):
+            async def send_message(self, chat_id: int, text: str, **kw: Any) -> Any:
+                if fails(text, kw):
+                    return None
+                return await super().send_message(chat_id, text, **kw)
+
+        cli = _Client()
+        r = TelegramRenderer(cli, 55, TELEGRAM_CAPABILITIES, session_key="telegram:1:0")  # type: ignore[arg-type]
+        reply = "\n\n".join(
+            (
+                "Part one. " + "alpha " * 500,
+                "Part two. " + "bravo " * 500,
+                "Part three. " + "charlie " * 400,
+            )
+        )
+
+        async def _go() -> None:
+            await r.on_turn_start()
+            await r.dispatch(OutputEvent(kind=TEXT_CHUNK, text=reply))
+            await r.dispatch(OutputEvent(kind=DONE, stop_reason=""))
+
+        asyncio.run(_go())
+        names = {"alpha": "1", "bravo": "2", "charlie": "3"}
+        seen = []
+        for text, _kb in cli.sent:
+            seen.append(next((n for w, n in names.items() if w in text), text))
+        return seen
+
+    def test_a_part_that_cannot_be_delivered_leaves_a_notice_in_its_place(self) -> None:
+        # Every send of the middle part fails. The later part still goes out, so
+        # a notice stands where the part is missing and the reply does not read
+        # as complete.
+        seen = self._parts_seen(lambda text, kw: "bravo" in text)
+        assert seen == ["1", "Part of this reply may not have been delivered.", "3"]
+
+    def test_a_reply_whose_parts_all_land_has_no_notice(self) -> None:
+        assert self._parts_seen(lambda text, kw: False) == ["1", "2", "3"]
+
+    def test_a_part_delivered_by_its_plain_fallback_has_no_notice(self) -> None:
+        seen = self._parts_seen(lambda text, kw: "bravo" in text and kw.get("parse_mode"))
+        assert seen == ["1", "2", "3"]
+
     def test_error_done_renders_error_when_no_text(self) -> None:
         cli = self._drive([OutputEvent(kind=DONE, stop_reason="error")])
         assert "Error" in cli.sent[-1][0]
@@ -4634,14 +4686,14 @@ class TestAutomaticOriginMirror:
         monkeypatch.setenv(emit.CREW_LOG_ENV, "1")
         monkeypatch.setattr(emit, "_retry_delay", lambda _attempts: 0.0)
         monkeypatch.setattr(FakeProvider, "session_id", "acp-owner-dm-turn", raising=False)
-        ledger_routes._BOARD_LOCKS.clear()
+        ledger_routes._BOARD_LOCKS._locks.clear()
 
         async def _recognized(*a: Any, **k: Any) -> None:
             return None
 
         monkeypatch.setattr(ledger_routes, "_recognize_session", _recognized)
         monkeypatch.setattr(ledger_routes, "_is_restricted_session", lambda *a: False)
-        monkeypatch.setattr(ledger_routes, "_contained_channel_caller", lambda request, sk: "")
+        monkeypatch.setattr(ledger_routes, "contained_channel_caller", lambda state, sk: "")
 
         async def _goal_write(sess: Any, key: str) -> tuple[int, dict[str, Any]]:
             app = web.Application()
@@ -4679,7 +4731,7 @@ class TestAutomaticOriginMirror:
         finally:
             emit.drain_for_shutdown(timeout=2.0)
             emit.reset_caches()
-            ledger_routes._BOARD_LOCKS.clear()
+            ledger_routes._BOARD_LOCKS._locks.clear()
 
     def test_a_recycled_conversation_opens_its_successor_log_citing_the_predecessor(
         self, monkeypatch
@@ -5853,6 +5905,130 @@ class TestForumCallbackGate:
         assert cli.answered == []
 
 
+class _PlainRetryResponse:
+    """A Bot API response: ``body`` as JSON, or ``error`` raised on entering it."""
+
+    def __init__(self, body: dict[str, Any] | None = None, error: BaseException | None = None):
+        self._body = body
+        self._error = error
+
+    async def json(self, content_type: Any = None) -> dict[str, Any] | None:
+        return self._body
+
+    async def __aenter__(self) -> "_PlainRetryResponse":
+        if self._error is not None:
+            raise self._error
+        return self
+
+    async def __aexit__(self, *a: Any) -> None:
+        return None
+
+
+class _PlainRetrySession:
+    """Records every ``sendMessage`` the server receives; answers ``first``, then ok."""
+
+    closed = False
+
+    def __init__(self, first: _PlainRetryResponse) -> None:
+        self.received: list[dict[str, Any]] = []
+        self._first = first
+
+    def post(self, url: str, **kwargs: Any) -> _PlainRetryResponse:
+        if not url.endswith("/sendMessage"):
+            return _PlainRetryResponse({"ok": True, "result": True})
+        self.received.append(dict(kwargs.get("json") or {}))
+        if len(self.received) == 1:
+            return self._first
+        return _PlainRetryResponse({"ok": True, "result": {"message_id": 100 + len(self.received)}})
+
+
+def _plain_retry_client(first: _PlainRetryResponse) -> tuple[TelegramClient, _PlainRetrySession]:
+    client = TelegramClient(token="12345:testtoken")
+    session = _PlainRetrySession(first)
+    client._session = session  # type: ignore[assignment]
+    return client, session
+
+
+_REJECTED_MARKUP = {"ok": False, "error_code": 400, "description": "Bad Request"}
+
+
+class TestPlainRetryOnlyOnRejectedMarkup:
+    """``send_message`` drops ``parse_mode`` on its retry only when Telegram rejected the send.
+
+    After a 400 nothing was posted, so the retry goes out as plain text. After
+    any other failure the first message may already be in the chat; the retry
+    keeps the markup, so a copy renders like the first instead of showing the
+    tags as text.
+    """
+
+    @pytest.mark.parametrize(
+        "first",
+        [
+            _PlainRetryResponse(error=asyncio.TimeoutError()),
+            _PlainRetryResponse(error=aiohttp.ServerDisconnectedError()),
+            _PlainRetryResponse({"ok": False, "error_code": 500, "description": "Internal"}),
+            _PlainRetryResponse({"ok": False, "error_code": 403, "description": "Forbidden"}),
+        ],
+        ids=["response-lost", "connection-reset", "server-error", "forbidden"],
+    )
+    def test_a_retry_after_an_unknown_outcome_keeps_the_markup(self, first) -> None:
+        client, session = _plain_retry_client(first)
+
+        result = asyncio.run(
+            client.send_message(42, "\U0001f510 Approve <code>bash</code>?", parse_mode="HTML")
+        )
+
+        modes = [r.get("parse_mode") for r in session.received]
+        assert modes == ["HTML", "HTML"], f"the retry shows the tags as text: {modes}"
+        assert result == 102
+
+    def test_a_rejected_markup_is_re_sent_once_as_plain_text(self) -> None:
+        client, session = _plain_retry_client(_PlainRetryResponse(_REJECTED_MARKUP))
+
+        result = asyncio.run(client.send_message(42, "<b>bad", parse_mode="HTML"))
+
+        assert result == 102
+        assert [r.get("parse_mode") for r in session.received] == ["HTML", None]
+        for sent in session.received:
+            assert sent["link_preview_options"] == {"is_disabled": True}
+
+    def test_a_send_that_lands_is_sent_once(self) -> None:
+        ok = _PlainRetryResponse({"ok": True, "result": {"message_id": 7}})
+        client, session = _plain_retry_client(ok)
+
+        assert asyncio.run(client.send_message(42, "<b>ok</b>", parse_mode="HTML")) == 7
+        assert len(session.received) == 1
+
+    def test_a_caller_that_opts_out_is_never_re_sent(self) -> None:
+        client, session = _plain_retry_client(_PlainRetryResponse(_REJECTED_MARKUP))
+
+        result = asyncio.run(
+            client.send_message(42, "<b>bad", parse_mode="HTML", retry_plain=False)
+        )
+
+        assert result is None
+        assert len(session.received) == 1
+
+    def test_the_approval_card_is_not_refused_after_a_lost_response(self, monkeypatch) -> None:
+        client, session = _plain_retry_client(_PlainRetryResponse(error=asyncio.TimeoutError()))
+        refused: list[str] = []
+        monkeypatch.setattr(
+            TelegramApprovalDecider,
+            "refuse_undelivered",
+            classmethod(lambda cls, key: refused.append(key)),
+        )
+        renderer = TelegramRenderer(  # type: ignore[arg-type]
+            client, 42, TELEGRAM_CAPABILITIES, session_key="telegram:42:0"
+        )
+        try:
+            asyncio.run(renderer.on_prompt_choice([], request_id="rq-lost", tool_title="bash"))
+        finally:
+            TelegramApprovalDecider.retire(TelegramApprovalDecider.key("telegram:42:0", "rq-lost"))
+
+        assert refused == [], "a lost response refused the approval"
+        assert len(session.received) == 2
+
+
 class TestLinkPreviewSuppression:
     def test_send_message_disables_previews_on_initial_send_and_plain_retry(
         self, monkeypatch
@@ -5981,6 +6157,138 @@ class TestRichMessageAvailabilityLatch:
             asyncio.run(c.send_rich_message(1, "| a |\n| - |"))  # 400
             asyncio.run(c.send_rich_message(1, "| a |\n| - |"))  # success
         assert c._rich_unsupported is False, "streak reset by each success"
+
+
+_GATEWAY_PAGE = "<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>"
+
+
+class _NonJsonResponse:
+    """A response whose body ``text`` is parsed the way aiohttp's ``json()`` parses it."""
+
+    def __init__(self, status: int, text: str) -> None:
+        self.status = status
+        self._text = text
+
+    async def json(self, content_type: Any = None) -> Any:
+        return json.loads(self._text)
+
+    async def __aenter__(self) -> "_NonJsonResponse":
+        return self
+
+    async def __aexit__(self, *a: Any) -> None:
+        return None
+
+
+class _NonJsonSession:
+    """Answers ``method`` calls from ``replies`` in turn, everything else with ok."""
+
+    closed = False
+
+    def __init__(self, *replies: _NonJsonResponse, method: str = "sendMessage") -> None:
+        self._replies = list(replies)
+        self._method = method
+        self.calls: list[tuple[str, dict[str, Any], bool]] = []
+
+    def post(self, url: str, **kwargs: Any) -> _NonJsonResponse:
+        method = url.rsplit("/", 1)[-1]
+        payload = dict(kwargs.get("json") or {})
+        if method == self._method and self._replies:
+            self.calls.append((method, payload, False))
+            return self._replies.pop(0)
+        self.calls.append((method, payload, True))
+        sends = ("sendMessage", "sendRichMessage")
+        result: Any = {"message_id": 100 + len(self.calls)} if method in sends else True
+        return _NonJsonResponse(200, json.dumps({"ok": True, "result": result}))
+
+
+class TestNonJsonErrorBody:
+    """A response body that is not JSON (an HTML error page) is a failed call.
+
+    ``_api_request`` returns None for it, as for any other failed call, and
+    reports its HTTP status as the error code, so callers take their failure
+    paths instead of meeting a decode error.
+    """
+
+    @staticmethod
+    def _client(session: _NonJsonSession) -> TelegramClient:
+        client = TelegramClient(token="12345:testtoken")
+        client._session = session  # type: ignore[assignment]
+        return client
+
+    def test_a_502_html_page_is_a_failed_call_with_its_status(self) -> None:
+        client = self._client(_NonJsonSession(_NonJsonResponse(502, _GATEWAY_PAGE)))
+        err: dict[str, Any] = {}
+
+        result = asyncio.run(client._api("sendMessage", {"chat_id": 42}, err_out=err))
+
+        assert result is None
+        assert err["error_code"] == 502
+
+    def test_send_message_returns_none_for_a_502_html_page(self) -> None:
+        client = self._client(_NonJsonSession(_NonJsonResponse(502, _GATEWAY_PAGE)))
+
+        assert asyncio.run(client.send_message(42, "hello")) is None
+
+    def test_the_answer_still_reaches_the_chat_after_a_502_html_page(self) -> None:
+        session = _NonJsonSession(_NonJsonResponse(502, _GATEWAY_PAGE))
+        renderer = TelegramRenderer(  # type: ignore[arg-type]
+            self._client(session), 55, TELEGRAM_CAPABILITIES, session_key="telegram:1:0"
+        )
+        answer = "The build passed on all three targets."
+
+        async def _turn() -> None:
+            await renderer.on_turn_start()
+            await renderer.on_text_chunk(answer)
+            await renderer._seal_current()
+
+        asyncio.run(_turn())
+
+        landed = [
+            payload.get("text", "")
+            for method, payload, ok in session.calls
+            if ok and method in ("sendMessage", "editMessageText")
+        ]
+        assert any(answer in text for text in landed), session.calls
+
+    @pytest.mark.parametrize("status", [400, 502], ids=["400", "502"])
+    def test_a_json_error_body_is_reported_as_before(self, status) -> None:
+        body = {"ok": False, "error_code": status, "description": "Bad Request: chat not found"}
+        client = self._client(_NonJsonSession(_NonJsonResponse(status, json.dumps(body))))
+        err: dict[str, Any] = {}
+
+        result = asyncio.run(client._api("sendMessage", {"chat_id": 42}, err_out=err))
+
+        assert result is None
+        assert err == {"error_code": status, "description": "Bad Request: chat not found"}
+
+    def test_a_successful_send_is_unchanged(self) -> None:
+        session = _NonJsonSession()
+
+        assert asyncio.run(self._client(session).send_message(42, "hello")) == 101
+        assert [method for method, _payload, _ok in session.calls] == ["sendMessage"]
+
+    def test_one_proxy_error_page_does_not_turn_rich_messages_off(self) -> None:
+        # A Bot API server without sendRichMessage answers every call with a JSON
+        # 4xx, which latches rich rendering off. One HTML 403 page from an edge or
+        # a proxy is not that server's verdict: the next rich send still goes out.
+        page = "<html><head><title>403 Forbidden</title></head><body>blocked</body></html>"
+        session = _NonJsonSession(_NonJsonResponse(403, page), method="sendRichMessage")
+        client = self._client(session)
+        table = "| a |\n|---|\n| 1 |"
+
+        async def scenario() -> tuple[Any, Any]:
+            first = await client.send_rich_message(42, table)
+            return first, await client.send_rich_message(42, table)
+
+        first, second = asyncio.run(scenario())
+
+        assert first is None
+        assert second is not None, (
+            "one non-JSON 403 page from a proxy turned sendRichMessage off for the "
+            f"process: server calls {[method for method, _payload, _ok in session.calls]}"
+        )
+        assert client._rich_unsupported is False
+        assert [method for method, _payload, _ok in session.calls] == ["sendRichMessage"] * 2
 
 
 class TestClientHealth:
@@ -8744,6 +9052,71 @@ class TestTurnLifecycleCharacterization:
             assert runtime_death.shared_deaths(self._KEY) == 0
         finally:
             runtime_death._reset_for_tests()
+
+    def _run_turn_ending(self, monkeypatch: Any, stop_reason: str) -> tuple[list, Any, list]:
+        d, _cli, sess = _dispatcher({7})
+
+        async def _stream(message: str) -> Any:
+            yield _Ev(EVENT_TEXT_CHUNK, text="half an answer")
+            yield _Ev(EVENT_COMPLETE, stop_reason=stop_reason)
+
+        events = self._instrument(monkeypatch, d, sess, stream=_stream)
+        resets: list[str] = []
+
+        async def _reset(key: str) -> None:
+            resets.append(key)
+
+        sess.reset = _reset
+        asyncio.run(d.handle_message(_dm("hi")))
+        return events, sess, resets
+
+    @pytest.mark.parametrize("stop_reason", ["timeout", STOP_REASON_STALE_RECOVER])
+    def test_an_unfinished_turn_is_a_failure_and_resets_the_session(
+        self, monkeypatch: Any, stop_reason: str
+    ) -> None:
+        events, sess, resets = self._run_turn_ending(monkeypatch, stop_reason)
+        assert sess.successes == []
+        assert ("charge", self._KEY) in events
+        assert resets == [self._KEY]
+
+    @pytest.mark.parametrize("stop_reason", ["timeout", STOP_REASON_STALE_RECOVER])
+    def test_at_the_breaker_threshold_an_unfinished_turn_resets_once(
+        self, monkeypatch: Any, stop_reason: str
+    ) -> None:
+        """The failure that trips the breaker resets the session inside
+        ``record_failure`` and answers True. A successor a same-key message started
+        during that reset is the live runtime afterwards, so the turn must not reset
+        it again."""
+        d, _cli, sess = _dispatcher({7})
+
+        async def _stream(message: str) -> Any:
+            yield _Ev(EVENT_TEXT_CHUNK, text="half an answer")
+            yield _Ev(EVENT_COMPLETE, stop_reason=stop_reason)
+
+        events = self._instrument(monkeypatch, d, sess, stream=_stream)
+        runtimes = ["first"]
+        killed: list[str] = []
+
+        async def _reset(key: str) -> None:
+            killed.append(runtimes[-1])
+            runtimes.append(f"successor {len(runtimes)}")
+
+        async def _breaker_at_threshold(key: str) -> bool:
+            events.append(("charge", key))
+            await sess.reset(key)
+            return True
+
+        sess.reset = _reset
+        sess.record_failure = _breaker_at_threshold
+        asyncio.run(d.handle_message(_dm("hi")))
+        assert ("charge", self._KEY) in events and sess.successes == []
+        assert killed == ["first"], f"the dispatcher reset again after the breaker did: {killed}"
+
+    def test_a_finished_turn_is_a_success_and_keeps_the_session(self, monkeypatch: Any) -> None:
+        events, sess, resets = self._run_turn_ending(monkeypatch, "end_turn")
+        assert sess.successes == [self._KEY]
+        assert ("charge", self._KEY) not in events
+        assert resets == []
 
 
 class TestCommandDispatchTable:

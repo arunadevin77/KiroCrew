@@ -4,7 +4,9 @@ Each subagent gets its own LLM session (via SessionManager) with a
 focused system prompt.  Results are announced back to the caller via
 a callback.  Max concurrent limit prevents resource exhaustion.
 
-No spawn recursion: subagents cannot spawn other subagents.
+Nested spawns are supported: a subagent may spawn its own subagents, and a
+nested spawn is tracked apart from the parent's wave, so its children are not
+counted against that wave's completion total.
 """
 
 from __future__ import annotations
@@ -224,8 +226,10 @@ from kiro_crew.subagent_persistence import (  # noqa: F401 - read_tombstone reso
     _cleanup_session_files_sync,
     _subagents_dir,
     agent_dir_for_display,
+    clear_leaked_process,
     clear_tombstone,
     create_agent_folder,
+    list_leaked_processes,
     list_orphans,
     mark_delivered,
     prune_stale_tombstones,
@@ -745,9 +749,10 @@ def parent_spawn_allowlists(parent_template: str) -> tuple[tuple[str, ...], ...]
 
 
 #: The gate's answers, one set per agents directory, each pinned to the
-#: directory's stat-only :func:`kiro_crew.agent_discovery.agents_dir_revision`
-#: (entry names, mtime AND ctime, size, inode, mode, the in-process spec
-#: generation, and nothing younger than the racy window). The catalog snapshot
+#: directory's :func:`kiro_crew.agent_discovery.agents_dir_revision`
+#: (entry names, mtime AND ctime, size, inode, mode, link count, the in-process
+#: spec generation, and a digest of the bytes of anything younger than the racy
+#: window). The catalog snapshot
 #: (``parsed_agent_specs``) revalidates on names and mtime alone, so a rewrite
 #: that keeps the mtime -- ``cp -p``, ``rsync -t``, a restore -- would serve a
 #: PERMISSIVE allowlist for ever after the operator tightened it; a security
@@ -1367,7 +1372,9 @@ def _subagent_default_effort(cfg: Any = None) -> str:
         return ""
 
 
-def _spawn_effective_model(model: str, agent: str, *, crew_agent: str | None = None) -> str | None:
+def _spawn_effective_model(
+    model: str, agent: str, *, crew_agent: str | None = None, backend: str | None = None
+) -> str | None:
     """Resolve the factory's model; ``""`` means auto, ``None`` means unavailable.
 
     Not a re-encoding of the factory's precedence — the selection itself is
@@ -1406,13 +1413,63 @@ def _spawn_effective_model(model: str, agent: str, *, crew_agent: str | None = N
             # No kwarg: get_or_create resolves the session chain and passes
             # its result (possibly None) as model_override.
             override = _session_model(cfg, agent or None, crew_agent=claim)
-        return cfg.acp_effective_model(agent or None, override) or ""
+        # A per-spawn backend is translated into ITS namespace, as the factory
+        # does once the override wins the selection gate.
+        namespace = None
+        if backend is not None:
+            from kiro_crew.agent_sdk.capabilities import capabilities_for
+
+            namespace = capabilities_for(backend).model_id_namespace
+        return cfg.acp_effective_model(agent or None, override, namespace=namespace) or ""
     except Exception:
         return None
 
 
+def _effort_channel(backend: str | None) -> str | None:
+    """How *backend* receives a reasoning-effort level, or ``None`` if it takes none.
+
+    ``"cli_json"`` for the Kiro family (kiro-cli reads the level from its
+    workspace ``cli.json`` at spawn), ``"config_option"`` for a harness that takes
+    it as a live ``set_config_option`` push. Both answers are opt-in MEMBERSHIP in
+    the sets the provider itself gates on, never "not one of the others": a
+    harness in neither set never receives the level. ``None`` (no per-spawn
+    backend) is the gateway default, which the verdict has always described as
+    the Kiro family.
+    """
+    from kiro_crew.acp_backends import (
+        ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION,
+        ACP_BACKENDS_KIRO_SLASH_COMMANDS,
+    )
+
+    if backend is None or backend in ACP_BACKENDS_KIRO_SLASH_COMMANDS:
+        return "cli_json"
+    if backend in ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION:
+        return "config_option"
+    return None
+
+
+def _effort_judged_at_session_start(backend: str | None) -> bool:
+    """Whether *backend* advertises its own effort levels, so no verdict is possible here.
+
+    Such a harness reports its model ids and effort levels with ``session/new``,
+    and the provider validates the level then (``AcpProvider._resolve_effort``);
+    the registry the verdict reads has none of them. Only a per-spawn backend is
+    asked: without one the verdict keeps describing the default, as before.
+    """
+    if backend is None:
+        return False
+    from kiro_crew.acp_backends import ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION
+
+    return backend in ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION
+
+
 def effort_drop_reason(
-    model: str, reasoning_effort: str, agent: str = "", *, crew_agent: str | None = None
+    model: str,
+    reasoning_effort: str,
+    agent: str = "",
+    *,
+    crew_agent: str | None = None,
+    backend: str | None = None,
 ) -> str:
     """Why a requested per-spawn effort will not take effect, or ``""``.
 
@@ -1426,9 +1483,11 @@ def effort_drop_reason(
     Reporting-only: never raises and never influences whether or how a spawn
     proceeds. ``crew_agent`` has the same namespace semantics as allocation.
     """
-    if not reasoning_effort:
+    if not reasoning_effort or _effort_judged_at_session_start(backend):
         return ""
-    resolved = _spawn_effective_model(model, agent, crew_agent=crew_agent)
+    if _effort_channel(backend) is None:
+        return f"backend '{backend}' takes no reasoning-effort level, so it is not applied"
+    resolved = _spawn_effective_model(model, agent, crew_agent=crew_agent, backend=backend)
     if resolved is None:
         return ""
     if not resolved:
@@ -1443,7 +1502,12 @@ def effort_drop_reason(
 
 
 def effort_applied_note(
-    model: str, reasoning_effort: str, agent: str = "", *, crew_agent: str | None = None
+    model: str,
+    reasoning_effort: str,
+    agent: str = "",
+    *,
+    crew_agent: str | None = None,
+    backend: str | None = None,
 ) -> str:
     """The delivery mirror of :func:`effort_drop_reason`, or ``""``.
 
@@ -1454,12 +1518,20 @@ def effort_applied_note(
     key, so a bare "applied" would leave that failure mode unobservable.
     Complementary with the drop reason when the selection can be resolved:
     exactly one is non-empty for a requested effort. An unavailable selection
-    leaves both empty. Reporting-only, same totality contract.
+    leaves both empty, and so does a per-spawn *backend* that advertises its own
+    effort levels. Reporting-only, same totality contract.
     """
-    if not reasoning_effort:
+    if not reasoning_effort or _effort_judged_at_session_start(backend):
         return ""
-    resolved = _spawn_effective_model(model, agent, crew_agent=crew_agent)
+    resolved = _spawn_effective_model(model, agent, crew_agent=crew_agent, backend=backend)
     if not resolved or not model_supports_effort(resolved):
+        return ""
+    channel = _effort_channel(backend)
+    if channel == "config_option":
+        from kiro_crew.acp_backends import effort_config_option_id
+
+        return f"{resolved} → config option {effort_config_option_id(str(backend))}"
+    if channel != "cli_json":
         return ""
     return f"{resolved} → {effort_settings_key(resolved)}.effort"
 
@@ -2878,6 +2950,11 @@ class SubagentInfo:
     # Wins over the ``role_efforts['subagent']`` pin; ``""`` defers to it.
     # Like ``model``, a non-empty value forces the dedicated-process path.
     reasoning_effort: str = ""
+    # Per-call backend (spawn_run ``backend``): the harness this run starts on
+    # instead of the gateway default. ``None`` = the default; ``""`` is Kiro's
+    # own id. Like ``model``, a value forces the dedicated-process path -- the
+    # shared runtime is the PARENT's process, on the parent's backend.
+    backend: str | None = None
     allowed_tools: list[str] = field(default_factory=list)
     bare: bool = False
     # Continuable conversations (spawn_run keep=True / spawn_continue):
@@ -2937,6 +3014,18 @@ class SubagentInfo:
     # startup watchdog measures from THIS timestamp so it never reaps an agent
     # that is merely waiting for approval. None until execution starts.
     _exec_started: float | None = None
+    # ``_exec_started`` on the monotonic clock, stamped and cleared beside it.
+    # When it is set the startup watchdogs measure from it, so a wall-clock step
+    # cannot reap a start in progress.
+    _exec_started_mono: float | None = None
+    # The run's registration on the monotonic clock. The reaper measures the run
+    # timeout from it, so a wall-clock step cannot reap a healthy run or spare a
+    # stuck one; ``started`` stays wall-clock for display and state.json.
+    _started_mono: float = field(default_factory=time.monotonic)
+    # ``last_activity`` on the monotonic clock, written beside it. The
+    # first-prompt-silent watchdog measures from it; ``last_activity`` stays
+    # wall-clock for the dashboard's idle display and the stall flag.
+    _last_activity_mono: float = field(default_factory=time.monotonic)
     # Wall-clock moment this execution's own session first answered its prompt
     # (``SubagentManager._leave_startup``): the first frame addressed to this
     # session, or a dependency verdict on the prompt. None until then, and reset
@@ -2963,6 +3052,8 @@ class SubagentInfo:
     # permit is not start time. Cleared by ``_gate_exit_reset`` at acquisition,
     # which adds the wait to ``_start_queue_wait_ms``.
     _gate_wait_started: float | None = None
+    # ``_gate_wait_started`` on the monotonic clock, marked and cleared beside it.
+    _gate_wait_started_mono: float | None = None
     # Learned-cost high-water marks (dynamic-subagent-sizing.md §4.1), sampled
     # periodically by the reaper loop and folded into the cost store at exit.
     peak_rss_gb: float = 0.0
@@ -3088,6 +3179,9 @@ class SubagentInfo:
     # Time this start spent queued at its start queues in total, ms (the paused
     # part of the startup clock); 0 when every queue was free.
     _start_queue_wait_ms: float = 0.0
+    # ``_start_queue_wait_ms`` measured on the monotonic clock, accumulated beside
+    # it; the startup watchdogs subtract it from a span measured on that clock.
+    _start_queue_wait_mono_ms: float = 0.0
     # True once the durable row was written ``running`` -- at the FIRST stream
     # event addressed to the run's own session, not at execution start, so a row is never
     # ``running`` while the session is still being created (RFC §4.4).
@@ -3118,6 +3212,11 @@ class SubagentInfo:
     # a report cancelled BEFORE delivery — which must be made recoverable on the
     # next start — from one cancelled AFTER it, which must not be re-delivered.
     _reported_to_parent: bool = False
+    # Set by the run's teardown when its kill left the process standing and no
+    # tombstone exists yet (a completed run). The terminal report reads it: a
+    # delivery the parent acknowledged writes the ``delivered`` tombstone with
+    # ``leaked_process`` so the next start ends the process without a notice.
+    _leaked_process: bool = False
     # The run's final ACP ``stop_reason`` and its ``classify_stop_reason``
     # class (a ``STOP_CLASS_*`` value), recorded by ``_run_inner`` on the
     # completion that ended the run
@@ -3133,6 +3232,19 @@ class SubagentInfo:
     # completion in place (``STOP_RECOVERY_MAX_RETRIES`` budget, shared with
     # the main chat's ``slot._tool_stall_retries``).
     _stop_recovery_used: int = 0
+
+    @property
+    def made_no_tool_calls(self) -> bool:
+        """Did this run neither emit a ``tool_call`` frame nor raise a permission request?
+
+        The pair the replay gates already read as "no side effect happened":
+        ``tool_count`` counts ``tool_call`` frames (and approved child
+        escalations) and ``turns`` counts the run's own permission requests, so a
+        backend that surfaces a gated tool only as a permission request still
+        counts as having called a tool. Such a run wrote no file, ran no command
+        and made no commit, whatever its text reports.
+        """
+        return self.tool_count == 0 and self.turns == 0
 
     @property
     def outcome(self) -> str:
@@ -3327,6 +3439,7 @@ DELIVERY_ROUTING_FIELDS: "dict[str, str]" = {
     # Recovery clears the first attempt's startup clocks before waiting to
     # launch its replacement. They govern startup reaping, not delivery.
     "_exec_started": NOT_DELIVERY_STATE,
+    "_exec_started_mono": NOT_DELIVERY_STATE,
     "_startup_deadline_stamp": NOT_DELIVERY_STATE,
     # Context-overflow recovery clears the retired shared runtime's identity
     # before it waits to start the dedicated replacement. These fields govern
@@ -3546,6 +3659,12 @@ class SubagentManager:
         # A snapshot whose cancel never ran is replaced by the next one.
         self._teardown_store_fences: dict[str, set[str]] = {}
         self._teardown_store_sweeps: list[tuple[str, set[str]]] = []
+        # TENTATIVE admission fences the identity sweep opens before it decides
+        # retire-vs-defer: they record admissions (so a concurrent /api/spawn is
+        # seen by the retire-vs-defer re-check) but do NOT drive delivery
+        # suppression, because the parent may be SPARED. Only a committed teardown
+        # fence (``_teardown_store_fences``) suppresses an expiring row's delivery.
+        self._identity_sweep_fences: dict[str, set[str]] = {}
         # Sweeps whose store read was refused: ``(key, fence, verb)``. Each fence
         # stays in ``_teardown_store_sweeps`` (recording, and gating an expiry of
         # the retired rows) until a reaper sweep's retry has read the store.
@@ -3655,9 +3774,10 @@ class SubagentManager:
         self.hook_store: Any = None  # Optional ScriptHookStore, set by server.py
         self._agents: dict[str, SubagentInfo] = {}
         # Continuable conversations: session_key ("subagent:<conv-id>") →
-        # last-used unix ts. Drives the reaper's idle-TTL sweep. Rebuilt from
-        # state.json (keep=True runs) on the reaper's first pass after a
-        # gateway restart, so promoted conversations stay owned by
+        # last-used ``time.monotonic()`` reading. Drives the reaper's idle-TTL
+        # sweep. Rebuilt from state.json (keep=True runs) on the reaper's first
+        # pass after a gateway restart, which turns each stored wall-clock stamp
+        # into an age, so promoted conversations stay owned by
         # the TTL sweep across restarts; a spawn_continue on an unknown key
         # also re-registers it on demand.
         self._conversations: dict[str, float] = {}
@@ -4238,6 +4358,12 @@ class SubagentManager:
     async def _reconcile_orphans(self) -> None:
         return await self._monitor._reconcile_orphans_impl()
 
+    async def _end_leaked_processes(self) -> None:
+        return await self._monitor._end_leaked_processes_impl()
+
+    async def _end_orphan_process(self, agent_id: str, state: dict, *, reason: str) -> str | None:
+        return await self._monitor._end_orphan_process_impl(agent_id, state, reason=reason)
+
     @staticmethod
     def _is_pid_alive(pid: int) -> bool:
         """Check if a PID is still running."""
@@ -4329,8 +4455,10 @@ class SubagentManager:
         derived = int(handshakes + collect + _STARTUP_LAUNCH_MARGIN_SECS)
         return max(_STARTUP_TIMEOUT_SECS, derived)
 
-    def _is_startup_stalled(self, info: SubagentInfo, now: float) -> bool:
-        return self._monitor._is_startup_stalled_impl(info, now)
+    def _is_startup_stalled(
+        self, info: SubagentInfo, now: float, mono_now: float | None = None
+    ) -> bool:
+        return self._monitor._is_startup_stalled_impl(info, now, mono_now)
 
     @staticmethod
     def _note_tool_dispatch(info: SubagentInfo, event: Any) -> None:
@@ -4878,6 +5006,7 @@ class SubagentManager:
         that preceded the PID is never charged to it.
         """
         info.last_activity = time.time()
+        info._last_activity_mono = time.monotonic()
         try:
             self._drain_queue()
         except Exception:
@@ -5056,6 +5185,7 @@ class SubagentManager:
         crew: str = "",
         target_member: str | None = None,
         delegation: dict[str, str] | None = None,
+        backend: str | None = None,
         _execution_context: dict | None = None,
         _parent_spawn_policy: "ParentSpawnPolicy | None" = None,
         _agent_check: "AgentCheck | None" = None,
@@ -5097,6 +5227,7 @@ class SubagentManager:
             crew=crew,
             target_member=target_member,
             delegation=delegation,
+            backend=backend,
             _execution_context=_execution_context,
             _parent_spawn_policy=_parent_spawn_policy,
             _agent_check=_agent_check,
@@ -5988,7 +6119,7 @@ class SubagentManager:
         return self._run_events._emit_queue_depth_impl(parent_session_key, batch_id, wait=wait)
 
     @staticmethod
-    def _write_tombstone(info: SubagentInfo, cause: str) -> None:
+    def _write_tombstone(info: SubagentInfo, cause: str, *, leaked_process: bool = False) -> None:
         """Best-effort tombstone write for abnormal exits.
 
         A run that is not persistent gets no tombstone. ``write_tombstone``
@@ -5996,6 +6127,11 @@ class SubagentManager:
         that ended before its folder was seeded -- a declined spawn prompt, a
         stop or a reap while it waited for admission into startup -- has
         neither, so the run's own mode decides here.
+
+        ``leaked_process`` records that the kill left the run's process
+        standing. The tombstone still ends the run (orphan reconciliation will
+        not report it again); the flag is what the next start reads to end the
+        survivor without a second notice (``list_leaked_processes``).
         """
         if info.memory_mode != "persistent":
             return
@@ -6028,6 +6164,7 @@ class SubagentManager:
                 # dies with the gateway, so without this the specific reason is
                 # recoverable from nothing but the log.
                 detail=(_redact(info.error)[:MAX_ERROR_DETAIL_LEN] if info.error else ""),
+                **({"leaked_process": True} if leaked_process else {}),
             )
         except Exception:
             logger.debug("Failed to write tombstone for %s", info.id, exc_info=True)
@@ -6095,7 +6232,7 @@ class SubagentManager:
             info, reason=reason, timeout=timeout, request=request
         )
 
-    async def _yield_for_dependency(self, info: SubagentInfo, signal: Any) -> bool:
+    async def _yield_for_dependency(self, info: SubagentInfo, signal: Any) -> bool | None:
         return await self._run_events._yield_for_dependency_impl(info, signal)
 
     async def _yield_for_infra_retry(self, info: SubagentInfo, infra: Any) -> str | None:
@@ -6278,6 +6415,83 @@ class SubagentManager:
     async def cancel_for_parent(self, parent_session_key: str) -> tuple[int, int]:
         return await self._cancellation.cancel_for_parent_impl(parent_session_key)
 
+    def has_live_or_queued_children(self, parent_session_key: str) -> bool:
+        """Whether *parent_session_key* owns a live or queued run, read with no await.
+
+        A side-effect-free query, unlike :meth:`snapshot_teardown_children` which
+        arms the delivery gate and tears down follow-ups. Lets a caller decide whether
+        to defer a parent's retirement without touching its children's completion path.
+        """
+        return self._cancellation.has_live_or_queued_children_impl(parent_session_key)
+
+    async def has_pending_store_children(self, parent_session_key: str) -> bool:
+        """Whether *parent_session_key* owns a waiting child only the store holds.
+
+        The off-loop companion to :meth:`has_live_or_queued_children`: it reads the
+        task store on the writer thread, so the identity-retire deferral can count a
+        durable-only or window-held child (which the teardown cancels) without a
+        synchronous store read on the event loop. Routed through
+        ``taskq_pending_ids_for_async(include_window=True)`` -- the SAME reading the
+        teardown's own store sweep uses (window rows kept, admitted rows left out,
+        raises when the store is unavailable) -- so the decision and the cancel can
+        never disagree about which rows count. A read failure propagates, so the
+        caller can defer rather than read an accepted child as absent.
+        """
+        rows = await self._admission.taskq_pending_ids_for_async(
+            parent_session_key, include_window=True
+        )
+        return bool(rows)
+
+    def open_teardown_fence(self, parent_session_key: str) -> "set[str] | None":
+        """Open the teardown fence for *parent_session_key* WITHOUT snapshotting.
+
+        The identity sweep opens the fence while it still holds the registry lock,
+        then decides retire-vs-defer at the async teardown. From the moment the
+        fence opens, the admission path records every child it accepts for this
+        parent into it (``note_teardown_store_accept`` under
+        ``_teardown_fence_lock``), so a child admitted between the open and the
+        off-loop read is seen by :meth:`has_fenced_children` rather than raced.
+        Unlike :meth:`snapshot_teardown_children` this takes NO in-memory snapshot:
+        it arms no delivery gate and tears down no follow-ups, so a parent that is
+        then spared keeps its children's completion path intact.
+
+        Returns the fence set, so a sweep that DEFERS can release exactly its own
+        fence (:meth:`release_teardown_fence`) and never one a concurrent teardown
+        opened. ``None`` when there is no store.
+        """
+        return self._cancellation.open_identity_sweep_fence_inner(parent_session_key)
+
+    def has_fenced_children(self, parent_session_key: str) -> bool:
+        """Whether any child was recorded in this parent's OPEN teardown fence.
+
+        Synchronous and cheap (a set read under ``_teardown_fence_lock``): the
+        admissions that landed since :meth:`open_teardown_fence`. Combined with
+        :meth:`has_live_or_queued_children` (in memory) and
+        :meth:`has_pending_store_children` (off-loop, pre-existing rows), it is the
+        third source the retire-vs-defer decision reads.
+        """
+        return self._cancellation.has_fenced_children_impl(parent_session_key)
+
+    def release_teardown_fence(
+        self, parent_session_key: str, expected: "AbstractSet[str] | None" = None
+    ) -> None:
+        """Discard this parent's teardown fence when the decision was to DEFER.
+
+        A spared parent runs no cancel sweep, so its fence has no consumer; drop it
+        so a later real teardown of the same key opens a fresh one. *expected* is
+        the fence the sweep opened; the drop happens only when the stored fence IS
+        it, so a concurrent ``destroy``'s fence is never dropped out from under its
+        own cancel.
+        """
+        self._cancellation.release_teardown_fence_impl(parent_session_key, expected)
+
+    async def cancel_queued(
+        self, agent_id: str, parent_session_key: str, *, stop_origin: str = ""
+    ) -> bool:
+        return await self._cancellation.cancel_queued_impl(
+            agent_id, parent_session_key, stop_origin=stop_origin
+        )
+
     def snapshot_teardown_children(self, parent_session_key: str) -> tuple[str, ...]:
         """Run ids under *parent_session_key*, taken with no await. Parent-end use.
 
@@ -6294,6 +6508,30 @@ class SubagentManager:
         selected = self._cancellation.snapshot_teardown_children_impl(parent_session_key)
         self._cancellation.note_teardown_snapshot(parent_session_key)
         return selected
+
+    def commit_identity_sweep_retire(
+        self, parent_session_key: str, expected: "AbstractSet[str]"
+    ) -> bool:
+        """Atomically decide the identity sweep's final commit-vs-defer.
+
+        Returns True (commit) only when *expected* (the sweep's tentative fence)
+        recorded no child since it opened; it then becomes this key's COMMITTED
+        teardown fence, so the cancel's store sweep inherits any concurrent
+        admission. False means a child arrived (or a newer sweep owns the key) and
+        the caller must defer and release. Removes the F1 window between the final
+        fenced-child check and the committed fence opening.
+        """
+        return self._cancellation.commit_identity_sweep_retire_inner(parent_session_key, expected)
+
+    def snapshot_teardown_children_only(self, parent_session_key: str) -> tuple[str, ...]:
+        """Select the run ids to cancel WITHOUT opening a fresh committed fence.
+
+        The identity sweep's commit path has already promoted its tentative fence
+        to the committed one (:meth:`commit_identity_sweep_retire`), so re-opening
+        a fresh fence here would discard the promoted set and the concurrent
+        admissions it carries. This takes only the selection half.
+        """
+        return self._cancellation.snapshot_teardown_children_impl(parent_session_key)
 
     async def cancel_for_teardown(
         self,

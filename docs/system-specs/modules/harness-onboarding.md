@@ -44,6 +44,20 @@ code should import the Agent SDK path so the registry keeps one owner:
 | membership in `ACP_BACKENDS_KNOWN` | `AcpProvider.__init__` rejects anything outside it (H8), and every capability set is asserted a subset of it. |
 | `PROVIDER_LABEL_<NAME>` in `acp/types.py` | A closed mapping; an absent label means Kiro, so a harness without one persists as a Kiro session and has its transcript pruned for want of a Kiro session file (H11). |
 | an entry in `POLICY_ID_BY_BACKEND` | A governance rule is written by a human as an identifier. The mapping is what makes the id nameable in a deny rule **before** anything registers it — so this is required even for a dormant harness. |
+| an entry in `_MODEL_REGISTRY_NAMESPACE_BY_BACKEND` | The model-id namespace, which is also the harness's bucket in the cross-session advertised-model cache. An id with no entry falls back to `acp` and joins the kiro family, so its advertised models can replace the list the picker offers for kiro-cli. |
+
+**A fresh id and a fresh namespace.** A new harness takes an id no other
+`ACP_BACKEND_*` constant spells, and a namespace no other backend reads; the one
+deliberate share is kiro-cli and KAS on `acp`, because they serve one model
+vocabulary. A second implementation that reaches the same provider — a direct
+adapter beside a harness, say — is a new harness and takes its own id. A shipped
+id is never re-pointed at a different implementation: saved `agent.acp_backend`
+values and governance rules already name it, so re-pointing it silently runs
+something else under an existing config and changes what an existing deny rule
+denies. Python gives no error for either collapse — two constants with one value
+become one set member and one dict key — so `test/test_backend_id_uniqueness.py`
+fails CI on a duplicated id, an unmapped known id, or a shared namespace outside
+the kiro family.
 
 `acp/types.py` and the top-level shim re-export the vocabulary, so existing callers
 keep their import sites. Do not define the constants there: both are compatibility
@@ -87,6 +101,7 @@ vocabulary.
 | `ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION` | Reasoning-effort push, same channel shape. |
 | `ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS` | The ids the harness ADVERTISES are `<model>[<effort>]` pairs its `model` option does not accept whole, so an exhausted spelling ladder falls through to two writes (bare model, then the effort). A non-member's refused bracketed id stays refused: claude's `[1m]` is a context WINDOW that must reach the wire intact, and opencode's `provider/model` ids carry no suffix at all, so neither may inherit a split it never advertised. Membership also lets a bare pin the harness does not advertise resolve to the bare model half of the advertised pair rows. It also gates the "adapter mismatch, not an account restriction" wording in `AcpModelUnavailable`, because "advertised implies entitled" is established only for a harness whose advertised list IS its entitlement. |
 | `ACP_BACKENDS_KIRO_SLASH_COMMANDS` | Receives `_kiro.dev/commands/execute`, and gets the workspace `cli.json` effort overlay written for it. Tool Search uses the narrower set below rather than inheriting this membership. |
+| `ACP_BACKENDS_NATIVE_TODOS` | The harness interprets `/todos` as its own task-list prompt command (`SessionCapabilities.supports_native_todos`), so the dashboard forwards it and lists it in `GET /api/slash-commands`. Claude only today. A non-member refuses it, because a kiro-family or unknown harness would receive the text as an ordinary prompt. Separate from `ACP_BACKENDS_KIRO_SLASH_COMMANDS`, which names an RPC rather than this command. |
 | `ACP_BACKENDS_TOOL_SEARCH_OVERLAY` | Reads Tool Search keys from the workspace `cli.json` overlay. A harness that takes those settings elsewhere must not collect a file it never reads. |
 | `ACP_BACKENDS_CLIENT_META_SETTINGS` | Takes feature settings from `initialize.clientCapabilities._meta.kiro.settings`; currently this is the KAS Tool Search channel. |
 | `ACP_BACKENDS_MARKDOWN_AGENT_SPECS` | The harness loads an agent defined as ONE markdown file (`~/.kiro/agents/<name>.md`, YAML frontmatter + body as prompt), the v3 / Kiro IDE form Crew's roster lists for every backend. Answered through the harness seam `reads_markdown_agent_specs` (`MembershipHarness`). A non-member that fails to activate such an agent has the activation guard explain the markdown file and name the members, instead of the generic "rewrite the JSON spec" advice; it is never refused BEFORE the spawn, so the Kiro path gains no gate (H13). KAS is the only member today: Crew parses the file and hands it over the wire. |
@@ -96,6 +111,7 @@ vocabulary.
 | `ACP_BACKENDS_SPEC_SERVERS_OFF_WIRE` | The agent spec's own `mcpServers` reach the session through a channel other than the `session/new` array, so unresolved-`@server` checks count those declarations as mounted. |
 | `ACP_BACKENDS_MEMBER_DISPATCH` | Crew's member-dispatch tools are mounted into a channel-member session, with the auto-approve grant that goes with them. A harness with no per-session mount to ride is excluded, which withholds only the extra grant. |
 | `ACP_BACKENDS_MEMBER_PANEL` | The member panel is mounted for a member session on this harness. Decided separately from `ACP_BACKENDS_MEMBER_DISPATCH` (harness-parity H6), so mounting the panel never implies the dispatch tools or their grant. |
+| `ACP_BACKENDS_MEMBER_TOOL_LIMITS` | Of the member-capability backends, the harness honours a saved spec's per-tool `disabledTools` on an MCP server. A non-member refuses such a spec before spawn. |
 | `ACP_BACKENDS_MEMBER_CAPABILITIES` | The harness can load an enrolled member's full saved agent spec at spawn. This is distinct from session sharing and per-session member dispatch; membership in either does not prove full-spec loading. |
 | `ACP_BACKENDS_SIDE_READONLY` | A Side Chat turn may execute read-only tools under the derived `<agent>--readonly` spec. A harness with an independent pre-approval surface stays out until every tool call is proven to reach this policy. |
 | `ACP_BACKENDS_COMPACT` | The manual `/compact` entry points are offered. A non-member refuses the manual command up front rather than stranding the status waiter on a harness that emits no compaction status of its own. |

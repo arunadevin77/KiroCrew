@@ -131,7 +131,12 @@ archetype: the reserved sandbox boot flags (`sandbox.require_isolation`,
 tiers set one, the subordinate's where the authority was silent — rather than handing
 it to `_compose_controls`, which would refuse it as a type mismatch and abort boot on
 an ordinary two-tier configuration. The flags are inert (nothing reads them), so
-neither direction can widen the ceiling. Everything outside `controls` stays the
+neither direction can widen the ceiling. `channels.posture` folds through
+`ScopedMap.compose` leaf by leaf (`_compose_posture`): a leaf both tiers set is the
+intersection of the two rulesets, a leaf or member only the subordinate sets is added
+(absent posture permits, so adding one restricts), and a leaf only the authority sets
+is kept. Over a profile this is a no-op, because a profile cannot carry posture.
+Everything outside `controls` stays the
 **authority's** — identity, signature state, tier and the `updates` *commands* — so a
 subordinate document cannot relabel whose ceiling this is or supply a command the
 gateway would run unsandboxed. The two `updates` pins that are themselves restrictions
@@ -899,7 +904,8 @@ scoped to this directory rather than every entry, because widening the others ha
 blast radius (a write deny on `.aws` would break a legitimate token refresh).
 
 Those dir entries are `$HOME`-relative, so `KIROCREW_HOME` moves the cache out from under
-them — a limitation shared with the vault entries. This one directory does not inherit it:
+them — a limitation the vault avoids through `_RELOCATED_CREW_HIDDEN_LEAVES`. This one
+directory does not inherit it:
 `sandbox._relocated_policy_cache_dirs()` additionally masks the data-home path whenever it
 differs. Compared with **`normpath`, not `realpath`**: this runs inside the launcher and
 seatbelt builders, which run on the event loop for every async spawn, and a link-resolving
@@ -971,7 +977,95 @@ the fleet now forbids: the tool short-circuits inside the harness and never reac
 own PreToolUse gate. `agent.reproject_for_ceiling_change` re-derives the file, bounded to an
 actual ceiling move by `governance_generation` — hooks run on every confirming poll, so an
 unconditional rebuild would rewrite a file kiro-cli watches every refresh interval for nothing.
-Two details make that bound safe rather than merely cheap. The baseline is seeded by
+
+"The file" is every spec a session can be started on through a crew, not only `kirocrew.json`.
+The rebuild re-derives Kiro Crew's own specs, then the fork refresh
+(`agent_materialization.fork_refresh`) re-filters `allowedTools` and strips governed
+`autoApprove` on every corroborated fork, and then runs the same two passes over every
+**shared template** a crew in `config.json` is bound to: a spec created on the Agent
+templates tab, edited on the agent detail page, or turned into a shared template by publish.
+Those writers filter only when they write, so without this pass such a template would keep
+the grants the ceiling now denies. The shared-template pass touches nothing but those two
+lists, rewrites a file only when a pass removed something, and never writes a spec no crew is
+bound to. A spec counts as the bound template when its stem is the bound name or it declares
+that name, and when two specs claim it every JSON one is filtered, since which is live is
+undefined. That is why the pass does not resolve through `agent.agent_spec_path`: a resolver
+for a writer acting on one agent prefers a declared match over a stem match and refuses two
+declared matches, and either rule would leave a claimant's grants unfiltered here. The
+exemption for Kiro Crew's own specs and for forks is per file, not per name: the pass skips
+`<name>.json` for an owned name its installer governs and the file `agent.agent_spec_path`
+resolves for a fork, because those are the only files those writers rewrite, and filters
+every other file that claims the name. A second file declaring `kirocrew`, for example, is
+one kiro-cli may load as that agent while the installer re-filters only `kirocrew.json`. A
+fork whose name two files declare has no file the fork refresh wrote, so every claimant is
+filtered. The pass does
+not hold spawns the way the fork gate does. A bound template it fails to rewrite for a
+reason a retry can clear (a spec file raised an `OSError` on its read, the agents directory could not be listed, its write raised, `config.json` or
+`config.local.json` could not be read whole by this load) is folded into the rebuild's
+conductor hold (`_held_out` and `agent._conductor_spec_held`, below), so the ceiling memo
+stays behind and the next poll or maintenance wake retries it; the hook does not skip an
+unchanged generation while that hold is set, and neither does the gateway's profile watch
+(`agent.reproject_for_profile_change`, on its own retry backoff, the retry a host without
+distribution polling has between maintenance wakes), which covers a hold the boot path's deferred
+pass sets after `prime_ceiling_projection` seeded the baseline. The hold lasts until the
+template is filtered, like a held conductor spec: releasing it while the failure persists
+would mark the tightened ceiling projected with a denied grant possibly still on disk, and
+nothing would retry it once the failure cleared. That includes a read this process is
+denied (`PermissionError`). kiro-cli runs as the same user and cannot load the file while
+its permissions deny the read, but restoring them puts whatever grants it carries back in
+front of kiro-cli with no ceiling move to trigger a retry. A Windows sharing or lock
+violation arrives as the same `PermissionError` and clears when the other handle closes.
+Neither rebuilds on every poll: the probe below re-reads the file and lets the next tick
+rebuild once the read succeeds. The directory is listed with `os.scandir`, whose errors
+propagate (`agent_spec_format.iter_agent_spec_files_strict`): `Path.glob` swallows a failed
+listing and answers with an empty directory, which would let the memo advance past every
+bound template in it. A spec file with a second hard link is held too, until its link count is
+one again, and logged at WARNING with the remedy. The fenced reader refuses a
+multiply-linked inode for good, because the other name may be any file on the volume, but
+kiro-cli reads the same bytes without that fence, so its grants are live and this pass cannot
+filter them; the file is never written through the shared inode. Any other regular file the
+reader refuses is held the same way, since its link count or kernel path changed under the
+read and a retry may read it; a refused directory or pipe at a spec name is not held. Whether a config file could
+not be read is asked of the load itself (`KiroCrewConfig._base_unreadable` and
+`_overlay_unreadable`), not of `degraded_sections`, whose whole-config marker lasts the
+process: a hold on it would never clear after the file was repaired. A template no retry can
+fix (a markdown spec this writer
+cannot re-serialize, bytes that do not parse, a capability reconcile that refuses) is logged
+at WARNING and not held.
+
+A file the pass cannot read holds whether or not it claims a bound name, because an unread
+file may be the one that declares it. Such a hold cannot clear until the file changes or a
+read of it succeeds, so it does not rebuild on every poll. The same is true of a config file
+the load could not read whole. When the pass's hold rests only on what it could not read, it
+records each unreadable file's path, inode, link count and mtime, the loader's fingerprint of
+both config files when one was unreadable, and the governance answer generation it ran under
+(`fork_refresh._shared_template_hold_record`). The ceiling hook and the maintenance wake skip
+the rebuild while that answer is current and is also the one the last rebuild derived its
+grants under (`agent._rebuild_answer_generation`), every recorded file is unchanged and still reads as
+held, and a fresh config load still cannot read a file whole
+(`fork_refresh.shared_template_hold_unchanged`; it re-reads each file through the same fence
+and logs nothing, and the loader never caches a read that failed). The memo stays behind
+either way, so the tightened answer is still not recorded as projected. A new answer, any
+change to a held file or config file, or a read that now succeeds (a sharing violation that
+cleared, an extra link that was removed) runs the rebuild on the next tick. A hold with any
+other cause is retried as before, because it can clear with nothing on disk changing: a
+conductor installer's hold (`agent._conductor_installers_held`), a write or governance pass
+that raised, or a rebuild that raised. The boot, pending and retry warnings name which kind
+of spec is held.
+
+A spec no crew is bound to is not re-filtered, whoever wrote it. A file hand-placed in the
+agents directory is outside every Kiro Crew writer. A template created on the Agent
+templates tab and left unbound keeps the grants it was saved with, and a subagent started on
+it through `spawn` runs with them. That spawn path is not covered here.
+
+The removal is one-way. A denied `allowedTools` entry or governed `autoApprove` list is
+dropped from the template, not parked: when the ceiling later loosens, nothing puts it back,
+and the template's author re-adds it on the Agent templates tab or the detail page. That is
+the contract every writer of these lists already has (a template saved under a tight ceiling
+loses the same entries at write time), and keeping a restorable copy would mean storing a
+grant the fleet forbids beside a file kiro-cli reads.
+
+Two details make the generation bound safe rather than merely cheap. The baseline is seeded by
 `prime_ceiling_projection` **before the poller starts**, because the first poll can itself
 install a new ceiling and a first-call baseline would record that generation and skip the very
 rebuild it needed. And the memo advances **only after a confirmed write**: the hook calls
@@ -1024,6 +1118,38 @@ apart (`conductor_agents._TRANSIENT_READ_BACKOFF_SECS`), because the pause costs
 hour of the previous ceiling's list; a path shape or bytes that can never be a spec are not
 retried, and a failure that outlasts the attempts holds the spec with the attempt count in the
 warning.
+
+A **governance profile** governs the same lists: the writers ask `may_skip_gate_now`, which
+withholds a grant whenever any configured profile could govern the ref, so a profile saved
+after the spec was written has to re-derive it exactly as a ceiling move does. The memo the
+hook compares is therefore `governance_answer_generation()` (ceiling plus profiles), read
+after `poll_profiles_fresh` re-stats the profiles directory. Every `rebuild_agent_config`
+reads that answer before it derives any grant and publishes it
+(`agent._rebuild_answer_generation`) only once it completes; a rebuild that raised (and only that: one
+still running does not) sets `agent._rebuild_incomplete` and clears the projection memo under the lock, because such a rebuild may have written grants derived under an older answer before it failed: the seed then leaves the baseline unseeded, and the next poll or watch tick re-projects, whatever a later rebuild's completion does to the flag. Otherwise
+`prime_ceiling_projection` seeds the baseline from the published answer: the boot rebuild and the seed are far
+apart, and a profile reader between them (a tool-approval check, a dashboard read) re-stats
+and publishes an edit, which a seed read at that point would absorb as projected. With no
+rebuild recorded, the seed reads the store as it stands, loading it first if nothing has,
+because no written grant consulted it. A profile is saved by editing a file, which no
+distribution poll observes, and a host without central distribution has no poll at all, so
+the gateway runs its own **profile watch**: every `_PROFILE_PROJECTION_POLL_S` (15 s), off
+the event loop, `agent.reproject_for_profile_change` re-stats the directory and calls the
+hook when the answer differs from the one the memo records. A projection that does not land
+(a declined rebuild or a held spec, each of which logs a refusal and an audit event per
+attempt) is retried by the watch every `agent._PROFILE_WATCH_RETRY_S` (an hour) rather than
+every tick, and one whose rebuild raised after `agent._PROFILE_WATCH_RAISE_RETRY_S` (five
+minutes). The hook and the watch run on
+different threads, so both hold `agent._REPROJECT_LOCK` across the whole read, rebuild and
+record: without it, a rebuild derived under an older answer could finish last and leave its
+grants on disk while the memo records the newer answer. The other rebuilds (a dashboard
+save, a config change, the maintenance retry) run without that lock, so each one, on
+completing, clears the memo when the answer moved since it started
+(`agent._invalidate_projection_if_answer_moved`, taken under the lock so it orders after any
+projection in flight), and the next poll or watch tick re-projects over its write. The watch starts in its own block
+ahead of the seed and `start_refresher`, so a failure in either does not take it down, and
+`_shutdown` cancels it beside the refresher, so no re-projection starts into a closing
+gateway.
 
 A builtin can also be governed by a **capability** rather than by its name:
 `BUILTIN_TOOL_CAPABILITIES` maps `use_subagent` to `capabilities.spawn`. A capability is not
@@ -1526,10 +1652,9 @@ the `_host` sentinel session key, which classifies to surface `host`. Operators 
 `surface:host` profile to narrow these on top of the policy ceiling (e.g. an
 `apps` allowlist that further restricts which apps may activate, or a `channels`
 allowlist that narrows which transports may connect below what the ceiling
-permits). NOTE: these callers used to pass an empty session key, which
-mis-classified to `slack` and accidentally picked up `surface:slack` profiles;
-they now use the honest `host` surface, so a `surface:slack` profile no longer
-governs host-side app activation or transport startup. The two policy-scope
+permits). These callers pass the `_host` sentinel session key, which classifies to
+surface `host`, so a `surface:slack` profile does not govern host-side app
+activation or transport startup. The two policy-scope
 chokepoints (app activation + transport start) audit their decisions via
 `sel().log_governance_decision` (`governance_permits` audits only its own
 degrade, never a normal permit/deny); Slack workspace admission audits via a
@@ -1878,7 +2003,36 @@ read-your-writes should add it deliberately, with its own tests.
   is deliberately NOT added to the deny-floor targets: that plane matches raw
   text and operator regexes, where `mcp__<server>` is a different string from
   the canonical identity a rule is written against rather than a broader form of
-  it. A server-only identity never satisfies auto-approval. Because this
+  it. A server-only identity never satisfies auto-approval. **Several spellings
+  of one tool.** A KAS built-in reaches the gate under its raw engine id
+  (`str_replace`) while the operator's rule is written under the kiro-cli name
+  it governs (`fs_write`); the two are one tool, not two targets, and asking
+  them as two targets would demand that an allow-mode rule name a raw id no
+  operator wrote. `gate_decision` therefore takes `alias_groups` -- tuples of
+  spellings for ONE tool -- and answers each group as one question: DENIED if
+  any spelling meets an explicit deny rule at either level (a deny-mode
+  `tools.deny: ["str_replace"]` still binds), otherwise PERMITTED when EACH
+  governing level permits SOME spelling -- OR within a level, intersection
+  across levels, so a ceiling granting `str_replace` beneath a profile granting
+  `fs_write` admits the one tool both granted. A group member that is also the
+  display title covers the title, which is then not asked again as a lone item
+  the allow set would have to carry. `deny_aliases` is the one-way counterpart:
+  spellings whose rules may REFUSE the call but never admit it. A KAS
+  `delete_file` reads under `fs_write` because an operator who denied writes
+  denied deletes, yet kiro-cli's `fs_write` cannot delete, so an allow-mode rule
+  naming `fs_write` must not become a deletion grant -- each deny alias is asked
+  for an explicit deny only, an allow-mode miss on it is not a refusal, and the
+  identity itself still has to be permitted on its own name. Both are empty for
+  every first-class harness; `HookManager.on_tool_call` fills them from the KAS
+  vocabulary tables (`platform/tool_names.py`, `policy_aliases` /
+  `policy_alias_split`) only for a server-less trusted identity those tables
+  know, on a permission event the KAS harness built (`kas_builtin_ids`) -- an
+  MCP-served call keeps exactly the targets it had, and another harness that
+  stamps the same bare id is asked under that id alone. This admits more than
+  asking the raw id by itself did: an allow-mode `tools: ["fs_write"]` now
+  permits a KAS `str_replace` / `fs_append` (and `fs_read` / `grep` / `glob`
+  permit the KAS read and search ids), which is the kiro-cli parity the table
+  exists for; `delete_file` is not admitted by `fs_write`. Because this
   enforcement is
   on the common path, the first-party app-own auto-approve below does **not**
   repeat it; what remains load-bearing there is the identity requirement itself
@@ -1987,11 +2141,10 @@ read-your-writes should add it deliberately, with its own tests.
   execution in `hooks._script_hooks_capability_denied` (at `run_script_hook`);
   app activation in `apps.manager._app_activation_denied` (at `enable_app`).
 
-Plane A carries **no live ordinal clamp**. It used to: a computer-use title under a
-`computer_use.approval: interactive` floor had both auto-approve branches suppressed,
-so the call fell through to interactive approval. That row and its clamp were removed
-along with the rest of the computer-use governance model — see [Computer use is NOT
-governed](#computer-use-is-not-governed-deliberately). The global `approval_mode`
+Plane A carries **no live ordinal clamp**. The computer-use governance model —
+including a `computer_use.approval` row and its clamp — is not present; computer
+use is not governed (see [Computer use is NOT
+governed](#computer-use-is-not-governed-deliberately)). The global `approval_mode`
 row's live clamp remains reserved (see "Still-reserved in v1").
 
 ### Owner capability previews

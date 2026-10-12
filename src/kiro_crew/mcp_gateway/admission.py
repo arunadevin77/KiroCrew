@@ -73,7 +73,7 @@ def derive_spawn_gate_ceiling(configured_max: int, subagent_ceiling: int) -> int
     ceiling lets the adaptive controller grow the gate to one backend
     initialization in flight per subagent the cap admits, on clean init
     evidence only; it still STARTS at ``spawn_concurrency_initial``, still
-    halves on loop lag, memory and failing inits, and never exceeds the larger
+    halves on memory and failing inits (not loop lag, which `GATE_IGNORED_SIGNALS` excludes from the gate's signal set), and never exceeds the larger
     of the two figures. ``subagent_ceiling`` is the value at the daemon's
     launch: like every other ``mcp_gateway`` admission key, the daemon reads it
     once, from its command line.

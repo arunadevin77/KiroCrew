@@ -21,7 +21,6 @@ from kiro_crew.acp.kas_agents import (
     _KAS_FALLBACK_PROMPT,
     KAS_MAX_CUSTOM_AGENTS,
     KasAgentTranslationError,
-    KasReservedAgentIdError,
     build_kas_custom_agents,
     hoist_managed_servers,
     load_agent_spec,
@@ -32,7 +31,11 @@ from kiro_crew.agent_discovery import (
     WELCOME_MESSAGE_MAX_CHARS,
     spec_welcome_message,
 )
-from kiro_crew.agent_files import KAS_RESERVED_AGENT_IDS
+from kiro_crew.agent_files import KAS_RESERVED_AGENT_IDS, kas_wire_agent_id
+from kiro_crew.platform.tool_names import (
+    KAS_TOOL_FAMILY_BY_KIRO_CLI_NAME,
+    expand_kiro_cli_tool_names,
+)
 
 
 def _rule(policy, capability):
@@ -72,7 +75,7 @@ class TestRequiredFields:
 
 
 class TestReservedIds:
-    """An id the engine keeps for itself is refused before it is sent.
+    """An id the engine keeps for itself goes out under a wire alias.
 
     kiro-cli 2.23.0 accepts a ``customAgents`` batch carrying any of these ids
     and then does one of two things, neither of them an error: ``default`` is
@@ -80,10 +83,10 @@ class TestReservedIds:
     ``spec``, ``quick-spec``, ``bug-fix``, ``plan``, ``autonomous``) keeps the
     ENGINE's definition, so ``set_mode`` would run the built-in with the
     crewmate's name on it. A crewmate bound to a private copy named after
-    itself hits the first case (the seeded crewmate is ``default``); one named
-    ``plan`` would hit the second. The projection refuses both up front and
-    names the remedy that applies, instead of the activation guard's
-    "regenerate the missing spec", which cannot help -- the spec exists.
+    itself hits the first case (the seeded crewmate is ``default``), which is
+    exactly the setup a kiro-cli user carries over when switching to KAS. So
+    the projection keeps the crewmate's id and only the wire envelope renames
+    it (see ``test_kas_mode_binding``).
     """
 
     RESERVED = ("default", "vibe", "spec", "quick-spec", "bug-fix", "plan", "autonomous")
@@ -92,26 +95,19 @@ class TestReservedIds:
         assert KAS_RESERVED_AGENT_IDS == frozenset(self.RESERVED)
 
     @pytest.mark.parametrize("agent_id", RESERVED)
-    def test_a_reserved_id_is_refused_with_the_remedy(self, agent_id):
-        with pytest.raises(KasAgentTranslationError) as exc:
-            to_client_custom_agent(agent_id, _spec(name=agent_id), "You are Kiro.")
-        message = str(exc.value)
-        assert message.startswith(f"Rename this crewmate's template: “{agent_id}” is reserved")
-        # The remedy keeps the user's edits: save-as-new-template first, reset
-        # only as the throwaway alternative. No wire vocabulary reaches the user.
-        # The remedy quotes the shipped labels, not a pane name the UI never shows.
-        assert "Agent Template tab" in message
-        assert "'Save as new template…'" in message
-        # A crewmate bound to a SHARED template under a reserved id (a `plan.json`
-        # created before the refusal existed) has no 'Save as new template…' /
-        # 'Reset my changes' controls, so the remedy names its path too.
-        assert "shared template, the template picker" in message
-        assert "KAS" not in message
-        assert isinstance(exc.value, KasReservedAgentIdError)
+    def test_a_reserved_id_is_projected_under_its_own_name(self, agent_id):
+        out = to_client_custom_agent(agent_id, _spec(name=agent_id), "You are Kiro.")
+        assert out["id"] == agent_id
 
-    def test_the_refusal_reaches_the_batch_builder(self, tmp_path):
-        with pytest.raises(KasAgentTranslationError, match="reserved for a built-in agent"):
-            build_kas_custom_agents(tmp_path, "default", _spec(name="default"))
+    @pytest.mark.parametrize("agent_id", RESERVED)
+    def test_a_reserved_id_gets_a_wire_alias_off_the_reserved_set(self, agent_id):
+        wire = kas_wire_agent_id(agent_id)
+        assert wire == f"{agent_id}-crewmate"
+        assert wire not in KAS_RESERVED_AGENT_IDS
+
+    def test_the_batch_builder_accepts_a_reserved_id(self, tmp_path):
+        batch = build_kas_custom_agents(tmp_path, "default", _spec(name="default"))
+        assert [a["id"] for a in batch] == ["default"]
 
     @pytest.mark.parametrize(
         "agent_id",
@@ -123,6 +119,7 @@ class TestReservedIds:
         # description), so widening the match would refuse working ids.
         out = to_client_custom_agent(agent_id, _spec(name=agent_id), "You are Kiro.")
         assert out["id"] == agent_id
+        assert kas_wire_agent_id(agent_id) == agent_id
 
 
 class TestToolsFailClosed:
@@ -133,8 +130,19 @@ class TestToolsFailClosed:
     """
 
     def test_list_is_passed_through(self):
+        """The exact list, in the spec's order: each kiro-cli name followed by its
+        KAS family, the MCP ref untouched, and nothing else. An exact pin is what
+        catches an entry the projection starts injecting that nobody wrote."""
         out = to_client_custom_agent("a", _spec(), "p")
-        assert out["tools"] == ["fs_read", "fs_write", "@kirocrew-core"]
+        assert out["tools"] == [
+            "fs_read",
+            "read_file",
+            "list_directory",
+            "fs_write",
+            "str_replace",
+            "fs_append",
+            "@kirocrew-core",
+        ]
 
     def test_mcp_server_shorthand_survives(self):
         """KAS tags every MCP tool ``@<server>``, so Crew's existing syntax works."""
@@ -156,7 +164,119 @@ class TestToolsFailClosed:
 
     def test_non_string_entries_are_discarded(self):
         out = to_client_custom_agent("a", _spec(tools=["fs_read", 3, "", None]), "p")
-        assert out["tools"] == ["fs_read"]
+        assert out["tools"] == ["fs_read", "read_file", "list_directory"]
+
+
+class TestTheSpecIsSpelledInKasToolIds:
+    """The defect: a spec written for kiro-cli mounts nothing it names on KAS.
+
+    ``matchesPattern`` (``tools/tool-filter.ts``) compares an allowlist entry to
+    a tool's exact id or a tag and translates nothing; on KAS ``fs_read`` is a
+    policy capability, not a tool, and ``grep`` / ``glob`` are no tool at all. So
+    the shipped spec reached the engine holding ``execute_bash``, ``fs_write``,
+    ``web_fetch`` and its MCP refs -- and no way to read, list or search a file.
+    """
+
+    def test_each_kiro_cli_read_tool_carries_its_kas_family(self):
+        out = to_client_custom_agent("a", _spec(tools=["fs_read", "grep", "glob"]), "p")
+        assert out["tools"] == [
+            "fs_read",
+            "read_file",
+            "list_directory",
+            "grep",
+            "grep_search",
+            "glob",
+            "file_search",
+        ]
+
+    def test_the_write_family_is_bounded_by_what_kiro_cli_s_fs_write_can_do(self):
+        """kiro-cli's ``fs_write`` creates, replaces, inserts and appends; it
+        cannot delete. KAS files ``delete_file`` under the same ``fs_write``
+        capability, but a spec that mounted ``fs_write`` never granted deletion,
+        and under a trust mode that skips the prompt a mounted tool RUNS -- so
+        the family stops at what the kiro-cli tool does. Every member is still
+        refused an auto-approve rule by ``WITHHELD_FROM_AUTO_APPROVE``."""
+        out = to_client_custom_agent("a", _spec(tools=["fs_write"]), "p")
+        assert out["tools"] == ["fs_write", "str_replace", "fs_append"]
+        assert "delete_file" not in out["tools"]
+        assert "permissions" not in out or not any(
+            r["capability"] == "fs_write" and r["effect"] == "allow"
+            for r in out["permissions"]["rules"]
+        )
+
+    def test_delete_file_mounts_only_when_the_spec_names_it(self):
+        out = to_client_custom_agent("a", _spec(tools=["fs_write", "delete_file"]), "p")
+        assert out["tools"] == ["fs_write", "str_replace", "fs_append", "delete_file"]
+
+    def test_no_family_widens_past_its_kiro_cli_tool_s_own_verbs(self):
+        """The deletion rule, stated for the table as a whole: no kiro-cli name
+        expands to a KAS tool with a verb the kiro-cli tool lacks."""
+        assert "delete_file" not in {
+            t for fam in KAS_TOOL_FAMILY_BY_KIRO_CLI_NAME.values() for t in fam
+        }
+
+    def test_the_spec_s_own_name_is_kept_beside_the_family(self):
+        """Adds, never substitutes: a name both engines know keeps matching."""
+        out = to_client_custom_agent("a", _spec(tools=["fs_read"]), "p")
+        assert out["tools"][0] == "fs_read"
+
+    def test_names_both_engines_share_and_mcp_refs_pass_through_unchanged(self):
+        shared = ["execute_bash", "code", "web_fetch", "tool_search", "@kirocrew-core"]
+        out = to_client_custom_agent("a", _spec(tools=shared), "p")
+        assert out["tools"] == shared
+
+    def test_a_spec_already_in_kas_vocabulary_is_not_duplicated(self):
+        out = to_client_custom_agent(
+            "a", _spec(tools=["read_file", "fs_read", "str_replace", "fs_write"]), "p"
+        )
+        assert out["tools"] == [
+            "read_file",
+            "fs_read",
+            "list_directory",
+            "str_replace",
+            "fs_write",
+            "fs_append",
+        ]
+
+    def test_excluded_tools_are_widened_the_same_way(self):
+        """The restricting direction: excluding ``fs_read`` for kiro-cli must not
+        leave ``read_file`` mounted on KAS."""
+        out = to_client_custom_agent("a", _spec(excludedTools=["fs_read", "@x/y"]), "p")
+        assert out["excludedTools"] == ["fs_read", "read_file", "list_directory", "@x/y"]
+
+    def test_excluding_fs_write_also_excludes_delete_file(self):
+        """Opposite polarity from mounting: a mount family stops at the kiro-cli
+        tool's own verbs, an exclusion reaches everything governed under the
+        name -- or excluding ``fs_write`` leaves ``delete_file`` mounted."""
+        out = to_client_custom_agent(
+            "a", _spec(tools=["fs_write", "delete_file"], excludedTools=["fs_write"]), "p"
+        )
+        assert out["excludedTools"] == ["fs_write", "str_replace", "fs_append", "delete_file"]
+
+    def test_the_table_names_only_ids_kas_registers_on_a_standalone_session(self):
+        """Pins the vocabulary to the engine's, via the recorded registry
+        ``test/fixtures/kas_builtin_tool_ids.json``: every family member is an
+        id the engine registers, and every key is a kiro-cli built-in the shipped
+        spec can name. A tag (``read``, ``@builtin``) would also match but grants
+        by class rather than by tool, so none appears here."""
+        registry = Path(__file__).resolve().parent / "fixtures" / "kas_builtin_tool_ids.json"
+        registered = set(json.loads(registry.read_text(encoding="utf-8"))["registered"])
+        for kiro_cli_name, family in KAS_TOOL_FAMILY_BY_KIRO_CLI_NAME.items():
+            assert kiro_cli_name in {"fs_read", "fs_write", "grep", "glob"}
+            assert set(family) <= registered, kiro_cli_name
+            assert kiro_cli_name not in family, "a family lists the OTHER engine's ids"
+
+    def test_expand_is_pure_and_order_preserving(self):
+        entries = ["@a", "fs_read", "@b", "fs_read"]
+        assert expand_kiro_cli_tool_names(entries) == [
+            "@a",
+            "fs_read",
+            "read_file",
+            "list_directory",
+            "@b",
+        ]
+        assert entries == ["@a", "fs_read", "@b", "fs_read"], "input untouched"
+        assert expand_kiro_cli_tool_names([]) == []
 
 
 class TestDeliberateOmissions:
@@ -672,6 +792,15 @@ class TestAgainstTheRealBundledSpec:
         # the agent nominally configured but unable to reach its own tools.
         assert any(t.startswith("@") for t in out["tools"])
         assert "fs_read" in out["tools"]
+        # The shipped spec is written for kiro-cli; on KAS the same list must
+        # name the ids the engine actually registers, or the agent runs
+        # read-blind (the defect this projection now covers). Pinned EXACTLY --
+        # the spec's own list with each kiro-cli name followed by its family and
+        # nothing else -- so an entry the projection starts injecting that the
+        # spec never wrote fails here rather than riding a subset check.
+        assert out["tools"] == expand_kiro_cli_tool_names(spec["tools"])
+        assert {"read_file", "list_directory", "grep_search", "file_search"} <= set(out["tools"])
+        assert "delete_file" not in out["tools"]
 
     def test_the_real_spec_carries_keys_KAS_cannot_take(self):
         """Guards the drop path against the actual spec, not a synthetic one."""

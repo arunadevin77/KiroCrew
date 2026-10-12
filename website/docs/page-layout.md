@@ -23,9 +23,12 @@ controls. The layout rules that belong here:
 - In chat, the dock sits above the composer, in the composer's own column
   (`--mc-input-width`), and its tiles wrap in a narrow column. Long-run status reuses
   the side-panel dock, expansion and narrow-screen overlay, not another drawer.
-- Crew's permanent **Dashboard** tab renders the crewmate's published page
-  (`CrewDashboardFrame`) straight into the panel, with no Command Center, no Published
-  view selector and no in-chat dock opener. Once visited, its body stays mounted across
+- Crew's permanent **Dashboard** tab is a standing entry either way; only what
+  fills it moves with the `PREVIEW_DASHBOARD` feature preview. With the preview
+  off the tab renders the crewmate's published page (`CrewDashboardFrame`)
+  straight into the panel; with it on it renders the crewmate's dynamic
+  dashboard (`CrewDashboardTab`). Either way there is no Command Center, no
+  Published view selector and no in-chat dock opener. Once visited, its body stays mounted across
   tab-strip switches (Dashboard to Files), so it keeps its scroll and document.
 - The All Dashboards page uses the standard page header and scroll container, with one
   column narrow and two wide.
@@ -304,17 +307,22 @@ controls, and a control under the glass is an ambiguous tap. A failed suggestion
 fetch shows an `ErrorNotice` there instead.
 It is `isolate` so WelcomeView's own z-indexes order its cards against each other
 and never against the composer's, and its column uses `safe center` and compact
-rows under 600px tall so a short window still fits both rows above the dock. The
-side-panel `ChatPane.tsx` keeps
-its bars in flow and needs none of this.
+rows under 600px tall so a short window still fits both rows above the dock.
+
+`ChatPane.tsx` (split panes and a crewmate's chat) floats its composer the same
+way: one dock root (`composer-dock-root`) over the scroller's bottom edge holding
+the jump pill, the bars, the queue, the question card, the notices and the
+composer, measured by the same `useComposerDockMetrics` and paid for by the same
+`DOCK_CLEARANCE_PX` (`pages/chat/composerDockMetrics.ts`, shared by both hosts).
+The pane has no welcome hero, so nothing in it ends above the dock.
 
 The same reading applies at the TOP of a chat that a host crowns with a glass
 chip: the Members page's DM header (the Glass identity pill, the switcher, the
 panel opener) floats over the pane's top edge and the conversation scrolls under
 it (#18325). `ChatPane` takes the band's measured height as `topInset` and pads
-its scroller's rows below it (and hangs its pinned-prompt band under it by the
-same offset); the host measures the header with `useMeasuredHeight`, never a
-constant. Anything with controls that sits between such a header and the pane
+its scroller's rows below it (a crewmate's chat draws no pinned-prompt band,
+#18346, so the inset is the only thing it pays); the host measures the header
+with `useMeasuredHeight`, never a constant. Anything with controls that sits between such a header and the pane
 (a notice, a greeting card) stays in flow, padded below the header, and the pane
 then takes no inset: a control under the glass is an ambiguous tap. The row and
 its cells pass pointer events through; only the controls catch them. Details:

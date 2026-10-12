@@ -22,10 +22,12 @@ is the contract for the machinery underneath it.
 
 ## Components
 
-Long runs can expose a model-designed `task-dashboard` HTML artifact in the
-shared chat/Crew Dynamic Dashboard, published by an authorized descendant and
-updated under the same slug. This is a presentation of the pipeline's existing
-facts, not a new status store or a broader conductor role. The host independently
+No panel reads a `task-dashboard` HTML artifact. A root session's side-panel
+Overview is that session's catalog dashboard page, whose fields read the
+pipeline's own work ledger and crew log (see [artifacts](artifacts.md)); it is a
+presentation of the pipeline's existing facts, not a new status store or a
+broader conductor role. The skill text that still names the artifact is retired
+separately (CREW-21664). The host independently
 shows native questions and tool approvals for the session subtree; Normal
 permission users can act on an exact request without visiting every worker.
 Publishing never changes permissions. See [artifacts](artifacts.md).
@@ -101,7 +103,9 @@ Auto-approved core verbs are reads (`resource_status`, `list_sessions`,
 `skill_search`, `skill_fetch`), the conductor's own patrol lifecycle
 (`monitor_start`, `monitor_update`, `autonudge_stop`, `wait`), its own durable
 ledger (`session_ledger_read`, `session_ledger_record`), and reporting to the
-owner (`send_message`, `send_notification`, `ask_question`). Auto-approved
+owner (`send_message`, `send_notification`, `ask_question`), and the quiet end
+of a patrol cycle with nothing to report (`nothing_to_do`, which mutates
+nothing). Auto-approved
 dashboard verbs are create-or-read only: `chat_folder_tree`,
 `chat_folder_create`, `session_create`, `session_read_message`, and
 `session_status` (a read of the caller's own children).

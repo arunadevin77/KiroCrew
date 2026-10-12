@@ -42,6 +42,7 @@ against a binding that exists.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import logging
 from typing import Any
@@ -54,11 +55,14 @@ from kiro_crew.crew_log import emit as crew_log_emit
 from kiro_crew.crew_log.errors import CrewLogError
 from kiro_crew.crew_log.resolve import UNKNOWN, unit_for_session_key
 from kiro_crew.dashboard import session_control
-from kiro_crew.dashboard.handlers._shared import _is_restricted_session
+from kiro_crew.dashboard.handlers._shared import (
+    _is_restricted_session,
+)
 
 # Module-scope like ``session_ledger.py``'s identical imports: the recognition
 # gate and the incognito classifier are this module's own load-bearing deps.
 from kiro_crew.dashboard.handlers.cron import _recognize_session
+from kiro_crew.dashboard.handlers.office_slides import _KeyedLocks
 from kiro_crew.dashboard.state import DashboardState
 from kiro_crew.history import is_incognito_transcript
 from kiro_crew.messaging.link import is_channel_session_key
@@ -325,6 +329,11 @@ async def _caller_key(
 
 
 def _caller_admission(request: web.Request, sk: str) -> tuple[str, Any, dict[str, Any] | None]:
+    """:func:`caller_admission` over a request. See it for the judgement."""
+    return caller_admission(request.app["state"], sk)
+
+
+def caller_admission(state: DashboardState, sk: str) -> tuple[str, Any, dict[str, Any] | None]:
     """The entry gate's one judgement of *sk*: ``(why, slot, admission)``.
 
     ``why`` is ``""`` when the caller may reach the ledger, else the refusal reason
@@ -347,12 +356,16 @@ def _caller_admission(request: web.Request, sk: str) -> tuple[str, Any, dict[str
     A key that resolves to no open slot has no slot to record an audience on and
     nothing of its own that publishes; it is judged as before -- by its key and the
     live probe -- and records nothing.
+
+    Takes the STATE rather than the request, because an in-process producer that
+    delivers ledger state into a session's own turn has to pass this same gate and
+    holds no request. One judgement, one implementation: a second copy of a
+    containment test is how one of the two drifts open.
     """
-    state: DashboardState = request.app["state"]
     slot_key = session_control.caller_slot_key(state, sk)
     slot = state.get_slot(slot_key) if slot_key else None
     if slot is None:
-        return _contained_channel_caller(request, sk), None, None
+        return contained_channel_caller(state, sk), None, None
     try:
         verdict = session_control.judge_owner_dm(state, slot)
     except Exception:  # pragma: no cover - the predicate fails closed itself
@@ -367,6 +380,11 @@ def _caller_admission(request: web.Request, sk: str) -> tuple[str, Any, dict[str
 
 
 def _contained_channel_caller(request: web.Request, sk: str) -> str:
+    """:func:`contained_channel_caller` over a request. See it for the judgement."""
+    return contained_channel_caller(request.app["state"], sk)
+
+
+def contained_channel_caller(state: DashboardState, sk: str) -> str:
     """Why *sk*'s turns reach a channel audience the ledger must stay out of; ``""`` if not.
 
     Two mechanisms reach a channel -- a channel-BORN key, and a dashboard-born
@@ -391,9 +409,8 @@ def _contained_channel_caller(request: web.Request, sk: str) -> str:
     this reason-only form is what that gate falls back to for a key no open slot
     answers to, where there is nothing to record.
     """
-    if not (is_channel_session_key(sk) or _reaches_a_channel(request, sk)):
+    if not (is_channel_session_key(sk) or reaches_a_channel(state, sk)):
         return ""
-    state: DashboardState = request.app["state"]
     try:
         return session_control.session_owner_dm_refusal(state, sk)
     except Exception:  # pragma: no cover - the predicate fails closed itself
@@ -402,6 +419,11 @@ def _contained_channel_caller(request: web.Request, sk: str) -> str:
 
 
 def _reaches_a_channel(request: web.Request, sk: str) -> bool:
+    """:func:`reaches_a_channel` over a request. See it for the predicate."""
+    return reaches_a_channel(request.app["state"], sk)
+
+
+def reaches_a_channel(state: DashboardState, sk: str) -> bool:
     """Whether this caller's turns reach a messaging channel, mirror included.
 
     ``is_channel_session_key`` catches a channel-BORN session. It does not catch a
@@ -416,7 +438,6 @@ def _reaches_a_channel(request: web.Request, sk: str) -> bool:
     a peer, and which FAILS CLOSED: a session store that cannot answer counts as
     mirrored.
     """
-    state: DashboardState = request.app["state"]
     for candidate in (
         sk,
         session_ledger.ledger_key(sk),
@@ -930,15 +951,14 @@ def _baseline_fields(item: Any, header: Any) -> dict[str, Any]:
 #: append and across a rebuild, so a rebuild can never fold between the two and
 #: write the cache back to before a mutation the log then records. Every writer
 #: and every rebuild runs on this gateway's one loop, which is what makes an
-#: in-process lock the complete answer.
-_BOARD_LOCKS: dict[str, asyncio.Lock] = {}
+#: in-process lock the complete answer. The registry is ``office_slides``'s
+#: ``_KeyedLocks``: a board's entry lives only while someone holds or waits for
+#: its lock, so it is bounded by the boards in use.
+_BOARD_LOCKS = _KeyedLocks()
 
 
-def _board_lock(slot: str) -> asyncio.Lock:
-    lock = _BOARD_LOCKS.get(slot)
-    if lock is None:
-        lock = _BOARD_LOCKS[slot] = asyncio.Lock()
-    return lock
+def _board_lock(slot: str) -> contextlib.AbstractAsyncContextManager[None]:
+    return _BOARD_LOCKS.hold(slot)
 
 
 async def _drain_before_cancelling(coro: Any) -> Any:
@@ -1224,18 +1244,7 @@ async def api_work_ledger_get(request: web.Request) -> web.Response:
     patrolled = conductor_patrol.has_active_patrol(state, key)
     rows: list[dict[str, Any]] = []
     for item in shown:
-        row = item.to_dict()
-        row["orphaned"] = work_ledger.is_orphaned(item, conductor_slot_exists=conductor_alive)
-        row["stale"] = work_ledger.is_stale(
-            item,
-            worker_running=_slot_running(state, item.worker_session_key or ""),
-            worker_closed=_slot_closed(state, item.worker_session_key or ""),
-        )
-        # Why an item is (or is not) in ``accept_batch``, on the item itself. Without
-        # it a conductor sees an item it dispatched simply missing from the batch and
-        # has no way to tell "bar not filled in yet" from "the read dropped it".
-        row["acceptance_concrete"] = work_ledger.is_acceptance_concrete(item.acceptance)
-        row["unpatrolled"] = item.state == "open" and not patrolled
+        row = _row_with_flags(state, item, conductor_alive=conductor_alive, patrolled=patrolled)
         if compact:
             rows.append({name: row[name] for name in _COMPACT_ROW_FIELDS})
             continue
@@ -1268,6 +1277,46 @@ async def api_work_ledger_get(request: web.Request) -> web.Response:
         # The whole board, never the filtered rows.
         payload["accept_batch"] = work_ledger.accept_batch(items)
     return web.json_response(payload)
+
+
+def _row_with_flags(
+    state: DashboardState,
+    item: work_ledger.WorkItem,
+    *,
+    conductor_alive: bool,
+    patrolled: bool,
+) -> dict[str, Any]:
+    """One item as a read row, with the four flags the store derives from liveness.
+
+    A function rather than four lines inlined per caller because the read route and
+    the wake snapshot both publish these flags and must publish the SAME ones: a
+    snapshot that said a worker was alive while the route called it stale would be a
+    second opinion on the one question a conductor acts on.
+
+    Liveness is read straight off the dashboard's own slot table rather than over
+    HTTP: every caller runs in the process that owns it. ``orphaned`` asks whether
+    the CONDUCTOR's slot is still open and ``stale`` whether the WORKER's is -- the
+    conjunction with the staleness window is what keeps a worker in a thirty-minute
+    build from being flagged.
+
+    ``acceptance_concrete`` says why an item is (or is not) in ``accept_batch``.
+    Without it a conductor sees an item it dispatched simply missing from the batch
+    and has no way to tell "bar not filled in yet" from "the read dropped it".
+
+    ``unpatrolled`` marks an open item whose conductor holds no active work-ledger
+    watch -- nobody is reading its reports -- and ``patrolled`` is that one read for
+    the whole board, passed in rather than re-read per item.
+    """
+    row = item.to_dict()
+    row["orphaned"] = work_ledger.is_orphaned(item, conductor_slot_exists=conductor_alive)
+    row["stale"] = work_ledger.is_stale(
+        item,
+        worker_running=_slot_running(state, item.worker_session_key or ""),
+        worker_closed=_slot_closed(state, item.worker_session_key or ""),
+    )
+    row["acceptance_concrete"] = work_ledger.is_acceptance_concrete(item.acceptance)
+    row["unpatrolled"] = item.state == "open" and not patrolled
+    return row
 
 
 #: The fields a ``compact=true`` row carries: what a patrol cycle reads to decide
@@ -1417,6 +1466,30 @@ def _slot_closed(state: DashboardState, key: str) -> bool:
     live worker as gone, and anything unreadable answers False.
     """
     return ledger_wake.worker_closed(state, key)
+
+
+def worker_holds_open_item(slot_key: str) -> bool:
+    """Whether *slot_key* is a worker bound to an OPEN item that names it back. BLOCKING.
+
+    For the slot-retention paths (the open-tab restore budget and the idle
+    sweep), which must not leave a worker without its tab: the wake gate reads a
+    worker with no slot as closed. The key is the slot's own name, resolved by
+    the server, never by a caller. Both spellings are asked, because a binding
+    is filed under the ledger's folded key. Any read that fails answers True: an
+    unknown binding must not cost a worker its tab.
+    """
+    try:
+        for candidate in dict.fromkeys((slot_key, session_ledger.ledger_key(slot_key))):
+            binding = work_ledger.read_binding(candidate, strict=True)
+            if binding is None:
+                continue
+            item = work_ledger.read_work_item(*binding, strict=True)
+            if item is not None and not item.is_terminal and item.worker_session_key == candidate:
+                return True
+    except Exception:  # noqa: BLE001 - unreadable binding means keep the tab
+        logger.debug("work-ledger binding read failed for %s", slot_key, exc_info=True)
+        return True
+    return False
 
 
 def _find_slot(state: DashboardState, key: str):

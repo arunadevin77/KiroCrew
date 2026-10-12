@@ -35,6 +35,7 @@ import pytest
 
 from kiro_crew import platform_compat as pc
 from kiro_crew import windows_acl
+from kiro_crew.testing.ids import UNALLOCATABLE_PID
 
 
 @pytest.mark.skipif(
@@ -2092,6 +2093,21 @@ class TestProcessIdentityPosix:
             assert result is False
 
 
+#: Lost-run ceiling for the positive exact-argv read, not a race to tune. One
+#: Windows read is a PowerShell spawn that ``process_command_line`` bounds at 10 s.
+#: Measured from the windows-pytest-progress artifacts: the whole test's call phase
+#: takes 1.2 s on a passing run, and a loaded runner has spent the full 10.02 s on
+#: one read that timed out. 25 s is over 10x the passing call, leaves room for a
+#: retry after two timed-out reads, and is under half the suite's 120 s
+#: ``--timeout``, so a read that never matches fails by name.
+_ARGV_READ_CEILING_SECS = 25.0
+
+#: How long a probe child sleeps after its readiness byte. It outlives every read
+#: a test makes (the ceiling, a matching read that runs its full 10 s, then the
+#: near-miss reads) and any ``--timeout``; ``_reap`` kills it in ``finally``.
+_PROBE_CHILD_LIFE_SECS = 300
+
+
 class TestProcessArgvMatchesExact:
     """The strict identity check behind reclaiming a recorded-but-orphaned
     child: the WHOLE argv must match, element for element, and every failure
@@ -2102,7 +2118,7 @@ class TestProcessArgvMatchesExact:
             sys.executable,
             "-c",
             f"import sys, time; sys.stdout.write('R'); sys.stdout.flush(); "
-            f"time.sleep(30)  # {token}",
+            f"time.sleep({_PROBE_CHILD_LIFE_SECS})  # {token}",
         ]
         child = subprocess.Popen(
             argv,
@@ -2122,6 +2138,26 @@ class TestProcessArgvMatchesExact:
         except subprocess.TimeoutExpired:
             pass
 
+    @staticmethod
+    def _assert_matches_once_readable(pid, argv):
+        """Poll the positive exact-argv read until it confirms; fail by name at the ceiling.
+
+        The read is best-effort on every OS: /proc can lag on a loaded runner,
+        and on Windows one read is a PowerShell ``Get-CimInstance`` spawn with
+        its own 10 s timeout that answers "" when it runs out.
+        """
+        start = time.monotonic()
+        reads = 1
+        result = pc.process_argv_matches_exact(pid, argv)
+        while not result and time.monotonic() - start < _ARGV_READ_CEILING_SECS:
+            time.sleep(0.05)
+            reads += 1
+            result = pc.process_argv_matches_exact(pid, argv)
+        assert result is True, (
+            f"argv never matched in {time.monotonic() - start:.1f}s over {reads} read(s); "
+            f"last command line {pc.process_command_line(pid)!r}"
+        )
+
     def test_exact_argv_matches_and_near_misses_do_not(self):
         if pc.IS_POSIX:
             # A plain binary that does NOT re-exec, so its kernel-visible argv
@@ -2135,32 +2171,32 @@ class TestProcessArgvMatchesExact:
         else:
             child, argv = self._spawn("kirocrew-argvexact-probe")
         try:
+            self._assert_matches_once_readable(child.pid, argv)
+            changed = list(argv)
+            changed[-1] = changed[-1] + " "
             if pc.IS_POSIX:
-                # Exact match: retry briefly for slow /proc population on
-                # loaded runners (same shape as the process_matches test).
-                deadline = time.monotonic() + 10.0
-                result = pc.process_argv_matches_exact(child.pid, argv)
-                while not result and time.monotonic() < deadline:
-                    time.sleep(0.05)
-                    result = pc.process_argv_matches_exact(child.pid, argv)
-                assert result is True
                 # Anything less than the whole argv is a different process:
                 # a subset (prefix), a superset, and a one-element difference
                 # must all answer False — substring semantics are exactly what
                 # this function exists to NOT have.
-                assert pc.process_argv_matches_exact(child.pid, argv[:-1]) is False
-                assert pc.process_argv_matches_exact(child.pid, argv + ["-x"]) is False
-                changed = list(argv)
-                changed[-1] = changed[-1] + " "
-                assert pc.process_argv_matches_exact(child.pid, changed) is False
+                near_misses = {"subset": argv[:-1], "superset": argv + ["-x"], "changed": changed}
             else:
                 # Windows: the live command line must equal list2cmdline(argv).
                 # The -c payload carries spaces and quotes, so real quoting runs.
-                assert pc.process_argv_matches_exact(child.pid, argv) is True
-                assert pc.process_argv_matches_exact(child.pid, argv[:-1]) is False
-                changed = list(argv)
-                changed[-1] = changed[-1] + " "
-                assert pc.process_argv_matches_exact(child.pid, changed) is False
+                near_misses = {"subset": argv[:-1], "changed": changed}
+            answers = {
+                name: pc.process_argv_matches_exact(child.pid, near)
+                for name, near in near_misses.items()
+            }
+            # A read of a process that has exited answers False for the wrong
+            # reason. A child still running after the last read was running
+            # for every one of them, so only then do the False answers count.
+            assert child.poll() is None, (
+                f"probe child exited (returncode {child.returncode!r}) before the "
+                f"near-miss reads finished; their answers {answers!r} prove nothing"
+            )
+            for name, answer in answers.items():
+                assert answer is False, f"{name} near-miss matched: {near_misses[name]!r}"
         finally:
             self._reap(child)
 
@@ -2217,6 +2253,69 @@ class TestProcessArgvMatchesExact:
         self._as_windows(monkeypatch, unreadable)
 
         assert pc.process_argv_matches_exact(4242, ["ssh.exe", "h"]) is False
+
+    def test_the_positive_read_retries_a_command_line_that_is_not_readable_yet(self, monkeypatch):
+        # A loaded Windows runner can time out the PowerShell read, which
+        # answers "". The live test's positive read must retry it, not fail.
+        argv = [r"C:\Windows\System32\OpenSSH\ssh.exe", "-N", "my host alias"]
+        monkeypatch.setattr(pc, "IS_WINDOWS", True)
+        reads = iter(["", "", subprocess.list2cmdline(argv)])
+        seen: list[int] = []
+
+        def read(pid):
+            seen.append(pid)
+            return next(reads)
+
+        monkeypatch.setattr(pc, "process_command_line", read)
+
+        self._assert_matches_once_readable(4242, argv)
+        assert seen == [4242, 4242, 4242]
+
+    @pytest.mark.parametrize("exits_after_read", [None, 1, 2])
+    def test_the_near_miss_answers_count_only_against_a_live_probe_child(
+        self, monkeypatch, exits_after_read
+    ):
+        # A slow runner can spend the probe child's life on the reads. An
+        # exited child's command line reads as "", so a near-miss read then
+        # answers False with nothing proven, and the test must fail instead.
+        argv = [r"C:\Python\python.exe", "-c", "import sys; print('a b') # probe"]
+        monkeypatch.setattr(pc, "IS_POSIX", False)
+        monkeypatch.setattr(pc, "IS_WINDOWS", True)
+        reads: list[int] = []
+
+        def gone():
+            return exits_after_read is not None and len(reads) >= exits_after_read
+
+        child = types.SimpleNamespace(pid=UNALLOCATABLE_PID, returncode=None)
+
+        def poll():
+            child.returncode = 0 if gone() else None
+            return child.returncode
+
+        child.poll = poll
+        reaped: list[int] = []
+        monkeypatch.setattr(
+            TestProcessArgvMatchesExact, "_spawn", lambda self, token: (child, list(argv))
+        )
+        monkeypatch.setattr(
+            TestProcessArgvMatchesExact, "_reap", staticmethod(lambda c: reaped.append(c.pid))
+        )
+
+        def read(pid):
+            was_gone = gone()
+            reads.append(pid)
+            return "" if was_gone else subprocess.list2cmdline(argv)
+
+        monkeypatch.setattr(pc, "process_command_line", read)
+
+        if exits_after_read is None:
+            self.test_exact_argv_matches_and_near_misses_do_not()
+        else:
+            with pytest.raises(AssertionError, match="probe child exited"):
+                self.test_exact_argv_matches_and_near_misses_do_not()
+        # One matching read, then both near-miss reads, in every case.
+        assert reads == [UNALLOCATABLE_PID] * 3
+        assert reaped == [UNALLOCATABLE_PID]
 
     def test_windows_rejects_bad_pid_before_any_read(self, monkeypatch):
         seen = self._as_windows(monkeypatch, "ssh.exe h")
@@ -7799,6 +7898,33 @@ class TestKillAndReap:
         proc.kill.assert_called_once()
 
 
+class TestTerminateAndReapSyncReapedChild:
+    """The blocking twin of the reaped-child guard in :func:`kill_and_reap`."""
+
+    @pytest.mark.parametrize("live", [True, False])
+    def test_the_tree_kill_addresses_only_a_child_that_is_not_reaped(self, live) -> None:
+        """``terminate_and_reap_sync``'s fallback (Windows, a reaped child, or
+        one outside its own group) kills by pid. Once ``poll()`` has reaped the
+        child its pid may name another process, so only an unreaped child's
+        tree is killed. The group and same-group probes are pinned so the reap
+        check alone decides."""
+        from unittest import mock
+
+        proc = mock.MagicMock()
+        proc.pid = 99_999_999_999  # above every pid_max: never a live process
+        proc.poll.return_value = None if live else 0
+        with (
+            mock.patch.object(pc, "_isolated_group_of_live_child", lambda *a, **k: None),
+            mock.patch.object(pc, "_shares_own_process_group", lambda _pid: False),
+            mock.patch.object(pc, "kill_process_tree") as tree,
+        ):
+            pc.terminate_and_reap_sync(proc, grace=0.1, reap_timeout=0.1)
+        if live:
+            tree.assert_called_once_with(99_999_999_999, pc.SIGKILL)
+        else:
+            tree.assert_not_called()
+
+
 class TestPublishDirNoreplace:
     """Workspace installs must never replace a raced empty
     destination -- POSIX os.rename silently replaces an empty directory, so
@@ -7939,6 +8065,26 @@ class TestOpenLockFile:
         assert lock.exists()
         assert lock.read_bytes() == b""
 
+    def test_non_creating_open_refuses_a_missing_file_and_creates_nothing(self, tmp_path):
+        from kiro_crew.platform_compat import open_lock_file
+
+        lock = tmp_path / "absent.lock"
+        with pytest.raises(FileNotFoundError):
+            with open_lock_file(lock, create=False):
+                pass
+        assert not lock.exists()
+
+    def test_non_creating_open_preserves_existing_content(self, tmp_path):
+        lock = tmp_path / "held.lock"
+        lock.write_text("holder-pid 1234")
+        from kiro_crew.platform_compat import file_lock, open_lock_file
+
+        with open_lock_file(lock, create=False) as fd:
+            assert lock.read_text() == "holder-pid 1234"  # open did not truncate
+            with file_lock(fd, exclusive=True):
+                pass
+        assert lock.read_text() == "holder-pid 1234"
+
     def test_no_lock_site_opens_truncating(self):
         # CONTRACT (the work-ledger fix's test shape, applied fleet-wide): grep the source
         # tree for a truncating open whose descriptor is handed to a
@@ -7948,13 +8094,6 @@ class TestOpenLockFile:
         import kiro_crew
 
         src_root = os.path.dirname(os.path.abspath(kiro_crew.__file__))
-        # deploy/pending.py and deploy/profiles.py are owned by an in-flight
-        # deploy-locks fix; drop the exemptions once it merges — the scan
-        # will then enforce those sites too.
-        exempt = {
-            os.path.join(src_root, "deploy", "pending.py"),
-            os.path.join(src_root, "deploy", "profiles.py"),
-        }
         offenders = []
         open_w = re.compile(r"""\bopen\([^)]*["']wb?["']\)""")
         acquire = re.compile(r"\b(file_lock|flock_exclusive|acquire_lock)\(\s*\w+\.fileno\(\)")
@@ -7963,8 +8102,6 @@ class TestOpenLockFile:
                 if not name.endswith(".py"):
                     continue
                 path = os.path.join(dirpath, name)
-                if path in exempt:
-                    continue
                 with open(path, encoding="utf-8", errors="replace") as fh:
                     lines = fh.readlines()
                 for i, line in enumerate(lines):

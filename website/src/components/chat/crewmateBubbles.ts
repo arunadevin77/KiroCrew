@@ -104,16 +104,17 @@ export function isCrewmateSpeech(m: ChatMessage): boolean {
   return !isHiddenInvisibleAssistantRow(m) && !isSystemNoticeRow(m) && !isWorkflowCompletionMessage(m) && !isSubagentCompletionMessage(m)
 }
 
-/** The runner's own empty-response recovery cards ("ended without a closing
- *  reply — continuing once", "send a message to continue"): the runner talking
- *  about its machinery, tagged `meta.kind = "empty_turn"` by `chat_runner`
- *  (`chat_utils.EMPTY_TURN_NOTICE_KIND`). A person reading a crewmate's chat
- *  has nothing to do with them, so they are dropped by the tag, never by their
- *  words. A `notice` row with any other tag (an automation arm refusal, say)
- *  still draws: it names something the person may have to act on. */
-const EMPTY_TURN_NOTICE_KIND = 'empty_turn'
-function isEmptyTurnNotice(m: ChatMessage): boolean {
-  return m.role === 'notice' && (m.meta as { kind?: unknown } | undefined)?.kind === EMPTY_TURN_NOTICE_KIND
+/** The `notice` kinds a crewmate's chat drops: the runtime's own machinery that
+ *  the person has nothing to do with. `empty_turn` is the runner's empty-response
+ *  recovery card (`chat_utils.EMPTY_TURN_NOTICE_KIND`); `arm_refusal` is the
+ *  automation arm/revision/stop refusal (`session_directive_apply.ARM_REFUSAL_NOTICE_KIND`),
+ *  which is re-routed to the crewmate's next turn as an `inject` row instead.
+ *  Every notice OUTSIDE this set names something the person may have to act on
+ *  (a dropped queued message, a model-fallback hint) and keeps drawing. */
+const CREWMATE_HIDDEN_NOTICE_KINDS: ReadonlySet<string> = new Set(['empty_turn', 'arm_refusal'])
+function isHiddenCrewmateNotice(m: ChatMessage): boolean {
+  const kind = (m.meta as { kind?: unknown } | undefined)?.kind
+  return typeof kind === 'string' && CREWMATE_HIDDEN_NOTICE_KINDS.has(kind)
 }
 
 /** Whether a row is drawn in a crewmate's chat at all. */
@@ -121,7 +122,15 @@ export function isCrewmateChatRow(m: ChatMessage): boolean {
   if (MACHINERY_ROLES.has(m.role)) return false
   if (m.role === 'assistant') return isCrewmateSpeech(m)
   if (m.role === 'system') return isStopCard(m)
-  if (isEmptyTurnNotice(m)) return false
+  // A crewmate's chat shows messages only, so a `notice` the runtime writes
+  // about its OWN machinery is dropped — an empty-turn recovery card, and the
+  // automation arm/revision/stop refusal, which reaches the crewmate through
+  // its next turn instead (`session_directive_apply`). The drop is by an
+  // ALLOWLIST of those kinds, never by role: a notice the PERSON must act on
+  // (a dropped queued message, a model-fallback hint, a directive-not-applied
+  // warning) has no second route, so it keeps drawing. The Sessions page draws
+  // every notice as today.
+  if (m.role === 'notice') return !isHiddenCrewmateNotice(m)
   // A pending approval is the approval surface and stays; a RESOLVED one draws
   // nothing (its renderer returns null) and must not count as content — kept,
   // it would hide the quiet hint behind a blank chat. Same rule `isRunTransparent`
@@ -153,13 +162,16 @@ function neighbour(messages: ChatMessage[], index: number, dir: -1 | 1): ChatMes
  *  wake or an envelope between two replies is filtered out — so the boundary
  *  is read from the UNFILTERED transcript when the caller passes it: any row
  *  between the two that is not the turn's own machinery ends the turn. Without
- *  a transcript (a host that has none) adjacency in the drawn list is the rule. */
+ *  a transcript (a host that has none) adjacency in the drawn list is the rule.
+ *  A change card or guide offer (`card` rows) is the crewmate's own proposal,
+ *  so it joins the run like a message, grouped with the reply that explains it
+ *  instead of floating between two speakers. */
 function chained(
   a: ChatMessage | undefined,
   b: ChatMessage | undefined,
   transcript: ChatMessage[] | undefined,
 ): boolean {
-  if (!a || !b || !isCrewmateSpeech(a) || !isCrewmateSpeech(b)) return false
+  if (!a || !b || !isRunMember(a) || !isRunMember(b)) return false
   if (!transcript) return true
   const ia = transcript.indexOf(a)
   const ib = transcript.indexOf(b)
@@ -172,6 +184,16 @@ function chained(
     return false
   }
   return true
+}
+
+/** The `card` role a change card or guide offer is written under
+ *  (cards/ConversationCard's CARD_ROLE, restated to keep this module free of
+ *  the card store's imports). */
+const CARD_ROW_ROLE = 'card'
+
+/** A row that belongs to the crewmate's run: its speech, or its own proposal. */
+function isRunMember(m: ChatMessage): boolean {
+  return isCrewmateSpeech(m) || m.role === CARD_ROW_ROLE
 }
 
 /** A completion envelope is a turn boundary WHATEVER role carries it: a
@@ -245,6 +267,12 @@ const BUBBLE_BASE =
 /** Classes for the crewmate's message bubble at `pos`. */
 export function crewmateBubbleClass(pos: CrewmateRunPosition): string {
   return `${BUBBLE_BASE} ${CORNERS[pos]}`
+}
+
+/** The run's corner rule alone, for a surface in the run that draws its own
+ *  box (a change card or guide offer). */
+export function crewmateCornerClass(pos: CrewmateRunPosition): string {
+  return CORNERS[pos]
 }
 
 /** Vertical rhythm of a row. Bubbles inside a run sit close but never touch:

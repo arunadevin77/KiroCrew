@@ -23,9 +23,10 @@ import { glideDurationMs, runConvergingGlide } from '../../utils/convergingGlide
  * Whether `node` is one of the transcript's own row wrappers. Rows are never
  * nested, so a `data-display-index` node inside another row came from message
  * content (the markdown sanitizer admits arbitrary `data-*`). Every row read in
- * this hook goes through here so a message cannot forge the index it reads.
+ * this hook goes through here so a message cannot forge the index it reads, and
+ * so does the turn stepper's (useTurnStepper).
  */
-function isTranscriptRow(node: Element, scroller: Element): boolean {
+export function isTranscriptRow(node: Element, scroller: Element): boolean {
   const owner = node.parentElement?.closest('[data-display-index]')
   return !(owner && scroller.contains(owner))
 }

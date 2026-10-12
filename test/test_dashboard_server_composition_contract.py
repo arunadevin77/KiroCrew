@@ -444,6 +444,7 @@ def test_the_shared_state_keeps_its_identity() -> None:
 _LAZY_IMPORTS = {
     "kiro_crew": "_hist_mod _rs stt",
     "kiro_crew.agent": "rebuild_agent_config rebuild_agent_config_reporting",
+    "kiro_crew.change_card_catalog": "HOOKED_ROUTES",
     "kiro_crew.apps.bridges": "reconcile_enabled_app_resources",
     "kiro_crew.apps.dev_mode": "init_dev_mode_watcher stop_dev_mode_watcher",
     "kiro_crew.apps.event_bus": "build_broadcast_fn",
@@ -456,6 +457,7 @@ _LAZY_IMPORTS = {
     "kiro_crew.dashboard.chat": "_run_chat",
     "kiro_crew.dashboard.handlers": "wf_handlers work_ledger",
     "kiro_crew.dashboard.handlers.ask_question": (
+        "api_agent_ask_open api_agent_ask_wait api_agent_ask_withdraw "
         "api_ask_question api_ask_question_answer api_ask_question_dismiss "
         "api_ask_question_pending"
     ),
@@ -465,6 +467,7 @@ _LAZY_IMPORTS = {
         "api_monitor_restart api_monitor_slot_get api_monitor_stop api_monitor_update "
         "api_monitors_list api_session_monitor_get"
     ),
+    "kiro_crew.dashboard.handlers.change_cards": "change_card_middleware",
     "kiro_crew.dashboard.handlers.decisions": "resume_local_decision_model",
     "kiro_crew.dashboard.handlers.sandbox_doc": "register_sandbox_doc_routes",
     "kiro_crew.dashboard.handlers.updates": "apply_log_level_from_config",
@@ -509,7 +512,7 @@ def test_the_lazy_imports_stay_inside_the_functions_that_need_them() -> None:
                     for alias in node.names:
                         local.setdefault(alias.asname or alias.name, set()).add(alias.name)
     assert local == {name: {module} for name, module in expected.items()}
-    assert len(expected) == 76
+    assert len(expected) == 81
 
 
 def test_a_star_import_carries_the_moved_public_names(tmp_path: Path) -> None:
@@ -1305,8 +1308,9 @@ def test_no_owner_captures_a_name_tests_rebind_on_the_facade() -> None:
 #: layer and the factory that built it. The order is a security contract: latency is
 #: outermost, the deny-audit boundary is outer to every barrier that can refuse, the
 #: SEL request audit is inner to them, the per-slot ownership checkpoint is inner to
-#: token auth and the audit record, and the workflow and crewmate-prune gates are
-#: appended after the explicit list.
+#: token auth and the audit record, and the workflow and crewmate-prune gates and the
+#: change-card hook (innermost, after auth has classified the caller) are appended
+#: after the explicit list.
 _DASHBOARD_CHAIN = (
     ("route_latency_middleware", "make_route_latency_middleware.<locals>."),
     ("deny_audit_middleware", "_make_deny_audit_middleware.<locals>."),
@@ -1321,6 +1325,7 @@ _DASHBOARD_CHAIN = (
     ("spa_fallback", "_install_dashboard_middlewares.<locals>."),
     ("_workflow_ready", "_register_workflow_lifecycle.<locals>."),
     ("_crewmate_prune_gate", "_register_crewmate_prune_gate.<locals>."),
+    ("_change_card_hook", "_register_change_card_hook.<locals>."),
 )
 _API_CHAIN = (
     ("route_latency_middleware", "make_route_latency_middleware.<locals>."),
@@ -1404,9 +1409,14 @@ _DASHBOARD_BOOT = tuple("""
     _register_mcp_routes _deferred _deferred setup_spawn_resume_routes
     _deferred_work_ledger _deferred_work_ledger _deferred_work_ledger
     _deferred_work_ledger _deferred_work_ledger _deferred _deferred _deferred _deferred
+    _deferred
     _deferred _deferred _deferred _deferred _deferred _deferred _deferred _deferred
     _deferred _deferred _deferred _deferred _deferred _deferred _deferred _deferred
-    _deferred _deferred _deferred
+    _deferred _deferred _deferred _deferred
+    _deferred _deferred _deferred _deferred
+    _deferred _deferred _deferred _deferred _deferred _deferred _deferred _deferred
+    _deferred _deferred _deferred _deferred _deferred _deferred _deferred _deferred
+    _deferred _deferred _deferred _deferred _deferred _deferred _deferred _deferred
     _deferred _deferred _deferred _deferred _deferred
     register_all subprocess_executor subprocess_executor subprocess_executor
     subprocess_executor subprocess_executor subprocess_executor _register_deploy_routes
@@ -1425,7 +1435,7 @@ _DASHBOARD_BOOT = tuple("""
     _register_stt_hooks _register_own_host_warm _register_config_watch
     _register_instances_hooks _register_browser_install_cleanup
     _register_browser_view_cleanup _register_connections_warm_lifecycle
-    _register_workflow_lifecycle _register_crewmate_prune_gate
+    _register_workflow_lifecycle _register_crewmate_prune_gate _register_change_card_hook
     _register_unix_socket_cleanup build_hardened_runner on_gateway_startup
     init_hook_reconciler async_safe_context_call current_context _arm_listener_guard
     _kick_crewmate_prune subprocess_executor _start_unix_site _resolved_bound_port
@@ -1466,9 +1476,14 @@ _API_BOOT = tuple("""
     _register_mcp_routes _deferred _deferred setup_spawn_resume_routes
     _deferred_work_ledger _deferred_work_ledger _deferred_work_ledger
     _deferred_work_ledger _deferred_work_ledger _deferred _deferred _deferred _deferred
+    _deferred
     _deferred _deferred _deferred _deferred _deferred _deferred _deferred _deferred
     _deferred _deferred _deferred _deferred _deferred _deferred _deferred _deferred
-    _deferred _deferred _deferred
+    _deferred _deferred _deferred _deferred
+    _deferred _deferred _deferred _deferred
+    _deferred _deferred _deferred _deferred _deferred _deferred _deferred _deferred
+    _deferred _deferred _deferred _deferred _deferred _deferred _deferred _deferred
+    _deferred _deferred _deferred _deferred _deferred _deferred _deferred _deferred
     _deferred _deferred _deferred _deferred _deferred
     _register_deploy_routes _register_stt_hooks _register_own_host_warm
     _register_config_watch _register_prevent_sleep_shutdown
@@ -1683,8 +1698,8 @@ def _routes(app: web.Application) -> list[tuple[str, str, str]]:
 #: SHA-256 of the MCP route table's ``"<method> <path> <handler>"`` rows in
 #: registration order, and their count. The table is shared by both entrypoints, so a
 #: route added to it on purpose updates these with it.
-_MCP_TABLE_ROWS = 243
-_MCP_TABLE_DIGEST = "64719190fbe9fb9e6aa8fb47a352017e81cffeb39734d741c8a1c60163b9a6d3"
+_MCP_TABLE_ROWS = 278
+_MCP_TABLE_DIGEST = "b89c0b9c4e6eeef603eaf96d34ca79eb274050121c6919ecd69575f2a185a29a"
 
 
 def test_the_mcp_route_table_keeps_its_rows_and_order() -> None:

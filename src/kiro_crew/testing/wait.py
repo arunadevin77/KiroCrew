@@ -17,6 +17,16 @@ test that patches the stdlib clock and then imports it for the first time
 captures the fake (the rootdir conftest puts the session's originals back at
 each test's setup, which covers this repository's suites). Besides the standard library the module
 imports only ``kiro_crew.loop_lock``; it never imports pytest.
+
+Wait on signals, not clocks. A test that waits a fixed short time for something
+the code signals -- ``wait_for(..., timeout=5)``, ``.result(timeout=5)``, a poll of
+200 five-millisecond turns, a 50 ms module constant -- is betting that the runner is
+as fast as the machine it was written on, and that bet is the single commonest
+cause of a flaky backend test in this repository. :func:`await_until` awaits the
+event or future itself under the lost-run bound; :class:`LoopHop` does the same for
+a hook that must run a coroutine on the loop from an executor thread.
+``test/test_wait_discipline_ratchet.py`` holds every test file to the number of
+short fixed waits it already has.
 """
 
 from __future__ import annotations
@@ -33,7 +43,9 @@ __all__ = [
     "DEFAULT_INTERVAL_SECS",
     "DEFAULT_PROGRESS_WINDOW_SECS",
     "FALLBACK_TIMEOUT_SECS",
+    "LoopHop",
     "async_wait_until",
+    "await_until",
     "default_timeout",
     "drained_progress",
     "runner_timeout_secs",
@@ -464,3 +476,110 @@ def drained_progress(
             window_end = now + window
             continue
         _sleep(min(interval, window_end - now))
+
+
+# ── signals: await the thing itself, under a lost-run bound ─────────────
+
+
+def _signal_failure(what: str, elapsed: float, budget: float, state: str) -> AssertionError:
+    return AssertionError(
+        f"{what} had not happened after {elapsed:.2f}s (lost-run bound {budget:.2f}s); {state}"
+    )
+
+
+async def await_until(
+    signal: asyncio.Event | asyncio.Future[Any],
+    *,
+    timeout: float | None = None,
+    what: str = "",
+) -> Any:
+    """Await the signal the code under test emits, under a lost-run bound only.
+
+    The replacement for ``asyncio.wait_for(signal, <short number>)`` in a test:
+
+    * an :class:`asyncio.Event`: returns ``True`` once it is set;
+    * an :class:`asyncio.Future` -- a task, a ``gather``: returns its result. Its
+      own exception propagates as itself, and an expired bound never cancels it,
+      because the test owns it.
+
+    A state with no event or future behind it is :func:`async_wait_until`.
+
+    ``timeout`` is a lost-run bound, not the barrier: by default half of the running
+    test's timeout (:func:`default_timeout`), never a number tuned to the host. When
+    it expires the ``AssertionError`` names ``what`` (or the kind of signal) and the
+    elapsed time, so a hang fails by name instead of killing the worker.
+    """
+    budget = _resolve_timeout(timeout)
+    if isinstance(signal, asyncio.Event):
+        if signal.is_set():
+            return True
+        waiter = asyncio.ensure_future(signal.wait())
+        start = _monotonic()
+        set_, _ = await asyncio.wait({waiter}, timeout=budget)
+        if waiter in set_:
+            return waiter.result()
+        waiter.cancel()
+        raise _signal_failure(
+            what or "the event", _monotonic() - start, budget, "it is still clear"
+        )
+    if not asyncio.isfuture(signal):
+        raise TypeError(
+            "await_until() takes an asyncio.Event or an asyncio future, not "
+            f"{type(signal).__name__}; a state with neither behind it is async_wait_until()"
+        )
+    start = _monotonic()
+    done, _ = await asyncio.wait({signal}, timeout=budget)
+    if signal in done:
+        return signal.result()
+    raise _signal_failure(what or "the future", _monotonic() - start, budget, "it is still pending")
+
+
+class LoopHop:
+    """Run loop-side coroutines from an off-loop hook, and fail the TEST on a hang.
+
+    A hook under test calls :meth:`run` while the handler awaits the hook off the
+    loop. An exception raised inside the hook reaches the framework that called it
+    (aiohttp, an executor), not pytest: a ``TimeoutError`` becomes a bodiless 504
+    and anything else a 500, so the test would read a status instead of a cause.
+    So an expired bound is recorded here with the elapsed time and the last step
+    the coroutine noted, the hook still raises (the handler must not continue as if
+    the hop landed), and the test calls :meth:`check` right after its request to
+    fail on that record.
+
+    The bound is a lost-run ceiling, not a race to tune: half the running test's
+    timeout (:func:`default_timeout`). The hop waits for the loop to finish
+    real durable work -- a session delete is a SQLite commit, a WAL checkpoint, an
+    fsync and sidecar unlinks -- and takes 0.03 s per call on a quiet 32-core Linux
+    host while exceeding 5 s on the Windows runner, so the Windows worst case is
+    "over 5 s", not a number.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._timeout = default_timeout()
+        self.steps: list[str] = []
+        self.failure = ""
+
+    def note(self, step: str) -> None:
+        """Record progress from inside the coroutine, for the failure message."""
+        self.steps.append(step)
+
+    def run(self, coro: Awaitable[_T], what: str) -> _T:
+        """Run ``coro`` on the loop from this (off-loop) thread and return its result."""
+        started = _monotonic()
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)  # type: ignore[arg-type]
+        try:
+            return future.result(timeout=self._timeout)
+        except TimeoutError:
+            future.cancel()
+            last = self.steps[-1] if self.steps else "nothing noted yet"
+            self.failure = (
+                f"{what} was still pending on the loop after "
+                f"{_monotonic() - started:.1f}s (lost-run ceiling "
+                f"{self._timeout:.0f}s); last step: {last}"
+            )
+            raise AssertionError(self.failure) from None
+
+    def check(self) -> None:
+        """Fail by name if a hop expired; call it before reading the response."""
+        assert not self.failure, self.failure

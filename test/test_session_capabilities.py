@@ -60,6 +60,7 @@ class FakeProvider(LLMProvider):
         self.sid = ""
         self.active = ""
         self.supported = True
+        self.tool_limits = True
         self.fail = False
         self.after_start = None
         self.starts = 0
@@ -116,6 +117,10 @@ class FakeProvider(LLMProvider):
     @property
     def member_capabilities_supported(self):
         return self.supported
+
+    @property
+    def member_tool_limits_supported(self):
+        return self.tool_limits
 
     @property
     def loaded_capability_template(self):
@@ -383,6 +388,16 @@ async def test_dashboard_enrolled_member_controls_through_real_manager(
             assert not state.sessions.has_session(key)
             assert view["status"] == "failed"
             assert "capability_harness_unsupported" in caplog.text
+            # An expected pre-spawn refusal: a warning, never a traceback.
+            refusals = [
+                r for r in caplog.records if "capability_harness_unsupported" in r.getMessage()
+            ]
+            assert refusals and all(r.levelname == "WARNING" for r in refusals)
+            assert not [r for r in caplog.records if "Dashboard chat error" in r.getMessage()]
+            # The row names the setting that decides, and the saved spec.
+            row = next(m for m in slot.messages if m.get("role") == "error")
+            assert "agent.member_acp_backend" in row["content"]
+            assert "saved capabilities" in row["content"]
     finally:
         await _close_capability_dashboards(world)
 
@@ -592,11 +607,14 @@ async def test_governance_change_during_startup_is_not_applied(world):
 
 @pytest.mark.parametrize("backend", sorted(ACP_BACKENDS_KNOWN))
 def test_real_provider_support_is_explicit_and_unstarted_is_unverified(tmp_path, backend):
-    from kiro_crew.acp.types import ACP_BACKEND_KIRO
+    from kiro_crew.acp.types import ACP_BACKEND_KAS, ACP_BACKEND_KIRO
     from kiro_crew.providers.acp import AcpProvider
 
     provider = AcpProvider(work_dir=tmp_path, acp_backend=backend)
-    assert provider.member_capabilities_supported is (backend == ACP_BACKEND_KIRO)
+    # KAS is the default member backend, so a saved spec must load there.
+    assert provider.member_capabilities_supported is (
+        backend in (ACP_BACKEND_KIRO, ACP_BACKEND_KAS)
+    )
     assert provider.loaded_capability_template == ""
 
 
@@ -605,12 +623,15 @@ def test_real_session_provider_member_support_is_explicit(tmp_path, backend):
     from kiro_crew.acp.runtime import AcpRuntime
     from kiro_crew.acp.session_handle import AcpSessionHandle, WatchdogSettings
     from kiro_crew.acp.session_provider import AcpSessionProvider
-    from kiro_crew.acp.types import ACP_BACKEND_KIRO
+    from kiro_crew.acp.types import ACP_BACKEND_KAS, ACP_BACKEND_KIRO
 
     runtime = AcpRuntime(work_dir=tmp_path, acp_backend=backend)
     handle = AcpSessionHandle("member", asyncio.Queue(), runtime, watchdog=WatchdogSettings())
     provider = AcpSessionProvider(handle, runtime, owns_runtime=True)
-    assert provider.member_capabilities_supported is (backend == ACP_BACKEND_KIRO)
+    # KAS is the default member backend, so a saved spec must load there.
+    assert provider.member_capabilities_supported is (
+        backend in (ACP_BACKEND_KIRO, ACP_BACKEND_KAS)
+    )
     assert provider.loaded_capability_template == ""
 
 
@@ -876,6 +897,56 @@ async def test_http_reports_observed_runtime_without_applying_preview(world):
             assert broken["runtime"]["status"] == "failed"
             assert broken["runtime"]["error_code"] == "materialization_changed"
             manager.release("dashboard:A")
+    finally:
+        await manager.close_all(drain_timeout=0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("honoured", [True, False], ids=["kiro_like", "kas_like"])
+async def test_saved_per_tool_switch_off_is_refused_before_spawn_where_dropped(world, honoured):
+    """A saved ``disabledTools`` never runs wider: refused pre-spawn where unsupported."""
+    from kiro_crew.dashboard.chat_runner import _is_pre_spawn_refusal
+
+    service, cfg, factory, made, project, _, _ = world
+
+    def enroll_with_limited_server():
+        request = {
+            "revision": service.get("A")["revision"],
+            "enroll": True,
+            "operations": [
+                {
+                    "section": "mcpServers",
+                    "id": "docs",
+                    "action": "set",
+                    "value": {"command": "example-mcp", "disabledTools": ["wipe"]},
+                }
+            ],
+        }
+        preview = service.preview("A", request)
+        service.put("A", {**request, "preview_token": preview["preview_token"]})
+
+    await asyncio.to_thread(enroll_with_limited_server)
+    prepared = await asyncio.to_thread(prepare_member_capabilities, "A", project)
+    assert prepared["tool_limited_servers"] == ("docs",)
+
+    def limited_factory(key, **kwargs):
+        provider = factory(key, **kwargs)
+        provider.tool_limits = honoured
+        return provider
+
+    manager = SessionManager(cfg, provider_factory=limited_factory)
+    try:
+        if honoured:
+            await manager.get_or_create("dashboard:A", agent="A", cwd=str(project))
+            assert made[0].starts == 1
+        else:
+            with pytest.raises(CapabilityStartupError) as refused:
+                await manager.get_or_create("dashboard:A", agent="A", cwd=str(project))
+            assert str(refused.value) == "capability_tool_limits_unsupported"
+            # Before any process: nothing started, and the eager-spawn cap is not charged.
+            assert made[0].starts == 0
+            assert not manager.has_session("dashboard:A")
+            assert _is_pre_spawn_refusal(refused.value)
     finally:
         await manager.close_all(drain_timeout=0)
 

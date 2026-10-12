@@ -732,6 +732,14 @@ screens it through `_validate_spec_path` (`hooks.validate_file_path`, off the ev
 loop): a traversal, a missing file or a UNC/laundered link answers
 `400 invalid_spec_path`, and a sensitive credential path answers `403 access_denied`.
 
+Starting is refused while the `projects` app (the Task Runner page) is
+switched off in Library: `POST /api/taskrunner` answers 409 `app_disabled`
+("Task Runner is disabled. Enable it in Library to start tasks.") before any
+inline spec is written, the `task_run` MCP tool relays the same refusal, and
+the chat command `task run <spec>` replies with that sentence. Only an
+explicit `enabled: false` install record counts as disabled
+(`apps.manager.app_disabled`); a host with no record runs tasks.
+
 ### Status Response
 
 A partial example; each run also carries `name`, `auto_approve`,

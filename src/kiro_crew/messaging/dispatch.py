@@ -1467,7 +1467,8 @@ class Asker:
     ``None`` leaves it unmirrored. ``addressed=False`` is a rules-mode message
     nobody addressed to the agent: no decider, no record, and the tool-less refusal
     ends silently (the turn-ceiling and member-memory refusals still render).
-    ``model`` reaches a session only at creation.
+    ``model`` reaches a session only at creation. ``agent`` is this
+    conversation's own ``/agent`` pick; ``None`` runs the pipeline's agent.
     """
 
     session_key: str
@@ -1482,6 +1483,7 @@ class Asker:
     origin: ChannelLink | None = None
     display_name: str | None = None
     model: str | None = None
+    agent: str | None = None
 
     @property
     def can_prompt(self) -> bool:
@@ -1898,7 +1900,7 @@ class ChannelTurns:
         # session is acquired.
         if Drift.NO_GOVERNANCE_BACKSTOP not in drift and not await inbound_permitted(channel):
             return self._outcome(Verdict.DENIED, monitor)
-        agent = self._agent()
+        agent = asker.agent or self._agent()
         if asker.resumed:
             # A resumed session must run as ITSELF: on a cold start ``get_or_create``
             # applies the agent it is handed, so the dispatcher's own agent would load
@@ -2416,6 +2418,34 @@ class ChannelTurns:
                 )
                 await sessions.record_failure(session_key)
                 verdict = Verdict.UNDELIVERED
+            elif getattr(driver, "unfinished_turn", False) is True:
+                # The handle ended a turn the backend never finished; the driver
+                # already followed the partial text with the timeout notice. The
+                # runtime still reads alive, so book a failure and reset the
+                # session (keeping the conversation), as the compaction-failure
+                # retry above does, or the next message waits on it again.
+                logger.warning(
+                    "%s: the turn for %s ended unfinished (%s); resetting the session",
+                    channel,
+                    session_key,
+                    stop_reason,
+                )
+                # At its threshold the breaker resets the session inside
+                # record_failure and answers True. A same-key message can claim a
+                # successor while that reset is awaited, so a second reset here
+                # would end the successor mid-turn: reset only when it did not.
+                breaker_reset = await sessions.record_failure(session_key)
+                verdict = Verdict.FAILED
+                if breaker_reset is not True:
+                    try:
+                        await sessions.reset(session_key)
+                    except Exception:
+                        logger.warning(
+                            "%s: session reset after an unfinished turn failed session=%s",
+                            channel,
+                            session_key,
+                            exc_info=True,
+                        )
             else:
                 _record_success(sessions, session_key, channel)
                 verdict = Verdict.ANSWERED

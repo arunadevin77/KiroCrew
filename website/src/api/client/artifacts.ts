@@ -10,6 +10,7 @@
  */
 
 import type { SessionDoc, PublishProviderDescriptor } from '../../types'
+import type { Site } from '../../hooks/useDirectDeploy'
 import { toApiError } from '../apiError'
 import type { ClientTransport } from './transport'
 
@@ -21,6 +22,19 @@ export interface AppPublishProvider {
   configured: boolean
   setupRoute: string
   endpoint: string
+}
+
+/** What `GET /api/deploy/list` answers: every public-web site, read live from the
+ *  AWS accounts' resource tags. `configured: false` means no AWS profile is
+ *  registered, so there is nothing to list; `profile_errors` names the profiles
+ *  whose account could not be read. `error` is set when the listing could not
+ *  run on this host at all (deploy is unsupported on native Windows): the
+ *  answer is still HTTP 200, with no sites and `configured: false`. */
+export interface DeploySitesResponse {
+  sites: Site[]
+  configured: boolean
+  profile_errors?: string[]
+  error?: string
 }
 
 export function createArtifactsEndpoints({ get, post, del, patch, j, jfetch: fetch, checkSessionExpired, removeAuthBanner }: ClientTransport) {
@@ -225,10 +239,15 @@ export function createArtifactsEndpoints({ get, post, del, patch, j, jfetch: fet
      *  Separate from `publishToProvider` on purpose: that one routes at an app's declared
      *  endpoint and falls back to `/api/deploy/deploy`, which is per-artifact deploy
      *  infrastructure -- a different destination, not a different spelling of this one. */
-    publishArtifactToCoreProvider: async (slug: string, providerName: string) => {
+    publishArtifactToCoreProvider: async (
+      slug: string,
+      providerName: string,
+      visibility: 'PRIVATE' | 'SHARED' | 'PUBLIC' = 'PUBLIC',
+      sharedWith: string[] = [],
+    ) => {
       const r = await post(`/api/artifacts/${encodeURIComponent(slug)}/publish`, {
-        visibility: 'PUBLIC',
-        shared_with: [],
+        visibility,
+        shared_with: sharedWith,
         provider: providerName,
       })
       checkSessionExpired(r)
@@ -246,14 +265,23 @@ export function createArtifactsEndpoints({ get, post, del, patch, j, jfetch: fet
         return { error: text }
       }
     },
-    publishToProvider: async (slug: string, providerId: string, provider?: AppPublishProvider, ttlHours?: number) => {
+    publishToProvider: async (
+      slug: string,
+      providerId: string,
+      provider?: AppPublishProvider,
+      ttlHours?: number,
+      profile?: string,
+    ) => {
       // Route to the provider's declared endpoint with the payload shape
       // that _do_deploy expects (site_id + artifact_slug). ttl_hours is sent on
       // BOTH preview and confirm so the previewed TTL matches what is deployed
       // (omitting it here makes preview use the backend 72h default).
+      // `profile` names the AWS profile to deploy with; omitted, the backend
+      // uses its default profile.
       const endpoint = provider?.endpoint || '/api/deploy/deploy'
       const payload: Record<string, unknown> = { site_id: slug, artifact_slug: slug, provider_id: providerId }
       if (ttlHours !== undefined) payload.ttl_hours = ttlHours
+      if (profile) payload.profile = profile
       const r = await post(endpoint, payload)
       checkSessionExpired(r)
       if (r.ok) { removeAuthBanner(); return r.json() }
@@ -261,6 +289,10 @@ export function createArtifactsEndpoints({ get, post, del, patch, j, jfetch: fet
       if (r.status === 409) { return r.json() }
       throw await toApiError(r)
     },
+    /** Every live public-web site across the registered AWS profiles. The deploy
+     *  keys a site by the artifact slug, so this is how a surface finds an
+     *  artifact's existing public link without a stored copy of it. */
+    deploySites: () => get('/api/deploy/list').then(j) as Promise<DeploySitesResponse>,
   }
 
   return { library, remoteAndComments, publishing }

@@ -3944,14 +3944,14 @@ class TestDispatcher:
         monkeypatch.setattr(emit, "_retry_delay", lambda _attempts: 0.0)
         monkeypatch.setattr(FakeProvider, "session_id", "acp-owner-dm-turn", raising=False)
         monkeypatch.setattr(FakeProvider, "served_model", "model-x", raising=False)
-        ledger_routes._BOARD_LOCKS.clear()
+        ledger_routes._BOARD_LOCKS._locks.clear()
 
         async def _recognized(*a: Any, **k: Any) -> None:
             return None
 
         monkeypatch.setattr(ledger_routes, "_recognize_session", _recognized)
         monkeypatch.setattr(ledger_routes, "_is_restricted_session", lambda *a: False)
-        monkeypatch.setattr(ledger_routes, "_contained_channel_caller", lambda request, sk: "")
+        monkeypatch.setattr(ledger_routes, "contained_channel_caller", lambda state, sk: "")
         emit.reset_caches()
         try:
             d, _cli, sess = _dispatcher({"u1"})
@@ -3992,7 +3992,7 @@ class TestDispatcher:
             assert "parent" not in opened[0].data
             assert [e.type for e in entries].count("work/recorded") == 1
         finally:
-            ledger_routes._BOARD_LOCKS.clear()
+            ledger_routes._BOARD_LOCKS._locks.clear()
             await asyncio.to_thread(settle)
 
     @pytest.mark.asyncio
@@ -6703,3 +6703,54 @@ class TestTheLiveBubbleSeamSurvivesItsEditLifecycle:
         self._assert_no_key_on_screen(
             [_delivered_form(neighbour)] + [_delivered_form(f) for f in frames]
         )
+
+
+# ── !agent (show and switch the conversation's agent) ──
+
+
+def _agent_roster():
+    from kiro_crew.agent_discovery import AgentInfo
+
+    return [
+        AgentInfo(name="beta", filename="beta.json", description="", model=""),
+        AgentInfo(
+            name="kirocrew-worker",
+            filename="kirocrew-worker.json",
+            description="",
+            model="",
+            kirocrew_owned=True,
+        ),
+    ]
+
+
+class TestAgentCommand:
+    @staticmethod
+    def _msg(text: str) -> InboundMessage:
+        return InboundMessage(channel_type="discord", user_id="u1", conversation_id="c1", text=text)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("command", ["!agent beta", "/agent beta"])
+    async def test_agent_name_switches_the_next_turn(self, monkeypatch, command) -> None:
+        monkeypatch.setattr("kiro_crew.telegram.transport_dispatch.list_agents", _agent_roster)
+        d, cli, sess = _dispatcher({"u1"})
+        await d.handle_message(self._msg(command))
+        assert any("Agent set to `beta`" in t for t, _ in cli.sent)
+        await d.handle_message(self._msg("hi"))
+        assert sess.last_agent == "beta"
+
+    @pytest.mark.asyncio
+    async def test_status_names_the_picked_agent(self, monkeypatch) -> None:
+        monkeypatch.setattr("kiro_crew.telegram.transport_dispatch.list_agents", _agent_roster)
+        d, cli, _ = _dispatcher({"u1"})
+        await d.handle_message(self._msg("!agent beta"))
+        await d.handle_message(self._msg("!status"))
+        assert "agent `beta`" in cli.sent[-1][0]
+
+    @pytest.mark.asyncio
+    async def test_internal_agent_is_refused(self, monkeypatch) -> None:
+        monkeypatch.setattr("kiro_crew.telegram.transport_dispatch.list_agents", _agent_roster)
+        d, cli, sess = _dispatcher({"u1"})
+        await d.handle_message(self._msg("!agent kirocrew-worker"))
+        assert any("No agent named" in t for t, _ in cli.sent)
+        await d.handle_message(self._msg("hi"))
+        assert sess.last_agent == "kirocrew"

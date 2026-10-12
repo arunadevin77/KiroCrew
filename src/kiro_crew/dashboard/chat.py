@@ -42,6 +42,7 @@ from kiro_crew.dashboard.chat_folders import (  # noqa: F401
     api_chat_folders,
     api_chat_slot_folder,
     api_chat_slot_mode,
+    api_chat_slot_muted,
     api_chat_slot_mutes_opened,
     api_chat_slot_pin,
 )
@@ -78,6 +79,7 @@ from kiro_crew.dashboard.chat_handlers import (  # noqa: F401
     api_chat_slot_stop,
     api_chat_slot_summary,
     api_chat_slot_summary_generate,
+    api_chat_slot_turn_timeout,
     api_chat_slot_workspace,
     api_chat_slots,
     api_chat_slots_cleanup,

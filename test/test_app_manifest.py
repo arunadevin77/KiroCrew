@@ -279,7 +279,8 @@ class TestValidation:
         for value, expected in ((False, False), (True, True)):
             m = AppManifest.from_dict(
                 _valid_manifest(
-                    crons=[{"name": "j1", "every": 300, "message": "go", "enabled": value}]
+                    crons=[{"name": "j1", "every": 300, "message": "go", "enabled": value}],
+                    permissions={"cron": True},
                 )
             )
             assert m.validate() == []
@@ -309,7 +310,10 @@ class TestValidation:
         assert not any(selector in error for error in m.validate())
         # Absent key: default enabled, no error.
         m = AppManifest.from_dict(
-            _valid_manifest(crons=[{"name": "j1", "every": 300, "message": "go"}])
+            _valid_manifest(
+                crons=[{"name": "j1", "every": 300, "message": "go"}],
+                permissions={"cron": True},
+            )
         )
         assert m.validate() == []
         assert m.crons[0].enabled is True
@@ -367,7 +371,7 @@ class TestValidation:
                 "crons": [{"name": "refresh", "every": 3600, "message": "refresh data"}],
                 "ui": {"pages": [{"route": "/apps/owt", "label": "Dashboard", "icon": "Shield"}]},
                 "backend": {"entryPoint": "backend/app.py"},
-                "permissions": {"mcpTools": ["GetPipelineHealth"], "storage": True},
+                "permissions": {"mcpTools": ["GetPipelineHealth"], "storage": True, "cron": True},
                 "setup": {"onInstall": "backend/setup.py:on_install"},
                 "tags": ["oncall"],
                 "jobFamilies": ["SDE"],
@@ -1990,3 +1994,36 @@ class TestShippedManifestsAreWellFormedJson:
                 "the effective value is whichever comes last, which is not what the "
                 "file appears to say."
             )
+
+
+class TestSignedPrincipalManifest:
+    """``backend.signedPrincipal`` is a strict, default-off opt-in."""
+
+    def test_defaults_off_and_stays_out_of_the_canonical_dict(self):
+        manifest = AppManifest.from_dict(_valid_manifest(backend={"entryPoint": "server.py"}))
+        assert manifest.backend.signedPrincipal is False
+        assert "signedPrincipal" not in manifest.to_dict()["backend"]
+
+    def test_true_round_trips(self):
+        manifest = AppManifest.from_dict(
+            _valid_manifest(backend={"entryPoint": "server.py", "signedPrincipal": True})
+        )
+        assert manifest.backend.signedPrincipal is True
+        assert manifest.to_dict()["backend"]["signedPrincipal"] is True
+        assert AppManifest.from_dict(manifest.to_dict()).backend.signedPrincipal is True
+
+    @pytest.mark.parametrize("raw", ["true", "false", 1, 0, {}, [], None])
+    def test_only_the_json_boolean_true_turns_it_on(self, raw):
+        manifest = AppManifest.from_dict(
+            _valid_manifest(backend={"entryPoint": "server.py", "signedPrincipal": raw})
+        )
+        assert manifest.backend.signedPrincipal is False
+        assert "signedPrincipal" not in manifest.to_dict()["backend"]
+
+    def test_admission_signature_covers_the_flag(self):
+        ordinary = AppManifest.from_dict(_valid_manifest(backend={"entryPoint": "server.py"}))
+        opted_in = AppManifest.from_dict(
+            _valid_manifest(backend={"entryPoint": "server.py", "signedPrincipal": True})
+        )
+        assert b"signedPrincipal" not in ordinary.signing_payload()
+        assert b'"signedPrincipal":true' in opted_in.signing_payload()

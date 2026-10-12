@@ -29,8 +29,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
-from kiro_crew import platform_compat
+from kiro_crew import context_omissions, platform_compat
 from kiro_crew.artifacts import slugify
 from kiro_crew.atomic_write import atomic_write, fsync_dir, read_bytes_with_retry
 from kiro_crew.config.paths import data_home
@@ -147,13 +148,21 @@ def select_provider_backend(
     session_key: str | None,
     member_backend: str,
     configured_default: str,
+    backend_override: str | None = None,
 ) -> str:
     """The per-session half of the ONE backend-selection gate (H3/H13).
 
-    Precedence: the member-DM auto-route, then the configured default. The
-    member arm goes through :func:`resolve_selected_backend` — the same
-    governance/selectability gate the persisted field crosses, so a denied or
-    unknown value degrades to kiro and the member thread runs as plain chat.
+    Precedence: the caller's explicit backend (``backend_override``, a
+    sub-agent spawned with ``spawn_run(backend=...)``), then the member-DM
+    auto-route, then the configured default. ``None`` is no override, so the
+    lower tiers decide exactly as before; ``""`` is Kiro's own id, not "unset".
+
+    The override and member arms go through :func:`resolve_selected_backend` —
+    the same governance/selectability gate the persisted field crosses, so a
+    denied or unknown value degrades to kiro with the reason in the log. The
+    spawn endpoint refuses an unselectable backend up front; this gate is what
+    still holds when governance narrows the set between the refusal check and
+    the cold start.
 
     Lives here rather than inline in ``create_provider_factory`` so the
     factory body stays a single selection CALL with no branching of its own:
@@ -162,6 +171,15 @@ def select_provider_backend(
     """
     from kiro_crew.acp_backends import resolve_selected_backend
 
+    if backend_override is not None:
+        backend = resolve_selected_backend(backend_override)
+        logger.info(
+            "session %s: backend override %r resolved to acp_backend=%r",
+            session_key,
+            backend_override,
+            backend,
+        )
+        return backend
     if is_member_session_key(session_key):
         backend = resolve_selected_backend(member_backend)
         logger.info(
@@ -472,10 +490,49 @@ def key_new_crew(name: str, display_name: str, agents: Mapping[str, object]) -> 
     else:
         key, label = crew_id_for_display_name(name, agents), display_name or name
     shown = label or key
-    for other_key, other in agents.items():
-        if (getattr(other, "display_name", "") or other_key) == shown:
-            return NewCrewKey(key, label, shown)
+    if crew_showing(shown, agents):
+        return NewCrewKey(key, label, shown)
     return NewCrewKey(key, label, "")
+
+
+def crew_showing(name: str, agents: Mapping[str, object], *, exclude: str = "") -> str:
+    """The key of a crew other than *exclude* that shows *name*, else ``""``.
+
+    A crew shows its ``display_name`` when it has one, else its key. Exact
+    comparison, the same one :func:`key_new_crew` refuses a create on.
+    """
+    for key, agent in agents.items():
+        if key != exclude and (getattr(agent, "display_name", "") or key) == name:
+            return key
+    return ""
+
+
+class MemberNameTaken(MemberNameError):
+    """Raised when another crew already shows the name a relabel would show."""
+
+    def __init__(self, other: str) -> None:
+        super().__init__(f"agent '{other}' already shows that name")
+        self.other = other
+
+
+def check_crew_label(key: str, label: str, agents: Mapping[str, object]) -> str:
+    """Return *label* when crew *key* may show it, else raise :class:`MemberNameError`.
+
+    ``""`` is a real value: the crew then shows its key. A non-empty label must
+    pass :func:`validate_member_name` and must not be credential-shaped, since
+    every roster surface and the crewmate's own prompt render it. Either way the
+    name the crew would show must not be one another crew already shows
+    (:class:`MemberNameTaken`), the rule a create is held to. Only the label is
+    judged: the key, slug, thread and memory of the crew never move.
+    """
+    if label:
+        validate_member_name(label)
+        if external_text_requires_redaction(label):
+            raise MemberNameError("name must not be credential-shaped text")
+    other = crew_showing(label or key, agents, exclude=key)
+    if other:
+        raise MemberNameTaken(other)
+    return label
 
 
 def is_valid_member_name(value: object) -> bool:
@@ -675,6 +732,143 @@ def member_dir(slug: str) -> Path:
     if target != root and root not in target.parents:
         raise MemberSlugError(f"member slug {slug!r} escapes {root}")
     return target
+
+
+#: Written into a member's directory when the first-crewmate step creates Mate:
+#: that member owes its user a first welcome. A member that arrived any other
+#: way (a create form, discovery, an import, an app) has no such file and never
+#: greets through it.
+WELCOME_OWED_FILENAME = "welcome_owed.json"
+
+
+def mark_welcome_owed(name: str, *, config=None) -> bool:
+    """Record that the just-created member *name* owes a first welcome.
+
+    Called by the first-crewmate step after the member is published. Best
+    effort: a failure is logged and the member simply never greets, which is the
+    safe direction. The record names the member, so a directory a different
+    member later reaches under the same slug is not mistaken for this one's.
+    Blocking IO.
+    """
+    try:
+        path = member_dir(member_slug(name, config)) / WELCOME_OWED_FILENAME
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Written at boot, before the gateway's own owner-only sweep runs, so the
+        # chain this creates is tightened here (members/ and members/<slug>/).
+        for _dir in (path.parent, path.parent.parent):
+            platform_compat.restrict_dir_to_owner(_dir)
+        atomic_write(path, json.dumps({"member": name}) + "\n")
+    except Exception:
+        logger.warning("Could not record the first welcome owed by %r", name, exc_info=True)
+        return False
+    return True
+
+
+def welcome_owed(slug: str, member: str) -> bool:
+    """Whether *member* (at *slug*) owes a first welcome.
+
+    Only a record written for this exact member counts; a missing, unreadable or
+    foreign record owes nothing. Blocking IO.
+    """
+    try:
+        raw = read_bytes_with_retry(member_dir(slug) / WELCOME_OWED_FILENAME, max_bytes=4096)
+        record = json.loads(raw)
+    except (OSError, ValueError, MemberSlugError):
+        return False
+    return isinstance(record, dict) and record.get("member") == member
+
+
+class SelfRenameError(ValueError):
+    """Why :func:`rename_member_display` refused: ``code`` is machine-readable."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def clean_display_name(raw: object) -> str:
+    """*raw* with control and format characters removed and spaces collapsed.
+
+    Raises :class:`SelfRenameError` when nothing usable is left or the result
+    is not a valid member display name (:func:`validate_member_name`, whose
+    length cap is :data:`MEMBER_NAME_MAX_CHARS`).
+    """
+    import unicodedata
+
+    if not isinstance(raw, str):
+        raise SelfRenameError("invalid_name", "name must be a string")
+    # Whitespace controls (a tab, a line break) separate words; every other
+    # control or format character is dropped outright.
+    kept = "".join(
+        " " if ch.isspace() else ch
+        for ch in raw
+        if ch.isspace() or not unicodedata.category(ch).startswith("C")
+    )
+    name = " ".join(kept.split())
+    if not name:
+        raise SelfRenameError("empty_name", "name is empty")
+    try:
+        return validate_member_name(name)
+    except MemberNameError as exc:
+        raise SelfRenameError("invalid_name", str(exc)) from None
+
+
+def rename_member_display(member: str, raw_name: object, *, expected_store: str = "") -> str:
+    """Set crewmate *member*'s display name to *raw_name*, cleaned. Blocking IO.
+
+    Only the label changes: the key, slug, thread and memory stay. The reserved
+    ``default`` member and the configured default crew are refused, as is a
+    member that is not a configured crewmate, and so is a name
+    :func:`check_crew_label` refuses (another crew shows it, or it is
+    credential-shaped). *expected_store*, when given, is
+    the memory store the caller's thread was opened on: a row under the same
+    key with any other store (a crewmate deleted and created again while the old
+    thread still ran) is refused, and the persisted row is checked against it
+    under the config lock. The rename is recorded in the
+    member's event log (``member/config``), whose roster projection is what the
+    dashboard already folds into the open chat, the roster and the switcher.
+    Returns the name that was saved.
+    """
+    from kiro_crew.config.loader import KiroCrewConfig, _invalidate_config_cache
+    from kiro_crew.memory_stores import persist_member_config
+
+    name = clean_display_name(raw_name)
+    _invalidate_config_cache()
+    cfg = KiroCrewConfig.load()
+    agent = cfg.agents.get(member)
+    default_crew = getattr(cfg, "default_agent", "") or ""
+    if agent is None or member == "default" or member == default_crew:
+        raise SelfRenameError("not_a_crewmate", "only a crewmate can rename itself")
+    if expected_store and agent.memory_store != expected_store:
+        raise SelfRenameError("not_a_crewmate", "this chat belongs to a crewmate that was removed")
+    try:
+        check_crew_label(member, name, cfg.agents)
+    except MemberNameTaken:
+        raise SelfRenameError("name_taken", "another crewmate already goes by that name") from None
+    except MemberNameError as exc:
+        raise SelfRenameError("invalid_name", str(exc)) from None
+    before = agent.display_name
+    agent.display_name = name
+    if before != name:
+        persist_member_config(
+            cfg,
+            member,
+            expected_store=expected_store or agent.memory_store,
+            changed_fields={"display_name"},
+        )
+        try:
+            from kiro_crew import eventlog_hooks
+            from kiro_crew.eventlog.types import MEMBER_CONFIG
+
+            eventlog_hooks.emit(
+                member_slug(member, cfg),
+                member,
+                MEMBER_CONFIG,
+                {"display_name": name, "changed": ["display_name"]},
+            )
+        except Exception:
+            logger.debug("member/config event-log hook failed", exc_info=True)
+    return name
 
 
 def member_slot_key(slug: str, memory_store: str = "") -> str:
@@ -1008,6 +1202,55 @@ def read_dm_binding_for_slot(slot_key: str) -> dict | None:
         return None
     binding = read_dm_binding(slug)
     return binding if binding is not None and binding["slot_key"] == slot_key else None
+
+
+def member_identity_for_session(session_key: str | None) -> dict[str, str] | None:
+    """``{"slug", "name"}`` of the crewmate whose pinned DM session this is, else ``None``.
+
+    Accepts every spelling :func:`is_member_session_key` does. The name comes
+    from the slot's live ``dm.json`` binding, never from the key: slugification
+    is lossy, and a key whose binding is gone or belongs to another generation
+    names no crewmate. Total, and blocking file IO like :func:`read_dm_binding`.
+    """
+    if not session_key or not is_member_session_key(session_key):
+        return None
+    key = session_key
+    for prefix in ("dashboard_", "dashboard:"):
+        if key.startswith(prefix):
+            key = key[len(prefix) :]
+            break
+    binding = read_dm_binding_for_slot(key)
+    slug = slug_from_dm_slot_key(key)
+    if binding is None or not slug:
+        return None
+    name = binding["member"]
+    # The payload refuses a member past this bound, and a refused payload drops
+    # the whole note; an unattributable note must still be delivered.
+    if len(name) > MEMBER_NAME_MAX_CHARS:
+        return None
+    return {"slug": slug, "name": name}
+
+
+def attributable_session_key(request: Any) -> str:
+    """The request's ``X-Session-Key`` when it may name a note's crewmate, else ``""``.
+
+    Over TCP loopback the header alone is the caller's word, so an app token
+    holding a send grant could declare a crewmate's DM key and put that
+    crewmate's face on its own note. The key counts only once
+    :func:`kiro_crew.member_memory_auth.session_key_is_attested` binds it to
+    the caller (the Unix-socket peer attestation, or a signed per-session
+    token that verifies to it), and never for an app caller
+    (``request["app"]``), whose notes are the app's own. Blocking file IO on
+    the token branch; callers on an event loop must offload it.
+    """
+    from kiro_crew.member_memory_auth import session_key_is_attested
+
+    if request.get("app"):
+        return ""
+    key = request.headers.get("X-Session-Key", "")
+    if not isinstance(key, str) or not key:
+        return ""
+    return key if session_key_is_attested(request, key) else ""
 
 
 def member_rules_path(slug: str) -> Path:
@@ -1365,7 +1608,12 @@ def read_member_briefing(slug: str) -> str:
     Blocking file IO: call via ``asyncio.to_thread`` from async code.
     """
     text, _mtime, read_bounded = read_member_briefing_bounded(slug)
-    return cap_member_briefing(text, read_bounded)[0]
+    capped, truncated = cap_member_briefing(text, read_bounded)
+    if truncated:
+        context_omissions.record(
+            context_omissions.MEMBER_BRIEFING, "cap", budget_chars=MEMBER_BRIEFING_MAX_CHARS
+        )
+    return capped
 
 
 def record_activity(

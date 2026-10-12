@@ -455,6 +455,204 @@ class TestRestartDurability:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# The inbound restore: the map row and the transcript header, stricter wins
+# ──────────────────────────────────────────────────────────────────────
+class TestInboundRestoreReadsRowAndHeader:
+    """``hydrate_inbound`` restores from BOTH durable records, so the gate stays
+    private when either one says so: a map that loads empty (its file could not
+    be read) still reads a thread whose header records the mode as private.
+    Nothing it does can loosen a mode."""
+
+    @staticmethod
+    def _log():
+        from kiro_crew import history as history_mod
+        from kiro_crew.history import ConversationLog
+
+        log = ConversationLog()
+        log.init()
+        with history_mod.allow_on_loop_persist():
+            log.append(_TG_KEY, "user", "a persistent-era turn")
+        return log
+
+    @staticmethod
+    async def _set_header(log, mode: str) -> None:
+        await asyncio.to_thread(
+            log.update_metadata_if, _TG_KEY, {"memory_mode": mode}, lambda _m: True
+        )
+
+    @staticmethod
+    def _unreadable_map(tmp_path, session_map):
+        """A restart over a map file that cannot be parsed: the map loads empty."""
+        from kiro_crew.session_map import SESSION_MAP_FILENAME
+
+        (tmp_path / SESSION_MAP_FILENAME).write_text("{not json", encoding="utf-8")
+        sm = session_map()
+        assert sm.privacy_flagged_entries() == {}, "premise: the map loaded empty"
+        return sm
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_map_with_a_private_header_still_restricts(
+        self, audits, session_map, tmp_path
+    ):
+        """The fail-open the header read closes.
+
+        Mutation: drop the header read from ``hydrate_inbound`` (restore from
+        the row alone) -- red, and the thread runs persistent after the restart.
+        """
+        log = self._log()
+        sm = session_map()
+        await privacy_mode.apply_mode(
+            privacy_mode.MODE_INCOGNITO, _TG_KEY, source="telegram", sessions=_Sessions(sm)
+        )
+        await _land_on_disk(sm)
+        assert log.get_metadata(_TG_KEY).get("memory_mode") == "incognito"
+
+        privacy_mode.reset()  # the restart
+        restarted = _Sessions(self._unreadable_map(tmp_path, session_map))
+        privacy_mode.hydrate(restarted, _TG_KEY)
+        assert privacy_mode.is_restricted(_TG_KEY) is False, "premise: the row alone reads open"
+
+        await privacy_mode.hydrate_inbound(restarted, _TG_KEY)
+        assert privacy_mode.is_incognito(_TG_KEY) is True
+        assert privacy_mode.is_restricted(_TG_KEY) is True
+
+    @pytest.mark.asyncio
+    async def test_the_upload_gate_refuses_on_the_header_alone(self, audits, session_map, tmp_path):
+        """The same record at a gate: an unreadable map plus a temporary header
+        refuses both the write side and the read side."""
+        from types import SimpleNamespace
+
+        from kiro_crew.messaging import upload_gate
+
+        log = self._log()
+        await self._set_header(log, "temporary")
+        state = SimpleNamespace(sessions=_Sessions(self._unreadable_map(tmp_path, session_map)))
+
+        def _probe(*_a, **_k):
+            raise AssertionError("a channel key never reaches the persisted probe")
+
+        assert await upload_gate.session_is_restricted(state, _TG_KEY, persisted_probe=_probe)
+        privacy_mode.reset()
+        assert await upload_gate.session_blocks_reads(state, _TG_KEY, persisted_probe=_probe)
+
+    @pytest.mark.asyncio
+    async def test_a_stricter_header_tightens_a_looser_row(self, audits, session_map):
+        log = self._log()
+        sm = session_map()
+        await privacy_mode.apply_mode(
+            privacy_mode.MODE_INCOGNITO, _TG_KEY, source="telegram", sessions=_Sessions(sm)
+        )
+        await _land_on_disk(sm)
+        await self._set_header(log, "temporary")
+
+        privacy_mode.reset()
+        await privacy_mode.hydrate_inbound(_Sessions(session_map()), _TG_KEY)
+        assert privacy_mode.is_temporary(_TG_KEY) is True
+        assert privacy_mode.is_incognito(_TG_KEY) is True
+
+    @pytest.mark.asyncio
+    async def test_a_looser_header_does_not_loosen_a_stricter_row(self, audits, session_map):
+        """Mutation: let the header REPLACE the row's flags -- red."""
+        log = self._log()
+        sm = session_map()
+        await privacy_mode.apply_mode(
+            privacy_mode.MODE_TEMPORARY, _TG_KEY, source="telegram", sessions=_Sessions(sm)
+        )
+        await _land_on_disk(sm)
+        await self._set_header(log, "persistent")
+
+        privacy_mode.reset()
+        await privacy_mode.hydrate_inbound(_Sessions(session_map()), _TG_KEY)
+        assert privacy_mode.is_temporary(_TG_KEY) is True
+
+    @pytest.mark.asyncio
+    async def test_a_completed_release_leaves_nothing_to_restore(self, audits, session_map):
+        """The release restores the header before it clears the row, so after it
+        neither record says the mode and the restore marks nothing."""
+        self._log()
+        sm = session_map()
+        res = await privacy_mode.reserve(
+            privacy_mode.MODE_INCOGNITO, _TG_KEY, source="telegram", sessions=_Sessions(sm)
+        )
+        await privacy_mode.release(res, sessions=_Sessions(sm), source="telegram")
+        await _land_on_disk(sm)
+
+        privacy_mode.reset()
+        await privacy_mode.hydrate_inbound(_Sessions(session_map()), _TG_KEY)
+        assert privacy_mode.is_restricted(_TG_KEY) is False
+
+    @pytest.mark.asyncio
+    async def test_the_header_read_waits_for_a_durable_sequence_in_flight(
+        self, audits, session_map
+    ):
+        """A release restores the header and drops the mark under the session's
+        lock; a read taken before it finished would re-publish the mode it took
+        back. Mutation: read the header outside ``_serialized`` -- red."""
+        from kiro_crew.testing.wait import until_parked
+
+        log = self._log()
+        await self._set_header(log, "incognito")
+        sessions = _Sessions(session_map())
+        async with privacy_mode._serialized(_TG_KEY):
+            task = asyncio.ensure_future(privacy_mode.hydrate_inbound(sessions, _TG_KEY))
+            await until_parked(privacy_mode._key_locks[_TG_KEY].lock)
+            assert not task.done(), "the read must wait for the sequence holding the lock"
+            await self._set_header(log, "persistent")  # what the release restores
+        await asyncio.wait_for(task, timeout=10)
+        assert privacy_mode.is_restricted(_TG_KEY) is False
+
+    @pytest.mark.asyncio
+    async def test_no_sessions_reads_no_header(self, audits):
+        log = self._log()
+        await self._set_header(log, "incognito")
+        await privacy_mode.hydrate_inbound(None, _TG_KEY)
+        assert privacy_mode.is_restricted(_TG_KEY) is False
+
+    @pytest.mark.asyncio
+    async def test_a_dashboard_chats_private_header_stays_out_of_the_channel_trackers(
+        self, audits, session_map
+    ):
+        """A Slack thread routed into a private dashboard chat restores the chat's
+        key. That chat keeps its transcript and gates its derived reads on the
+        header itself; a channel mark would make the channel skip the transcript
+        for it. Mutation: read every key's header -- red."""
+        from kiro_crew.history import ConversationLog
+
+        key = "dashboard:private-chat"
+        log = ConversationLog()
+        log.init()
+        await asyncio.to_thread(
+            log.update_metadata_if, key, {"memory_mode": "incognito"}, lambda _m: True
+        )
+        assert log.get_metadata(key).get("memory_mode") == "incognito", "premise"
+
+        await privacy_mode.hydrate_inbound(_Sessions(session_map()), key)
+        assert privacy_mode.is_restricted(key) is False
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_header_adds_nothing_and_the_row_still_counts(
+        self, audits, session_map, monkeypatch
+    ):
+        from kiro_crew.history import ConversationLog
+
+        self._log()
+        sm = session_map()
+        await privacy_mode.apply_mode(
+            privacy_mode.MODE_INCOGNITO, _TG_KEY, source="telegram", sessions=_Sessions(sm)
+        )
+        await _land_on_disk(sm)
+        privacy_mode.reset()
+
+        def _boom(self, key):
+            raise RuntimeError("header unreadable")
+
+        monkeypatch.setattr(ConversationLog, "get_metadata", _boom)
+        await privacy_mode.hydrate_inbound(_Sessions(session_map()), _TG_KEY)
+        assert privacy_mode.is_incognito(_TG_KEY) is True
+        assert privacy_mode.is_temporary(_TG_KEY) is False
+
+
+# ──────────────────────────────────────────────────────────────────────
 # The transcript header: the record that outlives the session-map entry
 # ──────────────────────────────────────────────────────────────────────
 class TestTranscriptHeaderDurability:
@@ -2028,7 +2226,8 @@ class TestPublishOnlyThroughTheCommitPrimitive:
     SHAPE instead, so a fifth call site cannot appear unnoticed: the durable
     write and its flush live in ``_land`` alone, the publication (``mark``)
     is reached only through ``_commit_mode`` -- after ``_land`` -- plus the
-    restore-from-durable ``hydrate`` and the two in-memory-only wrappers, and
+    restore-from-durable ``hydrate`` and ``hydrate_inbound`` and the two
+    in-memory-only wrappers, and
     the unpublish (``_tracker(...).pop``) only through ``_release_mode``.
     """
 
@@ -2071,7 +2270,13 @@ class TestPublishOnlyThroughTheCommitPrimitive:
 
     def test_mark_is_reached_only_through_the_primitive_hydrate_and_the_wrappers(self):
         callers = self._callers(self._is_name("mark"))
-        assert set(callers) == {"_commit_mode", "hydrate", "mark_temporary", "mark_incognito"}, (
+        assert set(callers) == {
+            "_commit_mode",
+            "hydrate",
+            "hydrate_inbound",
+            "mark_temporary",
+            "mark_incognito",
+        }, (
             "a new publication site: every mode must be published by _commit_mode, "
             f"after its row is on disk -- found {sorted(callers)}"
         )

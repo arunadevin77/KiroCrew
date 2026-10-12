@@ -670,7 +670,10 @@ def memory_store_version(store: str) -> int:
 
 def _require_legacy_store_files(store: str, target: Path) -> None:
     """An explicit member database cannot be opened through the V1 API."""
-    import sqlite3
+    # The same SQLite library the store opens this file with: a second copy keeps
+    # its own lock table, and closing its connection drops the POSIX locks the
+    # open store holds on the file, letting another process write mid-transaction.
+    from kiro_crew._sqlite_compat import sqlite3
 
     database = target / MEMORY_DB_FILE
     if not database.exists():
@@ -1437,7 +1440,7 @@ def _provision_member_memory(config, member: str) -> str:
     from kiro_crew.memory import PREFERENCES_FILE, PROJECTS_FILE
 
     manual = target / "memory"
-    manual.mkdir()
+    manual.mkdir(mode=0o700)
     atomic_write(manual / PREFERENCES_FILE, "# Member Preferences\n", fsync=True)
     atomic_write(manual / PROJECTS_FILE, "# Member Projects\n", fsync=True)
     agent.member_id = member_id
@@ -1528,6 +1531,7 @@ def persist_member_config(
     expected_store=None,
     changed_fields: set[str] | None = None,
     expected_approval_mode: str | None = None,
+    new_workspace: str = "",
 ) -> None:
     """Atomically publish a member and its ownership while retaining other writes.
 
@@ -1548,6 +1552,13 @@ def persist_member_config(
     Updates may name only the fields the caller actually changed, preserving
     concurrent edits to other fields. None retains full-record publication;
     creation always publishes the full record. A new binding must be included.
+
+    ``new_workspace`` names the workspace :func:`member_workspace.provision_member_workspace`
+    allocated for this create, if any. It is published in the SAME locked mutation
+    as the record (:func:`member_workspace.publish_member_workspace`: the name and
+    directory are re-checked against the document under the lock, the directory
+    is made, the entry written), so a member never lands bound to a workspace the
+    table does not declare. A create only; an update never allocates one.
     """
     from dataclasses import asdict
 
@@ -1577,6 +1588,15 @@ def persist_member_config(
         if not unchanged_binding and store != DEFAULT_MEMORY_STORE
         else None
     )
+    if new_workspace and not create:
+        raise UnknownMemoryStore("a member update cannot allocate a workspace")
+    if new_workspace and (
+        config.agents[member].workspace != new_workspace or new_workspace not in config.workspaces
+    ):
+        raise UnknownMemoryStore(
+            f"workspace {new_workspace!r} is not the binding of Crew Member {member!r}"
+        )
+    workspace_entry = config.workspaces[new_workspace] if new_workspace else None
 
     def mutate(data: dict) -> dict:
         agents = data.setdefault("agents", {})
@@ -1643,6 +1663,10 @@ def persist_member_config(
             ):
                 raise UnknownMemoryStore(f"memory store {store!r} ownership changed concurrently")
             stores[store] = {**(existing or {}), **store_record}
+        if workspace_entry is not None:
+            from kiro_crew.member_workspace import publish_member_workspace
+
+            publish_member_workspace(data, new_workspace, workspace_entry)
         if create:
             crew_teams.release_for_create(member)
         agents[member] = {**(current or {}), **agent_record}

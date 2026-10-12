@@ -113,6 +113,11 @@ class RosterProjection:
     #: refuses the payload), after which the member's own log is re-folded from
     #: the start under the monotone rule. Cheap, and the only lossless answer:
     #: the events the bad savepoint consumed are the ones that hold the truth.
+    #: Still 2 with `reset_at` in the fold: a savepoint a resume can admit was
+    #: folded over a log whose vocabulary holds no `member/reset`, so it carries
+    #: no reset this fold would read differently, and any such event arrives
+    #: above its watermark where the resumed fold applies it. A bump would buy
+    #: one cold re-fold per member and reach the same state.
     state_version = 2
 
     def init(self) -> dict:
@@ -132,6 +137,13 @@ class RosterProjection:
             if slot_key is not None and state.get("slot_key") != slot_key:
                 new = dict(state)
                 new["slot_key"] = slot_key
+                return new
+            return state
+        if etype == types.MEMBER_RESET:
+            reset_at = data.get("reset_at")
+            if isinstance(reset_at, str) and reset_at and state.get("reset_at") != reset_at:
+                new = dict(state)
+                new["reset_at"] = reset_at
                 return new
             return state
         if etype == types.MEMBER_MESSAGE:

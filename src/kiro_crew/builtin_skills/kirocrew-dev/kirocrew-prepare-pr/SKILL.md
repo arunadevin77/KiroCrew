@@ -182,7 +182,7 @@ Answering is prose work. It never needs a push and never widens the diff.
 
 **What must be answered:**
 
-- Non-PASS verdicts from the **whole-design lanes** — Design, First Principles, UX: every Watch item, Suggestion and Subtraction, each with its own `target=design` / `target=first-principles` / `target=ux` comment naming its `span=`. Their **BLOCK** verdict blocks readiness, and so does an **unanswered CONCERNS** for the current head: `pr_status.py` exits `20` on it even when the rollup is green, and it clears the moment one `target=<lane> head=<current sha>` disposition exists. PASS is advisory and must still be answered. `pr_findings.py` prints each item with its `span=` and `Clears when:` line, above the line-level findings.
+- Non-PASS verdicts from the **whole-design lanes** — Design, First Principles, UX: every Watch item, Suggestion and Subtraction, each with its own `target=design` / `target=first-principles` / `target=ux` comment naming its `span=`. Their **BLOCK** verdict blocks readiness, and so does an **unanswered CONCERNS** for the current head: `pr_status.py` exits `20` on it even when the rollup is green, and it clears the moment one `target=<lane> head=<current sha>` disposition exists. Under the `--reviewers` pin, a CONCERNS in the `Whole-design punchlines` block is that stop (`references/rationale.md`). PASS is advisory and must still be answered: its punchline is the ask. `pr_findings.py` prints each item with its `span=` and `Clears when:` line, above the line-level findings.
 - Non-blocking observations in the GPT / Opus bodies.
 - One-way-door concerns from Design Review — fix or justify in writing.
 - Human review comments and inline threads.
@@ -304,11 +304,7 @@ prose. Resolve once per run and keep the JSON for Phases 1–3:
 python3 $SKILL_DIR/scripts/resolve_profile.py > /tmp/pp-profile.json
 ```
 
-Most-specific-wins: repo-root `.prepare-pr.toml` → Kiro Crew markers (auto-loads
-`profiles/kirocrew.json`) → stack auto-detect → generic fallback. The JSON always
-has `setup[]`, `gates[]`, `reviewers[]` (each
-`{name, model, model_tier, contract, rubric}`), `rule_files[]`, `single_commit`,
-`base_branch`, and `readiness{status_context, defer_label}`.
+Its resolution order and the keys the JSON always carries: `references/rationale.md`.
 
 **Every profile input is read from the base ref, not the checkout** — otherwise a
 branch could drop the lane that reviews it. A ref resolving to nothing is a hard
@@ -541,7 +537,7 @@ comes after a record, never instead of one:
    **Always pin the fleet** (Kiro Crew: `--reviewers gpt,opus`): bare `pr_status.py`
    runs discovery mode, where a lane that never posted passes silently.
 
-   - **0** → Phase 4.
+   - **0** → answer its punchlines, then Phase 4.
    - **20** → run `pr_findings.py` and **TRIAGE before re-pushing**. An `unanswered CONCERNS from <LANE>` reason is cleared by POSTING dispositions, not by pushing. `pr_status.py` already reads only the current head's rollup and drops rows a newer run of the same check displaced; never dedupe check rows by name by hand, which drops live rows. **(d) Superseded or unpublished verdict** (`superseded verdict`, `verdict not published, re-run this lane`) → re-run that lane, or override at this head. **(a) CI/build/test failure** → read `gh run view <run-id> --log-failed`. If the same check also fails on main, follow *When main is red*. Otherwise, once you decide to fix, cancel the head's in-flight runs, reproduce the **exact failing node ids** locally, and fix the **root cause**; a flake confirmed and recorded per *Before you rerun a red test* gets `gh run rerun <run-id> --failed` (or `--job <job-id>`) once, never a whole-run replay. **(b) Review finding** → whole-design verdicts first, then the three questions. For Kiro Crew Opus-family or GPT 6.1 findings that need code changes, MUST execute [Review repair routing](#review-repair-routing): delegate the minimal fix and self-review to the model-pinned subagent, then verify in the parent. Otherwise rebut with evidence (never dismiss a CodeQL alert merely to pass), override it per *Overriding a false positive*, or ask a maintainer. **(c) Conflict / behind base** → Phase 1 handles it. Then **loop back to Phase 1** → 2 → 3 carrying those fixes.
    - **10** → still running. In a chat slot, load `kirocrew-core::monitor_start`
      through `tool_search`, request a finite same-session loop, then END THE TURN.
@@ -570,7 +566,8 @@ comes after a record, never instead of one:
      Replace the example URL with the real one. Under a merge hold, rewrite the
      `Exit 0` clause to `Exit 0: report review-ready and keep watching; do NOT arm
      auto-merge` — the message is re-injected verbatim every cycle and outlives
-     the turn that heard the hold. Keep `gate=False`: comments and
+     the turn that heard the hold. A hold heard after arming goes in with
+     `monitor_update(message=...)` that turn (`references/rationale.md`). Keep `gate=False`: comments and
      advisory findings are outside the typed provider's evidence. Omit `banner` on
      Slack/Discord/Webex. Loop mechanics belong to the `babysit` skill.
 

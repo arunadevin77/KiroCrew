@@ -19,6 +19,8 @@ import { memberProjectionStore } from '../../state/memberProjectionStore'
 import { threadLiveStore, type ThreadReplyFrame } from '../../state/threadLiveStore'
 import { threadQueryKey, threadsQueryKey } from '../../api/threads'
 import { applyStatusDelta, parseStatusDelta } from '../../utils/pullRequestStatusDelta'
+import { GUIDE_PENDING_QUERY_KEY } from '../../api/guide'
+import { CHANGE_CARDS_QUERY_PREFIX } from '../../api/cards'
 import { slotChangeUrls } from '../../utils/pullRequestLinks'
 import { dashboardSessionKey, SESSION_CONTROL_STATUS_KEY } from '../useSessionControls'
 import type { ChatSlot, PullRequestStatusBatch } from '../../types'
@@ -158,6 +160,14 @@ export function refreshServerStateAfterReconnect(queryClient: QueryClient): void
   threadLiveStore.reset()
   queryClient.invalidateQueries({ queryKey: ['chat-thread'] })
   queryClient.invalidateQueries({ queryKey: ['chat-threads'] })
+  // A guide frame missed while the socket was down is recovered by re-reading.
+  queryClient.invalidateQueries({ queryKey: GUIDE_PENDING_QUERY_KEY })
+  // Same for a change-card frame: every slot's cards are re-read.
+  queryClient.invalidateQueries({ queryKey: CHANGE_CARDS_QUERY_PREFIX })
+  // The crew panel drawer reads its snapshot once and does not poll: only a
+  // `panel_published` frame re-reads it. One sent while the socket was down
+  // would leave the drawer stale until a reload, so re-read every observed one.
+  queryClient.invalidateQueries({ queryKey: ['member-panel'] })
   // A dropped socket is the one client-visible sign the gateway may have
   // restarted — and a restart drops an unmessaged member slot while its
   // binding survives. The Crew Members page mounts a cached thread key
@@ -248,6 +258,9 @@ export function handleMemberProjection(data: FrameData): void {
  *  -- the refetch re-asks the server, which re-checks ownership. */
 export const MEMBER_DASHBOARD_QUERY_PREFIX = 'member-dashboard'
 
+/** The query key prefix a root session's Dashboard Overview reads under. */
+export const SESSION_DASHBOARD_QUERY_PREFIX = 'session-dashboard'
+
 /** A crewmate's dashboard moved, so an open tab must re-read it.
  *
  *  Two frames reach here and both mean the same thing to this tab. A
@@ -262,9 +275,16 @@ export const MEMBER_DASHBOARD_QUERY_PREFIX = 'member-dashboard'
  *  its data island, its agentic marks and its stale band already decided, so there
  *  is no client-side shape to patch. */
 export function handleDashboardMoved(queryClient: QueryClient, data: FrameData): void {
-  const slug = String(((data ?? {}) as { slug?: unknown }).slug || '')
+  const frame = (data ?? {}) as { slug?: unknown; slot?: unknown }
+  const slug = String(frame.slug || '')
   if (slug) {
     queryClient.invalidateQueries({ queryKey: [MEMBER_DASHBOARD_QUERY_PREFIX, slug] })
+  }
+  // A ROOT session's own page is named by its slot: its store key is a digest no
+  // client can match, so the gateway's frame carries the slot instead.
+  const slot = String(frame.slot || '')
+  if (slot) {
+    queryClient.invalidateQueries({ queryKey: [SESSION_DASHBOARD_QUERY_PREFIX, slot] })
   }
 }
 

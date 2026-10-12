@@ -56,6 +56,7 @@ __all__ = [
     "unlink_sharing_violation",
     "nonatomic_write",
     "windows_text_mode_write",
+    "same_tick_file_stat",
 ]
 
 _DEFAULT_INSTANT = _dt.datetime(2026, 1, 1, 0, 0, 0, tzinfo=_dt.timezone.utc)
@@ -456,6 +457,69 @@ def nonatomic_write(cred: pathlib.Path, data: bytes) -> Iterator[None]:
         yield
     finally:
         cred.write_bytes(data)  # completion phase — full payload lands
+
+
+class _SameTickStat:
+    """A ``stat_result`` stand-in whose timestamps are pinned; every other field is live."""
+
+    __slots__ = ("_real", "_mtime_ns", "_ctime_ns")
+
+    def __init__(self, real: os.stat_result, mtime_ns: int, ctime_ns: int) -> None:
+        self._real = real
+        self._mtime_ns = mtime_ns
+        self._ctime_ns = ctime_ns
+
+    @property
+    def st_mtime_ns(self) -> int:
+        return self._mtime_ns
+
+    @property
+    def st_ctime_ns(self) -> int:
+        return self._ctime_ns
+
+    @property
+    def st_mtime(self) -> float:
+        return self._mtime_ns / 1_000_000_000
+
+    @property
+    def st_ctime(self) -> float:
+        return self._ctime_ns / 1_000_000_000
+
+    def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
+        return getattr(self._real, name)
+
+
+@contextmanager
+def same_tick_file_stat(*, match: Optional[str] = None) -> Iterator[dict]:
+    """Make every rewrite of a file land on ONE file-clock tick in ``Path.stat()``.
+
+    NTFS stamps a file's last-write time from the system clock, which moves in
+    ticks of about 1-16 ms, so two in-place rewrites inside one tick report the
+    same ``st_mtime_ns``. Windows ``st_ctime`` is the file's CREATION time, which
+    no rewrite moves, and an in-place truncate-and-write keeps ``st_ino``. A
+    cache keyed on those three alone cannot see the second rewrite. POSIX moves
+    both timestamps from a finer clock, so the tie never reproduces locally.
+
+    For each matching path the first ``stat()`` is remembered and every later
+    ``stat()`` reports that first ``st_mtime_ns``/``st_ctime_ns`` while ``st_size``,
+    ``st_ino`` and every other field stay live. *match*: if given, only paths
+    whose name equals it OR whose string contains it are pinned. Yields a
+    ``{"n": count}`` dict of pinned stats.
+    """
+    real_stat = pathlib.Path.stat
+    pinned: dict[str, tuple[int, int]] = {}
+    state = {"n": 0}
+
+    def _patched(self: pathlib.Path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        real = real_stat(self, *args, **kwargs)
+        if match is not None and not (self.name == match or match in str(self)):
+            return real
+        state["n"] += 1
+        tick = pinned.setdefault(str(self), (real.st_mtime_ns, real.st_ctime_ns))
+        return _SameTickStat(real, *tick)
+
+    with mock.patch.object(pathlib.Path, "stat", _patched):
+        yield state
 
 
 # Real Windows uses 0x8000 for os.O_BINARY; reuse it so the simulated flag value

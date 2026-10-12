@@ -55,6 +55,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from kiro_crew.agent_sdk.backend_mcp_ability import ability_for
 from kiro_crew.agent_sdk.capabilities import capabilities_of
 from kiro_crew.hooks import (
     HOOK_EVENT_AGENT_SPAWN,
@@ -100,6 +101,10 @@ _CACHE_MAX = 64
 #: is one literal name, never a glob, which would widen the guard across servers; the
 #: tool keeps the object form's own set, ``*`` included (``@server/*``).
 _MCP_MATCHER_RE = re.compile(r"@[A-Za-z0-9_.\-]+/[A-Za-z0-9_.*\-]+")
+
+#: The hooks concern's id on a backend's MCP ability card
+#: (:func:`kiro_crew.agent_sdk.backend_mcp_ability.concern_id` of ``Concern.HOOKS``).
+_HOOKS_CONCERN = "hooks"
 
 #: Per spec content: the hooks that run, and how many ``confirm: true`` documents
 #: were skipped (the session-start notice names the count).
@@ -457,6 +462,36 @@ def crew_fired_spec_hooks(
     spec = _agent_spec(agent_id, project_dir)
     hooks, unconfirmable = _convert(agent_id, spec)
     return list(hooks), spec_keys_without_carrier(spec), unconfirmable
+
+
+def spec_hooks_run_nowhere(provider: object) -> bool:
+    """Whether a session on *provider* runs none of its agent spec's ``hooks``.
+
+    True where the backend's mirror rules the hooks concern ``no-channel`` or
+    ``withheld``: the harness is not sent the field, and Crew does not fire it.
+    False where the harness runs the field itself (kiro-cli), where Crew fires it
+    (``crew_fires_spec_hooks``), and for a backend with no ruling, about which
+    nothing is established.
+    """
+    caps = capabilities_of(provider)
+    if caps.crew_fires_spec_hooks:
+        return False
+    ability = ability_for(caps.backend)
+    return _HOOKS_CONCERN in ability.no_channel or _HOOKS_CONCERN in ability.withheld
+
+
+def spec_hook_events(agent_id: str, project_dir: str | None = None) -> list[str]:
+    """The events the active agent spec has hooks on, as an agent spec spells them.
+
+    Each event is named once, in kiro-cli's order. Read through the conversion Crew
+    fires from, so an entry that would not run where Crew fires the field (disabled,
+    waiting for a confirmation, malformed) is not named. For the session-start
+    notice on a backend where :func:`spec_hooks_run_nowhere` holds. Raises when the
+    spec cannot be read. *project_dir* is :func:`spec_project_dir` of the session.
+    """
+    hooks, _unconfirmable = _convert(agent_id, _agent_spec(agent_id, project_dir))
+    present = {hook.event for hook in hooks}
+    return [name for name, event in _OBJECT_EVENT_TO_HOOK_EVENT.items() if event in present]
 
 
 class TurnSpecHooks(NamedTuple):

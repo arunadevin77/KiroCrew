@@ -299,7 +299,7 @@ async def _handle_resumed_busy(
             # ``/unlink`` is exempt from the busy gate (the refusal even names it),
             # so a re-entry's fresh binding resolution could land this message in
             # the native session the user just left this one for.
-            privacy_mode.hydrate(self.sessions, session_key)
+            await privacy_mode.hydrate_inbound(self.sessions, session_key)
             await self._run_turn(
                 msg,
                 text,

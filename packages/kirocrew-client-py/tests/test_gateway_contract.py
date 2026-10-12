@@ -240,6 +240,54 @@ class TestContextNotQueued:
         assert mc.pending_context_count == 0
 
 
+class TestContextSecretShaped:
+    """A credential-shaped pending-context payload answers 400
+    ``context_secret_shaped``. The same bytes are refused on every attempt, so a
+    buffered entry the Gateway refused this way is dropped rather than re-buffered,
+    and it must not block an unrelated send."""
+
+    _REFUSED = {
+        "error": "pending context must not carry credentials",
+        "code": "context_secret_shaped",
+    }
+
+    async def test_refusal_has_its_own_code_and_is_not_retried(self, gw):
+        gw.statuses = [400]
+        gw.status_bodies = {400: self._REFUSED}
+        async with _client(gw, max_retries=3, retry_base_delay=0) as mc:
+            with pytest.raises(KiroCrewError) as exc:
+                await mc.inject_context("slot-1", "c", source="s")
+        assert exc.value.code == ErrorCode.CONTEXT_SECRET_SHAPED
+        assert len(gw.requests) == 1
+
+    async def test_a_plain_400_keeps_the_validation_code(self, gw):
+        gw.statuses = [400]
+        async with _client(gw, max_retries=3, retry_base_delay=0) as mc:
+            with pytest.raises(KiroCrewError) as exc:
+                await mc.inject_context("slot-1", "c", source="s")
+        assert exc.value.code == ErrorCode.VALIDATION_ERROR
+
+    async def test_flush_drops_a_refused_entry_without_raising(self, gw):
+        gw.statuses = [400]
+        gw.status_bodies = {400: self._REFUSED}
+        async with _client(gw, max_retries=3, retry_base_delay=0) as mc:
+            await mc.inject_context(None, "a", source="s")
+            dropped = await mc.flush_pending_context("slot-1")
+        assert dropped == 1
+        assert mc.pending_context_count == 0, "a refused entry is dropped, not re-buffered"
+
+    async def test_refused_entry_does_not_block_an_unrelated_send(self, gw):
+        gw.statuses = [400]  # the one /context flush post is refused
+        gw.status_bodies = {400: self._REFUSED}
+        async with _client(gw, max_retries=3, retry_base_delay=0) as mc:
+            mc.set_default_slot("slot-1")
+            await mc.inject_context(None, "ctx", source="s")
+            await mc.send_message("slot-1", "hello")  # must not raise
+        posts = [r for r in gw.requests if r["method"] == "POST"]
+        assert any(r["path"] == "/api/chat" for r in posts), "the turn send went through"
+        assert mc.pending_context_count == 0
+
+
 class TestRequestRetries:
     async def test_post_503_is_not_retried(self, gw):
         gw.statuses = [503]

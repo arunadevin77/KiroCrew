@@ -56,6 +56,9 @@ Common cause → fix:
   margins).
 
 Apply the smallest fix at the identified line, recompile (in Papyrus the app
-recompiles when your turn ends, so check the new `.log` on the next turn;
+recompiles when your turn ends **only while the author has the Papyrus page
+open** — it is a page-scoped effect, and nothing server-side compiles — so on
+the next turn check that the `.log` is NEWER than your edit before believing
+it, and ask the author to press Cmd+S when it is not;
 outside it, rerun the compiler), and confirm THAT error is gone before moving on.
 Report what broke and exactly what you changed.

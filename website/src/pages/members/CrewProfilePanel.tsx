@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type HTMLAttributes, type ReactNode, type Ref } from 'react'
+import { forwardRef, useEffect, useRef, useState, type HTMLAttributes, type ReactNode, type Ref, type ForwardedRef } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { AlarmClock, Brain, ChevronLeft, ChevronRight, FolderOpen, Goal, IdCard, NotebookPen, Pencil, Route, X } from 'lucide-react'
+import { AlarmClock, Brain, ChevronLeft, ChevronRight, FolderOpen, Goal, IdCard, NotebookPen, Pencil, RotateCcw, Route, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { MemberRosterRow } from '../../api/client'
 import { crewDisplayName } from '../../components/AgentSelector'
@@ -9,7 +9,10 @@ import Tablist, { type TablistTab } from '../../components/Tablist'
 import type { CronJob } from '../../types'
 import CrewScheduleList from './CrewScheduleList'
 import { cn } from '../../lib/utils'
+import { Btn } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
+import { forwardUiLocation } from '../../uiLocations/uiLocation'
+import type { UiLocationId } from '../../uiLocations/descriptors'
 
 /** The card's four tabs, in strip order (crewmate-panel IA sketch). */
 export const PROFILE_TABS = ['sessions', 'schedule', 'goals', 'profile'] as const
@@ -34,6 +37,9 @@ export interface CrewProfilePanelProps {
   descriptionError?: boolean
   /** Where its memory lives, already worded by the page (private / global / …). */
   memoryLabel: string
+  /** Opens the management page of THIS crewmate's private memory store.
+   *  Absent when the binding is not its own store: the tile stays a readout. */
+  onOpenMemory?: () => void
   /** Which tab opens first. */
   initialTab?: ProfileTab
   /** The head face's element, for the page's face flight (#18236): the page
@@ -64,6 +70,9 @@ export interface CrewProfilePanelProps {
   onRequestBack: (proceed: () => void) => void
   onEdit: () => void
   onOpenFiles: () => void
+  /** Fresh start: stop any turn and start a clean conversation on the same
+   *  thread. Absent while the thread is unbound or a reset runs. */
+  onFreshStart?: () => void
 }
 
 const TONE: Record<'accent' | 'ok' | 'warn' | 'info', string> = {
@@ -73,20 +82,23 @@ const TONE: Record<'accent' | 'ok' | 'warn' | 'info', string> = {
   info: 'bg-info-subtle text-info',
 }
 
-function Row({ icon, tone = 'accent', label, sub, onClick, testId }: {
+const Row = forwardRef(function Row({ icon, tone = 'accent', label, sub, onClick, testId, 'data-ui-location': uiLocationId }: {
   icon: ReactNode
   tone?: keyof typeof TONE
   label: string
   sub?: string
   onClick: () => void
   testId: string
-}) {
+  /** A registered find_ui location (`{...uiLocation(id)}` spread on the row). */
+  'data-ui-location'?: UiLocationId
+}, forwardedRef: ForwardedRef<HTMLButtonElement>) {
   return (
     <button
       type="button"
       onClick={onClick}
       className="flex items-center gap-3 w-full px-3.5 py-3 text-left border-t border-border first:border-t-0 hover:bg-bg-hover transition-colors cursor-pointer"
       data-testid={testId}
+      {...forwardUiLocation(uiLocationId, forwardedRef)}
     >
       <span className={cn('w-8 h-8 rounded-[9px] grid place-items-center shrink-0', TONE[tone])} aria-hidden="true">{icon}</span>
       <span className="flex-1 min-w-0 leading-tight">
@@ -96,7 +108,7 @@ function Row({ icon, tone = 'accent', label, sub, onClick, testId }: {
       <ChevronRight size={15} className="text-muted shrink-0" aria-hidden="true" />
     </button>
   )
-}
+})
 
 function Tile({ icon, tone, label, value, title, onClick, testId }: {
   icon: ReactNode
@@ -137,8 +149,8 @@ function Tile({ icon, tone, label, value, title, onClick, testId }: {
  * It is a floating card over the right of the thread — a hover card, not a
  * second side panel: rounded on every corner, a third of the row wide, the
  * side panel's height. The side panel itself carries only the dynamic Dashboard
- * and the Workspace file browser, which is where the Memory and Workspace tiles
- * lead.
+ * and the Workspace file browser, which is where the Workspace tile leads; the
+ * Memory tile opens the crewmate's private memory page in Settings.
  */
 export default function CrewProfilePanel(p: CrewProfilePanelProps) {
   const { t } = useTranslation()
@@ -276,6 +288,32 @@ export default function CrewProfilePanel(p: CrewProfilePanelProps) {
             {/* Face and name only: the id, the role and the activity line were
                 dropped from the head (they live in the pill and the editor). */}
             <div className="mt-1 text-[19px] font-bold tracking-tight text-text-strong leading-tight" data-testid="crew-profile-name">{name}</div>
+            {/* Fresh start: a small pill button under the name, where the
+                person is. A real button shape (border, filled background on
+                hover) rather than a bare caption-weight link, so a first-time
+                reader can tell it is a control before deciding whether to
+                risk it; muted colour and no danger tone keep it quiet. The
+                label carries the action alone: what survives the reset is the
+                confirm dialog's job, where the person is deciding. Held while
+                its own flow runs.
+
+                The shared `Btn` primitive carries the press feedback every
+                other button on a page has (`active:scale`), and `twMerge`
+                lets the pill keep its own radius, height, size and muted
+                colour over Btn's defaults. `hover:border-border` is spelled
+                out to hold Btn's brighter hover border back: this control
+                stays quiet, and only its fill and label move on hover. */}
+            {p.onFreshStart && (
+              <Btn
+                type="button"
+                onClick={p.onFreshStart}
+                className="gap-1.5 h-7 px-3 mt-1 rounded-full bg-bg text-[12px] text-muted hover:border-border hover:bg-bg-hover hover:text-text focus-ring"
+                data-testid="crew-profile-fresh-start"
+              >
+                <RotateCcw size={12} aria-hidden="true" />
+                <span>{t('pages.membersPage.fresh_start')}</span>
+              </Btn>
+            )}
             <button
               type="button"
               onClick={p.onEdit}
@@ -331,7 +369,7 @@ export default function CrewProfilePanel(p: CrewProfilePanelProps) {
                 </section>
 
                 <div className="grid grid-cols-2 gap-2.5">
-                  <Tile icon={<Brain size={18} />} tone="accent" label={t('pages.membersPage.profile_memory')} value={p.memoryLabel} testId="crew-profile-memory" />
+                  <Tile icon={<Brain size={18} />} tone="accent" label={t('pages.membersPage.profile_memory')} value={p.memoryLabel} onClick={p.onOpenMemory} testId="crew-profile-memory" />
                   <Tile icon={<FolderOpen size={18} />} tone="info" label={t('pages.membersPage.profile_workspace')} value={ws || t('pages.membersPage.profile_workspace_none')} title={p.member.workspace} onClick={p.onOpenFiles} testId="crew-profile-workspace" />
                 </div>
 

@@ -1,6 +1,6 @@
 ---
 title: Conductor default patrol -- a bind arms a work-ledger watch when the conductor has no loop
-status: in-progress
+status: implemented
 author: iamwhatever, with kirocrew-worker
 created: 2026-10-05
 last-audited: 2026-10-05
@@ -14,7 +14,7 @@ superseded-by: []
 
 # RFC: Conductor default patrol
 
-- Status: in-progress. The decision was made by the operator who owns the conductor patrol (2026-10-05). The implementation is [#17069](https://github.com/kirodotdev/KiroCrew/pull/17069). That PR's First Principles lane reads an RFC's status off the base branch, so this document lands on its own first, as GOVERNANCE.md asks of an RFC. The implementation then rebases onto it.
+- Status: implemented. The decision was made by the operator who owns the conductor patrol (2026-10-05). The implementation is [#17069](https://github.com/kirodotdev/KiroCrew/pull/17069). That PR's First Principles lane reads an RFC's status off the base branch, so this document lands on its own first, as GOVERNANCE.md asks of an RFC. The implementation then rebases onto it.
 - Amends [rfc-conductor-work-ledger.md](rfc-conductor-work-ledger.md) in one place, named in section 3: arming the `work-ledger` watch is no longer only the conductor's own act.
 - Related: [rfc-crew-log-wake.md](rfc-crew-log-wake.md) (how a worker's report wakes the conductor) and the goal-conductor skill's `scripts/patrol_budget.py` (the bounds a patrol must pass).
 - Measured at `a92dde1a6c`.

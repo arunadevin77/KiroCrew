@@ -10,7 +10,8 @@ import FilePathMenu, { useRevealFailure } from '../FilePathMenu'
 import { i18nT } from '../../i18n/t'
 import { InsideLinkCtx, PathActionCtx, PathProbeCtx, SessionActionCtx, SidebarFolderCtx } from './contexts'
 import { activatePath, basenameOf, usePathResolution } from './pathReferences'
-import { folderSegmentsOf, resolveFolderChip, resolveSessionChip } from './linkTargets'
+import { folderSegmentsOf, resolveFolderChip, useSessionChip } from './linkTargets'
+import { ClosedSessionNotice } from './ClosedSessionNotice'
 import { CopyFailedNotice, useCopiedFlash, useTitleCuedCopy } from './copyFeedback'
 import { ELEMENT_OVERRIDES, isElementWithProps } from './elements'
 
@@ -475,6 +476,9 @@ export function InlineCode({ children, ...props }: { children?: React.ReactNode 
   const { directLocal } = useBranding()
   const raw = codeStr.trim()
   const pathResolution = usePathResolution(raw, probeEnabled)
+  // Before the early returns below (rules of hooks): a closed session's chip
+  // waits on a gateway probe. Same text the chip branch below would see.
+  const sessionTarget = useSessionChip(visibleText === null || raw === '' ? null : raw, sessionActions)
   // Failure state for the chip's reveal (Shift+click / no handler wired); rendered
   // beside the chip. Declared before the early returns below (rules of hooks).
   const reveal = useRevealFailure(raw)
@@ -533,16 +537,19 @@ export function InlineCode({ children, ...props }: { children?: React.ReactNode 
     // span, where a button would write '' — clearing the clipboard — and then
     // confirm it). Stay an inert, selectable code span.
     if (visibleText === null || raw === '') return <code className={CHIP_BASE} {...safeProps}>{reserve}{children}</code>
-    const session = resolveSessionChip(raw, sessionActions)
+    const session = sessionTarget
     if (session) {
       return (
-        <SessionChip
-          sessionKey={session.key}
-          sessionTitle={session.title}
-          label={raw}
-          safeProps={safeProps}
-          onOpen={sessionActions.onSessionOpen!}
-        >{children}</SessionChip>
+        <>
+          <SessionChip
+            sessionKey={session.key}
+            sessionTitle={session.title}
+            label={raw}
+            safeProps={safeProps}
+            onOpen={session.open}
+          >{children}</SessionChip>
+          <ClosedSessionNotice failure={session.failure} name={session.key} />
+        </>
       )
     }
     // A sidebar folder named by its full human path. After the session chip (a
@@ -620,14 +627,19 @@ export function InlineCode({ children, ...props }: { children?: React.ReactNode 
     activatePath(path, kind, e.shiftKey, actions, reveal.onError, targetLine, targetEndLine)
   }
   // Right-click opens the shared file-path menu (Open in default app / reveal /
-  // copy path), additive to the existing click/shift-click activation. The menu
-  // items self-gate on directLocal, so a remote session sees only Copy path.
+  // copy path), additive to the existing click/shift-click activation. The
+  // native items self-gate on directLocal; the in-app items ("Open in side
+  // panel", "Show folder in side panel") come from this host's own handlers,
+  // so a remote session still gets an entry that works on the viewer's screen.
   // `kind` is threaded through so a directory chip hides "Open with default
   // app" — the reveal endpoint 400s an `open` on a directory, which would land
   // the user on an error for a click they cannot fix.
+  const openFileFromMenu = actions.onFileOpen
+    ? () => activatePath(path, kind, false, actions, reveal.onError, targetLine, targetEndLine)
+    : undefined
   return (
     <>
-    <FilePathMenu filePath={path} kind={kind}>
+    <FilePathMenu filePath={path} kind={kind} onFileOpen={openFileFromMenu} onFolderOpen={actions.onFolderOpen}>
       <code
         className={CHIP_ACTIONABLE}
         // eslint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role -- <code> is intentionally interactive (click-to-open path chip), same pattern as CopyableCode

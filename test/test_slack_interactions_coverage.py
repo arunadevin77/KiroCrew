@@ -975,7 +975,12 @@ class TestAllowlistButtons:
         )
         assert orch._allowed_users == {"U9"}
         orch.slack.open_dm.assert_awaited_once_with("U9")
-        assert "allowlist" in orch.slack.post_message.await_args.args[1]
+        dm_text = orch.slack.post_message.await_args.args[1]
+        assert "allowlist" in dm_text
+        # The bot is owner-only, so the approve DM must not falsely tell a
+        # non-owner they can now message the bot.
+        assert "can now message me" not in dm_text
+        assert "owner-only" in dm_text
         assert "Nine" in orch.slack.update_message.await_args.kwargs["text"]
 
     @pytest.mark.asyncio

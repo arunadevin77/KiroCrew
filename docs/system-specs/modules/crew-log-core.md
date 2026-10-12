@@ -179,6 +179,7 @@ source were removed (see the emitter spec's "Removed types").
 | `session/closed` | `{reason}` | yes |
 | `session/adopted` | `{parent, previous_parent?}` — the session was adopted under a new parent, replacing the `session/opened` parent edge | yes |
 | `session/released` | `{previous_parent?}` — the session was released from its parent, retracting the edge | yes |
+| `session/spawned` | `{child {slot}}` — written on the CREATOR's log when `session_create` or `session_fork` commits, so the creating edge is durable before the child's first turn opens its own log | yes |
 | `turn/started` | `{turn, actor, depth, message_seq?, attempt?}` | yes |
 | `turn/refused` | `{turn, actor, reason, depth}` | yes |
 | `turn/completed` | `{turn, depth, stop_reason, duration_ms, credits, model, provider, tokens{input,output,cache_read,cache_write}, context?{used, window}}`; `error?` and no `credits`/`tokens` on a turn that ended without its terminal event | yes |
@@ -282,6 +283,31 @@ line is recorded short by a NAMED member in `facts_omitted` rather than dropped 
 trimmed silently. No `turn`: a probe runs without a model turn, so the observation
 belongs to no turn. The monitor's state document still holds no history of the
 subject -- this entry is that history (`monitor-architecture.md`).
+
+### Cards and guides
+
+| Type | `data` | Emitter |
+|---|---|---|
+| `card/proposed` | `{slot, card_id, kind, title, revision, risk?, turn?, mid?}` — The agent proposed a change card at this point of the conversation | yes |
+| `card/finished` | `{card_id, status, revision}` — `status` closed to the card store's finished statuses (`applied`, `partial`, `failed`, `cancelled`, `expired`, `undone`) | yes |
+| `guide/offered` | `{slot, guide_id, actions:[id], turn?, mid?}` — The agent offered a guide at this point of the conversation | yes |
+| `guide/started` | `{guide_id}` — the first claim after the person pressed Start | yes |
+| `guide/finished` | `{guide_id, status, reason?}` — `status` closed to `completed`, `cancelled`, `expired`; `reason` closed to `saved_without_guide` | yes |
+
+A proposal is part of the conversation, so it is recorded twice in one step: a
+`card` row in the slot's transcript (display-only, drawn where it was proposed) and
+the opener here. `mid` is that row's id and is what joins the two. Every outcome
+patches the row in place and appends a closer, so the conversation with each card in
+its final state is reconstructible from this log alone -- the openers say where and
+what, the newest closer per id says how it ended. Only names are recorded: no card
+parameter, no edited field and no typed value reaches either record. The live state
+-- revisions, apply steps, the tab driving a guide -- stays the card and guide
+stores', and a re-preview writes nothing here. `card/finished` may repeat for one id
+(`failed` is retryable; an applied card can be undone), so a reader takes the newest.
+
+None of these is `ignorable`. The marker is for an entry that samples a stream, and
+a skip reads as a seq gap to the class fold, so marking these would not let an older
+reader pass them cleanly anyway; they are declared like every other fact.
 
 ### Background and children
 
@@ -405,7 +431,7 @@ with the first fold that actually performs it rather than shipped ahead of any c
 
 Every refusal is a `CrewLogError` carrying a stable `code`; the codes are API surface and are additive-only.
 
-**Ownership** answers whether a kind of unit has such events at all. `schema.TYPE_OWNERSHIP` maps kind to owned `type` domains -- crew: `member` `activity` `slot` `patrol` `message` `crew` `item` `memory`; member: `member` `activity` `slot` `patrol`; session: `session` `turn` `step` `tool` `approval` `model` `compaction` `plan` `ledger` `object` `message` `request` `context` `background` `subagent` `write` `radar` `work` `panel` -- and anything else is `event_type_not_owned`. It is prefix-based, so a new action under an owned domain needs no change: `crew/dispatch` and `crew/report` are owned by the `crew` domain the registry already lists. `message` appears in the crew and session registries, which is what ownership means: a crew forwards messages and a session records its own bodies, so both kinds have such events and neither name is a collision.
+**Ownership** answers whether a kind of unit has such events at all. `schema.TYPE_OWNERSHIP` maps kind to owned `type` domains -- crew: `member` `activity` `slot` `patrol` `message` `crew` `item` `memory`; member: `member` `activity` `slot` `patrol`; session: `session` `turn` `step` `tool` `approval` `model` `compaction` `plan` `ledger` `object` `message` `request` `context` `background` `subagent` `write` `radar` `work` `panel` `dashboard` `card` `guide` -- and anything else is `event_type_not_owned`. It is prefix-based, so a new action under an owned domain needs no change: `crew/dispatch` and `crew/report` are owned by the `crew` domain the registry already lists. `message` appears in the crew and session registries, which is what ownership means: a crew forwards messages and a session records its own bodies, so both kinds have such events and neither name is a collision.
 
 **Namespacing** answers whether an emitter may write it, and it is a rule about `src`. Two halves:
 

@@ -548,9 +548,9 @@ case no other term can see, including the coarse-clock collision reproduced by h
 two sequence type guards cover each other on a record with no sequence, so they are pinned
 as a pair. If the slot is absent or moved while the archive is
 being built, the skip is refused, the refusal leaves the newer record in place, and the
-run logs the reason before uploading the archive. `hooks._run_once` reads `uploaded` and
-reports and audits a skip as `unchanged` rather than as a push; a record without the field
-reads as a push. Neither the label publish nor the retention sweep runs on a successful
+run logs the reason before uploading the archive. The scheduled run's
+`backup.make_job_runner` runner reads `uploaded` and audits a skip as `unchanged`
+rather than as a push; a record without the field reads as a push. Neither the label publish nor the retention sweep runs on a successful
 skip. Labels follow a push, so a local rename reaches the drive on the next real upload
 rather than on a skip. An unchanged night cannot consume a keep slot or prune the archive
 the next skip depends on.
@@ -1391,14 +1391,56 @@ the gateway stopped. The panel copy says exactly that, because "share memory
 between my laptop and my cloud desktop" is the request that leads people here.
 
 The nightly toggle records whether an account is eligible for a scheduled
-snapshot. `aws_control.hooks._run_once` resolves an account and drive, checks
-S3 consent, runs only due backups, and SEL-audits invocation, success, and
-failure. It skips unavailable accounts or absent drives rather than creating
-resources itself. When `hooks._note_shared_drive` sees another install's prefix it
-logs and SEL-audits the observation and then PROCEEDS. It does not take ownership
-of the schedule: with the keys namespaced there is nothing left to collide, and a
+snapshot. `aws_control.hooks._run_once` resolves the account, checks S3 consent, and
+checks for the drive; it skips an unavailable account or an absent drive rather than
+creating resources, so when there is nowhere to push it CLAIMS no run at all (as the
+loop did before it went through the SDK — a claimed-but-empty `done` run would clear
+an owner's last failure on the Backup row). Otherwise, for each due kind it claims a
+Job SDK run through the same `start_async(kind, dedupe_key=account, …)` call the
+owner's manual backup uses — so a scheduled and a manual backup of one account dedupe
+on one key and the run shows on the Backup row. The run's `backup.make_job_runner`
+runner SEL-audits invocation, success, the `unchanged` skip, and failure, and feeds a
+failed scheduled run into the backoff `due_for_nightly` reads (minus a
+`ScheduledUploadWithheld` policy refusal, which is audited `withheld` and recorded
+nowhere — see the adopted-caller rule above). A drive lookup that
+RAISES (not one that returns no drive) is a fault that happens in the loop before any
+run is claimed, so the runner never sees it; `hooks._nightly_setup_failure` records and
+SEL-audits it per due kind there, the same two writes the runner makes after a claim,
+so a setup fault backs off exactly like a push fault. When the runner sees
+another install's prefix (checked once, on the snapshot kind only) it logs and
+SEL-audits the observation and then PROCEEDS. It does not take ownership of the
+schedule: with the keys namespaced there is nothing left to collide, and a
 single-owner schedule would leave one machine silently un-backed-up, which is
 discovered at restore time and is worse than the state it replaced.
+
+Because a scheduled and a manual backup of one account share one `(kind,
+dedupe_key)`, an owner's "Back up now" click DURING a nightly adopts the in-flight
+scheduled run: the SDK returns the first caller's run and `start_async` does not
+merge params, so the adopted run keeps `CALLER_SCHEDULED` and still runs the
+scheduled-only re-checks in `backup_parts/uploads.py`. The caller an adopted run
+keeps is therefore the SCHEDULED one, by construction — and the rule that keeps that
+honest for the owner is the backoff split below: a scheduled-only precondition the
+OWNER controls — the per-kind unattended grant withdrawn, or scheduled transcripts no
+longer allowed because outbound redaction was turned on mid-build — raises
+`uploads.ScheduledUploadWithheld` rather than a bare failure, and the runner audits it
+`withheld` and does NOT call `record_nightly_failure`. Without that split, an owner
+who clicked during a nightly and surfaced one of those gates would see a failure they
+did not cause and watch the backoff grow. The unregistered-kind fail-closed (no grant
+DEFINED for a kind) stays a fault that backs off: it is a configuration error, not an
+owner declining the upload.
+
+The scheduled runner re-resolves the drive per run, but it reads `(profile, region)`
+differently from the owner path. `accounts.resolve_account_profile_cached` serves only
+from the warm snapshot and returns `None` once it is past `accounts._PROBE_TTL_SECS`,
+and `start_async` is fire-and-forget, so the runner thread resolves LATER than the
+loop's live `probe_identity`. A gap longer than the TTL would resolve a nightly the
+loop JUST verified to `None` and audit it as failed. So the loop names the
+`(profile, region)` it freshly probed (`use_cache=False`) under `JOB_PARAM_PROFILE` /
+`JOB_PARAM_REGION`, and a scheduled run falls back to that pair when the cache has
+expired. This cannot operate on the wrong account: `_authorize_upload` still re-checks
+the LIVE account with `sts:GetCallerIdentity` before any byte leaves. The owner path
+carries neither param and keeps the cache-only resolve, because its route pre-flight
+has just warmed the snapshot. The bucket is always re-discovered either way.
 
 ### A failed unattended attempt is recorded, so the loop can back off
 
@@ -1410,10 +1452,13 @@ would take its never-ran branch on every wake, re-stage the whole data home into
 temporary directory, and repeat the same traceback roughly every half hour for as long as
 the fault lasted.
 
-`hooks._failed_attempt` closes that. It is the single place a failed unattended
-attempt is both SEL-audited and recorded, reached from the shared setup's handler
-and from each kind's own push, so the backoff cannot depend on which way the run
-broke.
+A failed unattended attempt is both SEL-audited and recorded in two honest places —
+`backup.make_job_runner`'s post-claim handler for a fault during the push, and
+`hooks._nightly_setup_failure` for a drive lookup that raises before any run is
+claimed — so the backoff cannot depend on which way the run broke. Both make the
+same pair of writes (the `failed` SEL audit under `backup/<subpath>` and
+`record_nightly_failure`), filed under one subject spelling per kind so a setup
+failure and a push failure for one kind never land apart.
 
 It closes that for a fault that leaves the state file writable, which is not every
 fault. A full disk fails the failure-write as well, so nothing is recorded and every
@@ -1424,7 +1469,10 @@ leaves the loop retrying as it does today. So a full disk is still a repeated-tr
 case; what this closes is the larger class where the disk is fine and the backup is not.
 
 Cancellation does not reach it: a cancelled attempt is teardown, and
-counting it would let a clean shutdown push the next night out.
+counting it would let a clean shutdown push the next night out. Neither does a
+`ScheduledUploadWithheld` refusal: the owner withdrawing an unattended grant, or
+turning redaction on, is a policy decision not to upload, not a fault, so counting it
+would let the owner's own setting grow the schedule's backoff.
 
 The record lives under `backup.NIGHTLY_FAILURE_STATE_KEY`, per account then per
 kind, as `{"at": iso8601, "since": iso8601, "consecutive": int, "error": str}`. It is a SEPARATE key
@@ -1545,7 +1593,8 @@ unattended upload starts.
 Due-ness is keyed per kind (`backup.due_for_sessions_nightly` against
 `KIND_SESSIONS`), so a snapshot that ran an hour ago does not make the
 transcripts look backed up, and a wake proceeds when EITHER kind is due. Each
-kind is pushed inside its own `hooks._push_nightly` call with its own
+kind is claimed through its own `start_async(kind, dedupe_key=account, …)` call
+in `hooks._run_once`, and `backup.make_job_runner`'s runner gives each its own
 try/except and its own audit subject (`backup/snapshots`, `backup/sessions`), so
 one kind failing costs the other nothing and an incident review can tell which
 bytes left the host. A platform without descriptor-pinned traversal is never due
@@ -1982,16 +2031,25 @@ The startup order is a correctness requirement rather than a preference:
 2. Write the container's own configuration. It must land after the bundle, because
    a bundle may ship config and the container's posture has to win on the keys it
    sets, and before the backend, which reads the file at boot.
-3. Restore the two authority files from the bucket, when one is configured. This
+3. Claim writer ownership in the bucket, when one is configured. Before it restores
+   anything, the task bumps the committed pointer's incarnation in place, same generation
+   id, marked as a provisional claim, under a compare-and-swap on the pointer's ETag, so a
+   predecessor that is still serving is fenced from that instant. A bucket with no pointer
+   writes nothing and the task mints a base token. The claimed token is exported as
+   `SMC_CLAIMED_INCARNATION` and the sidecar adopts it instead of minting its own. A task
+   that aborts before it is serving (a restore, spawn or readiness failure, or a stop
+   signal) releases the claim by restoring the committed owner's pointer under a
+   compare-and-swap, which is a no-op once a newer claimant has written the pointer.
+4. Restore the two authority files from the bucket, when one is configured. This
    must finish before the next step: the backend's periodic flush persists its
    in-memory slot table, so a flush landing before the restore completes writes an
    empty set over the record of which conversations existed. A restore that fails
    for any reason other than the objects being absent refuses the boot, because
    reading a denial as absence is that same empty flush by another route.
-4. Start the backend. `wait_until_ready` returns only when the port answers **and**
+5. Start the backend. `wait_until_ready` returns only when the port answers **and**
    the boot secret file exists; process-alive is not ready.
-5. Start the front process.
-6. Start the backup sidecar, last, because its first cycle should see a task that
+6. Start the front process.
+7. Start the backup sidecar, last, because its first cycle should see a task that
    is already serving.
 
 **The task owns its agent-spec directory, and that is what lets the backend write
@@ -2036,8 +2094,23 @@ because the alternative is silent loss. `SMC_BACKUP_INTERVAL_SECS` sets the cade
 and refuses only a value of zero or less, which is a busy loop rather than a faster
 cadence.
 
-Artifacts are NOT covered. That set is unbounded and the agent writes into it, so
-bounding it is an open question tracked on the issue rather than answered here.
+Artifacts are NOT covered: that set is unbounded and the agent writes into it, so it is
+outside the backup set.
+
+**Where it lands.** Keys sit under ``<SMC_BACKUP_PREFIX>/<SMC_CREW_NAME>/``, each part
+optional. The pointer is ``authority_generation.json``. A generation is ``gen/<id>/``
+holding ``session_map.json``, ``open_slots.json`` and ``transcript_index.json``, a
+``stem -> sha256`` map of the live transcripts. A live transcript is
+``data/blob/<sha256 of its bytes>``, written create-only, so two writers of different
+bytes never share a key and identical bytes converge. An archived segment keeps its path
+under ``data/sessions/archive/`` with the digest of its bytes appended, so the owner's
+control plane can still list a conversation's segments by prefix. The cycle carries
+forward the committed index's mappings for every conversation the captured pair still
+names, so a replacement that has not yet fetched a conversation does not drop it from the
+next generation. A merged index above 50,000 entries or half the read ceiling (32 MiB) is
+not published: the pair is withheld, the cycle fails loudly and the previous generation
+stays committed; a sessions directory holding more than 50,000 transcripts is withheld
+the same way.
 
 `session_index.db` is deliberately excluded: it is a search index the backend
 rebuilds, and its own module documents it as safe to be absent, stale or empty.
@@ -2072,32 +2145,37 @@ absent.
 
 A cycle that put the WHOLE pair in the bucket then commits ONE pointer object as the last
 thing it does: a single object naming the generation whose pair was just published whole.
-Each cycle publishes into a WRITER-UNIQUE, immutable generation id (``generations/<id>/``),
+Each cycle publishes into a WRITER-UNIQUE, immutable generation id (``gen/<id>/``),
 so the pair a cycle uploads never overwrites another generation's pair, and a publication
 interrupted halfway damages only an id nothing yet points at. There is no shared ``a``/``b``
 slot and no ``list``: the durability process holds only ``get`` and ``put``, so no cycle
 ever surveys the bucket for an orphaned pair. The pointer is settled by COMPARE-AND-SWAP on
 its ETag -- a cycle writes it ``If-Match`` the ETag it read (or ``If-None-Match: *`` for the
 first pointer) -- so two writers racing to commit cannot both win, and the loser re-reads
-and retries. An INCARNATION fence rides alongside the CAS: the pointer records the task
-incarnation that wrote it, and a strictly-older incarnation's commit is refused even if its
-CAS would pass, so a draining predecessor cannot roll the pointer back onto its older view
-after a replacement has committed newer state.
+and retries. An INCARNATION fence rides alongside the CAS: the pointer records the incarnation of the
+task that wrote it, and a commit is refused when the committed counter is strictly greater
+than this task's, or equal with a different token. A pointer that carries a provisional
+claim refuses the predecessor's commit as retryable, so a replacement that aborts cannot
+fence a healthy predecessor; once a replacement makes a real commit, the predecessor's
+commit is refused as superseded and its sidecar exits non-zero, which the supervisor
+treats as the end of the task. The sidecar exits non-zero for a configuration it cannot
+work with (2, no bucket), a bucket that cannot be written (3), a committed pointer it
+cannot read at startup (4) and a superseding replacement (5); a failed ordinary cycle is
+logged and retried at the next interval.
 
 The restore reads only the committed generation, by the id the pointer names, and decides
-FIVE cases. (1) No pointer: the legacy ``data/`` keys are GENERATION 0, and an authority
-file absent there is a first boot -- there is nothing to survey, because each generation
-lives at its own id and the process cannot list them. (2) A pointer whose generation holds
-every name it was committed with: the ordinary restore, fetched by that id. (3) A pointer
-whose generation is MISSING one committed name: refused, because the pair lost a member, and
-the next complete cycle mints a fresh generation and commits it, repairing the bucket. (4) A
-pointer present but UNUSABLE (unreadable, unparseable, or carrying a malformed incarnation):
-refused, since unusable is not absent -- reading it as absence would boot from the legacy
-keys the pointer was steering away from. (5) Legacy keys AND a committed generation both
-present: the pointer wins and the legacy keys are ignored, because they are the older
-publication no cycle of this writer rewrites. A read that fails for any other reason,
-including a denial, is failure too: reading a denial as absence is the same route to booting
-with an empty slot table.
+FOUR cases. (1) No pointer: the bucket is empty and both authority files are absent, which
+is a first boot. Nothing else in the bucket is consulted -- there is no pre-protocol
+``data/`` layout to read and no survey of generation ids, because the durability process
+holds only ``get`` and ``put`` and never a ``list``. A file already on local disk is still
+read, validated and loaded by the backend. (2) A pointer whose generation holds every name
+it was committed with: the ordinary restore, fetched by that id. (3) A pointer whose
+generation is MISSING one committed name: refused, because the pair lost a member, and the
+next complete cycle mints a fresh generation and commits it, repairing the bucket. (4) A
+pointer present but UNUSABLE (unreadable, unparseable, or carrying a malformed
+incarnation): refused, since unusable is not absent. A read that fails for any other
+reason, including a denial, is failure too: reading a denial as absence is the same route
+to booting with an empty slot table.
 
 The ARCHIVE root is the one root whose refusal must not withhold the pair. A link or a
 non-directory there is a SHAPE, so every later cycle meets the identical error and a withholding
@@ -2124,11 +2202,15 @@ flush, so it cannot contain what that flush wrote. That final cycle's verdict re
 the task's exit code, because it is the only copy of the turns in the flush.
 
 An overlapping deployment -- one that starts the replacement task before the old
-task has finished draining -- is outside that guarantee. The new task's restore
-reads authority files written before the old task's final cycle, and both sidecars
-then write the same keys, so the turns taken during the overlap window can be lost.
-The loss is bounded by that window rather than total, and the deployment driver is
-expected to serialize stop before start; where it cannot, this is the residual.
+task has finished draining -- is outside the lossless guarantee. The replacement claims
+writer ownership before it restores, which fences the old task: its commits are refused as
+retryable while the pointer carries the replacement's provisional claim, and as superseded
+once the replacement makes its first real commit, at which point its sidecar exits
+non-zero. Generations and transcript blobs are writer-unique, so neither task overwrites
+the other's objects, but the turns the old task takes after the replacement's restore are
+in no committed generation. The loss is bounded by that window rather than total, and the
+deployment driver is expected to serialize stop before start; where it cannot, this is the
+residual.
 
 ### The front layer
 
@@ -2272,6 +2354,15 @@ against the same 64 MiB ceiling, one chunk past it so an object of exactly that 
 be told from a larger one. The refusal is a `TranscriptUnavailable`, so an oversized
 object fails that turn rather than letting the backend serve one with the conversation
 missing.
+
+The front finds a conversation's transcript through the committed generation: it reads the
+pointer, then that generation's transcript index, then the one blob the index names for
+the slot's stem, three single-key reads and never a listing. A bucket with no pointer is
+empty and a stem the committed index does not name is a new conversation, so both serve
+fresh; no per-stem key is tried. A pointer or index that does not parse, an index the
+pointer references that is absent, or a blob the index references that is absent fails the
+turn with `TranscriptUnavailable`, because serving the conversation empty would let the
+next cycle replace its history. A local transcript is never overwritten by a fetched one.
 
 ### Launching the backend
 
@@ -2555,10 +2646,19 @@ process group and ESCAPES a `killpg` on the backend. Only the backend's own SIGT
 handling reaps it, which makes the drain window load-bearing rather than a
 courtesy: too short a drain SIGKILLs the backend before it finishes reaping and
 orphans a worker that goes on to finish its turn. Teardown order is front, then
-backend -- stop new turns arriving, then let the backend drain and flush -- and
-anything still alive afterwards is an escaped worker, which the teardown sweeps by
+backend, then the backup sidecar -- stop new turns arriving, let the backend drain and
+flush, then let the writer's final cycle upload what that flush produced -- and anything
+still alive afterwards is an escaped worker, which the teardown sweeps by
 process group over bounded rounds, because a killed process's children reparent to
 PID 1 and surface in the next round.
+
+The drain windows are 5 s for the front, 25 s for the backend and 75 s for the sidecar,
+declared in the image's `container/common/config.py`. The platform must wait for all of
+them plus a 10 s reap margin before it SIGKILLs the supervisor, so the task definition
+sets `stopTimeout` to their sum, 115 s, which stays under Fargate's 120 s cap; Fargate's
+30 s default would kill the writer before its final cycle starts. The gateway's
+`CREW_STOP_TIMEOUT_SECS` is a deliberate copy of that total, because the image tree
+cannot be imported there, and a test pins the two equal.
 
 A child in the supervisor's OWN process group is withheld from that discovery. The sweep's
 remedy is a group signal, and on its own group that SIGKILLs the supervisor -- so the

@@ -879,6 +879,10 @@ export interface McpServer {
    *  alongside `authChallenge`; absent is "unknown", which is why the sign-in
    *  wording is gated on an explicit `false`. */
   authGrantPresent?: boolean
+  /** The owner added this remote server from the dashboard, at this url, so the
+   *  table may offer the in-place sign-in on it. Absent or false for a server
+   *  an agent, a session or a hand edit added. */
+  ownerSignIn?: boolean
   /** Spec-declared temp keys the probe refused (path already redacted); the
    *  probe ran with the managed temp instead. Absent when nothing was refused. */
   tempRefusals?: McpTempRefusal[]
@@ -1003,6 +1007,12 @@ export interface McpSessionReport {
   awaiting_auth: string[]
   /** Server name -> its redacted failure reason, when one was reported. */
   failures: Record<string, string>
+  /**
+   * Failed servers whose reason reads as a credential they did not have when
+   * they started: a new session loads them once the credential exists.
+   * Optional because an older gateway sends no such key.
+   */
+  restart_to_load?: string[]
 }
 
 export interface SessionLink {
@@ -1193,6 +1203,12 @@ export interface ChatSlot {
    * muted session still surfaces. Set only by the user (never an agent);
    * durable, so it survives a gateway restart. */
   mutes_opened?: boolean
+  /** The user-owned per-row mute of THIS session, set from its own kebab menu.
+   * When true: no turn-done chime, background-finished toast or unread badge.
+   * A completion that pauses
+   * for the user, a terminal error and a tool-approval prompt still surface.
+   * Durable, like `pinned`. */
+  muted?: boolean
   /** The session tree's parent edge for this slot, attached to every row by
    * `_attach_slot_parents`: `{slot, key}`, or null when this slot has no parent.
    * `slot` is the parent's own citation and `key` names the parent's row IN THIS
@@ -1614,6 +1630,10 @@ export interface Notification {
   // RFC Phase 4: inline actions, stacking, dashboard-internal deep link
   group_key?: string; url?: string
   actions?: { id: string; label: string; url?: string }[]
+  /** The crewmate that published the note, stamped by the gateway from the
+   *  publishing session. Persisted rows are untrusted: read it through
+   *  `noteMember`, which checks the shape. */
+  member?: { slug: string; name: string }
 }
 
 /** One row from GET /api/notifications/channels. */
@@ -1799,7 +1819,14 @@ export interface RemoteArtifact {
 export interface Artifact {
   slug: string
   name: string
-  kind: 'widget' | 'html' | 'markdown' | 'svg' | 'json' | 'text' | 'webapp' | 'image'
+  /** `dashboard` is a CREWMATE'S DASHBOARD PACKAGE -- the `bound_to`, `model`,
+   *  `view` and `theme` document `artifact_store/dashboard_package.py` validates.
+   *  It is in this union because the Artifacts library lists and versions it like
+   *  any other record, which is where its history and its revert come from, and
+   *  deliberately NOT in any picker: the backend keeps it out of
+   *  `USER_SELECTABLE_KINDS` so nobody can mint one by hand, and a kind offered in
+   *  the UI that the server refuses is a dead menu entry. */
+  kind: 'widget' | 'html' | 'markdown' | 'svg' | 'json' | 'text' | 'webapp' | 'image' | 'dashboard'
   /** Provenance/origin bucket. Carries either a legacy bucket
    * (chat|cron|subagent|manual|import) or the actual session origin
    * (dashboard|slack|cli|task-runner|unknown), so treated as an open string. */

@@ -1,6 +1,6 @@
 ---
 title: Terminal exit closes its tab — what the dashboard does when a shell ends on its own
-status: partial
+status: implemented
 author: jjaskula
 created: 2026-09-29
 last-audited: 2026-10-06
@@ -14,12 +14,14 @@ superseded-by: []
 
 # RFC: Terminal Exit Closes Its Tab
 
-> **Status:** `partial`. Accepted on 2026-09-30 by maintainer bolichen (see Open
+> **Status:** `implemented`. Accepted on 2026-09-30 by maintainer bolichen (see Open
 > questions). [#14509](https://github.com/kirodotdev/KiroCrew/pull/14509) is on
 > main: when the shell exits, `src/kiro_crew/dashboard/handlers/terminal.py`
 > closes the socket with `_TERMINAL_WS_CLOSE_SHELL_EXITED` (4001), so the browser
 > closes the tab instead of redialling. The Windows ConPTY exit status,
-> [#14511](https://github.com/kirodotdev/KiroCrew/pull/14511), is not merged.
+> [#14511](https://github.com/kirodotdev/KiroCrew/pull/14511), is also on main:
+> `src/kiro_crew/conpty.py`'s `WindowsPty.exitstatus` reports the ConPTY child's
+> exit code, so a failed Windows shell posts the same bell note as on POSIX.
 
 ## Summary
 
