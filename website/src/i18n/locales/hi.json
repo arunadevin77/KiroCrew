@@ -12393,7 +12393,16 @@
       "muted": "म्यूट: कोई ध्वनि, सूचना या बैज नहीं",
       "chat_with_folder": "{{folder}} फ़ोल्डर के साथ चैट",
       "chat_with_folder_desc": "वह चैट जिसने इस फ़ोल्डर की बाकी चैट शुरू कीं",
-      "conductor_tag": "कंडक्टर"
+      "conductor_tag": "कंडक्टर",
+      "models": "मॉडल के अनुसार फ़िल्टर",
+      "model_default_label": "कोई मॉडल नहीं चुना गया (एजेंट डिफ़ॉल्ट)",
+      "show_only_sessions_using_model": "केवल {{name}} का उपयोग करने वाले सत्र दिखाओ",
+      "stop_filtering_by_model": "{{name}} के अनुसार फ़िल्टर करना बंद करो",
+      "hide_sessions_on_these_models": "इन मॉडलों के सेशन छिपाओ",
+      "hide_sessions_on_these_models_hint": "चयनित मॉडल का उपयोग करने वाले सत्रों को छोड़कर सभी सत्र दिखाओ",
+      "tick_a_model_first": "पहले एक मॉडल चुनो",
+      "not_models": "{{models}} नहीं",
+      "hide_sessions_using_model": "{{name}} का उपयोग करने वाले सत्र छिपाओ"
     },
     "connectionsPage": {
       "action_failed": "कार्रवाई विफल: {{error}}",

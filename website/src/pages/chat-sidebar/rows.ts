@@ -74,11 +74,17 @@ export interface SidebarRowFilters {
   /** The filter menu's folder hides. `active` is false while the search box holds
    *  text, so a hidden folder never becomes a search dead end. */
   folders: { hiddenSubtree: ReadonlySet<string>; active: boolean }
+  /** The model filter. `passes` is the include-or-exclude predicate the model
+   *  vocabulary owns (`useSidebarModels`), already answering true for every row
+   *  while nothing is selected; `active` is whether a selection narrows. */
+  models: { passes: (slot: Slot) => boolean; active: boolean }
 }
 
 /** How a reveal drops each dimension. Carried, never called, by this module. */
 export interface SidebarRowClears {
   tags: () => void
+  /** Drop the model selection and its direction. */
+  models: () => void
   search: () => void
   status: () => void
   /** Un-hide this folder and its ancestor chain; a no-op for `undefined`. */
@@ -506,7 +512,7 @@ function makeDimensions(
   folderOf: SidebarRows['folderOf'],
   clears: SidebarRowClears,
 ): FilterDimension[] {
-  const { tags, search, status, folders: folderFilter } = filters
+  const { tags, models, search, status, folders: folderFilter } = filters
   // A paused set keeps its chips but narrows nothing, so the whole status dimension
   // goes inert while the pause is on.
   const activeStatus = status.paused ? [] : (Object.keys(matches) as SessionFilterKey[]).filter(key => status.active.has(key))
@@ -597,6 +603,18 @@ function makeDimensions(
       // hides that never matched it.
       hides: slot => isRowStatusHidden(slot),
       clear: () => clears.hides(),
+    },
+    {
+      // Model. A session property like tags, so it is not suspended by search. The
+      // vocabulary is the row list itself (no async fetch), so the selection is
+      // settled on the same render as the rows: one predicate serves both roles.
+      // No pinned exemption: the filter exists to find every session on a model,
+      // and in exclude mode a pinned row on the hidden model is exactly what was
+      // asked to leave the list.
+      filtersRow: models.passes,
+      narrows: () => models.active,
+      hides: slot => !models.passes(slot),
+      clear: () => clears.models(),
     },
   ]
 }
@@ -760,9 +778,10 @@ export function buildSidebarRows(inputs: SidebarRowInputs, previous?: SidebarRow
   const isRowStatusHidden = reuse(prev?.isRowStatusHidden, [status.hidden, statusMatches.value], () =>
     makeIsRowStatusHidden(status.hidden, statusMatches.value))
   const dimensions = reuse(prev?.dimensions, [
-    status.active, status.paused, status.hidden, tags.resolved, tags.raw, search.text, search.folderMatches, searchRanks,
+    status.active, status.paused, status.hidden, tags.resolved, tags.raw, filters.models.passes, filters.models.active,
+    search.text, search.folderMatches, searchRanks,
     statusMatches.value, isRowStatusHidden.value, folderFilter.hiddenSubtree, slotFolders,
-    clears.tags, clears.search, clears.status, clears.folder, clears.hides,
+    clears.tags, clears.models, clears.search, clears.status, clears.folder, clears.hides,
   ], () => makeDimensions(filters, statusMatches.value, isRowStatusHidden.value, searchRanks, folderOf, clears))
 
   // Before the filter pass, as the chip counts always were: both read the clock for a

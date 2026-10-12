@@ -28,7 +28,7 @@ const peer = (key: string, over: Partial<Slot> = {}): Slot =>
   ({ key, title: `Peer ${key}`, running: false, last_turn_ts: iso(MINUTE), peer_id: 'inst-a', peer_name: 'astro', row_identity: `inst-a:${key}`, ...over }) as Slot
 
 function clears() {
-  return { tags: vi.fn(), search: vi.fn(), status: vi.fn(), folder: vi.fn(), hides: vi.fn() }
+  return { tags: vi.fn(), search: vi.fn(), status: vi.fn(), folder: vi.fn(), hides: vi.fn(), models: vi.fn() }
 }
 
 /** No crew group shows: a single-machine list, as the facade passes on the board. */
@@ -59,6 +59,7 @@ function inputs(rows: Slot[], over: InputOverrides = {}): SidebarRowInputs {
       search: { text: '', folderMatches: null, ...f.search },
       status: { active: new Set(), hidden: new Set(), paused: false, recentWindowMs: 60 * MINUTE, ...f.status },
       folders: { hiddenSubtree: new Set(), active: false, ...f.folders },
+      models: { passes: () => true, active: false, ...f.models },
     },
     clears: over.clears ?? clears(),
     crewGroups: over.crewGroups ?? NO_GROUPS,
@@ -218,44 +219,48 @@ describe('every filter dimension answers the three consumers together', () => {
   const kept = local('kept', { tags: ['t1'], pinned: true, folder_id: 'F1', title: 'kept here' })
   const dropped = local('dropped', { tags: ['t2'], folder_id: 'F2', title: 'other' })
   const pinnedSet = new Set(['kept'])
-  // Dimension order is the registry's: tags, search, status, folder, status hides.
+  // Dimension order is the registry's: tags, search, status, folder, status hides, model.
   const cases: Array<[string, InputOverrides, { filtered: string[]; narrowed: boolean; hides: boolean[]; hidesKept?: boolean[] }]> = [
-    ['nothing active', {}, { filtered: ['kept', 'dropped'], narrowed: false, hides: [false, false, false, false, false] }],
+    ['nothing active', {}, { filtered: ['kept', 'dropped'], narrowed: false, hides: [false, false, false, false, false, false] }],
     ['tags', { filters: { tags: { resolved: new Set(['t1']), raw: new Set(['t1']) } } },
-      { filtered: ['kept'], narrowed: true, hides: [true, false, false, false, false] }],
+      { filtered: ['kept'], narrowed: true, hides: [true, false, false, false, false, false] }],
     ['search', { filters: { search: { text: 'kept' } } },
-      { filtered: ['kept'], narrowed: true, hides: [false, true, false, false, false] }],
+      { filtered: ['kept'], narrowed: true, hides: [false, true, false, false, false, false] }],
     ['status', { filters: { status: { active: new Set<SessionFilterKey>(['pinned']) } } },
-      { filtered: ['kept'], narrowed: true, hides: [false, false, true, false, false] }],
+      { filtered: ['kept'], narrowed: true, hides: [false, false, true, false, false, false] }],
     // The folder dimension narrows nothing and filters no row: it acts through the
     // lanes (`isRowFolderHidden`) and the folder render, and only a reveal asks it.
     ['folder', { filters: { folders: { hiddenSubtree: new Set(['F2']), active: true } } },
-      { filtered: ['kept', 'dropped'], narrowed: false, hides: [false, false, false, true, false] }],
+      { filtered: ['kept', 'dropped'], narrowed: false, hides: [false, false, false, true, false, false] }],
     ['a paused status chip', { filters: { status: { active: new Set<SessionFilterKey>(['pinned']), paused: true } } },
-      { filtered: ['kept', 'dropped'], narrowed: false, hides: [false, false, false, false, false] }],
+      { filtered: ['kept', 'dropped'], narrowed: false, hides: [false, false, false, false, false, false] }],
     // A hide answers for the row itself, and exempts no pinned row: `kept` is pinned.
     ['a status hide', { filters: { status: { hidden: new Set<SessionFilterKey>(['pinned']) } } },
-      { filtered: ['dropped'], narrowed: true, hides: [false, false, false, false, false], hidesKept: [false, false, false, false, true] }],
+      { filtered: ['dropped'], narrowed: true, hides: [false, false, false, false, false, false], hidesKept: [false, false, false, false, true, false] }],
     // Raw-vs-resolved: a stored tag the vocabulary cannot resolve filters nothing, yet a
     // reveal still clears it (it could be re-hiding the row mid-load). `kept` is pinned,
     // so the tag filter exempts it: a reveal of it must not clear the tag.
     ['an unresolved stored tag', { filters: { tags: { resolved: new Set(), raw: new Set(['ghost']) } } },
-      { filtered: ['kept', 'dropped'], narrowed: false, hides: [true, false, false, false, false], hidesKept: [false, false, false, false, false] }],
+      { filtered: ['kept', 'dropped'], narrowed: false, hides: [true, false, false, false, false, false], hidesKept: [false, false, false, false, false, false] }],
+    // The model filter exempts no pinned row: in exclude mode a pinned session on the
+    // hidden model is the one the person asked to drop. `kept` is pinned.
+    ['model', { filters: { models: { passes: slot => slot.key === 'dropped', active: true } } },
+      { filtered: ['dropped'], narrowed: true, hides: [false, false, false, false, false, false], hidesKept: [false, false, false, false, false, true] }],
   ]
   it.each(cases)('%s', (_name, over, expected) => {
     const rows = buildSidebarRows(inputs([kept, dropped], { ...over, local: { pinned: pinnedSet, folderOf: { kept: 'F1', dropped: 'F2' } } }))
     expect(keys(rows.filteredSlots)).toEqual(expected.filtered)
     expect(rows.listNarrowed).toBe(expected.narrowed)
     expect(rows.revealBlockingFilters.map(d => d.hides(dropped))).toEqual(expected.hides)
-    expect(rows.revealBlockingFilters.map(d => d.hides(kept))).toEqual(expected.hidesKept ?? [false, false, false, false, false])
+    expect(rows.revealBlockingFilters.map(d => d.hides(kept))).toEqual(expected.hidesKept ?? [false, false, false, false, false, false])
   })
 
-  it.each([0, 1, 2, 3, 4])('reveal clear %i drops only its own dimension, the folder one along the row\'s own folder', index => {
+  it.each([0, 1, 2, 3, 4, 5])('reveal clear %i drops only its own dimension, the folder one along the row\'s own folder', index => {
     const c = clears()
     const rows = buildSidebarRows(inputs([kept, dropped], { clears: c, local: { folderOf: { dropped: 'F2' } } }))
     rows.revealBlockingFilters[index].clear(dropped)
-    const called = [c.tags, c.search, c.status, c.folder, c.hides].map(fn => fn.mock.calls.length)
-    expect(called).toEqual([0, 1, 2, 3, 4].map(i => (i === index ? 1 : 0)))
+    const called = [c.tags, c.search, c.status, c.folder, c.hides, c.models].map(fn => fn.mock.calls.length)
+    expect(called).toEqual([0, 1, 2, 3, 4, 5].map(i => (i === index ? 1 : 0)))
     if (index === 3) expect(c.folder).toHaveBeenCalledWith('F2')
   })
 
@@ -477,7 +482,7 @@ describe('the status hides', () => {
     const c = clears()
     reveal(build({ status: hideRunning }, c), running)
     expect(c.hides).toHaveBeenCalledTimes(1)
-    for (const other of [c.tags, c.search, c.status, c.folder]) expect(other).not.toHaveBeenCalled()
+    for (const other of [c.tags, c.search, c.status, c.folder, c.models]) expect(other).not.toHaveBeenCalled()
   })
 
   it('a reveal of a row the search dropped leaves the hides alone', () => {
@@ -710,6 +715,7 @@ describe('each output keeps its identity while its own inputs hold still', () =>
     filters: {
       tags: { ...ACTIVE.filters.tags }, search: { ...ACTIVE.filters.search },
       status: { ...ACTIVE.filters.status }, folders: { ...ACTIVE.filters.folders },
+      models: { ...ACTIVE.filters.models },
     },
     clears: { ...ACTIVE.clears },
   })
@@ -790,11 +796,11 @@ describe('each output keeps its identity while its own inputs hold still', () =>
     expect(observe(incremental, population)).toEqual(observe(buildSidebarRows(next), population))
   })
 
-  it.each(['tags', 'search', 'status', 'folder', 'hides'] as const)('a new %s clear is the one a reveal calls', name => {
+  it.each(['tags', 'search', 'status', 'folder', 'hides', 'models'] as const)('a new %s clear is the one a reveal calls', name => {
     const fresh = vi.fn()
     const next = { ...rebuilt(), clears: { ...ACTIVE.clears, [name]: fresh } }
     const incremental = buildSidebarRows(next, buildSidebarRows(ACTIVE))
-    const index = ['tags', 'search', 'status', 'folder', 'hides'].indexOf(name)
+    const index = ['tags', 'search', 'status', 'folder', 'hides', 'models'].indexOf(name)
     incremental.revealBlockingFilters[index].clear(POPULATION[1])
     expect(fresh).toHaveBeenCalledTimes(1)
     expect(CLEARS[name]).not.toHaveBeenCalled()

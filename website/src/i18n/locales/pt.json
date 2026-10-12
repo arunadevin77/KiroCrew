@@ -12585,7 +12585,16 @@
       "muted": "Silenciada: sem som, aviso ou selo",
       "chat_with_folder": "Chat com a pasta {{folder}}",
       "chat_with_folder_desc": "O chat que iniciou os outros chats desta pasta",
-      "conductor_tag": "maestro"
+      "conductor_tag": "maestro",
+      "models": "Filtrar por modelo",
+      "model_default_label": "Nenhum modelo escolhido (padrão do agente)",
+      "show_only_sessions_using_model": "Mostrar apenas as sessões que usam {{name}}",
+      "stop_filtering_by_model": "Parar de filtrar por {{name}}",
+      "hide_sessions_on_these_models": "Ocultar as sessões nestes modelos",
+      "hide_sessions_on_these_models_hint": "Mostrar todas as sessões exceto as que usam os modelos selecionados",
+      "tick_a_model_first": "Selecione um modelo primeiro",
+      "not_models": "Exceto {{models}}",
+      "hide_sessions_using_model": "Ocultar as sessões que usam {{name}}"
     },
     "connectionsPage": {
       "action_failed": "Falha na ação: {{error}}",

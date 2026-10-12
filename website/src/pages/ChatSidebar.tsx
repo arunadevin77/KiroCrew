@@ -127,6 +127,7 @@ import { useFolderSort, useFolderVisibility, useFolderFilterReveal, useFolderFil
 import FolderCleanupPanel from './chat-sidebar/FolderCleanupPanel'
 import { useSidebarResize } from './chat-sidebar/resize'
 import { useSidebarTags } from './chat-sidebar/tags'
+import { useSidebarModels, modelFilterLabel } from './chat-sidebar/models'
 import { useBoardColumns, useColumnPopover, useBoardColumnMutations, useColumnMatches, useBoardFolderCollapse } from './chat-sidebar/board'
 import { useHoverHold, useHoverPinLiveness } from './chat-sidebar/hoverHold'
 import { useLineageAvailable, useConductorLane, citedCreatorOf } from './chat-sidebar/conductor'
@@ -2563,6 +2564,7 @@ function ChatSidebar({
     showAllFolders, filterTagIds, toggleTagFilter, clearTagFilter, foldersShelved, setFoldersShelved,
     toggleFoldersShelved, toggleFilter, disableFilter, enableFilter,
     hiddenFilters, toggleHideFilter, clearHiddenFilters,
+    filterModelKeys, filterModelsExcluded, toggleModelFilter, setModelFilterExcluded, clearModelFilter,
   } = useSessionFilterState()
   const {
     slotsLoaded, workflowActiveSet, automationRunningSet, subagentCounts, subagentStartedCounts, subagentApprovalCounts, unreadSet,
@@ -2839,6 +2841,11 @@ function ChatSidebar({
   const {
     tagsData, tagsQueryFailed, refetchTags, tagById, activeTagIds, tagFilterRows, activeTagNames,
   } = useSidebarTags({ filterTagIds, localSlots })
+  const { modelFilterRows, activeModelKeys, activeModelRows, modelFilterPasses } = useSidebarModels({ filterModelKeys, filterModelsExcluded, localSlots })
+  // The direction is only ON when it has something to invert: a stored exclude
+  // whose keys no session uses any more must not draw a ticked invert row (or
+  // mark rows as hidden) while the next tick would narrow to "only X".
+  const modelFilterInverted = filterModelsExcluded && activeModelKeys.size > 0
   const {
     rawColumns, tagColumnsSettled, columnsFailed, columnsError, refetchColumns, tagColumnsEnabled,
     hideEmptyFolderBody, orderedColumns,
@@ -2924,11 +2931,12 @@ function ChatSidebar({
     },
     filters: {
       tags: { resolved: activeTagIds, raw: filterTagIds },
+      models: { passes: modelFilterPasses, active: activeModelKeys.size > 0 },
       search: { text: slotFilter, folderMatches: folderNameMatchIds },
       status: { active: activeFilters, hidden: hiddenFilters, paused: filtersPaused, recentWindowMs },
       folders: { hiddenSubtree: filterHiddenSubtree, active: folderFilterActive },
     },
-    clears: { tags: clearTagFilter, search: clearSearch, status: clearAllFilters, folder: clearFolderHide, hides: clearHiddenFilters },
+    clears: { tags: clearTagFilter, models: clearModelFilter, search: clearSearch, status: clearAllFilters, folder: clearFolderHide, hides: clearHiddenFilters },
     crewGroups: shownCrewGroups,
     sortKey,
     clock: Date.now,
@@ -5561,6 +5569,100 @@ function ChatSidebar({
                     ))}
                   </>
                 )}
+                {/* Models. Lists only the models some session uses, most used
+                    first, so the section is also the quickest read of what the
+                    sessions run on. A session property like tags, so it is not
+                    gated on the lane either. */}
+                {modelFilterRows.length > 0 && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <FilterMenuLabel>
+                      {i18nT('pages.chatSidebar.models')}
+                    </FilterMenuLabel>
+                    {/* The invert row sits FIRST, under the heading, so the mode
+                        that changes what every tick below it means is read before
+                        the ticks, not discovered at the bottom of a menu that may
+                        be clipped on a short window. Always listed so the "every
+                        session not on model X" option can be found before anything
+                        is ticked, but disabled until a model is selected:
+                        with nothing selected it would flip a flag that changes
+                        nothing on screen. Enabled on the RESOLVED selection, so
+                        a stored key no session uses cannot arm it either.
+                        "Hide" names what the list does. */}
+                    <>
+                      <DropdownMenuItem
+                        disabled={activeModelKeys.size === 0}
+                        title={i18nT('pages.chatSidebar.hide_sessions_on_these_models_hint')}
+                        onSelect={e => { e.preventDefault(); setModelFilterExcluded(!modelFilterInverted) }}
+                        data-testid="model-filter-exclude"
+                        role="menuitemcheckbox"
+                        aria-checked={modelFilterInverted}
+                      >
+                        {/* The same checkbox square as the model rows: the on
+                            state must be legible as a shape, not only as a
+                            colour, and a reader who sees a tick knows a second
+                            click clears it. */}
+                        <span
+                          aria-hidden="true"
+                          className={`w-3.5 h-3.5 shrink-0 rounded-[3px] border flex items-center justify-center ${modelFilterInverted ? 'border-accent bg-accent text-accent-fg' : 'border-border bg-transparent'}`}
+                        >
+                          {modelFilterInverted && <Check size={10} strokeWidth={3} />}
+                        </span>
+                        <span className="flex-1 truncate">{i18nT('pages.chatSidebar.hide_sessions_on_these_models')}</span>
+                        {/* A disabled row says why, in the row: a title tooltip is
+                            not shown reliably on a disabled item. Once a model is
+                            ticked the note is hidden, not removed: it is the widest
+                            row in the menu, and dropping it would shrink the menu
+                            and slide every row sideways under the pointer. */}
+                        <span
+                          className={`text-muted text-[11px] shrink-0 ${activeModelKeys.size === 0 ? '' : 'invisible'}`}
+                          aria-hidden={activeModelKeys.size === 0 ? undefined : true}
+                          data-testid="model-filter-exclude-note"
+                        >{i18nT('pages.chatSidebar.tick_a_model_first')}</span>
+                      </DropdownMenuItem>
+                      {/* Set apart from the model rows: it is a mode, not another
+                          model. */}
+                      <DropdownMenuSeparator />
+                    </>
+                    {modelFilterRows.map(row => {
+                      const name = modelFilterLabel(row)
+                      // The tooltip names what the click DOES: with the selection
+                      // inverted, ticking a row hides its sessions.
+                      const unselectedTitle = modelFilterInverted
+                        ? i18nT('pages.chatSidebar.hide_sessions_using_model', { name })
+                        : i18nT('pages.chatSidebar.show_only_sessions_using_model', { name })
+                      return (
+                        <DropdownMenuItem
+                          key={row.key}
+                          title={row.selected ? i18nT('pages.chatSidebar.stop_filtering_by_model', { name }) : unselectedTitle}
+                          // Keep the menu open so several models can be selected.
+                          onSelect={e => { e.preventDefault(); toggleModelFilter(row.key, modelFilterRows.map(r => r.key)) }}
+                          data-testid={`model-filter-row-${row.key}`}
+                          role="menuitemcheckbox"
+                          aria-checked={row.selected}
+                        >
+                          {/* The square always shows the tick for a selected row, so
+                              a click's effect stays legible. Once the selection is
+                              inverted the row reads as "hidden" through a muted name
+                              and a trailing eye-off glyph (not a strike-through,
+                              which reads as "deleted"). */}
+                          <span
+                            aria-hidden="true"
+                            className={`w-3.5 h-3.5 shrink-0 rounded-[3px] border flex items-center justify-center ${row.selected ? 'border-accent bg-accent text-accent-fg' : 'border-border bg-transparent'}`}
+                          >
+                            {row.selected && <Check size={10} strokeWidth={3} />}
+                          </span>
+                          <span
+                            className={`flex-1 truncate ${row.selected && modelFilterInverted ? 'text-muted' : ''}`}
+                            data-excluded={row.selected && modelFilterInverted ? 'true' : undefined}
+                          >{name}</span>
+                          {row.selected && modelFilterInverted && <EyeOff size={12} className="text-muted shrink-0" aria-hidden="true" />}
+                          <span className="text-muted text-[11px] shrink-0">{row.count}</span>
+                        </DropdownMenuItem>
+                      )
+                    })}
+                  </>
+                )}
                 {/* Folders sit LAST on purpose: the list grows with the user's
                     folder count, so anything below it would get pushed out of
                     easy reach. Being last, it can simply overflow into the
@@ -5673,6 +5775,24 @@ function ChatSidebar({
           </button>
         </div>
       )}
+      {/* The model filter's one chip, in its own row for the same AUTOSDE reason
+          as the tag chip above. The label carries the direction: "Not Fable 5"
+          when the selection is inverted, else the model names. */}
+      {activeModelRows.length > 0 && (() => {
+        const models = fmtList(activeModelRows.map(row => modelFilterLabel(row)), { type: 'disjunction' })
+        const label = modelFilterInverted ? i18nT('pages.chatSidebar.not_models', { models }) : models
+        return (
+          <div className="px-3 pb-1">
+            <FilterChip
+              aggregate
+              testId="model-filter-chip"
+              label={label}
+              clearLabel={i18nT('pages.chatSidebar.clear_named_filter', { filter: label })}
+              onClear={clearModelFilter}
+            />
+          </div>
+        )
+      })()}
       {activeFilters.size > 0 && (
         <div className={FILTER_CHIP_ROW_CLS}>
           {SESSION_FILTERS.filter(filterDef => activeFilters.has(filterDef.key)).map(filterDef => {

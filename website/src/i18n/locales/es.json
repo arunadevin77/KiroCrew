@@ -12585,7 +12585,16 @@
       "muted": "Silenciada: sin sonido, aviso ni insignia",
       "chat_with_folder": "Chat con la carpeta {{folder}}",
       "chat_with_folder_desc": "El chat que inició los demás chats de esta carpeta",
-      "conductor_tag": "conductor"
+      "conductor_tag": "conductor",
+      "models": "Filtrar por modelo",
+      "model_default_label": "Sin modelo elegido (predeterminado del agente)",
+      "show_only_sessions_using_model": "Mostrar solo las sesiones que usan {{name}}",
+      "stop_filtering_by_model": "Dejar de filtrar por {{name}}",
+      "hide_sessions_on_these_models": "Ocultar las sesiones en estos modelos",
+      "hide_sessions_on_these_models_hint": "Mostrar todas las sesiones excepto las que usan los modelos seleccionados",
+      "tick_a_model_first": "Selecciona un modelo primero",
+      "not_models": "No {{models}}",
+      "hide_sessions_using_model": "Ocultar las sesiones que usan {{name}}"
     },
     "connectionsPage": {
       "action_failed": "La acción falló: {{error}}",

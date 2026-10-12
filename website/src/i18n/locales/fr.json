@@ -12585,7 +12585,16 @@
       "muted": "En sourdine : ni son, ni notification, ni badge",
       "chat_with_folder": "Chat avec le dossier {{folder}}",
       "chat_with_folder_desc": "Le chat qui a lancé les autres chats de ce dossier",
-      "conductor_tag": "conducteur"
+      "conductor_tag": "conducteur",
+      "models": "Filtrer par modèle",
+      "model_default_label": "Aucun modèle choisi (défaut de l’agent)",
+      "show_only_sessions_using_model": "Afficher uniquement les sessions utilisant {{name}}",
+      "stop_filtering_by_model": "Arrêter de filtrer par {{name}}",
+      "hide_sessions_on_these_models": "Masquer les sessions sur ces modèles",
+      "hide_sessions_on_these_models_hint": "Afficher toutes les sessions sauf celles qui utilisent les modèles sélectionnés",
+      "tick_a_model_first": "Sélectionne d’abord un modèle",
+      "not_models": "Sauf {{models}}",
+      "hide_sessions_using_model": "Masquer les sessions utilisant {{name}}"
     },
     "connectionsPage": {
       "action_failed": "Échec de l’action : {{error}}",
