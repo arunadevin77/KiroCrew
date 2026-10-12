@@ -70,6 +70,17 @@ _CANONICAL_BASE_ONLY_PR_EXPR = (
     "format('codebuild-kirocrew-gha-linux-{0}-{1}', github.run_id, github.run_attempt) "
     "|| 'ubuntu-latest' }}"
 )
+# PR Readiness runs only default-branch code too. Only its pull_request_target
+# runs use the fleet: workflow_run carries the in_progress merge-guard hold,
+# and workflow_dispatch names no head to check, so both stay hosted.
+_CANONICAL_READINESS_EXPR = (
+    "${{ github.repository == 'kirodotdev/KiroCrew' && "
+    + _ACTOR_PREDICATE
+    + " && github.event_name == 'pull_request_target' && "
+    "github.event.pull_request.head.repo.full_name == github.repository && "
+    "format('codebuild-kirocrew-gha-linux-{0}-{1}', github.run_id, github.run_attempt) "
+    "|| 'ubuntu-latest' }}"
+)
 # The ratchet audit: push, manual dispatch, and the merge group, which is the
 # integrated tree one step before it lands.
 _CANONICAL_DISPATCH_MERGE_GROUP_EXPR = (
@@ -152,6 +163,7 @@ _EXPECTED_ROUTED_JOBS = {
     ("build-wheel.yml", "build-wheel"),
     ("dependency-vulnerability.yml", "audit-production-dependencies"),
     ("sensitive-change-review.yml", "sensitive-change-review"),
+    ("pr-readiness.yml", "readiness"),
 }
 _PUSH_ONLY_WORKFLOWS = {
     "release.yml",
@@ -161,6 +173,7 @@ _PUSH_ONLY_WORKFLOWS = {
 }
 _DISPATCH_WORKFLOWS = {"pages.yml"}
 _BASE_ONLY_PR_WORKFLOWS = {"sensitive-change-review.yml"}
+_READINESS_WORKFLOWS = {"pr-readiness.yml"}
 _DISPATCH_MERGE_GROUP_WORKFLOWS = {"main-ratchet-audit.yml"}
 # The fleet-routed workflows that declare a `merge_group` trigger.
 _MERGE_GROUP_WORKFLOWS = {"ci.yml", "fast-gate.yml", "build.yml"}
@@ -220,6 +233,8 @@ def _expected_inline_expression(workflow_name: str) -> str:
         return _CANONICAL_PUSH_EXPR
     if workflow_name in _BASE_ONLY_PR_WORKFLOWS:
         return _CANONICAL_BASE_ONLY_PR_EXPR
+    if workflow_name in _READINESS_WORKFLOWS:
+        return _CANONICAL_READINESS_EXPR
     if workflow_name in _DISPATCH_WORKFLOWS:
         return _CANONICAL_DISPATCH_EXPR
     if workflow_name in _DISPATCH_MERGE_GROUP_WORKFLOWS:

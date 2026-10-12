@@ -4754,6 +4754,9 @@ def test_heal_safe_and_exempt_workflows_form_the_exact_partition() -> None:
             "pr-merge-conflict-label.yml",
             # Posts a sticky PR comment; left to a human to re-run.
             "sensitive-change-review.yml",
+            # Publishes the required commit status and the readiness label. The
+            # sweep's hosted recompute republishes it, so no heal is needed.
+            "pr-readiness.yml",
         }
     )
     assert wd.HEAL_SAFE_WORKFLOWS == heal_safe

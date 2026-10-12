@@ -247,6 +247,7 @@ WATCHED_WORKFLOWS: tuple[str, ...] = (
     "main-ratchet-audit.yml",
     "pages.yml",
     "pr-merge-conflict-label.yml",
+    "pr-readiness.yml",
     "pr-scope.yml",
     "release.yml",
     "screenshot-evidence.yml",
