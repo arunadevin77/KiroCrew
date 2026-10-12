@@ -3657,6 +3657,143 @@ class TestConfigurableApiBase:
         assert url == "https://proxy.example.com/tg/file/bot<TOKEN>/photos/f.jpg"
 
 
+class TestFileBaseFollowsApiBase:
+    """The download base is derived from the template ``_api_base`` accepted.
+
+    ``_api_base`` validates the parsed URL, which lowercases the scheme, and
+    accepts any template carrying both placeholders. A file route can be
+    derived only from one that ends in ``bot{token}/{method}``; for any other
+    accepted template there is no download base, and no request is made.
+    """
+
+    @pytest.mark.parametrize(
+        ("template", "expected"),
+        [
+            ("HTTPS://proxy.example.com/bot{token}/{method}", "https://proxy.example.com"),
+            ("Https://proxy.example.com/tg/bot{token}/{method}", "https://proxy.example.com/tg"),
+            ("HTTP://127.0.0.1:8080/bot{token}/{method}", "http://127.0.0.1:8080"),
+        ],
+    )
+    def test_the_scheme_is_read_the_way_api_base_accepted_it(
+        self, monkeypatch: Any, template: str, expected: str
+    ) -> None:
+        import kiro_crew.telegram.client as client_mod
+
+        monkeypatch.setenv("TELEGRAM_API_BASE_URL", template)
+        assert client_mod._api_base() == template
+        assert client_mod._file_base() == expected
+
+    @pytest.mark.parametrize(
+        "template",
+        [
+            "https://proxy.example.com/tg/{token}/{method}",
+            "https://proxy.example.com/bot{token}/{method}/",
+            "https://proxy.example.com/api?token={token}&method={method}",
+        ],
+    )
+    def test_a_template_without_the_method_tail_has_no_download_base(
+        self, monkeypatch: Any, template: str
+    ) -> None:
+        import kiro_crew.telegram.client as client_mod
+
+        monkeypatch.setenv("TELEGRAM_API_BASE_URL", template)
+        # Method calls keep using it exactly as before ...
+        assert client_mod._api_base() == template
+        # ... but no download route can be derived from it.
+        assert client_mod._file_base() is None
+
+    def test_a_query_after_the_method_tail_has_no_download_base(self, monkeypatch: Any) -> None:
+        import kiro_crew.telegram.client as client_mod
+
+        template = "https://proxy.example.com/bot{token}/{method}?key=x"
+        monkeypatch.setenv("TELEGRAM_API_BASE_URL", template)
+        assert client_mod._api_base() == template
+        assert client_mod._file_base() is None
+
+    def _client(self, monkeypatch: Any, template: str | None) -> tuple[Any, dict[str, list[Any]]]:
+        """A real client whose ``getFile`` call and session are fakes.
+
+        Returns the client and a record of what it requested: the ``api``
+        method names and the ``get`` URLs.
+        """
+        import kiro_crew.telegram.client as client_mod
+
+        seen: dict[str, list[Any]] = {"api": [], "get": []}
+        if template is None:
+            monkeypatch.delenv("TELEGRAM_API_BASE_URL", raising=False)
+        else:
+            monkeypatch.setenv("TELEGRAM_API_BASE_URL", template)
+
+        class _Content:
+            async def iter_chunked(self, size: int) -> Any:
+                yield b"file-bytes"
+
+        class _FakeResp:
+            status = 200
+            content = _Content()
+
+            async def __aenter__(self) -> "_FakeResp":
+                return self
+
+            async def __aexit__(self, *a: Any) -> None:
+                return None
+
+        class _FakeSession:
+            def get(self, url: str, **kwargs: Any) -> _FakeResp:
+                seen["get"].append(url)
+                return _FakeResp()
+
+        cli = client_mod.TelegramClient(token="123:ABC")
+
+        async def _fake_api(method: str, params: dict, *a: Any, **k: Any) -> Any:
+            seen["api"].append(method)
+            return {"file_path": "photos/f.jpg"}
+
+        async def _fake_ensure() -> _FakeSession:
+            return _FakeSession()
+
+        monkeypatch.setattr(cli, "_api", _fake_api)
+        monkeypatch.setattr(cli, "_ensure_session", _fake_ensure)
+        return cli, seen
+
+    def test_download_goes_to_the_proxy_the_api_base_names(
+        self, monkeypatch: Any, tmp_path: Any
+    ) -> None:
+        cli, seen = self._client(monkeypatch, "HTTPS://proxy.example.com/tg/bot{token}/{method}")
+        dest = tmp_path / "out.bin"
+        asyncio.run(cli.download_file("file-id", str(dest)))
+        assert seen["get"] == ["https://proxy.example.com/tg/file/bot123:ABC/photos/f.jpg"]
+        assert dest.read_bytes() == b"file-bytes"
+
+    def test_download_without_the_override_requests_the_public_host(
+        self, monkeypatch: Any, tmp_path: Any
+    ) -> None:
+        # Control: the unset default is unchanged.
+        cli, seen = self._client(monkeypatch, None)
+        asyncio.run(cli.download_file("file-id", str(tmp_path / "out.bin")))
+        assert seen["get"] == ["https://api.telegram.org/file/bot123:ABC/photos/f.jpg"]
+
+    def test_download_refuses_a_template_it_cannot_derive_a_route_from(
+        self, monkeypatch: Any, tmp_path: Any
+    ) -> None:
+        cli, _ = self._client(monkeypatch, "https://proxy.example.com/tg/{token}/{method}")
+        dest = tmp_path / "out.bin"
+        with pytest.raises(ValueError) as excinfo:
+            asyncio.run(cli.download_file("file-id", str(dest)))
+        # The reason names the variable and never the token or the template.
+        assert "TELEGRAM_API_BASE_URL" in str(excinfo.value)
+        assert "123:ABC" not in str(excinfo.value)
+        assert "proxy.example.com" not in str(excinfo.value)
+        assert not dest.exists()
+
+    def test_a_refused_download_makes_no_request(self, monkeypatch: Any, tmp_path: Any) -> None:
+        # Refused before getFile: nothing is spent on a download that cannot happen.
+        cli, seen = self._client(monkeypatch, "https://proxy.example.com/tg/{token}/{method}")
+        with pytest.raises(ValueError):
+            asyncio.run(cli.download_file("file-id", str(tmp_path / "out.bin")))
+        assert seen == {"api": [], "get": []}
+
+
 class TestLoopbackProxyBypass:
     """A loopback destination must bypass a configured forward proxy.
 

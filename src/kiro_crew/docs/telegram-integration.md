@@ -230,6 +230,13 @@ method calls, the dashboard's token verification (`getMe`), and file/photo
 downloads (whose origin and path prefix are derived from it). When unset,
 everything uses the public `https://api.telegram.org` host exactly as before.
 
+File and photo downloads are derived by replacing the trailing
+`bot{token}/{method}` with `file/bot{token}/<path>`, so they need the template to
+end in exactly that, with no query string after it. A template of any other
+shape, such as `https://your-proxy.example.com/tg/{token}/{method}`, still serves
+method calls, but a download is refused with an error naming
+`TELEGRAM_API_BASE_URL` instead of being requested from a guessed URL.
+
 Because the URL carries your bot token, the scheme must be `https`. A plaintext
 `http://` value is accepted **only for a loopback host** (`127.0.0.1`, `::1`,
 `localhost`), where the token never leaves the machine — useful for a local dev

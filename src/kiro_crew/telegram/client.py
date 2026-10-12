@@ -199,8 +199,13 @@ TELEGRAM_CHUNK_LIMIT = 4000
 #: table-bearing segments are budgeted against this cap, not the render cap.
 TELEGRAM_RICH_MAX_CHARS = 32768
 
+#: Tail of every Bot API method route. A file download is derived from a
+#: configured template by dropping it, so a template that does not end in it
+#: has no download route (see :func:`_file_base`).
+_METHOD_TAIL = "bot{token}/{method}"
+
 # Default Bot API method template: the public host when no proxy is set.
-_DEFAULT_API_BASE = "https://api.telegram.org/bot{token}/{method}"
+_DEFAULT_API_BASE = "https://api.telegram.org/" + _METHOD_TAIL
 
 #: Hosts for which a plaintext ``http://`` scheme is accepted. Everywhere else
 #: the bot token would travel in clear text to a remote host, so only ``https``
@@ -270,24 +275,26 @@ def _api_base() -> str:
     return raw
 
 
-def _file_base() -> str:
-    """Origin + path prefix for Telegram file downloads.
+def _file_base() -> str | None:
+    """Origin + path prefix for Telegram file downloads, or ``None``.
 
-    Derived from :func:`_api_base` so a configured proxy also serves
-    ``/file/bot<token>/<path>`` downloads. Everything up to the trailing
-    ``bot{token}/{method}`` is kept, so a path-prefixed template such as
-    ``https://proxy.example.com/tg/bot{token}/{method}`` yields the download
-    base ``https://proxy.example.com/tg`` and the file URL stays inside the
-    proxied route. Falls back to the public host when the template is unset or
-    unparseable.
+    Derived from the same parse :func:`_api_base` validated, so a configured
+    proxy also serves ``/file/bot<token>/<path>`` downloads and the scheme is
+    the one ``_api_base`` accepted (``HTTPS://`` is ``https``). Everything up
+    to the trailing ``bot{token}/{method}`` is kept, so a path-prefixed
+    template such as ``https://proxy.example.com/tg/bot{token}/{method}``
+    yields the download base ``https://proxy.example.com/tg`` and the file URL
+    stays inside the proxied route.
+
+    ``None`` when the template does not end in that tail, or carries a query
+    after it: no download route can be derived from it, and the token-bearing
+    URL is not requested from a guessed one. The public default always has it.
     """
-    base = _api_base()
-    # Strip the method-template tail so any path prefix before it survives.
-    prefix = re.sub(r"bot\{token\}/\{method\}$", "", base).rstrip("/")
-    if re.match(r"^https?://[^/]+", prefix):
-        return prefix
-    m = re.match(r"^(https?://[^/]+)", base)
-    return m.group(1) if m else "https://api.telegram.org"
+    parts = urllib.parse.urlsplit(_api_base())
+    if parts.query or not parts.path.endswith(_METHOD_TAIL):
+        return None
+    prefix = parts.path[: -len(_METHOD_TAIL)].rstrip("/")
+    return f"{parts.scheme}://{parts.netloc}{prefix}"
 
 
 #: Consecutive polling failures before the status callback reports unhealthy.
@@ -1327,12 +1334,20 @@ class TelegramClient:
         2. Construct ``<file_base>/file/bot<token>/<file_path>`` and download
            the bytes, where ``<file_base>`` is the public host by default or a
            configured proxy origin (with any path prefix) via :func:`_file_base`.
+           A template with no derivable download route is refused before any
+           request.
 
         Redirects are refused so a compromised file_path cannot exfiltrate data
         via an open redirect. Errors raise token-free messages (the download URL
         contains the bot token, so aiohttp's default exception str() must never
         propagate).
         """
+        base = _file_base()
+        if base is None:
+            raise ValueError(
+                "TELEGRAM_API_BASE_URL must end in bot{token}/{method}, with no query, "
+                "for file downloads"
+            )
         result = await self._api("getFile", {"file_id": file_id})
         if not result or not isinstance(result, dict):
             raise ValueError(f"getFile returned no result for file_id={file_id!r}")
@@ -1340,7 +1355,7 @@ class TelegramClient:
         if not file_path:
             raise ValueError(f"getFile returned empty file_path for file_id={file_id!r}")
 
-        url = f"{_file_base()}/file/bot{self._token}/{file_path}"
+        url = f"{base}/file/bot{self._token}/{file_path}"
 
         session = await self._ensure_session()
         try:
