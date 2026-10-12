@@ -16,7 +16,6 @@ if TYPE_CHECKING:
         _avatar_stem,
         _carries_mask,
         _carry_motions_through_motionless_save,
-        _carry_pack_through_faceless_save,
         _commit_promoted_avatar,
         _crew_effort_rejected,
         _crew_memory_store_rejected,
@@ -463,7 +462,6 @@ async def api_kirocrew_agent_update(request: web.Request) -> web.Response:
                     },
                     status=400,
                 )
-            _av = _carry_pack_through_faceless_save(agent.avatar, _raw_av, _av)
             _av = _carry_motions_through_motionless_save(agent.avatar, _raw_av, _av)
             if _av.get("kind") == "image":
                 # THE commit point for pictures, under this same config lock.

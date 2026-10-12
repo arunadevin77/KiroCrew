@@ -1070,18 +1070,12 @@ describe('crew editor — appearance pack round-trip', () => {
   })
 
   it('Reset → Apply → Save undresses a pack crew, using the explicit-reset spelling', async () => {
-    /* `{}` cannot express this. The backend's `_carry_pack_through_faceless_save`
-       reads a faceless save on a pack-wearing crew as an unrelated edit by a client
-       that cannot see packs, and KEEPS the pack — which is right for such a client
-       and wrong for this one, now that the Library tab exists and Reset is a click
-       that means something. So the editor has to send `null`, the spelling the
-       backend reserves for a reset that is meant. Before this, Reset → Save
-       reported success and left the crew wearing the pack.
+    /* The editor sends `null`, the reset spelling the backend documents for
+       every tier, so the wire says the reset was meant.
 
-       The other half of the distinction is pinned by "writes the pack back verbatim
-       when an unrelated field is saved" above: a save with no opinion about the face
-       must keep sending the pack, or every routing edit would undress the crew —
-       which is the bug the backend carve exists to stop. */
+       The other half is pinned by "writes the pack back verbatim when an
+       unrelated field is saved" above: a save that does not touch the face sends
+       the pack the crew wears, so a routing edit leaves it dressed. */
     await renderRoster()
     const sheet = await openEditor('aurora')
 

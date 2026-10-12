@@ -85,7 +85,7 @@ _BASE_NAMES = frozenset("""
         _app_declared_server_names _app_or_host_owned _atomic_json_write
         _audit_capability _avatar_stem _avatar_variant_paths _avatars_dir
         _binds_template _bounded_catalog _capability_manager _carries_mask
-        _carry_motions_through_motionless_save _carry_pack_through_faceless_save
+        _carry_motions_through_motionless_save
         _catalog_cache _cc_models _commit_agent_config _commit_agent_config_locked
         _commit_promoted_avatar _config_lock _consume_refresh_exception
         _crew_effort_rejected _crew_memory_store_rejected _discard_pending_avatar
@@ -202,7 +202,7 @@ _BASE_OWNERS: dict[str, tuple[str, ...]] = {
         _prune_private_copy_of_deleted_crew api_kirocrew_agent_delete
         """.split()),
     "avatars": tuple("""
-        _carry_pack_through_faceless_save _carry_motions_through_motionless_save
+        _carry_motions_through_motionless_save
         _is_ghost_shaped _avatars_dir _avatar_stem _avatar_variant_paths
         _pending_avatar_path _remove_avatar_files _discard_pending_avatar
         _read_avatar_file _staging_token _promote_pending_avatar _commit_promoted_avatar
@@ -214,7 +214,7 @@ _BASE_OWNERS: dict[str, tuple[str, ...]] = {
 #: SHA-256 of the sorted ``"<name> <kind> <signature>"`` lines of every name in
 #: ``_BASE_OWNERS``, captured from the one-module file before the split: each moved
 #: name keeps the kind and signature it had there.
-_BASE_SHAPE_DIGEST = "54f616ae7fbc7dbee618439bb16204802f68596743729e9b02f8d74e083abde8"
+_BASE_SHAPE_DIGEST = "01b50a2bc5c70d777d54fd3904e81b7a92401e90c111788c31198f721a252d3e"
 
 #: Definitions that stay in the facade file. The seams every owner reads; the
 #: config schema route; the model and picker reads with the crew model-pin checks,
@@ -314,7 +314,7 @@ def _run_child(tmp_path: Path, script: str, *args: str) -> None:
 def test_every_name_the_facade_bound_at_the_base_still_resolves() -> None:
     """Routes, the handlers package, sibling handlers and tests read private names
     off the facade as well as public ones, so every module-level binding survives."""
-    assert len(_BASE_NAMES) == 274
+    assert len(_BASE_NAMES) == 273
     assert sorted(name for name in _BASE_NAMES if not hasattr(agents, name)) == []
 
 
@@ -489,12 +489,12 @@ def test_every_moved_name_is_one_object_in_its_owner() -> None:
     ]
     assert strays == []
     names = [name for group in _BASE_OWNERS.values() for name in group]
-    assert len(names) == len(set(names)) == 94
+    assert len(names) == len(set(names)) == 93
 
 
 def test_the_moved_names_keep_their_base_shapes() -> None:
     lines = sorted(f"{name} {_shape(getattr(agents, name))}" for name in _MOVED)
-    assert len(lines) == 94
+    assert len(lines) == 93
     digest = hashlib.sha256("\n".join(lines).encode()).hexdigest()
     assert digest == _BASE_SHAPE_DIGEST, "\n".join(lines)
 
@@ -540,7 +540,7 @@ def test_every_base_definition_is_in_exactly_one_place() -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
     }
     assert defined == set(_FACADE_DEFS)
-    assert len(defined | _MOVED) == len(defined) + len(_MOVED) == 121
+    assert len(defined | _MOVED) == len(defined) + len(_MOVED) == 120
 
 
 def test_the_owners_log_as_the_facade() -> None:

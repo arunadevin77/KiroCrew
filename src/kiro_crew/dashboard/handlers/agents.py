@@ -176,7 +176,6 @@ from kiro_crew.dashboard.agent_admin.avatars import (  # noqa: F401
     _avatar_variant_paths,
     _avatars_dir,
     _carry_motions_through_motionless_save,
-    _carry_pack_through_faceless_save,
     _commit_promoted_avatar,
     _discard_pending_avatar,
     _image_body_complete,

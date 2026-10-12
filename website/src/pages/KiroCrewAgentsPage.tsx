@@ -92,10 +92,9 @@ interface AgentUpdatePayload {
   reasoning_effort: string
   /** Default session color (#rrggbb hex) for new sessions. '' = no default. */
   session_color: string
-  /** The face this save commits. Three spellings the backend tells apart:
-   *  a record pins a face; `null` is an explicit RESET to the name-derived face;
-   *  `{}` says this save has no opinion about the face at all, and on a crew
-   *  wearing a pack the backend answers it by keeping the pack. */
+  /** The face this save commits: a record pins a face; `null` is an explicit
+   *  RESET to the name-derived face; `{}` is the record for a crew with no
+   *  override, which the backend also stores as no override. */
   avatar: CrewAvatarOverride | Record<string, unknown> | null
 }
 
@@ -1027,14 +1026,9 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
   const [retiredCarry, setRetiredCarry] = useState<RetiredCarry | null>(null)
   /** The builder committed an explicit RESET — the user pressed "Reset to default"
    *  and then Apply — as opposed to never having opened it. Both leave
-   *  `editAvatar` null, and the two must not send the same thing: `{}` is the
-   *  spelling a client uses when it has no opinion about the face, and the backend
-   *  answers it on a pack-wearing crew by keeping the pack
-   *  (`_carry_pack_through_faceless_save`), because the editor that shipped before
-   *  this picker could not see a pack and would otherwise have undressed one on
-   *  every unrelated save. `null` is the spelling reserved for a reset that is
-   *  MEANT, and this editor is now the client that can mean it. Without the
-   *  distinction, Reset → Save silently did nothing to a pack crew. */
+   *  `editAvatar` null. `{}` is the record for a crew that carries no override;
+   *  `null` is the reset spelling the backend documents for every tier, so a
+   *  reset the user meant goes on the wire as exactly that. */
   const [avatarReset, setAvatarReset] = useState(false)
   const [avatarBuilderOpen, setAvatarBuilderOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -1438,11 +1432,10 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
       reasoning_effort: editEffort,
       session_color: sessionColor,
     }
-    // Three spellings, and the difference between the last two is load-bearing:
-    // a draft the user built; `null` when they explicitly RESET (see
-    // `avatarReset`); `avatarPassthrough` before `{}` so a record this build did
-    // not understand is preserved rather than erased; and `{}` last, for a crew
-    // that really has no override and a save that says nothing about the face.
+    // Three spellings: a draft the user built; `null` when they explicitly RESET
+    // (see `avatarReset`); `avatarPassthrough` before `{}` so a record this build
+    // did not understand is preserved rather than erased; and `{}` last, for a
+    // crew that really has no override.
     let avatarPayload: CrewAvatarOverride | Record<string, unknown> | null = avatarReset
       ? null
       : (editAvatar ?? avatarPassthrough ?? {})
@@ -2642,10 +2635,6 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
               // tier's retired cue still exists: the draft cannot carry one,
               // because the readers that build it are ghost-gated.
               retiredCue={retiredCueFrom(editingAgent?.avatar)}
-              // The STORED tier, not the drafted one: a faceless ghost result is
-              // read as "this client cannot see packs" by the backend's carry, so
-              // the builder has to know when that would swallow a tier change.
-              savedPack={packAvatarFrom(editingAgent?.avatar) !== null}
               // Also the STORED record: an emptied reaction map has to be NAMED
               // on the wire when the record carries one, and the draft forgets
               // that after the first Apply lands the empty map.
@@ -2660,9 +2649,8 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
                 // never saw must not ride along behind their choice.
                 setAvatarPassthrough(null)
                 // A null draft out of the builder is the Reset link having been
-                // pressed — an intent, not an absence. Recorded so Save can send
-                // the reset the backend honours instead of the "no opinion" `{}`
-                // that leaves a pack on.
+                // pressed — an intent, not an absence. Recorded so Save sends
+                // the reset spelling, `null`.
                 setAvatarReset(next === null)
                 setAvatarBuilderOpen(false)
               }}

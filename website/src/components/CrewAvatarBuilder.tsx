@@ -368,7 +368,6 @@ export default function CrewAvatarBuilder({
   name,
   value,
   retiredCue = null,
-  savedPack = false,
   savedReactions,
   onCancel,
   onSave,
@@ -395,15 +394,6 @@ export default function CrewAvatarBuilder({
    */
   retiredCue?: RetiredCue | null
   /**
-   * The crew's SAVED record wears an appearance pack.
-   *
-   * Read from the record rather than from `value`, which is the editor's draft
-   * and stops saying "pack" the moment one Apply has landed — while the stored
-   * record keeps wearing it until the editor's own Save. `buildResult` needs the
-   * stored tier, not the drafted one (see the faceless-ghost branch there).
-   */
-  savedPack?: boolean
-  /**
    * Which reaction keys the crew's SAVED record carries a non-empty map for.
    *
    * `buildResult` names an emptied map on the wire so the backend's carry does
@@ -412,7 +402,7 @@ export default function CrewAvatarBuilder({
    * it stops carrying the original after the first Apply lands an empty map: a
    * later reopen re-inits from `{}`, the draft-only test reads "never had one",
    * the key is omitted, and the carry brings the cleared motion back. Read from
-   * the record by the editor, the same way `retiredCue` and `savedPack` are.
+   * the record by the editor, the same way `retiredCue` is.
    */
   savedReactions?: { motions?: boolean; sounds?: boolean }
   onCancel: () => void
@@ -677,21 +667,8 @@ export default function CrewAvatarBuilder({
     }
     if (draft) return { kind: 'ghost', traits: draft, ...reactions }
     const anyReaction = isSet(motions) || isSet(sounds)
-    // A faceless ghost — "the name-derived face, plus these reactions" — cannot
-    // express a TIER CHANGE when the stored record is a pack:
-    // `_carry_pack_through_faceless_save` reads a ghost carrying no `traits` as a
-    // save from a client that cannot see packs, keeps the pack, and copies only
-    // the cue across — so choosing Ghost face, picking a motion and saving left
-    // the crew wearing its pack with the motion gone. Pinning the face the pane
-    // is SHOWING makes the change unambiguous, and it is the face the user was
-    // looking at when they chose it.
-    //
-    // Only over a stored pack, and only with a reaction to carry: a ghost-to-ghost
-    // save keeps the faceless spelling, where deriving the face from the name is
-    // the point, and with nothing set at all the reset below is the honest answer
-    // (an explicit `null` is a reset the backend honours on every tier, pack
-    // included).
-    if (savedPack && anyReaction) return { kind: 'ghost', traits: shown, ...reactions }
+    // A faceless ghost is "the name-derived face, plus these reactions" on every
+    // stored tier: over a pack or a picture it is the tier change to that ghost.
     // Judged on what is actually SET, never on `reactions`: a record whose only
     // content is two empty maps is not an override, and sending it as one would
     // reach the validator's all-empty collapse and be refused as junk. With

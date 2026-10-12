@@ -61,11 +61,9 @@ function mount(
   value: CrewAvatarOverride | null = null,
   {
     retiredCue = null,
-    savedPack = false,
     savedReactions,
   }: {
     retiredCue?: RetiredCue | null
-    savedPack?: boolean
     savedReactions?: { motions?: boolean; sounds?: boolean }
   } = {},
 ) {
@@ -82,7 +80,6 @@ function mount(
         name="radar"
         value={value}
         retiredCue={retiredCue}
-        savedPack={savedPack}
         savedReactions={savedReactions}
         onCancel={onCancel}
         onSave={onSave}
@@ -368,12 +365,11 @@ describe('CrewAvatarBuilder — Reactions pane', () => {
     expect(lastSaved(onSave)).toBeNull()
   })
 
-  it('pins the shown face when a pack crew moves to the ghost tier with a reaction', async () => {
-    // A faceless ghost cannot express this change: the backend's
-    // `_carry_pack_through_faceless_save` reads a ghost with no `traits` as a save
-    // from a client that cannot see packs, keeps the pack and drops the motion —
-    // so the crew stayed dressed and the reaction the user just picked was gone.
-    const { onSave } = mount({ kind: 'pack', id: 'aurora' }, { savedPack: true })
+  it('sends a faceless ghost when a pack crew moves to the ghost tier with a reaction', async () => {
+    // "The name-derived face, plus these reactions" is a tier change over a pack,
+    // the same spelling a ghost-to-ghost save uses, so the face stays derived
+    // from the crew name rather than pinned on the user's behalf.
+    const { onSave } = mount({ kind: 'pack', id: 'aurora' })
     openFace()
     openReactions()
     await chooseMotion('done', 'Nod')
@@ -381,23 +377,20 @@ describe('CrewAvatarBuilder — Reactions pane', () => {
     const saved = lastSaved(onSave) as Ghost
     expect(saved.kind).toBe('ghost')
     expect(saved.motions).toEqual({ done: 'nod' })
-    // The face is stated rather than derived, which is what makes the tier change
-    // legible on the wire.
-    expect(saved.traits).toBeTruthy()
+    expect('traits' in saved).toBe(false)
   })
 
-  it('still resets when a pack crew moves to the ghost tier and picks nothing', () => {
-    // Nothing to carry, so the honest answer is the explicit reset — which the
-    // backend honours on every tier, pack included — not a face pinned on the
-    // user's behalf.
-    const { onSave } = mount({ kind: 'pack', id: 'aurora' }, { savedPack: true })
+  it('resets when a pack crew moves to the ghost tier and picks nothing', () => {
+    // Nothing set and no face pinned, so the honest answer is the explicit
+    // reset, which the backend honours on every tier, pack included.
+    const { onSave } = mount({ kind: 'pack', id: 'aurora' })
     openFace()
     apply()
     expect(lastSaved(onSave)).toBeNull()
   })
 
   it('keeps the faceless spelling for a ghost crew, where the name derives the face', async () => {
-    const { onSave } = mount(null, { savedPack: false })
+    const { onSave } = mount(null)
     openReactions()
     await chooseMotion('done', 'Nod')
     apply()
@@ -437,7 +430,7 @@ describe('CrewAvatarBuilder — Reactions pane', () => {
     await screen.findByTestId('avatar-reactions-absent-pack')
     expect(screen.queryByTestId('avatar-reactions-retired-cue-pack')).toBeNull()
     picture.unmount()
-    mount({ kind: 'pack', id: 'aurora' }, { retiredCue: { kind: 'pack', states: ['done'] }, savedPack: true })
+    mount({ kind: 'pack', id: 'aurora' }, { retiredCue: { kind: 'pack', states: ['done'] } })
     openPicture()
     expect(screen.getByTestId('avatar-reactions-absent-picture')).toBeInTheDocument()
     expect(screen.queryByTestId('avatar-reactions-retired-cue-picture')).toBeNull()
@@ -448,7 +441,7 @@ describe('CrewAvatarBuilder — Reactions pane', () => {
     // a picture really is silent, while a worn pack plays the sounds its own
     // manifest declares. One shared sentence claimed silence for both and was
     // simply false on the pack pane.
-    mount({ kind: 'pack', id: 'aurora' }, { retiredCue: { kind: 'pack', states: ['done'] }, savedPack: true })
+    mount({ kind: 'pack', id: 'aurora' }, { retiredCue: { kind: 'pack', states: ['done'] } })
     const note = await screen.findByTestId('avatar-reactions-retired-cue-pack')
     expect(note.textContent).toContain('its own')
     expect(note.textContent).not.toMatch(/is silent/)
@@ -467,7 +460,7 @@ describe('CrewAvatarBuilder — Reactions pane', () => {
     // rounds of review went into wording a deletion that should not happen.
     expect(pictureNote.textContent).not.toMatch(/delete|deleted|drops/i)
     picture.unmount()
-    mount({ kind: 'pack', id: 'aurora' }, { retiredCue: { kind: 'pack', states: ['done'] }, savedPack: true })
+    mount({ kind: 'pack', id: 'aurora' }, { retiredCue: { kind: 'pack', states: ['done'] } })
     const packNote = await screen.findByTestId('avatar-reactions-retired-cue-pack')
     expect(packNote.textContent).not.toMatch(/for good/)
     expect(packNote.textContent).toMatch(/Ghost face/)

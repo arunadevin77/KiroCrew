@@ -2952,26 +2952,18 @@ and it is deliberately NOT re-exported from `loader.py` — the loader's
   drawing like a picture, so it carries NO reaction keys (`motions`, `sounds`,
   `expressions`).
 
-  **A pack survives a faceless save.** The
-  shipped crew editor rebuilds the override from a closed ghost/picture shape,
-  so for a pack-wearing crew it renders the name-derived face and any unrelated
-  save (a model change, a colour) submits `{}` — or `{"kind": "ghost", ...}`
-  carrying only the ghost tier's own reactions — which read as reset would
-  silently clear a pack set through the API. `PUT /api/agents/{name}` therefore
-  keeps the current pack id when the record is a pack and the save names no face
-  (`dashboard/agent_admin/avatars.py::_carry_pack_through_faceless_save`), and rides the save's
-  `expressions` and `sounds` onto the kept pack: both are still legal on every
-  tier here, and a pack's own cue answers a different route (`/sound/{state}`)
-  than a crew-record cue does, so the two do not collide. Only `motions` is left
-  behind, because it is the ghost's alone. Both carried keys are now vestigial —
-  the shipped editor authors reactions on the ghost tier alone and submits
-  neither on a pack — and they retire with the validator change that drops them. It is narrow: ghost and picture keep
-  their reset semantics; `avatar: null` (which the editor never sends) is
-  still an explicit reset that takes the pack off; a real face — a ghost with
-  traits, a picture, another pack — replaces it. The carve-out exists until the
-  picker can display a pack, at which point the editor round-trips it itself.
-  **A ghost's `motions` survive a save that does not name them** for the same
-  reason (`dashboard/agent_admin/avatars.py::_carry_motions_through_motionless_save`): the shipped
+  **A pack round-trips through the editor.** The crew editor loads a
+  pack-wearing crew's draft as `{"kind": "pack", "id": ...}` and sends it back on
+  every save, so an unrelated save (a model change, a colour) writes the pack
+  the crew already wears; a save that carries no `avatar` key at all leaves the
+  record alone. `PUT /api/agents/{name}` therefore applies one rule on every
+  tier, pack included: `avatar: null` and `avatar: {}` are resets that take the
+  face off, a ghost with no `traits` is the name-derived face plus its
+  reactions (a tier change when the crew wears a pack or a picture), and any
+  other face replaces the current one. The editor sends `null` for its
+  Reset to default, so the wire says the reset was meant.
+  **A ghost's `motions` survive a save that does not name them**
+  (`dashboard/agent_admin/avatars.py::_carry_motions_through_motionless_save`): the shipped
   editor rebuilds a ghost draft from the axes it can draw and submits exactly
   those, so a `motions` pick set through the API would be erased by the next
   unrelated save with no click that meant it. The rule is the tri-state
