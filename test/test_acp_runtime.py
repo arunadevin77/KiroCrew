@@ -77,6 +77,7 @@ from kiro_crew.mcp_cleanup import KIROCREW_BIN_MCP_SERVERS
 from kiro_crew.mcp_gateway.claim import STUB_SESSION_TOKEN_ENV
 from kiro_crew.metrics.events import CHILD_PERMISSION_DENIED
 from kiro_crew.start_priority import StartPriority
+from kiro_crew.testing.wait import async_wait_until, await_until, default_timeout
 
 # ── Harness ──
 
@@ -158,7 +159,7 @@ def kas_readiness_wire(monkeypatch, tmp_path):
     monkeypatch.setattr(AcpSessionHandle, "__init__", observe_queue)
 
     async def take(queue):
-        return await asyncio.wait_for(queue.get(), timeout=3.0)
+        return await _next(queue, what="the next frame on the wire")
 
     def status(
         state="connecting", sid="ready-session", *, origin="client", extra_servers=(), **extra
@@ -380,7 +381,7 @@ async def test_derived_worker_identity_keeps_freshness_and_readiness(
             wire.status("connected", extra_servers=("kirocrew-work",))
             wire.tags("kirocrew-core", "kirocrew-work")
             with pytest.raises(AcpRuntimeError, match="changed during worker load"):
-                await asyncio.wait_for(start, 3.0)
+                await await_until(start, what="the session start")
             terminate.assert_awaited_once_with("ready-session")
         else:
             await wire.take(wire.reads)
@@ -392,7 +393,7 @@ async def test_derived_worker_identity_keeps_freshness_and_readiness(
             await wire.take(wire.reads)
             assert not start.done(), "a fresh template still needs actual tool exposure"
             wire.tags("kirocrew-core", "kirocrew-work")
-            await asyncio.wait_for(start, 3.0)
+            await await_until(start, what="the session start")
             terminate.assert_not_awaited()
         assert wire.sent.empty(), "startup must not issue a prompt"
     finally:
@@ -535,7 +536,7 @@ async def test_kas_readiness_delays_prompt_until_active_managed_tools(
         await wire.take(wire.reads)
         assert not start.done(), "Connected transport alone does not establish tool exposure"
         wire.tags("kirocrew-core", "kirocrew-dashboard")
-        handle = await asyncio.wait_for(start, 3.0)
+        handle = await await_until(start, what="the session start")
         assert wire.sent.empty()
 
         async def collect():
@@ -546,7 +547,7 @@ async def test_kas_readiness_delays_prompt_until_active_managed_tools(
             request = await wire.take(wire.sent)
             assert request["method"] == "session/prompt"
             _feed(wire.reader, {"id": request["id"], "result": {"stopReason": "end_turn"}})
-            await asyncio.wait_for(turn, 3.0)
+            await await_until(turn, what="the turn finishing")
             assert wire.sent.empty()
         finally:
             if not turn.done():
@@ -615,7 +616,7 @@ async def test_kas_readiness_refuses_failure_or_missing_report(kas_readiness_wir
             assert deletion["params"] == {"sessionId": "ready-session"}
             _feed(wire.reader, {"id": deletion["id"], "result": {}})
         with pytest.raises(expected, match="kirocrew-core") as raised:
-            await asyncio.wait_for(start, 3.0)
+            await await_until(start, what="the session start")
         if state == "legacy-provenance":
             assert "connected without provenance" in str(raised.value)
             assert "reports no MCP server origin" in str(raised.value)
@@ -654,7 +655,7 @@ async def test_kas_readiness_accepts_provenance_less_wire_for_injected_servers(
         await wire.take(wire.reads)
         assert not start.done(), "Connected transport alone does not establish tool exposure"
         wire.tags("kirocrew-core", "kirocrew-dashboard")
-        handle = await asyncio.wait_for(start, 3.0)
+        handle = await await_until(start, what="the session start")
         assert set(handle.mcp_session_report().payload()["ready"]) == {
             "kirocrew-core",
             "kirocrew-dashboard",
@@ -714,7 +715,7 @@ async def test_kas_default_managed_core_is_hoisted_and_ready_on_provenance_less_
             await wire.take(wire.reads)
             assert not start.done(), "exposure is still required for an injected server"
             wire.tags("kirocrew-core", "kirocrew-dashboard")
-        handle = await asyncio.wait_for(start, 3.0)
+        handle = await await_until(start, what="the session start")
         assert set(handle.mcp_session_report().payload()["ready"]) == {
             "kirocrew-core",
             "kirocrew-dashboard",
@@ -742,7 +743,7 @@ async def test_kas_readiness_accepts_pre_response_reports_for_unchanged_mode(
     start = None
     try:
         start = await wire.handshake(resume, switch=False, pre_ready=True)
-        handle = await asyncio.wait_for(start, 3.0)
+        handle = await await_until(start, what="the session start")
         report = handle.mcp_session_report().payload()
         assert set(report["ready"]) == {"kirocrew-core", "kirocrew-dashboard"}
         assert wire.sent.empty()
@@ -827,7 +828,7 @@ async def test_kas_readiness_respects_projected_tool_restrictions(
             await wire.take(wire.reads)
         assert not start.done(), "A restricted tool policy does not waive connection readiness"
         wire.status("connected", tools=catalog)
-        handle = await asyncio.wait_for(start, 3.0)
+        handle = await await_until(start, what="the session start")
         assert set(handle.mcp_session_report().payload()["ready"]) == {
             "kirocrew-core",
             "kirocrew-dashboard",
@@ -905,7 +906,7 @@ async def test_kas_readiness_preserves_external_init_side_effects(
             assert not start.done()
             wire.status("connected")
             wire.tags("kirocrew-core", "kirocrew-dashboard")
-        handle = await asyncio.wait_for(start, 3.0)
+        handle = await await_until(start, what="the session start")
         assert handle._config_options == cfg
         assert handle.pop_pending_oauth_requests() == [
             {"serverName": "external-auth", "oauthUrl": "https://example.com/authorize"}
@@ -1036,7 +1037,34 @@ async def _stop_reader(task: asyncio.Task) -> None:
         pass
 
 
-async def _await_routed(rt: AcpRuntime, *session_ids: str, timeout: float = 5.0) -> dict[str, int]:
+async def _bounded(coro, *, what: str):
+    """Await a coroutine the code under test should finish, under the lost-run bound.
+
+    The replacement for ``asyncio.wait_for(coro, <short N>)`` in this file (rule
+    D1): the coroutine runs as its own task and ``await_until`` awaits that task
+    for half the test's timeout, so a hang fails by name instead of a bet on the
+    runner's speed deciding pass versus fail. Past the bound the task is
+    cancelled and settled before the error propagates, so a teardown that closes
+    the generator or stops the reader does not meet a step still running.
+    """
+    task = asyncio.ensure_future(coro)
+    try:
+        return await await_until(task, what=what)
+    except AssertionError:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        raise
+
+
+async def _next(queue: asyncio.Queue, *, what: str = "the next frame on the session queue"):
+    """The next item on ``queue``: the frame the demux routes IS the signal."""
+    return await _bounded(queue.get(), what=what)
+
+
+async def _await_routed(
+    rt: AcpRuntime, *session_ids: str, timeout: float | None = None
+) -> dict[str, int]:
     """Wait until the runtime has an in-flight request for each session, and
     return the ``{session_id: request_id}`` map.
 
@@ -1060,23 +1088,30 @@ async def _await_routed(rt: AcpRuntime, *session_ids: str, timeout: float = 5.0)
     populates it in the same synchronous block that allocates the id
     (``runtime.py``), so the entry is visible as soon as the request exists.
     """
-    deadline = time.monotonic() + timeout
     wanted = set(session_ids)
-    while True:
-        routed = {sid: rid for rid, sid in rt._routed_requests.items()}
-        if wanted <= routed.keys():
-            return routed
-        if time.monotonic() >= deadline:
-            raise AssertionError(
-                f"timed out after {timeout}s waiting for in-flight requests for "
-                f"{sorted(wanted)}; currently routed: {routed}"
-            )
-        # Yield rather than spin: the driver task needs the loop to progress.
-        await asyncio.sleep(0.001)
+
+    def routed_now() -> dict[str, int]:
+        return {sid: rid for rid, sid in rt._routed_requests.items()}
+
+    def every_session_routed() -> bool:
+        return wanted <= set(rt._routed_requests.values())
+
+    # ``async_wait_until`` re-reads between loop turns, so the driver task gets
+    # the loop; ``timeout`` is the lost-run bound (half the test's by default) and
+    # the failure quotes the sessions waited for and what was routed.
+    await async_wait_until(
+        every_session_routed,
+        timeout=timeout,
+        describe=lambda: (
+            f"waiting for in-flight requests for {sorted(wanted)}; "
+            f"currently routed: {routed_now()}"
+        ),
+    )
+    return routed_now()
 
 
 async def _await_pending(
-    rt: AcpRuntime, *, exclude: set[int] | None = None, timeout: float = 5.0
+    rt: AcpRuntime, *, exclude: set[int] | None = None, timeout: float | None = None
 ) -> int:
     """Wait for an in-flight control-plane request and return its id.
 
@@ -1097,21 +1132,25 @@ async def _await_pending(
     driving a second request cannot pick up a leftover entry from the first.
     """
     seen = exclude or set()
-    deadline = time.monotonic() + timeout
-    while True:
-        fresh = [rid for rid in rt._pending_requests if rid not in seen]
-        if fresh:
-            # These tests keep exactly one control-plane request in flight, so
-            # more than one means the id being returned is a coin flip.
-            assert len(fresh) == 1, f"expected one in-flight request, got {fresh}"
-            return fresh[0]
-        if time.monotonic() >= deadline:
-            raise AssertionError(
-                f"timed out after {timeout}s waiting for an in-flight request; "
-                f"currently pending: {sorted(rt._pending_requests)}"
-            )
-        # Yield rather than spin: the caller needs the loop to progress.
-        await asyncio.sleep(0.001)
+
+    def fresh_requests() -> list[int]:
+        return [rid for rid in rt._pending_requests if rid not in seen]
+
+    # Re-read between loop turns so the caller progresses; ``timeout`` is the
+    # lost-run bound and the failure quotes what was pending.
+    await async_wait_until(
+        fresh_requests,
+        timeout=timeout,
+        describe=lambda: (
+            "waiting for an in-flight request; "
+            f"currently pending: {sorted(rt._pending_requests)}"
+        ),
+    )
+    fresh = fresh_requests()
+    # These tests keep exactly one control-plane request in flight, so more
+    # than one means the id being returned is a coin flip.
+    assert len(fresh) == 1, f"expected one in-flight request, got {fresh}"
+    return fresh[0]
 
 
 # ── The _await_routed helper itself ──
@@ -1152,7 +1191,7 @@ async def test_await_routed_tolerates_a_driver_that_has_not_run_yet():
         assert rt._routed_requests[routed["sA"]] == "sA"
 
         _feed(reader, {"id": routed["sA"], "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
     finally:
         await _stop_reader(task)
 
@@ -1182,7 +1221,7 @@ async def test_notification_routed_to_named_session():
     task = await _start_reader(rt)
     try:
         _feed(reader, {"method": "session/update", "params": {"sessionId": "sA", "x": 1}})
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=1.0)
+        msg = await _next(q["sA"])
         assert msg.params["sessionId"] == "sA"
         # The other session's queue must NOT have received it.
         assert q["sB"].empty()
@@ -1212,8 +1251,8 @@ async def test_null_session_notification_broadcasts_to_all():
     task = await _start_reader(rt)
     try:
         _feed(reader, {"method": "some/global", "params": {}})  # no sessionId
-        a = await asyncio.wait_for(q["sA"].get(), timeout=1.0)
-        b = await asyncio.wait_for(q["sB"].get(), timeout=1.0)
+        a = await _next(q["sA"])
+        b = await _next(q["sB"])
         assert a.method == "some/global"
         assert b.method == "some/global"
     finally:
@@ -1287,15 +1326,15 @@ async def test_permission_answer_waits_for_shared_answer_capacity_then_answers()
     rt._wait_for_answer_capacity = observed_capacity  # type: ignore[method-assign]
     try:
         await rt._spawn_answer_task(_permission_msg(1), "sA")
-        await asyncio.wait_for(first_started.wait(), timeout=1.0)
+        await await_until(first_started, what="the first answer task starting")
         assert len(rt._answer_tasks) == 1
 
         second = asyncio.ensure_future(rt._spawn_answer_task(_permission_msg(2), "sA"))
-        await asyncio.wait_for(second_capacity_check.wait(), timeout=1.0)
+        await await_until(second_capacity_check, what="the second answer task's capacity check")
         assert not second_started.is_set()
 
         release_first.set()
-        await asyncio.wait_for(second_started.wait(), timeout=1.0)
+        await await_until(second_started, what="the second answer task starting")
         await second
         assert len(rt._answer_tasks) == 1
         assert sum(rt._dropped_frames.values()) == 0
@@ -1304,7 +1343,7 @@ async def test_permission_answer_waits_for_shared_answer_capacity_then_answers()
         discarded = asyncio.Event()
         retained.add_done_callback(lambda _task: discarded.set())
         release_second.set()
-        await asyncio.wait_for(discarded.wait(), timeout=1.0)
+        await await_until(discarded, what="the retained answer task being discarded")
         assert rt._answer_tasks == set()
     finally:
         release_first.set()
@@ -1362,10 +1401,10 @@ async def test_answer_cap_timeout_marks_runtime_dead_without_growth():
     rt._mark_dead = mark_dead  # type: ignore[method-assign]
     try:
         await rt._spawn_answer_task(_permission_msg(1), "sA")
-        await asyncio.wait_for(first_started.wait(), timeout=1.0)
+        await await_until(first_started, what="the first answer task starting")
 
         await rt._spawn_answer_task(_permission_msg(2), "sA")
-        await asyncio.wait_for(marked_dead.wait(), timeout=1.0)
+        await await_until(marked_dead, what="the runtime being marked dead")
 
         assert not second_started.is_set()
         assert len(rt._answer_tasks) == 1
@@ -1387,7 +1426,7 @@ async def test_awaited_response_resolves_pending_future():
     task = await _start_reader(rt)
     try:
         _feed(reader, {"id": 7, "result": {"sessionId": "new1"}})
-        result = await asyncio.wait_for(fut, timeout=1.0)
+        result = await await_until(fut, what="the pending request's future")
         assert result == {"sessionId": "new1"}
         assert 7 not in rt._pending_requests
     finally:
@@ -1427,7 +1466,7 @@ async def test_missing_agent_spec_error_reaches_caller_actionable(tmp_path):
                 },
             )
             with pytest.raises(AcpRuntimeError) as excinfo:
-                await asyncio.wait_for(fut, timeout=1.0)
+                await await_until(fut, what="the pending request's future")
     finally:
         await _stop_reader(task)
 
@@ -1460,9 +1499,9 @@ async def test_non_numeric_response_id_dropped_without_killing_demux():
         # notification must both be delivered after the bad frames.
         _feed(reader, {"id": 7, "result": {"sessionId": "new1"}})
         _feed(reader, {"method": "session/update", "params": {"sessionId": "sA"}})
-        result = await asyncio.wait_for(fut, timeout=1.0)
+        result = await await_until(fut, what="the pending request's future")
         assert result == {"sessionId": "new1"}
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=1.0)
+        msg = await _next(q["sA"])
         assert msg.params["sessionId"] == "sA"
         assert not rt._dead
     finally:
@@ -1479,7 +1518,7 @@ async def test_numeric_string_response_id_still_coerced():
     task = await _start_reader(rt)
     try:
         _feed(reader, {"id": "7", "result": {"ok": 1}})
-        result = await asyncio.wait_for(fut, timeout=1.0)
+        result = await await_until(fut, what="the pending request's future")
         assert result == {"ok": 1}
     finally:
         await _stop_reader(task)
@@ -1494,7 +1533,7 @@ async def test_error_response_sets_exception_on_future():
     try:
         _feed(reader, {"id": 9, "error": {"code": -1, "message": "boom"}})
         with pytest.raises(AcpRuntimeError):
-            await asyncio.wait_for(fut, timeout=1.0)
+            await await_until(fut, what="the pending request's future")
     finally:
         await _stop_reader(task)
 
@@ -1507,7 +1546,7 @@ async def test_routed_response_goes_to_session_queue():
     task = await _start_reader(rt)
     try:
         _feed(reader, {"id": 11, "result": {"stopReason": "end_turn"}})
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=1.0)
+        msg = await _next(q["sA"])
         assert msg.id == 11
         assert 11 not in rt._routed_requests
     finally:
@@ -1536,7 +1575,7 @@ async def test_non_json_line_is_skipped():
     try:
         reader.feed_data(b"not json at all\n")
         _feed(reader, {"method": "session/update", "params": {"sessionId": "sA"}})
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=1.0)
+        msg = await _next(q["sA"])
         assert msg.params["sessionId"] == "sA"  # loop survived the bad line
     finally:
         await _stop_reader(task)
@@ -1555,7 +1594,7 @@ async def test_non_object_json_line_does_not_crash_reader():
             reader.feed_data(bad)
         # A well-formed frame after the bad lines must still route → reader alive.
         _feed(reader, {"method": "session/update", "params": {"sessionId": "sA"}})
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=1.0)
+        msg = await _next(q["sA"])
         assert msg.params["sessionId"] == "sA"
         assert not rt._dead  # reader never marked the runtime dead
     finally:
@@ -1589,7 +1628,7 @@ async def test_line_json_loads_rejects_without_decode_error_does_not_crash_reade
     try:
         reader.feed_data(bad)
         _feed(reader, {"method": "session/update", "params": {"sessionId": "sA"}})
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=1.0)
+        msg = await _next(q["sA"])
         assert not rt._dead, "one stray stdout line marked the shared runtime dead"
         assert msg.params["sessionId"] == "sA"
     finally:
@@ -1607,7 +1646,7 @@ async def test_frame_with_an_invalid_utf8_byte_in_a_string_is_still_routed():
         reader.feed_data(
             b'{"method":"session/update","params":{"sessionId":"sA","note":"a\xffb"}}\n'
         )
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=1.0)
+        msg = await _next(q["sA"])
         assert not rt._dead, "one invalid byte marked the shared runtime dead"
         assert msg.params == {"sessionId": "sA", "note": "a\ufffdb"}
     finally:
@@ -1634,7 +1673,7 @@ async def test_oversize_stdout_frame_is_dropped_not_fatal():
     try:
         reader.feed_data(b"X" * 1024 + b"\n")  # oversize, newline present
         _feed(reader, {"method": "session/update", "params": {"sessionId": "sA"}})
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=5.0)
+        msg = await _next(q["sA"])
         assert msg.params["sessionId"] == "sA"
         assert not rt._dead
     finally:
@@ -1660,7 +1699,7 @@ async def test_an_oversize_reply_fails_its_awaited_request_with_the_size_and_lim
         frame = b'{"jsonrpc":"2.0","id":7,"result":{"modes":"' + b"W" * 2048 + b'"}}\n'
         reader.feed_data(frame)
         with pytest.raises(AcpFrameTooLarge) as excinfo:
-            await asyncio.wait_for(future, timeout=5.0)
+            await await_until(future, what="the pending request's future")
         message = str(excinfo.value)
         assert f"{len(frame):,} bytes" in message
         assert f"{runtime_mod._STDOUT_BUFFER_LIMIT:,}-byte" in message
@@ -1668,7 +1707,7 @@ async def test_an_oversize_reply_fails_its_awaited_request_with_the_size_and_lim
         assert "MCP" not in message
         assert 7 not in rt._pending_requests
         _feed(reader, {"method": "session/update", "params": {"sessionId": "sA"}})
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=5.0)
+        msg = await _next(q["sA"])
         assert msg.params["sessionId"] == "sA"
         assert not rt._dead
     finally:
@@ -1801,7 +1840,7 @@ async def test_unterminated_oversize_stdout_recovers_at_next_frame():
             await asyncio.sleep(0)
         reader.feed_data(b"TAIL-OF-OVERSIZE-LINE\n")  # line finally terminates
         _feed(reader, {"method": "session/update", "params": {"sessionId": "sA"}})
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=5.0)
+        msg = await _next(q["sA"])
         assert msg.params["sessionId"] == "sA"
         assert not rt._dead
     finally:
@@ -1842,7 +1881,7 @@ async def test_oversize_frame_split_mid_multibyte_does_not_kill_demux():
             await asyncio.sleep(0)
         reader.feed_data(blob[1000:])  # 201 bytes < limit → returned as a line
         _feed(reader, {"method": "session/update", "params": {"sessionId": "sA"}})
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=5.0)
+        msg = await _next(q["sA"])
         assert msg.params["sessionId"] == "sA"
         assert not rt._dead
     finally:
@@ -1870,7 +1909,7 @@ async def test_many_terminated_oversize_frames_never_exhaust_the_budget():
             reader.feed_data(b"X" * 4096 + b"\n")
             _feed(reader, {"method": "session/update", "params": {"sessionId": "sA", "n": i}})
         for i in range(rounds):
-            msg = await asyncio.wait_for(q["sA"].get(), timeout=5.0)
+            msg = await _next(q["sA"])
             assert msg.params["n"] == i
         assert not rt._dead
     finally:
@@ -1897,7 +1936,7 @@ async def test_unterminated_blob_past_the_byte_budget_marks_runtime_dead():
             reader.feed_data(b"Z" * 65536)  # never a newline
             fed += 65536
             await asyncio.sleep(0)
-        await asyncio.wait_for(task, timeout=5.0)
+        await await_until(task, what="the reader loop exiting")
     except Exception:
         pass
     finally:
@@ -2029,7 +2068,7 @@ async def test_cold_start_admission_caps_simultaneous_runtime_spawns(monkeypatch
     monkeypatch.setattr(AcpRuntime, "_spawn_admitted", controlled_spawn)
     tasks = [asyncio.create_task(AcpRuntime().spawn()) for _ in range(3)]
     try:
-        await asyncio.wait_for(first_two_entered.wait(), timeout=1.0)
+        await await_until(first_two_entered, what="the first two spawns entering")
         await _wait_for_queued(admission, 1)
 
         assert peak == 2
@@ -2060,7 +2099,7 @@ async def test_cold_start_cancellation_releases_active_admission_slot(monkeypatc
     monkeypatch.setattr(AcpRuntime, "_spawn_admitted", blocked_spawn)
     task = asyncio.create_task(AcpRuntime().spawn())
     try:
-        await asyncio.wait_for(entered.wait(), timeout=1.0)
+        await await_until(entered, what="the spawn entering")
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -2092,7 +2131,7 @@ async def test_cold_start_queued_cancellation_does_not_consume_slot(monkeypatch)
     active = asyncio.create_task(AcpRuntime().spawn())
     queued = None
     try:
-        await asyncio.wait_for(entered.wait(), timeout=1.0)
+        await await_until(entered, what="the spawn entering")
         queued = asyncio.create_task(AcpRuntime().spawn())
         await _wait_for_queued(admission, 1)
 
@@ -2396,9 +2435,9 @@ async def test_process_exit_marks_dead_and_poisons_queues():
         reader.feed_eof()  # empty readline → process exited
         # Pending future fails, every session queue gets a None poison sentinel.
         with pytest.raises(AcpRuntimeDead):
-            await asyncio.wait_for(fut, timeout=1.0)
-        assert await asyncio.wait_for(q["sA"].get(), timeout=1.0) is None
-        assert await asyncio.wait_for(q["sB"].get(), timeout=1.0) is None
+            await await_until(fut, what="the pending request's future")
+        assert await _next(q["sA"]) is None
+        assert await _next(q["sB"]) is None
         assert rt._dead is True
     finally:
         await _stop_reader(task)
@@ -2410,7 +2449,7 @@ async def test_mark_dead_is_idempotent():
     q = _register(rt, "sA")
     rt._mark_dead("first")
     rt._mark_dead("second")  # no-op, must not double-poison or raise
-    assert await asyncio.wait_for(q["sA"].get(), timeout=1.0) is None
+    assert await _next(q["sA"]) is None
     assert q["sA"].empty()
 
 
@@ -2453,7 +2492,7 @@ async def test_observed_exit_retires_registry_entries_once_reaped(monkeypatch):
     task = await _start_reader(rt)
     try:
         reader.feed_eof()
-        await asyncio.wait_for(task, timeout=2.0)
+        await await_until(task, what="the reader loop exiting")
     finally:
         await _stop_reader(task)
     assert rt._dead is True
@@ -2484,7 +2523,7 @@ async def test_observed_exit_keeps_tracking_while_the_root_still_runs(monkeypatc
     task = await _start_reader(rt)
     try:
         reader.feed_eof()
-        await asyncio.wait_for(task, timeout=2.0)
+        await await_until(task, what="the reader loop exiting")
     finally:
         await _stop_reader(task)
     assert calls == []
@@ -2496,7 +2535,7 @@ async def test_observed_exit_keeps_tracking_while_the_root_still_runs(monkeypatc
     task = await _start_reader(rt)
     try:
         reader.feed_eof()
-        await asyncio.wait_for(task, timeout=2.0)
+        await await_until(task, what="the reader loop exiting")
     finally:
         await _stop_reader(task)
     assert calls == []
@@ -2519,7 +2558,7 @@ async def test_eof_inside_an_oversize_line_retires_the_same_way(monkeypatch):
         # LimitOverrunError, the drain hits IncompleteReadError.
         reader.feed_data(b"x" * (reader._limit + 1))
         reader.feed_eof()
-        await asyncio.wait_for(task, timeout=2.0)
+        await await_until(task, what="the reader loop exiting")
     finally:
         await _stop_reader(task)
     assert rt._dead is True
@@ -2598,8 +2637,8 @@ async def test_deliberate_kill_logs_info_and_still_fails_pending_futures(caplog,
     assert "killed" in records[0].getMessage()
     # Severity-only change: waiters still learn the runtime died.
     with pytest.raises(AcpRuntimeDead):
-        await asyncio.wait_for(fut, timeout=1.0)
-    assert await asyncio.wait_for(q["sA"].get(), timeout=1.0) is None
+        await await_until(fut, what="the pending request's future")
+    assert await _next(q["sA"]) is None
 
 
 @pytest.mark.asyncio
@@ -2717,7 +2756,7 @@ async def test_unexpected_process_exit_still_warns_with_diagnostic_shape(caplog)
         with caplog.at_level(logging.INFO, logger="kiro_crew.acp.runtime"):
             reader.feed_eof()  # empty readline → process exited
             with pytest.raises(AcpRuntimeDead):
-                await asyncio.wait_for(fut, timeout=1.0)
+                await await_until(fut, what="the pending request's future")
     finally:
         await _stop_reader(task)
 
@@ -3095,7 +3134,7 @@ async def test_exit_reason_does_not_promote_the_last_stderr_line_to_a_cause():
     try:
         reader.feed_eof()
         with pytest.raises(AcpRuntimeDead) as ei:
-            await asyncio.wait_for(fut, timeout=1.0)
+            await await_until(fut, what="the pending request's future")
     finally:
         await _stop_reader(task)
     msg = str(ei.value)
@@ -3658,10 +3697,13 @@ async def test_concurrent_prompt_on_same_handle_rejected():
         await _await_routed(rt, "sA")
         assert not handle._turn_done.is_set(), "first turn must be marked active"
         # A second prompt on the same handle must refuse rather than corrupt state.
-        # The ceiling only matters if the guard is broken: then this raises
-        # TimeoutError (a named failure) instead of blocking the worker.
+        # The bound only matters if the guard is broken: then the wait fails by
+        # name instead of blocking the worker.
         with pytest.raises(AcpRuntimeError):
-            await asyncio.wait_for(handle.prompt("again", timeout=1.0).__anext__(), 5.0)
+            await _bounded(
+                handle.prompt("again", timeout=1.0).__anext__(),
+                what="the second prompt's refusal",
+            )
         first.cancel()
         try:
             await first
@@ -3724,7 +3766,7 @@ async def test_multiple_sessions_routed_independently():
         _feed(reader, {"id": sid_to_req["sA"], "result": {"stopReason": "end_turn"}})
         _feed(reader, {"id": sid_to_req["sB"], "result": {"stopReason": "end_turn"}})
 
-        await asyncio.wait_for(asyncio.gather(da, db), timeout=5.0)
+        await await_until(asyncio.gather(da, db), what="every driver finishing its turn")
 
         text_a = "".join(e.text for e in out_a if e.kind == EVENT_TEXT_CHUNK)
         text_b = "".join(e.text for e in out_b if e.kind == EVENT_TEXT_CHUNK)
@@ -4136,7 +4178,7 @@ async def test_dispatch_permission_request():
         )
         # Then complete the turn
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         perm = [e for e in events if e.kind == EVENT_PERMISSION_REQUEST]
         assert len(perm) == 1
         assert perm[0].title == "git status"
@@ -4218,7 +4260,7 @@ async def test_a_spec_disabled_tool_is_refused_before_the_event_is_yielded():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         assert [e for e in events if e.kind == EVENT_PERMISSION_REQUEST] == []
         answered = [
             json.loads(call.args[0].decode())
@@ -4289,7 +4331,7 @@ async def test_a_tool_the_deny_set_does_not_name_still_reaches_the_consumer():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         perm = [e for e in events if e.kind == EVENT_PERMISSION_REQUEST]
         assert len(perm) == 1
         assert perm[0].request_id == 6002
@@ -4344,7 +4386,7 @@ async def test_an_unidentifiable_mcp_approval_never_reaches_the_consumer():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         assert [e for e in events if e.kind == EVENT_PERMISSION_REQUEST] == []
         answered = [
             json.loads(call.args[0].decode())
@@ -4449,7 +4491,7 @@ async def test_dispatch_tool_call_and_result():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
 
         tc = [e for e in events if e.kind == EVENT_TOOL_CALL]
         tr = [e for e in events if e.kind == EVENT_TOOL_RESULT]
@@ -4575,7 +4617,7 @@ async def test_dispatch_thinking_chunk():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         think = [e for e in events if e.kind == EVENT_THINKING_CHUNK]
         assert len(think) == 1 and think[0].text == "thinking..."
     finally:
@@ -4618,7 +4660,7 @@ async def test_dispatch_compaction_and_clear():
         )
         _feed(reader, {"method": METHOD_CLEAR_STATUS, "params": {"sessionId": "sA"}})
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         comp = [e for e in events if e.kind == EVENT_COMPACTION_STATUS]
         clr = [e for e in events if e.kind == EVENT_CLEAR_STATUS]
         assert len(comp) == 1 and comp[0].text == "compacting"
@@ -4664,7 +4706,7 @@ async def test_dispatch_compaction_completed_resets_context_stats():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         stats = handle.last_prompt_stats
         assert stats.context_pct == 0.0
         assert stats.context_used_tokens == 0
@@ -5059,7 +5101,7 @@ async def test_dispatch_agent_switched():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         sw = [e for e in events if e.kind == EVENT_AGENT_SWITCHED]
         assert len(sw) == 1 and sw[0].text == "kirocrew-lite"
     finally:
@@ -5096,7 +5138,7 @@ async def test_dispatch_mcp_oauth_request():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         oauth = [e for e in events if e.kind == EVENT_MCP_OAUTH_REQUEST]
         assert len(oauth) == 1
         assert oauth[0].server_name == "github-mcp"
@@ -5134,7 +5176,7 @@ async def test_dispatch_mcp_server_initialized():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         init = [e for e in events if e.kind == EVENT_MCP_SERVER_INITIALIZED]
         assert len(init) == 1 and init[0].server_name == "builder-mcp"
     finally:
@@ -5171,7 +5213,7 @@ async def test_dispatch_mcp_server_init_failure():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         fail = [e for e in events if e.kind == EVENT_MCP_SERVER_INIT_FAILURE]
         assert len(fail) == 1 and fail[0].server_name == "bad-mcp" and fail[0].text == "timeout"
     finally:
@@ -5197,7 +5239,7 @@ async def test_dispatch_unknown_server_request_gets_error_response():
         # Unknown method WITH an id (server request, not notification)
         _feed(reader, {"id": 9999, "method": "unknown/method", "params": {"sessionId": "sA"}})
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         # Check that an error response was sent back
         calls = proc.stdin.write.call_args_list
         error_sent = False
@@ -5244,7 +5286,7 @@ async def test_dispatch_tool_call_update_raw_output():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         tr = [e for e in events if e.kind == EVENT_TOOL_RESULT]
         assert len(tr) == 1 and tr[0].tool_output == "raw stuff"
     finally:
@@ -5286,7 +5328,7 @@ async def test_dispatch_tool_call_update_refinement():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         tu = [e for e in events if e.kind == EVENT_TOOL_CALL_UPDATE]
         assert len(tu) == 1
         assert tu[0].title == "Reading file"
@@ -5324,7 +5366,7 @@ async def test_dispatch_usage_update():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         assert handle.last_prompt_stats.context_pct == 50.0
         assert handle.last_prompt_stats.context_used_tokens == 5000
     finally:
@@ -5383,7 +5425,7 @@ async def test_dispatch_cost_and_prompt_tokens_reach_event_complete():
                     },
                 },
             )
-            await asyncio.wait_for(driver, timeout=3.0)
+            await await_until(driver, what="the driver finishing its turn")
             (complete,) = [ev for ev in events if ev.kind == EVENT_COMPLETE]
             return complete
 
@@ -5502,7 +5544,7 @@ async def test_dispatch_metadata_credits():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         assert handle.last_prompt_stats.credits == pytest.approx(1.23)
         assert handle.last_prompt_stats.context_pct == 12.5
         complete = [e for e in events if e.kind == EVENT_COMPLETE]
@@ -5543,7 +5585,7 @@ async def test_dispatch_metadata_credits_robust():
             reader, {"method": METHOD_METADATA, "params": {"sessionId": "sA"}}
         )  # no meteringUsage
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         assert handle.last_prompt_stats.credits == 0.0
     finally:
         await _stop_reader(task)
@@ -5593,7 +5635,7 @@ async def test_metadata_credits_routed_per_session():
         )
         _feed(reader, {"id": sid_to_req["sA"], "result": {"stopReason": "end_turn"}})
         _feed(reader, {"id": sid_to_req["sB"], "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(asyncio.gather(da, db), timeout=5.0)
+        await await_until(asyncio.gather(da, db), what="every driver finishing its turn")
 
         assert handle_a.last_prompt_stats.credits == pytest.approx(2.0)
         assert handle_b.last_prompt_stats.credits == pytest.approx(0.5)
@@ -5633,7 +5675,7 @@ async def test_dispatch_subagent_list():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         sl = [e for e in events if e.kind == EVENT_SUBAGENT_LIST]
         assert len(sl) == 1 and sl[0].subagents == [{"id": "sub1"}]
     finally:
@@ -5675,7 +5717,7 @@ async def test_dispatch_subagent_activity_tool():
             )
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         sa = [e for e in events if e.kind == EVENT_SUBAGENT_ACTIVITY]
         assert len(sa) == 1
         assert sa[0].sub_session_id == "sub-1"
@@ -5717,7 +5759,7 @@ async def test_dispatch_subagent_activity_text():
             )
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         sa = [e for e in events if e.kind == EVENT_SUBAGENT_ACTIVITY]
         assert len(sa) == 1
         assert sa[0].text == "hello from sub"
@@ -5759,7 +5801,7 @@ async def test_dispatch_subagent_activity_text_is_redacted():
             )
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         sa = [e for e in events if e.kind == EVENT_SUBAGENT_ACTIVITY]
         assert len(sa) == 1
         assert "AKIAIOSFODNN7EXAMPLE" not in sa[0].text
@@ -5812,7 +5854,7 @@ async def test_dispatch_subagent_activity_ignores_this_session():
             )
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         assert [e for e in events if e.kind == EVENT_SUBAGENT_ACTIVITY] == []
     finally:
         await _stop_reader(task)
@@ -5851,7 +5893,7 @@ async def test_dispatch_subagent_activity_ignores_this_session_text():
             )
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
         assert [e for e in events if e.kind == EVENT_SUBAGENT_ACTIVITY] == []
     finally:
         await _stop_reader(task)
@@ -5879,7 +5921,7 @@ async def test_prompt_error_response_raises():
         req_id = (await _await_routed(rt, "sA"))["sA"]
         _feed(reader, {"id": req_id, "error": {"code": -1, "message": "throttled"}})
         with pytest.raises(AcpError):
-            await asyncio.wait_for(driver, timeout=3.0)
+            await await_until(driver, what="the driver finishing its turn")
     finally:
         await _stop_reader(task)
 
@@ -5919,7 +5961,7 @@ async def test_prompt_transient_error_sets_transient_flag():
             },
         )
         with pytest.raises(AcpError) as excinfo:
-            await asyncio.wait_for(driver, timeout=3.0)
+            await await_until(driver, what="the driver finishing its turn")
         assert excinfo.value.transient is True
     finally:
         await _stop_reader(task)
@@ -5955,7 +5997,7 @@ async def test_prompt_auth_error_not_transient():
             },
         )
         with pytest.raises(AcpError) as excinfo:
-            await asyncio.wait_for(driver, timeout=3.0)
+            await await_until(driver, what="the driver finishing its turn")
         assert excinfo.value.transient is False
     finally:
         await _stop_reader(task)
@@ -6043,7 +6085,7 @@ async def test_n_sessions_routed_independently():
         for sid in sids:
             _feed(reader, {"id": sid_to_req[sid], "result": {"stopReason": "end_turn"}})
 
-        await asyncio.wait_for(asyncio.gather(*drivers), timeout=5.0)
+        await await_until(asyncio.gather(*drivers), what="every driver finishing its turn")
 
         for sid in sids:
             text = "".join(e.text for e in out[sid] if e.kind == EVENT_TEXT_CHUNK)
@@ -6101,7 +6143,7 @@ async def test_one_session_errors_others_unaffected():
         )
         _feed(reader, {"id": sid_to_req["sOk"], "result": {"stopReason": "end_turn"}})
 
-        await asyncio.wait_for(asyncio.gather(d_ok, d_err), timeout=5.0)
+        await await_until(asyncio.gather(d_ok, d_err), what="every driver finishing its turn")
 
         assert len(err_exc) == 1, "errored session should raise AcpError"
         ok_text = "".join(e.text for e in ok_out if e.kind == EVENT_TEXT_CHUNK)
@@ -6173,7 +6215,7 @@ async def test_interleaved_tool_calls_routed_per_session():
         )
         _feed(reader, {"id": sid_to_req["sA"], "result": {"stopReason": "end_turn"}})
         _feed(reader, {"id": sid_to_req["sB"], "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(asyncio.gather(da, db), timeout=5.0)
+        await await_until(asyncio.gather(da, db), what="every driver finishing its turn")
 
         tc_a = [e for e in out_a if e.kind == EVENT_TOOL_CALL]
         tc_b = [e for e in out_b if e.kind == EVENT_TOOL_CALL]
@@ -6225,7 +6267,7 @@ async def test_destroyed_session_stops_receiving_frames():
                 },
             },
         )
-        msg = await asyncio.wait_for(q["sB"].get(), timeout=1.0)
+        msg = await _next(q["sB"])
         assert msg.params["sessionId"] == "sB"
         # sB's queue must not contain the ghost frame.
         assert q["sB"].empty()
@@ -7604,7 +7646,7 @@ async def test_create_session_buffers_oauth_emitted_before_response():
         )
         _feed(reader, {"id": request_id, "result": {"sessionId": "sid-new"}})
 
-        handle = await asyncio.wait_for(create_task, timeout=3.0)
+        handle = await await_until(create_task, what="the session being created")
         provider = AcpSessionProvider(handle, rt)
         assert provider.pop_pending_oauth_requests() == [
             {"serverName": "linear", "oauthUrl": oauth_url}
@@ -7644,13 +7686,13 @@ async def test_failed_session_init_oauth_does_not_leak_to_reused_id():
             },
         )
         with pytest.raises(AcpRuntimeError, match="session init failed"):
-            await asyncio.wait_for(failed_task, timeout=3.0)
+            await await_until(failed_task, what="the failed session start settling")
         assert not rt._pending_init_notifications
 
         fresh_task = asyncio.create_task(rt.create_session(cwd="/w"))
         fresh_request_id = await _await_pending(rt, exclude={failed_request_id})
         _feed(reader, {"id": fresh_request_id, "result": {"sessionId": "sid-reused"}})
-        handle = await asyncio.wait_for(fresh_task, timeout=3.0)
+        handle = await await_until(fresh_task, what="the fresh session being created")
         assert handle.pop_pending_oauth_requests() == []
     finally:
         for task in (failed_task, fresh_task):
@@ -7717,7 +7759,7 @@ async def test_steer_notifications_yield_steer_events():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
 
         kinds = [e.kind for e in events]
         assert EVENT_STEER_QUEUED in kinds
@@ -7771,7 +7813,7 @@ async def test_tool_interrupted_marker_synthesizes_complete(monkeypatch):
             },
         )
         # Must finish WITHOUT the turn response (the synthesized complete ends it).
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
 
         assert events[-1].kind == EVENT_COMPLETE
         assert handle._turn_done.is_set()
@@ -7808,7 +7850,7 @@ async def test_unresponsive_cancel_unblocks_without_killing_runtime():
         handle._cancel_ts = time.monotonic() - (handle._cancel_grace_secs + 1)
         # Wake the loop so it re-checks the cancel guard at the top of the while.
         _feed(reader, {"method": "_kiro.dev/metadata", "params": {"sessionId": "sA"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
 
         assert events[-1].kind == EVENT_COMPLETE
         assert events[-1].stop_reason == "error: cancel unacked"
@@ -8108,11 +8150,11 @@ async def test_drain_init_no_reports_returns_at_ceiling():
     q = _register(rt, "sA")
     handle = AcpSessionHandle("sA", q["sA"], rt)
     q["sA"].put_nowait(_metadata_frame("sA"))  # non-MCP traffic doesn't extend it
-    # The outer wait_for is the hang guard: generous vs the 0.2s ceiling so a
-    # loaded shard can't flake it, tiny vs a genuine unbounded wait.
-    await asyncio.wait_for(
+    # The outer bound is the hang guard (half the test's timeout): it only
+    # names a genuine unbounded wait, never a slow shard.
+    await _bounded(
         handle.drain_init(duration=0.05, idle_exit=0.01, no_report_ceiling=0.2),
-        timeout=5.0,
+        what="the init drain returning at its no-report ceiling",
     )
     assert q["sA"].empty()
 
@@ -8121,15 +8163,17 @@ async def test_drain_init_no_reports_returns_at_ceiling():
 async def test_drain_init_idle_exit_stays_prompt_after_first_report():
     """Once a report has been seen, a subsequent idle gap still exits
     promptly — the warm path must not degrade into full-ceiling waits. The
-    ceilings are deliberately huge relative to the outer bound, so completing
-    inside it proves the idle shortcut (not a ceiling) ended the drain."""
+    ceilings sit far past the wait's own lost-run bound, so completing inside
+    it proves the idle shortcut (not a ceiling) ended the drain: with the
+    shortcut broken the drain holds to its ceiling and the wait fails by name."""
     rt, _, _ = _make_runtime()
     q = _register(rt, "sA")
     handle = AcpSessionHandle("sA", q["sA"], rt)
     q["sA"].put_nowait(_mcp_initialized_frame("sA", "fast-server"))
-    await asyncio.wait_for(
-        handle.drain_init(duration=30.0, idle_exit=0.02, no_report_ceiling=30.0),
-        timeout=5.0,
+    far = 10 * default_timeout()
+    await _bounded(
+        handle.drain_init(duration=far, idle_exit=0.02, no_report_ceiling=far),
+        what="the init drain exiting on its idle gap",
     )
     assert q["sA"].empty()
 
@@ -8143,11 +8187,12 @@ async def test_drain_init_zero_ceiling_keeps_idle_exit_active_from_start():
     q = _register(rt, "sA")
     handle = AcpSessionHandle("sA", q["sA"], rt)
     q["sA"].put_nowait(_metadata_frame("sA"))
-    # duration is deliberately huge relative to the outer bound: completing
-    # inside it proves the idle shortcut ended the drain despite zero reports.
-    await asyncio.wait_for(
-        handle.drain_init(duration=30.0, idle_exit=0.02, no_report_ceiling=0.0),
-        timeout=5.0,
+    # duration sits far past the wait's lost-run bound: completing inside it
+    # proves the idle shortcut ended the drain despite zero reports, and a
+    # broken shortcut fails the wait by name instead of ending at the deadline.
+    await _bounded(
+        handle.drain_init(duration=10 * default_timeout(), idle_exit=0.02, no_report_ceiling=0.0),
+        what="the init drain exiting on its idle gap",
     )
     assert q["sA"].empty()
 
@@ -8712,7 +8757,7 @@ async def test_dispatch_mcp_oauth_guard_and_dedup():
             },
         )
         _feed(reader, {"id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=3.0)
+        await await_until(driver, what="the driver finishing its turn")
 
         oauth = [e for e in events if e.kind == EVENT_MCP_OAUTH_REQUEST]
         # evil (unsafe) + empty-name dropped; gh emitted, deduped, then re-emitted = 2
@@ -9711,7 +9756,7 @@ async def test_numeric_method_is_counted_and_reader_survives():
         assert not task.done()
         # ...and still routing for every co-tenant session.
         _feed(reader, {"method": "session/update", "params": {"sessionId": "sA"}})
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=1.0)
+        msg = await _next(q["sA"])
         assert msg.params["sessionId"] == "sA"
     finally:
         await _stop_reader(task)
@@ -9733,7 +9778,7 @@ async def test_non_string_session_id_is_counted_and_reader_survives():
         assert rt.is_alive() is True
         assert not task.done()
         _feed(reader, {"method": "session/update", "params": {"sessionId": "sA"}})
-        msg = await asyncio.wait_for(q["sA"].get(), timeout=1.0)
+        msg = await _next(q["sA"])
         assert msg.params["sessionId"] == "sA"
     finally:
         await _stop_reader(task)
@@ -12414,7 +12459,7 @@ async def test_handle_owned_rejections_are_sel_audited():
     rt.send_request = AsyncMock(return_value=9)
     gen = handle.prompt("hi", timeout=0.2)
     with contextlib.suppress(StopAsyncIteration, asyncio.TimeoutError, Exception):
-        await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+        await _bounded(gen.__anext__(), what="the first prompt event")
     await gen.aclose()
 
     assert audited, "pre-turn drain reject was not SEL-audited"
@@ -12464,7 +12509,7 @@ async def test_pre_turn_drain_counts_discarded_frames_without_logging_content(ca
     with caplog.at_level(logging.WARNING, logger="kiro_crew.acp.session_handle"):
         gen = handle.prompt("hi", timeout=0.2)
         with contextlib.suppress(StopAsyncIteration, asyncio.TimeoutError, Exception):
-            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+            await _bounded(gen.__anext__(), what="the first prompt event")
         await gen.aclose()
 
     _drain_lines = [
@@ -12485,7 +12530,7 @@ async def _drain_warning_lines(handle, caplog):
     with caplog.at_level(logging.WARNING, logger="kiro_crew.acp.session_handle"):
         gen = handle.prompt("hi", timeout=0.2)
         with contextlib.suppress(StopAsyncIteration, asyncio.TimeoutError, Exception):
-            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+            await _bounded(gen.__anext__(), what="the first prompt event")
         await gen.aclose()
     return [
         rec.getMessage() for rec in caplog.records if "pre-turn drain discarded" in rec.getMessage()
@@ -12825,7 +12870,7 @@ async def test_pre_turn_drain_answers_a_permission_request_whose_id_collides():
 
     gen = handle.prompt("hi", timeout=0.2)
     with contextlib.suppress(StopAsyncIteration, asyncio.TimeoutError, Exception):
-        await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+        await _bounded(gen.__anext__(), what="the first prompt event")
     await gen.aclose()
 
     handle.reject_tool.assert_awaited_once_with(3)
@@ -12905,7 +12950,7 @@ async def test_pre_turn_drain_hands_back_an_owed_frame_before_awaiting_a_reject(
 
     gen = handle.prompt("hi", timeout=0.2)
     with contextlib.suppress(StopAsyncIteration, asyncio.TimeoutError, Exception):
-        await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+        await _bounded(gen.__anext__(), what="the first prompt event")
     await gen.aclose()
 
     assert _seen_at_reject, "reject_tool was never reached"
@@ -13376,7 +13421,7 @@ async def test_fidelity_unaware_consumer_gate_rejects_and_audits():
             },
         )
         _feed(reader, {"jsonrpc": "2.0", "id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=5.0)
+        await await_until(driver, what="the driver finishing its turn")
 
         kinds = [ev.kind for ev in events]
         assert EVENT_PERMISSION_REQUEST not in kinds  # never yielded
@@ -13473,7 +13518,7 @@ async def test_aware_consumer_receives_kindless_mcp_child_permission():
             },
         )
         _feed(reader, {"jsonrpc": "2.0", "id": req_id, "result": {"stopReason": "end_turn"}})
-        await asyncio.wait_for(driver, timeout=5.0)
+        await await_until(driver, what="the driver finishing its turn")
 
         perm = [ev for ev in events if ev.kind == EVENT_PERMISSION_REQUEST]
         assert perm, "the permission event never reached the aware consumer"
@@ -14460,7 +14505,7 @@ async def test_managed_readiness_keeps_external_wire_roster(kas_readiness_wire, 
         await wire.take(wire.reads)
         wire.status("connected")
         wire.tags("kirocrew-core", "kirocrew-dashboard")
-        handle = await asyncio.wait_for(start, 3.0)
+        handle = await await_until(start, what="the session start")
         report = handle.mcp_session_report().payload()
         assert set(report["configured"]) == {"kirocrew-core", "kirocrew-dashboard", "external"}
         assert "external" in report["failed"]
@@ -14737,8 +14782,8 @@ async def test_probe_deadline_timeout_raises_revalidating_but_probe_completes():
     # Let the probe finish; it was NOT cancelled, so it completes and replaces
     # the snapshot in place (what the next read will serve).
     release.set()
-    await asyncio.wait_for(probe_finished.wait(), 2.0)
-    await asyncio.wait_for(handle._read_refresh_task, 2.0)
+    await await_until(probe_finished, what="the model probe finishing")
+    await await_until(handle._read_refresh_task, what="the model probe landing")
     assert [m["modelId"] for m in handle.available_models] == ["auto", "claude-opus-5"]
     assert handle._available_models_probe_confirmed is True
 
@@ -14785,7 +14830,7 @@ async def test_in_flight_probe_is_awaited_not_bypassed_on_the_next_poll():
 
     # Let the probe land; a read now returns the corrected list.
     release.set()
-    await asyncio.wait_for(handle._read_refresh_task, 2.0)
+    await await_until(handle._read_refresh_task, what="the model probe landing")
     third = await handle.maybe_refresh_available_models(_KIRO_CATALOG_IDS)
     assert [m["modelId"] for m in third] == ["auto", "claude-opus-5"]
     assert rt.probe_advertised_models.await_count == 1
@@ -14865,7 +14910,7 @@ async def test_unconfirmed_auto_only_reprobes_after_a_failed_probe_within_the_in
     assert handle._available_models_probe_confirmed is False
     # Drain the failed task (it raised) so single-flight starts a fresh probe.
     with pytest.raises(RuntimeError):
-        await asyncio.wait_for(handle._read_refresh_task, 2.0)
+        await await_until(handle._read_refresh_task, what="the model probe landing")
     second = await handle.maybe_refresh_available_models(_KIRO_CATALOG_IDS)
     assert [m["modelId"] for m in second] == ["auto"]
     assert rt.probe_advertised_models.await_count == 2
