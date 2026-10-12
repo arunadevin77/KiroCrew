@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from kiro_crew.context import ContextBuilder
+from kiro_crew.dashboard.chat_title import _ui_language
 from kiro_crew.history import TranscriptWithheld, is_incognito_transcript
 from kiro_crew.llm_helpers import run_bg_oneliner
 from kiro_crew.loop_lock import LoopBoundLock
@@ -57,6 +58,8 @@ Based on the user's current context below, generate 4-6 short, actionable prompt
 that the user might want to ask right now. Each suggestion should be a single sentence \
 (under 60 characters) that the user can click to start a conversation.
 
+{language}
+
 Consider:
 - What they were working on recently (projects, sessions)
 - Their preferences and habits
@@ -81,6 +84,41 @@ Example: [{"text": "Continue refactoring auth module", "kind": "code"}, \
 {"text": "Draft the release notes", "kind": "write"}]
 """
 
+# Filled into the ``{language}`` slot when the workspace has an explicit UI
+# language. The cards sit under a heading and a refresh link rendered in the UI
+# language, so the cards are UI chrome too: they follow the configured tag, not
+# the conversation, exactly as chat titles do (``chat_title._TITLE_LANGUAGE_TEMPLATE``).
+# The raw BCP-47 tag is injected for the reason ``context._build_ui_language_section``
+# gives: the frontend's SUPPORTED_LANGUAGES registry is the one list of languages.
+_LANGUAGE_TEMPLATE = (
+    'LANGUAGE: Write every suggestion\'s "text" in the language of BCP-47 tag {lang}. '
+    "That is the language the dashboard around the suggestions is rendered in, so the "
+    "text must be in it even when the context below is in another language. Keep code, "
+    'identifiers, paths, and product names verbatim. The "kind" value always stays one '
+    "of the fixed English tags listed below."
+)
+
+# Filled in when no UI language is configured (``ui_language_tag`` returns ""):
+# the dashboard then follows the browser, which the backend cannot see, so the
+# best available signal is the user's own preferences and messages.
+_LANGUAGE_INFERRED = (
+    'LANGUAGE: Write every suggestion\'s "text" in the language the user writes and '
+    "prefers: a preferred/response language stated in the context below, else the "
+    'language of the user\'s recent messages. The "kind" value always stays one of the '
+    "fixed English tags listed below."
+)
+
+
+def _build_prompt(context: str, ui_language: str) -> str:
+    """Render the suggestions prompt for ``context`` in ``ui_language``.
+
+    ``ui_language`` is a validated tag from ``chat_title._ui_language``; ``""`` keeps
+    the inference wording. The language line is filled first, so a context that
+    quotes the ``{language}`` slot cannot steer it.
+    """
+    language = _LANGUAGE_TEMPLATE.format(lang=ui_language) if ui_language else _LANGUAGE_INFERRED
+    return _PROMPT_TEMPLATE.replace("{language}", language).replace("{context}", context)
+
 
 @dataclass
 class SuggestionsCache:
@@ -88,6 +126,10 @@ class SuggestionsCache:
 
     suggestions: list[Suggestion] = field(default_factory=_fallback)
     generated_at: float = 0.0
+    # The UI language tag the cached set was generated for. A request whose
+    # current tag differs regenerates instead of serving the old language's
+    # cards for the rest of the refresh interval.
+    language: str = ""
     # LoopBoundLock, not asyncio.Lock: the cache is stored on the
     # long-lived DashboardState, which outlives any single event loop.
     _lock: LoopBoundLock = field(default_factory=LoopBoundLock, repr=False)
@@ -226,8 +268,8 @@ def _redact_suggestions(suggestions: list[Suggestion]) -> list[Suggestion]:
     return result
 
 
-async def generate_suggestions(state: DashboardState) -> list[Suggestion]:
-    """Generate suggestions using the background kiro-cli session."""
+async def generate_suggestions(state: DashboardState, *, ui_language: str) -> list[Suggestion]:
+    """Generate suggestions in ``ui_language`` using the background kiro-cli session."""
     # _build_context() calls list_sessions() + recent() — O(all sessions) disk IO.
     # Offload to keep the event loop responsive (same pattern as this PR's other
     # two offload sites in sessions.py).
@@ -236,7 +278,7 @@ async def generate_suggestions(state: DashboardState) -> list[Suggestion]:
         logger.debug("Insufficient context for suggestions — using fallback")
         return _fallback()
 
-    prompt = _PROMPT_TEMPLATE.replace("{context}", context)
+    prompt = _build_prompt(context, ui_language)
 
     # run_bg_oneliner owns the shared background-session skeleton (acquire _bg,
     # reject + SEL-audit any tool call, drive the event loop, destroy in finally)
@@ -263,19 +305,29 @@ async def refresh_suggestions(state: DashboardState, cache: SuggestionsCache) ->
     """Background task: regenerate suggestions."""
     async with cache._lock:
         try:
-            suggestions = await generate_suggestions(state)
+            language = await asyncio.to_thread(_ui_language)
+            suggestions = await generate_suggestions(state, ui_language=language)
             cache.suggestions = suggestions
             cache.generated_at = time.time()
+            cache.language = language
         except Exception:
             logger.warning("Suggestions generation failed", exc_info=True)
 
 
-async def maybe_refresh(state: DashboardState, cache: SuggestionsCache) -> None:
-    """Trigger a background refresh if suggestions are stale."""
+async def maybe_refresh(
+    state: DashboardState, cache: SuggestionsCache, *, language_changed: bool = False
+) -> None:
+    """Trigger a background refresh if suggestions are stale or in another language.
+
+    A language switch takes this background path too, never the blocking one:
+    the request keeps the cached set, and a slow generation finishes on its own
+    instead of being cut off and retried by every page view.
+    """
     now = time.time()
-    if now - cache.generated_at < _REFRESH_INTERVAL_SECS:
+    if not language_changed and now - cache.generated_at < _REFRESH_INTERVAL_SECS:
         return
-    if cache._lock.locked():
+    # A started task that has not reached the lock yet counts as running too.
+    if cache._lock.locked() or (cache._task is not None and not cache._task.done()):
         return
 
     # Fire and forget
@@ -304,6 +356,10 @@ async def api_suggestions(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     cache = get_suggestions_cache(state)
     force = request.query.get("force") == "1"
+    # A set generated for another UI language is stale whatever its age.
+    language_changed = bool(cache.generated_at) and (
+        cache.language != await asyncio.to_thread(_ui_language)
+    )
 
     if force:
         try:
@@ -323,14 +379,14 @@ async def api_suggestions(request: web.Request) -> web.Response:
             except (asyncio.TimeoutError, Exception):
                 pass
     else:
-        await maybe_refresh(state, cache)
+        await maybe_refresh(state, cache, language_changed=language_changed)
 
     return web.json_response(
         {
             "suggestions": cache.suggestions,
             "generated_at": cache.generated_at,
             "stale": (
-                (time.time() - cache.generated_at) > _REFRESH_INTERVAL_SECS
+                language_changed or (time.time() - cache.generated_at) > _REFRESH_INTERVAL_SECS
                 if cache.generated_at
                 else True
             ),
