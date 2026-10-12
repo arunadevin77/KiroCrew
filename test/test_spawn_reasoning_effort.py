@@ -1159,6 +1159,34 @@ class TestAppliedLineRendering:
         line = next(ln for ln in result.splitlines() if "reasoning_effort=" in ln)
         assert line == "ℹ reasoning_effort='high' for a1, a2: pending-note"
 
+    def test_plain_spawn_without_effort_renders_its_receipt(self):
+        """A spawn that asks for no effort still renders the receipt: every
+        verdict list the receipt reads reaches it from the run's own state."""
+        bodies, result = self._run({"task": "x"}, [{"id": "a1"}])
+        assert len(bodies) == 1
+        assert "Spawned 1 subagent(s)" in result
+        assert "reasoning_effort=" not in result
+
+    def test_pending_verdicts_reach_the_receipt_helper(self):
+        """The receipt renders pending verdicts handed to it by keyword."""
+        from kiro_crew.mcp_tools.spawn import _spawn_run_receipt
+
+        result = _spawn_run_receipt(
+            agent_ids=["a1"],
+            agent_names=["kirocrew-default"],
+            agent_tasks=["x"],
+            effort_drops=[],
+            effort_applies=[],
+            effort_pendings=[("a1", ("high", "pending-note"))],
+            queued_reasons={},
+            errors=[],
+            transport_errors=[],
+            parent_session="dashboard:chat-1",
+            can_work=False,
+            keep=False,
+        )
+        assert "ℹ reasoning_effort='high' for a1: pending-note" in result.splitlines()
+
     def test_api_spawn_returns_applied_for_capable_model(self):
         from kiro_crew.config.loader import AgentConfig, KiroCrewConfig
         from kiro_crew.dashboard.handlers.messaging import api_spawn
