@@ -1867,12 +1867,26 @@ async def api_dashboard_write(request: web.Request) -> web.Response:
         # this product already serves. Only a read of a real PACKAGE names the half the
         # display cannot draw yet.
         #
-        # Fails CLOSED, and it costs no crewmate anything today: a package exists only
-        # once an agent composes one through the gate on this stack, so the population
-        # this refuses is empty until the display can draw it. The change that makes
-        # the display read the same package is what lifts this, and it is also where
-        # the package's field table is first translated into something to check against
-        # -- which is why a package read carries no Model here.
+        # Fails CLOSED, over a population that is REAL: ``artifact_save`` accepts
+        # ``kind="dashboard"``, so any agent can bind a package to a crewmate and every
+        # agentic field write to that crewmate arrives here. What that costs the
+        # crewmate is bounded in three ways, and a reader weighing this refusal should
+        # have all three. The values already in the crew log stay there and the page
+        # goes on drawing them from its template instance, so nothing a person is
+        # looking at changes. The refusal carries its own remedy sentence and is
+        # recorded under its own code, so an agent is told what to do rather than left
+        # to retry. And deleting the package artifact leaves the binding unclaimed,
+        # which puts the member back on the fall-through to its template instance, so
+        # the pause is undone in product by the artifact store's own delete.
+        #
+        # WHAT LIFTS IT, named so a reader does not have to go looking: the change
+        # that makes ``api_member_dashboard`` render a bound package instead of the
+        # template instance, carried on the ``feat/19060-page-host`` branch. It lifts
+        # this for every crewmate at once, and it is also where the package's field
+        # table is first translated into something to check against -- which is why a
+        # package read carries no Model here. Until it lands, a crewmate with a bound
+        # package has its dashboard field writes refused, and the remedies above are
+        # the whole of what an agent or a person can do about that.
         if package.from_package:
             raise dashboard_agentic.display_pending_refusal(field)
         entry = dashboard_agentic.check_write(package.model, field, value, mistakes)

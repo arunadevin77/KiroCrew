@@ -88,12 +88,32 @@ def schemas() -> list[dict[str, Any]]:
                     },
                     "kind": {
                         "type": "string",
-                        "enum": ["widget", "html", "markdown", "svg", "json", "text", "webapp"],
+                        "enum": [
+                            "widget",
+                            "html",
+                            "markdown",
+                            "svg",
+                            "json",
+                            "text",
+                            "webapp",
+                            "dashboard",
+                        ],
                         "description": (
                             "Artifact kind. Optional — inferred from the content "
                             "when omitted (HTML-ish body -> widget, markdown text "
                             "-> markdown). Pass explicitly to override; markdown "
-                            "documents should set kind='markdown'."
+                            "documents should set kind='markdown'. kind='dashboard' "
+                            "is a dynamic dashboard's LAYOUT PACKAGE: content is a "
+                            "JSON object carrying exactly these five keys -- kind "
+                            "(the string 'dashboard'), bound_to, model, view, theme "
+                            "-- and no values anywhere in it, because values stay in "
+                            "the crew log and reach the page through the fold. The "
+                            "store refuses anything else, naming the rule it broke. "
+                            "Saving one BINDS that crewmate's page to it: while the "
+                            "page still draws from its template instance, agentic "
+                            "field writes to that crewmate are refused "
+                            "package_display_pending, so compose a package only for "
+                            "a page the user asked for."
                         ),
                     },
                     "source": {
@@ -248,7 +268,16 @@ def schemas() -> list[dict[str, Any]]:
                     "tag": {"type": "string", "description": "Filter by tag."},
                     "kind": {
                         "type": "string",
-                        "enum": ["widget", "html", "markdown", "svg", "json", "text", "webapp"],
+                        "enum": [
+                            "widget",
+                            "html",
+                            "markdown",
+                            "svg",
+                            "json",
+                            "text",
+                            "webapp",
+                            "dashboard",
+                        ],
                         "description": "Filter by kind.",
                     },
                     "q": {

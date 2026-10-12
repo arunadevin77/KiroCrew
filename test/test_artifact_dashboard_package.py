@@ -12,6 +12,8 @@ handler and a plain ``artifact_update`` all reach
 3. A revert restores layout and keeps the LIVE binding.
 4. An invalid package is refused on every write path, with a reason that names
    the rule.
+5. ``artifact_save`` -- the only save path an agent has -- reaches that gate at
+   all, and reaching it is all the tool layer does.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -26,6 +29,12 @@ from kiro_crew.artifact_store import dashboard_package as dp
 from kiro_crew.artifact_store.records import ALLOWED_EVENT_TYPES
 from kiro_crew.artifact_store.rules import ALLOWED_KINDS, USER_SELECTABLE_KINDS
 from kiro_crew.artifacts import ArtifactStore, ArtifactValidationError
+from kiro_crew.validation import (
+    _ARTIFACT_KIND_RE,
+    ARTIFACT_LIST_SCHEMA,
+    ARTIFACT_SAVE_SCHEMA,
+    validate_tool_args,
+)
 
 BOUND = "crewmate:mate"
 
@@ -87,6 +96,53 @@ def content(**kwargs: Any) -> str:
     return json.dumps(package(**kwargs))
 
 
+def _tool_kind_enum(tool: str) -> list[str]:
+    """The ``kind`` values the MCP tool *tool* advertises to an agent."""
+    from kiro_crew.mcp_tools.artifacts import schemas
+
+    for descriptor in schemas():
+        if descriptor["name"] == tool:
+            enum = descriptor["inputSchema"]["properties"]["kind"]["enum"]
+            assert isinstance(enum, list) and enum
+            return enum
+    raise AssertionError(f"no {tool} descriptor in the artifacts tool schemas")
+
+
+def _save_through_the_tool(
+    store: "ArtifactStore", args: dict[str, Any]
+) -> tuple[str, dict[str, Any]]:
+    """Run the real ``artifact_save`` handler against *store*.
+
+    The handler reaches the gateway, so the POST is the seam: this stands a real
+    :class:`ArtifactStore` behind it and renders a refusal the way the dashboard's
+    own handler does, as ``{"error": ...}``. That keeps the whole tool path under
+    test -- schema, handler, store, package validator -- rather than the schema
+    alone, which is the half that cannot tell a reachable kind from an advertised
+    one.
+    """
+    from kiro_crew import mcp_core
+    from kiro_crew.mcp_tools.artifacts import artifact_save
+
+    posted: dict[str, Any] = {}
+
+    def _fake_post(path: str, body: dict[str, Any] | None = None, **_kw: Any) -> dict[str, Any]:
+        assert path == "/api/artifacts", path
+        posted.update(body or {})
+        try:
+            art = store.create(
+                name=posted["name"], kind=posted.get("kind"), content=posted["content"]
+            )
+        except ArtifactValidationError as exc:
+            return {"error": str(exc)}
+        return {"slug": art.slug, "version": art.version, "name": art.name, "kind": art.kind}
+
+    with (
+        patch.object(mcp_core, "_post", side_effect=_fake_post),
+        patch.object(mcp_core, "_resolve_session_key", return_value=""),
+    ):
+        return artifact_save("artifact_save", args), posted
+
+
 @pytest.fixture
 def store(tmp_path: Path) -> ArtifactStore:
     return ArtifactStore(root=tmp_path / "artifacts")
@@ -128,6 +184,152 @@ class TestSaveAndRead:
         # any lookup helper: a reader keyed by binding scans these values.
         parsed = dp.parse_package(store.get(saved.slug).content or "")
         assert parsed["bound_to"] == BOUND
+
+
+class TestTheAgentToolMaySaveOne:
+    """``artifact_save`` is the only save path an agent has, so it has to reach the gate.
+
+    A package is composed by an agent, so the agent tool is what decides whether this
+    kind can be brought into being at all. Three lists stand between a call and the
+    store and all three have to carry the name: the tool's advertised enum, the kind
+    pattern the tool schema validates against, and the store's own ``ALLOWED_KINDS``.
+    A name missing from either of the first two refuses the call ``kind: invalid
+    format`` before the store sees the bytes, which is a refusal with no rule behind
+    it.
+
+    The second claim is what makes the first safe. Carrying the name is ALL the front
+    lists do -- what the bytes may be is the store's single gate in
+    ``dashboard_package``, so a body that is not a package is refused with the rule it
+    broke rather than stored under a kind the renderer would then have to parse.
+    """
+
+    def test_the_three_lists_agree_on_the_kind(self) -> None:
+        assert "dashboard" in ALLOWED_KINDS
+        assert _ARTIFACT_KIND_RE.fullmatch("dashboard") is not None
+        assert "dashboard" in _tool_kind_enum("artifact_save")
+        assert "dashboard" in _tool_kind_enum("artifact_list")
+
+    @pytest.mark.parametrize("tool", ["artifact_save", "artifact_list"])
+    def test_every_kind_the_tool_advertises_reaches_the_store(self, tool: str) -> None:
+        # Drift pin, and the direction matters. An enum entry the pattern or the
+        # store does not carry is advertised to every agent and then refused on
+        # use, which is a refusal naming no rule. The reverse is allowed:
+        # ``image`` needs a source_path the MCP save path never sends, so the
+        # pattern is deliberately wider than what the tool offers.
+        for kind in _tool_kind_enum(tool):
+            assert _ARTIFACT_KIND_RE.fullmatch(kind) is not None, kind
+            assert kind in ALLOWED_KINDS, kind
+
+    def test_the_tool_schema_takes_a_package(self) -> None:
+        cleaned = validate_tool_args(
+            {"name": "Mate dashboard", "content": content(), "kind": "dashboard"},
+            ARTIFACT_SAVE_SCHEMA,
+        )
+        assert cleaned["kind"] == "dashboard"
+
+    def test_the_list_filter_takes_the_kind_too(self) -> None:
+        # An agent that can create one has to be able to find it again.
+        cleaned = validate_tool_args({"kind": "dashboard"}, ARTIFACT_LIST_SCHEMA)
+        assert cleaned["kind"] == "dashboard"
+
+    def test_a_package_saved_through_the_tool_lands_as_a_package(self, store) -> None:
+        out, posted = _save_through_the_tool(
+            store, {"name": "Mate dashboard", "content": content(), "kind": "dashboard"}
+        )
+        # The handler forwards the kind rather than letting inference re-type a
+        # JSON body as plain ``json``, which would store the package under a kind
+        # nothing validates.
+        assert posted["kind"] == "dashboard"
+        assert out.startswith("Saved artifact: slug=")
+        stored = store.list(kind="dashboard")
+        assert len(stored) == 1
+        # Version 1 because that is what creating ANY artifact answers; there is no
+        # version 0 in this store. It is not an approval of anything, which is the
+        # next test.
+        assert stored[0].version == 1
+        assert dp.parse_package(store.get(stored[0].slug).content or "")["bound_to"] == BOUND
+
+    def test_a_save_is_a_write_and_never_a_persons_yes(self, store) -> None:
+        # Every version this store cuts appends a lifecycle event carrying the
+        # ACTOR, and the actor comes from how the request authenticated rather than
+        # from anything a caller spells. A tool save is an agent save, so no event
+        # it writes can read as a person's. Pinned here because "the package has a
+        # version" is the thing most easily misread as "someone said yes to it":
+        # what a version means is the display half's question, and nothing on this
+        # path answers it.
+        _save_through_the_tool(
+            store, {"name": "Mate dashboard", "content": content(), "kind": "dashboard"}
+        )
+        art = store.get(store.list(kind="dashboard")[0].slug)
+        events = list(getattr(art, "events", None) or [])
+        assert events, "a create records its own lifecycle event"
+        assert not [e for e in events if str(e.get("by") or "") == "user"]
+
+    def test_a_body_that_is_not_a_package_is_refused_with_its_reason(self, store) -> None:
+        out, _ = _save_through_the_tool(
+            store, {"name": "Prose", "content": "# a prose document", "kind": "dashboard"}
+        )
+        assert "is not valid JSON" in out
+        assert not store.list(kind="dashboard")
+
+    def test_a_package_carrying_values_is_refused_with_its_reason(self, store) -> None:
+        # The refusal an agent is most likely to earn: valid JSON, right shape,
+        # and values pasted into it. The rule it names is the one it broke.
+        p = package()
+        p["view"]["blocks"][1]["data"] = [{"last_run": "now"}]
+        out, _ = _save_through_the_tool(
+            store, {"name": "With values", "content": json.dumps(p), "kind": "dashboard"}
+        )
+        assert "values stay in the crew log" in out
+        assert not store.list(kind="dashboard")
+
+    def test_the_tool_cannot_ask_for_a_linked_package(self, store) -> None:
+        # The serve path refuses a linked artifact because its bytes come from a
+        # file nothing gates. The tool schema has no source_path field at all, so
+        # the request cannot be spelled, and the store refuses it even if it were.
+        assert not any(f.name == "source_path" for f in ARTIFACT_SAVE_SCHEMA.fields)
+
+    def test_the_enum_tells_the_agent_every_key_the_package_needs(self) -> None:
+        # The description is the only place an agent learns what the content has
+        # to be, so a key missing from it is a refusal the agent cannot act on:
+        # it composes what it was told, the store refuses the result, and nothing
+        # in either half says which list is short.
+        from kiro_crew.mcp_tools.artifacts import schemas
+
+        save = next(s for s in schemas() if s["name"] == "artifact_save")
+        described = save["inputSchema"]["properties"]["kind"]["description"]
+        # The keys come from the VALIDATOR'S OWN canonical output, not from a list
+        # written again here: a second copy of the five keys in this file would
+        # drift from the gate exactly the way the description can.
+        for key in json.loads(dp.canonical_package_content(content())):
+            assert key in described, key
+        # And the rule behind the keys, which is the one a package most often breaks.
+        assert "values stay in the crew log" in described
+
+    def test_deleting_the_package_leaves_the_binding_unclaimed_again(self, store) -> None:
+        # THE UNDO, and it is the artifact store's own. A bound package changes
+        # what the member's write route checks against, so the step that ends that
+        # is the step that makes the binding unclaimed: deleting the artifact. The
+        # lookup every reader goes through answers None again, which is the answer
+        # it gives for a member that never had one, so a reader falls back to the
+        # template instance exactly as before the save.
+        out, _ = _save_through_the_tool(
+            store, {"name": "Mate dashboard", "content": content(), "kind": "dashboard"}
+        )
+        assert out.startswith("Saved artifact: slug=")
+        slug = store.list(kind="dashboard")[0].slug
+        assert dp.resolve_bound_slug(BOUND, store=store) == slug
+
+        assert store.delete(slug) is not False
+        assert dp.resolve_bound_slug(BOUND, store=store) is None
+        assert not store.list(kind="dashboard")
+
+    def test_an_agent_tool_kind_is_not_a_hand_pickable_one(self) -> None:
+        # The browser's type control is the one path a PERSON writes a kind on,
+        # and a prose document flipped to this kind stores content no reader can
+        # parse. The agent tool offering the kind does not make it one a person
+        # may pick: the two lists answer different questions.
+        assert "dashboard" not in USER_SELECTABLE_KINDS
 
 
 class TestWhereAValueComesFrom:

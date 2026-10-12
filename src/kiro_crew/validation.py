@@ -30,6 +30,7 @@ from typing import Any, Iterable
 # ``artifact_store.rules`` loads the record dataclasses and the slug hash
 # fallback, never ``kiro_crew.artifacts`` (the service module whose import from
 # here would close the ``artifacts -> hooks -> webhooks -> validation`` cycle).
+from kiro_crew.artifact_store.rules import ALLOWED_KINDS as _ARTIFACT_KINDS
 from kiro_crew.artifact_store.rules import MAX_TAG_LEN as ARTIFACT_TAG_MAX
 from kiro_crew.artifact_store.rules import normalize_tag as _normalize_artifact_tag
 
@@ -2378,7 +2379,22 @@ WORKFLOW_RERUN_SCHEMA = ToolSchema(
 # only the tag count and length caps as fields and check each tag's characters
 # in ``_validate_artifact_tags`` through the store's own ``normalize_tag``.
 _ARTIFACT_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
-_ARTIFACT_KIND_RE = re.compile(r"^(widget|html|markdown|svg|json|text|image|webapp)$")
+# BUILT FROM THE STORE'S OWN SET, not spelled again. This pattern decides only
+# whether a kind REACHES the store, so a name the store accepts and this list
+# omits is a kind advertised nowhere and refused "invalid format" with no rule
+# behind it. Sorted so the pattern is stable whatever order the frozenset
+# iterates in, and ``re.escape`` because the alternation is built rather than
+# written: a kind carrying a regex metacharacter would otherwise change what
+# this matches instead of being rejected by the store's own name rules.
+#
+# What the content has to be stays the store's question. ``kind="dashboard"``
+# is a layout package, and ``ArtifactStore.create`` / ``.update`` run every one
+# of those writes through ``artifact_store.dashboard_package``, which is the
+# single gate on it; spelling any of those rules here would make a second
+# vocabulary that could drift from the gate that holds.
+_ARTIFACT_KIND_RE = re.compile(
+    "^(" + "|".join(re.escape(k) for k in sorted(_ARTIFACT_KINDS)) + ")$"
+)
 
 # Model identifiers passed to kiro-cli ``--model`` (AcpRuntime). First char
 # must be alphanumeric so a value can never be parsed as a CLI flag, and the
