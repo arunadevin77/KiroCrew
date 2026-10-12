@@ -37,6 +37,7 @@ from off_loop_helpers import off_loop
 from kiro_crew.apps.builtins.issue_radar.backend import crew_runtime as cr
 from kiro_crew.apps.builtins.issue_radar.backend import crew_store as cs
 from kiro_crew.apps.builtins.issue_radar.backend import github_client as gh
+from kiro_crew.apps.builtins.issue_radar.backend import gitlab_queries as glq
 from kiro_crew.apps.builtins.issue_radar.backend import provider, routes, store
 from kiro_crew.crew_log import projection as crew_log_projection
 
@@ -1588,9 +1589,53 @@ class SweepDepsRefreshTest(unittest.TestCase):
         write.assert_called_once()
         self.assertIs(out, stored)
 
-    def test_a_non_github_provider_stays_a_plain_cache_read(self):
-        with mock.patch.object(cr.store, "read_deps_cache", return_value=None):
-            self.assertIsNone(cr._read_or_refresh_deps(self._key("gitlab"), None))
+    def test_a_stale_gitlab_cache_is_refreshed_through_the_gitlab_fetch(self):
+        # The sweep dispatches exactly as the /deps route does: a GitLab repo's
+        # stale graph is rebuilt by gitlab_queries with the repo's host, and the
+        # GitHub fetch is never consulted for it.
+        stale = {"edges": [], "nodes": {}, "fetched_at": time.time() - 99999}
+        stored = {"edges": [{"blocked": 2, "blocker": 1, "source": "native"}], "nodes": {}}
+        key = provider.RepoKey(owner="o", repo="r", provider="gitlab", host="gitlab.example.com")
+        with (
+            mock.patch.object(cr.store, "read_deps_cache", side_effect=[stale, stored]),
+            mock.patch.object(cr.store, "read_issues_cache", return_value=[{"number": 2}]),
+            mock.patch.object(cr.store, "write_deps_cache") as write,
+            mock.patch.object(gh, "fetch_dependency_edges") as gh_fetch,
+            mock.patch.object(
+                glq,
+                "fetch_dependency_edges",
+                return_value=([{"blocked": 2, "blocker": 1, "source": "native"}], {}),
+            ) as gl_fetch,
+        ):
+            out = cr._read_or_refresh_deps(key, None)
+        gh_fetch.assert_not_called()
+        gl_fetch.assert_called_once()
+        self.assertEqual(gl_fetch.call_args.kwargs.get("host"), "gitlab.example.com")
+        write.assert_called_once()
+        self.assertIs(out, stored)
+
+    def test_a_gitlab_refresh_failure_keeps_the_stale_graph(self):
+        stale = {"edges": [], "nodes": {}, "fetched_at": time.time() - 99999}
+        key = provider.RepoKey(owner="o", repo="r", provider="gitlab", host="gitlab.example.com")
+        with (
+            mock.patch.object(cr.store, "read_deps_cache", return_value=stale),
+            mock.patch.object(cr.store, "read_issues_cache", return_value=[]),
+            mock.patch.object(cr.store, "write_deps_cache") as write,
+            mock.patch.object(glq, "fetch_dependency_edges", side_effect=RuntimeError("boom")),
+        ):
+            out = cr._read_or_refresh_deps(key, None)
+        self.assertIs(out, stale)
+        write.assert_not_called()
+
+    def test_an_unsupported_provider_stays_a_plain_cache_read(self):
+        with (
+            mock.patch.object(cr.store, "read_deps_cache", return_value=None),
+            mock.patch.object(gh, "fetch_dependency_edges") as gh_fetch,
+            mock.patch.object(glq, "fetch_dependency_edges") as gl_fetch,
+        ):
+            self.assertIsNone(cr._read_or_refresh_deps(self._key("azure"), None))
+        gh_fetch.assert_not_called()
+        gl_fetch.assert_not_called()
 
     def test_a_refresh_failure_keeps_the_stale_graph(self):
         stale = {"edges": [], "nodes": {}, "fetched_at": time.time() - 99999}

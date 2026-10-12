@@ -246,7 +246,7 @@ per-repo store-scoping rule.
 | GET | `/issues` | List open/closed issues (cached, paginated). `poll=1` takes the probe-gated path — see Client-Side List Polling. `first_page=1` (open only) takes the progressive first-paint fast path — see First Paint |
 | GET | `/issue` | Full issue detail + timeline |
 | GET | `/ref` | Compact summary of one referenced issue/PR (hover preview + issue-vs-PR resolution). One `gh` call, no timeline, short-TTL cache |
-| GET | `/deps` | The repo's dependency graph `{edges, nodes}` (edge = `{blocked, blocker, source: native\|inferred}`), scoped to the open issues. Serve-stale-revalidate-behind: a cache younger than `DEPS_CACHE_TTL_SEC` is served as-is, an older one is served immediately while ONE coalesced background rebuild per repo refreshes it (cancelled on app cleanup); only a never-synced repo or `refresh=1` rebuilds inline. Non-GitHub providers answer an empty graph, not an error. Inline rebuild failures are 502 `deps_issue_scope_unavailable` (open-issue scope unreadable) or `deps_fetch_failed` |
+| GET | `/deps` | The repo's dependency graph `{edges, nodes}` (edge = `{blocked, blocker, source: native\|inferred}`), scoped to the open issues. Serve-stale-revalidate-behind: a cache younger than `DEPS_CACHE_TTL_SEC` is served as-is, an older one is served immediately while ONE coalesced background rebuild per repo refreshes it (cancelled on app cleanup); only a never-synced repo or `refresh=1` rebuilds inline. GitHub and GitLab rebuild (see "Graph tab by forge"); Azure and any unknown provider answer an empty graph, not an error. Inline rebuild failures are 502 `deps_issue_scope_unavailable` (open-issue scope unreadable) or `deps_fetch_failed` |
 | GET | `/labels` | Repo label set (cached with a **10-min TTL**; see "The label cache expires") |
 | GET | `/members` | Repo collaborators (authoritative API or fallback) |
 | GET | `/repos` | Connected repos list. Rows missing a cached `permissions` object (connected before permissions were tracked) are self-healed with a live `verify_repo_access`, run CONCURRENTLY under a bounded semaphore (`_REPO_HEAL_CONCURRENCY`) rather than one-at-a-time, since this gates app open; a single unreadable repo is skipped, not fatal |
@@ -286,7 +286,7 @@ per-repo store-scoping rule.
 | GET | `/crews/names` | Suggested names for a new crew |
 | GET/PUT | `/crews/settings` | Per-repo crew settings |
 | GET/PUT/DELETE | `/crew` | Read one crew with its open items, events and the repo's shared skip index; PUT updates it; DELETE retires it (the record survives) |
-| GET | `/crew/fabric` | The crews pipeline view's whole payload (phases and items). Non-GitHub providers answer `items: []` |
+| GET | `/crew/fabric` | The crews pipeline view's whole payload (phases and items), folded from the crew store for every provider |
 | PUT | `/crew/work` | Record one work-item step and its progress event (the write behind `issue_radar_crew_record`) |
 | POST | `/crew/pause` | Pause or resume a crew |
 
@@ -1176,6 +1176,34 @@ and that is indistinguishable from "no links" on the server side.
 
 Azure and any unknown provider are answered an empty graph by `/deps` without a rebuild;
 nothing is written to their cache.
+
+### Crews on GitLab
+
+The crew runtime (`crew_runtime.py`) reaches the forge through `provider.client_for(key)`
+and speaks the provider's vocabulary (`MR`, `!`), so a crew can be created on a GitLab
+repo with no route change. Three seams complete that:
+
+- **The sweep's deps refresh** (`_read_or_refresh_deps`) dispatches like `/deps`: a
+  stale GitLab graph is rebuilt by `gitlab_queries.fetch_dependency_edges` with the
+  repo's host, so `SIG_DEP_UNBLOCKED` fires for a GitLab crew when its blocker closes.
+  Any other provider stays a plain cache read. A refresh failure keeps the cached graph
+  (stale beats wrong), on both forges.
+- **`GET /crew/fabric` folds every provider** from the crew store, which keys and
+  persists a GitLab repo's crews exactly like a GitHub repo's; the pipeline view's
+  designed empty state is now only "no crews", never "wrong forge".
+- **`gitlab_client` carries the two writes the crew's GitHub shape needs**:
+  `update_issue_comment` (`PUT .../issues/:iid/notes/:id`, the claim-ledger heartbeat;
+  the issue iid is a required keyword-only `number` because GitLab nests notes under
+  the issue, and a caller written against GitHub's repo-flat shape fails with
+  `TypeError` instead of editing the wrong note) and `create_pull_request`
+  (`POST .../merge_requests`; GitLab has no draft field, so `draft=True` prepends
+  `Draft:` to the title once). Both send model-authored prose as JSON on stdin, never
+  argv, and are refused on an empty body/title or a missing branch. Neither is on the
+  dispatch surface yet: Azure has no equivalent, and no route calls them.
+
+Unchanged on GitLab: `enable_auto_merge` / `disable_auto_merge` and `REQUEST_CHANGES`
+stay refused (no safe verb), the host allowlist and `glab` transport are untouched, and
+no token scope beyond `api` is needed.
 
 The Pipeline tab (`pipeline_routes.py`) is unchanged and still github.com-only: its files
 are keyed on `owner/repo` alone by the GitHub jobs that write them, so serving another
