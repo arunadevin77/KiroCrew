@@ -14451,7 +14451,7 @@ async def _run_chat(
                             tool_kind=event.tool_kind,
                             outcome="auto_approve_declined",
                             request_id=event.request_id,
-                            error="the command writes through a redirect the grant does not cover",
+                            error="the command may write through a redirect the grant does not cover",
                             metadata={
                                 "reason": "redirect_outside_grant",
                                 "tier": "trusted_pattern",
@@ -14459,8 +14459,8 @@ async def _run_chat(
                         )
                         slot.append(
                             "system",
-                            "🛡️ Trusted pattern not applied — the command writes to a file "
-                            "through an output redirect, which the grant does not cover. "
+                            "🛡️ Trusted pattern not applied — the command may write through "
+                            "a redirect, which the grant does not cover. "
                             "Approve this command explicitly.",
                             "msg msg-info",
                         )

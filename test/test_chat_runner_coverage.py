@@ -5245,7 +5245,20 @@ class TestRunChatAutoApproveRungs:
             "reason": "redirect_outside_grant",
             "tier": "trusted_pattern",
         }
-        assert any("Trusted pattern not applied" in m.get("content", "") for m in slot.messages)
+        # The redirect check also fires on a quoted ``>`` that writes nothing,
+        # so both texts say the command MAY write, not that it does.
+        assert (
+            declined[0]["error"]
+            == "the command may write through a redirect the grant does not cover"
+        )
+        notices = [
+            m.get("content", "")
+            for m in slot.messages
+            if "Trusted pattern not applied" in m.get("content", "")
+        ]
+        assert notices, slot.messages
+        assert "may write through a redirect, which the grant does not cover" in notices[0]
+        assert "writes to a file" not in notices[0]
 
     @pytest.mark.asyncio
     async def test_a_base_grant_still_covers_a_discard_redirect(self, tmp_path):
