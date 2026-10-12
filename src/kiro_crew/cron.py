@@ -5443,11 +5443,17 @@ class CronService:
             extra=self._store_extra,
             unknown_fields=self._unknown_fields,
         )
-        # Atomic write: unique tmp → rename
+        # Atomic write: unique tmp → fsync → rename, then sync the directory so
+        # the rename itself survives a sudden host restart. Without both syncs a
+        # save that returned can come back as an empty or missing crons.json.
         # Deferred import to avoid circular dependency (pre-existing)
-        from kiro_crew.atomic_write import atomic_write
+        from kiro_crew.atomic_write import atomic_write, fsync_dir
 
-        atomic_write(self._path, document)
+        atomic_write(self._path, document, fsync=True)
+        # Best-effort: the replace has already published the new store, so a
+        # filesystem that refuses a directory fsync must not turn a committed
+        # save into a reported failure.
+        fsync_dir(self._path.parent, best_effort=True)
         # Refresh the (mtime_ns, size) fingerprint so _sync recognizes this as
         # our own write and does not reload it back over the in-memory state.
         self._record_fingerprint()

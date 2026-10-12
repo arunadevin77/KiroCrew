@@ -255,6 +255,43 @@ async def test_stop_persists_a_record_its_merge_could_not_save(tmp_path, make_jo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("make_job", [_every_job, _one_shot], ids=["every", "at"])
+async def test_a_failed_result_save_then_a_forced_reload_runs_the_job_once(
+    tmp_path, monkeypatch, make_job
+):
+    # The run's result save fails under a persistent write fault (now an
+    # fsync-ed write), and a reload then reads the disk copy that never got the
+    # run while the store is still full. The held record must ride that reload,
+    # so the job is not due again and lands once the store recovers.
+    import kiro_crew.atomic_write as atomic_write_module
+
+    runs: list[str] = []
+    service = await _service(tmp_path, runs)
+    job = await make_job(service)
+    real_atomic_write = atomic_write_module.atomic_write
+
+    def disk_full(*_a, **_k) -> None:
+        raise OSError(28, "No space left on device")
+
+    try:
+        with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+            monkeypatch.setattr(atomic_write_module, "atomic_write", disk_full)
+            await _tick(service, job.id)  # runs; its result save fails
+            record = _held_record(service, job.id)
+            service._reset_fingerprint()  # the next sync reloads the stale disk copy
+            await _tick(service, job.id)  # reload, store still full
+            monkeypatch.setattr(atomic_write_module, "atomic_write", real_atomic_write)
+            await _tick(service, job.id)  # the store recovers
+            await _tick(service, job.id)
+    finally:
+        monkeypatch.setattr(atomic_write_module, "atomic_write", real_atomic_write)
+        await service.stop()
+
+    assert runs == [job.id], f"{job.schedule.kind} job ran {len(runs)} times"
+    _assert_run_recorded(tmp_path, job, record)
+
+
+@pytest.mark.asyncio
 async def test_a_newer_stored_run_wins_over_a_held_record(tmp_path):
     # Same fence as the merge: a held record never overwrites a newer run that
     # another process already stored.
