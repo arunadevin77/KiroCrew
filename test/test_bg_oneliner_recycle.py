@@ -77,6 +77,8 @@ async def _manager(backend: str) -> SessionManager:
     cfg.agent.acp_backend = backend
     mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
     await mgr.start_pool()
+    # The background session starts on first use; these tests act on a live one.
+    await mgr._ensure_background()
     return mgr
 
 

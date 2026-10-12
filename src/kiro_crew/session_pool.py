@@ -83,6 +83,8 @@ class WarmPoolOwner(Protocol):
 
     async def _ensure_background(self) -> None: ...
 
+    def _bg_backend_supports_runtime(self) -> bool: ...
+
     async def _fill_warm_pool(self) -> None: ...
 
     def _dispatch_hard_kill(self, provider: LLMProvider) -> None: ...
@@ -312,7 +314,7 @@ class WarmSessionPool:
 
             async def _start_bg_and_pool() -> None:
                 await self._stamp_privacy_headers_for_startup()
-                await self._owner._ensure_background()
+                await self._ensure_background_unless_lazy()
                 await self._owner._fill_warm_pool()
                 if self._pool_size:
                     self._pool_health_task = asyncio.create_task(self._owner._pool_health_loop())
@@ -326,7 +328,7 @@ class WarmSessionPool:
             return
 
         await self._stamp_privacy_headers_for_startup()
-        await self._owner._ensure_background()
+        await self._ensure_background_unless_lazy()
         self._deps.logger.info("Background session ready")
 
         if self._pool_size:
@@ -336,6 +338,21 @@ class WarmSessionPool:
             self._pool_health_task = asyncio.create_task(self._owner._pool_health_loop())
             self._owner._background_tasks.add(self._pool_health_task)
             self._pool_health_task.add_done_callback(self._owner._background_tasks.discard)
+
+    async def _ensure_background_unless_lazy(self) -> None:
+        """Start the persistent background session now, unless it can wait.
+
+        On a backend whose background one-liners run on the shared multiplexed
+        runtime, the persistent session serves only the occasional background
+        turn (``SessionManager.get_or_create`` creates it on that first turn).
+        Starting it at boot held a whole idle agent process -- about 430 MB --
+        on every gateway, used or not. Other backends route every background
+        call through it, so they keep the boot start.
+        """
+        if self._owner._bg_backend_supports_runtime():
+            self._deps.logger.info("Background session deferred to its first use")
+            return
+        await self._owner._ensure_background()
 
     async def _stamp_privacy_headers_for_startup(self) -> None:
         """Stamp the mode into the flagged rows' transcript headers, once per start.

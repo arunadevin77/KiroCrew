@@ -977,6 +977,14 @@ class TestStatelessSkipsPool:
         mgr._warm_pool.put_nowait((pooled, time.monotonic()))
         mgr._drain_and_claim = AsyncMock(return_value=pooled)
 
+        def _persistent_provider(*_a, **_kw):
+            # A real provider reports its privacy mode; the turn after creation
+            # checks it against the session's.
+            p = _make_provider()
+            p.memory_mode = "persistent"
+            return p
+
+        factory.side_effect = _persistent_provider
         provider, is_new, _ = await mgr.get_or_create("_bg", agent=None)
 
         mgr._drain_and_claim.assert_not_awaited()

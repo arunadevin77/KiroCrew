@@ -535,11 +535,46 @@ class TestWarmPool:
     """Tests for warm session pool and background session."""
 
     @pytest.mark.asyncio
-    async def test_start_pool_creates_background(self, cfg):
-        """start_pool() creates background session."""
+    async def test_start_pool_defers_background_on_a_runtime_backend(self, cfg):
+        """Boot spawns no idle background agent on the default backend; first use does."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        assert mgr._bg_backend_supports_runtime()
+        await mgr.start_pool()
+        assert BACKGROUND_KEY not in mgr._sessions
+
+        await mgr.get_or_create(BACKGROUND_KEY)
+        assert BACKGROUND_KEY in mgr._sessions
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_deferred_background_first_use_with_the_background_agent(self, cfg, monkeypatch):
+        """Consolidation names the background agent; it must still go through
+        ``_ensure_background`` rather than the generic cold start."""
+        from kiro_crew.session import BACKGROUND_AGENT
+
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.start_pool()
+        assert BACKGROUND_KEY not in mgr._sessions
 
+        calls: list[object] = []
+        real_ensure = mgr._ensure_background
+
+        async def _spy(**kwargs):
+            calls.append(kwargs)
+            await real_ensure(**kwargs)
+
+        monkeypatch.setattr(mgr, "_ensure_background", _spy)
+        await mgr.get_or_create(BACKGROUND_KEY, agent=BACKGROUND_AGENT)
+        assert calls, "first use with the background agent skipped _ensure_background"
+        assert BACKGROUND_KEY in mgr._sessions
+        await mgr.close_all()
+
+    @pytest.mark.asyncio
+    async def test_start_pool_keeps_the_boot_start_without_a_shared_runtime(self, cfg, monkeypatch):
+        """Backends that route every background call through ``_bg`` start it at boot."""
+        mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        monkeypatch.setattr(mgr, "_bg_backend_supports_runtime", lambda: False)
+        await mgr.start_pool()
         assert BACKGROUND_KEY in mgr._sessions
         await mgr.close_all()
 
@@ -622,6 +657,7 @@ class TestWarmPool:
 
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.start_pool()
+        await mgr._ensure_background()
 
         mgr._sessions[BACKGROUND_KEY].last_used = time.monotonic() - 9999
         await mgr._expire_idle(1)
@@ -636,6 +672,7 @@ class TestWarmPool:
 
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.start_pool()
+        await mgr._ensure_background()
 
         key = "channel:abc123:agent1"
         mgr._sessions[key] = mgr._sessions[BACKGROUND_KEY].__class__.__new__(
@@ -665,13 +702,16 @@ class TestWarmPool:
         assert mgr._session_map._flush_task is None
 
     @pytest.mark.asyncio
-    async def test_start_pool_idempotent(self, cfg):
+    async def test_start_pool_idempotent(self, cfg, monkeypatch):
         """Calling start_pool() twice is a no-op."""
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
+        # A backend without a shared runtime, so the boot start is observable.
+        monkeypatch.setattr(mgr, "_bg_backend_supports_runtime", lambda: False)
         await mgr.start_pool()
+        first = mgr._sessions[BACKGROUND_KEY]
 
         await mgr.start_pool()  # should be no-op
-        assert BACKGROUND_KEY in mgr._sessions
+        assert mgr._sessions[BACKGROUND_KEY] is first
         await mgr.close_all()
 
 
@@ -754,6 +794,7 @@ class TestRecycleBackground:
         """Background session is recycled when context >= 70%."""
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.start_pool()
+        await mgr._ensure_background()
 
         old_provider = mgr._sessions[BACKGROUND_KEY].provider
         # Simulate high context
@@ -774,6 +815,7 @@ class TestRecycleBackground:
         """Background session is recycled after 40 prompts with no metadata."""
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.start_pool()
+        await mgr._ensure_background()
 
         old_provider = mgr._sessions[BACKGROUND_KEY].provider
         old_provider.context_usage_pct = lambda: 0.0  # no metadata
@@ -791,6 +833,7 @@ class TestRecycleBackground:
         """Background session is NOT recycled when context is low."""
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.start_pool()
+        await mgr._ensure_background()
 
         old_provider = mgr._sessions[BACKGROUND_KEY].provider
         old_provider.context_usage_pct = lambda: 30.0
@@ -820,6 +863,7 @@ class TestRecycleBackground:
         """
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.start_pool()
+        await mgr._ensure_background()
 
         provider = mgr._sessions[BACKGROUND_KEY].provider
         provider.context_usage_pct = lambda: 0.0  # backend reports no metadata
@@ -850,6 +894,7 @@ class TestRecycleBackground:
         """
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.start_pool()
+        await mgr._ensure_background()
 
         provider = mgr._sessions[BACKGROUND_KEY].provider
         provider.context_usage_pct = lambda: 0.0
@@ -892,6 +937,7 @@ class TestRecycleBackground:
         """
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.start_pool()
+        await mgr._ensure_background()
 
         sess = mgr._sessions[BACKGROUND_KEY]
         old_provider = sess.provider
@@ -953,6 +999,7 @@ class TestRecycleBackground:
         provider rather than to the torn-down one."""
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.start_pool()
+        await mgr._ensure_background()
 
         sess = mgr._sessions[BACKGROUND_KEY]
         old_provider = sess.provider
@@ -988,6 +1035,7 @@ class TestRecycleBackground:
 
         mgr = SessionManager(cfg, provider_factory=factory)
         await mgr.start_pool()
+        await mgr._ensure_background()
 
         sess = mgr._sessions[BACKGROUND_KEY]
         old_provider = sess.provider
@@ -4524,10 +4572,12 @@ class TestStartPoolNonBlocking:
     """Tests for start_pool non-blocking path."""
 
     @pytest.mark.asyncio
-    async def test_start_pool_non_blocking(self, cfg):
+    async def test_start_pool_non_blocking(self, cfg, monkeypatch):
         cfg.session.pool_size = 1
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         mgr._pool_size = 1
+        # A backend without a shared runtime, so the boot start is observable.
+        monkeypatch.setattr(mgr, "_bg_backend_supports_runtime", lambda: False)
         await mgr.start_pool(blocking=False)
         # Let background tasks run
         await asyncio.sleep(0.1)

@@ -1215,7 +1215,7 @@ Messages arriving while a session is busy are queued with ⏳ reaction and drain
 
 ### Startup
 
-`start_pool()` creates the background session for cron/heartbeat. Chat sessions cold-start on first message — no warm pool, no MCP reset hack.
+`start_pool()` creates the background session for cron/heartbeat on backends without a shared runtime; on the shared-runtime backend (`kiro`) it is created on its first turn instead. Chat sessions cold-start on first message — no warm pool, no MCP reset hack.
 
 ## Live configuration
 
