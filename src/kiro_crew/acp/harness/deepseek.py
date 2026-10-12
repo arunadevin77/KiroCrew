@@ -614,10 +614,9 @@ class DeepseekLaunch(ProcessAdapter):
         _deepseek_bin, argv, spawn_label, stderr_label = (
             await launch_mod.resolve_self_served_launch(self.backend)
         )
-        # Warm this session's array off the loop. This harness has no mirror, so the
-        # array holds only a member session's own mounts (session control and the
-        # panel) and is empty for any other session; Crew's pooled tools reach it
-        # through the shared broker append. See ``providers/mirrors/registry`` for
+        # Warm this session's array off the loop. The deepseek mirror builds it
+        # from the session's spec, and a member session adds its own mounts
+        # (session control and the panel). See ``providers/mirrors/registry`` for
         # the projection this harness declares.
         await session._prepare_session_mcp()
         #

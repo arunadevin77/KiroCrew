@@ -130,13 +130,29 @@ def _to_llm_event(e: Any) -> LLMEvent:
     )
 
 
+async def _ready_confirmed_session(self: AcpProvider) -> None:
+    """Make the direct client's session ready, and confirm a member's spec, before a send.
+
+    The one gate every path that sends a prompt goes through: :func:`stream`,
+    :func:`stream_command` and :func:`compact`. ``ensure_ready`` can respawn the
+    child and so create a NEW session on this adapter-only arm, and that session
+    must be confirmed before anything is prompted into it. A spec that cannot be
+    confirmed raises out of ``confirm_member_projection``, so nothing is sent.
+    A no-op for every session that projects nothing, and for one already
+    confirmed. Called on this arm only: the Kiro and KAS runtimes are not an
+    ``AcpClient``, so their paths gain no call or await (harness-parity H13).
+    """
+    if isinstance(self._client, AcpClient):
+        await self._client.ensure_ready()
+        await self._client.confirm_member_projection()
+
+
 async def stream(
     self: AcpProvider, message: str, timeout: float | None = None, *, allow_image: bool = True
 ) -> AsyncIterator[LLMEvent]:
     # The direct client can respawn in ensure_ready; resolve that BEFORE
     # comparing receipts so a recycled conversation receives the full text.
-    if isinstance(self._client, AcpClient):
-        await self._client.ensure_ready()
+    await self._ready_confirmed_session()
     send = self._client.stream_events
     if not allow_image:
         send = functools.partial(send, allow_image=False)
@@ -164,6 +180,7 @@ async def stream_command(self: AcpProvider, command: str) -> AsyncIterator[LLMEv
     # /compact and /clear discard native history; invalidate before dispatch
     # so the next warm turn resends the complete snapshot even when the
     # status receipt is missing or arrives late.
+    await self._ready_confirmed_session()
     self.essential_delivery.prepare_command(command)
     send = (
         self._client.stream_events
@@ -179,6 +196,7 @@ async def stream_command(self: AcpProvider, command: str) -> AsyncIterator[LLMEv
 
 async def compact(self: AcpProvider, context: str = "") -> None:
     """Trigger native /compact with optional context-preserving prompt."""
+    await self._ready_confirmed_session()
     self.essential_delivery.invalidate()
     if context:
         # Truncate to avoid overwhelming the compact prompt

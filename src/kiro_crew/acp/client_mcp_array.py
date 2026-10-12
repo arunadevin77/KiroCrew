@@ -8,12 +8,14 @@ Each function here whose first parameter is ``self`` is an ``AcpClient`` method:
 class binds it by name, so it reads and writes the session's own state on the instance,
 and a patch of the method on the class or on an instance reaches every caller.
 
-Instance fields written: ``_mcp_pruned``, ``_mcp_pruned_names``,
+Instance fields written: ``_capability_projection_gaps``,
+``_loaded_capability_template``, ``_mcp_pruned``, ``_mcp_pruned_names``,
 ``_mcp_pruned_omitted``, ``_mcp_report_frame_floor``, ``_member_dispatch_mounted``,
-``_pending_oauth_requests``, ``_pi_mcp_handoff``, ``_session_harness_deny_rules``,
-``_session_mcp_cache``, ``_session_mcp_excludes_local``,
-``_session_mcp_inline_settings``, ``_session_mcp_snapshot``,
-``_session_mcp_unhonoured``, ``_spec_denied_tools``, ``_spec_zero_tools``.
+``_pending_oauth_requests``, ``_pi_mcp_handoff``, ``_session_agent_spec``,
+``_session_harness_deny_rules``, ``_session_mcp_cache``,
+``_session_mcp_excludes_local``, ``_session_mcp_inline_settings``,
+``_session_mcp_snapshot``, ``_session_mcp_unhonoured``, ``_spec_denied_tools``,
+``_spec_zero_tools``.
 
 Instance fields read: ``_agent``, ``_channel_id``, ``_claude_inline_settings``,
 ``_claude_local_settings_excluded``, ``_mcp_gateway_overlay``, ``_mcp_notifications``,
@@ -259,6 +261,7 @@ def _resolve_session_mcp_servers(self: AcpClient) -> list[dict[str, Any]]:
     # Kept beside the array it describes, so the post-consume check judges the
     # generation these elements were built from and not a later read of the file.
     self._session_mcp_snapshot = projection.derived_spec_snapshot
+    self._session_agent_spec = projection.agent_spec
     servers = projection.params.get("mcpServers") or []
     out = list(servers) if isinstance(servers, list) else []
     # The restriction half of the projection's withhold set, from the SAME parse the
@@ -775,12 +778,19 @@ def _opencode_session_mcp_servers(self: AcpClient) -> list:
 
 
 def _deepseek_session_mcp_servers(self: AcpClient) -> list:
-    """MCP server array passed to a deepseek ``session/new`` / ``session/resume``.
+    """MCP server array passed to a deepseek ``session/new`` / ``session/load``.
 
-    Only the member mounts: deepseek has no mirror, so its spec is not
-    translated and Crew's pooled tools reach it through the shared broker
-    append. Empty on every non-member session. In-memory only: the launch
-    warms the cache off the loop.
+    The deepseek twin of :meth:`_goose_session_mcp_servers`: ``dsh --profile acp``
+    reads no ``~/.kiro/agents/<name>.json``, and with deepseek in ``MIRRORS``
+    :meth:`_pooled_mcp_servers` answers ``[]`` for it, so this array is the only
+    route for Crew's own tools, the spec's servers and a member session's own
+    mounts (session control and the panel). An element whose command cannot start
+    fails ``session/new`` whole on this harness
+    (``test/fixtures/acp_frames/deepseek/mcp-stdio-rollback-live.jsonl``).
+
+    In-memory only. The spawn path warms ``_session_mcp_cache`` off the loop, so
+    this accessor adds no scheduling or failure point to a call site shared with
+    kiro-cli (harness-parity H13).
     """
     return self._session_mcp_servers()
 
@@ -788,7 +798,7 @@ def _deepseek_session_mcp_servers(self: AcpClient) -> list:
 def _pi_session_mcp_servers(self: AcpClient) -> list:
     """MCP server array passed to a pi ``session/new`` / ``session/load``.
 
-    Only the member mounts, as on deepseek: pi has no mirror, so its spec is not
+    Only the member mounts: pi has no mirror, so its spec is not
     translated and Crew's pooled tools arrive through the shared broker append.
     pi-acp stores the wire array and never forwards it, so what MOUNTS these
     servers is the handoff file the spawn wrote from the same composition
@@ -908,9 +918,18 @@ def _goose_session_mcp_servers(self: AcpClient) -> list:
 
 
 def _invalidate_session_mcp_projection(self: AcpClient) -> None:
-    """Drop the MCP array and the spec snapshot that authorized it."""
+    """Drop the MCP array, the spec snapshot that authorized it, and the
+    member-projection verdict recorded against it.
+
+    NOT ``_session_agent_spec``: that names what the host's live session
+    consumed, and the re-seed which calls this runs DURING the start whose
+    confirmation reads it (see :meth:`confirm_member_projection`). It is dropped
+    with the session, in ``_reset_state``.
+    """
     self._session_mcp_cache = None
     self._session_mcp_snapshot = None
+    self._loaded_capability_template = ""
+    self._capability_projection_gaps = ()
 
 
 async def _prepare_session_mcp(self: AcpClient) -> None:

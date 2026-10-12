@@ -288,6 +288,7 @@ from kiro_crew.acp.types import (  # noqa: F401
     ACP_BACKENDS_INLINE_COMPACTION,
     ACP_BACKENDS_INTERNAL_SANDBOX,
     ACP_BACKENDS_LOAD_WITHOUT_MODES,
+    ACP_BACKENDS_MEMBER_CAPABILITIES,
     ACP_BACKENDS_MEMBER_DISPATCH,
     ACP_BACKENDS_MEMBER_PANEL,
     ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS,
@@ -778,6 +779,20 @@ class AcpClient:
         # ``session/load`` response instead, against this snapshot. Resolved and
         # cleared together with the array, for the same per-spawn freshness reason.
         self._session_mcp_snapshot: DerivedSpecSnapshot | None = None
+        # The spec the array above was built from -- what an enrolled member's
+        # session consumed. Read AFTER the session exists (by
+        # :meth:`confirm_member_projection`, from the adapter-only arm of the client
+        # startup path), so unlike the snapshot it survives a re-seed that drops the
+        # array cache: the host already holds the array this describes, and dropping
+        # the cache for the NEXT session must not erase what THIS one consumed.
+        self._session_agent_spec: dict[str, Any] | None = None
+        self.member_context = False
+        self._loaded_capability_template = ""
+        self._capability_projection_gaps: tuple[str, ...] = ()
+        # Session id :meth:`confirm_member_projection` already confirmed, so a start
+        # that re-enters on a live session does not judge it again. Cleared with the
+        # session, never by the re-seed, which happens DURING the start that confirms.
+        self._confirmed_capability_session = ""
         # This session's agent spec, snapshotted once per spawn for the
         # unresolved-ref guard alone (see _guard_unresolved_mcp_refs). Held for
         # the same reason as the array above and read at the same kind of site:
@@ -1551,6 +1566,71 @@ class AcpClient:
         _client_claude_session._verify_claude_project_denies_unchanged
     )
     _pin_claude_starting_mode = _client_claude_session._pin_claude_starting_mode
+
+    async def confirm_member_projection(self) -> None:
+        """Confirm the projection this session consumed. Blocking.
+
+        Called from the adapter-only arm of the client startup path, AFTER
+        ``ensure_ready`` returned, so a session whose array was withheld, whose saved
+        intent cannot be read, or whose saved intent is not the spec the array was
+        built from is refused before its first prompt. A host that sends no array
+        (kiro-cli, which receives its servers through ``--agent``) and a session with
+        no saved intent are both no-ops -- and because the call sits on that arm and
+        not on a step of the shared construction path, Kiro's startup gains no
+        conditional, call or failure point in service of an adapter (harness-parity
+        H13).
+
+        Idempotent for the session it confirmed: a later start that re-enters on the
+        same live session does not judge it again against a saved intent that may have
+        moved since the session was created. State recorded by the confirmation is
+        dropped with the session, so a NEW session is always judged afresh.
+        """
+        if not self.member_context or not self._session_id:
+            return
+        if self._confirmed_capability_session == self._session_id:
+            return
+        if (
+            self.backend not in ACP_BACKENDS_MEMBER_CAPABILITIES
+            or self.backend not in ACP_BACKENDS_SESSION_MCP_ARRAY
+        ):
+            return
+        await asyncio.to_thread(self._confirm_member_projection, self._session_agent_spec)
+        self._confirmed_capability_session = self._session_id
+
+    def _confirm_member_projection(self, spec: dict[str, Any] | None) -> None:
+        """Confirm the consumed projection, never a spec re-read after startup."""
+        if not self.member_context:
+            return
+        from kiro_crew.agent_capabilities import CapabilityError
+        from kiro_crew.agent_capabilities_consumed import confirm_consumed_projection
+
+        try:
+            gaps = confirm_consumed_projection(
+                self._agent,
+                spec,
+                withheld=self._seeds_local_settings and not self._permission_surface_governed,
+            )
+        except CapabilityError as exc:
+            raise AcpError(f"{exc.code}: saved spec projection could not be confirmed") from exc
+        if gaps is None:
+            return
+        self._capability_projection_gaps = gaps
+        self._loaded_capability_template = self._agent
+
+    @property
+    def loaded_capability_template(self) -> str:
+        """Saved template whose projection was consumed by this live session."""
+        if (
+            self.backend in ACP_BACKENDS_MEMBER_CAPABILITIES
+            and self.is_ready
+            and self._is_process_alive()
+        ):
+            return self._loaded_capability_template
+        return ""
+
+    @property
+    def capability_projection_gaps(self) -> tuple[str, ...]:
+        return self._capability_projection_gaps
 
     @property
     def is_ready(self) -> bool:
