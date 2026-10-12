@@ -212,6 +212,9 @@ with no row here.
        is the resulting server list, which it already receives
    * - ``ACP_BACKENDS_HONOR_ZERO_TOOL_BAN``
      - semantic question (``SessionCapabilities.honors_zero_tool_ban``)
+   * - ``ACP_BACKENDS_PRUNE_UNSTARTABLE_MCP``
+     - driver-internal (whether a ``session/new`` stdio element whose command
+       cannot be found is left out and reported as failed before the request)
    * - ``ACP_BACKENDS_ACP_CLIENT_SPAWNABLE``
      - semantic question (``SessionCapabilities.acp_client_spawnable``)
 
@@ -2265,6 +2268,16 @@ ACP_BACKENDS_HONOR_ZERO_TOOL_BAN = frozenset(
         ACP_BACKEND_GOOSE,
     }
 )
+
+# Backends whose ``session/new`` array Crew prunes of stdio elements whose command
+# certainly cannot be found (``acp.mcp_startable``), recording each one as a failed
+# server on the session's MCP report. Membership is a MEASURED bad outcome without it:
+# goose drops such an element silently and starts a session missing that server's
+# tools (``test/fixtures/acp_frames/goose/mcp-stdio-dropped-live.jsonl``), and
+# deepseek fails the whole ``session/new`` over it
+# (``test/fixtures/acp_frames/deepseek/mcp-stdio-rollback-live.jsonl``). Both run on
+# ``AcpClient``, which is where the prune is applied.
+ACP_BACKENDS_PRUNE_UNSTARTABLE_MCP = frozenset({ACP_BACKEND_GOOSE, ACP_BACKEND_DEEPSEEK})
 
 # Backends that read the MCP Tool Search setting from the workspace ``cli.json``
 # overlay (``toolSearch.*`` keys). Only kiro-cli's Rust engine does. KAS shares

@@ -522,6 +522,14 @@ OFF_CARD_SETS: Mapping[str, str] = {
         "WRONG IDENTITY -- kas or codex under a bare kiro-cli spawn -- which is a "
         "defect, not an absent feature a reader choosing a harness acts on"
     ),
+    "ACP_BACKENDS_PRUNE_UNSTARTABLE_MCP": (
+        "whether a session/new stdio element whose command cannot be found is left "
+        "out and reported as a failed server, rather than handed to a harness that "
+        "drops it silently or fails the whole session over it. A repair of a "
+        "harness hazard on the start path, not a capability a reader choosing a "
+        "harness gains or loses: the server is unusable either way, and the report "
+        "already names it on every backend that sends the array"
+    ),
     "ACP_BACKENDS_HONOR_ZERO_TOOL_BAN": (
         "whether an agent spec's `\"tools\": []` holds against this backend's "
         "NATIVE tools too, or only narrows the MCP allowlist. Read by the "

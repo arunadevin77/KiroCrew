@@ -107,6 +107,7 @@ class TestAcpClientCapture:
                 "unresolved_refs": [],
                 "no_tools": [],
                 "no_tools_omitted": 0,
+                "pruned_omitted": 0,
                 "ready": ["a"],
                 "failed": [],
                 "awaiting_auth": [],

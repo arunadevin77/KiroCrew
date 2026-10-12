@@ -325,7 +325,10 @@ PROJECTIONS: dict[str, McpProjection] = {
         "rides along and it is the inverse of opencode's whole-session strictness: an "
         "element whose command cannot start is DROPPED rather than failing session/new, so "
         "an unstartable pooled broker stub costs no session and leaves a healthy-looking "
-        "one carrying none of Crew's tools",
+        "one carrying none of Crew's tools. Crew answers the commonest cause, a command "
+        "that does not exist, before the request: acp.mcp_startable leaves the element "
+        "out and the session's MCP report names it as failed "
+        "(ACP_BACKENDS_PRUNE_UNSTARTABLE_MCP)",
         # WHOLE-SERVER, and it stays that way until two things hold. goose puts the pair
         # on the wire as _meta.goose.toolCall.{extensionName,toolName}, and asks for
         # every MCP call under GOOSE_MODE=approve, so a per-call refusal is reachable.
@@ -354,7 +357,10 @@ PROJECTIONS: dict[str, McpProjection] = {
             "is the servers its own agent spec declares, or the spec's per-tool deny "
             "set, because no mirror translates them. One hazard rides along, in "
             "mcp-stdio-rollback-live.jsonl: an element whose command cannot start fails "
-            "the WHOLE session rather than being dropped"
+            "the WHOLE session rather than being dropped. Crew answers the commonest "
+            "cause, a command that does not exist, before the request: acp.mcp_startable "
+            "leaves the element out and the session's MCP report names it as failed "
+            "(ACP_BACKENDS_PRUNE_UNSTARTABLE_MCP)"
         ),
         tracking="docs/request-for-change/rfc-agent-config-mirror.md#5-migration",
     ),

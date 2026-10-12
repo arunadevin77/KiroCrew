@@ -71,6 +71,9 @@ NAME_CAP = _NAME_CAP
 # A failure text comes from the failing server's own startup and can carry a
 # connection string. It is redacted first; this bounds what survives.
 _ERROR_CAP = 240
+# Shared with the client's warning for a pruned server, whose reason quotes the
+# configured command and reaches a log line the same way.
+ERROR_CAP = _ERROR_CAP
 # Servers per bucket. A stock install runs well under ten; the cap exists so a
 # misconfigured host cannot push an unbounded list into every slots snapshot.
 _BUCKET_CAP = 64
@@ -502,6 +505,10 @@ class McpSessionReport:
     #: bucket is capped like every other; the overflow is counted and said in
     #: the payload and the summary rather than dropped without a word.
     no_tools_omitted: int = 0
+    #: How many more servers Crew left out of the array as unstartable than the
+    #: failed bucket lists. Set by :meth:`record_pruned_omitted`; counted and said
+    #: in the payload and the summary like :attr:`no_tools_omitted`.
+    pruned_omitted: int = 0
     _ready: list[str] = field(default_factory=list)
     _failed: list[str] = field(default_factory=list)
     _awaiting_auth: list[str] = field(default_factory=list)
@@ -533,6 +540,7 @@ class McpSessionReport:
         self.unresolved_refs = ()
         self.no_tools = ()
         self.no_tools_omitted = 0
+        self.pruned_omitted = 0
         self._started = True
         self._ready.clear()
         self._failed.clear()
@@ -575,6 +583,33 @@ class McpSessionReport:
             if ref and ref not in seen:
                 seen.append(ref)
         self.unresolved_refs = tuple(seen[:_BUCKET_CAP])
+
+    def record_pruned(self, name: Any, reason: Any) -> bool:
+        """Record a server Crew left out of this session's array before sending it.
+
+        It lands in the FAILED bucket with *reason*, because that is what it is to
+        the reader: a server this session cannot use, whose startup needs fixing.
+        Sanitized and capped like a frame's name and error. Call it after
+        :meth:`begin_session`, which clears the buckets. Returns True when the
+        report changed.
+        """
+        clean = sanitize_sink_text(str(name or ""), _NAME_CAP)
+        if not clean:
+            return False
+        return self._record(
+            _ACTION_INIT_FAILURE, clean, sanitize_sink_text(str(reason or ""), _ERROR_CAP)
+        )
+
+    def record_pruned_omitted(self, count: Any) -> bool:
+        """Record how many pruned servers were past the cap and are not listed.
+
+        Call it after :meth:`begin_session`. A non-integer or negative count reads
+        as zero. Returns True when the report changed.
+        """
+        value = count if isinstance(count, int) and not isinstance(count, bool) else 0
+        before = self.pruned_omitted
+        self.pruned_omitted = max(0, value)
+        return self.pruned_omitted != before
 
     def record_no_tools(self, names: Any) -> bool:
         """Record the servers that started but gave this session no tool.
@@ -806,7 +841,15 @@ class McpSessionReport:
                 )
                 for name in self._failed
             ]
-            parts.append("failed to start: " + _joined(described))
+            parts.append(
+                "failed to start: "
+                + _joined(described)
+                + (
+                    f" (+{self.pruned_omitted} more left out as unstartable, not listed)"
+                    if self.pruned_omitted
+                    else ""
+                )
+            )
         restart = self.restart_to_load()
         if restart:
             parts.append(
@@ -870,6 +913,7 @@ class McpSessionReport:
             "unresolved_refs": list(self.unresolved_refs),
             "no_tools": list(self.no_tools),
             "no_tools_omitted": self.no_tools_omitted,
+            "pruned_omitted": self.pruned_omitted,
             "ready": list(self._ready),
             "failed": list(self._failed),
             "awaiting_auth": list(self._awaiting_auth),
