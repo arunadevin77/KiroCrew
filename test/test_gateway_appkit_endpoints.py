@@ -1992,7 +1992,8 @@ class TestNoteEndpoint:
         in session replay, and that sink is exempt from redaction elsewhere. So
         the handler must redact credentials and exfil URLs before appending the
         visible line, or a caller-supplied secret lands in the transcript. The
-        context half stays raw (the trust boundary inherited from /context)."""
+        context half is never rewritten: a credential-shaped note seats none,
+        and any other note's context half carries the caller's bytes."""
         state = _make_state(tmp_path)
         slot = _ChatSlot("s1")
         state._slots["s1"] = slot
@@ -2001,10 +2002,17 @@ class TestNoteEndpoint:
             "board updated AKIAIOSFODNN7EXAMPLE see "
             "http://evil.example.com/x?d=AKIAIOSFODNN7EXAMPLE"
         )
+        plain_note = "board updated, see https://example.com/board/42?view=week"
         async with self._make_client(state) as client:
             resp = await client.post(
                 "/api/chat/slots/s1/note",
                 json={"content": raw, "source": "board-sync"},
+            )
+            assert resp.status == 200
+            assert (await resp.json())["contextSkipped"] is True
+            resp = await client.post(
+                "/api/chat/slots/s1/note",
+                json={"content": plain_note, "source": "board-sync"},
             )
             assert resp.status == 200
 
@@ -2015,8 +2023,9 @@ class TestNoteEndpoint:
         assert "AKIAIOSFODNN7EXAMPLE" not in visible
         assert "[REDACTED: credential]" in visible
         assert "[REDACTED: suspicious URL to evil.example.com]" in visible
-        # Context half: left raw by design (trusted-caller prompt-frame boundary).
-        assert slot._pending_context[0]["content"] == raw
+        # Context half: the credential-shaped note seated none; the other note's
+        # context half is the caller's bytes unchanged.
+        assert [e["content"] for e in slot._pending_context] == [plain_note]
 
     @pytest.mark.asyncio
     async def test_note_non_string_content_rejected(self, tmp_path: Path):

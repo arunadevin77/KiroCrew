@@ -900,12 +900,13 @@ class KiroCrewClient:
     async def flush_pending_context(self, slot_id: str) -> int:
         """Post every buffered context entry to *slot_id*.
 
-        Returns the number of entries the full queue refused and this call
+        Returns the number of entries the Gateway refused for good and this call
         dropped. A ``context_not_queued`` refusal is not transient — only a turn
         drains the queue, and ``send_message`` calls this right before sending
         that turn — so re-queuing such an entry and raising would block every
-        later send behind a queue only the blocked send could drain. Those
-        entries are dropped (with a warning) and the call returns rather than
+        later send behind a queue only the blocked send could drain. A
+        ``context_secret_shaped`` refusal is permanent for those bytes. Both are
+        dropped (with a warning) and the call returns rather than
         raising. A transient failure (network, auth, 5xx) is different: the entry
         is put back and the first such error is raised, so a retry can resend it.
         """
@@ -937,6 +938,16 @@ class KiroCrewClient:
                     logger.warning(
                         "Dropped a pending context entry for slot %s: the "
                         "Gateway's context queue is full (context_not_queued)",
+                        slot_id,
+                    )
+                    continue
+                if exc.code == ErrorCode.CONTEXT_SECRET_SHAPED:
+                    # The Gateway refuses these bytes on every attempt, so a
+                    # re-buffered entry would fail every later send. Drop it.
+                    dropped += 1
+                    logger.warning(
+                        "Dropped a pending context entry for slot %s: the "
+                        "Gateway refused it as credential-shaped (context_secret_shaped)",
                         slot_id,
                     )
                     continue

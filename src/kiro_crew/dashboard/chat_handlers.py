@@ -10326,6 +10326,41 @@ def _validate_content(content: object) -> web.Response | None:
     return None
 
 
+def _is_secret_shaped_context(content: str) -> bool:
+    """Whether the credential redactor would rewrite pending-context *content*.
+
+    Pending context is in-band: the drain prepends it to the next user message,
+    so the model reads it as ordinary prompt text and "consume silently" is a
+    request, not a guarantee. It is not a confidential channel, and a payload
+    that carries a secret hands that secret to the model and to everything the
+    turn's output reaches. The check is the credential redactor itself -- a
+    payload it would rewrite is a payload that is refused -- so the admission
+    rule and the redaction rule cannot drift apart.
+    """
+    cleaned, _ = redact_credentials(content)
+    return cleaned != content
+
+
+def _refuse_secret_shaped_context(content: str) -> web.Response | None:
+    """400 ``context_secret_shaped`` for credential-shaped *content*, else None.
+
+    The refusal never echoes any part of the content.
+    """
+    if not _is_secret_shaped_context(content):
+        return None
+    return web.json_response(
+        {
+            "error": (
+                "pending context must not carry credentials: the content contains "
+                "a credential-shaped value. Pending context is delivered as "
+                "model-visible prompt text, not as a confidential channel"
+            ),
+            "code": "context_secret_shaped",
+        },
+        status=400,
+    )
+
+
 def _normalize_source(source: object) -> str:
     """Trim a caller source to its stored form: a stripped str.
 
@@ -10498,8 +10533,9 @@ def _enqueue_pending_context(
     """Build, cap, and append a ``_pending_context`` entry.
 
     Returns a 4xx response on a bad request (429 could not be queued, 400
-    invalid ``max_age``), else None on success. The entry is consumed on the next
-    user-initiated message via ``drain_pending_context``.
+    invalid ``max_age`` or credential-shaped content), else None on success.
+    The entry is consumed on the next user-initiated message via
+    ``drain_pending_context``.
 
     A 400 leaves the queue untouched. The two 429s come from different places:
     ``_build_pending_context_entry`` returns the per-source ``capacity_reached``
@@ -10548,10 +10584,17 @@ def _build_pending_context_entry(
     400 or 429 on the POST -- while HOLDING the entry until the running turn
     ends. Queueing it at the POST instead would hand it to the turn already in
     flight, since that turn drains the queue after its task is assigned.
+
+    Every pending-context entry is built here, so this is where a
+    credential-shaped payload is refused (``context_secret_shaped``): no
+    producer can queue one by skipping a handler-level check.
     """
     bad_age = _validate_max_age(max_age)
     if bad_age is not None:
         return None, bad_age
+    secret_shaped = _refuse_secret_shaped_context(content)
+    if secret_shaped is not None:
+        return None, secret_shaped
     if _source_cap_reached(slot, source):
         return None, web.json_response(
             {
@@ -10580,6 +10623,10 @@ async def api_chat_slot_context(request: web.Request) -> web.Response:
 
     No LLM turn is triggered, no WS event is broadcast, and no visible
     message is appended to the slot's chat history.
+
+    The content reaches the model in-band, as prompt text, so it is not a
+    confidential channel: a credential-shaped ``content`` is refused with a
+    400 ``context_secret_shaped`` and the queue is left unchanged.
 
     Body::
 
@@ -10920,6 +10967,10 @@ async def api_chat_slot_note(request: web.Request) -> web.Response:
             "ephemeral": true         // optional, default true (passed to the context entry)
         }
 
+    A credential-shaped ``content`` never seats a context half: the context
+    half reaches the model in-band and is not a confidential channel. The
+    visible line is still written, redacted, and ``contextSkipped`` is true.
+
     Returns ``{"ok", "appended", "visibleDeferred", "contextSkipped", "pending"}``.
     If the source's per-source context cap is already full the visible line is
     still written and ``contextSkipped`` is true: the cap protects the context
@@ -11054,7 +11105,12 @@ async def api_chat_slot_note(request: web.Request) -> web.Response:
     # null means no expiry, the same as it does on /context.
     context_skipped = False
     context_entry: dict[str, object] | None = None
-    if _source_cap_reached(slot, source):
+    if _is_secret_shaped_context(content):
+        # Pending context reaches the model in-band, so a credential-shaped note
+        # never seats a context half. Its visible line is still written,
+        # redacted below, and the skip is reported the way a full cap is.
+        context_skipped = True
+    elif _source_cap_reached(slot, source):
         context_skipped = True
     elif deferred and not slot.has_pending_context_seat():
         # The HELD path must refuse the context half at admission, the same way
@@ -11098,8 +11154,9 @@ async def api_chat_slot_note(request: web.Request) -> web.Response:
 
     # Caller-controlled content reaching the visible transcript (SSE plus the
     # on-disk JSONL). Redact at this sink so a secret or exfil URL cannot land
-    # in user-visible history. The context half stays raw: that is the
-    # trusted-caller boundary inherited from /context. Attribution scope: the
+    # in user-visible history. The context half is never rewritten: a
+    # credential-shaped note seats no context half at all, and the context half
+    # otherwise carries the caller's bytes unchanged. Attribution scope: the
     # note CONTENT runs through the exfiltration → credential redaction pair and
     # nothing more — a note carries a source LABEL, not a rewritten body, so no
     # format-char normalization is layered on the content here.
