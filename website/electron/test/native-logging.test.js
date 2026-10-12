@@ -10,7 +10,6 @@ const {
   previousNativeLogPath,
   nativeLoggingSwitches,
   rotateNativeLog,
-  redactTokensInText,
   redactTokensInBuffer,
   redactNativeLogSecrets,
   createTightLogFile,
@@ -22,6 +21,13 @@ const {
   MAX_REDACT_BYTES,
   REDACT_CHUNK_BYTES,
 } = require("../native-logging");
+
+// Reference grammar for the byte matcher, kept in the test as an oracle: the
+// module ships only the byte form, and this regex is what it must agree with.
+const TOKEN_QUERY_RE = /([?&](?:token|access_token)=)[^&\s"'`)\]]+/gi;
+function redactTokensInText(text) {
+  return String(text == null ? "" : text).replace(TOKEN_QUERY_RE, "$1[REDACTED]");
+}
 
 const LIVE = path.join("/logs", NATIVE_LOG_BASENAME);
 const PREV = path.join("/logs", NATIVE_LOG_PREVIOUS_BASENAME);
@@ -305,11 +311,13 @@ describe("rotateNativeLog", () => {
     const fs = fakeFs({ present: [LIVE], throwOn: "EPERM" });
     const lines = [];
     const out = rotateNativeLog(LIVE, { fs, log: (m) => lines.push(m) });
+    // The redaction pass ran (and found nothing) before the rename threw, so
+    // the kept file is reported clean.
     assert.deepEqual(out, {
       rotated: false,
       blocked: true,
       previousPath: null,
-      redacted: false,
+      redacted: true,
     });
     assert.equal(fs.files.has(LIVE), true, "the live log must survive a failed rotate");
     assert.equal(lines.length, 1);
@@ -639,40 +647,37 @@ const TOKENED_LINE =
   'notifications.", source: http://localhost:5476/chat/gateway?token=eyJzdWIiOiJVMEJRQTNYUkI4RCJ9' +
   ".MgrpIEuHoX7bVuGcQSmK7xqK4tytvtrZiXvy7NtEesw&sid=chat-155-1787945035 (0)";
 
-describe("redactTokensInText", () => {
+describe("redactTokensInBuffer on log lines", () => {
+  const redact = (text) => redactTokensInBuffer(Buffer.from(text, "latin1")).out.toString("latin1");
+
   it("replaces the token value and stops at the next parameter", () => {
-    const out = redactTokensInText(TOKENED_LINE);
+    const out = redact(TOKENED_LINE);
     assert.match(out, /\?token=\[REDACTED\]&sid=chat-155-1787945035/);
     assert.ok(!/eyJzdWIi/.test(out), "no part of the JWT may survive");
   });
 
   it("keeps everything around the token intact", () => {
-    const out = redactTokensInText(TOKENED_LINE);
+    const out = redact(TOKENED_LINE);
     assert.match(out, /INFO:CONSOLE:0/);
     assert.match(out, /ResizeObserver loop completed/);
     assert.match(out, /http:\/\/localhost:5476\/chat\/gateway/);
   });
 
   it("redacts every occurrence, not just the first", () => {
-    const out = redactTokensInText("a?token=AAA b\nc?token=BBB d");
+    const out = redact("a?token=AAA b\nc?token=BBB d");
     assert.equal(out, "a?token=[REDACTED] b\nc?token=[REDACTED] d");
   });
 
   it("covers the &token= and access_token= spellings", () => {
-    assert.equal(redactTokensInText("x?a=1&token=ZZZ"), "x?a=1&token=[REDACTED]");
-    assert.equal(redactTokensInText("x?access_token=ZZZ"), "x?access_token=[REDACTED]");
+    assert.equal(redact("x?a=1&token=ZZZ"), "x?a=1&token=[REDACTED]");
+    assert.equal(redact("x?access_token=ZZZ"), "x?access_token=[REDACTED]");
   });
 
   // The pattern is deliberately narrow. A broad "anything JWT-shaped" rule would
   // start eating legitimate log content, which is the opposite of the goal.
   it("leaves a line with no query token untouched", () => {
     const line = "[1:0828/1:INFO:CONSOLE:0] plain message, source: http://localhost:5476/ (0)";
-    assert.equal(redactTokensInText(line), line);
-  });
-
-  it("does not throw on nullish input", () => {
-    assert.equal(redactTokensInText(null), "");
-    assert.equal(redactTokensInText(undefined), "");
+    assert.equal(redact(line), line);
   });
 });
 
@@ -1172,6 +1177,80 @@ describe("rotateNativeLog credential hygiene", () => {
     assert.equal(fs.modes.get(LIVE), SECRET_FILE_MODE);
     assert.equal(fs.body.get(LIVE), "no credential here\n");
   });
+
+// A non-regular file at the live path would be refused by redaction on every
+// boot. Blocking on it would keep the file sink off forever, so the entry is
+// removed (never its target) and the boot starts fresh.
+describe("rotateNativeLog with a non-regular live path", () => {
+  it("removes a symlinked live log and arms the sink instead of blocking", () => {
+    const fs = fakeFs({
+      present: ["/logs/victim", PREV],
+      contents: { "/logs/victim": "target bytes", [PREV]: "older session\n" },
+      links: { [LIVE]: "/logs/victim" },
+    });
+    const out = rotateNativeLog(LIVE, { fs });
+    assert.equal(out.blocked, false, "a repeat refusal must not keep logging off");
+    assert.equal(out.rotated, false);
+    assert.ok(fs.unlinked.includes(LIVE), "the link entry is removed");
+    assert.equal(fs.body.get("/logs/victim"), "target bytes", "the link target is untouched");
+    assert.equal(fs.body.get(PREV), "older session\n", "the older generation is untouched");
+    assert.deepEqual(fs.renames, []);
+  });
+
+  it("stays blocked when the non-regular entry cannot be removed", () => {
+    const fs = fakeFs({ present: ["/logs/victim"], links: { [LIVE]: "/logs/victim" } });
+    fs.unlinkSync = () => {
+      throw new Error("EISDIR");
+    };
+    assert.equal(rotateNativeLog(LIVE, { fs }).blocked, true);
+  });
+
+  // A regular log this process cannot open (a root-owned file left by a sudo
+  // launch) is evidence, not a stray link: it must be kept and rotation aborted.
+  it("keeps a regular log it cannot open and aborts instead of deleting it", () => {
+    const fs = fakeFs({
+      present: [LIVE, PREV],
+      contents: { [LIVE]: TOKENED_LINE, [PREV]: "older session\n" },
+    });
+    const realOpen = fs.openSync.bind(fs);
+    fs.openSync = (p, flag, mode) => {
+      if (p === LIVE && String(flag) === "r") {
+        const err = new Error("EACCES: permission denied");
+        err.code = "EACCES";
+        throw err;
+      }
+      return realOpen(p, flag, mode);
+    };
+    const out = rotateNativeLog(LIVE, { fs });
+    assert.equal(out.blocked, true);
+    assert.equal(fs.unlinked.includes(LIVE), false, "the regular log must not be deleted");
+    assert.equal(fs.body.get(LIVE), TOKENED_LINE);
+    assert.equal(fs.body.get(PREV), "older session\n");
+    assert.deepEqual(fs.renames, []);
+  });
+});
+
+describe("initNativeLogging verdict line", () => {
+  const verdictOf = (fs) => {
+    const lines = [];
+    initNativeLogging({ logsDir: "/logs", appendSwitch: () => {}, log: (m) => lines.push(m), fs });
+    return lines.find((l) => /native logging armed/.test(l));
+  };
+
+  it("names an unredacted kept file when redaction aborted the rotation", () => {
+    const fs = fakeFs({
+      present: [LIVE],
+      contents: { [LIVE]: TOKENED_LINE },
+      throwWriteOn: `${LIVE}.redact.tmp`,
+    });
+    assert.match(verdictOf(fs), /kept=UNREDACTED/);
+  });
+
+  it("says nothing was kept on an ordinary rotation", () => {
+    const fs = fakeFs({ present: [LIVE], contents: { [LIVE]: TOKENED_LINE } });
+    assert.match(verdictOf(fs), /kept=none/);
+  });
+});
 });
 
 // main.js is not loadable under the unit runner (it requires `electron`), so the

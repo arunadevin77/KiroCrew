@@ -153,38 +153,25 @@ const MAX_CARRY_BYTES = 1024 * 1024;
  * that document records the session token verbatim. The value ends at the next
  * URL/log delimiter; `&` matters because the real URL continues with `&sid=`.
  *
- * Narrow by SHAPE, not by spelling: it matches a query parameter whose value is
- * a credential, and nothing else. A broad "anything JWT-shaped" pattern would
- * start eating legitimate log content. The `access_token` alternative has no
- * producer in `website/` today and is kept deliberately, because the repo's other
- * credential redactors already cover the prefixed spellings and a redactor that
- * covered fewer of them than its siblings would be the surprising one — see the
- * comment at `website/src/utils/errorReport.ts` recording that a bare `\btoken\b`
- * does NOT match `access_token`, and the cache-key stripper in
- * `website/src/test/imageDims.keySecrets.test.ts`.
- */
-const TOKEN_QUERY_RE = /([?&](?:token|access_token)=)[^&\s"'`)\]]+/gi;
-
-/**
- * Replace query-string token values with a marker, preserving everything else.
+ * Narrow by SHAPE, not by spelling: only a query parameter whose value is a
+ * credential is matched, right after `?` or `&`. A broad "anything JWT-shaped"
+ * pattern would start eating legitimate log content. `access_token=` has no
+ * producer in `website/` today; it is kept because the dashboard's own
+ * error-report redactor (`website/src/utils/errorReport.ts`) covers it, and a log
+ * handed over with a bug report should be held to the same rule as the report.
  *
- * Pure so the pattern is testable without touching a filesystem. The marker is
- * left in place of the value rather than removing the parameter, so a log reader
- * can still see that a tokened URL was involved.
+ * The value is replaced with a marker rather than the parameter removed, so a log
+ * reader can still see that a tokened URL was involved.
  */
-function redactTokensInText(text) {
-  return String(text == null ? "" : text).replace(TOKEN_QUERY_RE, "$1[REDACTED]");
-}
 
 /** The marker written in place of a value, as bytes. */
 const REDACTED_BYTES = Buffer.from("[REDACTED]", "ascii");
 
-/** Parameter names whose value is a credential, lowercase, as the byte matcher folds. */
+/** Parameter names whose value is a credential, lowercase, as the matcher folds. */
 const TOKEN_PARAM_NAMES = ["token=", "access_token="];
 
 /**
- * Bytes that terminate a value, mirroring the character class in
- * {@link TOKEN_QUERY_RE}: `&`, ASCII whitespace, `"`, `'`, a backtick, `)`, `]`.
+ * Bytes that terminate a value: `&`, ASCII whitespace, `"`, `'`, a backtick, `)`, `]`.
  */
 const VALUE_END_BYTES = new Set([
   0x26, 0x20, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x22, 0x27, 0x60, 0x29, 0x5d,
@@ -202,12 +189,10 @@ function matchesNameAt(buffer, at, name) {
 }
 
 /**
- * Byte-exact counterpart of {@link redactTokensInText}: replaces token VALUES and
- * copies every other byte verbatim. Returns the original buffer untouched when
- * there was nothing to redact.
+ * Replaces credential VALUES byte-exactly and copies every other byte verbatim.
+ * Returns the original buffer untouched when there was nothing to redact.
  *
- * The redaction path uses THIS rather than the string form because a log is bytes,
- * not text. Decoding to a string and re-encoding would be lossy in exactly the
+ * Bytes rather than a string regex because a log is bytes, not text. Decoding to a string and re-encoding would be lossy in exactly the
  * situation this module exists for: a crash truncates the file mid-write, the
  * trailing multi-byte sequence is invalid UTF-8, and a decode turns it into U+FFFD.
  * Since the rewrite is a rename over the original, that corruption would be silent
@@ -227,7 +212,7 @@ function redactTokensInBuffer(buffer) {
   while (i < buffer.length) {
     const b = buffer[i];
     // A value is only a credential where the query grammar says it is: right after
-    // `?` or `&`, same as the regex. `&x_token=` is not a match, in either form.
+    // `?` or `&`. `&x_token=` is not a match.
     if (b !== 0x3f && b !== 0x26) {
       i += 1;
       continue;
@@ -306,8 +291,15 @@ function pendingParamStart(buffer) {
  * An `fs` double that cannot express the check opts out (null) rather than
  * falling back to the unguarded call — for a security guard, "could not verify"
  * has to mean "do not proceed", not "proceed anyway".
+ *
+ * A caller that needs to know WHY it got null passes `why = {}`: `why.reason`
+ * is then "non-regular" only when `lstat` succeeded and saw a symlink, device or
+ * directory. Every other null (a stat or open failure, a swap) is "unavailable".
+ * The two must not be confused: the first is safe to remove, the second may be
+ * an ordinary log this process merely failed to open.
  */
-function openRegularFile(filePath, flags, { fs, log = () => {} } = {}) {
+function openRegularFile(filePath, flags, { fs, log = () => {}, why = {} } = {}) {
+  why.reason = "unavailable";
   if (!fs || typeof fs.lstatSync !== "function" || typeof fs.openSync !== "function") return null;
   let before;
   try {
@@ -317,6 +309,7 @@ function openRegularFile(filePath, flags, { fs, log = () => {} } = {}) {
     return null;
   }
   if (!before || typeof before.isFile !== "function" || !before.isFile()) {
+    if (before && typeof before.isFile === "function") why.reason = "non-regular";
     log(`native log path refused at ${filePath}: not a regular file`);
     return null;
   }
@@ -570,8 +563,12 @@ function redactNativeLogSecrets(filePath, { fs, log = () => {} } = {}) {
   if (!fs || typeof fs.writeFileSync !== "function") {
     return { scanned: false, redacted: false, skipped: "unsupported-fs" };
   }
-  const source = openRegularFile(filePath, "r", { fs, log });
-  if (!source) return { scanned: false, redacted: false, skipped: "not-a-regular-file" };
+  const why = {};
+  const source = openRegularFile(filePath, "r", { fs, log, why });
+  if (!source) {
+    const skipped = why.reason === "non-regular" ? "not-a-regular-file" : "unreadable";
+    return { scanned: false, redacted: false, skipped };
+  }
   try {
     // Over the bound the same redaction runs a chunk at a time instead of being
     // skipped: an over-cap log is the one most likely to be attached to a bug
@@ -718,6 +715,7 @@ function createTightLogFile(logPath, { fs, log = () => {} } = {}) {
  */
 function rotateNativeLog(logPath, { fs, log = () => {} } = {}) {
   const previousPath = previousNativeLogPath(logPath);
+  let redactedHere = false;
   try {
     if (!fs.existsSync(logPath)) {
       // First launch on this install, or the file was cleaned up. Nothing to
@@ -741,11 +739,32 @@ function rotateNativeLog(logPath, { fs, log = () => {} } = {}) {
     // single-instance lock is what makes that hold — `initNativeLogging` only runs
     // in the winner, so no sibling process is writing either.
     const redaction = redactNativeLogSecrets(logPath, { fs, log });
+    if (redaction.skipped === "not-a-regular-file") {
+      // A symlink (or device, or directory) at the log path is not a session's
+      // evidence, and it would be refused again on every boot, leaving the sink
+      // off for good. Remove the entry itself — `unlinkSync` never follows a
+      // link — and start fresh, as on a first launch. The older generation is
+      // not touched. If the unlink fails (a directory, say), fall through to the
+      // blocked path below.
+      try {
+        fs.unlinkSync(logPath);
+        log(`native log path at ${logPath} was not a regular file; removed it, starting fresh`);
+        return { rotated: false, blocked: false, previousPath: null, redacted: true };
+      } catch (e) {
+        log(`native log path at ${logPath} is not a regular file and could not be removed: ${e && e.message}`);
+      }
+    }
     if (redaction.skipped) {
       // Reported as `blocked`, which already means "the sink is not armed this
       // launch" — correct here for the same reason as a failed rename: the file
       // still holds a session we could not clean, and letting Chromium truncate
       // or append to it would be acting on evidence we just failed to handle.
+      //
+      // Deliberate trade: if the failure persists (a full disk, an unreadable
+      // file), the Chromium file sink stays off on every boot until it clears.
+      // That costs native diagnostics; the alternative, rotating an unredacted
+      // copy into the file users attach to bug reports, ships the credential.
+      // Minidumps stay armed, and the verdict line says `kept=UNREDACTED`.
       log(
         `native log rotation ABORTED at ${logPath}: redaction reported ` +
           `${redaction.skipped}, so neither generation is touched — the retained ` +
@@ -764,6 +783,7 @@ function rotateNativeLog(logPath, { fs, log = () => {} } = {}) {
     // violation when any handle is open on either path (an AV or
     // Search-indexer touch is enough); see `replace_with_retry` in
     // `src/kiro_crew/atomic_write.py`.
+    redactedHere = true;
     fs.renameSync(logPath, previousPath);
     tightenLogMode(previousPath, { fs, log });
     return { rotated: true, blocked: false, previousPath, redacted: true };
@@ -774,7 +794,7 @@ function rotateNativeLog(logPath, { fs, log = () => {} } = {}) {
     log(`native log rotate failed at ${logPath}: ${e && e.message}`);
     // Same as the aborted branch: the un-rotated file stays, so tighten its mode.
     tightenLogMode(logPath, { fs, log });
-    return { rotated: false, blocked: true, previousPath: null, redacted: false };
+    return { rotated: false, blocked: true, previousPath: null, redacted: redactedHere };
   }
 }
 
@@ -880,7 +900,7 @@ function initNativeLogging({
   log(
     `native logging armed: file=${blocked ? "skipped" : logPath} ` +
       `previous=${previousPath || "none"} ` +
-      `retained=${rotated && !redacted ? "UNREDACTED-DROPPED" : "clean"} ` +
+      `kept=${blocked ? (redacted ? "redacted" : "UNREDACTED") : "none"} ` +
       `switches=${applied.join(",") || "none"} minidumps=${crashReporter}`
   );
   return {
@@ -888,7 +908,6 @@ function initNativeLogging({
     previousPath,
     rotated,
     blocked,
-    redacted,
     switches: applied,
     crashReporter,
     tightenLiveLog,
@@ -901,18 +920,14 @@ module.exports = {
   previousNativeLogPath,
   nativeLoggingSwitches,
   rotateNativeLog,
-  redactTokensInText,
   redactTokensInBuffer,
-  pendingParamStart,
   redactNativeLogSecrets,
   createTightLogFile,
   tightenLogMode,
   openRegularFile,
-  redactLargeLogByStreaming,
   NATIVE_LOG_BASENAME,
   NATIVE_LOG_PREVIOUS_BASENAME,
   SECRET_FILE_MODE,
   MAX_REDACT_BYTES,
   REDACT_CHUNK_BYTES,
-  MAX_CARRY_BYTES,
 };
