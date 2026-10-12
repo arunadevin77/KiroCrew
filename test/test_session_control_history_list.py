@@ -15,7 +15,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from chat_test_helpers import _make_state
+from chat_test_helpers import _make_state, close_before_resume
 
 from kiro_crew.dashboard import create_rate_limit
 from kiro_crew.dashboard import session_control as sc
@@ -24,8 +24,8 @@ from kiro_crew.dashboard.chat_utils import slot_history_key
 
 
 @pytest.fixture(autouse=True)
-def _enabled(monkeypatch):
-    monkeypatch.setattr(sc, "session_control_enabled", lambda: True)
+def _enabled(_floor_monkeypatch):
+    _floor_monkeypatch.setattr(sc, "session_control_enabled", lambda: True)
 
 
 @pytest.fixture(autouse=True)
@@ -59,6 +59,8 @@ def _archive(state, caller, name: str, *, title: str = "", age: int = 0) -> str:
     peer._dirty = True
     asyncio.run(sc.close_target(state, caller_session_key=_key(caller), target=peer.key))
     assert peer.key not in state._slots
+    # Closed strictly before any revive that follows, whatever the clock's step.
+    close_before_resume(state.conversation_log, _key(peer))
     path = state.conversation_log._dir / f"dashboard_{peer.key}.jsonl"
     stamp = 1_800_000_000 - age * 60
     os.utime(path, (stamp, stamp))
@@ -113,17 +115,157 @@ def test_every_listed_row_is_a_target_revive_accepts(tmp_path):
     assert _list(state, caller)["sessions"] == []
 
 
-def test_limit_caps_rows_and_reports_more(tmp_path):
+def test_limit_caps_rows_and_says_more_exist(tmp_path):
     state = _make_state(tmp_path)
     caller = _slot(state, "chat-1")
-    for i in range(3):
+    for i in range(5):
         _archive(state, caller, f"chat-{i + 2}", age=i)
 
     result = _list(state, caller, limit=2)
 
     assert len(result["sessions"]) == 2
     assert result["more"] is True
-    assert _list(state, caller, limit=3)["more"] is False
+    assert "omitted" not in result
+    full = _list(state, caller, limit=5)
+    assert full["more"] is False
+
+
+def test_the_walk_stops_at_the_first_row_past_the_limit(tmp_path, monkeypatch):
+    # "More exist" needs one row past the page, so no metadata read or store
+    # probe is spent on the rest of the archive.
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    for i in range(6):
+        _archive(state, caller, f"chat-{i + 2}", age=i)
+    log = state.conversation_log
+    real_meta = log.get_metadata_status
+    real_probe = sc._archived_link_and_mirror
+    read, probed = [], []
+
+    def _meta(key):
+        read.append(key)
+        return real_meta(key)
+
+    def _probe(st, key):
+        probed.append(key)
+        return real_probe(st, key)
+
+    monkeypatch.setattr(log, "get_metadata_status", _meta)
+    monkeypatch.setattr(sc, "_archived_link_and_mirror", _probe)
+    result = _list(state, caller, limit=2)
+
+    assert _targets(result) == ["chat-2", "chat-3"]
+    assert result["more"] is True and result["scan_truncated"] is False
+    assert len(read) == 3 and len(probed) == 3
+
+
+def test_more_ignores_a_row_revive_would_refuse(tmp_path):
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    _archive(state, caller, "chat-2", age=0)
+    _archive(state, caller, "chat-3", age=1)
+    # The only row past the page is an app session, which revive refuses.
+    state.conversation_log.update_metadata("dashboard:chat-3", {"app": "some-app"})
+
+    result = _list(state, caller, limit=1)
+    assert _targets(result) == ["chat-2"]
+    assert result["more"] is False
+
+
+def test_a_row_revived_during_the_scan_is_dropped_and_more_still_holds(tmp_path, monkeypatch):
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    newest = _archive(state, caller, "chat-2", age=0)
+    _archive(state, caller, "chat-3", age=1)
+    _archive(state, caller, "chat-4", age=2)
+    real_scan = sc._scan_revivable_history
+
+    def _scan_then_revive(*args, **kwargs):
+        out = real_scan(*args, **kwargs)
+        _slot(state, newest)
+        return out
+
+    monkeypatch.setattr(sc, "_scan_revivable_history", _scan_then_revive)
+    result = _list(state, caller, limit=1)
+    assert _targets(result) == ["chat-3"]
+    assert result["more"] is True
+
+
+def test_the_walk_stops_at_the_scan_cap_and_says_so(tmp_path, monkeypatch):
+    # The catalog walk is bounded, so the `seen` set cannot grow with the
+    # archive; a walk that runs out of entries before the page fills says so.
+    monkeypatch.setattr(sc, "MAX_HISTORY_SCAN_ENTRIES", 3)
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    for i in range(6):
+        _archive(state, caller, f"chat-{i + 2}", age=i)
+
+    result = _list(state, caller, limit=5)
+
+    assert result["scan_truncated"] is True
+    assert result["more"] is True
+    assert len(result["sessions"]) == 3
+    monkeypatch.setattr(sc, "MAX_HISTORY_SCAN_ENTRIES", 100)
+    full = _list(state, caller, limit=6)
+    assert full["scan_truncated"] is False
+    assert full["more"] is False
+
+
+def test_the_listing_hides_every_refusal_revive_raises(tmp_path, monkeypatch):
+    # The scan asks revive's own predicate, so a refusal revive learns later is
+    # hidden from the listing with no second edit.
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    _archive(state, caller, "chat-2", age=0)
+    hidden = _archive(state, caller, "chat-3", age=1)
+    real = sc._archived_target_refusal
+
+    def _with_new_rule(slot_key, meta, **kwargs):
+        if slot_key == hidden:
+            return "a future private kind", "future_private_target"
+        return real(slot_key, meta, **kwargs)
+
+    monkeypatch.setattr(sc, "_archived_target_refusal", _with_new_rule)
+
+    assert _targets(_list(state, caller)) == ["chat-2"]
+    with pytest.raises(sc.SessionControlError) as refused:
+        asyncio.run(sc.revive_session(state, caller_session_key=_key(caller), target=hidden))
+    assert refused.value.code == "future_private_target"
+
+
+def test_the_scan_reads_a_bounded_catalog_not_list_sessions(tmp_path, monkeypatch):
+    # `list_sessions` builds a full row, title included, for every transcript
+    # before any cap applies; the scan must start from the bounded stem read.
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    for i in range(4):
+        _archive(state, caller, f"chat-{i + 2}", age=i)
+    log = state.conversation_log
+
+    def _refuse():
+        raise AssertionError("the history scan must not materialize list_sessions")
+
+    monkeypatch.setattr(log, "list_sessions", _refuse)
+    result = _list(state, caller, limit=2)
+
+    assert _targets(result) == ["chat-2", "chat-3"]
+    assert result["more"] is True and result["scan_truncated"] is False
+
+
+def test_newest_session_stems_keeps_only_the_newest_entries(tmp_path):
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    for i in range(5):
+        _archive(state, caller, f"chat-{i + 2}", age=i)
+    log = state.conversation_log
+
+    capped, more = log.newest_session_stems(2)
+    assert [stem for stem, _ in capped] == ["dashboard_chat-2", "dashboard_chat-3"]
+    assert more is True
+    everything, more_all = log.newest_session_stems(1000)
+    assert more_all is False
+    assert [stem for stem, _ in everything][:5] == [f"dashboard_chat-{i + 2}" for i in range(5)]
+    assert log.newest_session_stems(0) == ([], False)
 
 
 def test_limit_is_clamped_to_the_ceiling(tmp_path):
@@ -425,97 +567,94 @@ def test_route_is_registered_and_strict():
 
 # ── MCP tool ─────────────────────────────────────────────────────────────────
 
-
-def _strict(monkeypatch):
-    from kiro_crew import mcp_dashboard
-
-    monkeypatch.setattr(
-        mcp_dashboard, "require_strict_session_key", lambda *a, **k: ("dashboard:chat-1", "")
-    )
-    return mcp_dashboard
+_HISTORY = "GET /api/session-control/history"
+_FOLDERS = "GET /api/chat/folders"
 
 
-def test_mcp_tool_gets_the_history_route_and_renders_rows(monkeypatch):
-    mcp_dashboard = _strict(monkeypatch)
-    seen: dict = {}
+def _history_tool(args: dict, routes: dict, caller=None):
+    """One ``session_history_list`` frame through the dashboard table, in memory."""
+    from kiro_crew.mcp_dashboard import TABLE
+    from kiro_crew.mcp_tools.dashboard_client import InMemoryDashboardClient
+    from kiro_crew.mcp_tools.table import Caller, ToolContext
 
-    def _get(path, session_key=""):
-        seen.update(path=path, session_key=session_key)
-        return {
-            "ok": True,
-            "sessions": [
-                {
-                    "target": "chat-2",
-                    "title": "Lookup",
-                    "last_active": "2026-09-30T12:00:00Z",
-                    "folder_id": "f1",
-                }
-            ],
-            "more": True,
-            "lineage_unknown": False,
-        }
+    dash = InMemoryDashboardClient(routes)
+    ctx = ToolContext(dash, caller or Caller.strict("dashboard:chat-1"))
+    return TABLE.call("session_history_list", args, ctx), dash.requests
 
-    monkeypatch.setattr(mcp_dashboard, "_get", _get)
 
-    out = mcp_dashboard._call_tool_inner("session_history_list", {})
-
-    assert seen == {
-        "path": "/api/session-control/history?limit=20",
-        "session_key": "dashboard:chat-1",
+def test_mcp_tool_gets_the_history_route_and_renders_rows():
+    reply = {
+        "ok": True,
+        "sessions": [
+            {
+                "target": "chat-2",
+                "title": "Lookup",
+                "last_active": "2026-09-30T12:00:00Z",
+                "folder_id": "f1",
+            }
+        ],
+        "more": True,
+        "lineage_unknown": False,
     }
+    out, (get,) = _history_tool({}, {_HISTORY: reply})
+
+    assert (get.method, get.path, get.session_key) == (
+        "GET",
+        "/api/session-control/history?limit=20",
+        "dashboard:chat-1",
+    )
     assert "`chat-2` (Lookup)" in out and "2026-09-30T12:00:00Z" in out
     assert "folder f1" in out and "more exist" in out
     assert "session_revive" in out
 
+    out, _ = _history_tool({}, {_HISTORY: {**reply, "more": False}})
+    assert "more exist" not in out
 
-def test_mcp_tool_resolves_a_folder_path_without_creating_it(monkeypatch):
-    mcp_dashboard = _strict(monkeypatch)
+
+def test_mcp_tool_resolves_a_folder_path_without_creating_it():
     folders = [{"id": "f1", "name": "Gamma", "parent_id": None, "position": 0}]
-    monkeypatch.setattr(mcp_dashboard, "_get_rows", lambda path: (folders, None))
-    seen: dict = {}
-
-    def _get(path, session_key=""):
-        seen["path"] = path
-        return {"ok": True, "sessions": [], "more": False, "lineage_unknown": False}
-
-    monkeypatch.setattr(mcp_dashboard, "_get", _get)
-    with patch.object(mcp_dashboard, "_post") as post:
-        out = mcp_dashboard._call_tool_inner(
-            "session_history_list", {"folder": "Gamma", "limit": 5}
-        )
-
-    assert seen["path"] == "/api/session-control/history?limit=5&folder_id=f1"
-    assert "No archived sessions you can revive in `Gamma`" in out
-    post.assert_not_called()
-
-
-def test_mcp_tool_refuses_an_unknown_folder_without_calling_the_route(monkeypatch):
-    mcp_dashboard = _strict(monkeypatch)
-    monkeypatch.setattr(mcp_dashboard, "_get_rows", lambda path: ([], None))
-    with patch.object(mcp_dashboard, "_get") as get:
-        out = mcp_dashboard._call_tool_inner("session_history_list", {"folder": "Nowhere"})
-    assert out.startswith("Error:")
-    get.assert_not_called()
-
-
-def test_mcp_tool_says_when_the_lineage_hid_rows(monkeypatch):
-    mcp_dashboard = _strict(monkeypatch)
-    monkeypatch.setattr(
-        mcp_dashboard,
-        "_get",
-        lambda *a, **k: {"ok": True, "sessions": [], "more": False, "lineage_unknown": True},
+    empty = {"ok": True, "sessions": [], "more": False, "lineage_unknown": False}
+    out, requests = _history_tool(
+        {"folder": "Gamma", "limit": 5}, {_FOLDERS: folders, _HISTORY: empty}
     )
-    out = mcp_dashboard._call_tool_inner("session_history_list", {})
+
+    assert [r.method for r in requests] == ["GET", "GET"]
+    assert requests[-1].path == "/api/session-control/history?limit=5&folder_id=f1"
+    assert "No archived sessions you can revive in `Gamma`" in out
+
+
+def test_mcp_tool_refuses_an_unknown_folder_without_calling_the_route():
+    out, requests = _history_tool({"folder": "Nowhere"}, {_FOLDERS: [], _HISTORY: {"ok": True}})
+    assert out.startswith("Error:")
+    assert [r.route for r in requests] == [_FOLDERS]
+
+
+def test_mcp_tool_says_when_the_lineage_hid_rows():
+    reply = {"ok": True, "sessions": [], "more": False, "lineage_unknown": True}
+    out, _ = _history_tool({}, {_HISTORY: reply})
     assert "lineage" in out
 
 
-def test_mcp_tool_refuses_a_caller_without_a_strict_key(monkeypatch):
-    from kiro_crew import mcp_dashboard
+def test_mcp_tool_does_not_call_an_empty_page_an_empty_archive():
+    # The kept rows can be revived mid-scan while older rows remain unread.
+    reply = {"ok": True, "sessions": [], "more": True}
+    out, _ = _history_tool({}, {_HISTORY: reply})
+    assert "you can revive" not in out
+    assert "more exist" in out
 
-    monkeypatch.setattr(
-        mcp_dashboard, "require_strict_session_key", lambda *a, **k: ("", "Error: nope")
+
+def test_mcp_tool_names_a_refused_listing():
+    out, _ = _history_tool({}, {_HISTORY: {"error": "nope", "code": "not_creator"}})
+    assert out.startswith("Error: could not list archived sessions") and "nope" in out
+
+
+def test_mcp_tool_refuses_a_caller_without_a_strict_key():
+    from kiro_crew.mcp_tools.table import Caller
+
+    out, requests = _history_tool(
+        {},
+        {_HISTORY: {"ok": True}},
+        Caller.unverified("dashboard:chat-1", diagnosis=" [no channel]"),
     )
-    with patch.object(mcp_dashboard, "_get") as get:
-        out = mcp_dashboard._call_tool_inner("session_history_list", {})
-    assert out == "Error: nope"
-    get.assert_not_called()
+    assert out.startswith("Error: this session cannot be identified well enough")
+    assert requests == []

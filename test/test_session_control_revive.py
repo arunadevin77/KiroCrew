@@ -770,8 +770,25 @@ def test_revive_raises_every_target_side_code_authorize_target_raises():
         "ambiguous_target",
         "target_slot_unavailable",
     }
+
+    def returned_codes(fn) -> set[str]:
+        # The shared archived-target predicate answers ``(reason, code)``; the code
+        # is the last element of each returned tuple.
+        import ast
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        return {
+            node.value.elts[-1].value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Return)
+            and isinstance(node.value, ast.Tuple)
+            and isinstance(node.value.elts[-1], ast.Constant)
+        }
+
     assert target_side, "the regex found no refusal codes in authorize_target"
-    assert target_side <= codes(sc.revive_session), target_side - codes(sc.revive_session)
+    revive_codes = codes(sc.revive_session) | returned_codes(sc._archived_target_refusal)
+    assert target_side <= revive_codes, target_side - revive_codes
 
 
 # ── HTTP wrapper ─────────────────────────────────────────────────────────────

@@ -4286,6 +4286,7 @@ _DASHBOARD_TOOL_CALLS = {
     "session_generate_title": {"target": "chat-2"},
     "session_close": {"target": "chat-2"},
     "session_revive": {"target": "chat-2"},
+    "session_history_list": {},
     "session_send": {"target": "chat-2", "message": "hi"},
     "session_broadcast": {"message": "hi", "mode": "queue"},
     "session_status": {},

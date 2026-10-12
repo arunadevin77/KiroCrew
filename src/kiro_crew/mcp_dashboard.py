@@ -3221,25 +3221,19 @@ def _run_session_history_list(args: dict[str, Any], ctx: ToolContext) -> str:
             "lineage could not vouch for them (log off, or not seeded yet), and "
             "session_revive would refuse them for the same reason."
         )
-    omitted = resp.get("omitted")
-    truncated = bool(resp.get("scan_truncated"))
-    if isinstance(omitted, int) and omitted > 0:
-        count = f"at least {omitted}" if truncated else str(omitted)
-        more = f" ({count} more not shown; raise `limit` or narrow by `folder`)"
-    elif resp.get("more"):
-        more = " (more exist; raise `limit` or narrow by `folder`)"
-    else:
-        more = ""
+    more = " (more exist; raise `limit` or narrow by `folder`)" if resp.get("more") else ""
     if not hist_rows:
         # Rows kept by the scan can be revived before the answer is built
-        # while counted overflow rows remain, so an empty page is not an
-        # empty archive whenever ``more`` is set.
+        # while older rows remain unread, so an empty page is not an empty
+        # archive whenever ``more`` is set.
         if more:
             empty = f"\U0001f5c4\ufe0f No archived sessions on this page{where}{more}."
         else:
             empty = f"\U0001f5c4\ufe0f No archived sessions you can revive{where}."
         return redact(" ".join([empty, *notes]))
-    hist_lines = [f"\U0001f5c4\ufe0f {len(hist_rows)} archived session(s){where}, newest first{more}:"]
+    hist_lines = [
+        f"\U0001f5c4\ufe0f {len(hist_rows)} archived session(s){where}, newest first{more}:"
+    ]
     for row in hist_rows:
         bits = [str(row.get("last_active") or "")]
         if row.get("folder_id") and not folder_label:

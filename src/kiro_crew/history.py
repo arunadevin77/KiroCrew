@@ -3813,6 +3813,9 @@ class ConversationLog:
             return self._catalog_projection.list_sessions()
         return self._catalog_projection.list_sessions(keys=keys)
 
+    def newest_session_stems(self, max_entries: int) -> tuple[list[tuple[str, float]], bool]:
+        return self._catalog_projection.newest_session_stems(max_entries)
+
     def agent_usage(self) -> dict[str, tuple[int, float]]:
         return self._catalog_projection.agent_usage()
 

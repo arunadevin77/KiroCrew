@@ -1981,10 +1981,12 @@ have to guess a title. `list_archived_sessions` runs the caller side exactly as
 then the fence verdict) before touching history, so a refused caller learns
 nothing about what is on disk. The catalog walk (`_scan_revivable_history`) runs
 in a worker thread, newest first, and keeps a row only when revive would accept
-it: the same key fold and `cron-`/`workflow-`/`member-` prefix guards, persistent
-memory mode, no `app`, no link on the metadata line or in the gateway session
-store, no outbound mirror, the caller's workspace, and for a fenced caller a
-`created_by` corroborated by `_slot_tree_parent`. The store probes fail closed the
+it. Revive's target-side refusals live in one predicate, `_archived_target_refusal`
+(metadata plus the store's link and mirror reading, answering a refusal code or
+none), which both `revive_session` and the walk call, so a refusal added to revive
+is hidden from the listing by the same edit. The walk asks it on the metadata
+alone first and probes the session store only for a row that passes. The listing
+adds the `member-` DM prefix guard and the folder filter. The store probes fail closed the
 way revive's do, so a session whose link cannot be read is hidden rather than
 offered and then refused. A fenced caller whose candidates the lineage cannot
 vouch for gets `lineage_unknown: true` beside the rows it could verify, so an empty
@@ -1993,8 +1995,14 @@ The live-slot table is snapshotted on the loop before the walk and re-read after
 it (a session revived during the scan is dropped), and the caller surface and
 workspace are re-asserted after the walk because the rows carry titles, the same
 reason `created_session_status` re-checks. `folder_id` must exist in the tree
-(`folder_not_found` otherwise); `limit` is clamped to 1..100 and `more` says the
-walk stopped with rows left.
+(`folder_not_found` otherwise); `limit` is clamped to 1..100. The walk stops at
+the first eligible row past `limit` and answers `more: true`, so no metadata read
+or store probe is spent beyond the page. It examines at most
+`MAX_HISTORY_SCAN_ENTRIES` (5000) catalog entries, read through
+`newest_session_stems`, which keeps only that many stems and mtimes and reads no
+title or metadata line; when it runs out of them first it answers
+`scan_truncated: true` (and `more: true`), and the scan's memory stays bounded
+however large the archive is.
 
 ## Configuration
 

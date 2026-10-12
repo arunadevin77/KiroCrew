@@ -7179,6 +7179,75 @@ def _revived_slot_refusal(slot: "_ChatSlot", caller_slot: "_ChatSlot") -> tuple[
     return None
 
 
+def _archived_target_refusal(
+    slot_key: str,
+    meta: "Mapping[str, Any]",
+    *,
+    caller_key: str,
+    caller_workspace: str,
+    ownership_fenced: bool,
+    linked: bool,
+    mirrored: bool,
+) -> tuple[str, str] | None:
+    """Why :func:`revive_session` refuses archived *slot_key* for this caller, or None.
+
+    The ONE statement of revive's target-side refusals, as ``(reason, code)``:
+    :func:`revive_session` raises the answer and :func:`_scan_revivable_history`
+    skips any row it refuses, so a refusal added here is enforced by the revive
+    and hidden from the listing at once. *linked* and *mirrored* are the caller's
+    session-store reading (:func:`_archived_link_and_mirror`); passing False for
+    both yields the metadata-only refusals, a subset of the full answer, which is
+    how the scan avoids a store probe for a row the metadata already refuses.
+    The ``not_creator`` reason is generic; revive substitutes its caller-specific
+    wording.
+    """
+    if slot_key.casefold().startswith(UNATTENDED_SLOT_PREFIXES):
+        return "unattended sessions (scheduled runs) cannot be controlled", "unattended_target"
+    if str(meta.get("memory_mode") or "persistent") != "persistent":
+        return "incognito and temporary sessions are not addressable", "ephemeral_target"
+    if meta.get("app"):
+        return "app-scoped sessions are not addressable", "app_scoped_target"
+    if meta.get("linked_session_key") or meta.get("channel_origin") or linked:
+        # Both readings: the metadata line AND the gateway-owned session store,
+        # so a channel link scrubbed from the editable line is still seen.
+        return "channel-linked sessions are not addressable", "linked_session_target"
+    if mirrored:
+        # The outbound-mirror boundary ``_has_channel_mirror`` holds for a live
+        # slot, read on the history key because the link lives in the session
+        # store, not in the transcript: an archived dashboard session can still
+        # be republishing to a channel the moment it is reopened. Unknown reads
+        # as mirrored, the refusal paths' fail-closed direction.
+        return "sessions mirrored to a channel are not addressable", "mirrored_target"
+    if str(meta.get("workspace") or "default") != caller_workspace:
+        return "target session belongs to a different workspace", "workspace_mismatch"
+    if ownership_fenced:
+        if str(meta.get("created_by") or "") != caller_key:
+            return "target session was created by another session", "not_creator"
+        # The metadata line is a file an agent's file tools can edit
+        # (``chat_persistence`` says so where it restores ``created_by``), so for a
+        # FENCED caller the claim above is only a claim: a caller that rewrote
+        # ``created_by`` in an archived transcript would otherwise revive a session
+        # it never made and then hold it. The ownership is therefore corroborated
+        # against the one record those tools cannot reach -- the crew log's
+        # session-tree lineage, written by this gateway at the child's first turn
+        # from the in-process ``_lineage_minted`` witness and never from disk
+        # metadata. Fail closed when that record is not readable (crew log off,
+        # projection unseeded or incomplete) or names a different parent: an
+        # unverifiable ownership is refused, not assumed. A caller that is NOT
+        # fenced (the person's own tab) is not gated on ownership at all, so the
+        # human recovery this tool exists for is unaffected.
+        tree_known, lineage_parent, _ = _slot_tree_parent(slot_key)
+        if not tree_known or lineage_parent != caller_key:
+            return (
+                "archived session ownership could not be verified from gateway records "
+                "(a fenced caller needs the crew log's session-tree lineage, which is "
+                "missing when the log is off, its projection is unseeded, or the "
+                "session predates it)",
+                "ownership_unverified",
+            )
+    return None
+
+
 async def revive_session(
     state: "DashboardState",
     *,
@@ -7299,61 +7368,25 @@ async def revive_session(
     )
 
     # Target-side containment, read from the metadata line the resume would
-    # rehydrate the slot from -- the same fields ``authorize_target`` reads off
-    # a live slot, in the same order, with the same codes.
-    if slot_key.casefold().startswith(UNATTENDED_SLOT_PREFIXES):
-        raise deny("unattended sessions (scheduled runs) cannot be controlled", "unattended_target")
-    if str(meta.get("memory_mode") or "persistent") != "persistent":
-        raise deny("incognito and temporary sessions are not addressable", "ephemeral_target")
-    if meta.get("app"):
-        raise deny("app-scoped sessions are not addressable", "app_scoped_target")
-    # The session-store probes (inbound link, Slack thread binding, outbound
-    # mirror) go through the store's guarded getters, whose lock an off-loop
-    # writer holds across its disk write, so they run in a worker thread like the
-    # catalog scan does rather than on the loop.
+    # rehydrate the slot from. The session-store probes (inbound link, Slack
+    # thread binding, outbound mirror) go through the store's guarded getters,
+    # whose lock an off-loop writer holds across its disk write, so they run in
+    # a worker thread like the catalog scan does rather than on the loop.
     linked, mirrored = await asyncio.to_thread(_archived_link_and_mirror, state, history_key)
-    if meta.get("linked_session_key") or meta.get("channel_origin") or linked:
-        # Both readings: the metadata line AND the gateway-owned session store,
-        # so a channel link scrubbed from the editable line is still seen.
-        raise deny("channel-linked sessions are not addressable", "linked_session_target")
-    if mirrored:
-        # The outbound-mirror boundary ``_has_channel_mirror`` holds for a live
-        # slot, read on the history key because the link lives in the session
-        # store, not in the transcript: an archived dashboard session can still
-        # be republishing to a channel the moment it is reopened. Unknown reads
-        # as mirrored, the refusal paths' fail-closed direction.
-        raise deny("sessions mirrored to a channel are not addressable", "mirrored_target")
-
-    target_workspace = str(meta.get("workspace") or "default")
-    if target_workspace != (getattr(caller_slot, "workspace", "default") or "default"):
-        raise deny("target session belongs to a different workspace", "workspace_mismatch")
-    if ownership_fenced:
-        if str(meta.get("created_by") or "") != caller_key:
-            raise deny(
-                _not_creator_reason(state, caller_key, caller_slot, caller_fenced), "not_creator"
-            )
-        # The metadata line is a file an agent's file tools can edit
-        # (``chat_persistence`` says so where it restores ``created_by``), so for a
-        # FENCED caller the claim above is only a claim: a caller that rewrote
-        # ``created_by`` in an archived transcript would otherwise revive a session
-        # it never made and then hold it. The ownership is therefore corroborated
-        # against the one record those tools cannot reach -- the crew log's
-        # session-tree lineage, written by this gateway at the child's first turn
-        # from the in-process ``_lineage_minted`` witness and never from disk
-        # metadata. Fail closed when that record is not readable (crew log off,
-        # projection unseeded or incomplete) or names a different parent: an
-        # unverifiable ownership is refused, not assumed. A caller that is NOT
-        # fenced (the person's own tab) is not gated on ownership at all, so the
-        # human recovery this tool exists for is unaffected.
-        tree_known, lineage_parent, _ = _slot_tree_parent(slot_key)
-        if not tree_known or lineage_parent != caller_key:
-            raise deny(
-                "archived session ownership could not be verified from gateway records "
-                "(a fenced caller needs the crew log's session-tree lineage, which is "
-                "missing when the log is off, its projection is unseeded, or the "
-                "session predates it)",
-                "ownership_unverified",
-            )
+    refusal = _archived_target_refusal(
+        slot_key,
+        meta,
+        caller_key=caller_key,
+        caller_workspace=str(getattr(caller_slot, "workspace", "default") or "default"),
+        ownership_fenced=ownership_fenced,
+        linked=linked,
+        mirrored=mirrored,
+    )
+    if refusal is not None:
+        reason, code = refusal
+        if code == "not_creator":
+            reason = _not_creator_reason(state, caller_key, caller_slot, caller_fenced)
+        raise deny(reason, code)
 
     if folder_id:
 
@@ -7611,6 +7644,13 @@ async def revive_session(
 #: backend clamps too, because the route is reachable without the schema layer.
 DEFAULT_HISTORY_LIST_ROWS = 20
 MAX_HISTORY_LIST_ROWS = 100
+#: How many history catalog entries one scan walks, newest first. It bounds the
+#: catalog read (at most this many stems and mtimes) and the ``seen`` set. The
+#: walk normally ends earlier, at the first eligible row past ``limit``; when it
+#: runs out of entries first, the answer says ``scan_truncated``, because older
+#: sessions were never examined. Revivable sessions sit near the top of a
+#: newest-first catalog, so a real archive meets the row cap long before this.
+MAX_HISTORY_SCAN_ENTRIES = 5000
 
 #: Longest ``folder_id`` a history row carries. Folder ids are 12 hex characters
 #: (``chat_folders``), but the value is read from agent-writable transcript
@@ -7633,30 +7673,42 @@ def _scan_revivable_history(
 ) -> tuple[list[dict[str, Any]], bool, bool]:
     """The DISK half of :func:`list_archived_sessions`: runs in a worker thread.
 
-    Walks the history catalog newest first and keeps each archived dashboard
-    session :func:`revive_session` would accept for this caller, applying the
-    target-side refusals revive applies in the same order: unattended and member
-    DM keys, non-persistent memory, app scope, channel links (metadata AND the
-    gateway session store), outbound mirrors, workspace, and for a fenced caller
-    ``created_by`` corroborated by the crew-log lineage. A row that would be
-    refused is skipped, not reported, so the listing never names a session the
-    caller could not revive.
+    Walks the newest ``MAX_HISTORY_SCAN_ENTRIES`` transcripts of the history
+    catalog (``newest_session_stems``, stems and mtimes only) newest first and
+    keeps each archived dashboard session :func:`revive_session` would accept
+    for this caller. The target-side refusals are revive's own
+    (:func:`_archived_target_refusal`), asked first on the metadata alone and
+    then, for a row that passes, with the gateway session-store link and
+    outbound-mirror probe; member DM keys and the *folder_id* filter are the
+    listing's own. A row that would be refused is skipped, not reported, so the
+    listing never names a session the caller could not revive.
 
     *live_keys* is the live-slot snapshot the caller took on the loop; the slot
     table itself belongs to the loop and is not read here. Returns
-    ``(rows, more, lineage_unknown)``: *more* when the walk stopped at *limit*
-    with rows left, *lineage_unknown* when a fenced caller had candidates the
-    lineage could not vouch for (crew log off, unseeded, incomplete).
+    ``(rows, lineage_unknown, truncated)``. *rows* holds up to ``limit + 1``
+    eligible rows: the walk stops at the first one past *limit*, which only
+    says more exist, so no metadata read or store probe is spent beyond it.
+    *truncated* is set when the walk ran out of its ``MAX_HISTORY_SCAN_ENTRIES``
+    budget before that. *lineage_unknown* is set when a fenced caller had
+    candidates the lineage could not vouch for (crew log off, unseeded,
+    incomplete).
     """
     # Circular at runtime: ``members`` imports this module.
     from kiro_crew import members as members_mod
 
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
-    more = False
     lineage_unknown = False
-    for entry in log.list_sessions():
-        stem = str(entry.get("key") or "")
+    caller_facts: dict[str, Any] = {
+        "caller_key": caller_key,
+        "caller_workspace": caller_workspace,
+        "ownership_fenced": ownership_fenced,
+    }
+    # A bounded catalog read: only the newest ``MAX_HISTORY_SCAN_ENTRIES``
+    # transcripts' stems and mtimes, with no title or metadata, so nothing the
+    # walk starts from grows with the archive or with a persisted field.
+    entries, truncated = log.newest_session_stems(MAX_HISTORY_SCAN_ENTRIES)
+    for stem, modified in entries:
         if not stem.startswith("dashboard_"):
             continue
         slot_key = _fold_slot_key(stem)
@@ -7668,56 +7720,42 @@ def _scan_revivable_history(
             members_mod.DM_SLOT_KEY_PREFIX
         ):
             continue
-        # Cheap catalog pre-filters; the metadata line below is re-checked on the
-        # same fields because it is what a revive would actually read.
-        if str(entry.get("memory_mode") or "persistent") != "persistent":
-            continue
-        if folder_id and str(entry.get("folder_id") or "") != folder_id:
-            continue
         history_key = _history_key_for(slot_key)
         meta, readable = log.get_metadata_status(history_key)
         if not readable or not meta:
             continue
-        if str(meta.get("memory_mode") or "persistent") != "persistent":
-            continue
-        if meta.get("app") or meta.get("linked_session_key") or meta.get("channel_origin"):
-            continue
-        if str(meta.get("workspace") or "default") != caller_workspace:
-            continue
         if folder_id and str(meta.get("folder_id") or "") != folder_id:
             continue
-        if ownership_fenced:
-            if str(meta.get("created_by") or "") != caller_key:
-                continue
-            tree_known, lineage_parent, _ = _slot_tree_parent(slot_key)
-            if not tree_known:
-                lineage_unknown = True
-                continue
-            if lineage_parent != caller_key:
-                continue
-        linked, mirrored = _archived_link_and_mirror(state, history_key)
-        if linked or mirrored:
-            continue
-        if len(rows) >= limit:
-            more = True
-            break
-        modified = entry.get("modified")
-        last_active = ""
-        if isinstance(modified, (int, float)):
-            last_active = datetime.fromtimestamp(modified, tz=timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
+
+        # Metadata first: the refusals it alone yields are a subset of the full
+        # answer, so a row they refuse needs no session-store probe.
+        refusal = _archived_target_refusal(
+            slot_key, meta, linked=False, mirrored=False, **caller_facts
+        )
+        if refusal is None:
+            linked, mirrored = _archived_link_and_mirror(state, history_key)
+            refusal = _archived_target_refusal(
+                slot_key, meta, linked=linked, mirrored=mirrored, **caller_facts
             )
+        if refusal is not None:
+            if refusal[1] == "ownership_unverified" and not _slot_tree_parent(slot_key)[0]:
+                lineage_unknown = True
+            continue
+        last_active = datetime.fromtimestamp(modified, tz=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
         rows.append(
             {
                 "target": slot_key,
-                "title": _bounded_status_title(
-                    str(meta.get("title") or entry.get("title") or slot_key)
-                ),
+                "title": _bounded_status_title(str(meta.get("title") or slot_key)),
                 "last_active": last_active,
                 "folder_id": _bounded_folder_id(meta.get("folder_id")),
             }
         )
-    return rows, more, lineage_unknown
+        if len(rows) > limit:
+            # One past the cap answers "more exist"; nothing past it is read.
+            return rows, lineage_unknown, False
+    return rows, lineage_unknown, truncated
 
 
 async def list_archived_sessions(
@@ -7775,7 +7813,7 @@ async def list_archived_sessions(
 
     caller_workspace = str(getattr(caller_slot, "workspace", "default") or "default")
     live_keys = frozenset(slot.key for slot in list(state._slots.values()))
-    rows, more, lineage_unknown = await asyncio.to_thread(
+    rows, lineage_unknown, truncated = await asyncio.to_thread(
         _scan_revivable_history,
         state,
         log,
@@ -7813,19 +7851,32 @@ async def list_archived_sessions(
             )
     # A row revived by someone else during the scan is live now; drop it here,
     # where the slot table can be read, so the list stays "archived only".
-    rows = [row for row in rows if state.get_slot(row["target"]) is None]
+    # ``more`` is read off the scan, before that drop: a sentinel row revived
+    # meanwhile still proves the walk stopped early, so older rows were unread.
+    more = len(rows) > limit or truncated
+    rows = [row for row in rows if state.get_slot(row["target"]) is None][:limit]
 
     _audit(
         caller_session_key=caller_session_key,
         operation="history_list",
         slot_key=caller_key,
         outcome="allowed",
-        detail={"rows": len(rows), "more": more, "folder": bool(folder_id)},
+        detail={
+            "rows": len(rows),
+            "more": more,
+            "truncated": truncated,
+            "folder": bool(folder_id),
+        },
     )
     return {
         "ok": True,
         "sessions": rows,
+        # More revivable sessions may exist past this page: the walk found one
+        # past ``limit``, or it ran out of catalog entries before finishing.
         "more": more,
+        # The walk stopped at ``MAX_HISTORY_SCAN_ENTRIES`` catalog entries, so
+        # older sessions were not examined at all.
+        "scan_truncated": truncated,
         # Only a fenced caller's rows rest on the lineage; for anyone else this
         # is always False.
         "lineage_unknown": lineage_unknown,
