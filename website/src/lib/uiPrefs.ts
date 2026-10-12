@@ -533,6 +533,27 @@ function ownedAtFailure(): Set<string> | null {
 }
 
 /**
+ * Composite fields that are PURELY cosmetic rendering prefs: the local viewport's
+ * layout/scale, carrying no cross-device-meaningful state. For these, and ONLY
+ * these, a value the profile holds locally is kept over the host's cross-origin
+ * value even on a split-aware failed-restore marker (see `compositeChildOwned`).
+ *
+ * This is the deliberate, owner-ruled exception for GH #18237 (ruling recorded on
+ * PR #18558): a user's chat content width flipped Compact->Comfortable on upgrade
+ * because another origin's host value overwrote the locally-held one after a
+ * failed reconcile. The host value is usually another origin's EXPLICIT choice
+ * (`DEFAULTS.contentWidth` is `'compact'`), and the local value may be a default
+ * a whole-blob save filled in after the failure; the module cannot tell the two
+ * apart, and the ruling accepts that for this one cosmetic field the value this
+ * origin already holds wins. It decides this origin's display only: the kept
+ * value is baselined, not uploaded, so the other origin's choice stays on the
+ * host. The narrowest honest fix is a named allowlist (just the one field the
+ * ruling names) rather than a blanket present-local-wins rule (which would
+ * reverse the GPT 5.6 / Opus 5 default-fill protection for every field).
+ */
+const COSMETIC_COMPOSITE_FIELDS = new Set<string>(['contentWidth'])
+
+/**
  * Whether a composite CHILD wire key was owned at the failure that produced
  * `owned`.
  *
@@ -551,11 +572,29 @@ function ownedAtFailure(): Set<string> | null {
  * ownership is genuinely unavailable and the whole blob is the finest grain
  * there is. When any child entry is present the marker is from a split-aware
  * build and the exact child key is required.
+ *
+ * ONE narrow exception (GH #18237, owner-ruled): a COSMETIC composite field
+ * (`COSMETIC_COMPOSITE_FIELDS`) is treated as owned when the marker carries the
+ * parent -- the parent's presence proves the profile held chat config at the
+ * failure, so a cosmetic width value this origin holds survives the host's
+ * cross-origin value. Both callers act on the answer only when the local value
+ * is present, so an absent local field still takes the host value. This does
+ * NOT touch any non-cosmetic field: `showTimestamps`, `pinLastPrompt`, and every
+ * other default-fillable setting still require their exact child entry, so the
+ * GPT 5.6 / Opus 5 default-fill protection is unchanged for them.
  */
 function compositeChildOwned(owned: Set<string>, childWireKey: string): boolean {
   if (owned.has(childWireKey)) return true
   const hasChildEntry = [...owned].some((k) => childField(k) !== null)
-  return !hasChildEntry && owned.has(COMPOSITE_KEY)
+  if (!hasChildEntry) return owned.has(COMPOSITE_KEY)
+  // Split-aware marker: the exact child entry is normally required. Cosmetic
+  // exception -- a cosmetic field counts as owned under a parent-carrying
+  // marker (the profile demonstrably held chat config at the failure).
+  const field = childField(childWireKey)
+  if (field !== null && COSMETIC_COMPOSITE_FIELDS.has(field)) {
+    return owned.has(COMPOSITE_KEY)
+  }
+  return false
 }
 
 /** Record a failed restore. Never widens an existing snapshot (see the key's doc). */

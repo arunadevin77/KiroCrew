@@ -1254,6 +1254,11 @@ describe('uiPrefs', () => {
       // succeed. The reconcile must FAIL (keep the pending marker + migration
       // state) rather than mark the child reconciled -- otherwise the first
       // flush uploads the stale local `true` over the host's newer `false`.
+      //
+      // `pinLastPrompt` is a NON-cosmetic field, so the GH #18237 cosmetic-pref
+      // exception does NOT reach it: the general owned-at-failure rule stands and
+      // the host value wins here exactly as before. (A cosmetic width/scale field
+      // in the same shape WOULD be kept -- see the c404 F1 cosmetic exception test.)
       localStorage.setItem(SYNCED_KEYS_KEY, JSON.stringify({ [CFG]: 'legacy.fp.0' }))
       localStorage.setItem(CFG, JSON.stringify({ pinLastPrompt: true }))
       // A prior restore failed, recording an owned-at-failure snapshot that does
@@ -1423,6 +1428,12 @@ describe('uiPrefs', () => {
       // entry must NOT grant ownership to those defaults: a child the user truly
       // held is kept, but a default-filled child the host has a real value for
       // must lose to the host. (Earlier the parent OR-grant kept every default.)
+      //
+      // ONE narrow exception holds (GH #18237, owner-ruled): a COSMETIC
+      // width/scale pref (`contentWidth`) present in the blob under a
+      // parent-carrying marker is KEPT over the host's cross-origin value -- see
+      // the dedicated regression test below. A non-cosmetic default-fill
+      // (`showTimestamps`) is unaffected and still loses to the host here.
       localStorage.setItem(CFG, JSON.stringify({ pinLastPrompt: true }))
       localStorage.setItem(SYNCED_KEYS_KEY, JSON.stringify({ [CFG]: 'legacy.fp' }))
       mockFetch(() => Promise.reject(new Error('offline')))
@@ -1440,7 +1451,51 @@ describe('uiPrefs', () => {
 
       const blob = JSON.parse(localStorage.getItem(CFG)!) as Record<string, unknown>
       expect(blob.pinLastPrompt).toBe(true) // the field the profile genuinely held is kept
-      expect(blob.showTimestamps).toBe(false) // the post-failure default loses to the host
+      expect(blob.showTimestamps).toBe(false) // the non-cosmetic post-failure default loses to the host
+    })
+
+    it('a locally-present COSMETIC width pref survives the host cross-origin value (c404 F1 cosmetic exception, GH #18237)', async () => {
+      // The GH #18237 regression. The reported flip: chat content width goes
+      // Compact->Comfortable on an insider.14 -> nightly upgrade. A failed
+      // reconcile froze a split-aware marker while the local blob did not yet
+      // hold `contentWidth`, so the marker carries the parent but NOT the
+      // `contentWidth` child. `contentWidth: 'compact'` entered the blob AFTER
+      // the failure (a whole-blob `saveChatConfig` writes every field, defaults
+      // included), and the general rule then let the host's cross-origin
+      // `comfortable` (another origin's choice -- the default is `compact`)
+      // overwrite this origin's `compact`.
+      //
+      // Under the owner-ruled cosmetic-pref exception, a cosmetic width/scale
+      // field present in the blob under a parent-carrying marker is KEPT, even
+      // though it cannot be told apart from a default fill. Same marker shape as
+      // c404 F1 above; only the cosmetic field's outcome differs.
+      localStorage.setItem(CFG, JSON.stringify({ pinLastPrompt: true }))
+      localStorage.setItem(SYNCED_KEYS_KEY, JSON.stringify({ [CFG]: 'legacy.fp' }))
+      mockFetch(() => Promise.reject(new Error('offline')))
+      expect(await reconcileNewDurableKeys()).toBe(-1) // marker: [child(pinLastPrompt), parent]
+
+      // The user's `compact` enters the blob after the failure, so the marker
+      // has no `contentWidth` child entry.
+      localStorage.setItem(
+        CFG,
+        JSON.stringify({ pinLastPrompt: true, contentWidth: 'compact' }),
+      )
+      // The host backup holds a cross-origin `comfortable`.
+      mockFetch(() => okJson({ prefs: { [child('contentWidth')]: '"comfortable"' } }))
+      await hydrateUiPrefs()
+
+      const blob = JSON.parse(localStorage.getItem(CFG)!) as Record<string, unknown>
+      expect(blob.contentWidth).toBe('compact') // the user's local cosmetic choice is kept -- no flip
+
+      // The kept value decides THIS origin's display only. It is baselined, not
+      // uploaded, so the other origin's `comfortable` stays on the host backup.
+      const spy = mockFetch(() => okJson({ prefs: {} }))
+      await flushUiPrefs()
+      const puts = spy.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === 'PUT')
+      const patch = puts.length
+        ? JSON.parse((puts.at(-1)![1] as RequestInit).body as string).prefs
+        : {}
+      expect(patch[child('contentWidth')]).toBeUndefined()
     })
 
     it('a fully reconciled profile reports nothing unreconciled and pays no per-boot reconcile GET (c404 F2)', async () => {
