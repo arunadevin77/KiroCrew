@@ -993,19 +993,18 @@ Landing rule: with no crewmates the page
 shows a single empty-state hero (ghost avatar, "No crewmates yet", one line,
 "New crewmate") in place of a roster call to action and a "pick a member" pane;
 a roster containing only the first crewmate (`mate`) is not an empty state.
-With crewmates and no `?member=`, the crewmate the user last chatted with opens
-(greatest `last_chat_ts`, see below; it is server-side, so a gateway restart or a
-new browser keeps it), else the remembered crewmate, else the most recently used
-one (greatest `last_active_ts`, ties keep roster order; never `default`). The
-built-in `default` row is remembered like any other when opened, with the
-roster's chat mark beside it (`mc-members-last-member-chat-mark` = the greatest
-crewmate `last_chat_ts` at that open); it is never ranked by its own
+With crewmates and no `?member=`, the crewmate the user last OPENED in this
+browser reopens (`mc-members-last-member`, written on every open the user made —
+click, link, or the page's own default open; sending a message is not required,
+#19341), else the crewmate the user last chatted with (greatest `last_chat_ts`,
+see below; it is server-side, so a new browser or a cleared storage still lands
+on the right thread), else the most recently used one (greatest
+`last_active_ts`, ties keep roster order; never `default`). The memory is
+looked up on the whole roster, hidden rows included. The built-in `default` row
+is remembered like any other when opened; it is never ranked by its own
 `last_chat_ts` (that also moves for every plain chat that picked no crew, so it
-would win nearly always), and instead outranks the last-chatted crewmate exactly
-while no crewmate's `last_chat_ts` has moved past the mark. Both sides
-are the server's clock, so a remote dashboard compares the same. The mark is the
-user's own open (click or link): a restore re-reads it but never re-writes it.
-A roster holding only `default` still shows the hero.
+would win nearly always) and is never a fallback. A roster holding only
+`default` still shows the hero, whatever the memory says.
 The first crewmate's key, thread and private V2 memory store are its own, and an
 explicitly configured display name takes precedence over the label Mate.
 Explicit member and team links take precedence. Below md nothing auto-opens --
@@ -1195,8 +1194,8 @@ default-crew lookup lists every such row. The header count and the filter
 tallies count the listed rows plus any hidden row the search reaches.
 Before any of the landing rules, a bare visit with the Crewmates preview on
 opens Mate while no message has been exchanged with it (`resolveMateLanding`:
-Mate's row has neither `has_dm_message` nor a live `last_message`), ahead of the
-last-chatted, a remembered or a more recently used crewmate, at most once per
+Mate's row has neither `has_dm_message` nor a live `last_message`), ahead of a
+remembered, the last-chatted or a more recently used crewmate, at most once per
 page mount; once Mate's thread holds anything, that rule answers nothing and the
 rules above apply unchanged. While that landing applies, the page does not announce
 the visit (`mc-crewmates-page-entered`), so Meet CrewMates does not also open on top

@@ -39,8 +39,9 @@ When Mate's welcome lands, main already does the right thing:
   not flushed yet (`dashboard/handlers/members.py`, the `has_dm_message`
   assignment in the roster read).
 - So `pendingMate` (`website/src/lib/assistantMember.ts`) stops answering Mate,
-  and on the next bare visit `resolveMateLanding` yields to
-  `lastChattedMember` and the remembered crewmate.
+  and on the next bare visit `resolveMateLanding` yields to the ordinary
+  landing: the remembered crewmate, then `lastChattedMember` (order amended by
+  #19341, see rfc-crewmates-chatted-list.md §3.1).
 
 The pin is a welcome that never lands. `maybe_start_first_greeting` claims the
 once-only marker (`claim_greeting_marker`, `members/<slug>/welcome_claimed.json`)
@@ -59,7 +60,7 @@ landing applies.
 | Mate's welcome | Lands on (bare visit, preview on) |
 |---|---|
 | still coming | Mate (one introduction, fresh and existing users) |
-| sent | the ordinary landing (last-chatted, then the remembered crewmate) |
+| sent | the ordinary landing (the remembered crewmate, then last-chatted; #19341) |
 | attempted and failed | the ordinary landing (counts as seen) |
 
 - **Still coming** = the welcome is owed (`welcome_owed`), its marker is not
@@ -114,10 +115,11 @@ The implementation (#18904) pins:
 
 1. An existing user (another crewmate chatted with, Mate's welcome owed, its marker unclaimed,
    Mate's thread empty) lands on Mate once.
-2. After the welcome row exists, the next bare visit lands on the last-chatted
-   crewmate.
+2. After the welcome row exists, the next bare visit lands on the ordinary
+   landing (the remembered crewmate, then the last-chatted one — #19341; at
+   #18904 the last-chatted one came first).
 3. With a claimed marker and an empty thread (a failed welcome), the next bare
-   visit lands on the last-chatted crewmate.
+   visit lands on the ordinary landing likewise.
 4. A roster row that does not say whether the marker is claimed, or whether
    the welcome is owed, lands on the ordinary landing.
 5. An empty Mate with no owed record and no marker lands on the ordinary

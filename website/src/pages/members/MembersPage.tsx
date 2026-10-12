@@ -223,47 +223,50 @@ function freshStartFailureKey(err: unknown): string {
   if (code === 'turn_in_flight') return 'pages.membersPage.fresh_start_failed_busy'
   return 'pages.membersPage.fresh_start_failed'
 }
-/** The last member opened, so returning to the page (or reloading) lands on
- *  the conversation the user left rather than the empty column. Stored by
- *  exact name for the same reason as the URL param. One key per origin is
- *  the right scope: the roster is the gateway's global crew list, and
- *  localStorage is already per-gateway. */
+/** The last member OPENED (click, link, or the page's own default open), so
+ *  returning to the page (the rail's Crewmates row, a reload, a gateway
+ *  restart) lands on the row the user left — opened is enough, no message
+ *  need have been sent (#19341). Stored by exact name for the same reason as
+ *  the URL param. One key per origin is the right scope: the roster is the
+ *  gateway's global crew list, and localStorage is already per-gateway. */
 const LAST_MEMBER_KEY = 'mc-members-last-member'
-/** The greatest crewmate `last_chat_ts` on the roster WHEN the remembered
- *  row was opened — the server's clock, so it compares with later rosters on
- *  a remote dashboard too. Read only for a remembered built-in `default`: the
- *  server cannot say when the user last talked to it (see
- *  `rememberedDefaultPick`), so "no crewmate has been chatted with since this
- *  open" stands in. */
-const LAST_MEMBER_CHAT_MARK_KEY = 'mc-members-last-member-chat-mark'
 
-/** Which crewmate to RESTORE when the URL names none, or to fall back to when
- *  it names one that is gone (deleted or renamed since the link/memory was
- *  written): the remembered crewmate if it is still on the roster, else the
- *  most recently USED one — the greatest `last_active_ts`, strict `>` so a tie
- *  keeps the first in `ordered`. Product decision (CrewMates launch review):
- *  when crewmates exist and none is selected, the most recently used chat
- *  opens by default; the "pick one" landing is gone. This deliberately keys on
- *  use, not on `ordered`'s position — #11763 rejected priming the user on
- *  whichever row the SORT floated to the top, and a recency the user produced
- *  themselves is a different thing from a sort they may not have chosen.
- *  The built-in `default` assistant is not a crewmate: it is never a
- *  remembered hit here and the most-recently-used fallback never picks it, so
- *  a roster holding only `default` resolves to `undefined` and shows the
- *  empty-state hero. A remembered `default` is the restore effect's own case
- *  (`rememberedDefaultPick`, ranked above this). Pure, so the cases —
- *  restore, most-recently-used, tie, stale, empty — are tested directly.
- *  Mate's first visit is decided before this, by {@link resolveMateLanding}. */
-export function resolveDefaultMember(
+/** The remembered row (`LAST_MEMBER_KEY`), when it is still on `rows`: the
+ *  first thing a bare `/members` reopens. Any name, the built-in `default`
+ *  included — opening it is a choice like any other — except on a roster that
+ *  holds nothing but `default`, which lands on the empty-state hero whatever
+ *  the memory says. Looked up on the WHOLE roster, hidden rows too: a
+ *  crewmate the user reached through the search and opened is listed again
+ *  while open, and resolving among listed rows only would open a substitute
+ *  and overwrite the memory. */
+export function rememberedMember(
   remembered: string | null,
-  ordered: readonly MemberRosterRow[],
+  rows: readonly MemberRosterRow[],
 ): MemberRosterRow | undefined {
+  if (!remembered || hasNoCrewmates(rows)) return undefined
+  return rows.find((m) => m.name === remembered)
+}
+
+/** Which crewmate to open when the URL names none and this browser holds no
+ *  usable memory ({@link rememberedMember} answered nothing), or to fall back
+ *  to when the URL names one that is gone (deleted or renamed since the link
+ *  was written): the one the user last CHATTED with
+ *  ({@link lastChattedMember}), else the most recently USED one — the
+ *  greatest `last_active_ts`, strict `>` so a tie keeps the first in
+ *  `ordered`. Product decision (CrewMates launch review): when crewmates
+ *  exist and none is selected, the most recently used chat opens by default;
+ *  the "pick one" landing is gone. This deliberately keys on use, not on
+ *  `ordered`'s position — #11763 rejected priming the user on whichever row
+ *  the SORT floated to the top, and a recency the user produced themselves
+ *  is a different thing from a sort they may not have chosen. The built-in
+ *  `default` assistant is not a crewmate: neither rule picks it, so a roster
+ *  holding only `default` resolves to `undefined` and shows the empty-state
+ *  hero. Pure, so the cases — last-chatted, most-recently-used, tie, empty —
+ *  are tested directly. Mate's first visit is decided before this, by
+ *  {@link resolveMateLanding}. */
+export function resolveDefaultMember(ordered: readonly MemberRosterRow[]): MemberRosterRow | undefined {
   const chatted = lastChattedMember(ordered)
   if (chatted) return chatted
-  if (remembered && remembered !== 'default') {
-    const hit = ordered.find((m) => m.name === remembered)
-    if (hit) return hit
-  }
   let best: MemberRosterRow | undefined
   for (const m of ordered) {
     if (m.name === 'default') continue
@@ -273,11 +276,13 @@ export function resolveDefaultMember(
 }
 
 /** The crewmate the user last sent a message to (`last_chat_ts`, recorded by
- *  the server, so it survives a gateway restart and a new browser alike), in
- *  its DM or in a normal chat. It outranks this browser's remembered pick: the
- *  page reopens the conversation the user last HAD, not the row they last
- *  clicked. The built-in `default` assistant is not a crewmate. Strict `>` so
- *  a tie keeps the first in `rows`. */
+ *  the server, so it survives a new browser and a cleared storage alike), in
+ *  its DM or in a normal chat. The fallback when this browser holds no usable
+ *  memory ({@link rememberedMember}): a first visit from a new browser, or a
+ *  remembered row that is gone. The built-in `default` assistant is not a
+ *  crewmate, and its `last_chat_ts` also moves for every plain chat that
+ *  picked no crew, so it is never ranked here. Strict `>` so a tie keeps the
+ *  first in `rows`. */
 export function lastChattedMember(rows: readonly MemberRosterRow[]): MemberRosterRow | undefined {
   let best: MemberRosterRow | undefined
   for (const m of rows) {
@@ -285,34 +290,6 @@ export function lastChattedMember(rows: readonly MemberRosterRow[]): MemberRoste
     if (!best || (m.last_chat_ts ?? 0) > (best.last_chat_ts ?? 0)) best = m
   }
   return best
-}
-
-/** The greatest crewmate `last_chat_ts` on `rows` (the built-in `default`
- *  excluded, 0 when nobody chatted): what `chatMark` records at an open. */
-export function chatMarkOf(rows: readonly MemberRosterRow[]): number {
-  return lastChattedMember(rows)?.last_chat_ts ?? 0
-}
-
-/** The built-in `default` row, when the user's last open of it (#17210) is
- *  the conversation to reopen. `lastChattedMember` cannot rank `default`: its
- *  `last_chat_ts` also moves for every plain chat that picked no crew, so it
- *  would win nearly always and bury the crewmate the user actually talked to.
- *  The signal is `chatMark`, the greatest crewmate `last_chat_ts` seen when
- *  `default` was opened (written beside the memory): while no crewmate's
- *  `last_chat_ts` has moved past it, nobody has been talked to since that
- *  open, and `default` is the conversation the user left; once one has, that
- *  crewmate is. Both sides are the server's clock, so a remote dashboard whose
- *  own clock drifts compares the same. Never on a roster holding only
- *  `default` — that roster lands on the empty-state hero. */
-export function rememberedDefaultPick(
-  remembered: string | null,
-  chatMark: number,
-  rows: readonly MemberRosterRow[],
-): MemberRosterRow | undefined {
-  if (remembered !== 'default' || hasNoCrewmates(rows)) return undefined
-  const hit = rows.find((m) => m.name === 'default')
-  if (!hit) return undefined
-  return chatMarkOf(rows) > chatMark ? undefined : hit
 }
 
 /** Mate (`isAssistantMember`) while its welcome is still coming: the Crewmates
@@ -1543,12 +1520,6 @@ export default function MembersPage() {
   // ref, not state: it is a note between two runs of one effect, and must
   // not re-arm it.
   const goneStandInRef = useRef('')
-  // The member the fallback is about to RESTORE on a bare `/members` (the
-  // remembered or last-chatted one). Same note-between-two-runs shape as
-  // `goneStandInRef`: the open it triggers keeps the memory but must not
-  // re-write the chat mark — the mark means the USER's open, and a restore
-  // is the page reopening it, not a new one.
-  const restoredRef = useRef('')
   // The open member's thread, as the thread endpoint last answered it. The
   // roster's `bound`/`slot_key` are never trusted as mountable: dm.json
   // outlives the live slot (a restart drops an unmessaged slot while the
@@ -2006,10 +1977,10 @@ export default function MembersPage() {
     [mutateStar],
   )
   // Display order before the search filter — this is the roster the rows
-  // render from and the list `resolveDefaultMember` searches for a remembered
-  // member, so a typed filter never changes the order or which member a
-  // return visit restores (that lookup is by NAME, so a re-sort cannot change
-  // which member it finds).
+  // render from and the list the landing fallback (`resolveDefaultMember`)
+  // reads, so a typed filter never changes the order or which member a
+  // return visit opens (the memory lookup is by NAME, so a re-sort cannot
+  // change which member it finds).
   //
   // The order is HELD across refetches, and re-sorted on exactly three events:
   // a membership change, the user picking the other sort, and the OPEN
@@ -3198,17 +3169,13 @@ export default function MembersPage() {
   // opened IN PLACE OF one a link named that is gone: that open is the page's
   // choice, not the user's, so one stale link must not overwrite the member
   // they had actually chosen. The built-in `default` is remembered like any
-  // other row, with the roster's chat mark beside it (`rememberedDefaultPick`);
-  // `stamp` is false for a restore (`restoredRef`), which is the page
-  // reopening the user's last open, not a new one.
-  const membersRef = useRef(members)
-  membersRef.current = members
+  // other row (`rememberedMember`). A restore re-writes the same name it
+  // read, which is harmless and keeps one code path.
   const activate = useCallback(
-    (m: MemberRosterRow, remember = true, stamp = remember) => {
+    (m: MemberRosterRow, remember = true) => {
       activeNameRef.current = m.name
       setActiveName(m.name)
       if (remember) safeSetItem(LAST_MEMBER_KEY, m.name)
-      if (stamp) safeSetItem(LAST_MEMBER_CHAT_MARK_KEY, String(chatMarkOf(membersRef.current)))
       // A Side Chat belongs to the member it was asked about; nothing to reset
       // here — the panel's strip is bucketed per member slot, so switching
       // members swaps the whole strip and a Side tab stays with its member.
@@ -3389,8 +3356,8 @@ export default function MembersPage() {
   // URL -> open crewmate. Once the roster is in: a URL that names a crewmate
   // opens it; a URL that names none (a fresh visit, the sidebar entry, a
   // reload) is REPLACED with the remembered crewmate if one is still on the
-  // roster, so returning users land back on the conversation they left, else
-  // with the most recently USED one, else the built-in Assistant
+  // roster, so returning users land back on the row they last opened, else
+  // with the one last CHATTED with, else the most recently USED one
   // (`resolveDefaultMember`) — the default follows the user's own history,
   // never the sort order (#11763). "Nothing
   // to open" therefore means an EMPTY roster, and only that. A URL naming a
@@ -3412,9 +3379,7 @@ export default function MembersPage() {
         // user's choice and must not become the memory (see `activate`).
         const standIn = goneStandInRef.current === hit.name
         goneStandInRef.current = ''
-        const restored = restoredRef.current === hit.name
-        restoredRef.current = ''
-        if (hit.name !== activeNameRef.current) activate(hit, !standIn, !standIn && !restored)
+        if (hit.name !== activeNameRef.current) activate(hit, !standIn)
         // The notice belongs to the member shown in place of the gone one;
         // opening anyone else retires it. Functional updates throughout, and
         // `gone` is NOT a dependency: the URL write below is a router
@@ -3473,38 +3438,34 @@ export default function MembersPage() {
       return
     }
     // Desktop, URL names no crewmate (or names a gone one): restore the
-    // remembered crewmate if it is still listed, else open the most recently
-    // used listed one. `undefined` here means nothing is listed — the chat
-    // column shows the New crewmate hero instead (or, with only hidden rows,
-    // stays empty until a search or a link names one).
+    // remembered crewmate if it is still on the roster, else open the one last
+    // chatted with, else the most recently used listed one. `undefined` here
+    // means nothing is listed — the chat column shows the New crewmate hero
+    // instead (or, with only hidden rows, stays empty until a search or a
+    // link names one).
     // The fallback reads the LISTED rows, and the listing rule exempts the
     // default crew by name: until the default-crew read has settled (data or
     // a terminal error) the remembered crewmate may be that unlisted default,
     // and resolving now would open a substitute and overwrite the memory.
     if (!defaultAgentSettled) return
-    // A remembered crewmate the user opened themselves is restored even when the
-    // listing rule hides it (it was reached through the search): it is listed
-    // again while open (`chosen`), and resolving among listed rows only would
-    // open a substitute and overwrite the memory. Only with no usable memory
-    // does the fallback pick among the listed rows -- and when nothing but the
-    // default crew is listed while hidden crewmates exist, it opens the most
-    // recently used of those (listed while open), so the page never lands on an
-    // empty pane or claims there are no crewmates.
-    const remembered = safeGetItem(LAST_MEMBER_KEY)
-    const chatMark = Number(safeGetItem(LAST_MEMBER_CHAT_MARK_KEY)) || 0
-    const rememberedRow =
-      remembered && remembered !== 'default' ? members.find((m) => m.name === remembered) : undefined
-    // The last crewmate the user CHATTED with outranks the memory (it is the
-    // server's record, so a restart or a new browser keeps it). A remembered
-    // built-in `default` outranks even that while no crewmate has been
-    // chatted with since it was opened (`rememberedDefaultPick`); a
-    // default-only roster still lands on the hero.
+    // The memory wins (#19341): the row the user last OPENED is the one they
+    // come back to, whether or not they sent it a message — a click that sent
+    // nothing never moves `last_chat_ts`, so ranking the server's last-chatted
+    // crewmate first reopened a different thread on every return. The
+    // last-chatted crewmate is the fallback for a browser with no usable
+    // memory (a new browser, a cleared storage, a remembered row since
+    // deleted), where it still beats background recency. `rememberedMember`
+    // reads the WHOLE roster, hidden rows too (see its doc), and keeps a
+    // default-only roster on the hero. Only with no usable memory does the
+    // fallback pick among the listed rows -- and when nothing but the default
+    // crew is listed while hidden crewmates exist, it opens the most recently
+    // used of those (listed while open), so the page never lands on an empty
+    // pane or claims there are no crewmates.
     const target =
-      rememberedDefaultPick(remembered, chatMark, members) ??
+      rememberedMember(safeGetItem(LAST_MEMBER_KEY), members) ??
       lastChattedMember(orderedMembers) ??
-      rememberedRow ??
-      resolveDefaultMember(null, listedMembers) ??
-      resolveDefaultMember(null, orderedMembers)
+      resolveDefaultMember(listedMembers) ??
+      resolveDefaultMember(orderedMembers)
     if (!target) {
       // Named a gone crewmate on an empty roster: say where they went above
       // the roster (shown: '' marks the roster variant of the notice, as
@@ -3535,7 +3496,6 @@ export default function MembersPage() {
       )
       goneStandInRef.current = target.name
     }
-    restoredRef.current = target.name
     setSearchParams({ [MEMBER_PARAM]: target.name }, { replace: true })
   }, [loaded, loadError, urlMember, urlTeam, teamsQ.data, members, listedMembers, activeName, isMobile, activate, setSearchParams, rosterQuery.isFetching, defaultAgentSettled, orderedMembers, crewPreview])
 

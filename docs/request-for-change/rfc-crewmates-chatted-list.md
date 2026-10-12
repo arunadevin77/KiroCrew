@@ -7,7 +7,7 @@ last-audited: 2026-10-07
 audited-at: acc08092d7
 doc-pr:
 implementation-prs: [17808]
-tracking-issues: []
+tracking-issues: [19341]
 supersedes: []
 superseded-by: []
 ---
@@ -30,8 +30,8 @@ superseded-by: []
 The Crewmates page lists a crewmate only after the user has sent it a message,
 either in its Crewmates DM or in a normal chat, or has created it. The list is ordered by the
 user's last message, newest first. With no `?member=`, the page opens the
-crewmate the user last chatted with. That record is kept on the server, so it
-survives a gateway restart and a new browser.
+crewmate the user last opened in this browser, else the one last chatted with
+(§3.1). The chat record is kept on the server, so it survives a new browser.
 
 ## 2. Motivation
 
@@ -61,7 +61,7 @@ one last talked to.
 | Listed unasked | DM holds a message, dashboard-created, starred, or the default crew | the user sent it a message or created it (`last_chat_ts > 0`), or starred it |
 | Switcher list | every roster row | the column's own rule (#17835): the listed rows plus the open one; its search reaches every row |
 | Recent order | `last_active_ts` | `last_chat_ts` |
-| Landing with no `?member=` | browser memory, then greatest `last_active_ts` | greatest `last_chat_ts`, then browser memory, then greatest `last_active_ts` |
+| Landing with no `?member=` | browser memory, then greatest `last_active_ts` | greatest `last_chat_ts`, then browser memory, then greatest `last_active_ts` — **amended by #19341:** browser memory, then greatest `last_chat_ts`, then greatest `last_active_ts` (see §3.1) |
 
 "The user sent it a message" means a `POST /api/chat` from the dashboard user:
 no app token, no cron attestation, no peer relay. A chat with no crew picked
@@ -70,6 +70,34 @@ counts for the default crew. Creating a crewmate counts as well: the user's
 stamps the new crew, so it is listed at once and sorts first. A crew that the
 agent sync, an app or any background writer adds is not stamped. The record
 lives in `crew_recency.json` under the data home. A one-time seed fills it from typed rows already in DM threads.
+
+### 3.1 Amendment (#19341): the landing reopens the row last opened
+
+Ranking the server's last-chatted crewmate above the browser memory reopened
+the wrong thread on every ordinary return: a crewmate the user clicked but did
+not message never moves `last_chat_ts`, so leaving the page and coming back
+landed on whoever was chatted with last, not on the row the user had open. The
+product owner's call (2026-10-12): coming back to the Crewmates page lands on
+the crewmate last opened.
+
+| Rule | Before (this RFC) | After |
+|---|---|---|
+| Landing with no `?member=` | greatest `last_chat_ts`, then browser memory, then greatest `last_active_ts` | browser memory (any row still on the roster, `default` included), then greatest `last_chat_ts`, then greatest `last_active_ts` |
+| `mc-members-last-member-chat-mark` | written beside the memory when `default` is opened, to rank a remembered `default` against the last chat | removed; the memory needs no tie-break once it ranks first |
+
+`last_chat_ts` keeps every other job this RFC gave it (listing, recent order)
+and stays the landing fallback for a browser with no usable memory — a new
+browser, a cleared storage, a remembered crewmate since deleted — where it
+still beats background recency. A gateway restart does not clear localStorage,
+so the restart case this RFC set out to fix lands on the same row: the one the
+user had open.
+
+Considered and rejected: keeping the chat mark, generalized to every row, so
+that a chat with another crewmate started elsewhere would move the landing.
+The product owner's answer (#19346): a crewmate's conversation IS its Crewmates
+thread; there is no other place to chat with one, so a chat that moves
+`last_chat_ts` without an open on this page is not a case the landing has to
+weigh. The memory alone is the rule.
 
 ## 4. Non-goals
 
@@ -91,5 +119,6 @@ keeps the old rule, so a mixed-version deploy does not blank the list.
   the same record lists the new crewmate first, then lets it age like any other.
 - **Derive "chatted" from DM transcripts or the crew log.** Rejected: both also
   record background turns and peer deliveries, so the signal would stay noisy.
-- **Keep browser memory first.** Rejected: it does not survive a new browser,
-  and it names the last row clicked, not the last conversation.
+- **Keep browser memory first.** Rejected at the time: it does not survive a
+  new browser, and it names the last row clicked, not the last conversation.
+  Reversed by §3.1: the product owner wants the last row clicked.
