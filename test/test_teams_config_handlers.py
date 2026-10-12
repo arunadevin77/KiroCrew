@@ -130,6 +130,9 @@ class TestGet:
             "app_id_set",
             "app_password_set",
             "jwt_available",
+            "sdk_installed",
+            "sdk_install_supported",
+            "sdk_install_command",
             "enabled",
             "tenant_id",
             "allowed_emails",
@@ -151,6 +154,51 @@ class TestGet:
         assert _get(monkeypatch, tmp_path, {})["jwt_available"] is False
         monkeypatch.setattr(teams_client, "HAS_JWT", True)
         assert _get(monkeypatch, tmp_path, {})["jwt_available"] is True
+
+    @staticmethod
+    def _sdk(monkeypatch, *, present: bool, channel: bool = True) -> None:
+        """Make PyJWT (import name ``jwt``) look present or absent, and the pip
+        install channel available or not. Only ``jwt`` is faked so every other
+        lookup still resolves."""
+        real = mod.importlib.util.find_spec
+        monkeypatch.setattr(
+            mod.importlib.util,
+            "find_spec",
+            lambda name, *a: (object() if present else None) if name == "jwt" else real(name, *a),
+        )
+        monkeypatch.setattr(mod, "_pip_install_channel_available", lambda: channel)
+
+    def test_sdk_installed_needs_no_command(self, monkeypatch, tmp_path: Path) -> None:
+        self._sdk(monkeypatch, present=True)
+        payload = _get(monkeypatch, tmp_path, {})
+        assert payload["sdk_installed"] is True
+        assert payload["sdk_install_command"] == ""
+
+    def test_missing_sdk_names_this_interpreter(self, monkeypatch, tmp_path: Path) -> None:
+        """The command must name the gateway's own python, never a bare ``pip``:
+        installing PyJWT into another environment leaves the channel refusing
+        to start with nothing saying why."""
+        import sys
+
+        self._sdk(monkeypatch, present=False)
+        payload = _get(monkeypatch, tmp_path, {})
+        assert payload["sdk_installed"] is False
+        assert payload["sdk_install_supported"] is True
+        cmd = payload["sdk_install_command"]
+        assert sys.executable in cmd
+        assert "-m pip install" in cmd
+        assert "PyJWT" in cmd
+        assert not cmd.startswith("pip ")
+        assert "kirocrew[" not in cmd
+
+    def test_missing_sdk_without_an_install_channel_withholds_the_command(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        self._sdk(monkeypatch, present=False, channel=False)
+        payload = _get(monkeypatch, tmp_path, {})
+        assert payload["sdk_installed"] is False
+        assert payload["sdk_install_supported"] is False
+        assert payload["sdk_install_command"] == ""
 
     def test_thresholds_default_when_unset(self, monkeypatch, tmp_path: Path) -> None:
         payload = _get(monkeypatch, tmp_path, {})

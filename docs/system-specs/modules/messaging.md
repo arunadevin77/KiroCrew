@@ -6368,7 +6368,29 @@ and closes its loop before the daemon thread exits.
 `[feishu]` extra in `setup.cfg` and lazily imported inside the client module;
 `maybe_start_feishu` catches `ImportError` and logs a skip so a missing
 library never takes down the gateway. No public webhook endpoint is required.
-Capabilities: `streaming=False`, `edit=False`, `reactions=False`,
+
+**Optional-SDK card (Feishu, Teams, WhatsApp).** Every channel whose client
+library ships as an optional extra is one `_CHANNEL_SDK_EXTRA` entry in
+`dashboard/handlers/messaging.py` (`feishu` → `lark_oapi`, `teams` → `jwt`,
+`whatsapp` → `neonize`), and its config GET returns `sdk_installed`,
+`sdk_install_supported` and `sdk_install_command` from `_channel_sdk_status`:
+`find_spec` only (never an import, so the Teams GET still does not load PyJWT on
+the boot path), with the command from `pip_extra_install_command`, which names the
+gateway's OWN interpreter, and empty where `_pip_install_channel_available` says no
+in-place install can work. Each panel renders the shared `OptionalSdkCard`
+(`pages/settings/OptionalSdkCard.tsx`) from those fields: the command when it is
+supported, otherwise the "cannot install here" notice; `sdk_installed` absent
+(an older gateway) renders nothing. No panel shows a bare `pip install`: the Teams
+`jwt_required` notice carries no command and shows only when the card does not
+(`jwt_available` false while `find_spec` still finds a `jwt` module, or an older
+gateway), and the WhatsApp panel renders neither `connect_error` nor the
+"restart the gateway" hint while `sdk_installed` is false: the gateway leaves the
+log-oriented `MISSING_EXTRA_HINT` in `connect_error`, and a restart does nothing
+until the package is installed (that hint
+itself is unchanged for logs, doctor and the CLI setup wizard). There is no Install
+button.
+
+Feishu capabilities: `streaming=False`, `edit=False`, `reactions=False`,
 `files_inbound=False`, `files_outbound=False`, `rich_blocks=False`,
 `threads=False`, `max_message_chars=4000`, `max_buttons=0`,
 `supports_proactive_send=False`. A non-text message (`image`, `file`, `audio`,

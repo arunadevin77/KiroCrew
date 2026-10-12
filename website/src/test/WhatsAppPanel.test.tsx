@@ -123,6 +123,41 @@ describe('WhatsAppPanel — status', () => {
   })
 })
 
+describe('WhatsAppPanel — the neonize dependency', () => {
+  // What the gateway leaves in `connect_error` (MISSING_EXTRA_HINT): a bare pip
+  // line that may target another interpreter.
+  const RAW_HINT = 'The WhatsApp channel needs its optional dependency: pip install neonize==0.4.3.post0'
+  const CMD = '/opt/gw/bin/python -m pip install neonize==0.4.3.post0'
+  const missing = { connected: false, state: 'unpaired' as const, connect_error: RAW_HINT, sdk_installed: false }
+
+  it('shows the command naming the gateway interpreter, not the raw hint', async () => {
+    seed({ ...missing, sdk_install_supported: true, sdk_install_command: CMD })
+    renderWithProviders(<WhatsAppPanel />)
+    await waitFor(() => expect(screen.getByTestId('sdk-install-command')).toHaveTextContent(CMD))
+    expect(screen.queryByTestId('whatsapp-connect-error')).toBeNull()
+    // Not the restart advice either: a restart is a dead end until it is installed.
+    expect(screen.queryByTestId('whatsapp-connect-hint')).toBeNull()
+    expect(document.body.textContent?.replaceAll(CMD, '')).not.toContain('pip install')
+  })
+
+  it('says an in-place install is unavailable when the gateway cannot pip', async () => {
+    seed({ ...missing, sdk_install_supported: false, sdk_install_command: '' })
+    renderWithProviders(<WhatsAppPanel />)
+    await waitFor(() =>
+      expect(screen.getByText(/cannot install extra packages, so neonize cannot be added here/)).toBeInTheDocument(),
+    )
+    expect(screen.queryByTestId('sdk-install-command')).toBeNull()
+    expect(document.body.textContent).not.toContain('pip install')
+  })
+
+  it('keeps showing connect_error from a gateway that predates the SDK fields', async () => {
+    seed({ connected: false, state: 'unpaired', connect_error: RAW_HINT })
+    renderWithProviders(<WhatsAppPanel />)
+    await waitFor(() => expect(screen.getByTestId('whatsapp-connect-error')).toHaveTextContent('neonize'))
+    expect(screen.queryByTestId('sdk-install-command')).toBeNull()
+  })
+})
+
 describe('WhatsAppPanel — who can message the agent', () => {
   it('shows the saved policy on the trigger', async () => {
     renderWithProviders(<WhatsAppPanel />)

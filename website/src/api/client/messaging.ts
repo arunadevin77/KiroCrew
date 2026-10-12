@@ -298,6 +298,13 @@ export interface IMessageConfigSave {
    * predates the field sends none, and absent must not read as false.
    */
   jwt_available?: boolean
+  /** Whether the channel's optional SDK (PyJWT, the [teams] extra) is importable by the gateway;
+   *  absent from a gateway that predates the field, which must not read as false. */
+  sdk_installed?: boolean
+  /** False where a pip install cannot work: bundled app, no pip, PEP 668. */
+  sdk_install_supported?: boolean
+  /** Install command naming the gateway's OWN interpreter; "" when not useful. */
+  sdk_install_command?: string
   /** Context percentage at which the channel nudges the user to compact. */
   soft_threshold_pct?: number
   /** Context percentage at which the channel compacts without being asked. */
@@ -391,6 +398,13 @@ export interface WhatsAppConfigData {
   /** Pairing/connection lifecycle: unpaired → pairing → connected, or a terminal
    *  logged_out / banned / error. Drives the status badge. */
   state: 'unpaired' | 'pairing' | 'connected' | 'logged_out' | 'banned' | 'error'
+  /** Whether the channel's optional SDK (neonize, the [whatsapp] extra) is importable by the gateway;
+   *  absent from a gateway that predates the field, which must not read as false. */
+  sdk_installed?: boolean
+  /** False where a pip install cannot work: bundled app, no pip, PEP 668. */
+  sdk_install_supported?: boolean
+  /** Install command naming the gateway's OWN interpreter; "" when not useful. */
+  sdk_install_command?: string
 }
 
 /** Writable WhatsApp config fields sent to PUT /api/whatsapp/config. */

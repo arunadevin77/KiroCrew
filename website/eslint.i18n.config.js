@@ -934,6 +934,14 @@ export default [
               // presses, so translating it would mislabel their keyboard. Anchored and
               // enumerated, not a pattern: ordinary copy cannot match it.
               '^(Ctrl|Alt|Shift|Cmd|Win)$',
+              // A PyPI distribution name the optional-SDK card shows beside the
+              // install command (`OptionalSdkCard`'s `packageLabel`). It names the
+              // package the user installs, so it is do-not-translate on the same
+              // grounds as the key caps above. The lowercase names (`lark-oapi`,
+              // `neonize`) already pass as identifiers; this one carries an
+              // interior run of capitals no identifier pattern admits. Exact, not a
+              // shape: ordinary copy cannot match it.
+              '^PyJWT$',
               // Wire-protocol marker, not copy: the backend stamps `QUEUED:<fp>` onto a
               // `pr` value that was queued rather than drafted
               // (`spine/profile.py`: `return f"QUEUED:{fingerprint}"`), and the client only

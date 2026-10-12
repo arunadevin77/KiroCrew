@@ -264,6 +264,56 @@ def test_config_get_truncates_a_long_connect_error(cfg_file: Path) -> None:
     assert len(body["connect_error"]) == 120
 
 
+def _fake_neonize(monkeypatch, *, present: bool, channel: bool = True) -> None:
+    """Make neonize look present or absent to the SDK probe, and the pip install
+    channel available or not. Only ``neonize`` is faked."""
+    import kiro_crew.dashboard.handlers.messaging as messaging
+
+    real = messaging.importlib.util.find_spec
+    monkeypatch.setattr(
+        messaging.importlib.util,
+        "find_spec",
+        lambda name, *a: (object() if present else None) if name == "neonize" else real(name, *a),
+    )
+    monkeypatch.setattr(messaging, "_pip_install_channel_available", lambda: channel)
+
+
+def test_config_get_reports_an_installed_sdk_without_a_command(cfg_file: Path, monkeypatch) -> None:
+    _fake_neonize(monkeypatch, present=True)
+    status, body = _call(_serve(_FakeState()), "GET", "/api/whatsapp/config")
+    assert status == 200
+    assert body["sdk_installed"] is True
+    assert body["sdk_install_command"] == ""
+
+
+def test_config_get_names_this_interpreter_when_neonize_is_missing(
+    cfg_file: Path, monkeypatch
+) -> None:
+    """The panel shows this command instead of MISSING_EXTRA_HINT's bare
+    ``pip install``, which can target another environment."""
+    _fake_neonize(monkeypatch, present=False)
+    status, body = _call(_serve(_FakeState()), "GET", "/api/whatsapp/config")
+    assert status == 200
+    assert body["sdk_installed"] is False
+    assert body["sdk_install_supported"] is True
+    cmd = body["sdk_install_command"]
+    assert sys.executable in cmd
+    assert "-m pip install" in cmd
+    assert "neonize" in cmd
+    assert not cmd.startswith("pip ")
+
+
+def test_config_get_withholds_the_command_without_an_install_channel(
+    cfg_file: Path, monkeypatch
+) -> None:
+    _fake_neonize(monkeypatch, present=False, channel=False)
+    status, body = _call(_serve(_FakeState()), "GET", "/api/whatsapp/config")
+    assert status == 200
+    assert body["sdk_installed"] is False
+    assert body["sdk_install_supported"] is False
+    assert body["sdk_install_command"] == ""
+
+
 # ── PUT /api/whatsapp/config ──────────────────────────────────────────────────
 
 

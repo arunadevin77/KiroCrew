@@ -18,7 +18,7 @@ from kiro_crew.dashboard.channel_folders import (
 )
 from kiro_crew.dashboard.handlers.agents import _get_config_lock
 from kiro_crew.dashboard.handlers.core import _hot_apply_after_write
-from kiro_crew.dashboard.handlers.messaging import is_direct_local_request
+from kiro_crew.dashboard.handlers.messaging import _channel_sdk_status, is_direct_local_request
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,13 @@ def _live_client(request: web.Request) -> Any:
 
 async def whatsapp_config_get(request: web.Request) -> web.Response:
     """GET /api/whatsapp/config: status + policy (the channel has no secrets)."""
-    wa = (await asyncio.to_thread(KiroCrewConfig.load)).whatsapp
+
+    def _read() -> "tuple[Any, tuple[bool, bool, str]]":
+        # One thread hop for both filesystem reads: the config, and the SDK
+        # probe (find_spec plus the PEP 668 marker check).
+        return KiroCrewConfig.load().whatsapp, _channel_sdk_status("whatsapp")
+
+    wa, (sdk_installed, sdk_supported, sdk_command) = await asyncio.to_thread(_read)
     state = request.app.get("state")
     client = _live_client(request)
     return web.json_response(
@@ -48,6 +54,13 @@ async def whatsapp_config_get(request: web.Request) -> web.Response:
             "allowed_wa_ids": [str(u) for u in wa.allowed_wa_ids],
             "groups": list(wa.groups),
             "session_folder": wa.session_folder,
+            # The shared optional-SDK card's fields (see _channel_sdk_status).
+            # When neonize is missing the panel shows the card -- whose command
+            # names THIS gateway's interpreter -- instead of the log-oriented
+            # MISSING_EXTRA_HINT the gateway leaves in connect_error.
+            "sdk_installed": sdk_installed,
+            "sdk_install_supported": sdk_supported,
+            "sdk_install_command": sdk_command,
         }
     )
 

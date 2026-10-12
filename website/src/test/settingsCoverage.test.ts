@@ -81,6 +81,7 @@ const UNMAPPED_PANELS: Record<string, string> = {
   'InstanceFormFields.tsx': 'per-instance CRUD form fields (add/edit crew), not global settings',
   'McpManagement.tsx': 'mounted only on the standalone Developer page — a settings deep link would be dead',
   'MobileLoginCard.tsx': 'mint-a-sign-in-link action card; the link it returns is a one-time credential, not a persistent setting',
+  'OptionalSdkCard.tsx': 'read-only install-command card the Feishu, Teams and WhatsApp panels mount when their optional SDK is missing; zero controls, only a copy button',
   'PostureDisclosure.tsx': "read-only disclosure rows for SecurityPanel's posture section (manual entry security.live-security-posture)",
   'ReleasesPanel.tsx': 'read-only changelog viewer, zero persistent settings',
   'ReportProblemCard.tsx': 'feedback action card, no settings',

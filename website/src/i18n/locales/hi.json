@@ -16965,7 +16965,7 @@
         "if_single_tenant": "यदि सिंगल-टेनेंट हो)।",
         "in_the_bot_s": "बॉट के",
         "is_your_app_id_then_dm_the_bot_full_manifest_ste": "आपका App ID हो, फिर बॉट को DM करें —\n              पूरे manifest चरण ऊपर दी गई सेटअप गाइड में हैं।",
-        "jwt_required": "<strong>Microsoft Teams को PyJWT डिपेंडेंसी चाहिए।</strong> इनबाउंड Bot Framework अनुरोध एक साइन किया हुआ टोकन लाते हैं जिसे वेरिफ़ाई करना ज़रूरी है, इसलिए इसके बिना चैनल शुरू नहीं होगा। gateway चलाने वाले एनवायरनमेंट में <mono>pip install \"PyJWT[crypto]==2.13.0\"</mono> चलाएँ, फिर gateway रीस्टार्ट करें।",
+        "jwt_required": "<strong>Microsoft Teams को PyJWT डिपेंडेंसी चाहिए।</strong> इनबाउंड Bot Framework अनुरोध एक साइन किया हुआ टोकन लाते हैं जिसे वेरिफ़ाई करना ज़रूरी है, इसलिए इसके बिना चैनल शुरू नहीं होगा।",
         "leave_empty_for_a_multi_tenant_bot": "मल्टी-टेनेंट बॉट के लिए खाली छोड़ें",
         "loading_teams_config": "Teams कॉन्फ़िग लोड हो रहा है…",
         "localhost": "localhost",

@@ -17451,7 +17451,7 @@
         "if_single_tenant": "если однотенантный).",
         "in_the_bot_s": "В разделе бота",
         "is_your_app_id_then_dm_the_bot_full_manifest_ste": "— это ваш App ID, затем напишите боту\n              в личные сообщения — полные шаги по манифесту в руководстве по настройке выше.",
-        "jwt_required": "<strong>Для Microsoft Teams нужна зависимость PyJWT.</strong> Входящие запросы Bot Framework содержат подписанный токен, который необходимо проверять, поэтому без неё канал не запустится. Выполните <mono>pip install \"PyJWT[crypto]==2.13.0\"</mono> в окружении, где работает gateway, и перезапустите его.",
+        "jwt_required": "<strong>Для Microsoft Teams нужна зависимость PyJWT.</strong> Входящие запросы Bot Framework содержат подписанный токен, который необходимо проверять, поэтому без неё канал не запустится.",
         "leave_empty_for_a_multi_tenant_bot": "Оставьте пустым для мультитенантного бота",
         "loading_teams_config": "Загрузка конфигурации Teams…",
         "localhost": "localhost",

@@ -2709,10 +2709,14 @@ async def api_imessage_config_save(request: web.Request) -> web.Response:
 # Channels whose SDK ships as an optional extra rather than in core. Maps the
 # channel to (import name, extra name) so the panel can report BOTH whether the
 # SDK is importable by this gateway process and the exact command that installs
-# it into this interpreter. Teams (PyJWT) and WhatsApp (neonize) have the same
-# shape and are one entry each when their panels adopt the card.
+# it into this interpreter. Every panel that reports these renders the shared
+# optional-SDK card instead of a bare ``pip install`` line.
 _CHANNEL_SDK_EXTRA: dict[str, tuple[str, str]] = {
     "feishu": ("lark_oapi", "feishu"),
+    # PyJWT installs as the ``jwt`` package (teams/client.py imports ``jwt``).
+    "teams": ("jwt", "teams"),
+    # whatsapp/client.py probes ``find_spec("neonize")``.
+    "whatsapp": ("neonize", "whatsapp"),
 }
 
 

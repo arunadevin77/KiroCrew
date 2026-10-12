@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         _TEAMS_CREDENTIAL_REJECT_STATUSES,
         _TOKEN_VERIFY_TIMEOUT,
         DashboardState,
+        _channel_sdk_status,
         _clean_id_list,
         _CredentialTupleChanged,
         _hot_apply_after_write,
@@ -50,6 +51,12 @@ async def api_teams_config_get(request: web.Request) -> web.Response:
     cfg = KiroCrewConfig.load()
     # Off-loop: a secret:// reference is read and decrypted from the vault.
     creds = await asyncio.to_thread(cfg.load_credentials)
+    # Off-loop too: find_spec and the PEP 668 marker check touch the filesystem.
+    # find_spec locates PyJWT without importing it, so this keeps the boot-path
+    # rule above.
+    sdk_installed, sdk_supported, sdk_command = await asyncio.to_thread(
+        _channel_sdk_status, "teams"
+    )
     tc = cfg.teams
     # Credential resolution mirrors the boot path (slack/gateway.py) exactly: the
     # env credential wins over config.json for all three values, so the panel
@@ -77,6 +84,13 @@ async def api_teams_config_get(request: web.Request) -> web.Response:
             # validation is impossible. Reported so an operator sees the reason
             # instead of a channel that silently never starts.
             "jwt_available": bool(HAS_JWT),
+            # The shared optional-SDK card's fields (see _channel_sdk_status):
+            # the install command names THIS gateway's interpreter, and is empty
+            # where no in-place install can work, so the panel never shows a
+            # bare ``pip install`` that could target another environment.
+            "sdk_installed": sdk_installed,
+            "sdk_install_supported": sdk_supported,
+            "sdk_install_command": sdk_command,
             "enabled": tc.enabled,
             # Non-secret: blank means a multi-tenant bot, a value means
             # single-tenant. The operator needs it to tell those apart.
