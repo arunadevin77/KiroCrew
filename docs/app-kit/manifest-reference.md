@@ -1068,10 +1068,10 @@ Control how Kiro Crew manages the app:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `platform.os` | string[] | `["macos", "linux"]` | Supported platforms. Valid names: `macos`, `linux`, `windows`. **The default excludes `windows`** — see below |
+| `platform.os` | string[] | `["macos", "linux"]` | Supported platforms. Valid names: `macos`, `linux`, `windows`; any other value is rejected at validation. **The default excludes `windows`** — see below |
 | `platform.arch` | string[] | `[]` (any) | Supported architectures |
 | `platform.requiresDesktopApp` | boolean | `false` | App's own UI needs the Electron desktop shell |
-| `platform.installMode` | string | `"server"` | `"server"` or `"client"` |
+| `platform.installMode` | string | `"server"` | `"server"` or `"client"`; any other value is rejected at validation |
 | `platform.clientInstall.shell` | string | | One-liner for local install |
 | `platform.clientInstall.postInstall` | string | | Command to run after install |
 
@@ -1212,6 +1212,12 @@ gateway has them: `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`,
 - Each UI page must have `route` and `label`
 - Each UI overlay must have `id` and `replaces`; both must be kebab-case, and `id`
   must be unique within the manifest
+- Each `platform.os` entry must be exactly `macos`, `linux` or `windows`. Spelling and
+  case matter: `Windows`, `win` and `windows ` match no platform, so the platform gate
+  would answer no for the platform the manifest names. The platform strings `darwin` and
+  `win32` are refused too
+- `platform.installMode` must be exactly `server` or `client`; the install gates test
+  for `client` alone, so a spelling such as `Client` would install as a server app
 
 ## Full Example
 

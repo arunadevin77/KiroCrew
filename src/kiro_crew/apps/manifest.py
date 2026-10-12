@@ -1134,6 +1134,10 @@ class PlatformConfig:
     _OS_TO_PLATFORM = {"macos": "darwin", "linux": "linux", "windows": "win32"}
     _PLATFORM_TO_OS = {"darwin": "macos", "linux": "linux", "win32": "windows"}
 
+    # The values ``installMode`` takes. Both install gates test ``== "client"``, so any
+    # other spelling is read as ``"server"``.
+    _INSTALL_MODES = ("server", "client")
+
     def supports_platform(self, sys_platform: str) -> bool:
         """Check if this platform config supports the given sys.platform value."""
         return sys_platform in {self._OS_TO_PLATFORM.get(o, o) for o in self.os}
@@ -1142,6 +1146,31 @@ class PlatformConfig:
     def current_os() -> str:
         """Return the user-friendly OS name for the current platform."""
         return PlatformConfig._PLATFORM_TO_OS.get(sys.platform, sys.platform)
+
+    def validate(self) -> list[str]:
+        """Return an error for each ``platform`` value no gate recognises.
+
+        ``supports_platform`` resolves an ``os`` name through ``_OS_TO_PLATFORM`` and passes a
+        name without a row through unchanged, so ``"Windows"``, ``"win"`` or ``"windows "``
+        equals no ``sys.platform`` and the gate answers no for the platform its author named.
+        The platform strings themselves (``"win32"``, ``"darwin"``) match only through that
+        pass-through and are refused too: a manifest names an OS by its row.
+        ``installMode`` has the same shape: ``"Client"`` is not ``"client"``, so the app
+        installs as a server app. The error names the accepted values.
+        """
+        errors: list[str] = []
+        for name in self.os:
+            if name not in self._OS_TO_PLATFORM:
+                errors.append(
+                    f"platform.os: unknown value {name!r} "
+                    f"(expected one of {', '.join(self._OS_TO_PLATFORM)})"
+                )
+        if self.installMode not in self._INSTALL_MODES:
+            errors.append(
+                f"platform.installMode: unknown value {self.installMode!r} "
+                f"(expected one of {', '.join(self._INSTALL_MODES)})"
+            )
+        return errors
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -2674,6 +2703,9 @@ class AppManifest:
 
         # Backend hooks validation
         errors.extend(self.backend.hooks.validate())
+
+        # Platform names the install and enable gates compare against
+        errors.extend(self.platform.validate())
 
         # Notification channel validation (RFC Phase 2: 8-channel cap, kebab ids)
         errors.extend(self.notifications.validate())

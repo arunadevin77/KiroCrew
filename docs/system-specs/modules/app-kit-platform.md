@@ -3570,6 +3570,36 @@ Writers: `apps/routes.py`, `apps/proxy_auth.py`, `apps/manifest.py`. Tests:
 `test/test_app_proxy_auth.py`, `test/test_app_manifest.py`,
 `test/test_gateway_appkit_endpoints.py`.
 
+## 25. `platform.os` and `platform.installMode` are closed vocabularies, refused at validation
+
+`PlatformConfig.supports_platform` resolves each `platform.os` entry through
+`_OS_TO_PLATFORM`, so the keys `macos`, `linux` and `windows` are the only names a
+manifest can use. An entry with no row is passed through unchanged, so `"Windows"`,
+`"win"` and `"windows "` equal no `sys.platform` an app runs on, and the gate answers no
+for the platform the author named. A client-install app then has its `onEnable` script
+skipped (`unsupported_platform`) and a registry install turned into local-install
+instructions; the detail page prints the token as typed, so nothing marks it wrong.
+`installMode` has the same shape: `apps/routes.py::_client_install_manifest` and the
+registry install gate in `apps/registry_pipeline/install.py` both test `== "client"`, so
+`"Client"` installs as a server app with nothing to say why.
+
+`PlatformConfig.validate` refuses both, one error per offending value, and each error
+names the accepted values. `AppManifest.validate` calls it, so every door that validates
+a manifest applies it: `install_app` and `update_app` through `_validate_source_path`,
+builtin discovery in `apps/discovery.py` (which skips a builtin with errors), and the
+plugin importer in `apps/plugin_import.py` (which emits no `platform` block). An update
+that fails the rule leaves the installed copy as it was.
+
+Matching is exact. Nothing normalises case or whitespace, because the stored token is
+what the App Store prints and what the gates compare. `darwin` and `win32` are refused
+as well: `supports_platform` happens to match a raw `sys.platform` value, but the names a
+manifest may use are the three keys. `platform.arch` has no reader, so it has no
+vocabulary to enforce.
+
+Writers: `apps/manifest.py` (`PlatformConfig.validate`, `AppManifest.validate`). Tests:
+`test/test_app_manifest_platform_vocabulary.py`,
+`test/test_builtin_app_platform_declarations.py`.
+
 ## Windows stale-backend cleanup capacity
 
 Stale-backend tree reaping shares the Windows cleanup admission budget with ACP.
