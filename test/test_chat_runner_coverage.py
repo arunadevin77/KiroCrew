@@ -26,6 +26,7 @@ import asyncio
 import json
 import os
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -55,7 +56,11 @@ from kiro_crew.memory_stores import UnknownMemoryStore
 from kiro_crew.metrics import turns as turns_mod
 from kiro_crew.providers.base import LLMEvent
 from kiro_crew.security import oauth_url_contains_credential
-from kiro_crew.trust_patterns import canonical_non_shell_trust_key, exact_trust_pattern
+from kiro_crew.trust_patterns import (
+    GrantDeadline,
+    canonical_non_shell_trust_key,
+    exact_trust_pattern,
+)
 
 # ── Shared helpers ────────────────────────────────────────────────────────
 
@@ -5344,6 +5349,108 @@ class TestRunChatAutoApproveRungs:
             await _drive(state, slot)
 
         client.reject_tool.assert_awaited_once_with("req-cov-1")
+
+    @pytest.mark.asyncio
+    async def test_live_timed_pattern_auto_approves_a_matching_command(self, tmp_path):
+        state, client = _runner_state(tmp_path)
+        slot = _slot()
+        slot._trusted_pattern_deadlines = {
+            "ls*": GrantDeadline(wall=time.time() + 600, mono=time.monotonic() + 600)
+        }
+        _set_stream(
+            client,
+            [_permission(tool_input=json.dumps({"command": "ls -la"})), _complete()],
+        )
+
+        await _drive(state, slot)
+
+        client.approve_tool.assert_awaited_once_with("req-cov-1")
+        assert set(slot._trusted_pattern_deadlines) == {"ls*"}
+
+    @pytest.mark.asyncio
+    async def test_expired_timed_pattern_is_dropped_before_matching(self, tmp_path):
+        """Fail closed: a grant past its deadline never reaches the matcher."""
+        state, client = _runner_state(tmp_path)
+        slot = _slot()
+        slot._trusted_patterns = {"git status"}
+        # Past on the wall clock only, as after a suspended host wakes.
+        slot._trusted_pattern_deadlines = {
+            "ls*": GrantDeadline(wall=time.time() - 1, mono=time.monotonic() + 600)
+        }
+        # Session trust lets the turn finish; the matcher is what is observed.
+        slot._trust = True
+        _set_stream(
+            client,
+            [_permission(tool_input=json.dumps({"command": "ls -la"})), _complete()],
+        )
+
+        with patch.object(
+            chat_runner, "_matches_trusted_pattern", wraps=chat_runner._matches_trusted_pattern
+        ) as matcher:
+            await _drive(state, slot)
+
+        matcher.assert_called_once()
+        assert matcher.call_args.args[1] == {"git status"}
+        assert slot._trusted_patterns == {"git status"}
+        assert slot._trusted_pattern_deadlines == {}
+
+    @pytest.mark.asyncio
+    async def test_only_expired_timed_patterns_skip_matching_entirely(self, tmp_path):
+        state, client = _runner_state(tmp_path)
+        slot = _slot()
+        slot._trusted_pattern_deadlines = {
+            "ls*": GrantDeadline(wall=time.time() + 600, mono=time.monotonic() - 1)
+        }
+        slot._trust = True
+        _set_stream(
+            client,
+            [_permission(tool_input=json.dumps({"command": "ls -la"})), _complete()],
+        )
+
+        with patch.object(chat_runner, "_matches_trusted_pattern") as matcher:
+            await _drive(state, slot)
+
+        matcher.assert_not_called()
+        assert slot._trusted_pattern_deadlines == {}
+
+    @pytest.mark.asyncio
+    async def test_timed_grant_expiring_during_the_program_check_prompts(self, tmp_path):
+        """The approval rests on a grant that is live after the awaited check, not before it."""
+        state, client = _runner_state(tmp_path)
+        slot = _slot()
+        slot._trusted_pattern_deadlines = {
+            "ls*": GrantDeadline(wall=time.time() + 600, mono=time.monotonic() + 600)
+        }
+
+        async def _expire_while_checking(_command):
+            # The executor hop lasts past the deadline (a slow pool, a host
+            # suspended mid-call): the grant is live when matched, gone after.
+            slot._trusted_pattern_deadlines["ls*"] = GrantDeadline(wall=0.0, mono=0.0)
+            return None
+
+        prompted: list[bool] = []
+
+        def _allow_once_when_registered():
+            future = slot._approval_futures.get("req-cov-1")
+            if future is not None and not future.done():
+                prompted.append(True)
+                future.set_result("approved")
+
+        state.push_slots_update.side_effect = _allow_once_when_registered
+        _set_stream(
+            client,
+            [_permission(tool_input=json.dumps({"command": "ls -la"})), _complete()],
+        )
+
+        with patch.object(
+            chat_runner,
+            "_name_grant_refusal_off_loop",
+            new=AsyncMock(side_effect=_expire_while_checking),
+        ):
+            await _drive(state, slot)
+
+        assert prompted == [True]
+        assert slot._trusted_pattern_deadlines == {}
 
 
 class TestRunChatApprovalWindow:

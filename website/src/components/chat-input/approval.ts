@@ -11,9 +11,11 @@ import { useLanguage } from '../../i18n/LanguageProvider'
 import { pickToolLabel } from '../../utils/toolLabel'
 import { deriveToolCallTitle } from '../../utils/toolCallTitle'
 import { toApiDecision } from '../../utils/approvalDecision'
+import { baseCommandLabel, truncateCommandLabel } from '../../utils/trustPatterns'
 import { APPROVAL_MODE_ADJUSTED_LS_KEY } from '../ApprovalModePicker'
 import type { SubagentActivity } from '../../types'
 import { i18nT } from '../../i18n/t'
+import { fmtTime } from '../../i18n/format'
 
 /* The slot's approval chrome as state: the pending tool approval (its
    decision submit, the approval-mode discovery hint and nudge, the ghost
@@ -94,7 +96,7 @@ export function useToolApproval({ slotId, slotApprovalChrome, approvalMode, disp
   // The same notice slot carries two different things: STATUS about an
   // approval that expired (nothing failed on our side) and a FAILED decision
   // submit (a rejected request). Only the latter is an error surface.
-  const [approvalNoticeKind, setApprovalNoticeKind] = useState<'status' | 'error'>('status')
+  const [approvalNoticeKind, setApprovalNoticeKind] = useState<'status' | 'error' | 'granted'>('status')
 
   const activeSlot = slotId
   const approvalMeta = pendingApproval?.meta as Record<string, unknown> | undefined
@@ -205,13 +207,24 @@ export function useToolApproval({ slotId, slotApprovalChrome, approvalMode, disp
     if (approvalToolCallId) dispatch(openActivityToTool(approvalToolCallId))
   }, [approvalToolCallId, dispatch])
 
-  const handleApprovalAction = useCallback((decision: string, pattern?: string) => {
+  const handleApprovalAction = useCallback((decision: string, pattern?: string, ttlSeconds?: number) => {
     if (!approvalId) return
     setApprovalSubmitting(true)
     setApprovalNotice(null)
     const finish = () => {
       dispatch(resolveByApprovalId({ id: approvalId, slot: activeSlot || undefined, decision }))
       setApprovalSubmitting(false)
+      // A timed grant says what it covers and when it ends, since the card that
+      // offered the lifetime is gone the moment the decision lands. The time
+      // is the client's estimate from the click: the server's deadline starts
+      // on receipt, so the grant never ends before the time shown here.
+      if (ttlSeconds !== undefined && !approvalIsUnattended) {
+        const time = fmtTime(Date.now() + ttlSeconds * 1000)
+        setApprovalNoticeKind('granted')
+        setApprovalNotice(decision === 'trust_base'
+          ? i18nT('components.chatInput.trusted_base_until', { base: baseCommandLabel(approvalBaseCommand), time })
+          : i18nT('components.chatInput.trusted_command_until', { cmd: truncateCommandLabel(approvalFullCommand, 80), time }))
+      }
       // B2: tally manual one-shot approvals per slot. Only 'approved' counts —
       // a trust grant already reduces future prompts, and a rejection is not
       // approval fatigue. Fires once per dashboard install (localStorage
@@ -263,13 +276,14 @@ export function useToolApproval({ slotId, slotApprovalChrome, approvalMode, disp
         api.resolveApproval(approvalId, 'approve').then(finish).catch(fail)
         return
       }
-      const extra: Record<string, string> = { request_id: approvalId }
+      const extra: Record<string, string | number> = { request_id: approvalId }
       if (pattern) extra.pattern = pattern
+      if (ttlSeconds !== undefined) extra.ttl_seconds = ttlSeconds
       api.approveChatSlot(activeSlot, decision, extra).then(finish).catch(fail)
     } else {
       api.resolveApproval(approvalId, toApiDecision(decision)).then(finish).catch(fail)
     }
-  }, [approvalId, activeSlot, approvalIsUnattended, approvalSource, approvalMode, dispatch])
+  }, [approvalId, activeSlot, approvalIsUnattended, approvalSource, approvalMode, approvalFullCommand, approvalBaseCommand, dispatch])
 
   return {
     pendingApproval, hasApproval, approvalId, approvalSubmitting, approvalPickerSignal, setApprovalPickerSignal,

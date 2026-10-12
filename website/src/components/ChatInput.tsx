@@ -2,7 +2,7 @@ import { useRef, useEffect, useMemo, useCallback, useId, memo, lazy, Suspense } 
 import { GUIDE_KEEP_CLEAR } from '../guide/trustRoot'
 import { useGuidePredicate } from '../guide/guidePredicates'
 import { markComposerResize } from '../utils/composerResize'
-import { ArrowUp, Loader2, RotateCw, Sparkles, Target, CheckCircle, Lock, FolderOpen, ClipboardList, PenLine, MoreHorizontal, Terminal } from 'lucide-react'
+import { ArrowUp, Loader2, RotateCw, Sparkles, Target, CheckCircle, Lock, FolderOpen, ClipboardList, PenLine, MoreHorizontal, Terminal, Clock } from 'lucide-react'
 import SketchDialog from './SketchDialog'
 import QuoteCard from '../pages/chat/QuoteCard'
 import CopyBranchButton from './CopyBranchButton'
@@ -819,7 +819,8 @@ function ChatInput({
                             showTrustAll={approvalTrustAllGrantable || approvalTrustCommandGrantable}
                             disabled={approvalSubmitting}
                             className={approvalBtnClass}
-                            onAction={(action, pattern) => { handleApprovalAction(action, pattern) }}
+                            timedGrants
+                            onAction={(action, pattern, ttlSeconds) => { handleApprovalAction(action, pattern, ttlSeconds) }}
                         />
                       )}
                       <RejectDropdown
@@ -886,6 +887,14 @@ function ChatInput({
           className="flex items-center gap-2 px-4 py-2 mb-1 bg-[color-mix(in_srgb,var(--warn)_12%,transparent)] rounded-lg"
         >
           <Lock size={12} className="text-warn shrink-0" />
+          <span className="text-muted text-[13px]">{approvalNotice}</span>
+        </div>
+      )}
+      {approvalNotice && approvalNoticeKind === 'granted' && (
+        // A grant that landed, not a block: its own clock icon and ok tint,
+        // so the confirmation never wears the warning lock above.
+        <div role="status" className="flex items-center gap-2 px-4 py-2 mb-1 bg-ok-subtle rounded-lg">
+          <Clock size={12} className="text-ok shrink-0" />
           <span className="text-muted text-[13px]">{approvalNotice}</span>
         </div>
       )}

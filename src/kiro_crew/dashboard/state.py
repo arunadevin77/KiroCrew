@@ -143,6 +143,7 @@ if TYPE_CHECKING:
     from kiro_crew.power import SleepInhibitor  # noqa: F401
     from kiro_crew.slack.outbound import PostedOptions  # noqa: F401
     from kiro_crew.subagent import SubagentDelivery
+    from kiro_crew.trust_patterns import GrantDeadline  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -2916,6 +2917,7 @@ class _ChatSlot:
         "_trust_reads",
         "_member_approval_seeded",
         "_trusted_patterns",
+        "_trusted_pattern_deadlines",
         "_titled",
         "_title_origin",
         "_title_epoch",
@@ -3404,6 +3406,12 @@ class _ChatSlot:
         # A crewmate thread took its profile's approval mode (members handler).
         self._member_approval_seeded: bool = False
         self._trusted_patterns: set[str] = set()  # session-scoped fnmatch globs
+        # Timed command-scoped grants, kept apart from ``_trusted_patterns`` so
+        # no other writer of that set can end or extend one. Each maps a pattern
+        # to its deadline and is pruned at the first decision after it passes.
+        # In memory only, so a restart drops timed grants along with every other
+        # grant on the slot.
+        self._trusted_pattern_deadlines: dict[str, GrantDeadline] = {}
         self._titled: bool = False  # True once a title has been assigned
         # Provenance of the current title: "auto" (LLM auto-titler or its
         # fallback) or "user" (manual rename). Governs the background title

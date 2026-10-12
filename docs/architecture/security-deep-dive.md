@@ -563,6 +563,19 @@ Dashboard tool approvals offer four decisions, in widening scope: `trust_command
 `ls *`, plus the bare binary, session-scoped), `trust_reads` (read-only bash for
 the slot), and `trust` (all tools for the slot). `yolo` is the global escalation.
 
+`trust_command` and `trust_base` can also be timed. The chat approval prompt
+offers each one for an hour or for the rest of the user's day, beside the grant
+that lasts for the chat. The request carries `ttl_seconds`, a whole number from 1
+to 86400; any other value, or a lifetime on any other decision, is refused with
+no grant recorded and the call still pending. A timed grant is kept on the chat's
+slot in its own store, apart from the chat-long patterns, so no other writer of
+those patterns can end or extend it. Its deadline is held on both the wall clock
+and the monotonic clock and checked at decision time: a grant is dropped before
+matching once either deadline passes, so neither a suspended host nor a clock
+set backwards stretches it, and the next matching call prompts again. A timed
+grant stays on the chat that made it and, like every per-slot grant, is gone
+after a restart.
+
 The security-relevant property is what the pattern is derived from: the **actual
 command in `tool_input`**, not the model-authored display title. Trust patterns
 are per-slot fnmatch globs; a multi-command title yields one pattern per binary.

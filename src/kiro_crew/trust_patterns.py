@@ -12,8 +12,15 @@ import fnmatch
 import glob
 import json
 import re
+from collections.abc import Iterable
+from typing import NamedTuple
 
 ENV_ASSIGNMENT_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*=")
+
+# The longest a timed command-scoped grant may last. "For the rest of today"
+# is the widest timed choice the approval card offers, so a day bounds every
+# honest request; a longer one is refused rather than clamped.
+MAX_TIMED_GRANT_SECONDS = 24 * 60 * 60
 
 _REDIRECT_PLACEHOLDER = "\x00REDIR\x00"
 _REDIRECT_RE = re.compile(r"[0-9]*>&[0-9]*|&>>?")
@@ -328,3 +335,78 @@ def base_trust_patterns(base_command: str) -> set[str]:
         literal = glob.escape(base)
         patterns.update((literal, f"{literal} *"))
     return patterns
+
+
+def parse_grant_ttl(value: object) -> int | None:
+    """Return a timed grant's lifetime in whole seconds, or ``None`` if invalid.
+
+    Only a plain integer from 1 to :data:`MAX_TIMED_GRANT_SECONDS` is a
+    lifetime. A bool, a float, a numeric string or an out-of-range number is
+    invalid, and the caller refuses the grant on ``None``: an unreadable
+    lifetime never becomes a grant that lasts for the whole chat.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if not 1 <= value <= MAX_TIMED_GRANT_SECONDS:
+        return None
+    return value
+
+
+class GrantDeadline(NamedTuple):
+    """When a timed grant stops applying, on two clocks at once.
+
+    ``wall`` is ``time.time()`` and keeps counting while the host is
+    suspended, which is the clock the user's "until 1:45 AM" refers to.
+    ``mono`` is ``time.monotonic()`` and cannot be moved back by a clock
+    change. The grant ends when EITHER deadline passes, so neither a sleeping
+    laptop nor a clock set backwards stretches it.
+    """
+
+    wall: float
+    mono: float
+
+
+def grant_deadline(ttl: int, *, wall: float, mono: float) -> GrantDeadline:
+    """Return the deadline of a grant made at (``wall``, ``mono``) for ``ttl`` seconds."""
+    return GrantDeadline(wall=wall + ttl, mono=mono + ttl)
+
+
+def record_trust_grant(
+    patterns: set[str],
+    timed: dict[str, GrantDeadline],
+    granted: Iterable[str],
+    deadline: GrantDeadline | None,
+) -> None:
+    """Record a chat's grant of ``granted``, for the chat or until ``deadline``.
+
+    A chat-long grant goes into ``patterns``, the store every per-chat writer
+    shares, and clears any timed entry it now outlasts. A timed grant goes into
+    ``timed`` ONLY: it never adds to or removes from ``patterns``, so a pattern
+    another writer holds there (a worker lease, a chat-long grant) keeps its
+    own lifetime whatever the timed entry does. The newest timed grant of a
+    pattern sets its deadline.
+    """
+    for pattern in granted:
+        if deadline is None:
+            patterns.add(pattern)
+            timed.pop(pattern, None)
+        else:
+            timed[pattern] = deadline
+
+
+def live_trusted_patterns(
+    patterns: set[str], timed: dict[str, GrantDeadline], *, wall: float, mono: float
+) -> set[str]:
+    """Return the patterns that may approve a call now, dropping expired timed ones.
+
+    Called at decision time, right before a call is matched, so an expired
+    grant never approves anything: the call prompts again exactly as if the
+    grant had never been made. Only ``timed`` is pruned; ``patterns`` is
+    returned unchanged, and is returned itself when no timed grant is live.
+    """
+    for pattern, deadline in list(timed.items()):
+        if wall >= deadline.wall or mono >= deadline.mono:
+            del timed[pattern]
+    if not timed:
+        return patterns
+    return patterns | timed.keys()

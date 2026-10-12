@@ -6576,7 +6576,9 @@
       "terminal_pending": "Дождись загрузки сведений о сеансе или выбери другой сеанс.",
       "terminal_run_review": "Проверить команду терминала",
       "attachment_removed": "{{file}} удалён из вложений",
-      "attachment_restored": "{{file}} прикреплён"
+      "attachment_restored": "{{file}} прикреплён",
+      "trusted_command_until": "Доверие к «{{cmd}}» действует до {{time}}, затем запрос появится снова",
+      "trusted_base_until": "Доверие к любой команде «{{base}}» действует до {{time}}, затем запрос появится снова"
     },
     "chatPane": {
       "agent_list": "Список агентов",
@@ -8995,10 +8997,16 @@
       "trust": "Доверять",
       "trust_all_base": "Доверять всем командам <mono>{{base}}</mono>",
       "trust_all_base_channel": "Доверять всем командам <mono>{{base}}</mono> для @{{role}} — до перезапуска {{productName}}",
+      "trust_all_base_hour": "Доверять любой команде <mono>{{base}}</mono> в течение часа (до {{time}})",
+      "trust_all_base_session": "Доверять любой команде <mono>{{base}}</mono> в этом сеансе",
+      "trust_all_base_today": "Доверять любой команде <mono>{{base}}</mono> до полуночи ({{time}})",
       "trust_all_tools": "Доверять всем инструментам в этом сеансе",
       "trust_all_tools_channel": "Доверять всем инструментам в этом канале — сохраняется после перезапуска",
       "trust_this_command": "Доверять «<mono>{{cmd}}</mono>»",
-      "trust_this_command_channel": "Доверять «<mono>{{cmd}}</mono>» для @{{role}} — до перезапуска {{productName}}"
+      "trust_this_command_channel": "Доверять «<mono>{{cmd}}</mono>» для @{{role}} — до перезапуска {{productName}}",
+      "trust_this_command_hour": "Доверять «<mono>{{cmd}}</mono>» в течение часа (до {{time}})",
+      "trust_this_command_session": "Доверять «<mono>{{cmd}}</mono>» в этом сеансе",
+      "trust_this_command_today": "Доверять «<mono>{{cmd}}</mono>» до полуночи ({{time}})"
     },
     "tunnelStatus": {
       "connected": "Подключено",

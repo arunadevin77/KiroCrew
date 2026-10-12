@@ -5890,7 +5890,9 @@
       "terminal_force_stop": "[Şţøþ àğèñţ ···············]",
       "terminal_pending": "[Ẁàìţ ƒøŕ şèşşìøñ ðèţàìĺş ţø ĺøàð, øŕ şèĺèçţ àñøţĥèŕ şèşşìøñ. ·····················]",
       "attachment_removed": "[{{file}} ŕèɱøṽèð ƒŕøɱ àţţàçĥɱèñţş ··················]",
-      "attachment_restored": "[{{file}} àţţàçĥèð ··············]"
+      "attachment_restored": "[{{file}} àţţàçĥèð ··············]",
+      "trusted_command_until": "[Ţŕùşţèð “{{cmd}}” ùñţìĺ {{time}}, ţĥèñ ìţ àşķş àğàìñ ···················]",
+      "trusted_base_until": "[Ţŕùşţèð àñý “{{base}}” çøɱɱàñð ùñţìĺ {{time}}, ţĥèñ ìţ àşķş àğàìñ ·························]"
     },
     "chatPane": {
       "agent_list": "[Àğèñţ ĺìşţ ···············]",
@@ -7758,9 +7760,15 @@
       "trust_all_tools": "[Ţŕùşţ àĺĺ ţøøĺş ƒøŕ ţĥìş şèşşìøñ ················]",
       "trust_all_base": "[Ţŕùşţ àĺĺ <mono>{{base}}</mono> çøɱɱàñðş ·················]",
       "trust_all_base_channel": "[Ţŕùşţ àĺĺ <mono>{{base}}</mono> çøɱɱàñðş ƒøŕ @{{role}} — ùñţìĺ {{productName}} ŕèşţàŕţş ······················]",
+      "trust_all_base_hour": "[Ţŕùşţ àñý <mono>{{base}}</mono> çøɱɱàñð ƒøŕ àñ ĥøùŕ (ùñţìĺ {{time}}) ····················]",
+      "trust_all_base_session": "[Ţŕùşţ àñý <mono>{{base}}</mono> çøɱɱàñð ƒøŕ ţĥìş şèşşìøñ ··················]",
+      "trust_all_base_today": "[Ţŕùşţ àñý <mono>{{base}}</mono> çøɱɱàñð ùñţìĺ ɱìðñìğĥţ ({{time}}) ··················]",
       "trust_all_tools_channel": "[Ţŕùşţ àĺĺ ţøøĺş ìñ ţĥìş çĥàññèĺ — þèŕşìşţş àçŕøşş ŕèşţàŕţş ····················]",
       "trust_this_command": "[Ţŕùşţ “<mono>{{cmd}}</mono>” ············]",
-      "trust_this_command_channel": "[Ţŕùşţ “<mono>{{cmd}}</mono>” ƒøŕ @{{role}} — ùñţìĺ {{productName}} ŕèşţàŕţş ················]"
+      "trust_this_command_channel": "[Ţŕùşţ “<mono>{{cmd}}</mono>” ƒøŕ @{{role}} — ùñţìĺ {{productName}} ŕèşţàŕţş ················]",
+      "trust_this_command_hour": "[Ţŕùşţ “<mono>{{cmd}}</mono>” ƒøŕ àñ ĥøùŕ (ùñţìĺ {{time}}) ····················]",
+      "trust_this_command_session": "[Ţŕùşţ “<mono>{{cmd}}</mono>” ƒøŕ ţĥìş şèşşìøñ ··················]",
+      "trust_this_command_today": "[Ţŕùşţ “<mono>{{cmd}}</mono>” ùñţìĺ ɱìðñìğĥţ ({{time}}) ··················]"
     },
     "tunnelStatus": {
       "tunnel": "[Ţùññèĺ ·········]",

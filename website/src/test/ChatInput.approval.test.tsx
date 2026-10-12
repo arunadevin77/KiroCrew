@@ -169,7 +169,7 @@ describe('ChatInput approval flow', () => {
     renderWithProviders(<ChatInput {...defaultProps} />, { store })
     fireEvent.click(screen.getByText('Trust'))
     const buttons = screen.getAllByRole('menuitem')
-    const baseBtn = buttons.find(b => b.textContent?.includes('commands'))!
+    const baseBtn = buttons.find(b => /Trust any .+ command/.test(b.textContent ?? ''))!
     fireEvent.click(baseBtn)
     await waitFor(() => {
       expect(api.approveChatSlot).toHaveBeenCalledWith(
@@ -177,6 +177,38 @@ describe('ChatInput approval flow', () => {
       )
     })
     expect(api.resolveApproval).not.toHaveBeenCalled()
+  })
+
+  it('Trust dropdown timed command row sends ttl_seconds and says when it ends', async () => {
+    const store = createTestStore(stateWithApproval())
+    renderWithProviders(<ChatInput {...defaultProps} />, { store })
+    fireEvent.click(screen.getByText('Trust'))
+    const timed = screen.getAllByRole('menuitem').find(b => b.textContent?.startsWith('Trust “ls /tmp” for an hour'))!
+    fireEvent.click(timed)
+    await waitFor(() => {
+      expect(api.approveChatSlot).toHaveBeenCalledWith(
+        'slot-1', 'trust_command', { request_id: 'ap-123', pattern: 'ls /tmp', ttl_seconds: 3600 }
+      )
+    })
+    expect(api.resolveApproval).not.toHaveBeenCalled()
+    const granted = await screen.findByText(/^Trusted “ls \/tmp” until .+, then it asks again$/)
+    // A landed grant wears the clock, never the warning lock of a refusal.
+    const notice = granted.closest('[role="status"]')!
+    expect(notice.querySelector('svg.lucide-clock')).not.toBeNull()
+    expect(notice.querySelector('svg.lucide-lock')).toBeNull()
+  })
+
+  it('Trust dropdown timed family row names the family it trusted', async () => {
+    const store = createTestStore(stateWithApproval())
+    renderWithProviders(<ChatInput {...defaultProps} />, { store })
+    fireEvent.click(screen.getByText('Trust'))
+    fireEvent.click(screen.getAllByRole('menuitem').find(b => b.textContent?.startsWith('Trust any ls command for an hour'))!)
+    await waitFor(() => {
+      expect(api.approveChatSlot).toHaveBeenCalledWith(
+        'slot-1', 'trust_base', { request_id: 'ap-123', pattern: 'ls *', ttl_seconds: 3600 }
+      )
+    })
+    expect(await screen.findByText(/^Trusted any “ls” command until .+, then it asks again$/)).toBeInTheDocument()
   })
 
   it('Trust dropdown entire tool calls approveChatSlot with trust action', async () => {
@@ -324,21 +356,22 @@ describe('ChatInput approval flow', () => {
     renderWithProviders(<ChatInput {...defaultProps} />, { store })
     fireEvent.click(screen.getByText('Trust'))
     const buttons = screen.getAllByRole('menuitem')
-    expect(buttons.some(b => b.textContent?.includes('ls') && b.textContent?.includes('commands'))).toBe(true)
+    expect(buttons.some(b => b.textContent?.includes('ls') && /Trust any .+ command/.test(b.textContent ?? ''))).toBe(true)
   })
 
   it('chat surface offers every trust tier for a read-only shell command (regression guard)', () => {
     // The channels surface deliberately drops the command-scoped tiers
     // (hasCommand={false}); the chat surface must keep every tier — a future
     // change must not silently strip trust_command / trust_base here (#4421).
-    // Four tiers for this fixture, because it is also read-only.
+    // Four tiers for this fixture, because it is also read-only, and each
+    // command-scoped tier carries a timed hour row and rest-of-today row.
     const store = createTestStore(stateWithApproval())
     renderWithProviders(<ChatInput {...defaultProps} />, { store })
     fireEvent.click(screen.getByText('Trust'))
     const items = screen.getAllByRole('menuitem')
-    expect(items).toHaveLength(4)
+    expect(items).toHaveLength(8)
     expect(items.some(b => b.textContent?.includes('ls /tmp'))).toBe(true)          // trust_command
-    expect(items.some(b => b.textContent?.includes('commands'))).toBe(true)         // trust_base
+    expect(items.some(b => /Trust any .+ command/.test(b.textContent ?? ''))).toBe(true)         // trust_base
     expect(items.some(b => b.textContent === 'Trust read-only commands')).toBe(true)             // trust_reads
     expect(items.some(b => b.textContent?.includes('Trust all tools for this session'))).toBe(true)  // trust
   })
@@ -351,7 +384,7 @@ describe('ChatInput approval flow', () => {
     fireEvent.click(screen.getByText('Trust'))
     // Should show base command option (only for shell)
     const buttons = screen.getAllByRole('menuitem')
-    expect(buttons.some(b => b.textContent?.includes('commands'))).toBe(true)
+    expect(buttons.some(b => /Trust any .+ command/.test(b.textContent ?? ''))).toBe(true)
   })
 
   it('non-shell tool hides base command option', () => {
@@ -369,7 +402,7 @@ describe('ChatInput approval flow', () => {
     // Match the base tier's whole shape, not the bare word "commands": the
     // read-only tier also says "commands", so a substring test would pass
     // whatever the base tier does.
-    expect(buttons.some(b => /Trust all .+ commands/.test(b.textContent || ''))).toBe(false)
+    expect(buttons.some(b => /Trust any .+ command/.test(b.textContent || ''))).toBe(false)
   })
 
   it('keeps the session tier when the server cannot prove a command scope', () => {

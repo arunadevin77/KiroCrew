@@ -313,9 +313,13 @@ from kiro_crew.session_lifecycle import compaction_in_flight
 from kiro_crew.session_summary import count_user_turns_in_records
 from kiro_crew.start_priority import person_priority
 from kiro_crew.trust_patterns import (
+    GrantDeadline,
     base_consent_pattern,
     base_trust_patterns,
     exact_trust_pattern,
+    grant_deadline,
+    parse_grant_ttl,
+    record_trust_grant,
 )
 from kiro_crew.validation import (
     ARTIFACT_SLUG_RE,
@@ -10095,6 +10099,13 @@ def _deny_approval_mode(
     )
 
 
+def _grant_deadline(ttl: int | None) -> GrantDeadline | None:
+    """Return a timed grant's deadline from now, ``None`` for a chat-long grant."""
+    if ttl is None:
+        return None
+    return grant_deadline(ttl, wall=time.time(), mono=time.monotonic())
+
+
 def _deny_trust_pattern(name: str, request_id: str, action: str, code: str) -> web.Response:
     """Refuse and audit a command-scoped trust grant without resolving it."""
     try:
@@ -10112,6 +10123,8 @@ def _deny_trust_pattern(name: str, request_id: str, action: str, code: str) -> w
         "pattern_underivable": "the pending tool has no grantable command scope",
         "approval_superseded": "pattern does not match the pending command",
         "approval_not_slot_owned": "command-scoped trust requires a live slot approval",
+        "ttl_unsupported": "only a command or command-family grant can be timed",
+        "ttl_invalid": "ttl_seconds must be a whole number of seconds from 1 to 86400",
     }
     return web.json_response({"error": errors[code], "code": code}, status=400)
 
@@ -10177,6 +10190,17 @@ async def api_chat_slot_approve(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": "no pending approval", "code": "approval_not_pending"}, status=404
             )
+    # A timed grant names its lifetime in ``ttl_seconds``. Only the two
+    # command-scoped tiers carry one, and an unreadable lifetime refuses the
+    # whole decision BEFORE any side effect: it never falls back to a grant
+    # that lasts for the chat, and never to an approval with no grant.
+    grant_ttl: int | None = None
+    if "ttl_seconds" in body:
+        if original_action not in ("trust_command", "trust_base"):
+            return _deny_trust_pattern(name, request_id, original_action, "ttl_unsupported")
+        grant_ttl = parse_grant_ttl(body["ttl_seconds"])
+        if grant_ttl is None:
+            return _deny_trust_pattern(name, request_id, original_action, "ttl_invalid")
     # Locate the slot that OWNS the pending approval future. It is usually the
     # addressed slot, but under session-sharing or a rehydrated/replaced slot the
     # future can live on a different slot object under a different key. All
@@ -10285,7 +10309,12 @@ async def api_chat_slot_approve(request: web.Request) -> web.Response:
             # ``_trusted_patterns`` is the existing fnmatch store.  Escape every
             # metacharacter so an exact grant for ``rm *.tmp`` cannot authorize
             # ``rm secret.tmp``.
-            owner._trusted_patterns.add(exact_trust_pattern(trust_key))
+            record_trust_grant(
+                owner._trusted_patterns,
+                owner._trusted_pattern_deadlines,
+                (exact_trust_pattern(trust_key),),
+                _grant_deadline(grant_ttl),
+            )
         action = "approved"
     # Trust-base: derive bases from the same canonical pending command, never
     # from the client pattern or model-authored title.
@@ -10300,7 +10329,12 @@ async def api_chat_slot_approve(request: web.Request) -> web.Response:
                 return _deny_trust_pattern(name, request_id, original_action, "pattern_underivable")
             if pattern != base_consent_pattern(base):
                 return _deny_trust_pattern(name, request_id, original_action, "approval_superseded")
-            owner._trusted_patterns.update(base_trust_patterns(base))
+            record_trust_grant(
+                owner._trusted_patterns,
+                owner._trusted_pattern_deadlines,
+                base_trust_patterns(base),
+                _grant_deadline(grant_ttl),
+            )
         action = "approved"
     # YOLO: auto-approve all tools globally (all slots)
     elif action == "yolo":

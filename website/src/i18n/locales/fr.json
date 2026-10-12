@@ -6474,7 +6474,9 @@
       "terminal_pending": "Attends le chargement des détails de la session ou sélectionne une autre session.",
       "terminal_run_review": "Vérifier la commande du terminal",
       "attachment_removed": "{{file}} retiré des pièces jointes",
-      "attachment_restored": "{{file}} joint"
+      "attachment_restored": "{{file}} joint",
+      "trusted_command_until": "Confiance accordée à « {{cmd}} » jusqu’à {{time}}, puis la demande réapparaît",
+      "trusted_base_until": "Confiance accordée à toute commande « {{base}} » jusqu’à {{time}}, puis la demande réapparaît"
     },
     "chatPane": {
       "agent_list": "Liste des agents",
@@ -8870,10 +8872,16 @@
       "trust": "Approuver",
       "trust_all_base": "Faire confiance à toutes les commandes <mono>{{base}}</mono>",
       "trust_all_base_channel": "Faire confiance à toutes les commandes <mono>{{base}}</mono> pour @{{role}} — jusqu’au redémarrage de {{productName}}",
+      "trust_all_base_hour": "Faire confiance à toute commande <mono>{{base}}</mono> pendant une heure (jusqu’à {{time}})",
+      "trust_all_base_session": "Faire confiance à toute commande <mono>{{base}}</mono> pour cette session",
+      "trust_all_base_today": "Faire confiance à toute commande <mono>{{base}}</mono> jusqu’à minuit ({{time}})",
       "trust_all_tools": "Approuver tous les outils pour cette session",
       "trust_all_tools_channel": "Approuver tous les outils de ce canal — persiste après redémarrage",
       "trust_this_command": "Faire confiance à « <mono>{{cmd}}</mono> »",
-      "trust_this_command_channel": "Faire confiance à « <mono>{{cmd}}</mono> » pour @{{role}} — jusqu’au redémarrage de {{productName}}"
+      "trust_this_command_channel": "Faire confiance à « <mono>{{cmd}}</mono> » pour @{{role}} — jusqu’au redémarrage de {{productName}}",
+      "trust_this_command_hour": "Faire confiance à « <mono>{{cmd}}</mono> » pendant une heure (jusqu’à {{time}})",
+      "trust_this_command_session": "Faire confiance à « <mono>{{cmd}}</mono> » pour cette session",
+      "trust_this_command_today": "Faire confiance à « <mono>{{cmd}}</mono> » jusqu’à minuit ({{time}})"
     },
     "tunnelStatus": {
       "connected": "Connecté",
