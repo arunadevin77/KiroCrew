@@ -286,6 +286,9 @@ from kiro_crew.sandbox import (  # noqa: F401
     wrap_argv,
 )
 from kiro_crew.security import (  # noqa: F401
+    _CRED_CLASS,
+    _STREAM_HOLDBACK_JWT_MAX,
+    _STREAM_HOLDBACK_MAX,
     BINARY_MIME_ALLOWLIST,
     is_sensitive_canonical_path,
     is_sensitive_path,
@@ -2039,6 +2042,29 @@ _FILE_KINDS_MAX_PATHS = 100
 #: here would mis-set ``X-Truncated`` on multi-byte content.
 _FILE_READ_CAP = 512_000
 
+#: One credential-class character (the streaming redactor's ``_CRED_CLASS``).
+#: Matched against the REVERSED read, so finding the trailing run is linear.
+_CRED_RUN_REVERSED_RE = re.compile("[" + "".join(re.escape(c) for c in sorted(_CRED_CLASS)) + "]*")
+
+
+def _read_safe_end(text: str, cap: int) -> int:
+    """An end for *text*, a read cut off at its bound, that severs no token.
+
+    A credential is a contiguous run of credential-class characters, so the
+    trailing run is the only one the read's own end may sever. A run that
+    starts at or past *cap* is dropped; nothing below the cap depends on it.
+    A run crossing *cap* that holds a JWT header (``eyJ``) is dropped whole,
+    whatever its length. One without it is cut a streaming holdback before the
+    end, the same bound the streaming redactor holds an anchorless run to.
+    """
+    run = _CRED_RUN_REVERSED_RE.match(text[::-1])
+    # A ``*`` pattern matches the empty string, so a match always exists.
+    assert run is not None
+    run_start = len(text) - run.end()
+    if run_start >= cap or "eyJ" in text[run_start:]:
+        return run_start
+    return len(text) - _STREAM_HOLDBACK_MAX
+
 
 #: How much of a file the binary sniff reads before deciding, in BYTES. 8 KiB is
 #: the window the Files app already uses (``_is_binary_file`` in
@@ -2144,7 +2170,7 @@ async def api_file_read(request: web.Request) -> web.Response:
         outcome = await _run_path_probe(
             _read_request_path,
             raw_path,
-            0 if request.method == "HEAD" else read_cap + 1,
+            0 if request.method == "HEAD" else read_cap + _STREAM_HOLDBACK_JWT_MAX,
             transfer=request.method != "HEAD",
         )
     except _PathProbeBusy:
@@ -2203,7 +2229,6 @@ async def api_file_read(request: web.Request) -> web.Response:
             )
         content = outcome.content
         truncated = len(content) > read_cap
-        content = content[:read_cap]
         # OWNER-VIEW seam: when the requester IS the dashboard owner, the owner's
         # credential-redaction switch applies to this read of their own disk
         # (``security.redaction_switch``). A non-owner dashboard user (a Slack
@@ -2211,11 +2236,26 @@ async def api_file_read(request: web.Request) -> web.Response:
         # other opener in this module is ``api_file_diff``, which feeds the SAME
         # panel the ``original`` this buffer is compared against; the outbox
         # flagged-file check and the upload gates keep the unconditional ``redact``.
-        as_written = content
-        if await _owner_view_bypasses_credential_pass(request):
-            content = redact_owner_view_via_context(content)
-        else:
-            content = redact(content)
+        owner_view = await _owner_view_bypasses_credential_pass(request)
+
+        def redact_fn(text: str) -> str:
+            return redact_owner_view_via_context(text) if owner_view else redact(text)
+
+        # The read runs past the cap by the redactor's own longest-token bound,
+        # so a credential straddling the cap is matched whole there. The body
+        # keeps only what redacting the capped text and redacting the whole read
+        # agree on: it holds no prefix the capped pass alone left unmatched, and
+        # no raw text from past the cap that the shorter redacted output exposes.
+        # A read that stops short of its bound holds the whole file. A full one
+        # is first cut back to an end no token crosses (``_read_safe_end``), so
+        # the whole-read pass is one batch call that never sees a severed token.
+        as_written = content[:read_cap]
+        content = redact_fn(as_written)
+        if truncated:
+            whole = outcome.content
+            if len(whole) >= read_cap + _STREAM_HOLDBACK_JWT_MAX:
+                whole = whole[: _read_safe_end(whole, read_cap)]
+            content = os.path.commonprefix([content, redact_fn(whole)])
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_read", outcome="success", resources=path
         )
@@ -2229,7 +2269,7 @@ async def api_file_read(request: web.Request) -> web.Response:
         headers = {}
         if truncated:
             headers["X-Truncated"] = "true"
-        if content != as_written:
+        if not as_written.startswith(content):
             headers["X-Redacted"] = "true"
         if outcome.lossy:
             headers["X-Lossy-Decode"] = "true"

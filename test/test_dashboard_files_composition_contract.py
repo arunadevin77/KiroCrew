@@ -272,6 +272,7 @@ _FACADE_DEFS = (
     "_PathProbe",
     "_probe_request_path",
     "_owner_view_bypasses_credential_pass",
+    "_read_safe_end",
     "api_file_read",
     "api_file_raw",
     "_resolve_diff_path",
@@ -554,7 +555,7 @@ def test_every_base_definition_is_in_exactly_one_place() -> None:
     }
     assert defined == set(_FACADE_DEFS)
     moved = {name for names in _BASE_OWNERS.values() for name in names}
-    assert len(defined | moved) == len(defined) + len(moved) == 138
+    assert len(defined | moved) == len(defined) + len(moved) == 139
 
 
 def test_the_owners_log_as_the_facade() -> None:
