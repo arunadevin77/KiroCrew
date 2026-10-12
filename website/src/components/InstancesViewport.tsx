@@ -57,6 +57,12 @@ import {
   watchCursorAwayNative,
 } from '../lib/cursorAway'
 import { NATIVE_NOTIFY_TYPE, parseNativeNotifyEnvelope, postRelayedNativeNotification } from '../lib/nativeNotify'
+import {
+  PANE_CLIPBOARD_IMAGE_TYPE, PANE_CLIPBOARD_RESULT_TYPE, PANE_CLIPBOARD_VERSION, parsePaneClipboardImageRequest,
+} from '../lib/paneClipboardRelay'
+import { hasGesture } from '../hooks/useFrameOpenLink'
+import { copyImageToClipboard } from '../utils/clipboard'
+import { copyImageWithText } from '../pages/chat/share/shareSupport'
 import { frameDocumentState, paneLog, safePaneUrl } from '../lib/paneLog'
 import { clearPaneHttpCache, paneOriginFor } from '../lib/paneCache'
 import { connectInstanceInto } from '../lib/connectInstance'
@@ -688,6 +694,52 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
         const watchId = (data as { id?: unknown }).id
         const live = paneCursorWatchRef.current
         if (live && live.paneId === id && live.watchId === watchId) stopPaneCursorWatch()
+      } else if (data.type === PANE_CLIPBOARD_IMAGE_TYPE) {
+        // A pane wants an image on the clipboard. Its own async Clipboard API is
+        // refused (this document's header scopes the clipboard to this origin,
+        // and an iframe cannot be delegated more than that), and an image has no
+        // execCommand path, so this frame writes on its behalf. Narrow by
+        // design (paneClipboardRelay.ts): the request must come from that pane's
+        // own frame, the pane must be the one on screen, and the person must
+        // have JUST clicked or pressed a key inside it -- live activation with
+        // the focused element being that iframe -- so a pane posting on its
+        // own copies nothing. Every refusal is still answered, so the pane can
+        // fall back at once instead of waiting out its timeout.
+        const frameEl = iframeRefs.current.get(id)
+        const frame = frameEl?.contentWindow
+        if (!frameEl || !frame || e.source !== frame) return
+        const req = parsePaneClipboardImageRequest(data)
+        if (!req) return
+        const origin = e.origin
+        const reply = (ok: boolean) => {
+          try {
+            frame.postMessage({ type: PANE_CLIPBOARD_RESULT_TYPE, v: PANE_CLIPBOARD_VERSION, id: req.id, ok }, origin)
+          } catch {
+            /* frame mid-navigation — the pane's own timeout reports "not copied" */
+          }
+        }
+        if (id !== activeIdRef.current || !hasGesture(frameEl)) {
+          // Journaled, because the pane can only fall back silently: a refusal
+          // here (most plausibly a slow image render outliving the click's
+          // activation window) must leave evidence of which check said no.
+          paneLog('clipboard-relay-refused', {
+            id,
+            activePane: id === activeIdRef.current,
+            activation: Boolean(navigator.userActivation?.isActive),
+            focusOnPane: document.activeElement === frameEl,
+          })
+          reply(false)
+          return
+        }
+        // The same helpers a top-level copy uses; this document's policy allows
+        // the clipboard, so they take their direct path here.
+        const written = req.text !== undefined
+          ? copyImageWithText(req.png, req.text)
+          : copyImageToClipboard(Promise.resolve(req.png))
+        void written.then(ok => {
+          if (!ok) paneLog('clipboard-relay-write-failed', { id })
+          reply(ok)
+        })
       } else if (data.type === 'mc-embedded-boot') {
         // The pane's bundle EXECUTED (posted from main.tsx before React renders,
         // see EmbeddedHostBridge for the ready half). This line splits the one
@@ -1142,6 +1194,9 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
         // boundary in some engines and the receiver validates element-wise anyway.
         pinnedCrews,
         stableOrder,
+        // This host performs image copies for the pane (mc-clipboard-image).
+        // Advertised so a pane relays only to a host that will answer.
+        clipboardRelay: PANE_CLIPBOARD_VERSION,
       }
     },
     [instancesQuery.data, warm, unread, activeId, macInset, winInset, winCaptionReserve, focusMode, pinnedCrews, stableOrder],
@@ -1340,11 +1395,17 @@ export default function InstancesViewport({ macInset = false }: { macInset?: boo
           // without "microphone", getUserMedia in the remote dashboard rejects
           // with NotAllowedError; without "fullscreen",
           // document.fullscreenEnabled is false in the pane and the native
-          // <video> controls render a disabled fullscreen button; without
-          // "clipboard-write", navigator.clipboard.writeText() rejects in the
-          // pane, so every copy affordance fails (CliPanel's selection copy
-          // surfaces "Copy failed"; TerminalKeyBar and WebAppArtifactCard hit
-          // the same rejection). Local (top-level) use is unaffected.
+          // <video> controls render a disabled fullscreen button. clipboard-write
+          // is asked for too, but this delegation cannot grant it: the
+          // dashboard's own Permissions-Policy header scopes the clipboard to
+          // this origin (`clipboard-write=(self)`), and an `allow` attribute can
+          // only hand a frame what the embedding document's policy already gives
+          // that frame's origin. So navigator.clipboard is refused in every pane.
+          // Text copy still lands through the shared helper's execCommand
+          // fallback (it skips the refused call, so no policy violation is
+          // logged), and image copy is performed by THIS frame on the pane's
+          // behalf, gated on a gesture inside the pane (mc-clipboard-image,
+          // paneClipboardRelay.ts). Local (top-level) use is unaffected.
           // Loopback-only, and the pane already runs our own token-authed SPA,
           // so delegating these grants nothing a same-origin top-level load
           // wouldn't already. display-capture follows the same rule: without

@@ -1,7 +1,16 @@
+import { clipboardRelayAvailable, clipboardWriteBlockedByPolicy, relayImageCopyToHost } from '../lib/paneClipboardRelay'
+
 /** Copy code, trimming leading + trailing whitespace so a pasted command lands
  *  clean at the prompt — no leading indent, no trailing space. */
 export function copyCode(text: string): Promise<boolean> {
   return copyToClipboard(text.trim())
+}
+
+/** The rejection a policy-refused async write would have produced, for a caller
+ *  that never made the call. Same name, so a reason-reading caller (the
+ *  terminal's Copy key) reaches the same verdict it reached before. */
+function policyRefusal(): DOMException {
+  return new DOMException('clipboard-write refused by policy', 'NotAllowedError')
 }
 
 /** Why a copy ended the way it did, for the rare caller that must say something
@@ -31,6 +40,12 @@ export interface CopyOutcome {
 export async function copyWithOutcome(text: string): Promise<CopyOutcome> {
   const write = navigator.clipboard?.writeText
   if (!write) return { ok: execCommandCopy(text), hadAsyncApi: false }
+  // Refused by policy (an embedded instance pane): calling the API anyway is
+  // itself a logged Permissions-Policy violation and can only reject, so go
+  // straight to the fallback and report the refusal the call would have made.
+  if (clipboardWriteBlockedByPolicy()) {
+    return { ok: execCommandCopy(text), hadAsyncApi: true, asyncError: policyRefusal() }
+  }
   try {
     await navigator.clipboard.writeText(text)
     return { ok: true, hadAsyncApi: true }
@@ -114,6 +129,9 @@ export async function copyImageToClipboard(png: Promise<Blob>): Promise<boolean>
   // `unhandledRejection` under the test runner) on a path already reported as
   // `false`. A promise may carry more than one handler, so this costs nothing.
   void png.catch(() => {})
+  // Inside an embedded instance pane the policy refuses this write, so the host
+  // window performs it (paneClipboardRelay.ts says why that is safe).
+  if (clipboardWriteBlockedByPolicy()) return clipboardRelayAvailable() ? relayImageCopyToHost(png) : false
   if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') return false
   try {
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
@@ -132,7 +150,7 @@ export async function copyImageToClipboard(png: Promise<Blob>): Promise<boolean>
  *  missing or refused, the `execCommand` fallback carries both flavours in its
  *  `copy` event, so a plain-HTTP gateway still pastes formatted. */
 export async function copyRichToClipboard(html: string, plain: string): Promise<boolean> {
-  if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+  if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined' && !clipboardWriteBlockedByPolicy()) {
     try {
       await navigator.clipboard.write([new ClipboardItem({
         'text/html': new Blob([html], { type: 'text/html' }),

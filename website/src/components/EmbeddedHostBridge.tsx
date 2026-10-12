@@ -21,6 +21,7 @@ import { useAppDispatch } from '../store'
 import { setHostModel, type HostModel } from '../store/instancesSlice'
 import { isEmbeddedPane } from '../lib/embedded'
 import { setFocusModeEnabled } from '../hooks/useFocusMode'
+import { noteClipboardRelayHost, PANE_CLIPBOARD_VERSION } from '../lib/paneClipboardRelay'
 
 const MAC_INSET_CLASS = 'embedded-mac-inset'
 const WIN_INSET_CLASS = 'embedded-win-inset'
@@ -176,6 +177,12 @@ export default function EmbeddedHostBridge() {
       const model = parseHostModel(e.data)
       if (!model) return
       dispatch(setHostModel(model))
+      // Whether this host performs image copies for us, and where to ask. Read
+      // off the raw payload: it is a pane-side capability, not header state.
+      noteClipboardRelayHost(
+        e.origin,
+        (e.data as { clipboardRelay?: unknown }).clipboardRelay === PANE_CLIPBOARD_VERSION,
+      )
       document.documentElement.classList.toggle(MAC_INSET_CLASS, model.macInset)
       document.documentElement.classList.toggle(WIN_INSET_CLASS, model.winInset)
       // Adopt the host's zoom-aware reserve; without one the pane's own :root
@@ -213,6 +220,7 @@ export default function EmbeddedHostBridge() {
       document.documentElement.classList.remove(WIN_INSET_CLASS)
       document.documentElement.style.removeProperty(WIN_CAPTION_RESERVE_PROP)
       setFocusModeEnabled(false, { echo: false })
+      noteClipboardRelayHost(null, false)
       dispatch(setHostModel(null))
     }
   }, [dispatch])

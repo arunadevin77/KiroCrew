@@ -36,8 +36,10 @@ export function openUrlOf(data: unknown): string | null {
   return PR_URL_RE.test(msg.url) ? msg.url : null
 }
 
-/** Whether the person just made a gesture inside *frame*. No API counts as no. */
-function hasGesture(frame: HTMLIFrameElement): boolean {
+/** Whether the person just made a gesture inside *frame*. No API counts as no.
+ *  Shared with InstancesViewport's pane image-copy relay, which needs the same
+ *  "this click happened in that frame" test. */
+export function hasGesture(frame: HTMLIFrameElement): boolean {
   return Boolean(navigator.userActivation?.isActive) && document.activeElement === frame
 }
 

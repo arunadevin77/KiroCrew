@@ -349,6 +349,33 @@ describe('EmbeddedHostBridge (option B relay)', () => {
     expect(store.getState().instances.host).toBeNull()
   })
 
+  it('records the image-copy relay only for a host that advertises it, at the origin it spoke from', async () => {
+    // #14854: the pane relays image copies to its host. It must relay only to a
+    // host that answers (an older host never sends `clipboardRelay`), at the
+    // exact origin that host's own model came from, and forget it on unmount.
+    const { clipboardRelayAvailable } = await import('../lib/paneClipboardRelay')
+    vi.spyOn(window.parent, 'postMessage').mockImplementation(() => {})
+    const store = createTestStore()
+    const view = renderWithProviders(<EmbeddedHostBridge />, { store })
+    const sendModel = (extra: Record<string, unknown>, origin = 'http://localhost:8080') =>
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          source: window.parent, origin, data: { type: 'mc-host-model', ...model(), ...extra },
+        }))
+      })
+
+    sendModel({})
+    expect(clipboardRelayAvailable()).toBe(false)
+    sendModel({ clipboardRelay: 1 })
+    expect(clipboardRelayAvailable()).toBe(true)
+    // A model from a non-loopback origin never becomes a relay target.
+    sendModel({ clipboardRelay: 1 }, 'https://example.com')
+    expect(clipboardRelayAvailable()).toBe(false)
+    sendModel({ clipboardRelay: 1 })
+    view.unmount()
+    expect(clipboardRelayAvailable()).toBe(false)
+  })
+
   it('keeps the pane\'s own focus mode when an older host sends a model without the field', async () => {
     // Version skew, host side: an older host omits `focusMode` from its model
     // AND ignores the pane's echoed `mc-set-focus-mode`. Coercing that absence
