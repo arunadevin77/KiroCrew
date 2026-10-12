@@ -2527,6 +2527,27 @@ Only needed on hosts with kernel.apparmor_restrict_unprivileged_userns=1
     sbx_status.add_argument("--path", default=None, help="Executable to check instead of $APPIMAGE")
     sbx_sub.add_parser("remove-profile", help="Unload and remove the profile (sudo on Linux)")
 
+    # kas — Kiro Crew's own KAS engine bundle (agent.kas_bundle route).
+    kas_parser = cli_help.add_command(
+        sub,
+        "kas",
+        epilog="""
+Examples:
+  kirocrew kas install                   # latest pinned engine + Node, from agent.kas_bundle_url
+  kirocrew kas install --version 0.66.33
+  kirocrew kas install --from ./bundle   # offline: manifest.json + artifacts in a directory
+  kirocrew kas status
+  kirocrew kas remove
+
+Then: kirocrew config set agent.kas_bundle true && kirocrew restart
+The engine signs in through Kiro Crew's own login (dashboard → Sign in).
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    from kiro_crew.cli_kas import add_kas_parser
+
+    add_kas_parser(kas_parser)
+
     # cloud — provision + run KiroCrew on the user's own AWS EC2 (bring-your-own
     # AWS; credentials resolved by the aws CLI, never stored by KiroCrew).
     cloud_parser = cli_help.add_command(
@@ -3773,6 +3794,10 @@ env var overrides it.
         from kiro_crew.cli_server import _sandbox_cmd
 
         sys.exit(_sandbox_cmd(args))
+    elif args.command == "kas":
+        from kiro_crew.cli_kas import kas_cmd
+
+        sys.exit(kas_cmd(args))
     elif args.command == "cloud":
         sys.exit(handle_cloud(args))
     elif args.command == "logs":

@@ -13431,6 +13431,18 @@
         "folder_conductor": "Conductor de la carpeta",
         "folder_conductor_desc": "Sube al principio de la carpeta el chat que inició los demás chats de esa carpeta: una barra de color en su borde izquierdo y una pequeña etiqueta conductor junto al nombre del agente. Esto cambia el orden de la lista de sesiones, así que la lista se queda igual hasta que lo actives. El elemento de chat del menú de la carpeta está siempre."
       },
+      "kasBundleCard": {
+        "toggle_label": "Usar el motor KAS integrado de {{productName}}",
+        "toggle_description": "Ejecuta KAS sin kiro-cli, con la cuenta de Kiro de arriba. Instala el motor primero.",
+        "installed": "KAS {{version}} instalado (Node {{node}})",
+        "not_installed": "KAS {{version}} no está instalado.",
+        "install": "Instalar",
+        "installing": "Instalando KAS {{version}}…",
+        "installing_progress": "Instalando KAS {{version}}: {{percent}} ({{done}} de {{total}})",
+        "install_failed": "No se pudo iniciar la instalación del motor KAS.",
+        "save_failed": "No se pudo guardar la configuración del motor KAS.",
+        "status_unavailable": "No se pudo leer el estado del motor KAS."
+      },
       "kiroSignInCard": {
         "title": "Inicio de sesión en Kiro",
         "checking": "Comprobando el inicio de sesión…",

@@ -1,6 +1,11 @@
-"""The KAS relay, reached through kiro-cli's own ACP transport.
+"""The KAS engine: through kiro-cli's own ACP relay, or from Crew's own bundle.
 
-KAS shares kiro-cli's binary, but reports MCP readiness through session-scoped
+Two spawn routes, one harness. By default KAS shares kiro-cli's binary (the
+relay, :mod:`kiro_crew.acp.kas_transport`). With ``agent.kas_bundle`` on, the
+harness spawns the engine ``kirocrew kas install`` laid down under the data
+home (:mod:`kiro_crew.acp.kas_bundle`) with its own Node runtime, and no
+kiro-cli is involved. Every seam after the spawn is identical: the wire is the
+engine's either way. KAS reports MCP readiness through session-scoped
 ``_kiro/mcp/status`` and ``_kiro/tools/didChange`` snapshots.
 
 It takes no ``--agent`` flag, so the agent definition travels on every session
@@ -26,6 +31,7 @@ from typing import Any
 # compared by identity, never substituted.
 from kiro_crew import agent as agent_mod
 from kiro_crew.acp import kas_agents as kas_agents_mod
+from kiro_crew.acp import kas_bundle as kas_bundle_mod
 from kiro_crew.acp._dispatch import advertised_mode_origin
 from kiro_crew.acp.child_env_defaults import apply_child_env_defaults
 from kiro_crew.acp.harness._common import (
@@ -42,7 +48,11 @@ from kiro_crew.acp.harness.base import (
 )
 from kiro_crew.acp.kas_agents import KasAgentTranslationError
 from kiro_crew.acp.kas_host_auth import answer_get_access_token, vault_holds_identity_off_loop
-from kiro_crew.acp.kas_transport import METHOD_KAS_AUTH_GET_ACCESS_TOKEN, build_kas_argv
+from kiro_crew.acp.kas_transport import (
+    METHOD_KAS_AUTH_GET_ACCESS_TOKEN,
+    build_kas_argv,
+    build_kas_bundle_argv,
+)
 from kiro_crew.acp.session_mcp import project_agent_spec
 from kiro_crew.acp.types import (
     ACP_BACKEND_KAS,
@@ -109,6 +119,17 @@ def warn_kas_vocabulary_drift(version: tuple[int, int, int] | None) -> None:
 #: KAS numbers ACP revisions. It rejects the date-string spelling kiro-cli takes,
 #: so the TYPE here is part of the contract, not an encoding detail.
 PROTOCOL_VERSION_KAS = 1
+
+#: What a bundle spawn is logged under. The argv's program is a Node binary, which
+#: names no engine at all; this does.
+KAS_BUNDLE_SPAWN_LABEL = "kas-bundle"
+
+
+def _bundle_route_selected() -> bool:
+    """``agent.kas_bundle`` as configured. Blocking (reads config); call off the loop."""
+    from kiro_crew.config.loader import KiroCrewConfig
+
+    return bool(KiroCrewConfig.load().agent.kas_bundle)
 
 
 def _is_operator_override(binary: str, environ: Mapping[str, str]) -> bool:
@@ -238,19 +259,51 @@ class KasHarness(MembershipHarness):
     # ── Seam 1: spawn ──
 
     async def resolve_spawn(self, ctx: SpawnContext) -> SpawnPlan:
-        """``kiro-cli`` in relay mode, with the auth owner decided per spawn.
+        """The engine's argv, on whichever route ``agent.kas_bundle`` selects.
 
-        No ``--agent`` and no ``--model``: KAS takes custom agents over the wire
-        in ``session/new``, not from a flag.
+        No ``--agent`` and no ``--model`` on either route: KAS takes custom agents
+        over the wire in ``session/new``, not from a flag.
 
-        Crew owns the credential when its own vault holds a signed-in identity,
-        and kiro-cli owns it otherwise. Deciding that per spawn is what makes a
-        dashboard sign-in or sign-out take effect on the next process, and the
-        answer rides on the plan so the reader loop answers the engine's callback
-        only on a process that was started expecting it to.
+        **Bundle** (``agent.kas_bundle`` true): Crew's own installed engine and
+        Node runtime, spawned directly. Crew is the auth owner unconditionally --
+        there is no kiro-cli whose store could answer instead -- so the plan
+        carries ``host_auth=True`` whatever the vault holds; an empty vault is the
+        engine's own sign-in failure at prompt time, which the runtime already
+        maps to a sign-in prompt. Nothing installed is a refusal that names the
+        install command, not a fallback to the relay: the operator chose the
+        route, and silently running a different one would make a kiro-cli
+        problem look like a bundle problem (or the reverse).
+
+        **Relay** (default): ``kiro-cli`` in relay mode. Crew owns the credential
+        when its own vault holds a signed-in identity, and kiro-cli owns it
+        otherwise. Deciding that per spawn is what makes a dashboard sign-in or
+        sign-out take effect on the next process, and the answer rides on the plan
+        so the reader loop answers the engine's callback only on a process that
+        was started expecting it to.
         """
         from kiro_crew.acp.client import _resolve_kiro_bin_for_spawn, kiro_cli_not_found_message
         from kiro_crew.acp.session_handle import AcpRuntimeError
+
+        if await asyncio.to_thread(_bundle_route_selected):
+            bundle = await asyncio.to_thread(kas_bundle_mod.installed_bundle)
+            if bundle is None:
+                raise AcpRuntimeError(
+                    "agent.kas_bundle is on but no KAS engine bundle is installed under "
+                    f"{kas_bundle_mod.kas_engines_root()}. Run `kirocrew kas install`, or "
+                    "set agent.kas_bundle to false to use kiro-cli's relay."
+                )
+            logger.info(
+                "KAS auth owner=crew — spawning Crew's own engine bundle %s (node %s, agent=%s)",
+                bundle.version,
+                bundle.node_version or "?",
+                ctx.agent or "<none>",
+            )
+            return SpawnPlan(
+                argv=build_kas_bundle_argv(str(bundle.node_bin), str(bundle.acp_server)),
+                spawn_label=KAS_BUNDLE_SPAWN_LABEL,
+                stderr_label=KAS_BUNDLE_SPAWN_LABEL,
+                host_auth=True,
+            )
 
         kas_bin = await _resolve_kiro_bin_for_spawn(environ=dict(ctx.environ), home=ctx.home)
         if not kas_bin:

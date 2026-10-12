@@ -1156,6 +1156,14 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # runs them as ordinary shell tool calls through the standard approval
         # path.
         "browser_cli/install.py::_run",
+        # The KAS engine installer (`kirocrew kas install`, operator terminal, outside
+        # the sandbox). `_open_tar` runs the host's `zstd -d -c` on an archive whose
+        # name the manifest validated as a bare object name and whose bytes were
+        # sha256-pinned before extraction; `_probe_node` runs the just-extracted Node
+        # with `--version` from the gateway-owned staging directory. No agent input
+        # reaches either argv.
+        "acp/kas_bundle.py::_open_tar",
+        "acp/kas_bundle.py::_probe_node",
         "browser_cli/launcher.py::_run_cli",
         "browser_cli/view.py::_spawn",
         "cli.py::_consolidate_cmd",

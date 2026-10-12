@@ -74,6 +74,7 @@ from kiro_crew.acp.client import KIRO_CLI_BIN
 from kiro_crew.acp.kas_transport import (
     KAS_RELAY_ENGINE,
     build_kas_argv,
+    build_kas_bundle_argv,
 )
 
 # The one skill-view count ceiling, enforced in the projection and reused as the
@@ -1621,6 +1622,42 @@ def _doctor_kas(issues: list[str]) -> None:
         _report_kas_backend(issues)
 
 
+def _report_kas_bundle(issues: list[str]) -> None:
+    """The bundle route: Crew's own installed engine, no kiro-cli row at all.
+
+    kiro-cli is not consulted here because the route never runs it -- a missing
+    kiro-cli is not a problem on this route, and reporting one would send the
+    operator to install a binary nothing will use. Crew is the auth owner
+    unconditionally, so the vault row is the only credential row.
+    """
+    from kiro_crew.acp import kas_bundle
+
+    installed = kas_bundle.installed_bundle()
+    if installed is None:
+        print(f"  bundle:      ❌ nothing installed under {kas_bundle.kas_engines_root()}")
+        print("               Fix: kirocrew kas install   (or set agent.kas_bundle false)")
+        issues.append("agent.kas_bundle is on but no KAS engine bundle is installed")
+        return
+    print(f"  bundle:      ✅ KAS {installed.version}, Node {installed.node_version or '?'}")
+    print(
+        f"  spawn:       {' '.join(build_kas_bundle_argv(str(installed.node_bin), str(installed.acp_server)))}"
+    )
+    print("  auth owner:  Kiro Crew vault (the only owner on this route)")
+    try:
+        from kiro_crew.auth.bridge import describe_vault_identity, vault_holds_identity
+
+        signed_in = vault_holds_identity()
+        identity_line = describe_vault_identity()
+    except Exception:
+        signed_in = False
+        identity_line = None
+    if identity_line:
+        print(f"  crew vault:  {identity_line}")
+    if not signed_in:
+        print("  crew vault:  ⚠  not signed in; the first prompt will ask for a sign-in")
+    _report_kas_spec_permissions(issues)
+
+
 def _report_kas_backend(issues: list[str]) -> None:
     """Print the KAS diagnostic block (relay binary + engine support).
 
@@ -1628,6 +1665,9 @@ def _report_kas_backend(issues: list[str]) -> None:
     positive ``== ACP_BACKEND_KAS`` rather than an early-return on inequality.
     """
     print("\nKAS backend")
+    if KiroCrewConfig.load().agent.kas_bundle:
+        _report_kas_bundle(issues)
+        return
     binary = resolve_kiro_cli()
     if not binary:
         print(f"  relay:       ❌ {KIRO_CLI_BIN} not found")

@@ -63,6 +63,12 @@ vi.mock('../pages/developer/KiroSignInCard', () => ({
   ),
 }))
 
+// Same sentinel treatment for the engine card under it: its behaviour is pinned in
+// KasBundleCard.test.tsx, and the real card would need the kas-bundle API.
+vi.mock('../pages/developer/KasBundleCard', () => ({
+  KasBundleCard: () => <div data-testid="kas-bundle-card" />,
+}))
+
 import { AgentBackendTab } from '../pages/developer/AgentBackendTab'
 
 /** A schema map advertising exactly `values` for the backend field. */
@@ -2072,6 +2078,20 @@ describe('AgentBackendTab kiro sign-in', () => {
     expect(screen.queryByTestId('kiro-sign-in-card')).toBeNull()
   })
 
+  it('renders the KAS engine card in the KAS detail only, under the sign-in', async () => {
+    // The engine runs on the sign-in above it, so it lives in the same row.
+    wrap()
+    await waitFor(() => expect(row('KAS (kiro-agent)')).toBeInTheDocument())
+    expect(screen.queryByTestId('kas-bundle-card')).toBeNull()
+    highlight('KAS (kiro-agent)')
+    const card = screen.getByTestId('kas-bundle-card')
+    expect(detail().contains(card)).toBe(true)
+    const signIn = screen.getByTestId('kiro-sign-in-card')
+    expect(signIn.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    highlight('Claude Code')
+    expect(screen.queryByTestId('kas-bundle-card')).toBeNull()
+  })
+
   it('renders no sign-in card when this deployment cannot select KAS', async () => {
     // On a build or policy that hides that option there is nothing to sign in for.
     schemaMock.mockReturnValue(schemaWith(['', 'claude']))
@@ -2079,6 +2099,7 @@ describe('AgentBackendTab kiro sign-in', () => {
     await waitFor(() => expect(row('Kiro CLI')).toBeInTheDocument())
     expect(screen.queryByRole('radio', { name: 'KAS (kiro-agent)' })).toBeNull()
     expect(screen.queryByTestId('kiro-sign-in-card')).toBeNull()
+    expect(screen.queryByTestId('kas-bundle-card')).toBeNull()
     highlight('Claude Code')
     expect(screen.queryByTestId('kiro-sign-in-card')).toBeNull()
   })

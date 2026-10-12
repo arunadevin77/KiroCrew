@@ -331,7 +331,11 @@ def _url_payload_command(n: int) -> str:
 #: docstring, the runner and opener tables and the redirection and hidden-command
 #: patterns. It only narrows what auto-approves; no deny rule, threshold or pass
 #: moved.
-_PACKAGE_LINE_BUDGET = 29_293
+#:
+#: Raised again, from 29,293, for the ``engines`` leaf in ``paths.py``: the KAS
+#: engine bundle the gateway installs and later executes joins the file-tool floor
+#: beside ``playwright-cli`` -- one entry and its reason. No matcher moved.
+_PACKAGE_LINE_BUDGET = 29_296
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

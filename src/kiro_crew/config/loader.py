@@ -3364,6 +3364,8 @@ def _build_agent_config(agent_data: dict) -> AgentConfig:
         mcp_quarantine_after_failures=section.read("mcp_quarantine_after_failures", _safe_int),
         acp_backend=_normalize_acp_backend(section.get("acp_backend")),
         member_acp_backend=_normalize_acp_backend(section.get("member_acp_backend")),
+        kas_bundle=section.read("kas_bundle", _safe_bool),
+        kas_bundle_url=_sections.coerce_kas_bundle_url(section.get("kas_bundle_url")),
         default_agent=section.get("default_agent"),
         # Through the module alias rather than a new top-level import: the loader's
         # ``from ... import`` list is a FROZEN pre-split compatibility snapshot

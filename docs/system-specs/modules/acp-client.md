@@ -3107,6 +3107,55 @@ agent resolves an absent config to a no-op backend — so Crew's own sandbox sta
 engaged for this backend and KAS is excluded from
 `ACP_BACKENDS_INTERNAL_SANDBOX`.
 
+**KAS bundle route: the same harness, no kiro-cli.** `agent.kas_bundle = true`
+makes `KasHarness.resolve_spawn` spawn the engine from Kiro Crew's OWN install
+instead of kiro-cli's relay. `kirocrew kas install` (`cli_kas.py` →
+`acp/kas_bundle.py`) fetches a manifest from `agent.kas_bundle_url`
+(`<base>/kas/latest.json` → `<base>/kas/<version>/manifest.json`), picks this
+host's engine tarball (`platforms[<os>-<arch>]`; Mac is `darwin-universal`) and
+Node archive (`node.builds[<os>-<arch>]`, one binary per architecture), transfers
+both through `asset_downloader.download_to` (https-only, same-host redirects,
+sha256 and exact size pinned by the manifest), extracts into a staging directory,
+probes the Node binary (`--version` must match the manifest), and publishes the
+version with one rename under `<data home>/engines/kas/<version>/`. Which
+version runs is the release's pin, not a file on disk: `acp/kas_pin.py` holds
+`KAS_PIN_VERSION` and `KAS_PIN_MANIFEST_SHA256` (the sha256 of that version's
+published `manifest.json`, which in turn pins every artifact), `kirocrew kas
+install` installs exactly that and refuses a manifest whose bytes do not hash to
+the pin, and `installed_bundle()` looks up exactly that version's directory. A
+Kiro Crew update therefore moves the engine by asking for a different directory:
+the old one stays, so a still-running process of the previous release keeps its
+engine and a rollback finds its own. Another version needs `--unpinned` to
+install and `KIROCREW_KAS_VERSION` in the gateway's environment to run (testing
+only; never read from config). A manifest whose `node` is the string
+`"electron-builtin"` (a build that expected Kiro's own Electron) is refused with
+the remedy. `--from DIR` installs from a local manifest and artifacts (offline,
+mirrors, development). The publishing side is `scripts/kas_bundle_publish.py`:
+engine tarballs in, official Node builds from nodejs.org verified against that
+release's `SHASUMS256.txt`, manifest out, optional `aws s3 cp` with
+`latest.json` uploaded last. The harness reads the flag off the loop and, when
+on, resolves `kas_bundle.installed_bundle()`; nothing installed is an
+`AcpRuntimeError` naming `kirocrew kas install`, never a fallback to the relay —
+the operator chose the route, and a silent relay spawn would make a kiro-cli
+problem look like a bundle problem. The argv is `build_kas_bundle_argv`:
+`node --experimental-wasm-modules <acp-server.js> --transport=stdio
+--auth=acp-callback`, byte-for-byte what kiro-cli's relay builds for the engine
+minus kiro-cli. There is no `--auth-method` on this route, so the plan carries
+`host_auth=True` unconditionally: Crew's vault is the only credential
+([kas-auth.md](kas-auth.md)), and an empty vault surfaces as the engine's own
+"not signed in" prompt failure, which maps to a sign-in prompt as on the relay.
+The spawn is labelled `kas-bundle` (a Node program names no engine). Every seam
+after the spawn is unchanged — measured: `initialize`, the
+`_kiro/auth/getAccessToken` callback answered from the vault, and the
+`AcpRuntime` cold start behave as on the relay. `pin_mandatory_mcps_env` sees a
+non-kiro-cli program and keeps every Crew server resident, the conservative
+answer. The `engines` leaf is `READONLY` in every sandbox mode and on the
+file-tool floor ([security.md](security.md)): a sandboxed KAS process reads and
+executes its engine, and nothing in a sandbox rewrites the code the next session
+runs. `kirocrew doctor` reports the route when selected (`_report_kas_bundle`:
+installed version, the exact spawn argv, the vault as the only owner) and never
+mentions kiro-cli there; `kirocrew kas status` is the same facts alone.
+
 **Off-loop answers are bounded.** The off-loop answers — the unroutable-permission
 auto-reject, the KAS access-token answer and the MCP sign-in answer
 (`_kiro/openExternalUrl`) — can block on stdin `drain()` before writing their

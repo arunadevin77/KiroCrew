@@ -1679,6 +1679,66 @@ class TestDoctorAgentAuth:
         assert "Kiro Crew vault" not in out
 
 
+class TestDoctorKasBundle:
+    """The KAS section on the bundle route: Crew's own engine, no kiro-cli row.
+
+    kiro-cli is never consulted here because the route never runs it. A missing
+    kiro-cli on this route is not a problem, and reporting one would send the
+    operator to install a binary nothing will use.
+    """
+
+    class _Cfg:
+        def __init__(self) -> None:
+            self.agent = type("A", (), {"acp_backend": "kas", "kas_bundle": True})()
+
+    @pytest.fixture(autouse=True)
+    def _cfg(self, monkeypatch):
+        monkeypatch.setattr(cli_doctor.KiroCrewConfig, "load", classmethod(lambda cls: self._Cfg()))
+        # A kiro-cli resolver that would fail the test if consulted.
+        monkeypatch.setattr(
+            cli_doctor,
+            "resolve_kiro_cli",
+            lambda: pytest.fail("kiro-cli consulted on bundle route"),
+        )
+        monkeypatch.setattr(cli_doctor, "_report_kas_spec_permissions", lambda issues: None)
+        monkeypatch.setattr("kiro_crew.auth.bridge.vault_holds_identity", lambda: False)
+        monkeypatch.setattr("kiro_crew.auth.bridge.describe_vault_identity", lambda: None)
+
+    def test_nothing_installed_is_an_issue_naming_the_install(self, monkeypatch, capsys):
+        from kiro_crew.acp import kas_bundle
+
+        monkeypatch.setattr(kas_bundle, "installed_bundle", lambda: None)
+        issues: list[str] = []
+        cli_doctor._doctor_kas(issues)
+        out = capsys.readouterr().out
+        assert "bundle:      ❌" in out
+        assert "kirocrew kas install" in out
+        assert issues == ["agent.kas_bundle is on but no KAS engine bundle is installed"]
+        assert "relay:" not in out
+
+    def test_an_installed_engine_prints_the_exact_spawn_argv(self, monkeypatch, capsys, tmp_path):
+        from kiro_crew.acp import kas_bundle
+        from kiro_crew.acp.kas_transport import build_kas_bundle_argv
+
+        installed = kas_bundle.InstalledKasBundle(
+            version="0.66.33",
+            node_version="22.23.3",
+            root=tmp_path,
+            node_bin=tmp_path / "node" / "bin" / "node",
+            acp_server=tmp_path / "bundle" / "acp-server.js",
+        )
+        monkeypatch.setattr(kas_bundle, "installed_bundle", lambda: installed)
+        issues: list[str] = []
+        cli_doctor._doctor_kas(issues)
+        out = capsys.readouterr().out
+        assert "bundle:      ✅ KAS 0.66.33, Node 22.23.3" in out
+        argv = " ".join(build_kas_bundle_argv(str(installed.node_bin), str(installed.acp_server)))
+        assert argv in out
+        assert "auth owner:  Kiro Crew vault" in out
+        assert "not signed in" in out
+        assert issues == []
+
+
 class TestDoctorKas:
     """`kirocrew doctor` KAS backend section — gated on acp_backend == kas.
 
@@ -1689,8 +1749,8 @@ class TestDoctorKas:
     """
 
     class _Cfg:
-        def __init__(self, backend: str) -> None:
-            self.agent = type("A", (), {"acp_backend": backend})()
+        def __init__(self, backend: str, kas_bundle: bool = False) -> None:
+            self.agent = type("A", (), {"acp_backend": backend, "kas_bundle": kas_bundle})()
 
     def _patch_cfg(self, monkeypatch, backend: str) -> None:
         monkeypatch.setattr(
@@ -1954,7 +2014,9 @@ class TestTheKasBlockReportsAWithheldPermissionsField:
             cli_doctor.KiroCrewConfig,
             "load",
             classmethod(
-                lambda cls: type("C", (), {"agent": type("A", (), {"acp_backend": "kas"})()})()
+                lambda cls: type(
+                    "C", (), {"agent": type("A", (), {"acp_backend": "kas", "kas_bundle": False})()}
+                )()
             ),
         )
         monkeypatch.setattr(cli_doctor, "resolve_kiro_cli", lambda: "/x/kiro-cli")
@@ -2041,7 +2103,9 @@ class TestTheKasBlockReportsToolVocabularyDrift:
             cli_doctor.KiroCrewConfig,
             "load",
             classmethod(
-                lambda cls: type("C", (), {"agent": type("A", (), {"acp_backend": "kas"})()})()
+                lambda cls: type(
+                    "C", (), {"agent": type("A", (), {"acp_backend": "kas", "kas_bundle": False})()}
+                )()
             ),
         )
         monkeypatch.setattr(cli_doctor, "resolve_kiro_cli", lambda: "/x/kiro-cli")

@@ -542,6 +542,13 @@ _CREW_READONLY_LEAVES: tuple[str, ...] = (
     # an owner address-bar launch. The gateway installer runs outside the agent
     # sandbox, so it can still replace the managed copy.
     "playwright-cli",
+    # The KAS engine bundles Kiro Crew installs itself (``acp.kas_bundle``): a
+    # pinned ``@kiro/agent`` tree and the Node runtime that executes it. Same
+    # class as ``playwright-cli``: a sandboxed KAS process must read and execute
+    # this directory, while a write would choose the code every later KAS
+    # session runs. ``kirocrew kas install`` runs in the gateway, outside the
+    # sandbox, so it can still lay down a new version.
+    "engines",
     # The cloud launcher's config. In-sandbox code READS it (the provisioner selector calls
     # ``CloudConfig.load()``, and so does the launch record's legacy fallback, which every
     # ``cloud`` verb reaches through ``LaunchState.load``), and a WRITE would let an
@@ -895,6 +902,9 @@ _CREW_CHILD_READABLE_LEAVES: tuple[str, ...] = (
     # entry here the read gate also fences, so the only one whose exclusion changes
     # what an enforced child can open; the rest are already outside the mask.
     "playwright-cli",
+    # The KAS engine bundle a sandboxed KAS process must read and execute. The
+    # second entry the read gate also fences, for the same reason as the first.
+    "engines",
     # Authorization and lineage records an in-sandbox reader resolves. Read-only
     # sealed for the same reason: a forged entry decides a later grant.
     "apps/.dev-grants.json",

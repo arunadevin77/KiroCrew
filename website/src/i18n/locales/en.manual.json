@@ -8745,6 +8745,18 @@
         "folder_conductor": "Folder conductor",
         "folder_conductor_desc": "Lifts the chat that started a folder's other chats to the top of that folder: an accent bar down its left edge and a small conductor tag beside the agent name. This changes the order of the Sessions list, so the list stays as it is until you turn it on. The folder menu's chat item is always there."
       },
+      "kasBundleCard": {
+        "toggle_label": "Use {{productName}}'s built-in KAS engine",
+        "toggle_description": "Runs KAS without kiro-cli, signed in with the Kiro account above. Install the engine first.",
+        "installed": "KAS {{version}} installed (Node {{node}})",
+        "not_installed": "KAS {{version}} is not installed.",
+        "install": "Install",
+        "installing": "Installing KAS {{version}}…",
+        "installing_progress": "Installing KAS {{version}}: {{percent}} ({{done}} of {{total}})",
+        "install_failed": "Could not start the KAS engine install.",
+        "save_failed": "Could not save the KAS engine setting.",
+        "status_unavailable": "Could not read the KAS engine status."
+      },
       "kiroSignInCard": {
         "title": "Kiro sign-in",
         "checking": "Checking sign-in…",

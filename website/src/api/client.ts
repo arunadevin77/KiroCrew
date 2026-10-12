@@ -82,6 +82,7 @@ export type {
 } from './client/telemetry'
 export type {
   KiroPrerequisiteStatus,
+  KasBundleStatus,
   KasLoginStatus,
   KasLoginDeviceSession,
   KasLoginPollResult,

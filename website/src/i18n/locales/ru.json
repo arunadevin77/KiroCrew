@@ -13643,6 +13643,18 @@
         "folder_conductor": "Дирижёр папки",
         "folder_conductor_desc": "Поднимает в начало папки тот чат, который начал остальные чаты этой папки: цветная полоса у левого края и маленькая метка conductor рядом с именем агента. Это меняет порядок списка сессий, поэтому список остаётся прежним, пока ты это не включишь. Пункт чата в меню папки есть всегда."
       },
+      "kasBundleCard": {
+        "toggle_label": "Использовать встроенный движок KAS {{productName}}",
+        "toggle_description": "Запускает KAS без kiro-cli, с входом через аккаунт Kiro выше. Сначала установите движок.",
+        "installed": "KAS {{version}} установлен (Node {{node}})",
+        "not_installed": "KAS {{version}} не установлен.",
+        "install": "Установить",
+        "installing": "Установка KAS {{version}}…",
+        "installing_progress": "Установка KAS {{version}}: {{percent}} ({{done}} из {{total}})",
+        "install_failed": "Не удалось начать установку движка KAS.",
+        "save_failed": "Не удалось сохранить настройку движка KAS.",
+        "status_unavailable": "Не удалось получить состояние движка KAS."
+      },
       "kiroSignInCard": {
         "title": "Вход в Kiro",
         "checking": "Проверка входа…",

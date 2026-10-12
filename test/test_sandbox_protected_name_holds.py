@@ -355,7 +355,15 @@ class TestLeafOnlyPopulationIsRecorded:
     #: lock. Sealed read-only so a sandboxed shell cannot forge that mapping (the
     #: agents tree it moved out of was already sealed). A data-home root leaf,
     #: three entries per tier, leaf-only for the same reason as the root leaves above.
-    EXPECTED: dict[str, int] = {"standard": 278, "cc": 285, "strict": 286}
+    #:
+    #: One more root-level directory, three entries per tier:
+    #:
+    #: * ``engines`` -- the KAS engine bundles ``kirocrew kas install`` lays down
+    #:   (``acp/kas_bundle.py``), sealed read-only like ``playwright-cli`` so a
+    #:   sandboxed session cannot rewrite the engine code and Node runtime its
+    #:   next session runs. At the data-home root beside writable siblings, so
+    #:   leaf-only is the only hold available.
+    EXPECTED: dict[str, int] = {"standard": 281, "cc": 288, "strict": 289}
 
     @pytest.mark.parametrize("tier", TIERS)
     def test_leaf_only_count_has_not_grown(self, tier: str) -> None:

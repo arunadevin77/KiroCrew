@@ -13431,6 +13431,18 @@
         "folder_conductor": "Conducteur du dossier",
         "folder_conductor_desc": "Remonte en haut du dossier le chat qui a lancé les autres chats de ce dossier : une barre de couleur sur son bord gauche et une petite étiquette conductor à côté du nom de l'agent. Cela change l'ordre de la liste des sessions, donc la liste reste telle quelle jusqu'à ce que tu l'actives. L'entrée de chat du menu du dossier est toujours là."
       },
+      "kasBundleCard": {
+        "toggle_label": "Utiliser le moteur KAS intégré de {{productName}}",
+        "toggle_description": "Exécute KAS sans kiro-cli, avec le compte Kiro ci-dessus. Installez d'abord le moteur.",
+        "installed": "KAS {{version}} installé (Node {{node}})",
+        "not_installed": "KAS {{version}} n'est pas installé.",
+        "install": "Installer",
+        "installing": "Installation de KAS {{version}}…",
+        "installing_progress": "Installation de KAS {{version}} : {{percent}} ({{done}} sur {{total}})",
+        "install_failed": "Impossible de lancer l'installation du moteur KAS.",
+        "save_failed": "Impossible d'enregistrer le réglage du moteur KAS.",
+        "status_unavailable": "Impossible de lire l'état du moteur KAS."
+      },
       "kiroSignInCard": {
         "title": "Connexion Kiro",
         "checking": "Vérification de la connexion…",

@@ -411,6 +411,9 @@ _CREW_SECRET_LEAVES: list[str] = [
     # run it; file tools must not inspect or replace the executable the
     # unsandboxed gateway later uses for startup cleanup and owner launches.
     "playwright-cli",
+    # KAS engine bundles the gateway installs then executes (``acp.kas_bundle``);
+    # same class as ``playwright-cli``: READONLY in-sandbox, fenced from file tools.
+    "engines",
     # Legacy SEL HMAC key location (pre-``trust/`` installs, and any stale file
     # a backup restore resurrects). Kept alongside the ``trust``
     # directory entry below so the key is gated at BOTH locations.

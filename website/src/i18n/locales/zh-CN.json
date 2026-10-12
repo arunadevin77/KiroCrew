@@ -13007,6 +13007,18 @@
         "folder_conductor": "文件夹调度者",
         "folder_conductor_desc": "把开启本文件夹其他对话的那个对话提到该文件夹最上面：左边一道强调色竖线，智能体名字旁边一个小小的 conductor 标签。这会改变会话列表的排序，所以开启之前列表保持原样。文件夹菜单里的对话入口一直都在。"
       },
+      "kasBundleCard": {
+        "toggle_label": "使用 {{productName}} 内置的 KAS 引擎",
+        "toggle_description": "不经过 kiro-cli 运行 KAS，使用上方的 Kiro 账户登录。请先安装引擎。",
+        "installed": "已安装 KAS {{version}}（Node {{node}}）",
+        "not_installed": "尚未安装 KAS {{version}}。",
+        "install": "安装",
+        "installing": "正在安装 KAS {{version}}…",
+        "installing_progress": "正在安装 KAS {{version}}：{{percent}}（{{done}} / {{total}}）",
+        "install_failed": "无法开始安装 KAS 引擎。",
+        "save_failed": "无法保存 KAS 引擎设置。",
+        "status_unavailable": "无法读取 KAS 引擎状态。"
+      },
       "kiroSignInCard": {
         "title": "Kiro 登录",
         "checking": "正在检查登录状态…",

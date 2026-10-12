@@ -13219,6 +13219,18 @@
         "folder_conductor": "फ़ोल्डर कंडक्टर",
         "folder_conductor_desc": "जिस चैट ने फ़ोल्डर की बाकी चैट शुरू कीं, उसे उस फ़ोल्डर में सबसे ऊपर ले आता है: उसके बाएँ किनारे पर एक रंगीन पट्टी और एजेंट के नाम के पास एक छोटा conductor लेबल। इससे सत्र सूची का क्रम बदलता है, इसलिए जब तक तुम इसे चालू नहीं करते, सूची वैसी ही रहती है। फ़ोल्डर मेनू का चैट आइटम हमेशा रहता है।"
       },
+      "kasBundleCard": {
+        "toggle_label": "{{productName}} का बिल्ट-इन KAS इंजन इस्तेमाल करें",
+        "toggle_description": "kiro-cli के बिना KAS चलाता है, ऊपर दिए Kiro खाते से साइन इन करके। पहले इंजन इंस्टॉल करें।",
+        "installed": "KAS {{version}} इंस्टॉल है (Node {{node}})",
+        "not_installed": "KAS {{version}} इंस्टॉल नहीं है।",
+        "install": "इंस्टॉल करें",
+        "installing": "KAS {{version}} इंस्टॉल हो रहा है…",
+        "installing_progress": "KAS {{version}} इंस्टॉल हो रहा है: {{percent}} ({{total}} में से {{done}})",
+        "install_failed": "KAS इंजन का इंस्टॉलेशन शुरू नहीं हो सका।",
+        "save_failed": "KAS इंजन की सेटिंग सेव नहीं हो सकी।",
+        "status_unavailable": "KAS इंजन की स्थिति पढ़ी नहीं जा सकी।"
+      },
       "kiroSignInCard": {
         "title": "Kiro साइन-इन",
         "checking": "साइन-इन जाँचा जा रहा है…",

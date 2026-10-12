@@ -1825,6 +1825,11 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         # human-bound or third-party output, so neither is an egress boundary.
         "asset_downloader.py",
         "feature_videos_manifest.py",
+        # Same transfer-side hygiene for the KAS engine installer: a fetch failure
+        # names the manifest url with its path and query cut. The message reaches
+        # the operator's own terminal (``kirocrew kas install``) and the gateway
+        # log, neither a third-party boundary.
+        "acp/kas_bundle.py",
         # Gate-side log hygiene: the update provider redacts an update command's
         # stderr before writing it to the gateway log. It is a boot-time
         # operational log line, not an output boundary bound for a human or a

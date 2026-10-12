@@ -13219,6 +13219,18 @@
         "folder_conductor": "ফোল্ডারের কন্ডাক্টর",
         "folder_conductor_desc": "যে চ্যাট একটি ফোল্ডারের বাকি চ্যাটগুলো শুরু করেছে, সেটিকে ফোল্ডারের একদম উপরে তুলে ধরে: বাঁ ধারে একটি রঙিন দাগ আর এজেন্টের নামের পাশে একটি ছোট conductor লেবেল। এটি সেশন তালিকার সাজানো বদলে দেয়, তাই তুমি চালু না করা পর্যন্ত তালিকাটি আগের মতোই থাকে। ফোল্ডার মেনুর চ্যাট আইটেমটি সব সময়ই থাকে।"
       },
+      "kasBundleCard": {
+        "toggle_label": "{{productName}}-এর বিল্ট-ইন KAS ইঞ্জিন ব্যবহার করুন",
+        "toggle_description": "kiro-cli ছাড়াই KAS চালায়, উপরের Kiro অ্যাকাউন্ট দিয়ে সাইন ইন করে। আগে ইঞ্জিন ইনস্টল করুন।",
+        "installed": "KAS {{version}} ইনস্টল করা আছে (Node {{node}})",
+        "not_installed": "KAS {{version}} ইনস্টল করা নেই।",
+        "install": "ইনস্টল করুন",
+        "installing": "KAS {{version}} ইনস্টল হচ্ছে…",
+        "installing_progress": "KAS {{version}} ইনস্টল হচ্ছে: {{percent}} ({{total}}-এর মধ্যে {{done}})",
+        "install_failed": "KAS ইঞ্জিনের ইনস্টল শুরু করা যায়নি।",
+        "save_failed": "KAS ইঞ্জিনের সেটিং সেভ করা যায়নি।",
+        "status_unavailable": "KAS ইঞ্জিনের অবস্থা পড়া যায়নি।"
+      },
       "kiroSignInCard": {
         "title": "Kiro সাইন-ইন",
         "checking": "সাইন-ইন পরীক্ষা করা হচ্ছে…",

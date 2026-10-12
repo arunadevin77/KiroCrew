@@ -19,8 +19,11 @@
 > before, an API-key sign-in included: that cli-owned relay is handed `KIRO_API_KEY`
 > like the kiro backend, while a Crew-owned relay has it stripped because the engine
 > prefers an environment key over the callback (`KasHarness.apply_spawn_env`,
-> `cli_owned_auth`). kiro-cli remains the ACP service either way; Crew never spawns the KAS
-> bundle itself.
+> `cli_owned_auth`). On the relay route kiro-cli remains the ACP service either way.
+> On the bundle route (`agent.kas_bundle`, [acp-client.md](acp-client.md) § KAS bundle
+> route) Crew spawns its own installed engine and is the auth owner unconditionally:
+> the callback always reaches Crew, and there is no `--auth-method cli` to fall back
+> to.
 
 ## Why this exists
 

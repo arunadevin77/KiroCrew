@@ -55,6 +55,7 @@ COMMAND_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("setup", "Install agent config and run the setup wizard"),
             ("config", "Get or set configuration values"),
             ("sandbox", "Manage the AppArmor profile the agent sandbox needs (Linux)"),
+            ("kas", "Install Kiro Crew's own KAS engine bundle (no kiro-cli needed)"),
             ("manifest", "Generate a Slack app manifest with your alias"),
         ),
     ),

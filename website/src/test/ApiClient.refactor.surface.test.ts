@@ -30,7 +30,7 @@ const API_KEY_ORDER = [
   'sessionSummary', 'dashboardCard', 'generateSessionSummary',
   'beaconStatus', 'collectionStatus', 'kiroPrerequisite', 'repairKiroPrerequisiteSpecs',
   'updateKiroPrerequisiteCli', 'kasLoginStatus', 'kasLoginBeginDevice', 'kasLoginPoll',
-  'kasLoginBeginLoopback', 'kasLoginCancel', 'kasLoginLogout', 'onboardingImportScan',
+  'kasLoginBeginLoopback', 'kasLoginCancel', 'kasLoginLogout', 'kasBundleStatus', 'kasBundleInstall', 'onboardingImportScan',
   'onboardingImportApply', 'onboardingImportState', 'securityStats', 'securityPosture',
   'mobileLoginLink', 'mobileConnectMethods', 'tailnetStatus', 'tailnetMobile',
   'tailnetMobileConfigure', 'tailnetMobilePublish', 'tailnetMobileUnpublish', 'tailnetMobileQr',

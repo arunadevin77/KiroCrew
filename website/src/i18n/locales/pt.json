@@ -13431,6 +13431,18 @@
         "folder_conductor": "Conductor da pasta",
         "folder_conductor_desc": "Leva para o topo da pasta o chat que iniciou os outros chats dessa pasta: uma barra de destaque na borda esquerda e uma pequena etiqueta conductor ao lado do nome do agente. Isso muda a ordem da lista de sessões, por isso a lista fica como está até você ativar. O item de chat no menu da pasta está sempre lá."
       },
+      "kasBundleCard": {
+        "toggle_label": "Usar o mecanismo KAS integrado do {{productName}}",
+        "toggle_description": "Executa o KAS sem o kiro-cli, com a conta Kiro acima. Instale o mecanismo primeiro.",
+        "installed": "KAS {{version}} instalado (Node {{node}})",
+        "not_installed": "O KAS {{version}} não está instalado.",
+        "install": "Instalar",
+        "installing": "Instalando o KAS {{version}}…",
+        "installing_progress": "Instalando o KAS {{version}}: {{percent}} ({{done}} de {{total}})",
+        "install_failed": "Não foi possível iniciar a instalação do mecanismo KAS.",
+        "save_failed": "Não foi possível salvar a configuração do mecanismo KAS.",
+        "status_unavailable": "Não foi possível ler o status do mecanismo KAS."
+      },
       "kiroSignInCard": {
         "title": "Login do Kiro",
         "checking": "Verificando o login…",

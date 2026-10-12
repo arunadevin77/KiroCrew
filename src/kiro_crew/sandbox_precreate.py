@@ -97,6 +97,10 @@ _CREW_PRECREATE_READONLY_DIR_LEAVES: tuple[str, ...] = (
     # protects only hosts that happen to have the directory already.
     "panel-templates",
     "playwright-cli",
+    # The KAS engine bundle root, for the ``playwright-cli`` reason: on an install
+    # that has never run ``kirocrew kas install`` the directory is absent, and an
+    # absent target is a seal skipped and a name the agent may create.
+    "engines",
     # The decision log, on the ``profiles`` argument rather than the JSON one.
     # (1) An EMPTY dir means what an ABSENT dir means to its only reader:
     # A reader resolves a day-file by name and skips one that is not there, so no
@@ -142,6 +146,7 @@ _CREW_PRECREATE_READONLY_DIR_LEAVES: tuple[str, ...] = (
 #: half of a control, so none may be satisfied by a link the governed party planted.
 _CREW_NOFOLLOW_READONLY_DIR_LEAVES: tuple[str, ...] = (
     "playwright-cli",
+    "engines",
     "subagents",
     "member-memory-bindings",
     "decisions",
@@ -180,6 +185,10 @@ _DELEGATED_OVERLAP_LEAF_REASONS: "dict[str, tuple[str, str]]" = {
     "playwright-cli": (
         "sealed browser runtime",
         "the agent could replace the browser executable the gateway runs",
+    ),
+    "engines": (
+        "sealed agent engine",
+        "the agent could replace the KAS engine code and Node runtime every later session runs",
     ),
     # These two are gateway-owned run records: results stay readable, and agent code must
     # not rewrite the app owner a continuation restores its authorization from. The wording

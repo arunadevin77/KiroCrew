@@ -155,6 +155,19 @@ runs kiro-cli instead; the dashboard's KAS row lists `kiro-cli acp --agent-engin
 v3` as missing. `config.json` keeps `kas`, so updating kiro-cli and restarting
 returns to KAS. A check that cannot run leaves KAS selected.
 
+KAS can also run with **no kiro-cli at all**. `kirocrew kas install` downloads
+the `@kiro/agent` version this Kiro Crew release pins, plus its own Node runtime,
+from a sha256-pinned manifest (`agent.kas_bundle_url`) into
+`<data home>/engines/kas/<version>/`. Each Kiro Crew release runs exactly one
+engine version; after a Kiro Crew update run `kirocrew kas install` again. And
+`agent.kas_bundle: true` makes the `kas` backend spawn that engine directly. On
+this route Kiro Crew is always the credential owner: sign in from the dashboard
+(Sign in) — kiro-cli's login is not consulted. `kirocrew kas status` shows what is
+installed and whether the route is on; `kirocrew doctor` reports it under
+"KAS backend". The engine directory is read-only inside the agent sandbox and
+fenced from the agent's file tools, so a session cannot rewrite the code its next
+session runs; only the install command (your own terminal) writes there.
+
 Harness capabilities differ: agent-spec projection, MCP transport, model
 selection, permission routing, resume, compaction, and subagent continuation are
 not inferred from the harness name. See [Agent Spec Field
@@ -247,6 +260,8 @@ Set a registered value with, for example,
 |-----|-------------|---------|
 | `agent.provider` | LLM provider backend. `"acp"` (KiroACP / kiro-cli) is the only accepted value | `"acp"` |
 | `agent.default_agent` | Default agent name for new sessions. Empty resolves from the agent config | `""` |
+| `agent.kas_bundle` | Run the `kas` backend from Kiro Crew's own installed engine bundle (`kirocrew kas install`) with its bundled Node, instead of kiro-cli's ACP relay. kiro-cli is not needed; the engine signs in through Kiro Crew's own login only. `true` with nothing installed refuses the spawn and names the install command | `false` |
+| `agent.kas_bundle_url` | `https://` base `kirocrew kas install` fetches the engine manifest from (`<base>/kas/latest.json`). Every artifact is sha256-pinned by the manifest, so this chooses which pinned build is offered, never what is trusted. Non-https values fall back to the default | the project's release bucket |
 | `agent.deepseek_env` | Provider keys handed to the DeepSeek Harness (`agent.acp_backend: deepseek`) as environment variables at spawn: a map of environment-variable NAME to a `secret://<vault name>` reference. Store the key under Settings → Secrets first, then map it — e.g. `{"DEEPSEEK_API_KEY": "secret://my-dsh-key"}`. Any provider name the harness knows works. A plaintext value is refused at write time — the `config set` itself fails, so no key is ever stored in `config.json` — and, at spawn, so is a name the harness would forward to its own shell children, a name Kiro Crew sets itself, or one Kiro Crew's agent environment scrub strips: the session is refused before it starts, naming the offending key. Empty means no key — a locally served model needs none. Other backends ignore it | `{}` |
 | `agent.approval_mode` | `"auto"` or `"interactive"` | `"auto"` |
 | `agent.model` | Default LLM model for new sessions. `"auto"` defers to the agent config, then to Kiro's own default. Editable from Settings → Chat → Model; a per-session model picker overrides it for that session only | `"auto"` |
