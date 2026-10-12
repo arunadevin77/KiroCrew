@@ -498,7 +498,6 @@ export function addSlotSwitchCases(builder: ActionReducerMapBuilder<ChatState>):
       const comparable = (action.payload as { comparableTotal?: number }).comparableTotal
       retainServerTotal(state, key, comparable ?? action.payload.total, running,
         undefined, comparable !== undefined || action.payload.boundedRead)
-      state.slotState = running ? 'streaming' : 'idle'
       // Mark stale permissions as resolved so ApprovalBar ignores them
       if (!running) {
         for (const m of messages) {
@@ -599,15 +598,32 @@ export function addSlotSwitchCases(builder: ActionReducerMapBuilder<ChatState>):
       const priorServerRows = existing.filter(m => m.role !== 'thinking')
       const { olderHead } = olderHeadAbovePage(priorServerRows, preserved)
       if (olderHead.length) next = [...olderHead, ...next]
+      // The page's run verdict. An idle page that does not carry a send made
+      // while it was in flight (`liveSends`) was read BEFORE that send: it
+      // describes the slot as it was before the turn the send opened, so its
+      // `running: false` is stale, not an observation. Taking it idled the
+      // slot (`slotRunning`, `pendingTurnSlot`) under a turn the server was
+      // already running; nothing re-asserted the run until its first chunk,
+      // and for those seconds the transcript read "user row last, slot
+      // idle" -- the shape `selectTurnInterrupted` offers Resume on, so the
+      // composer swapped its placeholder for the interrupted-turn one while
+      // the reply was on its way. Keep the local run state the send (or a
+      // live `slots` frame) established; a page that caught the send, or
+      // one that reports running, is current and lands as before.
+      //
       // The active slot's server snapshot flipping to running is a turn
       // start (see `ChatState.runEpoch`), as it is in
       // syncSlotRunningFromServer; the hand-back in `enterActiveSlot` reads
       // the epoch to tell a turn that ran on screen from a slot that saw
       // nothing.
-      if (running && !state.slotRunning) bumpRunEpoch(state, key)
-      state.slotRunning = running
-      state.slotStopping = action.payload.stopping ?? false
-      state.pendingTurnSlot = null
+      const pagePredatesLiveSend = !running && liveSends.length > 0
+      if (!pagePredatesLiveSend) {
+        state.slotState = running ? 'streaming' : 'idle'
+        if (running && !state.slotRunning) bumpRunEpoch(state, key)
+        state.slotRunning = running
+        state.slotStopping = action.payload.stopping ?? false
+        state.pendingTurnSlot = null
+      }
       // Seed the replay guard from the PURE fetched page: its trailing
       // streaming row carries the newest chunk seq the server folded into
       // it, so a live chunk racing this snapshot is dropped, not re-appended.
@@ -615,12 +631,14 @@ export function addSlotSwitchCases(builder: ActionReducerMapBuilder<ChatState>):
       // turn can only sit at or below the live floor (raise, never lower). A
       // snapshot of a slot that is NOT running says no stream is in flight:
       // the floor is cleared, so a gateway restart (which does restart the
-      // counter) cannot leave a stale floor over the next turn's chunks.
+      // counter) cannot leave a stale floor over the next turn's chunks. A
+      // page that predates a live send has no say on that stream either: the
+      // floor its chunks raised stays.
       if (running) {
         const snapGen = snapshotChunkGen(messages)
         state.lastChunkSeq = raiseChunkSeq(floorForGen(state.lastChunkSeq, state.lastChunkGen, snapGen), snapshotChunkSeq(messages))
         if (snapGen !== undefined) state.lastChunkGen = snapGen
-      } else {
+      } else if (!pagePredatesLiveSend) {
         state.lastChunkSeq = undefined
       }
       /* The cursor is a row OFFSET, not the array's first row, so keeping a head
