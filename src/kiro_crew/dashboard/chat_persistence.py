@@ -1710,15 +1710,13 @@ def _rehydrate_slot_from_history(
         # drops the ancestor chain — long-running forked sessions would lose 200+
         # messages of context on every gateway restart.
         # A sidebar row (``_lazy_tail``) reads no transcript here at all.
-        messages: list[dict] = (
-            _prefetched_messages
-            if _prefetched_messages is not None
-            else (
-                []
-                if _lazy_tail is not None
-                else state.conversation_log.read_messages_chained(history_key)
-            )
-        )
+        messages: list[dict]
+        if _prefetched_messages is not None:
+            messages = _prefetched_messages
+        elif _lazy_tail is not None:
+            messages = []
+        else:
+            messages = state.conversation_log.read_messages_chained(history_key)
         if applied.minted_tab_id is not None:
             # Persist the freshly-minted tab_id AFTER reading the transcript above,
             # never before. update_metadata_off_loop dispatches an os.replace() of

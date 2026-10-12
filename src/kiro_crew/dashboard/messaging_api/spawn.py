@@ -82,8 +82,6 @@ async def _requested_backend(raw: object) -> tuple[str | None, web.Response | No
     this parameter exists to rule out. The refusal lists only what can start, so
     an agent's retry picks a backend that works.
     """
-    import asyncio
-
     from kiro_crew.acp_backends import POLICY_ID_BY_BACKEND, selectable_backend_values
     from kiro_crew.agent_sdk.backend_install import MISSING, probe_backend
 

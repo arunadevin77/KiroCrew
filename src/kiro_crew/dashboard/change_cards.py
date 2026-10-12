@@ -1898,9 +1898,6 @@ def _mcp_scopes(name: str) -> dict[str, str]:
     fingerprint cannot be tested against a guessed credential. A scope without
     the name is absent; one that cannot be read is :data:`_MCP_SCOPE_UNREADABLE`.
     """
-    import hashlib
-    import hmac
-
     from kiro_crew.dashboard.handlers.mcp import _config_entry_for, _uninstall_scope_files
 
     key: bytes | None = None
@@ -2057,8 +2054,6 @@ _CREWMATE_SPEC_FIELDS = (
 
 
 def _revision_digest(value: Any) -> str:
-    import hashlib
-
     return hashlib.sha256(canonical(_jsonable(value)).encode("utf-8")).hexdigest()[:16]
 
 
