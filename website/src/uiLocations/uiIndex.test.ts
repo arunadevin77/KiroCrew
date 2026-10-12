@@ -1353,8 +1353,8 @@ const committed = JSON.parse(fs.readFileSync(INDEX_FILE, 'utf-8')) as Index
 const byId = new Map(committed.locations.map(l => [l.id, l]))
 
 describe('the committed index', () => {
-  it('ships the 12 authored locales and not the pseudolocale', () => {
-    expect(committed.locales).toHaveLength(12)
+  it('ships the 13 authored locales and not the pseudolocale', () => {
+    expect(committed.locales).toHaveLength(13)
     expect(committed.locales).not.toContain('en-XA')
   })
 

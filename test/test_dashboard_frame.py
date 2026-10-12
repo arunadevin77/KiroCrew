@@ -286,7 +286,7 @@ class TestTheComposedDocument:
 
     @pytest.mark.parametrize(
         "raw",
-        ["xx-YY", "zh-TW", "zh-cn", "", None, 7, 'en"><script>alert(1)</script>', "en-XA"],
+        ["xx-YY", "zh-HK", "zh-cn", "", None, 7, 'en"><script>alert(1)</script>', "en-XA"],
     )
     def test_a_language_the_app_does_not_ship_falls_back_to_english(self, raw: Any) -> None:
         """The same gate as the persisted UI language: only a shipped catalog's tag."""

@@ -333,7 +333,7 @@ describe('the committed index', () => {
   const real = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../src/kiro_crew/docs/ui-index.generated.json'), 'utf-8'))
 
   it('carries no auto tier: it is generated at build time, so a new button never stales the committed file', () => {
-    expect(real.locales).toHaveLength(12)
+    expect(real.locales).toHaveLength(13)
     expect((real.locations as Loc[]).filter((l) => l.tier === 'auto')).toEqual([])
     expect(real.coverage.tiers).not.toHaveProperty('auto')
     expect(real.coverage).not.toHaveProperty('auto_controls')
