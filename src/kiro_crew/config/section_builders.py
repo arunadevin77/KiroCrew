@@ -44,6 +44,7 @@ from kiro_crew.config.fields import (
     _safe_nonnegative_int,
 )
 from kiro_crew.config.integration_sections import (
+    CloudSyncConfig,
     ComputerUseConfig,
     InstancesConfig,
     McpConfig,
@@ -471,6 +472,11 @@ def _build_publish_config(_dests_raw: list, publish_data: dict) -> PublishConfig
             r for r in section.get("relocate_roots") if isinstance(r, str) and r.strip()
         ],
     )
+
+
+def _build_cloud_sync_config(cloud_sync_data: dict) -> CloudSyncConfig:
+    section = SectionReader(CloudSyncConfig, cloud_sync_data)
+    return CloudSyncConfig(target=str(section.get("target")))
 
 
 def _build_computer_use_config(computer_use_data: dict) -> ComputerUseConfig:

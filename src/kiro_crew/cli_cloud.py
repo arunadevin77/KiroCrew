@@ -572,6 +572,49 @@ def _cloud_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cloud_memory(args: argparse.Namespace) -> int:
+    """``kirocrew cloud memory push | restore | list`` -- back memory up to a sync target.
+
+    A thin dispatcher into :mod:`kiro_crew.cloud.memory_sync`, which holds the
+    testable engine. Unlike the EC2 verbs above this touches no AWS: the
+    destination is a URL (``--target``, or the ``memory_sync.target`` config
+    key), ``file://`` built in and any other scheme delegated to an external
+    ``kirocrew-sync-<scheme>`` helper on PATH. Kiro Crew stores no credential of
+    its own for any target.
+    """
+    from kiro_crew.cloud import memory_sync
+
+    action = getattr(args, "memory_action", None)
+    target = getattr(args, "target", "") or ""
+    if action == "push":
+        return memory_sync.push(host=getattr(args, "host", "") or "", target=target)
+    if action == "restore":
+        return memory_sync.restore(
+            host=getattr(args, "host", "") or "",
+            stamp=getattr(args, "bundle", "") or "",
+            mode=getattr(args, "mode", "merge") or "merge",
+            dry_run=getattr(args, "dry_run", False),
+            target=target,
+        )
+    if action == "list":
+        return memory_sync.list_backups(target=target)
+    ui.note(
+        f"{ui.BOLD}kirocrew cloud memory{ui.RESET} -- back up memory and lessons to a sync target"
+    )
+    print()
+    ui.detail("push     Redact and upload this machine's memory + lessons")
+    ui.detail("list     Show which machines have a backup, and their bundle timestamps")
+    ui.detail(
+        "restore  Download a chosen bundle and restore it (same merge rules as a local restore)"
+    )
+    print()
+    ui.detail(
+        "Needs --target scheme://path, or set it once: "
+        "`kirocrew config set memory_sync.target <url>`."
+    )
+    return 0
+
+
 def _ensure_session_manager_plugin() -> bool:
     """Install the local Session Manager plugin when a cloud command needs SSM tunnels."""
     if ssm.session_manager_plugin_installed():
@@ -607,6 +650,7 @@ _DISPATCH = {
     "iam-policy": _cloud_iam_policy,
     "iam-boundary": _cloud_iam_boundary,
     "doctor": _cloud_doctor,
+    "memory": _cloud_memory,
 }
 
 
@@ -628,6 +672,7 @@ def handle_cloud(args: argparse.Namespace) -> int:
         ui.detail("iam-policy  Print the least-privilege IAM policy to apply")
         ui.detail("iam-boundary Pre-create the EC2 + Fargate permissions boundaries (admin)")
         ui.detail("doctor      Check cloud prerequisites + AWS reachability")
+        ui.detail("memory      Back up memory + lessons to a sync target (push | list | restore)")
         return 0
     fn = _DISPATCH.get(action)
     if not fn:

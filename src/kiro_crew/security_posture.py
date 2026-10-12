@@ -1707,6 +1707,16 @@ _REDACTION_SINKS: tuple[tuple[str, str, str], ...] = (
         "scrubbed result, because a value that fit before the scrub can be over the "
         "cap after it.",
     ),
+    (
+        "Memory and lessons backed up to a sync target",
+        "cloud/memory_sync.py",
+        "The readable markdown mirror (lessons, preferences, projects, semantic facts) "
+        "`kirocrew cloud memory push` uploads to the configured sync target. Each "
+        "document passes the shared egress scrubber before it is written to the upload "
+        "staging dir. The restore bundle itself is redacted on the same path by calling "
+        "`snapshot.prepare_redacted_copy(..., force=True)`, which runs the egress "
+        "redactor and refuses to upload anything it cannot prove clean.",
+    ),
 )
 
 # Modules that call a redactor but are NOT an output egress boundary, so they do

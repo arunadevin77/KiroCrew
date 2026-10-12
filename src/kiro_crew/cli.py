@@ -2788,6 +2788,49 @@ Examples:
     _cloud_creds_opts(_c_boundary)
     _c_doctor = cloud_sub.add_parser("doctor", help="Check cloud prerequisites + AWS reachability")
     _cloud_creds_opts(_c_doctor)
+    # memory -- back up Kiro Crew memory + lessons to a sync target (push | list | restore).
+    # No AWS: the target is a URL, file:// built in, any other scheme delegated to an
+    # external kirocrew-sync-<scheme> helper on PATH. See kiro_crew.cloud.memory_sync.
+    _c_memory = cloud_sub.add_parser(
+        "memory", help="Back up memory + lessons to a sync target (push | list | restore)"
+    )
+    _memory_sub = _c_memory.add_subparsers(dest="memory_action")
+
+    def _mem_target_opt(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--target",
+            default="",
+            help=(
+                "Sync target as scheme://path (file:// built in; any other scheme runs "
+                "kirocrew-sync-<scheme> from PATH). Default: the memory_sync.target "
+                "config key."
+            ),
+        )
+
+    _c_mem_push = _memory_sub.add_parser("push", help="Redact and upload this machine's memory")
+    _c_mem_push.add_argument(
+        "--host", default="", help="Label this backup under this host name (default: hostname)"
+    )
+    _mem_target_opt(_c_mem_push)
+    _c_mem_list = _memory_sub.add_parser(
+        "list", help="Show host labels and their bundle timestamps"
+    )
+    _mem_target_opt(_c_mem_list)
+    _c_mem_restore = _memory_sub.add_parser("restore", help="Download a bundle and restore it")
+    _c_mem_restore.add_argument(
+        "--host", default="", help="Restore from this host label (default: pick interactively)"
+    )
+    _c_mem_restore.add_argument(
+        "--bundle", default="", help="Restore this <UTC>.tar bundle (default: newest / pick)"
+    )
+    _c_mem_restore.add_argument(
+        "--mode",
+        choices=("merge", "replace"),
+        default="merge",
+        help="Restore mode (default: merge)",
+    )
+    _c_mem_restore.add_argument("--dry-run", action="store_true", help="Show what would change")
+    _mem_target_opt(_c_mem_restore)
 
     # logs — tail the gateway log. Reads from the systemd journal when running
     # as a service on Linux, the launchd stdout file on macOS, or the

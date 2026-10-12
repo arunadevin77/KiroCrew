@@ -70,6 +70,9 @@ from kiro_crew.config.fields import _coerce_bool
 
 # Historical loader names no builder reads any more (a section's defaults are its
 # DTO fields'), kept bound from their owners for the facade.
+# CloudSyncConfig is a POST-split DTO: imported from its own module, not through the
+# frozen config.sections facade (test_config_module_boundaries pins that facade).
+from kiro_crew.config.integration_sections import CloudSyncConfig  # noqa: F401
 from kiro_crew.config.integration_sections import (  # noqa: F401
     _CU_DEFAULT_ATTACH_SCREENSHOT,
     _CU_DEFAULT_MAX_TREE_DEPTH,
@@ -157,6 +160,7 @@ from kiro_crew.config.section_builders import (  # noqa: F401
     _STT_MIN_PARTIAL_INTERVAL_MS,
     _STT_MIN_SILENCE_MS,
     _STT_MIN_TIMEOUT_SECS,
+    _build_cloud_sync_config,
     _build_computer_use_config,
     _build_cron_history_config,
     _build_discord_config,
@@ -3928,6 +3932,14 @@ class KiroCrewConfig:
             "Publish", "Artifact publishing controls (destinations allowlist).", tags=["publish"]
         ),
     )
+    cloud_sync: CloudSyncConfig = field(
+        default_factory=CloudSyncConfig,
+        metadata=_meta(
+            "Cloud Sync",
+            "Default target for `kirocrew cloud memory push|restore|list`.",
+            tags=["cloud"],
+        ),
+    )
     wecom: WeComConfig = field(
         default_factory=WeComConfig,
         metadata=_meta("WeCom", "WeCom (企业微信) AI-bot integration settings.", tags=["wecom"]),
@@ -4302,6 +4314,7 @@ class KiroCrewConfig:
             "memory": asdict(self.memory),
             "slack": asdict(self.slack),
             "publish": asdict(self.publish),
+            "cloud_sync": asdict(self.cloud_sync),
             "telegram": asdict(self.telegram),
             "discord": asdict(self.discord),
             "webex": asdict(self.webex),
@@ -5557,6 +5570,7 @@ def build_config(
     imessage_data = _coerced_section(data, "imessage", _degraded)
     slack_data = _coerced_section(data, "slack", _degraded)
     publish_data = _coerced_section(data, "publish", _degraded)
+    cloud_sync_data = _coerced_section(data, "cloud_sync", _degraded)
     # A malformed allowed_destinations is the same class as a malformed
     # section one level down, in two shapes. A non-LIST value:
     # iterating it either crashes load() with a TypeError (a scalar — a
@@ -5841,6 +5855,7 @@ def build_config(
         teams=_build_teams_config(teams_data),
         slack=_build_slack_config(slack_data),
         publish=_build_publish_config(_dests_raw, publish_data),
+        cloud_sync=_build_cloud_sync_config(cloud_sync_data),
         wecom=_build_wecom_config(wecom_data),
         feishu=_build_feishu_config(feishu_data),
         dashboard=_build_dashboard_config(_degraded, dashboard_data),

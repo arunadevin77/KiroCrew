@@ -71,6 +71,7 @@ from kiro_crew.config.integration_sections import (  # noqa: F401
     _RECOVER_BACKOFF_CEILING,
     _WARM_SET_CAP_AUTO,
     FORWARD_DECLARED_ENV_DEFAULT,
+    CloudSyncConfig,
     ComputerUseConfig,
     ExternalRegistryConfig,
     InstancesConfig,

@@ -10,12 +10,35 @@ over SSM, and opens the dashboard through an SSM port-forward. Command surface
 `kirocrew cloud <action>`):
 
 ```
-launch | list | status | connect | tunnel | login | logout | stop | start | destroy | iam-policy | iam-boundary | doctor
+launch | list | status | connect | tunnel | login | logout | stop | start | destroy | iam-policy | iam-boundary | doctor | memory
 ```
 
 (`iam-boundary` is the one-time admin step that pre-creates the three immutable
 permissions boundaries — the EC2 instance ceiling and the two Fargate crew
 ceilings — see the security model below.)
+
+`memory` (`push | list | restore`) is the odd one out: it touches **no AWS**. It
+backs this machine's memory and lessons up to a destination the operator names as
+a URL (`--target scheme://path`, or the `memory_sync.target` config key). Kiro Crew
+is a public repo and names no storage service: `file://` is built in (a plain
+directory or mount), and any other scheme is handed to an external helper,
+`kirocrew-sync-<scheme>`, found on `PATH` -- the same pattern as git's
+`git-remote-<transport>` helpers. Kiro Crew stores no credential for any target; a
+helper that needs one reads its own service's login session. `push` builds a
+`--components memory` snapshot, runs the existing egress redactor with redaction
+**forced on** (the local opt-out switch does not apply to a sync-target upload --
+see `snapshot.prepare_redacted_copy(..., force=True)`), renders a readable
+markdown mirror through the same scrubber, uploads to `<target>/<host label>/`,
+and keeps the last 7 restore bundles. If the memory database cannot be proven
+clean it uploads nothing. The engine lives in `cloud/memory_sync.py`.
+
+A helper is invoked as `kirocrew-sync-<scheme> <verb> <url> ...`, the full target
+URL always the first argument after the verb, no shell involved: `check <url>`;
+`put <url> <local-file> <remote-rel>`; `get <url> <remote-rel> <local-file>`;
+`ls <url> <remote-rel>` (one entry name per stdout line); `rm <url> <remote-rel>`.
+`<remote-rel>` always uses `/` (e.g. `restore/<UTC>.tar`, `readable/lessons.md`),
+never the host OS separator. Exit 0 is success; a non-zero exit is a refusal and
+its stderr is shown to the operator.
 
 `cloud` verbs are **human/installer actions, never LLM/MCP tools**, guarded in
 layers. Be precise about what each layer actually buys, because there is **no
