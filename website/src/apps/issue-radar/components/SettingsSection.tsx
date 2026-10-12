@@ -83,6 +83,7 @@ function NavItem({ icon: Icon, repoRef, label, active, onClick }: {
     <button
       onClick={onClick}
       title={label}
+      aria-current={active ? 'page' : undefined}
       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] text-left cursor-pointer transition-colors ${
         active ? 'bg-accent-subtle text-text font-medium' : 'text-muted hover:bg-bg-hover'
       }`}

@@ -495,7 +495,9 @@ export default function SidePanelLayout({ title, tabs, defaultTab, rememberKey, 
             * are not a selection — and a listbox may contain only options and
             * groups, which the separators and headers here are not. Groups
             * carry the header text as their accessible name; the visual header
-            * stays aria-hidden so it is not announced twice. */}
+            * stays aria-hidden so it is not announced twice. No row is
+            * `aria-current`: nothing is open at the root, and `tab` is only the
+            * default for the pane. */}
           <div role="list" aria-label={title} className="flex flex-col gap-0.5 pb-2">
             {groupedTabs.map(({ group, items }, gi) => {
               const rows = items.map(t => (
@@ -592,6 +594,9 @@ export default function SidePanelLayout({ title, tabs, defaultTab, rememberKey, 
                     ? 'bg-accent-subtle text-accent'
                     : 'bg-transparent text-muted hover:text-text hover:bg-bg-hover'
                 }`}
+                // The rows navigate, so the open tab is the current page. The class
+                // above paints it; this is the part a screen reader can read.
+                aria-current={tab === t.key ? 'page' : undefined}
                 onClick={() => setTab(t.key)}
               >
                 {t.tile

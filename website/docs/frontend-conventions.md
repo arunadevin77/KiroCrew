@@ -301,6 +301,12 @@ Rules:
   [Keyboard isolation](#keyboard-isolation-dialogs-and-the-overlays-above-them).
 - Dynamic content that updates in place (streaming messages, notifications) uses
   `aria-live="polite"`.
+- A navigation rail (a column of buttons that each open a section or page) gives the
+  row of the open destination `aria-current="page"` and no other row. A class or an
+  inline style alone paints the row, and assistive technology cannot read it. A list
+  that has opened nothing yet, such as the phone's root list in `SidePanelLayout`,
+  has no current row. The open row of a list inside one view takes
+  `aria-current="true"`.
 - Do not use a raw `<button>`. Use `Btn` / `SendBtn` / `IconButton` (which carry
   the styling), or `Clickable` for a div-based control.
 
