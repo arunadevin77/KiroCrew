@@ -17,13 +17,37 @@ partition that does not serve it makes it as unusable as any other unentitled id
 
 ## Model-name format
 
-The shared spawn and cron model-name validator accepts an alphanumeric first
-character followed by alphanumerics, dots, underscores or hyphens, optionally
-ending in one nonempty bracketed qualifier using those same characters.
-Empty, unbalanced, nested, repeated or non-trailing qualifiers are rejected;
-shell metacharacters remain invalid. The existing field length limit still
-applies. This format check does not establish entitlement or alter the separate
-`MODEL_ID_RE` grammar or ACP runtime validation.
+The shared spawn, task-batch, cron and session model-name validator accepts an
+alphanumeric first character followed by alphanumerics, dots, underscores or
+hyphens, optionally ending in one nonempty bracketed qualifier using those same
+characters. It also accepts a provider-qualified id, the spelling a backend that
+resolves its model from its advertised list uses (OpenCode, Pi): two or more
+such segments joined by `/` (`provider/model`, `provider/org/model`), with an
+optional `:tag` on the last segment (`ollama/qwen3:8b`), at most 256
+characters, the bound `model_registry` keeps on an advertised id. Every
+segment starts with an alphanumeric, so an id is never an option flag, an
+absolute path or a `.`/`..` hop. Empty segments, a colon anywhere but a
+trailing tag, whitespace, control characters (a trailing newline included) and
+shell metacharacters are rejected, and so are empty, unbalanced, nested,
+repeated or non-trailing bracket qualifiers. The existing field length limit
+still applies. This format check does not establish entitlement or alter the
+separate `MODEL_ID_RE` grammar (the check `AcpRuntime` applies to a `model=`
+argument) or ACP
+runtime validation. The Settings model pins (`_MODEL_PIN_PATTERN`) build their
+qualified branch from the same `QUALIFIED_MODEL_PATTERN`, so a picker cannot
+offer an id one boundary refuses and a sibling accepts.
+
+`POST /api/spawn` also checks a qualified id against the backend the request
+names (each `spawn_run` batch entry is its own request). A backend that does not
+resolve its model from an advertised list refuses it, and once the named backend
+has advertised a list, read the way `GET /api/models` reads it (the newest live
+session, else the namespace cache), an id missing from it is refused too. Both
+refusals answer HTTP 400 with the `model_unavailable` code the chat model switch
+already uses; an empty list cannot be checked and is trusted.
+Bare and bracketed names get no membership gate. A request that names no backend
+(a continuation runs where the original ran), a cron job, a CLI call and a session
+are judged on shape alone, because none of them names a backend when it is
+validated.
 
 ## Resolve, don't guess
 
@@ -356,7 +380,9 @@ its own once the cache refreshes with a list that carries it.
   every validated model pin (`agent.role_models.*`, `agent.fallback_model`,
   `agent.refusal_fallback_model` and the `decisions.model_route` tiers) one
   grammar, `_MODEL_PIN_PATTERN` in `dashboard/handlers/core.py`: a bare id, or the
-  slash-joined `provider/model` form OpenCode advertises. It refuses empty
+  provider-qualified `provider/model` form OpenCode advertises, built from the
+  same `QUALIFIED_MODEL_PATTERN` the spawn and cron model-name check uses (so
+  `ollama/qwen3:8b` saves too). It refuses empty
   segments and shell metacharacters; `_validate_role_model` then judges
   entitlement as above. The chat default `agent.model` uses the same grammar
   (its picker lists the same names) without the entitlement check. `decisions.nudge_wake.llm_model` keeps the bare-id

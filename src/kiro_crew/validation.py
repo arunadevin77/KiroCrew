@@ -305,9 +305,20 @@ def is_registered_agent_name(value: object) -> bool:
 # end of the string.
 ARTIFACT_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?\Z")
 
-# Valid model names include bounded provider qualifiers (for example,
-# ``gpt-6-astra[high]``) as well as ordinary dotted and dashed identifiers.
-_MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*(?:\[[a-zA-Z0-9._-]+\])?$")
+# Valid model names are an ordinary dotted and dashed identifier with at most one
+# trailing bounded qualifier (``gpt-6-astra[high]``), or a provider-qualified id as a
+# backend that resolves its model from its advertised list spells it
+# (``provider/org/model``, ``ollama/qwen3:8b``). Every segment starts alphanumeric, so
+# an id is never an option flag, an absolute path or a ``.``/``..`` hop; only the last
+# segment may carry a ``:tag``. The Settings model pins share the qualified branch.
+_MODEL_SEGMENT = r"[A-Za-z0-9][A-Za-z0-9._-]*"
+QUALIFIED_MODEL_PATTERN = rf"{_MODEL_SEGMENT}(?:/{_MODEL_SEGMENT})+(?::{_MODEL_SEGMENT})?"
+# The bound ``model_registry`` keeps on an advertised id.
+_QUALIFIED_MODEL_MAX_CHARS = 256
+_MODEL_NAME_RE = re.compile(
+    rf"(?:{_MODEL_SEGMENT}(?:\[[A-Za-z0-9._-]+\])?"
+    rf"|(?=.{{1,{_QUALIFIED_MODEL_MAX_CHARS}}}\Z){QUALIFIED_MODEL_PATTERN})\Z"
+)
 
 # Content-bound theme-persona consent hash: sha256 rendered as EXACTLY 64
 # lowercase hex chars. This value flows into hmac.compare_digest at the

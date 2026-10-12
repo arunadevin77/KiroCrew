@@ -187,6 +187,7 @@ from kiro_crew.dashboard.messaging_api.slack_settings import (  # noqa: F401
 )
 from kiro_crew.dashboard.messaging_api.spawn import (  # noqa: F401
     _continue_on_loop,
+    _qualified_model_refusal,
     _requested_backend,
     _slot_for_parent,
     _spawn_on_loop,

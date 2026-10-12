@@ -129,6 +129,7 @@ from kiro_crew.transcribe import (
     ffmpeg_source,
     list_custom_vocabularies,
 )
+from kiro_crew.validation import QUALIFIED_MODEL_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -2664,13 +2665,12 @@ def _selectable_acp_backends() -> list[str]:
 # The grammar of every model PIN a Settings picker writes and `_validate_role_model`
 # then checks against the account's entitlement. The pickers list the advertised
 # model names, which OpenCode spells `provider/model`, so a pin accepts a bare id
-# OR slash-joined segments; the empty value (INHERIT / disabled, per key) still
-# matches. Malformed segments (`a//b`, `/a`, `a/`) and shell metacharacters are
-# refused. One constant so a picker cannot offer an id a sibling pin refuses.
-_MODEL_PIN_PATTERN = (
-    r"(?:[A-Za-z0-9][A-Za-z0-9._\-\[\]]*|[A-Za-z0-9][A-Za-z0-9._\-]*"
-    r"(?:/[A-Za-z0-9][A-Za-z0-9._\-]*)+)?\Z"
-)
+# OR a provider-qualified id (`validation.QUALIFIED_MODEL_PATTERN`, the branch the
+# spawn, task-batch and cron model-name check shares); the empty value (INHERIT /
+# disabled, per key) still matches. Malformed segments (`a//b`, `/a`, `a/`) and
+# shell metacharacters are refused. One constant so a picker cannot offer an id a
+# sibling pin refuses.
+_MODEL_PIN_PATTERN = rf"(?:[A-Za-z0-9][A-Za-z0-9._\-\[\]]*|{QUALIFIED_MODEL_PATTERN})?\Z"
 
 
 _EDITABLE_CONFIG: dict[str, dict] = {
