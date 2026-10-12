@@ -66,7 +66,10 @@ export default function CommandCenterPanel({ slot, active, sessionReady = true, 
   useEffect(() => () => { draftCb.current?.(false) }, [])
   // A ROOT session: one no other session dispatched (`created_by`) or adopted
   // (`parent`). The gateway decides with the same two readings and refuses the read
-  // otherwise, so this only withholds a segment it would refuse.
+  // otherwise, so this only withholds a segment it would refuse. This is the test for
+  // the dashboard PACKAGE; whether a session has a derived CARD to show is a different
+  // question on a different route, and `canCarryCard` in `./model` is the one predicate
+  // for that.
   const owner = useAppSelector(s => slot ? s.dashboard.slots.find(item => item.key === slot) : undefined)
   const root = !!slot && !!owner && !owner.created_by && !owner.parent
   // A crewmate's DM slot is a root too, but its agent writes the CREWMATE's page,

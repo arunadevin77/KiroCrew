@@ -11,7 +11,7 @@ import ErrorNotice from '../../../components/ErrorNotice'
 import { dashboardDocument } from './dashboardDocument'
 import type { DynamicDashboardCard } from '../../../types/dynamicDashboard'
 import { useAppSelector } from '../../../store'
-import { isPrivateMemoryMode } from '../../../utils/sessionRefs'
+import { canCarryCard } from './model'
 
 const STATUS_KEYS: Record<Exclude<DynamicDashboardCard['status'], 'published'>, string> = {
   disabled: 'commandCenter.card_disabled', waiting: 'commandCenter.card_waiting',
@@ -37,8 +37,10 @@ export default function SessionStatusFrame({ slot, title, active }: { slot: stri
   // answers 'unavailable', which renders as the unavailable status below. The session-tree
   // `parent` edge stays excluded: an ADOPTED worker is a member of someone else's team and
   // never carries its own board, so it must not fetch at all.
-  const eligible = !isPrivateMemoryMode(owner?.memory_mode) && owner?.executor !== 'remote'
-    && !owner?.parent
+  //
+  // The predicate itself lives in the shared model, because a surface that LISTS cards has
+  // to decide who has one and must decide it the same way this frame does.
+  const eligible = canCarryCard(owner)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const vars = useMemo(() => readThemeVars(), [theme, colorTheme, themeVersion])
   const query = useQuery({ queryKey: ['dashboard-card', slot, owner?.linked_session_key ?? '', owner?.memory_mode ?? 'persistent'], queryFn: () => api.dashboardCard(slot),

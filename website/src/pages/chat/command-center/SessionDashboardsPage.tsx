@@ -10,7 +10,7 @@ import ErrorNotice from '../../../components/ErrorNotice'
 import { fmtDateTime, fmtNumber } from '../../../i18n/format'
 import { lastActivityEpoch } from '../sessionOrder'
 import { missingSourcesNotice, useCommandCenter, type CommandCenterData } from './useCommandCenter'
-import { runTitle, type RunNode } from './model'
+import { canCarryCard, runTitle, type RunNode } from './model'
 import AttentionCard, { RestoredQuestionNotice } from './AttentionCard'
 import SessionStatusFrame from './SessionStatusFrame'
 
@@ -81,22 +81,40 @@ export default function SessionDashboardsPage() {
   const blocked = new Set(data.nodes.filter(n => n.state === 'blocked').map(n => n.slot))
   const recency = new Map(slots.map(slot => [slot.key, lastActivityEpoch(slot)]))
   const priority = (node: RunNode) => attention.has(node.slot) ? 0 : blocked.has(node.slot) ? 1 : node.state === 'running' ? 2 : 3
+  const slotByKey = new Map(slots.map(slot => [slot.key, slot]))
   const sessionNodes = data.nodes.filter(n => n.kind === 'session')
-  const sorted = [...sessionNodes].sort((a, b) => priority(a) - priority(b) || (recency.get(b.slot) || 0) - (recency.get(a.slot) || 0))
+  // Which sessions have a CARD to show, asked through the one predicate the frame
+  // below each card uses (`canCarryCard`), so the list and the frame cannot disagree.
+  // Deliberately NOT the root test: the card route serves a DERIVED board to a
+  // session another session dispatched, and this page is that board's only mount, so
+  // a root-only list would make it unreachable. What a non-root session does not own
+  // is the dashboard PAGE, which this surface must therefore not claim for an entry.
+  // The inbox below keeps every session either way: a worker's question is answered
+  // from this page whether or not it has a board.
+  const dashboardNodes = sessionNodes.filter(n => canCarryCard(slotByKey.get(n.slot)))
+  // Open sessions this page draws no card for. Said out loud, because a session
+  // leaving the list with nothing on screen to explain it reads as a lost session.
+  const withheld = sessionNodes.length - dashboardNodes.length
+  const sorted = [...dashboardNodes].sort((a, b) => priority(a) - priority(b) || (recency.get(b.slot) || 0) - (recency.get(a.slot) || 0))
   // Order is taken when the set, what needs attention, the filter or the page
   // changes, not on every activity update: moving a card's DOM node reloads its
   // iframes, and their single-use documents then 404. DOM order stays reading order.
-  const orderKey = JSON.stringify([sessionNodes.map(n => n.slot).sort(), [...attention].sort(), [...blocked].sort(), query, attentionOnly, limit])
+  const orderKey = JSON.stringify([dashboardNodes.map(n => n.slot).sort(), [...attention].sort(), [...blocked].sort(), query, attentionOnly, limit])
   const [frozen, setFrozen] = useState<{ key: string; order: string[] }>({ key: '', order: [] })
   if (frozen.key !== orderKey) setFrozen({ key: orderKey, order: sorted.map(n => n.slot) })
   const order = frozen.key === orderKey ? frozen.order : sorted.map(n => n.slot)
-  const bySlot = new Map(sessionNodes.map(n => [n.slot, n]))
+  const bySlot = new Map(dashboardNodes.map(n => [n.slot, n]))
   const nodes = order.map(slot => bySlot.get(slot)).filter((n): n is RunNode => !!n)
-  const matching = nodes.filter(n => (!attentionOnly || attention.has(n.slot)) && `${runTitle(n)} ${n.slot}`.toLowerCase().includes(query.trim().toLowerCase()))
+  const matches = (node: RunNode) => (!attentionOnly || attention.has(node.slot))
+    && `${runTitle(node)} ${node.slot}`.toLowerCase().includes(query.trim().toLowerCase())
+  const matching = nodes.filter(matches)
   const pageEnd = Math.min(limit, Math.max(12, Math.ceil(matching.length / 12) * 12))
   const visible = new Set(matching.slice(pageEnd - 12, pageEnd).map(n => n.slot))
-  const matchingSlots = new Set(matching.map(n => n.slot))
-  const sessionBySlot = new Map(nodes.map(n => [n.slot, n]))
+  // The search and the attention filter reach the inbox over EVERY session, not
+  // only the ones with a card: a dispatched worker's question is still this
+  // page's to answer, and a filter that hid it would strand the decision.
+  const matchingSlots = new Set(sessionNodes.filter(matches).map(n => n.slot))
+  const sessionBySlot = new Map(sessionNodes.map(n => [n.slot, n]))
   const pending = data.attention.filter(item => matchingSlots.has(item.slot))
   // A restored-answer notice is listed but not counted: nothing in it needs an answer.
   const pendingCount = pending.length
@@ -142,11 +160,17 @@ export default function SessionDashboardsPage() {
           Previews, inside the Dynamic Dashboard card: a setting belongs in
           Settings, and this page is for reading what the sessions show. */}
       <PanelSectionHeader label={t('pages.sessionsPage.page_title')} count={matching.length} />
+      {!!withheld && <p className="text-sm text-muted">{t('commandCenter.cards_withheld', { count: withheld })}</p>}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
         {/* Preserve selection, but unmount inactive iframe documents to cap resources. */}
         {nodes.map(node => <SessionDashboardCard key={node.slot} node={node} data={data} active={visible.has(node.slot)} />)}
       </div>
-      {slotsLoaded && !data.loading && !matching.length && <EmptyState icon={<LayoutDashboard size={24} />} title={t(nodes.length ? 'commandCenter.no_matches' : 'pages.sessionsPage.empty_title')} />}
+      {/* Three different nothings: a filter hid the cards, the open sessions have no
+          card between them, or there is no open session at all. Only the last one may
+          say "No sessions" -- the middle one said it too, and told people with open
+          sessions that their sessions were gone. */}
+      {slotsLoaded && !data.loading && !matching.length && <EmptyState icon={<LayoutDashboard size={24} />}
+        title={t(nodes.length ? 'commandCenter.no_matches' : sessionNodes.length ? 'commandCenter.no_cards' : 'pages.sessionsPage.empty_title')} />}
       <div className="flex flex-wrap gap-2">
         {pageEnd > 12 && <Btn onClick={() => setLimit(pageEnd - 12)}>{t('commandCenter.previous_sessions')}</Btn>}
         {matching.length > pageEnd && <Btn onClick={() => setLimit(pageEnd + 12)}>{t('commandCenter.next_sessions')}</Btn>}

@@ -5,6 +5,7 @@ import { i18nT } from '../../../i18n/t'
 import { fmtNumber } from '../../../i18n/format'
 import { slotChannelNamespace } from '../../../utils/channelOrigin'
 import { deriveToolCallTitle, parseToolArgs } from '../../../utils/toolCallTitle'
+import { isPrivateMemoryMode } from '../../../utils/sessionRefs'
 
 export type RunState = 'running' | 'idle' | 'done' | 'blocked' | 'waiting' | 'needs_input' | 'stopped'
 export const APPROVAL_MODE_KEYS: Record<ApprovalModeKey, string> = {
@@ -118,6 +119,30 @@ export function teamRoots(slots: ChatSlot[], key: string): string[] {
     current = creator ? slotKey(creator) : ''
   }
   return roots
+}
+
+/** Whether *slot* can carry a dashboard CARD -- what `GET .../dashboard-card` serves
+ * and `SessionStatusFrame` renders. The frame and every surface that lists cards ask
+ * through here, so they cannot disagree about who has a board.
+ *
+ * Not to be confused with the test for the dashboard PACKAGE, which is a ROOT
+ * session's (no `created_by`, no session-tree `parent`) and which the side panel spells
+ * out for its Overview. The two gate different objects on different routes: reusing
+ * the package test on a card surface withholds every dispatched conductor's board,
+ * which this route really does serve.
+ *
+ * The card route has NO root test. Its gate is the backend's `_derived_allowed`
+ * (`card_lifecycle.py`): privacy and remoteness only, which is why a session another
+ * session DISPATCHED still owns a derived board -- `publish_derived` says a conductor
+ * dispatched by another session "is exactly the case that must still get its board",
+ * and the read serves it before the cost gate. The session-tree `parent` edge is the
+ * one exclusion on top: an ADOPTED worker is a member of someone else's team and
+ * carries no board of its own.
+ *
+ * An unknown slot answers true, as the frame has always done: the row may not have
+ * reached this tab yet, and the route is the authority on what it holds. */
+export function canCarryCard(slot: ChatSlot | undefined | null): boolean {
+  return !isPrivateMemoryMode(slot?.memory_mode) && slot?.executor !== 'remote' && !slot?.parent
 }
 
 export function scopedSlots(slots: ChatSlot[], root: string | null): ChatSlot[] {
