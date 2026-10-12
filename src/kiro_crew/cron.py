@@ -1045,8 +1045,14 @@ class CronService:
                 # never runs. Held off the schedule here at once, with the pause
                 # saved by the merge below. A delete_after_run one is kept and
                 # auto-paused as a failed run; a run whose payload never started
-                # parks nothing and stays due.
-                park_one_shot = taken.started_monotonic is not None and run_parks_one_shot(job)
+                # parks nothing and stays due. Whether the payload ever started is
+                # read off the object the run executed on (``taken.job``), not
+                # ``job``: a store reload during the run or the kill awaits made
+                # ``job`` a different object, and ``run_never_started`` (like
+                # ``fire_time_denied`` and ``refusal_cannot_clear``, which the park
+                # decision reads) is runtime-only and does not survive a reload.
+                ran = taken.job if taken.job is not None else job
+                park_one_shot = taken.started_monotonic is not None and run_parks_one_shot(ran)
                 if park_one_shot:
                     job.enabled = False
                 try:
@@ -1062,7 +1068,7 @@ class CronService:
                         # the wait_for timeout arm; one that never started does not.
                         count_failure=taken.started_monotonic is not None
                         and not job.failure_recorded
-                        and not job.run_never_started,
+                        and not ran.run_never_started,
                         park_one_shot=park_one_shot,
                     )
                 except Exception:
@@ -4139,6 +4145,10 @@ class CronService:
             # share no epoch, so the reaper's deadline is only meaningful
             # against a stamp taken on its own clock.
             claim.started_monotonic = time.monotonic()
+            # The object this run executes on, kept on the claim for the reaper:
+            # a store reload replaces the registry's job objects, and the marker
+            # that says the payload never started stays on this one.
+            claim.job = job
             # One increment per execution, before the jitter sleep so a run
             # cancelled during jitter still counts as fired. ``kind`` is the
             # dispatch shape -- ``script`` and ``command`` bypass the model

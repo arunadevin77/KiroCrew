@@ -50,7 +50,7 @@ class _RunClaim:
     A claim's life: ``trigger``, ``claimed_at`` and ``marker_run`` are fixed at
     claim time. ``task`` is the handle the dispatcher tracks (the manual route's
     wrapper, then the run task that replaces it). ``generation``,
-    ``started_monotonic`` and ``jitter`` are stamped by ``_run_job_isolated`` as
+    ``started_monotonic``, ``job`` and ``jitter`` are stamped by ``_run_job_isolated`` as
     the run body reaches them. ``taken`` is set by ``cancel()`` / ``_force_reap``
     when they take over the run's terminal write: from then on the run's own
     fences fail, the reaper skips it and ``running_since`` is silent, while the
@@ -77,6 +77,13 @@ class _RunClaim:
     started_monotonic: float | None = None
     #: Jitter seconds the run slept before executing; the reaper's allowance.
     jitter: float | None = None
+    #: The job object this run executes and mutates, stamped with ``started_monotonic``.
+    #: Every store reload replaces the registry's job objects, and the runtime-only
+    #: markers the run set (``run_never_started``, ``fire_time_denied``) stay on this
+    #: one, so the reaper reads whether the payload ever started here and not off the
+    #: registry's replacement. None until the run body starts. Left out of the claim's
+    #: repr, so a logged or asserted claim does not print the whole job.
+    job: CronJob | None = field(default=None, repr=False)
     #: The task the dispatcher tracks for this run, for cancel / reap / stop.
     task: asyncio.Task[Any] | None = None
     #: Set by ``cancel()`` / ``_force_reap`` once they own the run's terminal

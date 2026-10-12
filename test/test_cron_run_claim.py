@@ -145,6 +145,7 @@ class TestReleaseClearsEveryField:
             "generation",
             "started_monotonic",
             "jitter",
+            "job",
             "task",
             "taken",
             "cancelled",

@@ -71,10 +71,12 @@ class _Payload:
         self.hang = hang
         self.never_started = never_started
         self.runs: list[str] = []
+        self.job: CronJob | None = None
         self.started = asyncio.Event()
 
     async def __call__(self, job: CronJob) -> None:
         self.runs.append(job.id)
+        self.job = job
         if self.never_started:
             # What the fire-time gate does while it waits: nothing has run yet.
             job.run_never_started = True
@@ -324,6 +326,52 @@ async def test_a_reaped_claim_with_no_start_stamp_keeps_the_one_shot_due(tmp_pat
     stored = _stored(tmp_path, job.id)
     assert stored is not None and stored.enabled and not stored.user_paused
     assert service._is_due(stored, time.time())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("never_started", "parked"),
+    [(True, False), (False, True)],
+    ids=["payload-never-started", "payload-started"],
+)
+async def test_a_store_reload_during_the_run_does_not_change_how_the_reaper_ends_it(
+    tmp_path, never_started, parked
+):
+    # Every store reload replaces the registry's job objects, and the runtime-only
+    # ``run_never_started`` marker stays on the object the run executed on. The
+    # reaper reads it there: read off the registry's replacement it is always False,
+    # which parked a one-shot whose payload never ran and counted that run as a
+    # failure toward auto-pause.
+    payload = _Payload(hang=1, never_started=never_started)
+    service = await _service(tmp_path, payload)
+    job = await _one_shot(service)
+    try:
+        with patch("kiro_crew.cron.admission_check", return_value=_ADMITTED):
+            await service._on_timer()
+            await await_until(payload.started, what="the run to start")
+            claim = service._claims[job.id]
+            task = claim.task
+            # Another writer edits the store; the next tick's scan reloads it.
+            other_writer = CronService(base_dir=tmp_path)
+            await asyncio.to_thread(other_writer.add_job, "unrelated", "msg", every_secs=86400)
+            await service._on_timer()
+            registered = next(j for j in service._jobs if j.id == job.id)
+            assert registered is not payload.job, "the store did not reload during the run"
+            await service._force_reap(job.id, _JOB_TIMEOUT_SECS + 10, claim=claim)
+            if task is not None:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await await_until(task, what="the reaped run to unwind")
+    finally:
+        await service.stop()
+
+    stored = _stored(tmp_path, job.id)
+    assert stored is not None and stored.last_error.startswith("Reaped")
+    if parked:
+        assert not stored.enabled and stored.user_paused, "a reaped one-shot was left due"
+    else:
+        assert stored.enabled and not stored.user_paused, "a never-started one-shot was parked"
+        assert service._is_due(stored, time.time())
+    assert stored.consecutive_failures == (0 if never_started else 1)
 
 
 # ── Loop safety ──
