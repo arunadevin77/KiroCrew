@@ -5051,3 +5051,55 @@ class TestTheHandleOfAnOwnedPopen:
             handle = process_handle_of(session)
 
         assert (handle.pid, handle.start_id) == (client_pid, _START_ID)
+
+
+class TestCronReapRefreshesTheTreeBeforeTheHandle:
+    """The cron reap takes its handle after re-walking the live leader's tree.
+
+    The client's startup record misses children a run's turns started, and only
+    a recorded member may vouch for a leaderless group.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_late_child_is_on_the_handle_the_reap_takes(
+        self, tmp_path: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(platform_compat, "IS_WINDOWS", False)
+        svc, _job, claim = _overdue_reap_fixture(tmp_path, "late1")
+        client = _session_with_pid(svc, "cron:late1", 7979)
+
+        async def _refresh() -> None:
+            client._child_pids[8979] = ("5150001", b"sleep")
+
+        client.refresh_process_tree = AsyncMock(side_effect=_refresh)
+        original = svc._sessions_under
+        taken: list[list[tuple[Any, ProcessHandle]]] = []
+
+        def _capture(session_key: str) -> list[tuple[Any, ProcessHandle]]:
+            pairs = original(session_key)
+            taken.append(pairs)
+            return pairs
+
+        with (
+            patch.object(svc, "_sessions_under", side_effect=_capture),
+            patch("kiro_crew.sel.sel"),
+            patch.object(svc, "_save"),
+            patch("kiro_crew.acp.client._get_child_pids", return_value=[]),
+            patch("kiro_crew.acp.client._kill_escaped_children"),
+            patch(
+                "kiro_crew.platform_compat.get_process_start_id",
+                side_effect=_start_id_reads({7979: [_START_ID, _START_ID, None]}),
+            ),
+            patch("kiro_crew.platform_compat.pid_exists", return_value=False),
+            patch("os.getpgid", return_value=7979, create=True),
+            _group_gone(),
+            patch("kiro_crew.platform_compat.kill_process_group"),
+        ):
+            await svc._force_reap("late1", _JOB_TIMEOUT_SECS + 60, claim=claim)
+
+        client.refresh_process_tree.assert_awaited()
+        assert taken, "the reap never took a handle"
+        handles = [handle for _session, handle in taken[0]]
+        assert handles and all(
+            8979 in handle.child_pids for handle in handles
+        ), "the cron reap's handle missed the child the run started"

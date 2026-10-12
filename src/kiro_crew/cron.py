@@ -192,6 +192,7 @@ from kiro_crew.process_identity import (
     kill_verified_process,
     process_handle_of,
     process_survived_async,
+    refresh_live_process_tree,
     release_teardown_lease,
     spawn_in_flight,
     teardown_barriers,
@@ -1266,6 +1267,10 @@ class CronService:
         joined, or None once every session under the key was answered and no
         start is past its spawn door under it.
         """
+        if self._sessions:
+            # Record the children the run's turns started, so they can vouch for
+            # the group once the leader exits (see ``refresh_live_process_tree``).
+            await refresh_live_process_tree(self._sessions, session_key)
         pairs = self._sessions_under(session_key)
         failure, popped = await self._reset_and_kill_once(
             session_key, pairs, job_id=job_id, who=who

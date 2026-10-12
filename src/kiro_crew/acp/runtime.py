@@ -2892,6 +2892,16 @@ class AcpRuntime:
             )
         return verdict == "holds"
 
+    async def refresh_process_tree(self) -> None:
+        """Re-walk this runtime's tree before a teardown takes its kill handle.
+
+        The snapshot otherwise runs only at spawn, create and resume, so a child
+        a turn started is missing from the handle, and only a recorded member may
+        vouch for a leaderless group (``process_identity._group_member_vouches``).
+        Same guarded pass as every other snapshot (:meth:`_snapshot_descendants`).
+        """
+        await self._snapshot_descendants()
+
     async def _snapshot_descendants(self, *, retry_when_empty: bool = False) -> None:
         """Record this runtime's descendant PIDs in the tracking file.
 

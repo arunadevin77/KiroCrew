@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         os,
         process_handle_of,
         process_survived_async,
+        refresh_live_process_tree,
         sel,
         spawn_in_flight,
         teardown_capture,
@@ -857,6 +858,9 @@ class TerminalCoordinator(ManagerComponent):
                     # to act on it), a session another path is tearing down, and a
                     # session still live under the key -- the run's own, or a successor
                     # this reset pops too. Each is verified and killed on its own handle.
+                    # The live tree is re-walked first so the run's late children are
+                    # recorded and can vouch for the group once the leader exits.
+                    await refresh_live_process_tree(self._manager._sessions, session_key)
                     pairs = self._manager._sessions_under(session_key)
                     handles = self._manager._retain_process_handles(agent_id, session_key, pairs)
                     seen = [session for session, _handle in pairs]

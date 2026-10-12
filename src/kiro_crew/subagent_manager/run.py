@@ -117,6 +117,7 @@ if TYPE_CHECKING:
         process_survived_async,
         provider_fallback_active,
         read_tombstone,
+        refresh_live_process_tree,
         refuse_stale_switch,
         replace_stale_shared_session,
         reproject_claimed_session,
@@ -722,6 +723,27 @@ class RunEventCoordinator(ManagerComponent):
         and the teardown gate — leaking a concurrency slot, which is the very
         class of bug this module's guard split exists to prevent.
         """
+        if not info._session_sharing:
+            # Re-walk the tree while the run still holds its lease, so children
+            # this run's turns started are on the handle taken below and can
+            # vouch for the group once the leader exits. Before ``release()``:
+            # a walk after it would leave the key claimable for the walk's
+            # length, and a claimer's live turn would then be popped by the
+            # reset. A cancellation here still releases the lease and records
+            # the undecided kill, like one during the reset.
+            try:
+                await refresh_live_process_tree(self._manager._sessions, session_key)
+            except asyncio.CancelledError as exc:
+                try:
+                    self._manager._sessions.release(session_key, cleanup=False)
+                except Exception:
+                    logger.warning("Subagent %s: release failed", info.id, exc_info=True)
+                if not info._reap_started:
+                    info.error = with_kill_failure(
+                        info.error or "",
+                        f"{failure_name(exc)}: the teardown was cancelled before its kill decided",
+                    )
+                raise
         try:
             if info._session_sharing:
                 # Session-sharing subagents: destroy the session handle
@@ -754,17 +776,17 @@ class RunEventCoordinator(ManagerComponent):
             # reaper finds the map empty and reads this entry instead. On a map
             # miss here the roles are reversed and the entry is the reaper's.
             # Every process the key names is a candidate, each on its own handle.
-            pairs = self._manager._sessions_under(session_key)
-            handles = self._manager._retain_process_handles(info.id, session_key, pairs)
-            seen = [session for session, _handle in pairs]
-            # Under a scope whose hook takes the handle of the exact session the
-            # reset pops (a successor a cold start registered after the snapshot);
-            # a popped session with no pid the snapshot never saw is a kill
-            # failure, one it saw names no process (see ``_force_reap``).
-            reset_kwargs, popped = teardown_capture(self._manager._sessions, session_key)
             kill_failed: str | None = None
             fallback_ran = False
             try:
+                pairs = self._manager._sessions_under(session_key)
+                handles = self._manager._retain_process_handles(info.id, session_key, pairs)
+                seen = [session for session, _handle in pairs]
+                # Under a scope whose hook takes the handle of the exact session the
+                # reset pops (a successor a cold start registered after the snapshot);
+                # a popped session with no pid the snapshot never saw is a kill
+                # failure, one it saw names no process (see ``_force_reap``).
+                reset_kwargs, popped = teardown_capture(self._manager._sessions, session_key)
                 try:
                     await asyncio.wait_for(
                         self._manager._sessions.reset(session_key, **reset_kwargs),

@@ -156,6 +156,7 @@ from kiro_crew.process_identity import (  # noqa: F401 - resolved by run.py/term
     kill_verified_process,
     process_handle_of,
     process_survived_async,
+    refresh_live_process_tree,
     spawn_in_flight,
     teardown_capture,
     with_kill_failure,

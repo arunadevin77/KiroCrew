@@ -3715,3 +3715,164 @@ class TestTheReapFencesTheKey:
         assert not mgr._has_allocation_reservation(key)
         mgr.release(key)
         await mgr.reset(key)
+
+
+# ── Both teardown paths refresh the live tree before taking their handles ──
+
+
+class TestTeardownRefreshesTheTreeBeforeTheHandle:
+    """Children a run's turns started are on the handle both teardown paths take.
+
+    The client's startup record misses them, and only a recorded member may
+    vouch for a leaderless group, so each path awaits the live client's
+    ``refresh_process_tree`` before ``_sessions_under`` reads the handle.
+    """
+
+    _LATE = 5151
+
+    def _late_child_on_refresh(self, manager: SubagentManager, key: str) -> AsyncMock:
+        client = manager._sessions._sessions[key].provider._client
+
+        async def _refresh() -> None:
+            client._child_pids[self._LATE] = (_START_ID, b"sleep")
+
+        client.refresh_process_tree = AsyncMock(side_effect=_refresh)
+        return client.refresh_process_tree
+
+    @staticmethod
+    def _handles_taken(spy: MagicMock) -> list[ProcessHandle]:
+        return [handle for call in spy.call_args_list for _s, handle in call.args[2]]
+
+    @pytest.mark.asyncio
+    async def test_the_reaper_records_a_late_child_before_its_reset(self) -> None:
+        manager, info, key = _overdue_run("late-reap", pid=4646)
+        refresh = self._late_child_on_refresh(manager, key)
+        _hanging_reset(manager)
+        children, alive, start_id, sweep = _kill_path_stubs()
+
+        with (
+            patch.object(
+                manager, "_retain_process_handles", wraps=manager._retain_process_handles
+            ) as spy,
+            patch("kiro_crew.subagent.Stats"),
+            patch("kiro_crew.subagent.sel"),
+            patch("kiro_crew.subagent._RESET_TIMEOUT", 0.05),
+            children,
+            alive,
+            start_id,
+            sweep,
+            patch("kiro_crew.platform_compat.kill_process_group"),
+        ):
+            await manager._force_reap("late-reap", info, 7200.0)
+
+        refresh.assert_awaited()
+        taken = self._handles_taken(spy)
+        assert taken and all(
+            self._LATE in h.child_pids for h in taken
+        ), "the reaper's handle missed the child the run started"
+
+    @pytest.mark.asyncio
+    async def test_the_runs_own_teardown_records_a_late_child_before_its_reset(self) -> None:
+        manager, info, key = _overdue_run("late-fin", pid=4747)
+        refresh = self._late_child_on_refresh(manager, key)
+        _hanging_reset(manager)
+        children, alive, start_id, sweep = _kill_path_stubs()
+
+        with (
+            patch.object(
+                manager, "_retain_process_handles", wraps=manager._retain_process_handles
+            ) as spy,
+            patch("kiro_crew.subagent.sel"),
+            patch("kiro_crew.subagent._RESET_TIMEOUT", 0.05),
+            children,
+            alive,
+            start_id,
+            sweep,
+            patch("kiro_crew.platform_compat.kill_process_group"),
+        ):
+            await manager._teardown_run_session(info, key)
+
+        refresh.assert_awaited()
+        taken = self._handles_taken(spy)
+        assert taken and all(
+            self._LATE in h.child_pids for h in taken
+        ), "the run's own teardown handle missed the child the run started"
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_refresh_does_not_stop_the_reap(self) -> None:
+        manager, info, key = _overdue_run("late-hang", pid=4848)
+        client = manager._sessions._sessions[key].provider._client
+
+        async def _hang() -> None:
+            await asyncio.Event().wait()  # never set: only the bound ends it
+
+        client.refresh_process_tree = AsyncMock(side_effect=_hang)
+        _hanging_reset(manager)
+        children, alive, start_id, sweep = _kill_path_stubs()
+
+        with (
+            patch("kiro_crew.process_identity.TREE_REFRESH_TIMEOUT", 0.05),
+            patch("kiro_crew.subagent.Stats"),
+            patch("kiro_crew.subagent.sel") as mock_sel,
+            patch("kiro_crew.subagent._RESET_TIMEOUT", 0.05),
+            children,
+            alive,
+            start_id,
+            sweep,
+            patch("kiro_crew.platform_compat.kill_process_group") as group_kill,
+        ):
+            await manager._force_reap("late-hang", info, 7200.0)
+
+        group_kill.assert_called_once_with(4848, platform_compat.SIGKILL)
+        assert _audit(mock_sel, "reaper_force_kill")["outcome"] == "reaped"
+
+    @pytest.mark.asyncio
+    async def test_a_cancel_during_the_refresh_is_recorded_as_an_undecided_kill(self) -> None:
+        manager, info, key = _overdue_run("late-cancel", pid=4949)
+        client = manager._sessions._sessions[key].provider._client
+        entered = asyncio.Event()
+
+        async def _hang() -> None:
+            entered.set()
+            await asyncio.Event().wait()  # never set: only the cancel ends it
+
+        client.refresh_process_tree = AsyncMock(side_effect=_hang)
+
+        with patch("kiro_crew.subagent.sel"):
+            task = asyncio.ensure_future(manager._teardown_run_session(info, key))
+            await await_until(entered, what="the refresh to start")
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert "the teardown was cancelled before its kill decided" in (
+            info.error or ""
+        ), "a cancel during the refresh skipped the undecided-kill record"
+        assert manager._process_handles == {}
+
+    @pytest.mark.asyncio
+    async def test_the_runs_own_teardown_refreshes_before_it_releases_the_lease(self) -> None:
+        """A walk after ``release()`` would leave the key claimable while it runs."""
+        manager, info, key = _overdue_run("late-order", pid=5050)
+        client = manager._sessions._sessions[key].provider._client
+        order: list[str] = []
+
+        async def _refresh() -> None:
+            order.append("refresh")
+
+        client.refresh_process_tree = AsyncMock(side_effect=_refresh)
+        manager._sessions.release = MagicMock(side_effect=lambda *_a, **_k: order.append("release"))
+        manager._sessions.reset = AsyncMock(return_value=True)
+        children, alive, start_id, sweep = _kill_path_stubs()
+
+        with (
+            patch("kiro_crew.subagent.sel"),
+            children,
+            alive,
+            start_id,
+            sweep,
+            patch("kiro_crew.platform_compat.kill_process_group"),
+        ):
+            await manager._teardown_run_session(info, key)
+
+        assert order[:2] == ["refresh", "release"], order

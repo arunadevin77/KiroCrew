@@ -1437,3 +1437,12 @@ class AcpSessionProvider(LLMProvider):
     def _start_time(self) -> int | None:
         """Process start time (for PID recycle detection)."""
         return getattr(self._runtime, "_start_time", None)
+
+    async def refresh_process_tree(self) -> None:
+        """Record descendants the runtime started since its last snapshot, before a teardown.
+
+        The kill handle reads ``_child_pids`` through this provider from the
+        runtime (above), so the refresh is the runtime's: its own guarded walk,
+        which verifies the root before and after and writes before it publishes.
+        """
+        await self._runtime.refresh_process_tree()
