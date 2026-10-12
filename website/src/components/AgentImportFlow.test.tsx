@@ -444,6 +444,47 @@ describe('AgentImportFlow', () => {
     })
     expect(screen.queryByRole('dialog', { name: 'Import agent setup' })).not.toBeInTheDocument()
   })
+  // The scan runs because the user asked for it (Settings, Import from another
+  // agent), not because first run reached the chapter. First run ends the chapter
+  // on an empty scan without a word; for a user who just clicked, that is a dialog
+  // that closes before it shows anything.
+  describe('when the user replays the importer and the scan finds nothing', () => {
+    const NOTHING_TO_IMPORT: AgentImportScanResponse = {
+      sources: [{ id: 'codex', name: 'Codex', detected: false, categories: [] }],
+      skipped: [],
+      merge_only: true,
+    }
+
+    it('says so instead of finishing the chapter', async () => {
+      mockSuccessfulRequests(NOTHING_TO_IMPORT)
+      const onComplete = vi.fn()
+      renderWithProviders(
+        <AgentImportFlow initialOpen keepOpenWhenEmpty onComplete={onComplete} />,
+      )
+
+      expect(await screen.findByRole('heading', { name: 'No supported setup found' }))
+        .toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: 'Import agent setup' })).toBeInTheDocument()
+      expect(api.onboardingImportState).not.toHaveBeenCalled()
+      expect(onComplete).not.toHaveBeenCalled()
+    })
+
+    it('still lets the user leave from the empty result, once', async () => {
+      mockSuccessfulRequests(NOTHING_TO_IMPORT)
+      const onComplete = vi.fn()
+      renderWithProviders(
+        <AgentImportFlow initialOpen keepOpenWhenEmpty onComplete={onComplete} />,
+      )
+
+      await screen.findByRole('heading', { name: 'No supported setup found' })
+      await userEvent.click(screen.getByRole('button', { name: 'Skip import' }))
+
+      await waitFor(() => expect(onComplete).toHaveBeenCalledOnce())
+      expect(api.onboardingImportState).toHaveBeenCalledOnce()
+      expect(api.onboardingImportState).toHaveBeenCalledWith({ completed: true })
+    })
+  })
+
 
   it('does not auto-complete when the only detected source could not be read', async () => {
     // Degrade-don't-fail turned a reader crash into zero eligible sources, which

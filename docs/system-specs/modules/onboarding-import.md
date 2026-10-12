@@ -6,6 +6,13 @@
 Kiro Crew. It runs from the first-run onboarding flow (after the Kiro CLI
 prerequisite gate, before the theme tour) and from Settings on demand.
 
+When the scan finds nothing to import, the first-run chapter ends by itself and
+the flow moves on. A replay of the importer from Settings stays open on the
+"No supported setup found" result, so the click is answered. `/onboarding`
+replays all of first run, and its empty import step still ends by itself. The
+host chooses in `website/src/shell/boot/firstRun.tsx` (`keepEmptyImport`) and
+passes it to `AgentImportFlow` as `keepOpenWhenEmpty`.
+
 The module is a **projection**, not a mirror: it reads a foreign layout and
 writes only into Kiro Crew's own containers through Kiro Crew's own APIs. It never
 invents a storage format, never writes a file Kiro Crew does not otherwise read,
