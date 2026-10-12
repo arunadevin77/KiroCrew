@@ -221,7 +221,14 @@ def test_a_spec_without_the_guide_server_keeps_the_one_time_grant_for_later(
 
 def _assert_private_first_crewmate(saved: dict, template: str = "kirocrew") -> str:
     row = saved["agents"][ASSISTANT_MEMBER_NAME]
-    assert (row["kiro_agent"], row["workspace"], row["source"]) == (template, "default", "builtin")
+    # Its own workspace from the start, like every created crewmate.
+    own_workspace = f"member-{ASSISTANT_MEMBER_NAME}"
+    assert (row["kiro_agent"], row["workspace"], row["source"]) == (
+        template,
+        own_workspace,
+        "builtin",
+    )
+    assert saved["workspaces"][own_workspace] == {"dir": f"workspace-{own_workspace}"}
     assert row["member_id"] and row["memory_store"] != "default"
     assert saved["memory_stores"][row["memory_store"]]["owner_member_id"] == row["member_id"]
     return row["member_id"]

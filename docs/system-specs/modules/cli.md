@@ -7,7 +7,9 @@ The CLI module (`kiro_crew/cli.py`) provides the `kirocrew` command using stdlib
 ## Member memory commands
 
 `kirocrew agent create --name <name>` explicitly creates a stable member identity
-and its empty member-scoped V2 SQLite database. A member cannot share or rebind its
+and its empty member-scoped V2 SQLite database, and a workspace of the member's own
+(`member-<slug>`, printed as `Workspace: …`). `--workspace <name>` instead binds the
+member to that workspace as given, sharing it. A member cannot share or rebind its
 store through a template, display-name change or arbitrary database path. This
 development-stage V2 contract has no old V2 data migration or compatibility mode.
 Global and named V1 memory retain their existing behavior independently.

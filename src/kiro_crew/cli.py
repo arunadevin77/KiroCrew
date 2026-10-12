@@ -3183,7 +3183,14 @@ Examples:
     )
     agent_create.add_argument("--display-name", default="", help="Label the dashboard shows")
     agent_create.add_argument("--kiro-agent", default="kirocrew", help="Kiro agent name")
-    agent_create.add_argument("--workspace", default="default", help="Workspace name")
+    agent_create.add_argument(
+        "--workspace",
+        default="",
+        help=(
+            "Share an existing workspace by name; omitted, the member gets a workspace "
+            "of its own (member-<slug>)"
+        ),
+    )
     agent_create.add_argument(
         "--memory-store",
         default="default",

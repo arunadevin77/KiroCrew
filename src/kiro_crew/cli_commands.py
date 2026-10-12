@@ -124,6 +124,11 @@ from kiro_crew.mcp_cron import (
     _vet_shell_command,
 )
 from kiro_crew.member_memory_auth import require_member_memory_creation
+from kiro_crew.member_workspace import (
+    MemberWorkspaceUnavailable,
+    provision_member_workspace,
+    retire_unpublished_workspace,
+)
 from kiro_crew.members import (
     MemberNameError,
     check_crew_label,
@@ -1563,11 +1568,17 @@ def _handle_agent(args: argparse.Namespace) -> None:
         )
         previous_store = cfg.agents[args.name].memory_store
         previous_member_id = cfg.agents[args.name].member_id
+        previous_workspace = cfg.agents[args.name].workspace
+        new_workspace = ""
         try:
             require_member_memory_creation(args.name)
             provision_member_memory(cfg, args.name)
-            persist_member_config(cfg, args.name, create=True)
+            new_workspace = provision_member_workspace(cfg, args.name)
+            persist_member_config(cfg, args.name, create=True, new_workspace=new_workspace)
         except BaseException as exc:
+            retire_unpublished_workspace(
+                cfg, args.name, new_workspace, previous_workspace=previous_workspace
+            )
             allocated = cfg.agents[args.name].memory_store
             if allocated != previous_store:
                 retire_unpublished_allocation(
@@ -1586,14 +1597,16 @@ def _handle_agent(args: argparse.Namespace) -> None:
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            if not isinstance(exc, (OSError, UnknownMemoryStore)):
+            if not isinstance(exc, (OSError, UnknownMemoryStore, MemberWorkspaceUnavailable)):
                 raise
             print(f"Error: {exc}", file=sys.stderr)
             sys.exit(1)
+        created = cfg.agents[args.name]
         if display_name:
             print(f"Created agent: {args.name} (display name: {display_name})")
         else:
             print(f"Created agent: {args.name}")
+        print(f"Workspace: {created.workspace}")
 
     elif action == "update":
         if args.name not in cfg.agents:

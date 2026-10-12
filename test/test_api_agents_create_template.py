@@ -63,6 +63,7 @@ def _fake_config():
         degraded_sections=frozenset(),
         agents={},
         memory_stores={},
+        workspaces={},
         default_agent="kirocrew",
         save=lambda: saved.append(True),
         saved=saved,
@@ -229,6 +230,8 @@ class TestExplicitTemplateStillWorks:
         assert data["ok"] is True
         assert cfg.written["doc"]["agents"]["researcher"]["kiro_agent"] == "kirocrew"
         assert cfg.written["doc"]["agents"]["researcher"]["workspace"] == "research"
+        # Naming a workspace is a reuse: stored as given, no entry of its own.
+        assert "workspaces" not in cfg.written["doc"]
 
     @pytest.mark.asyncio
     async def test_listed_template_creates_without_warning(self, caplog):

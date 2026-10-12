@@ -3129,7 +3129,8 @@ describe('New crewmate dialog', () => {
     await waitFor(() => expect(api.createKirocrewAgent).toHaveBeenCalledWith({
       name: 'radar',
       kiro_agent: 'kirocrew',
-      workspace: 'default',
+      // '' asks the server for a workspace of the crewmate's own.
+      workspace: '',
       memory_store: 'default',
       description: 'Triage new issues',
       triggers: '',
@@ -3249,7 +3250,7 @@ describe('New crewmate dialog', () => {
     await openDialog()
     fireEvent.click(screen.getByTestId('crewmate-create-advanced-toggle'))
     const workspace = await screen.findByRole('combobox', { name: 'Workspace' })
-    expect(workspace).toHaveTextContent('default')
+    expect(workspace).toHaveTextContent('Its own workspace (created automatically)')
     // The refresh after the create hangs: the pick must not wait for it.
     let finishRefresh: (v: { workspaces: { name: string }[] }) => void = () => {}
     wsMock.mockReturnValueOnce(new Promise((resolve) => { finishRefresh = resolve }))
@@ -3269,10 +3270,10 @@ describe('New crewmate dialog', () => {
     await waitFor(() => expect(screen.queryByTestId('crewmate-create-form')).toBeNull())
     await openDialog()
     fireEvent.click(screen.getByTestId('crewmate-create-advanced-toggle'))
-    expect(await screen.findByRole('combobox', { name: 'Workspace' })).toHaveTextContent('default')
+    expect(await screen.findByRole('combobox', { name: 'Workspace' })).toHaveTextContent('Its own workspace (created automatically)')
     finishRefresh({ workspaces: [{ name: 'default' }, { name: 'staging' }] })
     await new Promise((r) => setTimeout(r, 20))
-    expect(screen.getByRole('combobox', { name: 'Workspace' })).toHaveTextContent('default')
+    expect(screen.getByRole('combobox', { name: 'Workspace' })).toHaveTextContent('Its own workspace (created automatically)')
   })
 
   // The nested form's create is an awaited POST; Radix unmounts the form on
@@ -3290,7 +3291,7 @@ describe('New crewmate dialog', () => {
     createWs.mockReturnValueOnce(new Promise((resolve) => { finishCreate = resolve }))
     fireEvent.click(screen.getByTestId('crewmate-create-advanced-toggle'))
     const workspace = await screen.findByRole('combobox', { name: 'Workspace' })
-    expect(workspace).toHaveTextContent('default')
+    expect(workspace).toHaveTextContent('Its own workspace (created automatically)')
     fireEvent.keyDown(workspace, { key: 'ArrowDown' })
     fireEvent.click(await screen.findByRole('option', { name: '+ New workspace…' }))
     const wsName = await screen.findByPlaceholderText('e.g. oncall')
@@ -3311,7 +3312,7 @@ describe('New crewmate dialog', () => {
   const settle = () => new Promise((r) => setTimeout(r, 30))
   /** The stale-completion contract, whole: no pick, no cache entry, no refetch. */
   const expectStaleDropped = (queryClient: { getQueryData: (k: unknown[]) => unknown }, readsSince: () => number, readsAtClose: number) => {
-    expect(screen.getByRole('combobox', { name: 'Workspace' })).toHaveTextContent('default')
+    expect(screen.getByRole('combobox', { name: 'Workspace' })).toHaveTextContent('Its own workspace (created automatically)')
     expect(cachedWorkspaceNames(queryClient)).not.toContain('staging')
     expect(readsSince()).toBe(readsAtClose)
   }
@@ -3421,7 +3422,7 @@ describe('New crewmate dialog', () => {
       act(() => { rerenderOpen(true) })
       await screen.findByTestId('crewmate-create-form')
       fireEvent.click(screen.getByTestId('crewmate-create-advanced-toggle'))
-      expect(await screen.findByRole('combobox', { name: 'Workspace' })).toHaveTextContent('default')
+      expect(await screen.findByRole('combobox', { name: 'Workspace' })).toHaveTextContent('Its own workspace (created automatically)')
       expect(cachedWorkspaceNames(queryClient)).not.toContain('staging')
       fireEvent.keyDown(screen.getByRole('combobox', { name: 'Workspace' }), { key: 'ArrowDown' })
       expect(screen.queryByRole('option', { name: 'staging' })).toBeNull()

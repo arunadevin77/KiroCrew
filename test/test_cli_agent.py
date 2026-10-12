@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from kiro_crew.cli import main
+from kiro_crew.config.paths import data_home
 
 
 def _write_config(tmp_path: Path, data: dict) -> Path:
@@ -101,11 +102,54 @@ class TestAgentCreate:
         saved = json.loads(cfg_path.read_text(encoding="utf-8"))
         assert "research" in saved["agents"]
         assert saved["agents"]["research"]["kiro_agent"] == "kirocrew"
-        assert saved["agents"]["research"]["workspace"] == "default"
         store = saved["agents"]["research"]["memory_store"]
         assert store != "default"
         assert saved["memory_stores"][store]["owner_member"] == "research"
         assert saved["memory_stores"][store]["memory_version"] == 2
+        # Its own workspace, published with the record and present on disk.
+        assert saved["agents"]["research"]["workspace"] == "member-research"
+        assert saved["workspaces"]["member-research"] == {"dir": "workspace-member-research"}
+        assert (data_home() / "workspace-member-research").is_dir()
+        assert "Workspace: member-research" in out
+
+    def test_create_can_share_a_declared_workspace(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg_path = _write_config(tmp_path, _base_config())
+
+        with (
+            unittest.mock.patch("kiro_crew.config.loader.config_path", return_value=cfg_path),
+            unittest.mock.patch(
+                "sys.argv",
+                ["kirocrew", "agent", "create", "--name", "research", "--workspace", "default"],
+            ),
+        ):
+            main()
+
+        saved = json.loads(cfg_path.read_text(encoding="utf-8"))
+        assert saved["agents"]["research"]["workspace"] == "default"
+        assert set(saved["workspaces"]) == {"default"}
+
+    def test_a_named_workspace_is_stored_as_given(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The binding the CLI always stored; nothing is allocated for it.
+        cfg_path = _write_config(tmp_path, _base_config())
+
+        with (
+            unittest.mock.patch("kiro_crew.config.loader.config_path", return_value=cfg_path),
+            unittest.mock.patch(
+                "sys.argv",
+                ["kirocrew", "agent", "create", "--name", "research", "--workspace", "oncall"],
+            ),
+        ):
+            main()
+
+        saved = json.loads(cfg_path.read_text(encoding="utf-8"))
+        assert saved["agents"]["research"]["workspace"] == "oncall"
+        assert set(saved["workspaces"]) == {"default"}
+        assert not (data_home() / "workspace-oncall").exists()
+        assert "Workspace: oncall" in capsys.readouterr().out
 
     def test_create_duplicate_exits_nonzero(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

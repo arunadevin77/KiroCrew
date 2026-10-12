@@ -9,6 +9,7 @@ from aiohttp import web
 
 if TYPE_CHECKING:
     from kiro_crew.dashboard.handlers.agents import (
+        AUTO_WORKSPACE,
         DEFAULT_MEMORY_STORE,
         EFFORT_LEVELS,
         EFFORT_VALUES,
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
         KiroCrewConfig,
         MemberAlreadyExists,
         MemberNameError,
+        MemberWorkspaceUnavailable,
         UnknownMemoryStore,
         _drained_to_thread,
         _foreign_private_copy_owner,
@@ -40,9 +42,11 @@ if TYPE_CHECKING:
         normalize_agent_model,
         persist_member_config,
         provision_member_memory,
+        provision_member_workspace,
         resolve_agent_identity,
         resolve_effective_model,
         retire_unpublished_allocation,
+        retire_unpublished_workspace,
         teams_mod,
         validate_member_name,
     )
@@ -350,6 +354,15 @@ async def _api_kirocrew_agents_create(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    # Absent or empty means a workspace of the crew's own, allocated with the
+    # record (member_workspace.provision_member_workspace); a name is the explicit
+    # opt-in to share one, stored as given like every other create always did.
+    _raw_workspace = body.get("workspace", AUTO_WORKSPACE)
+    if not isinstance(_raw_workspace, str):
+        return web.json_response(
+            {"error": "workspace must be a string", "code": "invalid_workspace"}, status=400
+        )
+    workspace = _raw_workspace.strip()
     pending_reason = await _revalidate_crew_pin(model, request)
     if pending_reason:
         return web.json_response({"error": pending_reason, "code": "invalid_model"}, status=400)
@@ -402,7 +415,7 @@ async def _api_kirocrew_agents_create(request: web.Request) -> web.Response:
         # A purge that cannot be made refuses the create (409 below).
         new_agent = KiroCrewAgentConfig(
             kiro_agent=kiro_agent,
-            workspace=body.get("workspace", "default"),
+            workspace=workspace,
             memory_store=memory_store,
             model=model,
             reasoning_effort=reasoning_effort,
@@ -413,19 +426,31 @@ async def _api_kirocrew_agents_create(request: web.Request) -> web.Response:
             session_color=session_color,
             avatar=avatar,
         )
-        # Provision against this snapshot; publish the agent and owned store
-        # together through persist_member_config's flocked delta and create guard.
-        # A fresh allocation that never reached config.json is removed on the way
-        # out (retire_unpublished_allocation re-reads the disk under the config
-        # lock first, so a publication that did land is kept).
+        # Provision against this snapshot; publish the agent, its owned store and
+        # its own workspace together through persist_member_config's flocked delta
+        # and create guard. A fresh allocation that never reached config.json is
+        # removed on the way out (retire_unpublished_allocation re-reads the disk
+        # under the config lock first, so a publication that did land is kept; the
+        # workspace retire is in-memory, its directory is only ever made inside
+        # the locked write).
         cfg.agents[name] = new_agent
         previous_store = new_agent.memory_store
         previous_member_id = new_agent.member_id
+        previous_workspace = new_agent.workspace
+        new_workspace = ""
         try:
             try:
                 await _drained_to_thread(provision_member_memory, cfg, name)
-                await _drained_to_thread(lambda: persist_member_config(cfg, name, create=True))
+                new_workspace = await _drained_to_thread(provision_member_workspace, cfg, name)
+                await _drained_to_thread(
+                    lambda: persist_member_config(
+                        cfg, name, create=True, new_workspace=new_workspace
+                    )
+                )
             except BaseException:
+                retire_unpublished_workspace(
+                    cfg, name, new_workspace, previous_workspace=previous_workspace
+                )
                 allocated = cfg.agents[name].memory_store
                 if allocated != previous_store:
                     await _drained_to_thread(
@@ -438,6 +463,11 @@ async def _api_kirocrew_agents_create(request: web.Request) -> web.Response:
                         )
                     )
                 raise
+        except MemberWorkspaceUnavailable as exc:
+            # A name or directory collision under the lock, or a directory the
+            # host refused: a retry or another choice resolves it, like the
+            # memory-store refusals below.
+            return web.json_response({"error": str(exc), "code": exc.code}, status=409)
         except MemberAlreadyExists:
             return web.json_response(
                 {"error": f"Agent '{name}' already exists", "code": "agent_exists"}, status=409

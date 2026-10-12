@@ -136,6 +136,11 @@ def _create_private(template: str) -> bool:
     from kiro_crew.config.loader import KiroCrewConfig, _invalidate_config_cache
     from kiro_crew.config.sections import KiroCrewAgentConfig
     from kiro_crew.member_memory_auth import require_member_memory_creation
+    from kiro_crew.member_workspace import (
+        AUTO_WORKSPACE,
+        provision_member_workspace,
+        retire_unpublished_workspace,
+    )
     from kiro_crew.memory_stores import (
         persist_member_config,
         provision_member_memory,
@@ -151,14 +156,23 @@ def _create_private(template: str) -> bool:
     if ASSISTANT_MEMBER_NAME in config.agents:
         _mark(FIRST_CREWMATE_MARKER)
         return False
-    member = KiroCrewAgentConfig(kiro_agent=template, workspace="default", source="builtin")
+    # Its own workspace from the start, like its own store: the first crewmate is
+    # an ordinary crewmate and gets what every created crewmate gets.
+    member = KiroCrewAgentConfig(kiro_agent=template, workspace=AUTO_WORKSPACE, source="builtin")
     config.agents[ASSISTANT_MEMBER_NAME] = member
     previous_store, previous_id = member.memory_store, member.member_id
+    previous_workspace, new_workspace = member.workspace, ""
     try:
         require_member_memory_creation(ASSISTANT_MEMBER_NAME)
         provision_member_memory(config, ASSISTANT_MEMBER_NAME)
-        persist_member_config(config, ASSISTANT_MEMBER_NAME, create=True)
+        new_workspace = provision_member_workspace(config, ASSISTANT_MEMBER_NAME)
+        persist_member_config(
+            config, ASSISTANT_MEMBER_NAME, create=True, new_workspace=new_workspace
+        )
     except Exception:
+        retire_unpublished_workspace(
+            config, ASSISTANT_MEMBER_NAME, new_workspace, previous_workspace=previous_workspace
+        )
         if member.memory_store != previous_store:
             try:
                 retire_unpublished_allocation(

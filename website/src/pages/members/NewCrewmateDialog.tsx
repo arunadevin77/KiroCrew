@@ -52,6 +52,7 @@ import {
   Field,
   INHERIT_MODEL,
   ModelField,
+  OWN_WORKSPACE,
   SessionColorField,
   TriggersField,
   WorkspaceField,
@@ -129,7 +130,8 @@ export default function NewCrewmateDialog({ open, onClose, onCreated, existingNa
   const [builtFrom, setBuiltFrom] = useState('')
   const [job, setJob] = useState('')
   const [advanced, setAdvanced] = useState(false)
-  const [workspace, setWorkspace] = useState('default')
+  // A workspace of its own unless Advanced names one to share.
+  const [workspace, setWorkspace] = useState(OWN_WORKSPACE)
   const [pendingWorkspace, setPendingWorkspace] = useState<string | null>(null)
   const [model, setModel] = useState(INHERIT_MODEL)
   const [triggers, setTriggers] = useState('')
@@ -187,7 +189,7 @@ export default function NewCrewmateDialog({ open, onClose, onCreated, existingNa
   useEffect(() => {
     if (!open) return
     setName(''); setBuiltFrom(''); setJob(''); setAdvanced(false)
-    setWorkspace('default'); setModel(INHERIT_MODEL); setTriggers(''); setSessionColor('')
+    setWorkspace(OWN_WORKSPACE); setModel(INHERIT_MODEL); setTriggers(''); setSessionColor('')
     setHint(''); setError(''); setNameRefused(false); setUnconfirmed(false); setPendingWorkspace(null)
     // The nested workspace form too: a draft left in it belongs to the
     // dismissed open, and `atStake` must not count it against the next one.
@@ -285,7 +287,7 @@ export default function NewCrewmateDialog({ open, onClose, onCreated, existingNa
   // template or an Advanced pick is as lost on an accidental dismissal as a
   // typed name, and the reset-on-open above means there is no way back.
   const dirty = Boolean(
-    name || job || builtFrom || workspace !== 'default' || model !== INHERIT_MODEL || triggers || sessionColor,
+    name || job || builtFrom || workspace !== OWN_WORKSPACE || model !== INHERIT_MODEL || triggers || sessionColor,
   )
 
   // The mutation callbacks below outlive the dialog. A route change the user
@@ -658,6 +660,7 @@ export default function NewCrewmateDialog({ open, onClose, onCreated, existingNa
             >
               <WorkspaceField
                 subject="member"
+                ownOption
                 hint={t('pages.membersPage.create_workspace_hint')}
                 options={workspaceOptions}
                 value={workspace}

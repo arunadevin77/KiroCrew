@@ -470,8 +470,10 @@ test('a legacy configured default member keeps V1 while new members receive inde
     await expect(editor.getByText('This crewmate has its own memory (V2).', { exact: true })).toBeVisible()
     await expect(editor.getByRole('button', { name: 'Create private memory', exact: true })).toHaveCount(0)
     await expect(editor.getByRole('button', { name: 'Manage memory', exact: true })).toBeEnabled()
+    // A new member is created on a workspace of its own, named after it.
+    const own = `member-${newOwner.name}`
     const workspace = editor.getByRole('combobox', { name: 'Workspace', exact: true })
-    await expect(workspace).toContainText('default')
+    await expect(workspace).toContainText(own)
     await workspace.click()
     await page.getByRole('option', { name: 'extra', exact: true }).click()
     const manage = editor.getByRole('button', { name: 'Manage memory', exact: true })
@@ -482,7 +484,7 @@ test('a legacy configured default member keeps V1 while new members receive inde
     await expect(manage).toBeInViewport({ ratio: 1 })
     await page.screenshot({ path: testInfo.outputPath('member-memory-manage-disabled-draft.png'), fullPage: false, animations: 'disabled' })
     await workspace.click()
-    await page.getByRole('option', { name: 'default', exact: true }).click()
+    await page.getByRole('option', { name: own, exact: true }).click()
     await expect(manage).toBeEnabled()
     await expect(disabledReason).toHaveCount(0)
     await editor.getByRole('button', { name: 'Manage memory', exact: true }).click()

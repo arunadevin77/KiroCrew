@@ -773,15 +773,38 @@ name into `ResolvedBindings`, in this order:
 An unresolvable workspace falls back to `default_workspace`. Memory identity
 resolves exactly: the reserved `default` assistant uses Global Memory V1;
 existing V1 members keep their declared V1 binding.
+
+A new crew gets a **workspace of its own**, the way it gets its own member memory
+(`member_workspace.py`). A create that names no workspace (`POST /api/agents` with
+`workspace` absent or `""`; `kirocrew agent create` without `--workspace`) binds
+the crew to a fresh `member-<slug>` workspace whose directory is
+`<data home>/workspace-member-<slug>`; a same-slug collision takes a numeric suffix.
+Naming a workspace is the explicit opt-in to share one, stored as given the way
+every create path always stored it (an undeclared name resolves to the base
+directory at use, per the fall-through above). `provision_member_workspace` records
+the allocation on the caller's config snapshot only; `persist_member_config(create=True,
+new_workspace=<name>)` publishes it in the SAME locked mutation as the record,
+re-checking the name and directory against the document under the lock
+(`workspace_exists` / `workspace_dir_in_use`, 409), making the directory through
+`materialize_workspace_dir` and tightening it to owner-only like everything else a
+boot step creates under the data home. A create that fails afterwards calls
+`retire_unpublished_workspace`, which restores the snapshot; a directory the locked
+step already made is left in place by the same rule as every other workspace
+create. Every create path takes these steps: the dashboard, the CLI, the first
+crewmate and an app's `ensure_team`. Crews created before this rule keep the
+binding they have; deleting a crew leaves its workspace, like its memory store,
+on disk and in `workspaces`. The workspace is the crew's own data directory; it
+does not become the `project` of the crew's sessions.
 The first crewmate (config key `mate`, `agent_files.ASSISTANT_MEMBER_NAME`,
 shown as Mate while its `display_name` is empty) is an ordinary crewmate. Every
 install, fresh or upgraded, creates it once (`agent_materialization/first_crewmate.create_first_crewmate_once`,
 called from `rebuild_agent_config`) bound to the same template a user-created crewmate
 gets (the configured `agent.default_agent`, else `kirocrew`), with its own private V2
-store from the start: the row is built in memory, given a store by
+store and its own workspace from the start: the row is built in memory, given a store by
 `provision_member_memory` (the ordinary, collision-reserving identity: a deleted
-predecessor's retained DM binding or another legacy member's slug is never inherited) and
-published by `persist_member_config(create=True)`, the steps every explicit member
+predecessor's retained DM binding or another legacy member's slug is never inherited),
+a workspace by `provision_member_workspace`, and
+published by `persist_member_config(create=True, new_workspace=…)`, the steps every explicit member
 creation takes. It is never written on Global memory. A creation that fails leaves no
 row, no store and no sidecar, so the next start tries again. It carries no tool, Global-memory access, template or prompt of its own:
 its identity block is the ordinary member identity, and it can be renamed, rebound to

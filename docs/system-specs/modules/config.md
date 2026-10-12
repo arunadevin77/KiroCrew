@@ -453,7 +453,12 @@ V2 member must retain its ID and store. No manifest, retirement registry, privat
 payload copy, OS admission gate, or memory provisioning feature flag is involved.
 
 `POST /api/agents` and `kirocrew agent create` allocate new stores automatically.
-A supplied named store is rejected. Owner edits may echo the current store but
+A supplied named store is rejected. They also allocate the member's own workspace
+(`member_workspace.provision_member_workspace`: `member-<slug>` bound in `agents`,
+`workspace-member-<slug>` under the data home declared in `workspaces`) unless a
+workspace is named; `persist_member_config(create=True, new_workspace=…)`
+publishes the entry and makes the owner-only directory inside the same locked
+mutation as the record. Owner edits may echo the current store but
 cannot silently rebind it. Legacy members keep their explicit Global or named V1
 binding. Member updates and automatic discovery never initialize a V2 database;
 only explicit creation of a new member may allocate one. Existing V1 memory

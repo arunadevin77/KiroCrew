@@ -417,7 +417,8 @@ class TestAgentCrudProperties:
                     if update_ws and not refused_rebinding:
                         assert agent["workspace"] == new_ws
                     else:
-                        assert agent["workspace"] == "default"
+                        # Created without naming one, so it owns `member-<slug>`.
+                        assert agent["workspace"] == "member-test-agent"
                     assert agent["memory_store"] == private_store
                     persisted = json.loads(tmp.read_text())
                     assert persisted["agents"]["test-agent"]["memory_store"] == private_store

@@ -131,6 +131,7 @@ class TestCreateEndpoint:
             degraded_sections=frozenset(),
             agents={},
             memory_stores={},
+            workspaces={},
             default_agent="kirocrew",
             save=lambda: saved.append(True),
             saved=saved,

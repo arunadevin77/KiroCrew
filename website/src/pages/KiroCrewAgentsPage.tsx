@@ -103,6 +103,11 @@ interface AgentUpdatePayload {
  *  select shows this as a real option; the backend normalizes it back to ''. */
 export const INHERIT_MODEL = 'auto'
 
+/** The create API's "a workspace of its own" value (`member_workspace.AUTO_WORKSPACE`):
+ *  the member is bound to a fresh `member-<slug>` workspace made with its record.
+ *  Create-time only; a stored record never carries it. */
+export const OWN_WORKSPACE = ''
+
 /** Which crew the editor dialog is pointed at. `null` = closed. */
 type SheetTarget = { mode: 'edit'; name: string } | null
 /** Which word the create form uses for the thing being made. */
@@ -399,13 +404,20 @@ function withCurrent(opts: string[], cur: string): string[] {
  * `NewCrewmateDialog` composes them in its Advanced fold; the editor mounts them
  * individually, one per rail pane.
  */
-export function WorkspaceField({ options, value, onChange, onNewWorkspace, subject, hint }: {
+export function WorkspaceField({ options, value, onChange, onNewWorkspace, subject, hint, ownOption = false }: {
   options: string[]; value: string; onChange: (v: string) => void; onNewWorkspace: () => void; subject: FormSubject
   /** Replaces the subject's default hint. The defaults are EDIT-time copy
    *  ("new chats start fresh in the new folder"); a create form has no old
    *  chats to worry about, so it passes its own line. */
   hint?: string
+  /** Offer `OWN_WORKSPACE` ("its own workspace") as the first choice. Create
+   *  forms only: the API allocates on create and never on update, so the
+   *  editor must not show a choice it cannot save. */
+  ownOption?: boolean
 }) {
+  const choices = ownOption
+    ? [OWN_WORKSPACE, ...withCurrent(options, value).filter(o => o !== OWN_WORKSPACE)]
+    : withCurrent(options, value)
   return (
     <Field
       label={i18nT('pages.kiroCrewAgentsPage.workspace_2')}
@@ -413,7 +425,8 @@ export function WorkspaceField({ options, value, onChange, onNewWorkspace, subje
       info={i18nT('pages.kiroCrewAgentsPage.bindings_preview_info')}
     >
       <SimpleSelect
-        options={withCurrent(options, value)}
+        options={choices}
+        optionLabels={ownOption ? choices.map(o => (o === OWN_WORKSPACE ? i18nT('pages.kiroCrewAgentsPage.own_workspace_option') : o)) : undefined}
         value={value}
         onChange={onChange}
         action={{ label: i18nT('pages.kiroCrewAgentsPage.new_workspace_action'), onSelect: onNewWorkspace }}
