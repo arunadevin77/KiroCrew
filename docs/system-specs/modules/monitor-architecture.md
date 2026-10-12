@@ -730,7 +730,11 @@ keeps reaching the same conclusion.
 fingerprint against `last_wake_fingerprint`), is the budget spent
 (`monitor_budget_reason`), is this error retryable (`_provider_error_decision`
 against `_RETRYABLE_PROVIDER_ERRORS`). It takes the clock as a value through its
-`now` parameter and performs no IO at all.
+`now` parameter and performs no IO at all. A failed supplemental read on an
+otherwise readable subject goes through the same kind gate in
+`_supplemental_provider_error_decision`: only `TRANSIENT` and `RATE_LIMITED` are
+retried, under the same `max_provider_errors` budget, and every other kind stops
+the watch at once rather than spending the budget on a failure that cannot heal.
 
 **A skip is a third outcome, and it reaches three places.** A shared `github:api`
 cooldown makes a probe return WITHOUT calling the API, and it borrows the shape of a
