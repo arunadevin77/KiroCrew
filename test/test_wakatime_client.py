@@ -217,6 +217,51 @@ async def test_fetch_stats_raises_when_response_has_no_data_dict() -> None:
         await client.fetch_stats("last_7_days")
 
 
+async def test_fetch_stats_today_uses_summaries_not_stats() -> None:
+    # The stats endpoint answers 400 for "today", so the client must ask the
+    # summaries endpoint instead and fold the day into the stats shape.
+    day = {
+        "grand_total": {"total_seconds": 5400},
+        "languages": [
+            {"name": "Other", "total_seconds": 1800},
+            {"name": "Python", "total_seconds": 3600},
+        ],
+        "projects": [{"name": "oneka", "total_seconds": 5400}],
+    }
+    session = _FakeSession([_FakeResp(200, {"data": [day]})])
+    client = _client_with(session)
+    result = await client.fetch_stats("today")
+    assert session.calls[0]["url"].endswith("/users/current/summaries")
+    assert session.calls[0]["params"] == {"range": "Today"}
+    assert result == {
+        "total_seconds": 3600.0,
+        "total_seconds_including_other_language": 5400.0,
+        "daily_average": 3600.0,
+        "daily_average_including_other_language": 5400.0,
+        "languages": [
+            {"name": "Python", "total_seconds": 3600.0},
+            {"name": "Other", "total_seconds": 1800.0},
+        ],
+        "projects": [{"name": "oneka", "total_seconds": 5400.0}],
+    }
+
+
+async def test_fetch_stats_yesterday_maps_to_summaries_range() -> None:
+    session = _FakeSession([_FakeResp(200, {"data": []})])
+    client = _client_with(session)
+    result = await client.fetch_stats("yesterday")
+    assert session.calls[0]["params"] == {"range": "Yesterday"}
+    assert result["total_seconds"] == 0.0
+    assert result["languages"] == [] and result["projects"] == []
+
+
+async def test_fetch_stats_today_raises_on_server_error() -> None:
+    session = _FakeSession([_FakeResp(500)])
+    client = _client_with(session)
+    with pytest.raises(WakaTimeUnavailableError):
+        await client.fetch_stats("today")
+
+
 async def test_verify_raises_on_rejected_key() -> None:
     session = _FakeSession([_FakeResp(401)])
     client = _client_with(session)
