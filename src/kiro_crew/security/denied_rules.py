@@ -1316,20 +1316,51 @@ BUILTIN_DENIED_RULES: list[DeniedCommandRule] = [
     ),
     DeniedCommandRule(
         id="local-destructive-rm-rf-root",
-        pattern="rm -rf /.*",
+        # Scoped to the filesystem ROOT ITSELF, not every ``/``-rooted path.  The
+        # old ``rm -rf /.*`` refused ordinary cleanup (``rm -rf /tmp/x``,
+        # ``sudo rm -rf /opt/old``) even though deleting a NAMED child is routine
+        # and the floor already allows those descendants in every other flag
+        # spelling (``rm -fr /tmp/x`` never matched this literal ``rm -rf`` row).
+        # The lookahead fires only when the operand after ``/`` is root itself or a
+        # whole-root expansion -- end / whitespace / a separator (``; & | ) #``) /
+        # quote / a second ``/`` (``///``) / a BARE glob (``/*``, ``/?``; a suffixed
+        # ``/*.bak`` is a targeted op, allowed) / a dot-only segment (``/.``,
+        # ``/..``) -- so a named child (``/tmp``) with a word char after the slash
+        # does not match.  Matched via ``re.search`` over the raw command AND the
+        # command-shape deny-views, which canonicalize a re-quoted spelling
+        # (``rm -rf "/"`` -> ``rm -rf /``) but do NOT expand ``~``/``$HOME`` or the
+        # ``-fr`` flag order -- so this row and its ``~`` sibling keep the literal
+        # ``rm -rf`` contract they always had.  Path IDENTITY (``..`` out of a tree)
+        # stays the sensitive-path keystone's job.
+        pattern=r"rm -rf /(?=[\s/)#;&|'\"]|\Z|[*?]+(?=[\s/)#;&|'\"]|\Z)|\.\.?(?=[\s/)#;&|'\"]|\Z))",
         category="local-destructive",
         description=(
-            "Blocks recursive force-deletion rooted at the filesystem root (rm -rf /...), which "
-            "can wipe the entire operating system and all data."
+            "Blocks recursive force-deletion of the filesystem root itself (rm -rf /, "
+            "rm -rf /*, rm -rf /.., and the like), which can wipe the entire operating "
+            "system and all data. Deleting a named directory under root (rm -rf /tmp/x) "
+            "is ordinary cleanup and is allowed."
         ),
     ),
     DeniedCommandRule(
         id="local-destructive-rm-rf-home",
-        pattern="rm -rf ~.*",
+        # The ``~`` sibling, narrowed the same way: deny home ITSELF or a whole-home
+        # expansion (``~``, ``~/``, ``~*``, ``~?``, ``~/*``, ``~/?``, ``~/.``,
+        # ``~/..``), allow a named child (``~/.cache``, ``~/work/build``).  The
+        # alternation is a non-capturing group on purpose: a TOP-LEVEL ``|`` fails
+        # ``is_safe_user_regex`` and would DISABLE the row rather than narrow it.
+        pattern=(
+            r"rm -rf ~(?:"
+            r"(?=[\s;&|)#'\"]|\Z)"
+            r"|[*?]+(?=[\s;&|)#'\"]|\Z)"
+            r"|/(?=[\s;&|)#'\"]|\Z|[*?]+(?=[\s;&|)#'\"]|\Z)|\.\.?(?=[\s;&|)#/'\"]|\Z))"
+            r")"
+        ),
         category="local-destructive",
         description=(
-            "Blocks recursive force-deletion of the user home directory (rm -rf ~...), which "
-            "would destroy all personal files and config."
+            "Blocks recursive force-deletion of the user home directory itself (rm -rf ~, "
+            "rm -rf ~/, rm -rf ~/*, and the like), which would destroy all personal files "
+            "and config. Deleting a named directory under home (rm -rf ~/.cache/foo) is "
+            "ordinary cleanup and is allowed."
         ),
     ),
     DeniedCommandRule(

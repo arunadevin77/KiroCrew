@@ -279,20 +279,20 @@ class TestHooksConfigDeniedCommands:
 class TestEffectiveDenied:
     def test_builtin_denied_by_default(self):
         mgr = HookManager(HooksConfig())
-        result = mgr.on_tool_call("rm -rf /tmp/foo", command="rm -rf /tmp/foo", is_shell=True)
+        result = mgr.on_tool_call("rm -rf /", command="rm -rf /", is_shell=True)
         assert result.action == TOOL_DENY
 
     def test_disabled_builtin_falls_through(self):
         cfg = HooksConfig(denied_commands_disabled_ids=["local-destructive-rm-rf-root"])
         mgr = HookManager(cfg)
-        result = mgr.on_tool_call("rm -rf /tmp/foo", command="rm -rf /tmp/foo", is_shell=True)
+        result = mgr.on_tool_call("rm -rf /", command="rm -rf /", is_shell=True)
         # Not denied — the built-in rule was individually opted out.
         assert result.action != TOOL_DENY
 
     def test_disable_all_falls_through(self):
         cfg = HooksConfig(denied_commands_disable_all=True)
         mgr = HookManager(cfg)
-        result = mgr.on_tool_call("rm -rf /tmp/foo", command="rm -rf /tmp/foo", is_shell=True)
+        result = mgr.on_tool_call("rm -rf /", command="rm -rf /", is_shell=True)
         assert result.action != TOOL_DENY
 
     def test_user_added_pattern_denies(self):
@@ -517,7 +517,13 @@ class TestResolveDeniedNotes:
 
 class TestGovernancePins:
     def test_pinned_builtin_still_denied_when_disabled(self, restore_context):
-        _install_ceiling_with_command_deny(["rm -rf /.*"])
+        # Pin by the rule's LIVE pattern (not a hardcoded string) so the pin
+        # resolves to ``local-destructive-rm-rf-root`` even after the row's
+        # pattern was narrowed (GH #19473); a stale literal resolves to no rule
+        # and pins nothing.
+        from kiro_crew.security.denied_rules import _RULES_BY_ID
+
+        _install_ceiling_with_command_deny([_RULES_BY_ID["local-destructive-rm-rf-root"].pattern])
         cfg = HooksConfig(
             denied_commands_disabled_ids=["local-destructive-rm-rf-root"],
             denied_commands_disable_all=True,
@@ -525,7 +531,7 @@ class TestGovernancePins:
         mgr = HookManager(cfg)
         # Governance pinned the rule — user opt-out (and disable-all) cannot
         # weaken it (tightest-wins).
-        result = mgr.on_tool_call("rm -rf /tmp/foo", command="rm -rf /tmp/foo", is_shell=True)
+        result = mgr.on_tool_call("rm -rf /", command="rm -rf /", is_shell=True)
         assert result.action == TOOL_DENY
 
     def test_governance_pinned_ids_helper_failsoft(self):

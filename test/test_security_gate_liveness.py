@@ -249,7 +249,15 @@ def _url_payload_command(n: int) -> str:
 #: write redirect exactly as the read-only tier does, and for ``_DEVNULL_REDIR_RE``
 #: ending each discard idiom where bash ends the word, with its classes spelled out
 #: so a Unicode space or digit cannot pose as one. No verb or allowlist moved.
-_PACKAGE_LINE_BUDGET = 28_857
+#:
+#: Raised again, from 28,857, for narrowing the two ``local-destructive-rm-rf-*``
+#: catalog rows (GH #19473): ``rm -rf /.*`` / ``rm -rf ~.*`` refused ordinary
+#: cleanup of a named child under root/home (``rm -rf /tmp/x``,
+#: ``rm -rf ~/.cache/foo``). Each one-line pattern became a multi-line
+#: lookahead that fires only on the dir ITSELF or a whole-tree expansion, plus the
+#: comment explaining the boundary set. A narrowing, not a new tier: every
+#: root/home-itself wipe still denies.
+_PACKAGE_LINE_BUDGET = 28_888
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

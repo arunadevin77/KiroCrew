@@ -1546,7 +1546,7 @@ class TestIsDeniedReDoSResistance:
         # ``;``/``&&``/``|`` separator) must still be denied — a length-bounded
         # scan window would have let these bypass. Also must stay fast.
         for needle in (
-            "FOO=" + ("A" * 2050) + " rm -rf /home/user/project",
+            "FOO=" + ("A" * 2050) + " rm -rf /",
             "aws " + ("--region x " * 250) + "ec2 terminate-instances --instance-ids i-123",
             "psql -c '" + ("#" * 2100) + " DROP DATABASE prod'",
         ):
@@ -7248,10 +7248,15 @@ class TestDenyMatchingIsQuoteNormalized:
         assert security._decode_ansi_c_body("\\c\u00df") == "\\c\u00df"
         assert is_denied("echo $'\\c\u00df'") is None
         # ...and a non-ASCII operand still yields a DECISION rather than an
-        # exception. This one is denied on purpose: the rule blocks a recursive
-        # force-delete rooted at the filesystem root, and `/<non-ascii>` is rooted
-        # there -- what matters here is that the gate answers at all.
-        assert is_denied("rm -rf $'/\u00df'") is not None
+        # exception -- what matters here is that the gate ANSWERS at all. Since the
+        # root/home rows were narrowed to the directory ITSELF (GH #19473), a named
+        # child such as `/<non-ascii-name>` is ordinary cleanup and is now allowed,
+        # exactly like `rm -rf /tmp`; the gate returning a clean decision (not a
+        # crash) is the property under test.
+        assert is_denied("rm -rf $'/\u00df'") is None
+        # A root-ITSELF wipe reached through the same ANSI-C decode is still denied,
+        # so the decode path's coverage of the dangerous shape is unchanged.
+        assert is_denied(r"rm -rf $'/'") is not None
         assert is_denied(r"bash -c $'rm\cI-rf /'") is not None
 
     def test_a_nul_escape_truncates_the_word_like_bash(self):
@@ -7449,6 +7454,110 @@ class TestDenyMatchingIsQuoteNormalized:
         assert security._shell_tokens("") == []
 
 
+class TestRmRootHomeRowsNarrowedToTheDirItself:
+    """The ``rm -rf /`` and ``rm -rf ~`` catalog rows deny the root/home dir
+    ITSELF (and whole-tree expansions of it), while allowing deletion of a NAMED
+    child under it.
+
+    Why this exists: the old patterns ``rm -rf /.*`` / ``rm -rf ~.*`` matched any
+    target that merely began with ``/`` or ``~`` -- so ordinary cleanup
+    (``rm -rf /tmp/x``, ``rm -rf ~/.cache/foo``, ``sudo rm -rf /opt/old-tool``)
+    was refused even though the floor already allows the same descendants in
+    every other flag spelling (``rm -fr /tmp/x`` never matched this literal
+    ``rm -rf`` row at all).  The rows are now the dir-itself floor only.
+
+    SECURITY INVARIANT: this is a narrowing, so the proof is twofold -- every
+    whole-root / whole-home wipe STILL denies (the first two tests), and the
+    narrowing is what unblocks the legitimate descendants (the third).  These two
+    rows are the ONLY catalog protection for a root/home wipe
+    (``is_sensitive_bash_command`` matches no ``rm`` shape), so a dropped dangerous
+    cell here is a real hole, not a cosmetic regression.
+    """
+
+    # Every spelling whose argv target IS root/home or a whole-tree expansion of
+    # it.  All must stay refused.
+    DANGEROUS = (
+        "rm -rf /",
+        "rm -rf /.",
+        "rm -rf /..",
+        "rm -rf //",
+        "rm -rf ///",
+        "rm -rf /*",
+        "rm -rf /?",
+        "rm -rf / /home/victim",  # root is one of several targets
+        "rm -rf /; echo done",
+        "rm -rf ~",
+        "rm -rf ~/",
+        "rm -rf ~/.",
+        "rm -rf ~/..",
+        "rm -rf ~/*",
+        "rm -rf ~/?",
+        "rm -rf ~*",
+        "rm -rf ~?",
+        # The command-shape deny-view canonicalizes a re-quoted root to the plain
+        # form, so these reduce to ``rm -rf /`` and are still caught.
+        'rm -rf "/"',
+        "rm -rf '/'",
+        '"rm" -rf /',
+        "echo start; rm -rf \"/\"",
+    )
+
+    # Legitimate deletions of a NAMED directory under root/home -- the 8 the issue
+    # names, plus siblings.  All must be allowed by these two rows.
+    LEGITIMATE = (
+        "rm -rf /tmp/x",
+        "rm -rf /tmp/build-foo",
+        "rm -rf /var/tmp/kc-cache",
+        "sudo rm -rf /opt/old-tool",
+        "rm -rf ~/.cache/foo",
+        "rm -rf ~/.cache/pip ~/.npm/_cacache",
+        "rm -rf ~/work/repo/build && cd ~",
+        "rm -rf ~/.kiro/crew/scratch/runtime-1",
+        "rm -rf /tmp",
+        "rm -rf ~/Downloads",
+        "rm -rf /home/user/project",
+        "rm -rf ~/.config",
+        "rm -rf ~/build-*",  # a suffixed glob is a targeted op, not whole-home
+        "rm -rf /tmp/*.log",
+    )
+
+    def test_every_whole_root_or_home_wipe_still_denies(self):
+        for cmd in self.DANGEROUS:
+            assert is_denied(cmd) is not None, f"dangerous wipe no longer refused: {cmd!r}"
+
+    def test_the_two_rows_are_what_refuse_the_dangerous_shapes(self):
+        """Prove the deny comes from THESE rows, not some other tier -- so the
+        narrowing is measured against the right thing.  Disabling both rows must
+        make every dangerous cell allowed (nothing else catches them)."""
+        disabled = ["local-destructive-rm-rf-root", "local-destructive-rm-rf-home"]
+        for cmd in self.DANGEROUS:
+            still = is_denied(cmd, denied_regexes=None)
+            # Recompute the effective rule set WITHOUT the two rm rows.
+            from kiro_crew.security import BUILTIN_DENIED_RULES
+
+            kept = [r.pattern for r in BUILTIN_DENIED_RULES if r.id not in disabled]
+            assert is_denied(cmd) is not None  # sanity: refused with the rows on
+            # With only the other rows, the root/home wipes are no longer caught
+            # by this tier -- confirming these two rows carry the protection.
+            assert is_denied(cmd, denied_regexes=kept) is None, (
+                f"another row also refuses {cmd!r}; the test no longer isolates these rows"
+            )
+
+    def test_named_children_are_allowed(self):
+        for cmd in self.LEGITIMATE:
+            assert is_denied(cmd) is None, f"legitimate cleanup still refused: {cmd!r}"
+
+    def test_the_rows_pass_the_user_regex_safety_gate(self):
+        """A pattern that fails ``is_safe_user_regex`` would be DISABLED by
+        ``_DenyMatcher`` rather than enforced -- a silent hole.  Both narrowed
+        rows must pass (no top-level alternation, no ReDoS shape)."""
+        from kiro_crew.security import BUILTIN_DENIED_RULES
+
+        for rule in BUILTIN_DENIED_RULES:
+            if rule.id in ("local-destructive-rm-rf-root", "local-destructive-rm-rf-home"):
+                assert is_safe_user_regex(rule.pattern), rule.id
+
+
 class TestEmptyArgvElementDoesNotBreakTheDenyView:
     """An empty-quoted word must not walk a command past the deny catalog.
 
@@ -7468,18 +7577,21 @@ class TestEmptyArgvElementDoesNotBreakTheDenyView:
     the measured reason.
     """
 
-    # One rule (``rm -rf /.*``), every spelling of an empty word a shell accepts,
-    # at every position where it changes the join.
+    # One rule (the ``rm -rf /`` row), every spelling of an empty word a shell
+    # accepts, at every position where it changes the join.  The target is root
+    # itself: the row was narrowed to the root/home dir (GH #19473), so a named
+    # child like ``/home/x`` is no longer the destructive shape -- the empty-word
+    # render still has to collapse to ``rm -rf /`` for the row to catch it.
     EMPTY_WORD_SPELLINGS = (
-        'rm -rf "" /home/x',
-        "rm -rf '' /home/x",
-        "rm -rf $'' /home/x",  # ANSI-C quoting, empty body
-        'rm -rf $"" /home/x',  # locale quoting, empty body
-        "rm -rf \"\"'' /home/x",  # concatenation of two empty words
-        "rm -rf ''\"\" /home/x",
-        'rm -rf """" /home/x',
-        'rm -rf "" "" /home/x',  # two separate empty operands
-        'rm "" -rf /home/x',  # between the program and its flag
+        'rm -rf "" /',
+        "rm -rf '' /",
+        "rm -rf $'' /",  # ANSI-C quoting, empty body
+        'rm -rf $"" /',  # locale quoting, empty body
+        "rm -rf \"\"'' /",  # concatenation of two empty words
+        "rm -rf ''\"\" /",
+        'rm -rf """" /',
+        'rm -rf "" "" /',  # two separate empty operands
+        'rm "" -rf /',  # between the program and its flag
     )
 
     def test_every_empty_word_spelling_is_denied(self):
@@ -7503,7 +7615,7 @@ class TestEmptyArgvElementDoesNotBreakTheDenyView:
                 f"raw text now matches {cmd!r} on its own -- the cross above no "
                 "longer isolates the view's render"
             )
-        assert security.is_denied("rm -rf /home/x") is not None
+        assert security.is_denied("rm -rf /") is not None
 
     def test_other_rule_families_escaped_the_same_way(self):
         """Not an ``rm``-specific patch: any rule whose shape uses single
@@ -7753,14 +7865,17 @@ class TestEmptyArgvElementDoesNotBreakTheDenyView:
         from kiro_crew import security
 
         for cmd in (
-            'rm -rf " " /home/x',
-            "rm -rf $'\\t' /home/x",
-            "rm -rf ' ' $'\\t' /home/x",
+            'rm -rf " " /',
+            "rm -rf $'\\t' /",
+            "rm -rf ' ' $'\\t' /",
         ):
             assert (
                 is_denied(cmd) is not None
             ), f"a whitespace-only word escaped the deny view: {cmd!r}"
         # The added view is appended after the plain and empty-elided renders.
+        # (``/home/x`` here only exercises the VIEW RENDER, which is independent of
+        # which rule matches -- the behavioral cases above use the root target the
+        # narrowed row still denies.)
         views = security._deny_segment_views('rm -rf " " /home/x')
         assert views[-1] == "rm -rf /home/x"
         assert "rm -rf   /home/x" in views

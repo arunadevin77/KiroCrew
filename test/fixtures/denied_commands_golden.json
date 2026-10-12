@@ -607,15 +607,15 @@
   },
   {
     "id": "local-destructive-rm-rf-root",
-    "pattern": "rm -rf /.*",
+    "pattern": "rm -rf /(?=[\\s/)#;&|'\\\"]|\\Z|[*?]+(?=[\\s/)#;&|'\\\"]|\\Z)|\\.\\.?(?=[\\s/)#;&|'\\\"]|\\Z))",
     "category": "local-destructive",
-    "description": "Blocks recursive force-deletion rooted at the filesystem root (rm -rf /...), which can wipe the entire operating system and all data."
+    "description": "Blocks recursive force-deletion of the filesystem root itself (rm -rf /, rm -rf /*, rm -rf /.., and the like), which can wipe the entire operating system and all data. Deleting a named directory under root (rm -rf /tmp/x) is ordinary cleanup and is allowed."
   },
   {
     "id": "local-destructive-rm-rf-home",
-    "pattern": "rm -rf ~.*",
+    "pattern": "rm -rf ~(?:(?=[\\s;&|)#'\\\"]|\\Z)|[*?]+(?=[\\s;&|)#'\\\"]|\\Z)|/(?=[\\s;&|)#'\\\"]|\\Z|[*?]+(?=[\\s;&|)#'\\\"]|\\Z)|\\.\\.?(?=[\\s;&|)#/'\\\"]|\\Z)))",
     "category": "local-destructive",
-    "description": "Blocks recursive force-deletion of the user home directory (rm -rf ~...), which would destroy all personal files and config."
+    "description": "Blocks recursive force-deletion of the user home directory itself (rm -rf ~, rm -rf ~/, rm -rf ~/*, and the like), which would destroy all personal files and config. Deleting a named directory under home (rm -rf ~/.cache/foo) is ordinary cleanup and is allowed."
   },
   {
     "id": "iac-teardown-terraform-destroy",
