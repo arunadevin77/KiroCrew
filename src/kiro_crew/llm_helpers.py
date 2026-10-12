@@ -915,6 +915,47 @@ def pick_epoch_host(provider: Any) -> Any:
     return provider
 
 
+# Attribute on a session's pick-epoch host carrying the model it runs with
+# ``model.route`` routing OFF, as ``(session id, model, pick epoch)``. ONE spelling
+# and one validator (:func:`route_baseline_latch`) for both readers: the chat
+# runner, which latches it before a session's first routed turn, and the
+# sub-agent start, which prices its tiers against it.
+ROUTE_BASELINE_ATTR = "_jev_route_baseline"
+
+
+def _latch_identity(host: Any) -> tuple[str, int]:
+    """``(session id, pick epoch)`` of *host*, the two facts a latch is valid for."""
+    epoch = getattr(host, "_explicit_pick_epoch", 0)
+    epoch = epoch if isinstance(epoch, int) else 0
+    sid = str(getattr(host, "_session_id", "") or getattr(host, "session_id", "") or "")
+    return sid, epoch
+
+
+def route_baseline_latch(host: Any) -> str | None:
+    """The latched pre-route model on *host*, or ``None`` when no record holds.
+
+    A record holds while it names *host*'s current session and pick epoch: a
+    moved epoch is an explicit pick, a different id is a pooled host serving a
+    new session. ``""`` is a real latch -- the backend named no model.
+    """
+    latched = getattr(host, ROUTE_BASELINE_ATTR, None)
+    sid, epoch = _latch_identity(host)
+    if (
+        isinstance(latched, tuple)
+        and len(latched) == 3
+        and latched[0] == sid
+        and latched[2] == epoch
+    ):
+        return str(latched[1] or "")
+    return None
+
+
+def latch_route_baseline(host: Any, baseline: str) -> None:
+    """Record *baseline* on *host* for its current session and pick epoch."""
+    sid, epoch = _latch_identity(host)
+    setattr(host, ROUTE_BASELINE_ATTR, (sid, baseline, epoch))
+
+
 _slot_switch_session_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = (
     weakref.WeakValueDictionary()
 )

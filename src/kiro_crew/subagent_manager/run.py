@@ -82,6 +82,7 @@ if TYPE_CHECKING:
         _host_memory_reading_off_loop,
         _redact,
         _resolved_model_of,
+        _route_unpinned_start,
         _RunCreditAccounting,
         _selection_kind,
         _SharingPlan,
@@ -2221,6 +2222,11 @@ class RunEventCoordinator(ManagerComponent):
         # The one sharing decision (``_sharing_plan``), which admission also read
         # to price this start: template execution, not ``keep``, the eligibility
         # predicate, and no model / reasoning-effort pin.
+        # An UNPINNED start may take a model from ``model.route``'s derived tiers
+        # (``decisions.model_route_derive``, off by default). Decided before the
+        # sharing plan, which reads the routed model as a pin: a routed model
+        # cannot be applied to the parent's already-started runtime.
+        await _route_unpinned_start(info, kind, self._manager._sessions)
         plan = self._manager._sharing_plan(info)
         eff_model = plan.eff_model
         # Record the EFFECTIVE pin (per-spawn OR the role_models['subagent']
@@ -4076,7 +4082,7 @@ class RunEventCoordinator(ManagerComponent):
                 return False
         except Exception:
             return False
-        if info.model or info.allowed_tools or info.bare:
+        if info.model or info.routed_model or info.allowed_tools or info.bare:
             return False
         # The shared runtime is the parent's own process, on the parent's backend:
         # a run asked onto a backend of its own needs a process of its own.
@@ -4101,7 +4107,7 @@ class RunEventCoordinator(ManagerComponent):
         here names a harness. *cfg* is a config the caller already loaded.
         """
         kind = _selection_kind(info)
-        eff_model = info.model or _subagent_default_model(cfg)
+        eff_model = info.model or _subagent_default_model(cfg) or info.routed_model
         eff_effort = info.reasoning_effort or _subagent_default_effort(cfg)
         # Not coerced: the eligibility answer is passed through as the run has
         # always read it, and admission prices a start shared only on a real

@@ -1372,6 +1372,73 @@ def _subagent_default_effort(cfg: Any = None) -> str:
         return ""
 
 
+async def _route_unpinned_start(info: "SubagentInfo", kind: str, sessions: Any) -> None:
+    """Route an UNPINNED start through ``model.route``'s derived tiers. Never raises.
+
+    A start is unpinned when it carries no model of its own (``info.model``), no
+    role pin (``agent.role_models['subagent']``), no named agent, crew or backend,
+    and is not a continued conversation: each of those already chose its model,
+    and a chosen model is never routed. ``model_route`` answers only while
+    ``decisions.model_route_derive`` is on, so with it off this sends, writes and
+    changes nothing.
+
+    The task is classified by the question a chat turn gets, under the PARENT's
+    session key, and priced against the model the parent runs with routing off
+    (:func:`~kiro_crew.decisions.points.model_route.inherited_baseline`) -- not its
+    live model, which is the tier its last routed turn landed on. A parent with
+    no live provider, or a substitute serving it with nothing named to go back
+    to, routes nothing. Asked ONCE per run: a recovery respawn of a start already
+    routed keeps that routing, because a dead process or an orphaned session says
+    nothing about whether the tier was right. Sets ``info.routed_model`` /
+    ``info.routed_tier``; ``routed_model`` stays ``""`` when the tier keeps the
+    inherited model.
+    """
+    if (
+        info.routed_tier
+        or info.model
+        or info.agent
+        or info.crew
+        or info.backend is not None
+        or info.conversation_key
+        or kind != "template"
+        or not info.parent_session_key
+    ):
+        return
+    try:
+        from kiro_crew.decisions.points import model_route
+        from kiro_crew.llm_helpers import provider_advertised_ids
+
+        if not model_route.derive_enabled():
+            return
+        if await asyncio.to_thread(_subagent_default_model):
+            return
+        provider = sessions.get_provider(info.parent_session_key)
+        if provider is None:
+            return
+        baseline = model_route.inherited_baseline(provider)
+        if baseline is None:
+            return
+        advertised = provider_advertised_ids(provider)
+        chosen, tier = await model_route.routed_spawn_model(
+            info.task,
+            session_key=info.parent_session_key,
+            current_model=baseline,
+            advertised=advertised,
+            run_id=info.id,
+            rate_of=model_route.rate_lookup(provider),
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.debug(
+            "model.route: leaving sub-agent %s on its inherited model", info.id, exc_info=True
+        )
+        return
+    if tier:
+        info.routed_tier = tier
+        info.routed_model = chosen
+
+
 def _spawn_effective_model(
     model: str, agent: str, *, crew_agent: str | None = None, backend: str | None = None
 ) -> str | None:
@@ -2946,6 +3013,14 @@ class SubagentInfo:
     # ``"auto"`` ⇒ unpinned (no per-spawn pin, no role pin — the provider picks
     # the model). Resolved once at spawn.
     requested_model: str = ""
+    # The model ``model.route`` picked for an UNPINNED start and the tier it ran
+    # at; both "" when the start was not routed. Kept apart from ``model``, which
+    # is only ever a caller's own pin, so a pinned start is never routed, a
+    # recovery respawn of a routed start keeps the routing it already has, and
+    # the usage row names the model that actually served (``model_source``)
+    # rather than a routed id the child session may have withheld.
+    routed_model: str = ""
+    routed_tier: str = ""
     # Per-call reasoning-effort override (spawn_run ``reasoning_effort``).
     # Wins over the ``role_efforts['subagent']`` pin; ``""`` defers to it.
     # Like ``model``, a non-empty value forces the dedicated-process path.

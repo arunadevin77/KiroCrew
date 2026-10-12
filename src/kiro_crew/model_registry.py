@@ -373,17 +373,20 @@ def refresh_kiro_catalog(rows: list[dict[str, Any]], namespace: str) -> tuple[bo
     ids, windows = admit_catalog_rows(rows)
     windows_changed = _replace_kiro_windows(windows)
     advertised_changed = refresh_advertised_models(namespace, ids)
-    _replace_kiro_rates(_catalog_rates(rows, ids))
+    _replace_catalog_rates(namespace, _catalog_rates(rows, ids))
     return windows_changed, advertised_changed
 
 
-# Credit multiplier per kiro model id, off the same ``--list-models`` rows: the
-# ``rate_multiplier`` field the picker's cost badge renders (Auto = 1.0). In
+# Credit multiplier per model id, off the same ``--list-models`` rows: the
+# ``rate_multiplier`` field the picker's cost badge renders (Auto = 1.0), kept
+# per registry NAMESPACE -- the one :func:`refresh_kiro_catalog` was handed --
+# so a price is only ever read back for a session whose backend shares that
+# namespace, never for another harness whose ids happen to fold onto these. In
 # memory only and REPLACED by each snapshot, like the window cache: a price is a
-# fact about the catalog kiro serves now, and a stale one surviving a restart
-# would route a turn on a price the account does not pay. A cold process has
-# none, which every reader treats as "price unknown".
-_KIRO_RATES: dict[str, float] = {}
+# fact about the catalog served now, and a stale one surviving a restart would
+# route a turn on a price the account does not pay. A cold process has none,
+# which every reader treats as "price unknown".
+_CATALOG_RATES: dict[str, dict[str, float]] = {}
 
 
 def _priced(value: object) -> float | None:
@@ -416,30 +419,32 @@ def _catalog_rates(rows: list[dict[str, Any]], ids: Sequence[str]) -> dict[str, 
     return rates
 
 
-def _replace_kiro_rates(rates: dict[str, float]) -> None:
-    """Make ``_KIRO_RATES`` hold exactly *rates*; an empty snapshot is a no-op."""
+def _replace_catalog_rates(namespace: str, rates: dict[str, float]) -> None:
+    """Make *namespace*'s prices exactly *rates*; an empty snapshot is a no-op."""
     if not rates:
         return
-    _KIRO_RATES.clear()
-    _KIRO_RATES.update(rates)
+    _CATALOG_RATES[namespace] = dict(rates)
 
 
-def rate_multiplier(model_id: str) -> float | None:
-    """*model_id*'s credit multiplier from the last catalog, or ``None`` when unknown.
+def rate_multiplier(model_id: str, namespace: str) -> float | None:
+    """*model_id*'s credit multiplier in *namespace*'s last catalog, or ``None``.
 
-    Asked as written, then case-folded, then on the dot/dash fold the picker's
-    ``normalizeModelKey`` applies, because a session advertises the spelling its
-    own backend uses and the catalog may print another.
+    *namespace* is the registry namespace of the session asking
+    (``agent_sdk.backends.model_registry_namespace``); a namespace no catalog was
+    read for has no prices. Asked as written, then case-folded, then on the
+    dot/dash fold the picker's ``normalizeModelKey`` applies, because a session
+    advertises the spelling its own backend uses and the catalog may print another.
     """
+    rates = _CATALOG_RATES.get(namespace)
     name = str(model_id or "").strip()
-    if not name:
+    if not rates or not name:
         return None
     for candidate in (name, name.lower()):
-        found = _KIRO_RATES.get(candidate)
+        found = rates.get(candidate)
         if found is not None:
             return found
     folded = name.lower().replace(".", "-")
-    for key, rate in _KIRO_RATES.items():
+    for key, rate in rates.items():
         if key.lower().replace(".", "-") == folded:
             return rate
     return None

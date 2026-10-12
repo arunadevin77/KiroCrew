@@ -481,6 +481,7 @@ from kiro_crew.hooks import (  # noqa: F401
 from kiro_crew.image_artifacts import register_images_off_loop
 from kiro_crew.llm_helpers import (  # noqa: F401
     _NO_PRIOR_STATS,
+    ROUTE_BASELINE_ATTR,
     TRANSIENT_RETRIES,
     TURN_FALLBACK_ATTR,
     FallbackState,
@@ -495,6 +496,7 @@ from kiro_crew.llm_helpers import (  # noqa: F401
     connection_retry_delay,
     fallback_rewound_transient_budget,
     first_advertised_fallback,
+    latch_route_baseline,
     pick_epoch_host,
     probe_fallback_restore,
     provider_active_model,
@@ -504,6 +506,7 @@ from kiro_crew.llm_helpers import (  # noqa: F401
     provider_raw_model,
     record_interaction_event,
     resolve_substitute_set_model,
+    route_baseline_latch,
     run_bg_oneliner,
     slot_switch_session_lock,
     transient_retry_delay,
@@ -3677,7 +3680,42 @@ def _jev_preview_on(session_key: str) -> bool:
         return False
 
 
-_JEV_ROUTE_BASELINE_ATTR = "_jev_route_baseline"
+_JEV_ROUTE_BASELINE_ATTR = ROUTE_BASELINE_ATTR
+
+
+#: Stop reasons that say the MODEL ran out of room or steps before it finished --
+#: the length limit and the step limit. The only endings derived-tier escalation
+#: reads as evidence a turn's tier was too low.
+_JEV_ROUTE_CAPABILITY_STOPS = frozenset({"max_tokens", "max_turn_requests"})
+
+
+def _jev_route_turn_ok(terminal: "dict[str, Any] | None") -> bool | None:
+    """How a turn ended, for derived-tier escalation: ok, too hard, or neither.
+
+    ``True`` for a turn whose terminal event reads ``ok``. ``False`` only when the
+    model itself stopped at its length or step limit
+    (:data:`_JEV_ROUTE_CAPABILITY_STOPS`). ``None`` for everything else: a turn
+    with no terminal event (a cancel, a dead process, a transport error), an
+    error or timeout the provider reported, a refusal, a recovered stall. None of
+    those says a dearer model would have done better, so none may raise the
+    session's tier.
+    """
+    if terminal is None:
+        return None
+    reason = str(terminal.get("stop_reason") or "")
+    if _turn_outcome(reason) == "ok":
+        return True
+    return False if reason in _JEV_ROUTE_CAPABILITY_STOPS else None
+
+
+def _settle_jev_route(session_key: str, ok: bool | None) -> None:
+    """Hand a turn's ending to ``model_route.settle``. Never raises; in-memory only."""
+    try:
+        from kiro_crew.decisions.points import model_route
+
+        model_route.settle(session_key, ok)
+    except Exception:  # pragma: no cover - a build without the point
+        logger.debug("model.route: could not settle the routed turn", exc_info=True)
 
 
 def _active_fallback(slot: Any, client: Any) -> tuple[bool, str]:
@@ -3717,26 +3755,20 @@ def _jev_route_baseline(slot: Any, client: Any) -> tuple[str, str, int]:
     host = pick_epoch_host(client)
     epoch = getattr(host, "_explicit_pick_epoch", 0)
     epoch = epoch if isinstance(epoch, int) else 0
-    sid = str(getattr(host, "_session_id", "") or getattr(host, "session_id", "") or "")
     _sync_served_model(slot, client)
     live_model = _crew_log_model(slot)
     # A degraded model is not what this session runs when nothing has moved it.
     _fallback_on, _fallback_primary = _active_fallback(slot, client)
-    latched = getattr(host, _JEV_ROUTE_BASELINE_ATTR, None)
-    if (
-        isinstance(latched, tuple)
-        and len(latched) == 3
-        and latched[0] == sid
-        and latched[2] == epoch
-    ):
-        return live_model, str(latched[1] or ""), epoch
+    latched = route_baseline_latch(host)
+    if latched is not None:
+        return live_model, latched, epoch
     baseline = _fallback_primary or live_model
     if _fallback_on and not _fallback_primary:
         # A fallback serves the session and nothing names what it left, so there is
         # no record to take: latching the substitute is the defect this branch
         # exists to avoid, and the next turn latches once the ladder is done.
         return live_model, baseline, epoch
-    setattr(host, _JEV_ROUTE_BASELINE_ATTR, (sid, baseline, epoch))
+    latch_route_baseline(host, baseline)
     return live_model, baseline, epoch
 
 
@@ -3878,6 +3910,7 @@ async def _route_model_for_turn(
     session_key: str,
     *,
     prompt: str,
+    retried: bool = False,
 ) -> None:
     """Ask ``model.route`` which model this turn should run on, and switch to it.
 
@@ -3960,6 +3993,8 @@ async def _route_model_for_turn(
             current_model=_baseline,
             advertised=_advertised,
             history_source=_route_history_source(state, session_key),
+            retried=retried,
+            rate_of=model_route.rate_lookup(client),
         )
     except asyncio.CancelledError:
         raise
@@ -3987,6 +4022,9 @@ async def _route_model_for_turn(
         _restore_to = ""
     _target = _chosen or _restore_to
     if not _target:
+        # Nothing to switch: the tier keeps the model the turn already runs on,
+        # the one exit beside a taken switch where the answer shapes the turn.
+        model_route.note_applied(session_key, routed)
         await asyncio.to_thread(model_route.record_outcome, session_key, routed)
         return
 
@@ -4171,6 +4209,7 @@ async def _route_model_for_turn(
     # Written and published only once the switch has landed, so the strip and the
     # log describe the model the turn actually ran on. Off the loop: the row is a
     # filesystem append.
+    model_route.note_applied(session_key, routed)
     await asyncio.to_thread(model_route.record_outcome, session_key, routed)
     return
 
@@ -11815,8 +11854,17 @@ async def _run_chat(
             # Two texts, kept apart on purpose: the person's own words are what the
             # tier is classified from, and ``full_message`` is what the turn SENDS, so
             # it is what the fit rule has to size.
+            # A regenerate is the same request asked again, which is what
+            # derived-tier escalation steps up on (``retried``); it changes
+            # nothing while ``decisions.model_route_derive`` is off.
             await _route_model_for_turn(
-                state, slot, client, _jev_route_text, session_key, prompt=full_message
+                state,
+                slot,
+                client,
+                _jev_route_text,
+                session_key,
+                prompt=full_message,
+                retried=bool(regenerate_hint),
             )
 
         state.broadcast_ws("chat_status", {"slot": slot.key, "status": "Thinking…"})
@@ -19541,6 +19589,10 @@ async def _run_chat(
         # text they close over. Emitted HERE rather than at the terminal event
         # because several recovery paths return before that event is reached, and
         # a stash that never runs leaves a turn open in the file forever.
+        # Derived-tier escalation hears how a routed turn ended. A no-op for a
+        # session with no routed turn in flight, which is every session while
+        # ``decisions.model_route_derive`` is off.
+        _settle_jev_route(session_key, _jev_route_turn_ok(_crew_log_terminal))
         if _crew_log_terminal is not None:
             # Any tool still open produced no result frame of its own. Closed
             # before the turn completes so a turn never completes with an open

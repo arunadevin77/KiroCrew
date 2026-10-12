@@ -5190,8 +5190,10 @@ class DecisionsConfig:
             "'medium' keeps the session's own model, and 'complex' runs on the "
             "dearest model priced above it. A tier you pinned always wins. With this "
             "on, a sub-agent spawned with no model of its own is routed the same "
-            "way, and a turn or sub-agent retried after a failure runs one tier "
-            "higher. Off by default. No model id is written for you: the targets "
+            "way once tool-call arguments are also allowed on the Decisions card "
+            "(its task is one), and a chat turn you regenerate, or the turn after one that hit "
+            "its length or step limit, runs one tier higher. Off by default. No "
+            "model id is written for you: the targets "
             "are read from the live model list each time, and a tier with no "
             "price to compare (a cold list, a tie) keeps the session's model. The "
             "decision log marks every derived choice 'derived'.",
