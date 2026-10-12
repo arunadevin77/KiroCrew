@@ -3957,6 +3957,18 @@ with a bounded worker count -- the full suite is CI's job:
 python3 scripts/local-gate.py
 ```
 
+A command that already passed on this exact tree is not run again. The gate keeps one
+proof per command under `<git-dir>/local-gate-proofs/`, keyed by the tree (HEAD plus
+every staged, unstaged and untracked edit; files `.gitignore` hides are outside it), the
+argv, the working directory, a digest of the whole command environment and the tools
+behind the argv (this interpreter and every package installed in it; for npm and npx also
+the node they resolve to and the lockfile npm wrote for `node_modules`), and it reports
+`reused, not run` for each command it skips. A command whose tools cannot be named always
+runs. A proof lasts an hour, a failure is never kept, and a pass is kept only when the
+tree did not move while the command ran. After changing something that no package list or
+lockfile names (a built `dist/`, a hand edit under `node_modules`), run
+`python3 scripts/local-gate.py --no-reuse`.
+
 The whole suite with the configured defaults is a human's run, not a gate:
 
 ```bash

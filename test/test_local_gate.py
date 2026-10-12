@@ -283,7 +283,7 @@ def test_main_passes_the_capped_env_to_every_command(gate, monkeypatch) -> None:
     seen: list[dict] = []
 
     def fake_run(cmd, cwd, env=None, **_kwargs):
-        if cmd[:2] != ["git", "merge-base"]:
+        if cmd[0] != "git":
             seen.append(env or {})
         return subprocess.CompletedProcess(cmd, 0)
 

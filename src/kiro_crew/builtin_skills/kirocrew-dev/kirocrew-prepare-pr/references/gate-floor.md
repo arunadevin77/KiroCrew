@@ -193,6 +193,17 @@ default.
 skip the matrix, so it must stay SOUND and its escalations still mean "CI runs
 the full suite" — which is exactly where the full suite belongs.
 
+`scripts/local-gate.py` does not rerun a command that already passed on the same tree.
+It keeps one proof per command under `<git-dir>/local-gate-proofs/`, keyed by the tree
+(HEAD plus staged, unstaged and untracked edits; `.gitignore`d files are outside it), the
+argv, the working directory, a digest of the whole command environment and the tools
+behind the argv (this interpreter and every package installed in it; for npm and npx also
+the node they resolve to and the lockfile npm wrote for `node_modules`), and it reports
+`reused, not run`. A command whose tools cannot be named always runs. A proof lasts an
+hour, a failure is never kept, and a pass is kept only when the tree did not move while
+the command ran. `--no-reuse` runs everything, which is the move after changing something
+no package list or lockfile names (a built `dist/`, a hand edit under `node_modules`).
+
 **The surface split is transcribed from `ci.yml`'s `changes` job, buckets and veto
 alike, because that job is the authority for the question.** Its three buckets are
 `frontend: website/**`, `meta: .github/** scripts/**`, and `backend: **` minus the
