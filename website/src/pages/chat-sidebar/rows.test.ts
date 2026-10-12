@@ -11,10 +11,11 @@ import v8 from 'node:v8'
 import vm from 'node:vm'
 import { describe, it, expect, vi } from 'vitest'
 import {
-  buildSidebarRows, chipLabel, sameRowView,
+  buildSidebarRows, chipLabel, guideStepOnRowControl, sameRowView,
   type ConductorRowView, type RowPlacement, type RowScene, type RowShell, type SidebarRowInputs, type SidebarRows,
 } from './rows'
 import type { SessionFilterKey, Slot } from './types'
+import type { GuideStepPlan } from '../../guide/guideActions'
 
 const NOW = Date.parse('2026-10-05T12:00:00Z')
 const MINUTE = 60_000
@@ -72,7 +73,7 @@ const NO_BOOST = { idlePct: [], activePct: [], hoverPct: [], mutedColors: [] }
 const SHELL: RowShell = {
   connected: true, mode: undefined, isMobile: false, colorMode: 'tint', defaultAgent: 'kirocrew',
   installedAgents: [], tagById: {}, paletteColors: [], boost: NO_BOOST, boostFor: () => NO_BOOST, recentTintCount: 3,
-  dragInFlight: false, activeDraggedKey: null, activeDraggedPinnedIndex: -1,
+  dragInFlight: false, activeDraggedKey: null, activeDraggedPinnedIndex: -1, guideOnRowControl: false,
 }
 
 function scene(over: Partial<Omit<RowScene, 'local'>> & { local?: Partial<RowScene['local']> } = {}): RowScene {
@@ -928,5 +929,37 @@ describe('the window a row stubs into', () => {
     expect(mounted({ drag: { type: 'folder', id: 'a' } })).toBe(false)
     expect(mounted({ local: { nativeDragKey: 'a' } })).toBe(true)
     expect(mounted({ activeSlot: 'b', local: { nativeDragKey: 'b' } })).toBe(false)
+  })
+})
+
+describe('guideStepOnRowControl', () => {
+  const step = (target: GuideStepPlan['target']): GuideStepPlan => ({ target, complete: { kind: 'ack' }, textKey: 'k' })
+
+  it('is false with no guide step, so the open row hides its actions at rest', () => {
+    expect(guideStepOnRowControl(null)).toBe(false)
+    expect(guideStepOnRowControl(undefined)).toBe(false)
+  })
+
+  it('is true for a step on the row menu', () => {
+    expect(guideStepOnRowControl(step({ kind: 'location', id: 'sessions.row-menu' }))).toBe(true)
+  })
+
+  it('is true for a ui.find step whose opener is the row menu', () => {
+    expect(guideStepOnRowControl(step({ kind: 'find-container', key: 'k', opener: 'sessions.row-menu' }))).toBe(true)
+  })
+
+  it('is true for a ui.find step located on a row control', () => {
+    expect(guideStepOnRowControl(step({ kind: 'find', key: 'k', query: { label: 'Close', location: 'sessions.row-close' } }))).toBe(true)
+  })
+
+  it('is false for a ui.find step located elsewhere or with no location', () => {
+    expect(guideStepOnRowControl(step({ kind: 'find', key: 'k', query: { label: 'Menu', location: 'sessions.list-menu' } }))).toBe(false)
+    expect(guideStepOnRowControl(step({ kind: 'find', key: 'k', query: { label: 'Close' } }))).toBe(false)
+  })
+
+  it('is false for a step on some other control', () => {
+    expect(guideStepOnRowControl(step({ kind: 'location', id: 'sessions.list-menu' }))).toBe(false)
+    expect(guideStepOnRowControl(step({ kind: 'find-container', key: 'k' }))).toBe(false)
+    expect(guideStepOnRowControl(step({ kind: 'none' }))).toBe(false)
   })
 })

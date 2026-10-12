@@ -5748,8 +5748,11 @@ opening another artifact's page is the choice changing, and the guide goes back
 to the choose step even though the library is not drawn. The open session's
 sidebar row is the pick of `session_open` (`aria-current`): a step bound to it
 whose control every row draws (the row's ⋯) points at that row's copy, and the
-open row keeps its actions shown, so Rename and Pin are planned without a
-pointer on the row. An open dialog on top of the target's (a confirm opened
+open row shows its actions (⋯, fork, ✕) while an entered step this tab owns
+points at one of them (a `sessions.row-*` location, a menu item whose opener is
+one, or a find located on one; `guideStepOnRowControl`), so Rename and Pin are
+still planned without a pointer on the row; at rest they appear only on hover,
+focus or an open menu. An open dialog on top of the target's (a confirm opened
 from inside a job's panel) hides the outline: the topmost modal is the one
 compared. In the crew editor the
 section a control is drawn in (Model, Workspace · Memory, Danger zone) is a

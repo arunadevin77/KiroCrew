@@ -96,6 +96,7 @@ import MonitorRadar from '../components/MonitorRadar'
 import { i18nT } from '../i18n/t'
 import { uiLocation } from '../uiLocations/uiLocation'
 import { useGuideDisclosureScope } from '../guide/GuideRevealScope'
+import { useGuide } from '../guide/GuideContext'
 import { agentOrDefaultLabel } from '../utils/agentLabel'
 import { useLaneScrollMemory } from '../hooks/useLaneScrollMemory'
 import { useScrollEdges } from '../hooks/useScrollEdges'
@@ -112,7 +113,7 @@ import { useDebouncedSessionSearch, useSearchMatches } from './chat-sidebar/sear
 import { openCrewWindow, useCrewWindow } from './chat/crew-window/crewWindowStore'
 import { useStableCallbackProps } from './chat/useStableCallbackProps'
 import { sessionRowIdentity, historyRowIdentity } from './chat-sidebar/rowIdentity'
-import { buildSidebarRows, chipLabel, sameRowView, type ConductorRowView, type RowScene, type RowShell, type SessionRowView, type SidebarRows } from './chat-sidebar/rows'
+import { buildSidebarRows, chipLabel, guideStepOnRowControl, sameRowView, type ConductorRowView, type RowScene, type RowShell, type SessionRowView, type SidebarRows } from './chat-sidebar/rows'
 import { useSessionSources } from './chat-sidebar/sessionSources'
 import { CrewGroupSection, CrewOfflineContext, LocalGroupHeader, crewSpaceChain, useCollapsedCrews, useCollapsedCrewSpaces, useCrewEnable } from './chat-sidebar/CrewGroups'
 import { crewOf, type CrewGroup } from '../hooks/useInstanceSessions'
@@ -924,7 +925,7 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
   const closeReachHint = conductor && conductor.childCount > 0 ? i18nT('pages.chatSidebar.close_keeps_children_hint') : undefined
   const {
     connected, mode, isMobile, colorMode, defaultAgent, installedAgents, tagById, paletteColors, boost, boostFor,
-    recentTintCount, dragInFlight, activeDraggedKey, activeDraggedPinnedIndex,
+    recentTintCount, dragInFlight, activeDraggedKey, activeDraggedPinnedIndex, guideOnRowControl,
   } = view.shell
   const {
     onNativeDragStart, onNativeDragEnd, onPinnedKeyboardReorder,
@@ -1660,10 +1661,9 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
         </DropdownMenu>
       </div>
     ) : (
-      // The open session's row keeps its actions shown, so a guide can point
-      // at its ⋯ (sessions.row-menu, resolved to the open row's copy) with no
-      // pointer on the row.
-      <IconButtonGroup className={`absolute top-1/2 -translate-y-1/2 right-1.5 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 group-focus-visible:opacity-100 group-has-[:focus-visible]:opacity-100 has-[[data-state=open]]:opacity-100 ${isActive ? '!opacity-100' : ''}`}>
+      // The open session's row shows its actions only while a guide step
+      // points at one (sessions.row-menu resolves to the open row's copy).
+      <IconButtonGroup className={`absolute top-1/2 -translate-y-1/2 right-1.5 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 group-focus-visible:opacity-100 group-has-[:focus-visible]:opacity-100 has-[[data-state=open]]:opacity-100 ${isActive && guideOnRowControl ? '!opacity-100' : ''}`}>
         <DropdownMenu guideScope="menu:sessions.row-menu">
           <DropdownMenuTrigger asChild>
             <IconButton title={i18nT('pages.chatSidebar.more')} aria-label={i18nT('pages.chatSidebar.more_options')} {...uiLocation('sessions.row-menu')} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}><MoreVertical size={12} /></IconButton>
@@ -1677,7 +1677,7 @@ const SessionRow = memo(function SessionRow({ view, actions }: SessionRowProps) 
       </IconButtonGroup>
     )) : null
     // `langGen` (read with `void` above) because the labels are i18nT strings, which re-translate on a catalog load.
-    ), [renamingHere, foreignRow, isMobile, isActive, rowMenuProps, onMenuCloseAutoFocus, onDuplicate, onCloseSession, closeReachLabel, rowKey, langGen])
+    ), [renamingHere, foreignRow, isMobile, isActive, guideOnRowControl, rowMenuProps, onMenuCloseAutoFocus, onDuplicate, onCloseSession, closeReachLabel, rowKey, langGen])
     const rowContextMenuContent = useMemo(() => (void langGen, !foreignRow ? (
       <ContextMenuContent className="min-w-[160px]" onClick={e => e.stopPropagation()} onCloseAutoFocus={onMenuCloseAutoFocus}>
         <SessionActionsMenu variant="context" {...rowMenuProps} />
@@ -3485,15 +3485,21 @@ function ChatSidebar({
   const activeDraggedKey = activeDrag?.type === 'session' ? activeDrag.id : null
   const activeDraggedPinnedIndex = activeDraggedKey !== null ? (pinnedRank.get(activeDraggedKey) ?? -1) : -1
   const tintAgents = rowAgents ?? installedAgents
+  // A live guide step pointing at a row control (`sessions.row-menu`, or a
+  // `ui.find` whose opener is it) needs the open row's actions shown with no
+  // pointer on the row. Only a step GuideLayer draws here counts (owned by this
+  // tab, entered). Read once here so rows re-render only when it flips.
+  const guideView = useGuide()?.view
+  const guideOnRowControl = guideStepOnRowControl(guideView?.ownedHere && !guideView.needsEnter ? guideView.step : null)
   const rowShell: RowShell = useMemo(() => ({
     connected, mode, defaultAgent, installedAgents: tintAgents, tagById, paletteColors, boost, boostFor, colorMode, recentTintCount,
     // A session row on any touch screen (an iPad too) gets the single ⋯ menu,
     // not the overlay cluster.
     isMobile: isMobile || isTouchDevice,
-    dragInFlight, activeDraggedKey, activeDraggedPinnedIndex,
+    dragInFlight, activeDraggedKey, activeDraggedPinnedIndex, guideOnRowControl,
   }), [
     connected, mode, defaultAgent, tintAgents, tagById, paletteColors, boost, boostFor, colorMode, recentTintCount,
-    isMobile, isTouchDevice, dragInFlight, activeDraggedKey, activeDraggedPinnedIndex,
+    isMobile, isTouchDevice, dragInFlight, activeDraggedKey, activeDraggedPinnedIndex, guideOnRowControl,
   ])
   // What this render shows rows with. The row model reads the local-only members
   // for a local row alone.

@@ -20,6 +20,7 @@
  *  output can have changed. The result object, its `lanes` container, `staleSplit` and
  *  `views` are fresh per build: read their members, never key on them. */
 import type { ChatTag } from '../../types'
+import type { GuideStepPlan } from '../../guide/guideActions'
 import type { PaletteBoost } from '../../utils/sessionColors'
 import { isChatPageSurface } from '../../utils/channelOrigin'
 import { compareBySort, comparePinnedThenSort, lastActivityEpoch, slotActivityTs, type SortKey } from '../chat/sessionOrder'
@@ -181,6 +182,9 @@ export interface RowShell {
   dragInFlight: boolean
   activeDraggedKey: string | null
   activeDraggedPinnedIndex: number
+  /** A guide step points at the open row's action group (`sessions.row-*`):
+   *  the open row keeps that group shown with no pointer on it. */
+  guideOnRowControl: boolean
 }
 
 /** The values one render shows rows with. */
@@ -922,4 +926,16 @@ export function sameRowView(a: SessionRowView, b: SessionRowView): boolean {
     }
   }
   return true
+}
+
+/** Whether a guide step points at a session row's action group: the row menu
+ *  itself, a `ui.find` whose opener is it (a menu item under it), or a `ui.find`
+ *  located on a row control (fork, ✕). */
+export function guideStepOnRowControl(step: GuideStepPlan | null | undefined): boolean {
+  const t = step?.target
+  const id = t?.kind === 'location' ? t.id
+    : t?.kind === 'find-container' ? t.opener
+      : t?.kind === 'find' ? t.query.location
+        : undefined
+  return !!id?.startsWith('sessions.row-')
 }
