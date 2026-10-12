@@ -4863,8 +4863,8 @@ HONOUR_TOOL_REFS_KEY = "honourToolRefs"
 #: spec's ``tools`` and never copied from the spec itself.
 POLICY_INCLUDE_KEY = "include"
 
-#: The managed servers an opted-in spec's per-tool refs narrow.
-INCLUDE_LIST_SERVERS: tuple[str, ...] = ("kirocrew-core",)
+#: The managed server an opted-in spec's per-tool refs narrow.
+INCLUDE_LIST_SERVER = "kirocrew-core"
 
 
 def _policy_answer(
@@ -4877,9 +4877,9 @@ def _policy_answer(
     ``tools`` here, and an ``include`` written by hand is not a field the
     managed servers read from a spec.
 
-    With the opt-in set, each server in :data:`INCLUDE_LIST_SERVERS` that the
-    spec grants ONLY through ``@<server>/<tool>`` refs gets its set of tool
-    names under ``include``; the server lists those and refuses any other call.
+    With the opt-in set and the spec granting :data:`INCLUDE_LIST_SERVER` ONLY
+    through ``@<server>/<tool>`` refs, its set of tool names goes under
+    ``include``; the server lists those and refuses any other call.
     A whole-server grant -- ``*``, a bare ``@<server>``, a glob tool part --
     yields no entry, so the server answers exactly as it does without the opt-in.
 
@@ -4902,13 +4902,9 @@ def _policy_answer(
         )
     if not opt_in:
         return answer
-    include: dict[str, list[str]] = {}
-    for server in INCLUDE_LIST_SERVERS:
-        granted = per_tool_grants(config.get("tools"), server)
-        if granted is not None:
-            include[server] = sorted(granted)
-    if include:
-        answer[POLICY_INCLUDE_KEY] = include
+    granted = per_tool_grants(config.get("tools"), INCLUDE_LIST_SERVER)
+    if granted is not None:
+        answer[POLICY_INCLUDE_KEY] = {INCLUDE_LIST_SERVER: sorted(granted)}
     return answer
 
 
