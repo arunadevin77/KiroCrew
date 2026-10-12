@@ -665,12 +665,23 @@ Security properties:
   created empty at 0700 before every namespace spawn, and the mask applies to a
   sandbox that started before the first secret.
 - **`.env` migration.** `kirocrew secrets import [--apply]` moves the
-  vault-aware Jira credential keys (`JIRA_API_TOKEN`, per-host
-  `JIRA_TOKEN_<HEX>`) out of the data-home `.env` and rewrites each line to a
-  `secret://KEY` reference; it reads only the data-home `.env` (no `--file`
-  option) so it cannot be pointed at an attacker-controlled file. See
+  vault-aware credential keys (`JIRA_API_TOKEN`, per-host `JIRA_TOKEN_<HEX>`,
+  and the channel secrets in `loader.VAULT_CHANNEL_CREDENTIAL_KEYS`) out of the
+  data-home `.env` and rewrites each line to a `secret://KEY` reference; it
+  reads only the data-home `.env` (no `--file` option) so it cannot be pointed
+  at an attacker-controlled file. See
   [secrets-env.md](../../guides/secrets-env.md) and
   [cli.md](cli.md#secrets-command).
+- **Channel tokens.** `load_credentials()` resolves a `secret://` value on any
+  credential key through `loader.resolve_env_credentials`, after propagating
+  the raw `.env` values into `os.environ`, so a child inherits the reference
+  and never the vault secret. A reference that cannot be resolved reads as
+  unset and logs its key once, never the value or the referenced name. The
+  dashboard channel save stores a new channel secret in the vault and writes
+  its `.env` line as `KEY=secret://KEY` (`secrets.migrate.ChannelSecretStore`,
+  under the `.env` lock); a refused `.env` write restores the vault entry it
+  replaced, by compare-and-swap under the vault's store lock, so a value
+  another writer stored since is kept.
 
 ### OS-Level Sandbox (`sandbox.py`)
 

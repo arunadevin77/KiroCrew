@@ -31,6 +31,7 @@ from aiohttp import web
 import kiro_crew.config.loader as loader
 import kiro_crew.dashboard.handlers.messaging as mod
 from conftest import forget_env_at_teardown
+from kiro_crew.secrets import SecretVault
 from kiro_crew.subagent import AGENT_NOT_FOUND_CODE
 
 #: The subject every request double presents, and the id ``_state`` reports as its
@@ -1736,7 +1737,11 @@ class TestTeamsConfigSave:
         resp, env, cfg = self._save(monkeypatch, tmp_path, body)
         assert _payload(resp)["ok"] is True
         assert _payload(resp)["restart_required"] is True
-        assert "MICROSOFT_APP_PASSWORD=super-secret" in env.read_text(encoding="utf-8")
+        assert "MICROSOFT_APP_PASSWORD=secret://MICROSOFT_APP_PASSWORD" in env.read_text(
+            encoding="utf-8"
+        )
+        stored = SecretVault(env.parent).get("MICROSOFT_APP_PASSWORD")
+        assert stored is not None and stored.reveal() == "super-secret"
         data = json.loads(cfg.read_text(encoding="utf-8"))
         assert data["teams"]["app_id"] == "app-1"
         assert data["teams"]["allowed_emails"] == ["kyle@example.com"]
@@ -1914,6 +1919,8 @@ class TestWriteEnvUpdates:
 
         env = tmp_path / ".env"
         monkeypatch.setattr(loader, "env_path", lambda: env)
+        # An existing vault, so the recorded writes are the store and the .env.
+        SecretVault(tmp_path).set_sync("SLACK_BOT_TOKEN", "placeholder-old")
 
         events: list[str] = []
         real_restrict = platform_compat.restrict_to_owner
@@ -1932,8 +1939,9 @@ class TestWriteEnvUpdates:
 
         mod._write_env_updates({"SLACK_BOT_TOKEN": "xoxb-secret"})
 
-        assert events == ["restrict", "write"], events
-        assert env.read_text(encoding="utf-8") == "SLACK_BOT_TOKEN=xoxb-secret\n"
+        # Vault store, then .env: each locked down before its first content byte.
+        assert events == ["restrict", "write", "restrict", "write"], events
+        assert env.read_text(encoding="utf-8") == "SLACK_BOT_TOKEN=secret://SLACK_BOT_TOKEN\n"
 
     def test_aborts_when_shared_env_lock_is_held(self, monkeypatch, tmp_path: Path) -> None:
         """A channel/token save serializes on the SAME .env.lock the importer

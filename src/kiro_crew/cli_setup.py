@@ -37,6 +37,7 @@ from kiro_crew.config.loader import (
     normalize_workspace_path,
     read_config_text,
     read_env_text,
+    resolve_env_credential,
     unsandboxed_exec_declared,
     unsandboxed_exec_platform_default,
     update_config_locked,
@@ -576,7 +577,13 @@ def _verify_slack_secret(key: str, token: str) -> tuple[bool | None, str]:
     itself makes at startup, so a token that passes here will connect at boot —
     and everything else with ``auth.test``.
 
+    A kept ``.env`` value that is a ``secret://`` reference is checked as the
+    vault secret it names; one that cannot be resolved is rejected without a
+    call to Slack.
     """
+    token = resolve_env_credential(key, token)
+    if not token:
+        return False, "the secret:// reference cannot be resolved from the vault"
     client = WebClient(token=token, timeout=_SLACK_VERIFY_TIMEOUT)
     try:
         if key == CRED_SLACK_APP_TOKEN:
@@ -611,7 +618,10 @@ def _verify_slack_owner_id(bot_token: str, owner_id: str) -> tuple[bool | None, 
             "not a member ID — 'C…' is a channel and 'B…' is a bot; yours starts "
             "with U (or W on Enterprise Grid), from your profile → ⋯ More → Copy member ID"
         )
-    client = WebClient(token=bot_token, timeout=_SLACK_VERIFY_TIMEOUT)
+    client = WebClient(
+        token=resolve_env_credential(CRED_SLACK_BOT_TOKEN, bot_token),
+        timeout=_SLACK_VERIFY_TIMEOUT,
+    )
     try:
         resp = client.users_info(user=owner_id)
     except SlackApiError as exc:

@@ -46,6 +46,7 @@ from source_corpus import repo_files_named, repo_root
 import kiro_crew.dashboard.handlers as handlers_pkg
 import kiro_crew.dashboard.handlers.messaging as msg
 from kiro_crew.dashboard import messaging_api
+from kiro_crew.secrets import SecretVault
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
 _FACADE = msg.__name__
@@ -1653,7 +1654,10 @@ def test_the_slack_saver_stores_a_token_slack_could_not_be_asked_about(
     monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-old")
     status, payload = _saver_put(monkeypatch, tmp_path, "slack", {"bot_token": "xoxb-2"})
     assert status == 200 and payload["ok"] is True, payload
-    assert "SLACK_BOT_TOKEN=xoxb-2" in (tmp_path / ".env").read_text(encoding="utf-8")
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "SLACK_BOT_TOKEN=secret://SLACK_BOT_TOKEN" in env_text
+    stored = SecretVault(tmp_path).get("SLACK_BOT_TOKEN")
+    assert stored is not None and stored.reveal() == "xoxb-2"
 
 
 @pytest.mark.parametrize(

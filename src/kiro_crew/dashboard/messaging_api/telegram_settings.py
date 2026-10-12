@@ -81,7 +81,8 @@ async def api_telegram_config_get(request: web.Request) -> web.Response:
     )
 
     cfg = KiroCrewConfig.load()
-    creds = cfg.load_credentials()
+    # Off-loop: a secret:// reference is read and decrypted from the vault.
+    creds = await asyncio.to_thread(cfg.load_credentials)
     token = creds.get(CRED_TELEGRAM_BOT_TOKEN, "") or cfg.telegram.bot_token
     tg = cfg.telegram
     state: DashboardState = request.app["state"]

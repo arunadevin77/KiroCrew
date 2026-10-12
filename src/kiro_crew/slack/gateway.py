@@ -964,6 +964,7 @@ class GatewayOrchestrator:
         json_ready: bool = False,
         approval_mode: str | None = None,
         test_mode: bool = False,
+        credentials: Mapping[str, str] | None = None,
     ) -> None:
         # NOTE: test_heartbeat_prompt_deliver.py creates instances via __new__
         # (bypassing __init__). Update that fixture if new attributes are added.
@@ -975,7 +976,9 @@ class GatewayOrchestrator:
         self._json_ready = json_ready
         self._approval_mode = approval_mode
         self._test_mode = test_mode
-        creds = cfg.load_credentials()
+        # *credentials* is ``load_credentials()`` already run off the event loop
+        # (``run_gateway``): resolving a secret:// reference reads the vault.
+        creds = dict(credentials) if credentials is not None else cfg.load_credentials()
         self._app_token = creds.get(CRED_SLACK_APP_TOKEN, "")
         self._bot_token = creds.get(CRED_SLACK_BOT_TOKEN, "")
         self._owner_id = creds.get(CRED_OWNER_ID, "")
@@ -15145,6 +15148,8 @@ async def run_gateway(
                 daemon=True,
             ).start()
 
+    # Off-loop: resolving a secret:// channel reference reads and decrypts the vault.
+    credentials = await asyncio.to_thread(cfg.load_credentials)
     orchestrator = GatewayOrchestrator(
         cfg,
         no_dashboard=no_dashboard,
@@ -15154,6 +15159,7 @@ async def run_gateway(
         json_ready=json_ready,
         approval_mode=approval_mode,
         test_mode=test_mode,
+        credentials=credentials,
     )
     try:
         await orchestrator.run()

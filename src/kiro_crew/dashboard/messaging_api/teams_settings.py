@@ -48,7 +48,8 @@ async def api_teams_config_get(request: web.Request) -> web.Response:
     from kiro_crew.teams.client import HAS_JWT  # noqa: F811
 
     cfg = KiroCrewConfig.load()
-    creds = cfg.load_credentials()
+    # Off-loop: a secret:// reference is read and decrypted from the vault.
+    creds = await asyncio.to_thread(cfg.load_credentials)
     tc = cfg.teams
     # Credential resolution mirrors the boot path (slack/gateway.py) exactly: the
     # env credential wins over config.json for all three values, so the panel
@@ -179,6 +180,7 @@ async def _teams_config_save(request: web.Request) -> web.Response:
         _threshold_pct,
         config_path,
         read_env_file_credential,
+        resolve_env_credential,
     )
 
     caller = request.get("user", "dashboard")
@@ -333,6 +335,8 @@ async def _teams_config_save(request: web.Request) -> web.Response:
         _c_pw = os.environ.get(CRED_MICROSOFT_APP_PASSWORD, "") or _c_pw
         _c_app_id = os.environ.get(CRED_MICROSOFT_APP_ID, "") or _c_app_id
         _c_tenant = os.environ.get(CRED_MICROSOFT_APP_TENANT_ID, "") or _c_tenant
+        # A secret:// reference reads as the vault secret it names.
+        _c_pw = await asyncio.to_thread(resolve_env_credential, CRED_MICROSOFT_APP_PASSWORD, _c_pw)
         # ENV-first: env_updates wins, then .env/os.environ (_c_pw).  When the
         # password lives ONLY in legacy config.json (not in .env or os.environ,
         # so _c_pw is empty), fall back to the raw legacy value so verification
@@ -404,6 +408,9 @@ async def _teams_config_save(request: web.Request) -> web.Response:
             _f_pw = os.environ.get(CRED_MICROSOFT_APP_PASSWORD, "") or _f_pw
             _f_app_id = os.environ.get(CRED_MICROSOFT_APP_ID, "") or _f_app_id
             _f_tenant = os.environ.get(CRED_MICROSOFT_APP_TENANT_ID, "") or _f_tenant
+            _f_pw = await asyncio.to_thread(
+                resolve_env_credential, CRED_MICROSOFT_APP_PASSWORD, _f_pw
+            )
             now_password = env_updates.get(
                 CRED_MICROSOFT_APP_PASSWORD,
                 _f_pw or str(teams_cfg.get("app_password", "")),
@@ -472,11 +479,15 @@ async def _teams_config_save(request: web.Request) -> web.Response:
         # entry, no env_update) — that would erase the sole credential copy and
         # produce a dead pair at the next restart.
         # _c_pw is only populated inside ``if credential_touched`` (Phase 1.5).
-        # For metadata-only saves (credential_touched=False) fall back to a
-        # synchronous os.environ check — load_credentials() seeds os.environ from
-        # .env at startup, so the key is present when .env holds the credential.
-        _pw_in_env_or_environ = locals().get("_c_pw") or os.environ.get(
-            CRED_MICROSOFT_APP_PASSWORD, ""
+        # For metadata-only saves (credential_touched=False) fall back to the
+        # os.environ value — load_credentials() seeds os.environ from .env at
+        # startup, so the key is present when .env holds the credential. That
+        # value counts only once resolved: a secret:// reference the vault
+        # cannot answer is no copy of the password at all.
+        _pw_in_env_or_environ = locals().get("_c_pw") or await asyncio.to_thread(
+            resolve_env_credential,
+            CRED_MICROSOFT_APP_PASSWORD,
+            os.environ.get(CRED_MICROSOFT_APP_PASSWORD, ""),
         )
         _pw_safe_in_env = bool(
             CRED_MICROSOFT_APP_PASSWORD in env_updates  # being written this save

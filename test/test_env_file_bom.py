@@ -630,13 +630,18 @@ class TestMigrate:
         ):
             return migrate_env_secrets(**kwargs)
 
-    def test_utf8_bom_first_key_migrates_and_keeps_the_bom(self, tmp_path: Path) -> None:
+    def test_utf8_bom_first_key_migrates_and_keeps_the_bom(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
         ep = _utf8_bom(tmp_path)
         report = self._run(tmp_path, ep, dry_run=False)
-        assert report.migrated == ["JIRA_API_TOKEN"]
+        assert report.migrated == ["JIRA_API_TOKEN", "SLACK_BOT_TOKEN"]
         after = ep.read_bytes()
         assert after.startswith(codecs.BOM_UTF8)
-        assert after[3:] == b"JIRA_API_TOKEN=secret://JIRA_API_TOKEN\r\nSLACK_BOT_TOKEN=xyz\r\n"
+        assert after[3:] == (
+            b"JIRA_API_TOKEN=secret://JIRA_API_TOKEN\r\nSLACK_BOT_TOKEN=secret://SLACK_BOT_TOKEN\r\n"
+        )
 
     def test_a_wide_file_migrates_nothing(self, wide_codec: str, tmp_path: Path) -> None:
         ep = _wide_bom(tmp_path, wide_codec)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import os
@@ -70,7 +71,8 @@ async def api_slack_config_get(request: web.Request) -> web.Response:
     )
 
     cfg = KiroCrewConfig.load()
-    creds = cfg.load_credentials()
+    # Off-loop: a secret:// reference is read and decrypted from the vault.
+    creds = await asyncio.to_thread(cfg.load_credentials)
     bot = creds.get(CRED_SLACK_BOT_TOKEN, "")
     app = creds.get(CRED_SLACK_APP_TOKEN, "")
     owner = creds.get(CRED_OWNER_ID, "")

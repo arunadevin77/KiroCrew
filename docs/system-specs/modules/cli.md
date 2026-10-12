@@ -807,9 +807,11 @@ store/list/delete surface is the dashboard **Settings → Secrets** tab (the
 - **import** — migrate plaintext credential lines from the data-home `.env`
   into the vault. Dry-run by default (reports what *would* migrate, changes
   nothing); pass `--apply` to store the secret(s) and rewrite each migrated
-  `.env` line to a `secret://KEY` reference. Only the Jira credential keys the
-  vault-aware consumer reads are migrated (`JIRA_API_TOKEN` and per-host
-  `JIRA_TOKEN_<HEX>`); every other key is left untouched. There is no `--file`
+  `.env` line to a `secret://KEY` reference. Only the credential keys whose
+  every reader resolves a reference are migrated: the Jira tokens
+  (`JIRA_API_TOKEN` and per-host `JIRA_TOKEN_<HEX>`) and the channel secrets
+  (`loader.VAULT_CHANNEL_CREDENTIAL_KEYS`); every other key is left untouched.
+  There is no `--file`
   option — the importer reads only the data-home `.env`, so a caller cannot
   point it at an attacker-controlled file.
 

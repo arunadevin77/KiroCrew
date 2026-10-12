@@ -83,17 +83,21 @@ credential-like.
 
 ### Migrating existing plaintext secrets
 
-If you already keep the Jira API token as a plaintext `KEY=VALUE` line in the
-data home's `.env`, the importer moves it into the vault. It migrates ONLY the
-Jira credential keys the vault-aware Jira consumer reads — the global
-`JIRA_API_TOKEN` and per-host `JIRA_TOKEN_<hex>` tokens; other credential keys
-are left untouched because their consumers still read the literal `.env` value:
+If you already keep a credential as a plaintext `KEY=VALUE` line in the data
+home's `.env`, the importer moves it into the vault. It migrates the credential
+keys whose every reader resolves a `secret://` reference: the Jira tokens (the
+global `JIRA_API_TOKEN` and per-host `JIRA_TOKEN_<hex>`) and the channel secrets
+(`SLACK_APP_TOKEN`, `SLACK_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `TELEGRAM_BOT_TOKEN`,
+`WEBEX_BOT_TOKEN`, `MICROSOFT_APP_PASSWORD`, `WECOM_SECRET`, `WEIXIN_TOKEN`,
+`FEISHU_APP_SECRET`). Identifiers such as app ids and the owner id stay in
+`.env`, and so do `KIRO_API_KEY` and `AZURE_DEVOPS_EXT_PAT`, which a child
+process reads from its own environment:
 
 ```bash
 # Dry run (default): report what WOULD migrate, change nothing.
 kirocrew secrets import
 
-# Apply: store the Jira token(s) in the vault and rewrite each .env line
+# Apply: store the tokens in the vault and rewrite each .env line
 # to a secret:// reference.
 kirocrew secrets import --apply
 ```
@@ -103,16 +107,33 @@ caller cannot point it at an attacker-controlled file). A key whose value is
 overridden in the process environment is skipped, and the `.env` rewrite aborts
 if the file changes under a concurrent writer.
 
-Only the Jira credential keys are migrated (`JIRA_API_TOKEN` and per-host
-`JIRA_TOKEN_<HEX>`); every other credential key and unrecognized operator
-setting is left untouched.  On `--apply` each migrated line becomes
-`KEY=secret://KEY`, so the resolver picks the value up from the vault.
+Every other credential key and unrecognized operator setting is left untouched.
+On `--apply` each migrated line becomes `KEY=secret://KEY`, so the resolver
+picks the value up from the vault.
 
 The importer **does not delete** the `.env` file — it rewrites the migrated
 lines in place, so the plaintext value for those keys is replaced by the
 `secret://` reference.  A line that is already a `secret://` reference is left
 alone, so re-running `--apply` is a no-op.  If you keep a separate backup copy
 of the file, delete that plaintext copy once you have verified the migration.
+
+### Channel tokens and the vault
+
+A channel token saved from the dashboard (Settings > Channels) is stored in the
+vault under its key name, and its `.env` line is written as
+`KEY=secret://KEY`. A token already in `.env` as plaintext keeps working as it
+is: every channel reader accepts either form, and a hand-edited
+`KEY=secret://NAME` line resolves the vault secret `NAME`. A reference that
+cannot be resolved (no such vault entry, or a vault that cannot be read) leaves
+the channel unconfigured and logs the key once; the log never carries the
+token. Clearing a channel token from the dashboard also removes the vault entry
+that its `secret://KEY` line pointed at.
+
+A release that predates this behaviour reads a `KEY=secret://KEY` line as the
+token itself, so after a downgrade the channels saved this way fail to
+authenticate. To go back, re-enter each channel token under Settings > Channels
+on the older release (vault values cannot be read back), or put the plaintext
+token on its `.env` line by hand before downgrading.
 
 ### Jira uses the vault automatically
 

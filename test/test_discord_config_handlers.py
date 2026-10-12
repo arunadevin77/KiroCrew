@@ -10,6 +10,13 @@ from pathlib import Path
 from aiohttp.test_utils import make_mocked_request
 
 import kiro_crew.config.loader as loader
+from kiro_crew.secrets import SecretVault
+
+
+def _vault_value(env: Path, key: str) -> str | None:
+    """The vault secret a channel save stored beside *env* under *key*."""
+    stored = SecretVault(env.parent).get(key)
+    return stored.reveal() if stored is not None else None
 
 
 def test_save_denies_non_loopback(monkeypatch) -> None:
@@ -109,9 +116,10 @@ def test_save_persists_token_and_config(tmp_path: Path, monkeypatch) -> None:
     status, body = status_body
     assert status == 200
     assert body["restart_required"] is True
-    assert f"DISCORD_BOT_TOKEN={VALID_TOKEN}" in env.read_text(encoding="utf-8")
+    assert "DISCORD_BOT_TOKEN=secret://DISCORD_BOT_TOKEN" in env.read_text(encoding="utf-8")
+    assert _vault_value(env, "DISCORD_BOT_TOKEN") == VALID_TOKEN
     assert (env.stat().st_mode & 0o077) == 0
-    assert os.environ["DISCORD_BOT_TOKEN"] == VALID_TOKEN
+    assert os.environ["DISCORD_BOT_TOKEN"] == "secret://DISCORD_BOT_TOKEN"
     cfg = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert cfg["discord"]["enabled"] is True
     assert cfg["discord"]["allowed_user_ids"] == [
@@ -147,7 +155,8 @@ def test_save_strips_accidental_bot_prefix(tmp_path: Path, monkeypatch) -> None:
     status_body, env = _client_put(mod, monkeypatch, tmp_path, {"bot_token": f"Bot {VALID_TOKEN}"})
     status, _ = status_body
     assert status == 200
-    assert f"DISCORD_BOT_TOKEN={VALID_TOKEN}" in env.read_text(encoding="utf-8")
+    assert "DISCORD_BOT_TOKEN=secret://DISCORD_BOT_TOKEN" in env.read_text(encoding="utf-8")
+    assert _vault_value(env, "DISCORD_BOT_TOKEN") == VALID_TOKEN
 
 
 def test_save_rejects_token_discord_refuses(tmp_path: Path, monkeypatch) -> None:
@@ -177,7 +186,8 @@ def test_save_proceeds_with_warning_when_discord_unreachable(tmp_path: Path, mon
     status, body = status_body
     assert status == 200
     assert body["verify_warning"]
-    assert f"DISCORD_BOT_TOKEN={VALID_TOKEN}" in env.read_text(encoding="utf-8")
+    assert "DISCORD_BOT_TOKEN=secret://DISCORD_BOT_TOKEN" in env.read_text(encoding="utf-8")
+    assert _vault_value(env, "DISCORD_BOT_TOKEN") == VALID_TOKEN
 
 
 def test_save_rejects_non_numeric_user_ids(tmp_path: Path, monkeypatch) -> None:

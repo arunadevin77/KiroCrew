@@ -2281,10 +2281,13 @@ async def _write_env_or_roll_back(
             await rollback()
         raise
     for key, new_val in env_updates.items():
-        if new_val is None:
+        # The value the .env line now holds: a new channel token reads back as
+        # its secret:// reference, the same value a restart propagates.
+        line_val = _loader.vault_channel_env_value(key, new_val)
+        if line_val is None:
             os.environ.pop(key, None)
         else:
-            os.environ[key] = new_val
+            os.environ[key] = line_val
 
 
 def _wide_env_refusal(exc: _loader.EnvFileWideEncodingError) -> web.HTTPConflict:
@@ -2302,7 +2305,10 @@ def _wide_env_refusal(exc: _loader.EnvFileWideEncodingError) -> web.HTTPConflict
 def _write_env_updates(updates: dict[str, str | None]) -> None:
     """Update select keys in config_dir/.env, preserving comments and order.
 
-    A value of ``None`` deletes the key; new keys are appended. The write goes
+    A value of ``None`` deletes the key; new keys are appended. A new channel
+    secret (:data:`~kiro_crew.config.loader.VAULT_CHANNEL_CREDENTIAL_KEYS`) is
+    stored in the vault and its line written as the ``secret://KEY`` reference
+    (:class:`~kiro_crew.secrets.migrate.ChannelSecretStore`). The write goes
     through :func:`kiro_crew.atomic_write.atomic_write` with
     ``restrict_to_owner=True``, which locks the unique temp file down to its
     owner BEFORE any content byte is written: POSIX mode bits protect nothing
@@ -2339,7 +2345,7 @@ def _write_env_updates(updates: dict[str, str | None]) -> None:
     # OFF the gateway boot path (messaging.py is imported at startup). Importing
     # it inside the writer keeps it off the module-import path so gateway
     # readiness is not delayed by loading the migration module.
-    from kiro_crew.secrets.migrate import _env_lock_path
+    from kiro_crew.secrets.migrate import ChannelSecretStore, _env_lock_path
 
     lock_path = _env_lock_path(ep)
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
@@ -2351,7 +2357,16 @@ def _write_env_updates(updates: dict[str, str | None]) -> None:
             "the other operation finishes."
         )
     try:
-        _write_env_updates_locked(ep, updates)
+        # A new channel token goes to the vault and its .env line becomes the
+        # secret:// reference; a failed .env write puts the vault back.
+        store = ChannelSecretStore(ep)
+        env_updates = store.stage(updates)
+        try:
+            _write_env_updates_locked(ep, env_updates)
+        except BaseException:
+            store.rollback()
+            raise
+        store.finish()
     finally:
         platform_compat.release_lock(lock_fd)
         os.close(lock_fd)

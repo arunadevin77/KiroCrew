@@ -10,6 +10,7 @@ Portal if ever needed).
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 from typing import TYPE_CHECKING, Any
@@ -75,7 +76,8 @@ async def api_discord_config_get(request: web.Request) -> web.Response:
     )
 
     cfg = KiroCrewConfig.load()
-    creds = cfg.load_credentials()
+    # Off-loop: a secret:// reference is read and decrypted from the vault.
+    creds = await asyncio.to_thread(cfg.load_credentials)
     token = creds.get(CRED_DISCORD_BOT_TOKEN, "") or cfg.discord.bot_token
     dc = cfg.discord
     state: DashboardState = request.app["state"]

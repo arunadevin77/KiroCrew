@@ -10,6 +10,14 @@ from pathlib import Path
 from aiohttp.test_utils import make_mocked_request
 
 import kiro_crew.config.loader as loader
+from kiro_crew.secrets import SecretVault
+
+
+def _vault_value(env: Path, key: str) -> str | None:
+    """The vault secret a channel save stored beside *env* under *key*."""
+    stored = SecretVault(env.parent).get(key)
+    return stored.reveal() if stored is not None else None
+
 
 BOT_ID = "wxb-1234567890abcdef"
 SECRET = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd"
@@ -89,10 +97,11 @@ def test_save_persists_credentials_and_config(tmp_path: Path, monkeypatch) -> No
     assert body["restart_required"] is True
     env_text = env.read_text(encoding="utf-8")
     assert f"WECOM_BOT_ID={BOT_ID}" in env_text
-    assert f"WECOM_SECRET={SECRET}" in env_text
+    assert "WECOM_SECRET=secret://WECOM_SECRET" in env_text
+    assert _vault_value(env, "WECOM_SECRET") == SECRET
     assert (env.stat().st_mode & 0o077) == 0
     assert os.environ["WECOM_BOT_ID"] == BOT_ID
-    assert os.environ["WECOM_SECRET"] == SECRET
+    assert os.environ["WECOM_SECRET"] == "secret://WECOM_SECRET"
     cfg = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert cfg["wecom"]["enabled"] is True
     assert cfg["wecom"]["allowed_users"] == [
@@ -212,7 +221,8 @@ def test_env_line_paste_is_stripped(tmp_path: Path, monkeypatch) -> None:
     )
     status, _body = status_body
     assert status == 200
-    assert f"WECOM_SECRET={SECRET}\n" in env.read_text(encoding="utf-8")
+    assert "WECOM_SECRET=secret://WECOM_SECRET\n" in env.read_text(encoding="utf-8")
+    assert _vault_value(env, "WECOM_SECRET") == SECRET
     assert f"WECOM_SECRET=WECOM_SECRET={SECRET}" not in env.read_text(encoding="utf-8")
 
 

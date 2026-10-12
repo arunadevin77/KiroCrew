@@ -62,7 +62,8 @@ async def api_wecom_config_get(request: web.Request) -> web.Response:
     )
 
     cfg = KiroCrewConfig.load()
-    creds = cfg.load_credentials()
+    # Off-loop: a secret:// reference is read and decrypted from the vault.
+    creds = await asyncio.to_thread(cfg.load_credentials)
     bot_id = creds.get(CRED_WECOM_BOT_ID, "")
     secret = creds.get(CRED_WECOM_SECRET, "")
     wc = cfg.wecom

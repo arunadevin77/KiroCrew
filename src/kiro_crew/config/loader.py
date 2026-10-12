@@ -503,6 +503,44 @@ CREDENTIAL_KEYS = (
     CRED_BITBUCKET_API_TOKEN,
     CRED_KIRO_API_KEY,
 )
+# Channel secrets whose every reader resolves a ``secret://`` reference through
+# :func:`resolve_env_credentials`, so their ``.env`` line may hold a reference
+# into the vault instead of the token. The dashboard channel writer stores a new
+# value for one of these keys in the vault, and ``kirocrew secrets import``
+# migrates them. Identifiers (app ids, bot ids, the owner id) stay plaintext, and
+# so does any credential a child process reads from its inherited environment
+# (``KIRO_API_KEY``, ``AZURE_DEVOPS_EXT_PAT``): a child cannot resolve a reference.
+VAULT_CHANNEL_CREDENTIAL_KEYS: frozenset[str] = frozenset(
+    {
+        CRED_SLACK_APP_TOKEN,
+        CRED_SLACK_BOT_TOKEN,
+        CRED_WECOM_SECRET,
+        CRED_TELEGRAM_BOT_TOKEN,
+        CRED_DISCORD_BOT_TOKEN,
+        CRED_WEBEX_BOT_TOKEN,
+        CRED_MICROSOFT_APP_PASSWORD,
+        CRED_WEIXIN_TOKEN,
+        CRED_FEISHU_APP_SECRET,
+    }
+)
+
+
+def vault_channel_env_value(key: str, value: str | None) -> str | None:
+    """The ``.env`` value a dashboard channel save writes for *key*.
+
+    A nonempty plaintext value for a :data:`VAULT_CHANNEL_CREDENTIAL_KEYS` key
+    becomes ``secret://KEY``: the save stores the token in the vault under the
+    key's own name. Every other value, a value that already is a reference, and
+    a clear (``None`` or ``""``) come back unchanged.
+    """
+    from kiro_crew.mcp_gateway.secret_uri import SECRET_URI_PREFIX
+
+    if key not in VAULT_CHANNEL_CREDENTIAL_KEYS or not value:
+        return value
+    if value.startswith(SECRET_URI_PREFIX):
+        return value
+    return f"{SECRET_URI_PREFIX}{key}"
+
 
 # Per-host Jira tokens use a hex-encoded host suffix: JIRA_TOKEN_<HEX>.
 # Only hex chars are valid — restricting the pattern prevents forged key names
@@ -741,6 +779,109 @@ def read_env_file_credential(
     if definitive is not None:
         definitive.append(True)
     return value
+
+
+# Key -> the reason last logged by :func:`resolve_env_credentials`, so a
+# reference the gateway re-reads on every settings request logs once, not on
+# each read. A key drops out once it resolves again. Readers run on worker
+# threads, so every access holds the lock.
+_warned_unresolved_env_refs: dict[str, str] = {}
+_warned_unresolved_env_refs_lock = threading.Lock()
+
+
+def _is_env_credential_key(key: str) -> bool:
+    """True for a ``.env`` key :func:`resolve_env_credentials` resolves."""
+    return key in CREDENTIAL_KEYS or bool(_JIRA_TOKEN_RE.match(key))
+
+
+def resolve_env_credentials(
+    values: Mapping[str, str], *, home: Path | None = None
+) -> dict[str, str]:
+    """Resolve the ``secret://NAME`` credential values in *values* from the vault.
+
+    The one resolver every in-process ``.env`` credential reader shares. A
+    credential key (:data:`CREDENTIAL_KEYS` or a per-host ``JIRA_TOKEN_<HEX>``)
+    whose value starts with ``secret://`` is replaced by the vault entry it
+    names; a plaintext value, and every non-credential key, passes through
+    unchanged, so a hand-edited ``.env`` keeps working as it is.
+
+    A reference that cannot be resolved -- a malformed name, a name the vault
+    does not hold, or a vault that cannot be read -- fails closed: its key is
+    left out of the result (the credential reads as unset, never as the literal
+    reference) and one warning names the key and a short fixed reason. No log
+    line or error carries a secret value or a referenced name: only the
+    allowlisted key is ever named.
+
+    *home* is the directory holding the ``.env`` and its ``.vault``; it defaults
+    to the data home. Blocking file IO when *values* holds a reference: call via
+    ``asyncio.to_thread`` from async paths.
+    """
+    from kiro_crew.mcp_gateway.secret_uri import SECRET_URI_PREFIX, _is_valid_secret_name
+
+    resolved: dict[str, str] = {}
+    failures: dict[str, str] = {}
+    pending: dict[str, str] = {}
+    for key, value in values.items():
+        if not (value.startswith(SECRET_URI_PREFIX) and _is_env_credential_key(key)):
+            resolved[key] = value
+            continue
+        name = value[len(SECRET_URI_PREFIX) :]
+        if not _is_valid_secret_name(name):
+            failures[key] = "malformed secret:// reference"
+            continue
+        pending[key] = name
+    if pending:
+        from kiro_crew.secrets import SecretVault
+
+        vault_home = home if home is not None else env_path().parent
+        try:
+            fetched = SecretVault(vault_home).get_many(list(pending.values()))
+        except Exception:  # noqa: BLE001 - any vault fault fails closed
+            fetched = None
+        for key, name in pending.items():
+            if fetched is None:
+                failures[key] = "the secrets vault could not be read"
+                continue
+            secret = fetched.get(name)
+            if secret is None:
+                failures[key] = "the vault holds no secret by that name"
+                continue
+            resolved[key] = secret.reveal()
+    _warn_unresolved_env_credentials(failures, resolved_keys=pending.keys() - failures.keys())
+    return resolved
+
+
+def _warn_unresolved_env_credentials(
+    failures: Mapping[str, str], *, resolved_keys: Iterable[str] = ()
+) -> None:
+    """Log each unresolvable credential reference once, naming only its key."""
+    to_log: list[tuple[str, str]] = []
+    with _warned_unresolved_env_refs_lock:
+        for key in resolved_keys:
+            _warned_unresolved_env_refs.pop(key, None)
+        for key, reason in sorted(failures.items()):
+            if _warned_unresolved_env_refs.get(key) == reason:
+                continue
+            _warned_unresolved_env_refs[key] = reason
+            to_log.append((key, reason))
+    for key, reason in to_log:
+        logger.warning(
+            "%s (%s): this .env line is a vault reference that does not resolve, so it"
+            " reads as unset. Store the value under Settings > Secrets, or put the"
+            " plain value back on the line.",
+            key,
+            reason,
+        )
+
+
+def resolve_env_credential(key: str, value: str, *, home: Path | None = None) -> str:
+    """Resolve one credential *value*; ``""`` when its reference cannot resolve.
+
+    The single-value form of :func:`resolve_env_credentials`, for a reader that
+    takes a credential from ``os.environ`` or one ``.env`` line. A plaintext
+    value comes back unchanged without touching the vault.
+    """
+    return resolve_env_credentials({key: value}, home=home).get(key, "")
 
 
 def inject_kiro_cli_api_key(env: MutableMapping[str, str]) -> MutableMapping[str, str]:
@@ -4617,7 +4758,10 @@ class KiroCrewConfig:
         """Load credentials from ~/.kiro/crew/.env and environment variables.
 
         .env format: KEY=VALUE (one per line, # comments, no quotes required).
-        Environment variables override .env values.
+        Environment variables override .env values. A credential whose value is
+        a ``secret://NAME`` reference comes back as the vault secret it names
+        (:func:`resolve_env_credentials`); one that cannot be resolved is left
+        out, so it reads as unset.
         """
         creds: dict[str, str] = {}
         ep = env_path()
@@ -4698,7 +4842,10 @@ class KiroCrewConfig:
                     continue
                 os.environ.setdefault(k, v)
 
-        return creds
+        # Resolve AFTER propagating: a child inherits the ``.env`` line as
+        # written, so a ``secret://`` reference reaches os.environ as the
+        # reference and the vault secret stays in this process.
+        return resolve_env_credentials(creds, home=ep.parent)
 
     def create_provider_factory(self) -> Callable:
         """Return a factory that creates LLMProvider instances from config.
