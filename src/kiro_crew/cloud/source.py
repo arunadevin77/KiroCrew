@@ -1171,12 +1171,16 @@ def _ensure_boundary(
         _verify_boundary_content(arn, name, expected, profile, region)
         return arn
     # Any other failure (AccessDenied, throttling) is real — surface it with the
-    # precise missing action so the user knows what to grant.
+    # precise missing action so the user knows what to grant. The admin step is
+    # named BEFORE the raw AWS text: it is the remedy for a launcher whose policy
+    # has had iam:CreatePolicy removed, and a caller that keeps only the head of
+    # the message still shows it.
     missing = aws.map_missing_action(err)
     hint = f" — grant `{missing}` and retry" if missing else ""
     _audit_iam_policy_change("iam.create-policy", arn, "denied", error=(err or "").strip()[:300])
     raise aws.AWSError(
-        f"could not create the permissions boundary '{name}': "
+        f"could not create the permissions boundary '{name}' (an AWS admin can "
+        "create it once for this account with `kirocrew cloud iam-boundary`): "
         f"{(err or '').strip()[:300]}{hint}",
         action="iam:CreatePolicy",
         missing_action=missing,

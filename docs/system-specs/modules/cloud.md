@@ -13,8 +13,9 @@ over SSM, and opens the dashboard through an SSM port-forward. Command surface
 launch | list | status | connect | tunnel | login | logout | stop | start | destroy | iam-policy | iam-boundary | doctor
 ```
 
-(`iam-boundary` is the one-time admin step that pre-creates the immutable
-instance permissions boundary — see the security model below.)
+(`iam-boundary` is the one-time admin step that pre-creates the three immutable
+permissions boundaries — the EC2 instance ceiling and the two Fargate crew
+ceilings — see the security model below.)
 
 `cloud` verbs are **human/installer actions, never LLM/MCP tools**, guarded in
 layers. Be precise about what each layer actually buys, because there is **no
@@ -82,7 +83,7 @@ claim that a hostile in-process agent is fully contained.
 | `ui.py` / `wizard.py` | Terminal UI + the interactive launch flow. `_deploy_with_progress` runs the blocking deploy on a daemon thread and captures the `aws cloudformation deploy` child via a `proc_sink`, so a Ctrl+C on the main (poll) thread terminates it instead of orphaning it (~1800s). An unknown `--size`/`size_key` on the public `launch()` entrypoint yields a clean rc=1 + message, not an uncaught `KeyError`. Resuming a saved stack (`launch` after `stop`) first calls `_ensure_running_and_ssm_ready` — starts a `stopped` instance and waits for SSM `Online` before sign-in/tunnel (which are SSM-only and would otherwise fail); a `terminated` instance fails clean pointing at `--new`. `last_tag` is persisted (to the launch record, via `_record_launch`) **only after** a deploy confirms healthy, and a write that fails there WARNS rather than aborting -- the instance is already billing and sign-in still has to happen — a failed first launch leaves no saved pointer, so the next `launch` retries clean instead of resuming a rolled-back/instance-less stack; `_saved_launch_is_usable` additionally ignores a stale saved tag (from an older build) whose stack is in a `_FAILED_STATES` status or has no instance. |
 | `templates/kirocrew-ec2.yaml` | The CloudFormation stack. |
 | `templates/kirocrew-fargate-base.yaml` | The account-and-region Fargate stack: the ECS cluster and an egress-only security group with no ingress. One per account and region, shared by every crew's tasks, so deleting one crew's stack cannot delete the cluster its siblings run on. |
-| `templates/kirocrew-fargate-crew.yaml` | Not deployed by any production path yet (the template says so), and `source.ensure_crew_boundary` / `ensure_crew_exec_boundary` are tested but have no production caller. The per-crew Fargate stack: the execution role (crew-scoped secret read, log write), a task role holding exactly the four `ssmmessages` channel actions, and the log group. Resource names are the ones `identity.py` derives (`kirocrew-crew-<crew>-exec`, `-task`, `/kirocrew/crew/<crew>`) and `taskdef.py` refuses a document that disagrees with, so a rename on either side becomes a launch refusal rather than a mismatch that runs. The task role's whole grant is four `ssmmessages` actions -- the channel the in-task SSM agent opens so a port-forward can reach the crew -- and it must never gain `secretsmanager:GetSecretValue`: the execution role holds that read, scoped to the one crew's secret namespace. Each role carries its OWN permissions boundary, both required parameters with no default, because a boundary caps to the intersection of identity policy and ceiling: `kirocrew-crew-boundary` permits exactly those four actions and `kirocrew-crew-exec-boundary` permits exactly the execution role's seven (the crew secret read, two log-stream writes, four ECR reads). One shared ceiling cannot fit both -- sized for the task role it denies the secret fetch and log-stream open ECS performs before the container starts, so no task launches; sized as their union it would admit the secret read under the role a prompt can reach. |
+| `templates/kirocrew-fargate-crew.yaml` | Not deployed by any production path yet (the template says so). `source.ensure_crew_boundary` / `ensure_crew_exec_boundary` have one production caller, the `kirocrew cloud iam-boundary` admin step; no launch path calls them yet. The per-crew Fargate stack: the execution role (crew-scoped secret read, log write), a task role holding exactly the four `ssmmessages` channel actions, and the log group. Resource names are the ones `identity.py` derives (`kirocrew-crew-<crew>-exec`, `-task`, `/kirocrew/crew/<crew>`) and `taskdef.py` refuses a document that disagrees with, so a rename on either side becomes a launch refusal rather than a mismatch that runs. The task role's whole grant is four `ssmmessages` actions -- the channel the in-task SSM agent opens so a port-forward can reach the crew -- and it must never gain `secretsmanager:GetSecretValue`: the execution role holds that read, scoped to the one crew's secret namespace. Each role carries its OWN permissions boundary, both required parameters with no default, because a boundary caps to the intersection of identity policy and ceiling: `kirocrew-crew-boundary` permits exactly those four actions and `kirocrew-crew-exec-boundary` permits exactly the execution role's seven (the crew secret read, two log-stream writes, four ECR reads). One shared ceiling cannot fit both -- sized for the task role it denies the secret fetch and log-stream open ECS performs before the container starts, so no task launches; sized as their union it would admit the secret read under the role a prompt can reach. |
 
 The two Fargate stacks publish the fields the launch engine's refusal at
 `fargate_engine.py` lists, so each has exactly one place to be read from. The
@@ -572,6 +573,23 @@ pointer -- which `kirocrew cloud list` can rediscover from the real stacks anywa
     content before reuse, so a launcher that cannot read it cannot launch at all,
     whatever order the calls are made in. The agent-shell deny-list also blocks
     `aws iam create-policy`/`create-policy-version`.
+  - **`kirocrew cloud iam-boundary` creates all three boundaries the statement
+    names**, in order: `kirocrew-ec2-boundary` (the instance ceiling above),
+    `kirocrew-crew-boundary` (the Fargate task-role ceiling: the four
+    `ssmmessages` channel actions, `iam.crew_boundary_policy_document`) and
+    `kirocrew-crew-exec-boundary` (the Fargate execution-role ceiling: the crew
+    secret read, two log-stream writes and four ECR reads,
+    `iam.crew_exec_boundary_policy_document`). The documents are the content-fixed
+    ones in `cloud/iam.py`; the step adds no permission of its own. Each goes
+    through the same `_ensure_boundary` sequence a launch uses, so a re-run is a
+    no-op for a boundary whose content matches, and a boundary that has drifted
+    from its document is refused, never re-versioned or overwritten. The three
+    are attempted independently, so one refusal still reports the other two; the
+    step exits non-zero when any is not ready and then tells the operator to keep
+    `iam:CreatePolicy` in the statement, because the one statement covers all
+    three names and removing the action while a boundary is missing leaves no
+    principal allowed to create it. A launch whose `create-policy` is denied names
+    this admin step at the head of its error, ahead of AWS's own text.
   The instance role's inline `s3:GetObject` is still pinned to the **derived**
   launcher path (`kirocrew-src-${AccountId}-${Region}/${StackTag}/…`), not the
   `SourceBucket`/`SourceKey` deploy params — so a caller can't grant the box read

@@ -2783,7 +2783,7 @@ Examples:
     _cloud_creds_opts(_c_iam)
     _c_boundary = cloud_sub.add_parser(
         "iam-boundary",
-        help="Pre-create the immutable instance permissions boundary (admin, one-time)",
+        help="Pre-create the immutable EC2 + Fargate permissions boundaries (admin, one-time)",
     )
     _cloud_creds_opts(_c_boundary)
     _c_doctor = cloud_sub.add_parser("doctor", help="Check cloud prerequisites + AWS reachability")

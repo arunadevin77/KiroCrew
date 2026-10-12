@@ -459,7 +459,7 @@ resolved by the `aws` CLI and never stored by Kiro Crew. All verbs accept
 | `kirocrew cloud destroy` | Remove the instance and ALL its AWS resources |
 | `kirocrew cloud destroy --dry-run` | Show the delete command without running it |
 | `kirocrew cloud iam-policy` | Print the least-privilege IAM policy to apply |
-| `kirocrew cloud iam-boundary` | Pre-create the immutable permissions boundary (admin, one-time) |
+| `kirocrew cloud iam-boundary` | Pre-create the immutable EC2 + Fargate permissions boundaries (admin, one-time) |
 
 ## Tailnet (Tailscale)
 

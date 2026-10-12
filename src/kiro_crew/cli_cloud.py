@@ -475,36 +475,65 @@ def _cloud_iam_policy(_args: argparse.Namespace) -> int:
 
 
 def _cloud_iam_boundary(args: argparse.Namespace) -> int:
-    """Pre-create the shared, immutable instance permissions boundary (admin step).
+    """Pre-create the shared, immutable permissions boundaries (admin step).
 
-    Normally the first ``launch`` auto-creates this (the launcher policy grants
-    ``iam:CreatePolicy`` plus the two read verbs, ``iam:GetPolicy`` and
-    ``iam:GetPolicyVersion``, on the fixed boundary names). Operators who want to
-    eliminate the first-write race entirely run this ONCE as an admin, then remove
-    the ``iam:CreatePolicy`` action from the ``IamInstanceBoundaryCreateOnce``
-    statement in the applied launcher policy — the launcher then only *references*
-    the boundary ARN, never creates it. The statement's ``iam:GetPolicy`` and
-    ``iam:GetPolicyVersion`` grants stay: every launch reads the boundary to verify
-    its content before reusing it. Idempotent: an existing boundary is left
-    untouched (immutability).
+    Creates all three boundaries the launcher policy's
+    ``IamInstanceBoundaryCreateOnce`` statement names: the EC2 instance ceiling
+    (``kirocrew-ec2-boundary``) and the two Fargate crew ceilings
+    (``kirocrew-crew-boundary`` for the task role, ``kirocrew-crew-exec-boundary``
+    for the execution role). Normally a launch auto-creates the boundary it needs
+    (the statement grants ``iam:CreatePolicy`` plus the two read verbs,
+    ``iam:GetPolicy`` and ``iam:GetPolicyVersion``, on those exact names).
+    Operators who want to eliminate the first-write race entirely run this ONCE as
+    an admin, then remove the ``iam:CreatePolicy`` action from that statement —
+    the launcher then only *references* the boundary ARNs, never creates them.
+    That removal is safe only once ALL three exist, because the one statement
+    covers all three names; a boundary still missing when the action goes would
+    have no principal left that may create it. The statement's ``iam:GetPolicy``
+    and ``iam:GetPolicyVersion`` grants stay: every launch reads its boundary to
+    verify the content before reusing it.
+
+    Each boundary goes through the same create-once-and-verify sequence a launch
+    uses, so the step is idempotent (an existing boundary whose content matches is
+    left untouched, never re-versioned) and refuses a drifted one the same way. The
+    three are attempted independently, so one refusal still reports the state of
+    the other two; the exit status is non-zero when any of them is not ready.
     """
     from kiro_crew.cloud import source as source_mod
 
     profile, region = _resolve(args)
-    try:
-        arn = source_mod.ensure_instance_boundary(profile, region)
-    except AWSError as exc:
-        ui.fail(str(exc))
-        if exc.missing_action:
-            ui.detail(f"Grant `{exc.missing_action}` and retry.")
+    boundaries = (
+        ("Instance permissions boundary", source_mod.ensure_instance_boundary),
+        ("Fargate crew task-role boundary", source_mod.ensure_crew_boundary),
+        ("Fargate crew execution-role boundary", source_mod.ensure_crew_exec_boundary),
+    )
+    failed = False
+    for label, ensure in boundaries:
+        try:
+            arn = ensure(profile, region)
+        except AWSError as exc:
+            failed = True
+            ui.fail(str(exc))
+            if exc.missing_action:
+                ui.detail(f"Grant `{exc.missing_action}` and retry.")
+            # Every boundary ARN embeds the account id, so a failure to resolve it
+            # fails the remaining boundaries identically; say it once.
+            if exc.action == "sts:GetCallerIdentity":
+                break
+            continue
+        ui.ok(f"{label} ready: {arn}")
+    if failed:
+        ui.detail(
+            "Keep the iam:CreatePolicy action in the IamInstanceBoundaryCreateOnce "
+            "statement until every boundary above is ready, then re-run this step."
+        )
         return 1
-    ui.ok(f"Instance permissions boundary ready: {arn}")
     ui.detail(
-        "It is immutable and shared by every launch. To fully close the "
+        "They are immutable and shared by every launch. To fully close the "
         "first-write race, remove the iam:CreatePolicy action from the "
         "IamInstanceBoundaryCreateOnce statement in the applied launcher policy "
-        "now that the boundary exists. Keep the statement's read verbs — every "
-        "launch reads the boundary to verify it."
+        "now that all three boundaries exist. Keep the statement's read verbs — "
+        "every launch reads its boundary to verify it."
     )
     return 0
 
@@ -597,7 +626,7 @@ def handle_cloud(args: argparse.Namespace) -> int:
         ui.detail("stop|start  Pause / resume (save cost)")
         ui.detail("destroy     Remove everything from AWS")
         ui.detail("iam-policy  Print the least-privilege IAM policy to apply")
-        ui.detail("iam-boundary Pre-create the immutable instance permissions boundary (admin)")
+        ui.detail("iam-boundary Pre-create the EC2 + Fargate permissions boundaries (admin)")
         ui.detail("doctor      Check cloud prerequisites + AWS reachability")
         return 0
     fn = _DISPATCH.get(action)
