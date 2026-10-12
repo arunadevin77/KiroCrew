@@ -105,8 +105,8 @@ export default function GraphView() {
 
   // Build the full-graph nodes once per payload; every view derives from this.
   const built = useMemo(
-    () => (deps ? buildNodes(deps, issues, pulls, prevReadyRef.current) : null),
-    [deps, issues, pulls],
+    () => (deps ? buildNodes(deps, issues, pulls, prevReadyRef.current, active.provider) : null),
+    [deps, issues, pulls, active.provider],
   )
 
   // Snapshot the ready set after paint so the NEXT fetch compares against it.

@@ -16,6 +16,7 @@ import { CircleDot, GitPullRequest, Lock, Unlock } from 'lucide-react'
 import { useIssueRadar } from '../context'
 import { issueRadarApi, type DepEdge, type DepsResponse } from '../api'
 import { repoScopeKey } from '../lib/links'
+import { resolveLifecycle } from '../lib/deps'
 import { i18nT } from '../../../i18n/t'
 
 /** One resolved dependency row: the counterpart number, its kind/lifecycle, and
@@ -50,35 +51,12 @@ export default function DepsSection({ number }: { number: number }) {
     if (!deps) return { blockedBy: [] as DepRow[], blocking: [] as DepRow[] }
     const issueByNumber = new Map(issues.map((i) => [i.number, i]))
     const pullByNumber = new Map(pulls.map((p) => [p.number, p]))
+    // One lookup shared with the Graph tab, so the two surfaces can never show
+    // one number with two different lifecycles (see lib/deps.resolveLifecycle for
+    // the per-forge number-space rule).
     const resolve = (n: number, src: DepEdge['source']): DepRow => {
-      const node = deps.nodes[String(n)]
-      const pull = pullByNumber.get(n)
-      if (pull) {
-        return {
-          number: n,
-          kind: 'pull',
-          lifecycle: pull.merged_at ? 'merged' : pull.state === 'closed' ? 'closed' : 'open',
-          title: pull.title || node?.title || '',
-          source: src,
-        }
-      }
-      const issue = issueByNumber.get(n)
-      if (issue) {
-        return {
-          number: n,
-          kind: 'issue',
-          lifecycle: issue.state === 'closed' ? 'closed' : 'open',
-          title: issue.title || node?.title || '',
-          source: src,
-        }
-      }
-      return {
-        number: n,
-        kind: node?.kind ?? 'issue',
-        lifecycle: node?.state ?? 'open',
-        title: node?.title ?? '',
-        source: src,
-      }
+      const r = resolveLifecycle(n, deps, issueByNumber, pullByNumber, active.provider)
+      return { number: n, kind: r.kind, lifecycle: r.lifecycle, title: r.title, source: src }
     }
     const bb: DepRow[] = []
     const bl: DepRow[] = []
@@ -89,7 +67,7 @@ export default function DepsSection({ number }: { number: number }) {
     bb.sort((a, b) => a.number - b.number)
     bl.sort((a, b) => a.number - b.number)
     return { blockedBy: bb, blocking: bl }
-  }, [deps, number, issues, pulls])
+  }, [deps, number, issues, pulls, active.provider])
 
   if (blockedBy.length === 0 && blocking.length === 0) return null
 
