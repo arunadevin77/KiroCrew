@@ -55,36 +55,46 @@ _LAUNCHER_MODE = 0o700
 
 #: Per-OS instruction for the one tool that cannot be auto-installed. Shown by the
 #: UI verbatim; the user runs it themselves, which is the documented contract for
-#: a system package.
+#: a system package. macOS and Windows each have one conventional manager; Linux
+#: has several, so :func:`_linux_soffice_hint` decides it per host.
 _SOFFICE_HINTS = {
     "darwin": "brew install --cask libreoffice",
-    "linux": "sudo apt install libreoffice  (or: sudo dnf install libreoffice)",
     "win32": "winget install TheDocumentFoundation.LibreOffice",
 }
 
 #: Linux hints keyed by the distribution's os-release ``ID``/``ID_LIKE`` tokens.
 _LINUX_APT_HINT = "sudo apt install libreoffice"
-_LINUX_DNF_HINT = "sudo dnf install libreoffice"
+_LINUX_RPM_HINT = "sudo {manager} install libreoffice"
 _APT_IDS = frozenset({"debian", "ubuntu"})
-_DNF_IDS = frozenset({"fedora", "rhel", "centos"})
+#: The Fedora/RHEL lineage, whose manager is ``dnf``, ``yum`` or ``microdnf`` by
+#: generation and is probed per host. SUSE is absent on purpose: its manager is
+#: ``zypper``.
+_RPM_IDS = frozenset({"fedora", "rhel", "centos"})
 #: Distributions with no LibreOffice package in any enabled repo. Amazon Linux
 #: 2023 reports ``ID_LIKE=fedora``, yet ``dnf install libreoffice`` finds nothing
-#: there, so it is checked before the dnf family can claim it.
+#: there, so it is checked before the rpm family can claim it.
 _UNPACKAGED_IDS = frozenset({"amzn"})
 
 
 @lru_cache(maxsize=1)
 def _linux_soffice_hint() -> str | None:
     """Cached: the distribution does not change under a running process, and one
-    caller asks from the event loop."""
+    caller asks from the event loop.
+
+    The command names only what this host has: the apt family by lineage, the rpm
+    family by the manager :func:`os_deps.rpm_package_manager` finds (the probe the
+    browser installer uses). Any other distribution, SUSE included, gets ``None``,
+    as in the browser installer.
+    """
     ids = os_deps.os_release_ids()
     if ids & _UNPACKAGED_IDS:
         return None
     if ids & _APT_IDS:
         return _LINUX_APT_HINT
-    if ids & _DNF_IDS:
-        return _LINUX_DNF_HINT
-    return _SOFFICE_HINTS["linux"]
+    if ids & _RPM_IDS:
+        manager = os_deps.rpm_package_manager()
+        return _LINUX_RPM_HINT.format(manager=manager) if manager else None
+    return None
 
 
 def soffice_hint() -> str | None:
@@ -94,9 +104,11 @@ def soffice_hint() -> str | None:
     manager on the operator's behalf from a browser request is the host mutation
     this app refuses.
 
-    ``None`` means this distribution packages no LibreOffice, so there is no
-    command to give. Every surface frames the hint as "install it with:", so a
-    guessed command that fails on its own package name is worse than none.
+    ``None`` means there is no command to give: this distribution packages no
+    LibreOffice, Kiro Crew cannot name its package manager (SUSE, any unrecognized
+    Linux), or its rpm manager is not on ``PATH``. Every surface frames the hint as
+    "install it with:", so a guessed command that fails on its own first argument
+    or package name is worse than none.
     """
     if sys.platform.startswith("linux"):
         return _linux_soffice_hint()

@@ -48,13 +48,13 @@ _DEBIAN_IDS = frozenset({"debian", "ubuntu"})
 #: (``libgbm1`` for ``mesa-libgbm``) -- so no command this module could compose
 #: from :data:`_RPM_CHROMIUM_PACKAGES` works there, even when ``dnf`` or
 #: ``yum`` happens to be installed from SUSE's own repos. Lineage decides,
-#: not which binaries the host carries: see :func:`_rpm_package_manager`.
+#: not which binaries the host carries: see :func:`rpm_package_manager`.
 _SUSE_IDS = frozenset({"opensuse", "sles", "suse"})
 
 #: ``ID``/``ID_LIKE`` tokens that mean rpm packaging. Family membership says how
 #: packages are NAMED, not which manager installs them: Fedora-lineage hosts
 #: carry ``dnf`` or ``yum``, while the SUSE tokens mean ``zypper`` -- so the
-#: manager is probed per host (see :func:`_rpm_package_manager`), never assumed
+#: manager is probed per host (see :func:`rpm_package_manager`), never assumed
 #: from the family. ``amzn`` reports ``ID_LIKE=fedora``, so the ``ID_LIKE`` scan
 #: covers Amazon Linux without naming it, but it is listed anyway: Amazon Linux 2
 #: omits ``ID_LIKE``.
@@ -133,7 +133,7 @@ _APT_DEPS_COMMAND = "npx playwright install-deps {engine}"
 
 #: Remedy prefix for the rpm family, completed with :data:`_RPM_CHROMIUM_PACKAGES`.
 #: ``{manager}`` is filled with whichever supported manager this host actually
-#: has -- see :func:`_rpm_package_manager` -- because half the rpm family does
+#: has -- see :func:`rpm_package_manager` -- because half the rpm family does
 #: not carry ``dnf``, and a hardcoded manager fails on its own first argument
 #: exactly the way the module docstring warns about. Privilege elevation is
 #: composed separately by :func:`_sudo_prefix`.
@@ -267,8 +267,12 @@ def with_deps_supported() -> bool:
     return linux_family() == FAMILY_DEBIAN
 
 
-def _rpm_package_manager() -> str | None:
+def rpm_package_manager() -> str | None:
     """The supported rpm-family manager for this host, or ``None``.
+
+    Public because two surfaces name this host's manager to the operator:
+    :func:`manual_deps_command` here and the PPTX Maker LibreOffice hint. Both ask
+    this one probe, so they cannot disagree about which manager the host has.
 
     Lineage first, then the probe. A SUSE host (:data:`_SUSE_IDS` in its
     os-release tokens) is answered ``None`` outright: its packages are named
@@ -307,7 +311,7 @@ def manual_deps_command(engine: str = "chromium") -> str | None:
     side (whose packages this module's list cannot name), any rpm host with no
     supported manager on ``PATH``, and every engine other than Chromium on the
     rpm family (:data:`_RPM_LISTED_ENGINES`): no verified command can be
-    composed, so none is -- see :func:`_rpm_package_manager`.
+    composed, so none is -- see :func:`rpm_package_manager`.
     """
     family = linux_family()
     if family == FAMILY_DEBIAN:
@@ -315,7 +319,7 @@ def manual_deps_command(engine: str = "chromium") -> str | None:
     if family == FAMILY_RPM:
         if engine not in _RPM_LISTED_ENGINES:
             return None
-        manager = _rpm_package_manager()
+        manager = rpm_package_manager()
         if manager is None:
             return None
         return (

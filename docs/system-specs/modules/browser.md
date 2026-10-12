@@ -1088,6 +1088,10 @@ remedy for the engine that failed:
 | unrecognized Linux | never passed | none — a guessed package manager fails on its own first argument and reads as the product being broken |
 | macOS / Windows | not applicable | none — the browser download alone is sufficient |
 
+The rpm manager probe, `os_deps.rpm_package_manager`, is public because the PPTX
+Maker's LibreOffice hint asks it too ([pptx-maker](pptx-maker.md)), so the two name
+the same manager for a host.
+
 The remedy is a command for a human to run, appended to the failing step's
 detail (which the settings panel renders verbatim) rather than a new UI state.
 Nothing in the remedy path elevates or runs a package manager; the only elevation
