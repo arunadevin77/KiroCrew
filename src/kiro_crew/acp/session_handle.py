@@ -197,6 +197,7 @@ from kiro_crew.platform.context import redact_log_via_context
 from kiro_crew.recovery.ladder import InfraError, classify_infra_error
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 from kiro_crew.sel import sel
+from kiro_crew.trust_patterns import GrantDeadline, GrantEnded, grant_deadline_guard
 from kiro_crew.validation import MAX_ACP_SESSION_ID_LEN
 
 logger = logging.getLogger(__name__)
@@ -1065,7 +1066,13 @@ class AcpRuntimeProtocol(Protocol):
 
     def forget_request(self, future: "asyncio.Future[dict[str, Any]]") -> None: ...
 
-    async def send_response(self, request_id: str | int, result: dict[str, Any]) -> None: ...
+    async def send_response(
+        self,
+        request_id: str | int,
+        result: dict[str, Any],
+        *,
+        before_write: Callable[[], None] | None = None,
+    ) -> None: ...
 
     async def send_error(self, request_id: str | int, code: int, message: str) -> None: ...
 
@@ -2466,7 +2473,13 @@ class AcpSessionHandle:
 
     # ── Tool Approval ──
 
-    async def approve_tool(self, request_id: str | int, option_id: str | None = None) -> bool:
+    async def approve_tool(
+        self,
+        request_id: str | int,
+        option_id: str | None = None,
+        *,
+        deadline: GrantDeadline | None = None,
+    ) -> bool:
         """Approve a pending permission request.
 
         ``option_id`` overrides the auto-resolved id when provided. Otherwise the
@@ -2481,6 +2494,12 @@ class AcpSessionHandle:
         (:mod:`kiro_crew.permission_floor`): a request the deny floor or the
         sensitive-path checks refuse is REJECTED here, whichever consumer asked
         to approve it and whether or not that consumer consulted the gate.
+
+        ``deadline`` is set only by an approval a timed grant backs. It is
+        checked under the write lock, right before the answer is written: if it
+        has passed, nothing is written, the request stays pending as it was, and
+        :class:`~kiro_crew.trust_patterns.GrantEnded` tells the caller to ask
+        the person instead. Without it the approval is sent as before.
         """
         gate_event = self._permission_gate_events.pop(request_id, None)
         # No recorded event means no request this transport built, so there is
@@ -2502,10 +2521,11 @@ class AcpSessionHandle:
             return False
         resolved_id = option_id
         recorded = self._permission_options.pop(request_id, None)
-        # Answered — the turn is no longer waiting on a human. Also closes the
-        # human-wait segment of the park so an observer does not attribute the
-        # person's thinking time to the consumer (see _end_human_wait).
-        self._end_human_wait()
+        if deadline is None:
+            # Answered, so the turn is not waiting on a human. Also closes the
+            # human-wait segment of the park so an observer does not attribute the
+            # person's thinking time to the consumer (see _end_human_wait).
+            self._end_human_wait()
         if recorded:
             if resolved_id is None:
                 resolved_id = recorded.get("once") or recorded.get("always")
@@ -2515,10 +2535,27 @@ class AcpSessionHandle:
                 resolved_id = recorded.get("once") or resolved_id
         if resolved_id is None:
             resolved_id = OPTION_ALLOW_ONCE
-        await self._runtime.send_response(
-            request_id,
-            {"outcome": {"outcome": OUTCOME_SELECTED, "optionId": resolved_id}},
-        )
+        if deadline is None:
+            await self._runtime.send_response(
+                request_id,
+                {"outcome": {"outcome": OUTCOME_SELECTED, "optionId": resolved_id}},
+            )
+            return True
+        try:
+            await self._runtime.send_response(
+                request_id,
+                {"outcome": {"outcome": OUTCOME_SELECTED, "optionId": resolved_id}},
+                before_write=grant_deadline_guard(deadline, request_id),
+            )
+        except GrantEnded:
+            # Nothing was written: put the request back exactly as it was.
+            if gate_event is not None:
+                self._permission_gate_events[request_id] = gate_event
+            if recorded is not None:
+                self._permission_options[request_id] = recorded
+            raise
+        # Answered only now: until the write the request was still pending.
+        self._end_human_wait()
         return True
 
     async def reject_tool(self, request_id: str | int) -> None:

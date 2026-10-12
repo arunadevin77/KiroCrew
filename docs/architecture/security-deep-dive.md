@@ -572,9 +572,14 @@ slot in its own store, apart from the chat-long patterns, so no other writer of
 those patterns can end or extend it. Its deadline is held on both the wall clock
 and the monotonic clock and checked at decision time: a grant is dropped before
 matching once either deadline passes, so neither a suspended host nor a clock
-set backwards stretches it, and the next matching call prompts again. A timed
-grant stays on the chat that made it and, like every per-slot grant, is gone
-after a restart.
+set backwards stretches it, and the next matching call prompts again. An
+approval that rests on a timed grant carries that grant's deadline down to the
+transport, which checks it once more under its write lock, after its own
+security-floor check and right before it writes the answer: if the deadline has
+passed, nothing is written, the request stays pending, and the user is asked. An
+approval with no timed grant behind it carries no deadline and is answered as
+before. A timed grant stays on the chat
+that made it and, like every per-slot grant, is gone after a restart.
 
 The security-relevant property is what the pattern is derived from: the **actual
 command in `tool_input`**, not the model-authored display title. Trust patterns

@@ -621,6 +621,8 @@ from kiro_crew.slack.outbound import PostedOptions
 from kiro_crew.start_priority import StartPriority, person_priority
 from kiro_crew.tool_gate_busy import hook_gate_busy
 from kiro_crew.trust_patterns import (  # noqa: F401 -- compatibility re-export
+    GrantDeadline,
+    GrantEnded,
     _mask_quoted_separators,
     approval_command,
     approval_display_command,
@@ -634,6 +636,7 @@ from kiro_crew.trust_patterns import redirect_outside_grant as _redirect_outside
 from kiro_crew.trust_patterns import (  # noqa: F401 -- compatibility re-export
     split_command_segments as _split_command_segments,
 )
+from kiro_crew.trust_patterns import timed_grant_deadline as _timed_grant_deadline
 from kiro_crew.validation import ValidationError, validate_ask_user_question
 from kiro_crew.wakatime.heartbeats import (  # noqa: F401
     CADENCE_MIN_INTERVAL_SECS,
@@ -14472,7 +14475,7 @@ async def _run_chat(
                         matched
                         and event.is_shell
                         and _tp_command
-                        and _redirect_outside_grant(_tp_command, slot._trusted_patterns)
+                        and _redirect_outside_grant(_tp_command, _tp_live)
                     ):
                         # The user granted a program, not the files the shell
                         # opens for it: a write redirect needs a grant that
@@ -14538,23 +14541,17 @@ async def _run_chat(
                                 "msg msg-info",
                             )
                             matched = None
-                    if matched and _tp_deadlines is not None:
-                        # The program-name check above awaits an executor hop,
-                        # long enough for a timed grant to pass its deadline
-                        # (a slow pool, a host suspended mid-call). Re-derive
-                        # the live set and match again, with no await between
-                        # this and the approval below, so the approval rests on
-                        # a grant that is live now; with none left the call
-                        # falls through to the normal prompt.
-                        _tp_live = _live_trusted_patterns(
-                            slot._trusted_patterns,
-                            _tp_deadlines,
-                            wall=time.time(),
-                            mono=time.monotonic(),
-                        )
-                        matched = (
-                            _matches_trusted_pattern(_tp_command, _tp_live) if _tp_live else None
-                        )
+                    # The program-name check above and the transport's own floor
+                    # check are awaited hops, long enough for a timed grant to
+                    # pass its deadline (a slow pool, a host suspended mid-call).
+                    # An approval that rests on timed grants carries their
+                    # deadline down to the send, where the transport checks it
+                    # last; one the chat-long patterns cover alone carries none.
+                    _tp_deadline: GrantDeadline | None = (
+                        _timed_grant_deadline(_tp_command, slot._trusted_patterns, _tp_deadlines)
+                        if matched and _tp_deadlines
+                        else None
+                    )
                     if matched:
                         try:
                             validated_tool = _validate_tool_name(
@@ -14578,45 +14575,58 @@ async def _run_chat(
                                 refusal_reasons=_refusal_reasons,
                             )
                             continue
-                        approval_sent = await client.approve_tool(event.request_id)
-                        if approval_sent is False:
+                        if _tp_deadline is None:
+                            approval_sent = await client.approve_tool(event.request_id)
+                        else:
+                            # A timed grant backs this approval: the transport
+                            # checks its deadline again after the floor and, if it
+                            # has passed, sends nothing and raises. The call then
+                            # falls through to the normal prompt below.
+                            try:
+                                approval_sent = await client.approve_tool(
+                                    event.request_id, deadline=_tp_deadline
+                                )
+                            except GrantEnded:
+                                approval_sent = None
+                        if approval_sent is not None:
+                            if approval_sent is False:
+                                sel().log_tool_invocation(
+                                    session_key=session_key,
+                                    agent=slot.agent or "kirocrew",
+                                    source="dashboard",
+                                    tool_name=_redact_display_text(event.title),
+                                    tool_kind=event.tool_kind,
+                                    outcome=OUTCOME_REJECTED_TRANSPORT_FLOOR,
+                                    request_id=event.request_id,
+                                )
+                                continue
+                            _wt_note_approved(event)
+                            _tool_title = _broadcast_auto_tool(state, slot, event)
+                            _tool_title, _ = redact_exfiltration_urls(_tool_title)
+                            _tool_title, _ = redact_credentials(_tool_title)
+                            slot.append(
+                                "tool",
+                                f"🔧 {_tool_title}",
+                                "msg msg-tool",
+                                # `_tool_meta` for parity with every other rung: same
+                                # `_MAX_TOOL_PURPOSE` cap (a hand-rolled 200-char cap
+                                # here truncated restored purposes mid-sentence), same
+                                # redacted `tool_call_id` (the live↔replay join key),
+                                # and `input`/`kind` so historical rows open the same
+                                # inline detail panel as live ones.
+                                meta=_tool_meta(event),
+                            )
                             sel().log_tool_invocation(
                                 session_key=session_key,
                                 agent=slot.agent or "kirocrew",
                                 source="dashboard",
-                                tool_name=_redact_display_text(event.title),
+                                tool_name=_tool_title,
                                 tool_kind=event.tool_kind,
-                                outcome=OUTCOME_REJECTED_TRANSPORT_FLOOR,
+                                outcome="auto_approved",
                                 request_id=event.request_id,
+                                metadata={"reason": "trusted_pattern", "pattern": matched},
                             )
                             continue
-                        _wt_note_approved(event)
-                        _tool_title = _broadcast_auto_tool(state, slot, event)
-                        _tool_title, _ = redact_exfiltration_urls(_tool_title)
-                        _tool_title, _ = redact_credentials(_tool_title)
-                        slot.append(
-                            "tool",
-                            f"🔧 {_tool_title}",
-                            "msg msg-tool",
-                            # `_tool_meta` for parity with every other rung: same
-                            # `_MAX_TOOL_PURPOSE` cap (a hand-rolled 200-char cap
-                            # here truncated restored purposes mid-sentence), same
-                            # redacted `tool_call_id` (the live↔replay join key),
-                            # and `input`/`kind` so historical rows open the same
-                            # inline detail panel as live ones.
-                            meta=_tool_meta(event),
-                        )
-                        sel().log_tool_invocation(
-                            session_key=session_key,
-                            agent=slot.agent or "kirocrew",
-                            source="dashboard",
-                            tool_name=_tool_title,
-                            tool_kind=event.tool_kind,
-                            outcome="auto_approved",
-                            request_id=event.request_id,
-                            metadata={"reason": "trusted_pattern", "pattern": matched},
-                        )
-                        continue
                 # Trust-reads: auto-approve read-only bash commands
                 # Detect bash tools by tool_input content (title is human-readable)
                 cmd = _extract_bash_command(event.tool_input) if event.tool_input else ""

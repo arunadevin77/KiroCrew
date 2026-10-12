@@ -45,6 +45,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
     from kiro_crew.agent_sdk.tool_search import ToolSearchSettings
     from kiro_crew.recovery.ladder import InfraError
+    from kiro_crew.trust_patterns import GrantDeadline
 
 CancelOutcome = Literal["acked", "timeout", "no_turn", "error"]
 
@@ -176,7 +177,13 @@ class LLMProvider(ABC):
         return None
 
     @abstractmethod
-    async def approve_tool(self, request_id: str | int, *, always: bool = False) -> bool:
+    async def approve_tool(
+        self,
+        request_id: str | int,
+        *,
+        always: bool = False,
+        deadline: GrantDeadline | None = None,
+    ) -> bool:
         """Approve a pending tool permission request and report whether it was sent.
 
         Return ``True`` after sending an allow answer. Return ``False`` when the
@@ -187,6 +194,10 @@ class LLMProvider(ABC):
         persistent approval (ACP backends echoing optionId, claude-agent-acp
         emitting an addRules suggestion) should honor it; others may treat
         it as a synonym for one-shot allow.
+
+        ``deadline`` is set only by an approval a timed grant backs. Once it has
+        passed, send nothing, leave the request pending, and raise
+        :class:`~kiro_crew.trust_patterns.GrantEnded` so the caller prompts.
         """
 
     @abstractmethod

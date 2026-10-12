@@ -108,6 +108,7 @@ from kiro_crew.providers.base import (
 from kiro_crew.providers.cleanup import _is_safe_path
 from kiro_crew.recovery.ladder import InfraError
 from kiro_crew.session_work_dir import mark_run_dir, reclaim_session_work_dir
+from kiro_crew.trust_patterns import GrantDeadline
 from kiro_crew.workspace_cli_settings import (
     CLI_SETTINGS_LOCK_ACTION_TIMEOUT_SECS,
     CLI_SETTINGS_LOCK_TIMEOUT_SECS,
@@ -2774,8 +2775,16 @@ class AcpProvider(LLMProvider):
             async for e in events:
                 yield self._to_llm_event(e)
 
-    async def approve_tool(self, request_id: str | int, *, always: bool = False) -> bool:
-        return await self._client.approve_tool(request_id, always=always)
+    async def approve_tool(
+        self,
+        request_id: str | int,
+        *,
+        always: bool = False,
+        deadline: GrantDeadline | None = None,
+    ) -> bool:
+        if deadline is None:
+            return await self._client.approve_tool(request_id, always=always)
+        return await self._client.approve_tool(request_id, always=always, deadline=deadline)
 
     async def reject_tool(self, request_id: str | int) -> None:
         await self._client.reject_tool(request_id)

@@ -323,6 +323,7 @@ from kiro_crew.security.credential_sources import tool_output_fingerprints
 from kiro_crew.sel import sel
 from kiro_crew.session_token_sig import schedule_session_token_publish
 from kiro_crew.skill_usage import get_global_skill_read_observer, names_skill_file
+from kiro_crew.trust_patterns import GrantDeadline, GrantEnded, grant_deadline_guard
 from kiro_crew.turn_limit import current_turn_limit_secs
 from kiro_crew.user_json import loads_user_json
 
@@ -8080,7 +8081,13 @@ class AcpClient:
             self._stdin_lock = lock
         return lock
 
-    async def _write_response_bounded(self, data: bytes, request_id: str | int) -> None:
+    async def _write_response_bounded(
+        self,
+        data: bytes,
+        request_id: str | int,
+        *,
+        before_write: Callable[[], None] | None = None,
+    ) -> None:
         """Write a response/error frame under the write lock and a no-progress bound.
 
         Left alone, a deny path answering a permission request would sit on a
@@ -8090,7 +8097,9 @@ class AcpClient:
         response condition a closed pipe reports as an error, so it is mapped to
         the same exception: ``AcpProcessDied`` sends the caller down the existing
         session-reset + bounded-requeue recovery instead of hanging. The request
-        id appears only through ``_loggable_request_id``.
+        id appears only through ``_loggable_request_id``. ``before_write`` runs
+        under the lock right before the frame is written and may raise to abort
+        it with nothing written.
         """
         assert self._process is not None and self._process.stdin is not None
         if await write_response_frame_bounded(
@@ -8098,6 +8107,7 @@ class AcpClient:
             self._stdin_write_lock(),
             data,
             bound_secs=transport_framing._RESPONSE_WRITE_BOUND_SECS,
+            before_write=before_write,
         ):
             return
         safe_id = _loggable_request_id(request_id)
@@ -8115,14 +8125,25 @@ class AcpClient:
             f"delivering response to req={safe_id}"
         )
 
-    async def _send_response(self, request_id: str | int, result: dict) -> None:
+    async def _send_response(
+        self,
+        request_id: str | int,
+        result: dict,
+        *,
+        before_write: Callable[[], None] | None = None,
+    ) -> None:
         if not self._process or not self._process.stdin:
             raise AcpError("ACP process not running")
 
         msg = {"jsonrpc": "2.0", "id": request_id, "result": result}
         data = json.dumps(msg) + "\n"
         try:
-            await self._write_response_bounded(data.encode(), request_id)
+            if before_write is None:
+                await self._write_response_bounded(data.encode(), request_id)
+            else:
+                await self._write_response_bounded(
+                    data.encode(), request_id, before_write=before_write
+                )
         except (BrokenPipeError, ConnectionResetError) as exc:
             raise AcpProcessDied(f"ACP process pipe broken: {exc}") from exc
         self._last_activity = time.monotonic()
@@ -9664,6 +9685,7 @@ class AcpClient:
         option_id: str | None = None,
         *,
         always: bool = False,
+        deadline: GrantDeadline | None = None,
     ) -> bool:
         """Approve a pending session/request_permission.
 
@@ -9677,6 +9699,12 @@ class AcpClient:
         (:mod:`kiro_crew.permission_floor`): a request the deny floor or the
         sensitive-path checks refuse is REJECTED here, whichever consumer asked
         to approve it and whether or not that consumer consulted the gate.
+
+        ``deadline`` is set only by an approval a timed grant backs. It is
+        checked under the write lock, right before the answer is written: if it
+        has passed, nothing is written, the request stays pending as it was, and
+        :class:`~kiro_crew.trust_patterns.GrantEnded` tells the caller to ask
+        the person instead. Without it the approval is sent as before.
         """
         # An instance allocated without ``__init__`` may keep no event map until
         # the builder creates it; read it as empty, so it is judged like any
@@ -9702,8 +9730,9 @@ class AcpClient:
             return False
         # An approved call may complete; forget the envelope mapping so the map
         # stays bounded by the calls still awaiting an answer.
-        getattr(self, "_pi_gate_request_tool", {}).pop(str(request_id), None)
+        pi_gate_tool = getattr(self, "_pi_gate_request_tool", {}).pop(str(request_id), None)
         resolved_id = option_id
+        recorded: dict[str, str] | None = None
         if resolved_id is None:
             recorded = self._permission_options.pop(request_id, None)
             # A recorded entry may carry only a "reject" id (a request that
@@ -9712,10 +9741,27 @@ class AcpClient:
             resolved_id = (recorded or {}).get("always" if always else "once")
             if resolved_id is None:
                 resolved_id = OPTION_ALLOW_ALWAYS if always else OPTION_ALLOW_ONCE
-        await self._send_response(
-            request_id,
-            {"outcome": {"outcome": OUTCOME_SELECTED, "optionId": resolved_id}},
-        )
+        if deadline is None:
+            await self._send_response(
+                request_id,
+                {"outcome": {"outcome": OUTCOME_SELECTED, "optionId": resolved_id}},
+            )
+            return True
+        try:
+            await self._send_response(
+                request_id,
+                {"outcome": {"outcome": OUTCOME_SELECTED, "optionId": resolved_id}},
+                before_write=grant_deadline_guard(deadline, request_id),
+            )
+        except GrantEnded:
+            # Nothing was written: put the request back exactly as it was.
+            if gate_events is not None and gate_event is not None:
+                gate_events[request_id] = gate_event
+            if recorded is not None:
+                self._permission_options[request_id] = recorded
+            if pi_gate_tool is not None:
+                self._pi_gate_request_tool[str(request_id)] = pi_gate_tool
+            raise
         return True
 
     def _note_pi_gate_denied(self, request_id: str | int) -> None:
