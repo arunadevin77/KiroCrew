@@ -84,12 +84,56 @@ class TestManualClock:
         assert clock.now() == dt.datetime(2023, 11, 14, 22, 13, 20, tzinfo=dt.timezone.utc)
         assert clock.now().tzinfo is dt.timezone.utc
 
-    def test_monotonic_starts_at_the_real_reading_unless_given(self):
+    def test_monotonic_starts_within_a_grid_step_of_the_real_reading_unless_given(self):
         before = time.monotonic()
         clock = ManualClock()
         after = time.monotonic()
-        assert before <= clock.monotonic() <= after
+        grid = clock_mod._MONO_GRID_NS / 10**9
+        # Floored onto the grid: never ahead of the real reading, less than a step behind.
+        assert before - grid < clock.monotonic() <= after
+        # The default start is ON the 1/512 s grid, so the reading is exact as a float.
+        assert clock.monotonic_ns() % clock_mod._MONO_GRID_NS == 0
         assert ManualClock(monotonic_start=42.5).monotonic() == 42.5
+
+    # Raw ``time.monotonic_ns()`` readings (hosts up for 4 minutes to 24 days) whose
+    # float round-trip is one ULP off: ``fl(fl(ns/1e9) + 60)`` lands ABOVE
+    # ``fl((ns + 60e9)/1e9)``. Found by sampling; on a host up a few minutes (a fresh CI
+    # runner) one start in twenty-five does it.
+    _ULP_SHORT_STARTS_NS = (
+        230_581_778_801,
+        262_140_780_045_015,
+        2_097_111_569_668_913,
+    )
+
+    @pytest.mark.parametrize("real_ns", _ULP_SHORT_STARTS_NS)
+    def test_a_whole_second_deadline_is_met_after_advancing_that_many_seconds(
+        self, monkeypatch, real_ns
+    ):
+        """The product sets ``deadline = time.monotonic() + 60`` (a float sum) and the
+        test calls ``advance(60)`` (an integer step); the two must agree exactly, or a
+        wait the test advanced to its deadline still reports itself not due. This is
+        the shape of ``test_wait_tool_early_end.py::TestWaitSettlementAudit``."""
+        # The unsnapped reading is the trap: product float arithmetic rounds twice.
+        assert real_ns / 10**9 + 60 > (real_ns + 60 * 10**9) / 10**9
+
+        # Feed the real snapping function this reading instead of the host's. The
+        # module's ``_time`` must stay the stdlib module: install() recognises it by
+        # identity.
+        real_snap = clock_mod._snap_monotonic_start_ns
+        monkeypatch.setattr(clock_mod, "_snap_monotonic_start_ns", lambda ns: real_snap(real_ns))
+        clock = ManualClock()
+        deadline = clock.monotonic() + 60
+        assert clock.advance(60) == deadline
+        assert clock.monotonic() == deadline
+        # The product's own predicate, ``remaining = deadline - now; remaining <= 0``.
+        assert deadline - clock.monotonic() == 0
+
+    def test_snapping_floors_the_start_by_less_than_one_grid_step(self):
+        grid = clock_mod._MONO_GRID_NS
+        for real_ns in self._ULP_SHORT_STARTS_NS:
+            snapped = clock_mod._snap_monotonic_start_ns(real_ns)
+            assert snapped % grid == 0
+            assert 0 <= real_ns - snapped < grid
 
     def test_ten_tenth_second_steps_land_exactly_one_second_later(self):
         clock = ManualClock(monotonic_start=0.0)

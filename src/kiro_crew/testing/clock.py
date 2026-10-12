@@ -31,6 +31,11 @@ __all__ = ["DEFAULT_START", "ManualClock"]
 DEFAULT_START = 1_700_000_000.0
 
 _NS_PER_SEC = 1_000_000_000
+#: The grid the DEFAULT monotonic start is snapped to: 1/512 s, in nanoseconds.
+#: ``10**9 == 2**9 * 1_953_125``, so a reading on this grid is a dyadic rational
+#: that a float holds EXACTLY, and so is its sum with any whole number of
+#: seconds. See :func:`_snap_monotonic_start_ns`.
+_MONO_GRID_NS = _NS_PER_SEC // 512
 #: The real ``time.sleep``, taken at import: :meth:`ManualClock.sleep` yields
 #: through it, so a test that patches the stdlib sleep does not reach the clock.
 _REAL_SLEEP = _time.sleep
@@ -81,6 +86,25 @@ def _to_ns(seconds: float) -> int:
     if isinstance(seconds, int):
         return seconds * _NS_PER_SEC
     return round(seconds * _NS_PER_SEC)
+
+
+def _snap_monotonic_start_ns(real_ns: int) -> int:
+    """``real_ns`` floored to a multiple of :data:`_MONO_GRID_NS`.
+
+    The clock holds nanoseconds and advances in integers, but product code reads
+    it as a float and does float arithmetic on the reading: ``deadline =
+    time.monotonic() + 60`` then ``deadline - time.monotonic() <= 0`` after the
+    test's ``advance(60)``. Off the grid the two sides round differently --
+    ``fl(fl(ns / 1e9) + 60)`` rounds twice, ``fl((ns + 60e9) / 1e9)`` once -- and
+    the reading lands one ULP (about 1e-11 s) SHORT of the deadline, so the
+    deadline is not met. On a host up for a few minutes (a fresh CI runner) that
+    is one start in twenty-five; this is how a wait that the test had advanced
+    to its deadline still reported itself not due. On the grid every reading
+    and every whole-second sum is exact, so both sides agree. Floored, not
+    rounded, so the start never lies in the real clock's future: a deadline a
+    real reader set is still at or after the clock's start.
+    """
+    return real_ns // _MONO_GRID_NS * _MONO_GRID_NS
 
 
 def _check_duration(seconds: float, what: str) -> None:
@@ -284,10 +308,14 @@ class ManualClock:
 
     ``start`` is the wall time in epoch seconds. ``monotonic_start`` is the
     monotonic reading; by default it is the REAL ``time.monotonic()`` at
-    construction, because product deadlines are often set on one module's clock
-    and read on another's (a deadline computed by a real reader and compared on
-    the clocked one must still make sense). ``perf_counter`` is the monotonic
-    clock. ``tick`` advances both clocks by that many seconds after every read,
+    construction, floored to a multiple of 1/512 s, because product deadlines are
+    often set on one module's clock and read on another's (a deadline computed
+    by a real reader and compared on the clocked one must still make sense), and
+    a reading on that grid is exact as a float, so a deadline the product
+    computes as ``monotonic() + <whole seconds>`` is met exactly once the test
+    has advanced the clock by that many seconds (:func:`_snap_monotonic_start_ns`
+    says why an unsnapped reading is not). An explicit ``monotonic_start`` is
+    taken as given. ``perf_counter`` is the monotonic clock. ``tick`` advances both clocks by that many seconds after every read,
     so ``tick=0`` (the default) is a frozen clock and ``tick>0`` a strictly
     increasing one (in the ``_ns`` readers; a float reading of an epoch time
     resolves to about a quarter of a microsecond, so give a tick at least
@@ -314,14 +342,16 @@ class ManualClock:
         if tick and not _to_ns(tick):
             raise ValueError(f"tick {tick!r} is below one nanosecond and would freeze the clock")
         if monotonic_start is None:
-            monotonic_start = _time.monotonic()
+            mono_ns = _snap_monotonic_start_ns(_time.monotonic_ns())
         elif not math.isfinite(monotonic_start):
             raise ValueError(f"monotonic_start must be finite, got {monotonic_start!r}")
+        else:
+            mono_ns = _to_ns(monotonic_start)
         if not isinstance(tz, _dt.tzinfo):
             raise TypeError(f"tz must be a datetime.tzinfo, not {type(tz).__name__}")
         self._tz = tz
         self._wall_ns = _to_ns(start)
-        self._mono_ns = _to_ns(monotonic_start)
+        self._mono_ns = mono_ns
         self._tick_ns = _to_ns(tick)
         self._sleeps: list[float] = []
         self._lock = threading.Lock()
