@@ -1455,6 +1455,12 @@ SPAWN_RUN_TASK_ITEM_SCHEMA = ToolSchema(
     ],
 )
 
+#: Members one spawn batch may carry (``spawn_run.tasks``, ``spawn_run.agents``,
+#: ``spawn_sub_agents.agents``). A parked step retains its member list until
+#: submission finishes, so the count is bounded where it is retained, by one
+#: name shared by both tools. Twice the configured sub-agent ceiling of 64.
+SPAWN_BATCH_MEMBERS_MAX = 128
+
 SPAWN_RUN_SCHEMA = ToolSchema(
     tool_name="spawn_run",
     fields=[
@@ -1462,6 +1468,7 @@ SPAWN_RUN_SCHEMA = ToolSchema(
         FieldSpec(
             "tasks",
             list,
+            max_items=SPAWN_BATCH_MEMBERS_MAX,
             item_type=(str, dict),
             item_max_len=MAX_MEDIUM_STRING,
             item_schema=SPAWN_RUN_TASK_ITEM_SCHEMA,
@@ -1470,6 +1477,7 @@ SPAWN_RUN_SCHEMA = ToolSchema(
         FieldSpec(
             "agents",
             list,
+            max_items=SPAWN_BATCH_MEMBERS_MAX,
             item_type=str,
             item_max_len=MAX_SHORT_STRING,
             item_pattern=REGISTERED_AGENT_NAME_RE,
@@ -1559,7 +1567,13 @@ SPAWN_SUB_AGENTS_SCHEMA = ToolSchema(
         # Each item is a dict with prompt (required, max MAX_MEDIUM_STRING) and
         # agent_or_mode (optional, max MAX_SHORT_STRING). Per-field validation
         # enforced in handler (no item_schema support in FieldSpec).
-        FieldSpec("agents", list, required=True, item_type=dict),
+        FieldSpec(
+            "agents",
+            list,
+            required=True,
+            max_items=SPAWN_BATCH_MEMBERS_MAX,
+            item_type=dict,
+        ),
         FieldSpec("cwd", str, max_len=MAX_MEDIUM_STRING),
         # Context groups, as on spawn_run: batch-wide, all default True.
         FieldSpec("include_memory", bool, default=True),

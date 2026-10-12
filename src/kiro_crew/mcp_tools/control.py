@@ -30,7 +30,7 @@ from kiro_crew import autonudge, mcp_core, platform_compat, session_directive
 from kiro_crew.autonudge_judge import ending_phrase, screen_phrase
 from kiro_crew.config.loader import KiroCrewConfig
 from kiro_crew.constants import WAIT_TOOL_MAX_SECS
-from kiro_crew.mcp_shared import ToolCancelled, is_tool_cancelled
+from kiro_crew.mcp_shared import DeferredTool
 from kiro_crew.mcp_tools._limits import (
     _MONITOR_DEFAULT_MAX_CYCLES,
     _MONITOR_DEFAULT_MAX_RUNTIME_SECS,
@@ -1144,38 +1144,20 @@ def task_run(name: str, args: dict[str, Any]) -> str:
     return f"Task runner started: {safe_label}"
 
 
-def wait(name: str, args: dict[str, Any]) -> str:
+def wait(name: str, args: dict[str, Any]) -> "str | DeferredTool":
+    """Sleep for ``seconds`` without holding the MCP worker thread.
+
+    Everything that decides HOW to sleep runs here, on the worker; the sleep
+    itself is a :class:`_WaitStep` the dispatch loop times, so a thousand
+    parked sessions cost no thread (see ``mcp_shared.DeferredTool``). Each step
+    is one keepalive POST, at most once per ``_ping_secs``.
+    """
     args = validate_tool_args(args, WAIT_SCHEMA)
 
     seconds = max(60, min(WAIT_TOOL_MAX_SECS, int(args.get("seconds", 300))))
     reason = str(args.get("reason", ""))
     reason_safe, _ = redact_exfiltration_urls(reason)
     reason_safe, _ = redact_credentials(reason_safe)
-    deadline = mcp_core.time.monotonic() + seconds
-    # Identity for THIS sleep. The dashboard's "end wait now" button echoes
-    # it back through the keepalive response, so a request left over from an
-    # earlier sleep can never terminate the next one in the same session. The
-    # same reply also ends the sleep when a mid-turn steer lands after it
-    # began: the backend can only inject a steer at a model-inference
-    # boundary, and this sleep is the absence of one (see _wait_end_reason).
-    wait_id = uuid.uuid4().hex
-    # Ping session-keepalive every WAIT_PING_SECS so the gateway's
-    # is_responsive() doesn't flag this session as stale and SIGTERM the ACP
-    # subprocess -- and so the reply can carry an early-end request back.
-    #
-    # This POST is the ONLY inbound channel a sleeping wait has: the MCP
-    # subprocess runs no listener, and the one path that can interrupt it
-    # (notifications/cancelled on stdin) is a session-teardown signal that
-    # suppresses the tool's response entirely, and does not exist at all on
-    # Windows. So the ping interval IS the button's worst-case latency,
-    # which is why it matches the sleep granularity rather than the 60s the
-    # staleness watchdog alone would need.
-    _next_ping = mcp_core.time.monotonic()
-    ended_early = False
-    # Slot key of the session that ended this sleep through session_end_wait,
-    # or "" for the End-wait button / a steer. Only read from a reply that named
-    # this wait, so it cannot describe someone else's sleep.
-    ended_by = ""
     # Publish wait metadata ONLY under an authoritative identity, and refuse
     # to honour `end_wait` without one.
     #
@@ -1196,90 +1178,162 @@ def wait(name: str, args: dict[str, Any]) -> str:
     # When it comes back empty the identity is a guess, so the ping degrades
     # to the original `{}` touch: the session still cannot be reaped
     # mid-sleep, and the countdown simply never appears.
-    _identified = bool(mcp_core.require_strict_session_key("the wait keepalive ping")[0])
-    # The 5s cadence exists ONLY to bound how long the button appears to do
-    # nothing. An unidentified sleep publishes nothing and honours no
-    # end_wait, so it has no button and would be paying a 12x request
-    # multiplier for a latency nobody can observe; it reverts to the 60s the
-    # staleness watchdog actually needs.
-    _ping_secs = mcp_core.WAIT_PING_SECS if _identified else mcp_core.WAIT_STALENESS_PING_SECS
-    while True:
+    identified = bool(mcp_core.require_strict_session_key("the wait keepalive ping")[0])
+    return _WaitStep(seconds=seconds, reason_safe=reason_safe, identified=identified)
+
+
+class _WaitStep(DeferredTool):
+    """The parked half of :func:`wait`: one keepalive POST per step."""
+
+    def __init__(self, *, seconds: int, reason_safe: str, identified: bool) -> None:
+        self.seconds = seconds
+        self.reason_safe = reason_safe
+        self.identified = identified
+        self.deadline = mcp_core.time.monotonic() + seconds
+        # Identity for THIS sleep. The dashboard's "end wait now" button echoes
+        # it back through the keepalive response, so a request left over from
+        # an earlier sleep can never terminate the next one in the same
+        # session. The same reply also ends the sleep when a mid-turn steer
+        # lands after it began: the backend can only inject a steer at a
+        # model-inference boundary, and this sleep is the absence of one (see
+        # _wait_end_reason).
+        self.wait_id = uuid.uuid4().hex
+        # Ping session-keepalive every WAIT_PING_SECS so the gateway's
+        # is_responsive() doesn't flag this session as stale and SIGTERM the
+        # ACP subprocess -- and so the reply can carry an early-end request
+        # back.
+        #
+        # This POST is the ONLY inbound channel a sleeping wait has: the MCP
+        # subprocess runs no listener, and the one path that can interrupt it
+        # (notifications/cancelled on stdin) is a session-teardown signal that
+        # suppresses the tool's response entirely, and does not exist at all
+        # on Windows. So the ping interval IS the button's worst-case latency,
+        # which is why it matches the sleep granularity rather than the 60s
+        # the staleness watchdog alone would need.
+        #
+        # The 5s cadence exists ONLY to bound how long the button appears to
+        # do nothing. An unidentified sleep publishes nothing and honours no
+        # end_wait, so it has no button and would be paying a 12x request
+        # multiplier for a latency nobody can observe; it reverts to the 60s
+        # the staleness watchdog actually needs.
+        self.ping_secs = (
+            mcp_core.WAIT_PING_SECS if identified else mcp_core.WAIT_STALENESS_PING_SECS
+        )
+        self.next_ping = mcp_core.time.monotonic()
+
+    def due_at(self) -> float:
+        return min(self.next_ping, self.deadline)
+
+    def step(self) -> str | None:
         now = mcp_core.time.monotonic()
-        remaining = deadline - now
+        remaining = self.deadline - now
         if remaining <= 0:
-            break
-        # Check for cancellation from notifications/cancelled handler
-        if is_tool_cancelled():
-            raise ToolCancelled(f"wait cancelled after {seconds - remaining:.0f}s")
-        if now >= _next_ping:
+            return self._finish(ended_early=False, ended_by="")
+        if now < self.next_ping:
+            return None
+        try:
+            reply = mcp_core._post(
+                "/api/session-keepalive",
+                (
+                    {
+                        "wait_id": self.wait_id,
+                        "seconds": self.seconds,
+                        "remaining": max(0, int(remaining)),
+                        # Lets the dashboard derive a liveness window for
+                        # this sleep without importing this module's
+                        # constant -- see _service_wait_ping's collision
+                        # guard, which needs to know how stale a ping has to
+                        # be before the sleep behind it is presumed gone.
+                        "interval": self.ping_secs,
+                    }
+                    if self.identified
+                    else {}
+                ),
+                # A step shares a small pool with every other parked call, so
+                # a gateway that stops answering must not hold it for the
+                # default 30s: the next ping retries anyway.
+                timeout=_WAIT_PING_TIMEOUT_SECS,
+            )
+        except Exception:
+            reply = {}  # keepalive is best-effort
+        # Only a request naming this wait ends it. `_post` returns
+        # {"error": ...} on a failed round-trip rather than raising, so
+        # the equality check doubles as the error guard. Gated on
+        # `identified` too: an unidentified sleep sends no wait_id, so a
+        # matching reply could only mean the backend is answering about
+        # somebody else's wait.
+        if self.identified and isinstance(reply, dict) and reply.get("end_wait") == self.wait_id:
+            # Slot key of the session that ended this sleep through
+            # session_end_wait, or "" for the End-wait button / a steer. Only
+            # read from a reply that named this wait, so it cannot describe
+            # someone else's sleep.
+            return self._finish(
+                ended_early=True, ended_by=str(reply.get("end_wait_by") or "")[:128]
+            )
+        self.next_ping = now + self.ping_secs
+        return None
+
+    def cancel(self) -> None:
+        # The call ends with no response; still retire the countdown card.
+        self._retire_card()
+
+    def _retire_card(self) -> None:
+        # Retire the countdown card. The tool result travels back through
+        # kiro-cli, which the dashboard cannot correlate to this wait_id, so
+        # the sleep has to announce its own end. Best-effort: a slot whose
+        # wait state is stale also clears at turn end (chat_runner) and
+        # renders nothing once the turn stops running. Skipped entirely when
+        # the identity was never authoritative -- nothing was ever published,
+        # so there is nothing to retire, and sending a wait_id under a guessed
+        # key could blank a countdown belonging to a different session.
+        if self.identified:
             try:
-                reply = mcp_core._post(
+                mcp_core._post(
                     "/api/session-keepalive",
-                    (
-                        {
-                            "wait_id": wait_id,
-                            "seconds": seconds,
-                            "remaining": max(0, int(remaining)),
-                            # Lets the dashboard derive a liveness window for
-                            # this sleep without importing this module's
-                            # constant -- see _service_wait_ping's collision
-                            # guard, which needs to know how stale a ping has to
-                            # be before the sleep behind it is presumed gone.
-                            "interval": _ping_secs,
-                        }
-                        if _identified
-                        else {}
-                    ),
+                    {"wait_id": self.wait_id, "wait_done": True},
+                    timeout=_WAIT_PING_TIMEOUT_SECS,
                 )
             except Exception:
-                reply = {}  # keepalive is best-effort
-            # Only a request naming this wait ends it. `_post` returns
-            # {"error": ...} on a failed round-trip rather than raising, so
-            # the equality check doubles as the error guard. Gated on
-            # `_identified` too: an unidentified sleep sends no wait_id, so a
-            # matching reply could only mean the backend is answering about
-            # somebody else's wait.
-            if _identified and isinstance(reply, dict) and reply.get("end_wait") == wait_id:
-                ended_early = True
-                ended_by = str(reply.get("end_wait_by") or "")[:128]
-                break
-            _next_ping = now + _ping_secs
-        mcp_core.time.sleep(min(_ping_secs, remaining))
-    waited = max(0, int(seconds - max(0.0, deadline - mcp_core.time.monotonic())))
-    mcp_core.sel().log_tool_invocation(
-        session_key=mcp_core._resolve_session_key(),
-        source="mcp",
-        tool_name="wait",
-        outcome="success",
-    )
-    # Retire the countdown card. The tool result travels back through
-    # kiro-cli, which the dashboard cannot correlate to this wait_id, so the
-    # sleep has to announce its own end. Best-effort: a slot whose wait
-    # state is stale also clears at turn end (chat_runner) and renders
-    # nothing once the turn stops running. Skipped entirely when the identity
-    # was never authoritative -- nothing was ever published, so there is
-    # nothing to retire, and sending a wait_id under a guessed key could
-    # blank a countdown belonging to a different session.
-    if _identified:
-        try:
-            mcp_core._post("/api/session-keepalive", {"wait_id": wait_id, "wait_done": True})
-        except Exception:
-            pass
-    # Deliberately a normal return, NOT ToolCancelled: _run_tool suppresses
-    # the response of a cancelled call, so raising here would leave kiro-cli
-    # waiting on a tool result that never arrives until the 600s stall
-    # watchdog kills the session. Ending a wait early continues the turn.
-    if ended_early and ended_by:
-        return (
-            f"Wait ended early by session `{ended_by}` (session_end_wait) after "
-            f"{waited}s of {seconds}s. Resuming: {reason_safe}"
+                pass
+
+    def on_settled(self, text: str) -> None:
+        # The tool's own row, as the blocking tool wrote it at return. Written
+        # by the driver, not in ``step()``: a cancel landing while the final
+        # card retirement runs on the pool thread audits ``cancelled`` instead,
+        # and only the driver knows which. The audited wrapper then writes its
+        # generic ``completed`` row.
+        mcp_core.sel().log_tool_invocation(
+            session_key=mcp_core._resolve_session_key(),
+            source="mcp",
+            tool_name="wait",
+            outcome="success",
         )
-    if ended_early:
-        return (
-            f"Wait ended early by the user after {waited}s of {seconds}s. "
-            f"Resuming: {reason_safe}"
-        )
-    return f"Waited {seconds}s. Resuming: {reason_safe}"
+
+    def _finish(self, *, ended_early: bool, ended_by: str) -> str:
+        seconds = self.seconds
+        waited = max(0, int(seconds - max(0.0, self.deadline - mcp_core.time.monotonic())))
+        self._retire_card()
+        # Deliberately a normal return, NOT ToolCancelled: the loop suppresses
+        # the response of a cancelled call, so raising here would leave kiro-cli
+        # waiting on a tool result that never arrives until the 600s stall
+        # watchdog kills the session. Ending a wait early continues the turn.
+        if ended_early and ended_by:
+            return (
+                f"Wait ended early by session `{ended_by}` (session_end_wait) after "
+                f"{waited}s of {seconds}s. Resuming: {self.reason_safe}"
+            )
+        if ended_early:
+            return (
+                f"Wait ended early by the user after {waited}s of {seconds}s. "
+                f"Resuming: {self.reason_safe}"
+            )
+        return f"Waited {seconds}s. Resuming: {self.reason_safe}"
+
+
+#: Bound on one keepalive POST from a parked ``wait``. Loopback normally
+#: answers in milliseconds; the bound only matters when the gateway is stalled,
+#: where the step pool must not be held for the helper's 30s default.
+_WAIT_PING_TIMEOUT_SECS = 5.0
 
 
 def route_crew(name: str, args: dict[str, Any]) -> str:
@@ -1506,7 +1560,7 @@ def autonudge_stop(name: str, args: dict[str, Any]) -> str:
     )
 
 
-def ask_question(name: str, args: dict[str, Any]) -> str:
+def ask_question(name: str, args: dict[str, Any]) -> "str | DeferredTool":
     args = validate_tool_args(args, ASK_QUESTION_SCHEMA)
     # Stateless: return a directive. The session-aware consumer
     # (chat_runner) broadcasts a NON-BLOCKING question card (no ask_id) to
@@ -2236,7 +2290,7 @@ def suggest_followup(name: str, args: dict[str, Any]) -> str:
     )
 
 
-HANDLERS: dict[str, Callable[[str, dict[str, Any]], str]] = {
+HANDLERS: dict[str, Callable[[str, dict[str, Any]], "str | DeferredTool"]] = {
     "task_run": task_run,
     "wait": wait,
     "route_crew": route_crew,
