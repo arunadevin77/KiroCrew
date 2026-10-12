@@ -66,7 +66,15 @@ class SetupError(RuntimeError):
     transient API failure. Callers wrap this into their own error taxonomy
     (``SourceProviderError``, Issue Radar's ``GhSetupError``, Sage's
     ``GhSetupError``) so route-level handlers and UI treatment are untouched.
+
+    ``reason`` is an optional fixed, credential-free word (for example
+    ``executable_not_found`` or ``executable_untrusted``) an audit row can
+    record without copying the message, which may name a path.
     """
+
+    def __init__(self, *args: object, reason: str = "") -> None:
+        super().__init__(*args)
+        self.reason = reason
 
 
 class RepoUrlError(ValueError):
@@ -1093,7 +1101,10 @@ def resolve_gh(*, override_env: str = "", cache: bool = True) -> str:
         try:
             resolved = validate_provider_executable(value)
         except ValueError as exc:
-            raise SetupError(f"{name}={value!r} failed validation: {exc}") from exc
+            raise SetupError(
+                f"{name}={value!r} failed validation: {exc}",
+                reason="executable_untrusted",
+            ) from exc
         if cache:
             _RESOLVE_CACHE[key] = resolved
         return resolved
@@ -1118,7 +1129,8 @@ def resolve_gh(*, override_env: str = "", cache: bool = True) -> str:
     raise SetupError(
         f"no usable `gh` CLI found on this host{detail} — install it "
         "(`brew install gh` or your distro's package manager) and run "
-        f"`gh auth login`, or set {hint} to an absolute gh path"
+        f"`gh auth login`, or set {hint} to an absolute gh path",
+        reason="executable_untrusted" if last_error else "executable_not_found",
     )
 
 

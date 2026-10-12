@@ -369,7 +369,7 @@ def test_gitlab_revoked_host_is_a_terminal_authorization_failure(
     assert events[0]["outcome"] == "denied"
     assert events[0]["resources"] == "glab"
     assert events[0]["caller_identity"] == "core:monitor"
-    assert events[0]["error"] == ""
+    assert events[0]["error"] == "host_not_allowlisted"
     assert "gitlab.example.com" not in json.dumps(events)
     assert "acme/widgets" not in json.dumps(events)
 
@@ -1287,7 +1287,7 @@ def test_bitbucket_https_fetch_rejects_incomplete_credentials(
     assert events[0]["outcome"] == "denied"
     assert events[0]["resources"] == "bitbucket"
     assert events[0]["caller_identity"] == "core:monitor"
-    assert events[0]["error"] == ""
+    assert events[0]["error"] == "credentials_incomplete"
     assert "user@example.com" not in json.dumps(events)
     assert "secret-token" not in json.dumps(events)
     assert "acme/widgets" not in json.dumps(events)
