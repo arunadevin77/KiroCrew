@@ -104,6 +104,22 @@ case "$url" in
     ' "$FIXTURES/ci_runs.json" "$FIXTURES/green_runs.json"
     exit 0 ;;
   *"/actions/runs?event=dynamic"*)         cat "$FIXTURES/codeql_runs.json"; exit 0 ;;
+  *"/collaborators/"*"/permission"*)
+    # A reviewer's repository permission, after gh's own --jq. The fixture
+    # maps login -> permission; a login it does not name has write access.
+    # "__404__" answers "not a collaborator"; "__FAIL__" is a server error.
+    login="${url#*/collaborators/}"
+    login="${login%%/*}"
+    perm="write"
+    if [ -f "$FIXTURES/permissions.json" ]; then
+      perm="$(jq -r --arg l "$login" '.[$l] // "write"' "$FIXTURES/permissions.json")"
+    fi
+    case "$perm" in
+      __404__) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+      __FAIL__) echo 'gh: Server Error (HTTP 500)' >&2; exit 1 ;;
+    esac
+    printf '%s\n' "$perm"
+    exit 0 ;;
   *"/pulls/"*"/reviews"*)
     # Human reviews, as `--paginate --slurp` returns them: one array per page.
     # No fixture = a PR nobody has reviewed. A __FAIL__ fixture makes the read
@@ -1718,6 +1734,42 @@ class TestAChangesRequestedReviewOnThisHeadBlocks:
         assert outputs["status_state"] == "failure"
         assert "@alice" in _lane_log(proc)
         assert "@bob" not in _lane_log(proc)
+
+    def _permissions(self, runner: Runner, **by_login: str) -> None:
+        (runner.fixtures / "permissions.json").write_text(json.dumps(by_login))
+
+    @pytest.mark.parametrize("permission", ["read", "triage", "none", "__404__"])
+    def test_a_reviewer_without_write_access_does_not_block(self, runner: Runner, permission: str):
+        # Any signed-in account can review a public PR; only a writer's
+        # request counts, the bar GitHub's own review decision holds.
+        sha = runner.env["SHA"]
+        self._reviews(runner, [_review("mallory", "CHANGES_REQUESTED", sha)])
+        self._permissions(runner, mallory=permission)
+        proc, outputs = runner.evaluate()
+        assert proc.returncode == 0, proc.stderr
+        assert outputs["status_state"] == "success"
+        assert outputs["label"] == "readiness: passed"
+        assert "changes requested by @mallory" not in _lane_log(proc)
+
+    @pytest.mark.parametrize("permission", ["write", "admin"])
+    def test_a_reviewer_with_write_access_blocks(self, runner: Runner, permission: str):
+        sha = runner.env["SHA"]
+        self._reviews(runner, [_review("alice", "CHANGES_REQUESTED", sha)])
+        self._permissions(runner, alice=permission)
+        proc, outputs = runner.evaluate()
+        assert proc.returncode == 0, proc.stderr
+        assert outputs["status_state"] == "failure"
+        assert "changes requested by @alice on this head" in _lane_log(proc)
+
+    def test_an_unreadable_permission_waits_instead_of_deciding(self, runner: Runner):
+        sha = runner.env["SHA"]
+        self._reviews(runner, [_review("alice", "CHANGES_REQUESTED", sha)])
+        self._permissions(runner, alice="__FAIL__")
+        proc, outputs = runner.evaluate()
+        assert proc.returncode == 0, proc.stderr
+        assert outputs["status_state"] == "pending"
+        assert outputs["description"].startswith("[read-failed] ")
+        assert "permission of reviewer @alice could not be read" in _lane_log(proc)
 
     def test_an_unreadable_review_list_waits_instead_of_going_red(self, runner: Runner):
         (runner.fixtures / "reviews.json").write_text("__FAIL__")

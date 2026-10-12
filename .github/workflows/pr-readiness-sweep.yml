@@ -398,11 +398,14 @@ jobs:
             # Readiness blocks on a changes-requested review of the head (issue
             # #17049), and neither a review nor a dismissal emits an event
             # pr-readiness.yml hears or a check-run the modes above can see, so
-            # this is the only path that re-evaluates one. Every arm counts it
-            # against the same floor as check evidence in the pending arm --
-            # the publication stamp minus publish_lag_seconds -- because a
-            # review landing inside the evaluate-to-publish gap pre-dates the
-            # stamp but was never read. A missing timeline (the scan could not
+            # this is the only path that re-evaluates one. The success and
+            # failure arms count it against the same floor as check evidence in
+            # the pending arm -- the publication stamp minus
+            # publish_lag_seconds -- because a review landing inside the
+            # evaluate-to-publish gap pre-dates the stamp but was never read.
+            # The pending arm ignores it: a pending verdict already holds
+            # merge, and the check completion that resolves it re-reads the
+            # reviews. A missing timeline (the scan could not
             # read it) is no evidence, never invented staleness.
             newest_review="$(jq -r '.newest_review_at // empty' <<<"$row")"
             review_epoch=0
@@ -529,8 +532,7 @@ jobs:
                 # left to catch it. The bound doubles as this arm's minimum age
                 # (see pending_min_age_seconds), which is what carries a
                 # rescue's own republish past the same check on the next tick.
-                if [ "$newest_epoch" -le $(( updated_epoch - publish_lag_seconds )) ] \
-                  && [ "$review_epoch" -le $(( updated_epoch - publish_lag_seconds )) ]; then
+                if [ "$newest_epoch" -le $(( updated_epoch - publish_lag_seconds )) ]; then
                   # No evidence. ONE status-description read classifies this
                   # pending for both recoveries that depend on it.
                   rs_desc="$(readiness_description "$sha")"
@@ -583,8 +585,6 @@ jobs:
                     continue
                   fi
                   reason="pending for ${age}s (> ${stale_seconds}s) after a read failure, which a recompute resolves"
-                elif [ "$newest_epoch" -le $(( updated_epoch - publish_lag_seconds )) ]; then
-                  reason="pending for ${age}s with a review submitted or dismissed later at $newest_review"
                 else
                   reason="pending for ${age}s with a check completed later at $newest_check"
                 fi

@@ -1685,9 +1685,33 @@ jobs:
             if [ "$rc" -eq 22 ]; then exit 1; fi
           fi
           if [ "$reviews_read" = "true" ]; then
+            # Only a reviewer with write access blocks, the same bar GitHub's
+            # review decision and sensitive_change_review.py hold: any
+            # signed-in account can leave a review on a public repository.
+            # `author_association` is not that bar, so the repository's own
+            # permission answer is asked, and only for a reviewer who would
+            # otherwise block. A 404 is the API answering "not a
+            # collaborator"; any other failed read is unknown, so pending.
             while IFS= read -r reviewer; do
               [ -n "$reviewer" ] || continue
-              failed+=("changes requested by @$reviewer on this head: push a commit, or have them re-review, or dismiss the review")
+              if permission="$(gh_retry gh api \
+                "repos/$REPO/collaborators/$reviewer/permission" \
+                --jq '.permission // "none"' 2>"$RUNNER_TEMP/review-permission-err")"; then
+                case "$permission" in
+                  admin|write)
+                    failed+=("changes requested by @$reviewer on this head: push a commit, or have them re-review, or dismiss the review")
+                    ;;
+                  *)
+                    echo "Changes requested by @$reviewer ignored: repository permission is '$permission', not write."
+                    ;;
+                esac
+              elif grep -q 'HTTP 404' "$RUNNER_TEMP/review-permission-err"; then
+                echo "Changes requested by @$reviewer ignored: not a collaborator."
+              else
+                cat "$RUNNER_TEMP/review-permission-err" >&2 || true
+                pending+=("permission of reviewer @$reviewer could not be read")
+                read_failure=true
+              fi
             done <<<"$review_blockers"
           else
             pending+=("human reviews could not be read")

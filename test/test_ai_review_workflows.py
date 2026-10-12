@@ -1467,7 +1467,7 @@ class TestPrReadiness:
             encoding="utf-8"
         )
 
-        assert 'repos/$REPO/pulls/$PR/reviews?per_page=100' in workflow
+        assert "repos/$REPO/pulls/$PR/reviews?per_page=100" in workflow
         assert "itemTypes: [PULL_REQUEST_REVIEW, REVIEW_DISMISSED_EVENT]" in scanner
         assert ".newest_review_at // empty" in sweep
 

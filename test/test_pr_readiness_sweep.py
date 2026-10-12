@@ -1780,11 +1780,11 @@ def test_comments_are_not_read_when_the_pr_is_untouched_since_the_verdict(
     assert not runner.comments_read.exists()
 
 
-# ── Review evidence (issue #17049) ───────────────────────────────────────────
+# ── Review evidence ──────────────────────────────────────────────────────────
 #
 # Readiness reds a head a reviewer asked changes on, and neither a review nor a
 # dismissal emits an event the aggregator hears or a check-run the modes above
-# see. The scan's newest review time is what re-fires it, in every arm.
+# see. The scan's newest review time is what re-fires a terminal verdict.
 
 
 @pytest.mark.parametrize("state", ["success", "failure"])
@@ -1801,15 +1801,18 @@ def test_a_review_after_a_terminal_verdict_is_refired(runner: Runner, state: str
     assert "a review was submitted or dismissed" in runner.last_stdout
 
 
-def test_a_pending_with_a_later_review_and_no_later_check_is_refired(runner: Runner) -> None:
-    dispatched = runner.sweep(
-        state="pending",
-        status_at="2026-08-30T19:01:24Z",
-        check_completed_at="2026-08-30T18:00:00Z",
-        review_at="2026-08-30T19:20:00Z",
+def test_a_pending_is_not_refired_by_a_review_alone(runner: Runner) -> None:
+    # A pending verdict already holds merge, and the check completion that
+    # resolves it re-reads the reviews.
+    assert (
+        runner.sweep(
+            state="pending",
+            status_at="2026-08-30T19:01:24Z",
+            check_completed_at="2026-08-30T18:00:00Z",
+            review_at="2026-08-30T19:20:00Z",
+        )
+        == []
     )
-    assert len(dispatched) == 1
-    assert "with a review submitted or dismissed later" in runner.last_stdout
 
 
 @pytest.mark.parametrize("state", ["success", "failure"])
@@ -1825,7 +1828,7 @@ def test_a_review_inside_the_publish_lag_is_evidence(runner: Runner, state: str)
     assert len(dispatched) == 1
 
 
-@pytest.mark.parametrize("state", ["success", "failure", "pending"])
+@pytest.mark.parametrize("state", ["success", "failure"])
 def test_a_review_at_the_publish_lag_floor_is_not_evidence(runner: Runner, state: str) -> None:
     # Exactly 180s before the stamp, which is where a republish lands it: this
     # is what makes the review nudge self-terminating.

@@ -3067,18 +3067,22 @@ status plus one `readiness:` label**.
   managed workflow.
 - **Labels:** `readiness: checking` (pending), `readiness: action required` (a
   blocker), `readiness: passed`. Exactly one is ever present.
-- **A changes-requested review of the head blocks.** When a reviewer's newest
-  review (APPROVED, CHANGES_REQUESTED or DISMISSED; a COMMENTED review changes
-  nothing) asks for changes and names the current head commit, readiness is
-  `action required` and names the reviewer (#17049). A new commit, the
+- **A changes-requested review of the head blocks.** When a reviewer with
+  write access (asked through `collaborators/{login}/permission`, as
+  `sensitive_change_review.py` does) has a newest review (APPROVED,
+  CHANGES_REQUESTED or DISMISSED; a COMMENTED review changes nothing) that asks
+  for changes and names the current head commit, readiness is `action
+  required` and names the reviewer (#17049). A review from anyone without write
+  access is ignored, and a permission read that fails is `pending`. A new commit, the
   reviewer approving or re-reviewing, or a dismissal clears it. That is weaker
   than GitHub's own `reviewDecision`, which holds across new commits until the
   reviewer re-reviews: here the push is the author's answer. A review list it
   cannot read is `pending`, never red. Readiness hears no review event, so
   `pr-readiness-sweep.yml` reads each open PR's newest review or dismissal time
-  in its GraphQL scan and re-fires the recompute when one is newer than the
-  verdict, in every arm and against the same publish-lag floor the pending arm
-  uses for checks -- within about two sweep ticks.
+  in its GraphQL scan and re-fires the recompute when one is newer than a
+  `success` or `failure` verdict, against the same publish-lag floor the
+  pending arm uses for checks -- within about two sweep ticks. A `pending`
+  verdict already holds merge, and the check that resolves it re-reads reviews.
 - **It also enforces the disposition rule.** Besides scoring lanes, readiness runs
   `pr_status.py --disposition-gate` (checked out from the default branch, never
   from the PR head — this workflow is `pull_request_target` and holds write

@@ -45,7 +45,7 @@ Output is one JSON object per line on stdout, one per open pull request:
      "newest_completed_check_at": "<ISO8601>" | null,
      "newest_failed_check_at": "<ISO8601>" | null,
      "newest_review_at": "<ISO8601>" | null,
-     "checks_complete": true, "reviews_complete": true}
+     "checks_complete": true}
 
 A 200 body can carry `errors` next to usable `data`: GitHub nulls the one field
 it could not resolve (one pull request's rollup timing out, say) and reports it
@@ -55,10 +55,10 @@ told apart by that path: one whose readiness status could not be read is LEFT
 OUT of the output, because an emitted record with a null `readiness` would read
 as "no verdict published" and re-fire that pull request on transient trouble;
 one whose rollup could not be read is emitted with `checks_complete: false`, so
-the evidence is marked partial rather than read as "no checks", and one whose
-review timeline could not be read is emitted with `reviews_complete: false` on
-the same terms. Only a body whose `data` lacks the connection being walked is a
-failed attempt.
+the evidence is marked partial rather than read as "no checks"; one whose
+review timeline could not be read is still emitted, with a null
+`newest_review_at`, since missing review evidence can only fail to re-fire.
+Only a body whose `data` lacks the connection being walked is a failed attempt.
 
 Degradation is deliberate: when even a page of one pull request fails, the walk
 ends with a `::warning::` (saying how many pull requests were emitted before
@@ -394,9 +394,8 @@ def _scan_pr(
     status_context: str,
     counters: Counters,
     checks_complete: bool = True,
-    reviews_complete: bool = True,
 ) -> dict[str, Any] | None:
-    """One output record. `*_complete=False` when the page already nulled that field."""
+    """One output record. `checks_complete=False` when the page already nulled the rollup."""
     number = pr.get("number")
     sha = pr.get("headRefOid")
     if not isinstance(number, int) or not sha:
@@ -472,7 +471,6 @@ def _scan_pr(
         "newest_failed_check_at": _newest(failed),
         "newest_review_at": _newest_review(pr),
         "checks_complete": checks_complete,
-        "reviews_complete": reviews_complete,
     }
 
 
@@ -542,7 +540,7 @@ def main(argv: list[str] | None = None) -> int:
         left_out: list[Any] = []
         for index, pr in enumerate(nodes):
             pr = pr or {}
-            hit = {"status", "checks", "reviews"} if page_wide else touched.get(index, set())
+            hit = {"status", "checks"} if page_wide else touched.get(index, set())
             if "status" in hit:
                 # The readiness status could not be read. A record with a null
                 # `readiness` would read as "no verdict published" and re-fire
@@ -557,7 +555,6 @@ def main(argv: list[str] | None = None) -> int:
                 status_context=args.status_context,
                 counters=counters,
                 checks_complete="checks" not in hit,
-                reviews_complete="reviews" not in hit,
             )
             if record is None:
                 continue
