@@ -9,7 +9,7 @@
  *
  * Mock scaffolding mirrors ChatSidebar.instanceSessionsMerge.test.tsx.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter } from 'react-router-dom'
@@ -74,15 +74,24 @@ import type { RootState } from '../store'
 
 const S = en.pages.chatSidebar
 
+// One instant stands in for "now" in this file. A row's time label is the HH:MM of its
+// own stamp, so rows stamped from the live clock let two renders of the same fixture
+// land either side of a minute boundary and differ in a label the test never compares.
+// Fixtures are built here from PIN, at collection time; the hooks below pin what the
+// component reads at render. PIN is LOCAL midday, the point farthest from both midnight
+// edges in any timezone, in mid-January so no DST change falls near it.
+const PIN = new Date(2026, 0, 15, 12, 0, 0)
+const ago = (ms: number) => new Date(PIN.getTime() - ms).toISOString()
+
 const crew = (state: string) => ({ id: 'inst-a', name: 'astro', status: { state } })
 const PEER_ROW = {
   key: 'chat-9', row_identity: 'inst-a:chat-9', title: 'REMOTE peer row',
-  last_turn_ts: new Date(Date.now() - 120_000).toISOString(), agent: 'default',
+  last_turn_ts: ago(120_000), agent: 'default',
 }
 
 const liveSlot = (key: string, title: string, extra: Partial<ChatSlot> = {}): ChatSlot => ({
   key, title, messages: 1, running: false, mode: '', created: '',
-  last_turn_ts: new Date(Date.now() - 60_000).toISOString(), ...extra,
+  last_turn_ts: ago(60_000), ...extra,
 } as ChatSlot)
 
 function renderSidebar({ activeSlot = 's-local', relay = false, relayFolder, relayParent, onSelectSlot }: {
@@ -136,6 +145,15 @@ function renderSidebar({ activeSlot = 's-local', relay = false, relayFolder, rel
 }
 
 const rowIn = (scope: HTMLElement, title: string) => within(scope).queryByText(title)
+
+// Fake only `Date`, so real timers keep driving findBy*, waitFor and the query client.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(PIN)
+})
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('ChatSidebar – per-machine groups', () => {
   beforeEach(() => {
