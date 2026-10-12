@@ -527,6 +527,34 @@ describe('McpTab needs_auth status', () => {
   })
 })
 
+/**
+ * A `"type": "registry"` pointer has no local command; kiro-cli loads it
+ * from the organization's catalog. The row must not read "Error / no command".
+ */
+describe('McpTab registry pointer row', () => {
+  const pointer: McpServer = {
+    name: 'aws-iac-mcp', command: '', status: 'registry', source: 'mcp.json', enabled: true, tools: [],
+  }
+
+  it('renders the muted not-verified badge with a registry hint, never an error', async () => {
+    mockApi.mcpServers.mockResolvedValue([pointer])
+    renderTab()
+
+    const badge = await screen.findByText('Not verified')
+    expect(badge.className).toContain('text-[var(--muted)]')
+    expect(badge.className).not.toContain('text-danger')
+    expect(screen.queryByText('Error')).not.toBeInTheDocument()
+    expect(screen.queryByText('Unknown')).not.toBeInTheDocument()
+    expect(screen.queryByText(/no command/)).not.toBeInTheDocument()
+
+    const trigger = within(badge.parentElement!).getByRole('button', { name: 'More information' })
+    const hint = trigger.getAttribute('title') || ''
+    expect(hint).toContain('aws-iac-mcp')
+    expect(hint).toMatch(/MCP registry/)
+    expect(hint).toContain('kiro-cli mcp list')
+  })
+})
+
 describe('outdated status hint (#15516)', () => {
   // A row reads "Outdated" for two reasons that need different actions: the
   // last result aged past the probe TTL (refresh re-probes it), or the server

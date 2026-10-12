@@ -30,6 +30,7 @@ from kiro_crew.mcp_cleanup import (
     invalid_disabled_flag,
     mcp_entries_muted,
     mcp_entry_is_muted,
+    mcp_entry_is_registry_governed,
     warn_invalid_disabled,
 )
 from kiro_crew.mcp_gateway.secret_uri import routed_for_secret_reference, secret_reference_keys
@@ -893,6 +894,18 @@ def resolve_mcp_servers(
             valid_servers[name] = record_derived(merged, _derived)
             if _mute_here:
                 valid_servers[name] = _mute_withheld(valid_servers[name])
+        elif not had_any_command and mcp_entry_is_registry_governed(spec):
+            # A registry pointer (``{"type": "registry"}`` and no command anywhere)
+            # is not a broken local entry: kiro-cli wrote it and resolves it by map
+            # key against the admin's catalog, which only kiro-cli can read. The
+            # spec pins ``includeMcpJson: false``, so this copy is the only way the
+            # pointer reaches the session; dropping it would remove every governed
+            # server with nothing to explain it. Carried verbatim -- there
+            # is no local command to resolve or vouch for, and the catalog decides
+            # what launches. Its refs then go through the same shared-server sync
+            # and auto-approve gate as any other server. The Claude/KAS projections
+            # and the gateway still withhold marked entries on their own.
+            valid_servers[name] = dict(spec)
         elif not had_any_command:
             # No candidate defined a command at all — distinct from a command
             # that was defined but couldn't be resolved.

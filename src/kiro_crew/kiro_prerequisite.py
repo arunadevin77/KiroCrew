@@ -60,6 +60,7 @@ from kiro_crew.config.loader import CRED_KIRO_API_KEY, read_env_file_credential
 from kiro_crew.config.paths import config_dir
 from kiro_crew.executors import kiro_spawn_executor
 from kiro_crew.kiro_cli import find_kiro_cli_candidates, is_bundled_kiro_cli, known_kiro_cli_dirs
+from kiro_crew.mcp_cleanup import mcp_entry_is_registry_governed
 from kiro_crew.owner_only_files import ensure_directory
 from kiro_crew.sandbox import (
     SandboxUnavailableError,
@@ -2788,6 +2789,11 @@ def _unlaunchable_mcp_servers(spec_path: Path) -> str:
     healthy install into an unclearable readiness gate, and the only escape would
     discard the user's MCP tool selections.
 
+    A registry pointer (``"type": "registry"`` and nothing else) is launchable too:
+    kiro-cli resolves it by map key against the admin's catalog and supplies the
+    transport itself, and the spec rebuild carries such pointers on purpose.
+    Reporting one would put every governed host behind this gate.
+
     Structural only, and narrow on purpose: it reports an entry that names no
     transport whatsoever, or is not an object. It does not judge whether a command
     resolves or a URL answers — those are runtime questions with a different answer
@@ -2822,7 +2828,7 @@ def _unlaunchable_mcp_servers(spec_path: Path) -> str:
         launchable = (isinstance(stdio, str) and stdio.strip()) or (
             isinstance(remote, str) and remote.strip()
         )
-        if not launchable:
+        if not launchable and not mcp_entry_is_registry_governed(entry):
             return (
                 f"The MCP server {name!r} names neither a command to run nor a "
                 f"url to reach, so Kiro CLI cannot start it and the session runs "

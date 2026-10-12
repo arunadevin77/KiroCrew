@@ -13929,6 +13929,7 @@
         "off_count": "({{count}} deaktiviert)",
         "online": "Online",
         "online_help": "Das Gateway hat diesen Server selbst gestartet. Das ist eine Prüfung dieses Hosts und keine Garantie, dass eine bestimmte Chat-Sitzung ihn eingebunden hat — jede Sitzung meldet ihre eigenen Server in ihrem MCP-Panel.",
+        "registry_help": "{{provider}} wird von der MCP-Registry deiner Organisation verwaltet, hier gibt es also nichts zu beheben. Die Kiro CLI lädt es beim Start einer Sitzung, und diese Seite kann seinen Status nicht anzeigen. Zum Prüfen führe kiro-cli mcp list in einem Terminal aus.",
         "outdated": "Veraltet",
         "outdated_help": "Kein Prüfergebnis aus den letzten 30 Minuten. Wähle die Aktualisieren-Schaltfläche (↻, oben rechts), um erneut zu prüfen.",
         "pending_change_one": "{{count}} ausstehende Änderung",

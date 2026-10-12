@@ -52,6 +52,15 @@ Two consequences worth internalising:
   over from your entry as overrides. The `command` in a registry-type entry is
   not what launches.
 
+Registry servers a user installs from Kiro IDE or the Kiro CLI land in
+`~/.kiro/settings/mcp.json` as bare pointers, `{"type": "registry"}` with no
+`command` or `url`. Kiro Crew carries each pointer into the `kirocrew` agent spec
+unchanged, so kiro-cli resolves it there exactly as it does for its own sessions,
+and the dashboard lists it as **Not verified** rather than starting it (Kiro Crew
+cannot read the catalog). A pointer goes through the same tool-ref and
+auto-approve rules as any other user server. Sessions on the Claude and KAS
+backends still withhold every marked entry.
+
 Governance also **fails closed**: if the client cannot reach the governance API,
 MCP is disabled entirely rather than falling open.
 

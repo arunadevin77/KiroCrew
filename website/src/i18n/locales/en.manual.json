@@ -6509,6 +6509,7 @@
         "error": "Error",
         "online": "Online",
         "online_help": "The gateway started this server itself. That is a check of this host, not a guarantee that a given chat session mounted it — each session reports its own servers in its MCP panel.",
+        "registry_help": "{{provider}} is managed by your organization's MCP registry, so there is nothing to fix here. The Kiro CLI loads it when a session starts, and this page cannot show its status. To check it, run kiro-cli mcp list in a terminal.",
         "outdated": "Outdated",
         "outdated_help": "No probe result from the last 30 minutes. Select the refresh button (↻, top right) to check it again.",
         "pending_disable_click_to_revert": "Pending: disable (click to revert)",

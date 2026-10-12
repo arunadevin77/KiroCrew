@@ -287,6 +287,24 @@ launch from it — though doctor skips the probe for a server whose spec gate is
 closed, since no emitted spec defines it). See
 [../guides/enterprise-mcp-governance.md](../guides/enterprise-mcp-governance.md).
 
+A user entry that is a **bare registry pointer** — `"type": "registry"` with no
+`command` and no `url` in any source, the shape Kiro IDE and kiro-cli write when
+a server is installed from the catalog — is carried into the emitted spec
+verbatim by `resolve_mcp_servers` instead of taking the generic "no command" drop
+(#3308). The spec pins `includeMcpJson: false`, so that copy is the only route by
+which kiro-cli sees the pointer, and kiro-cli is the only party that can resolve
+it. Its `@ref` then goes through `sync_shared_server_refs` and the auto-approve
+gate like any other shared server. The readiness probe's structural check
+(`kiro_prerequisite._unlaunchable_mcp_servers`) accepts the same pointer as
+launchable, since kiro-cli supplies its transport; without that exemption every
+governed host would land behind the "agent specs rejected" gate. Nothing else changes: a marked entry with an
+unresolvable local `command` is still dropped, and the Claude session array, the
+KAS projection and the pooled broker stubs still withhold marked entries. In
+discovery, `_server_from_spec` flags the same shape as `registry_pointer`;
+`list_servers` and `probe_server` report it as status `registry` — never
+spawned, never cached, no quarantine verdict — and the dashboard renders it as
+the muted "Not verified" badge with a hint naming `kiro-cli mcp list`.
+
 `kirocrew-computer` carries **no `autoApprove` key and none may ever be added.**
 kiro-cli approves an auto-approved MCP tool locally and emits no permission
 request, so `hooks.on_tool_call` (the PreToolUse deny floor, sensitive-path

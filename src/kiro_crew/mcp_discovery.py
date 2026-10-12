@@ -49,6 +49,7 @@ from kiro_crew.json_line import parse_json_object_line
 from kiro_crew.mcp_cleanup import (
     invalid_disabled_flag,
     mcp_entry_is_muted,
+    mcp_entry_is_registry_governed,
     warn_invalid_disabled,
 )
 from kiro_crew.mcp_gateway.hashing import hash_command, hash_effective_env
@@ -845,7 +846,8 @@ class McpServerInfo:
     # a client — it only refuses to lose these fields while syncing.
     scopes: list[str] = field(default_factory=list)
     client_id: str = ""
-    status: str = "unknown"  # unknown | ok | error | probing | outdated | disabled | needs_auth
+    # unknown | ok | error | probing | outdated | disabled | needs_auth | registry
+    status: str = "unknown"
     tools: list[str] = field(default_factory=list)
     error: str = ""
     source: str = "agent"  # agent | mcp.json | discovered  (legacy field, prefer presence)
@@ -867,6 +869,11 @@ class McpServerInfo:
     # itself, so setting this flag is sufficient no matter which entry point does
     # the probing.
     disabled: bool = False
+    # True for a commandless, urlless ``"type": "registry"`` pointer: an entry
+    # kiro-cli resolves by map key against the admin's catalog, which only
+    # kiro-cli can read. Such a row is never spawned and reports ``registry``
+    # rather than "no command" -- there is no local process to check.
+    registry_pointer: bool = False
     # ``"invalid"`` when the row is disabled by NOTHING but non-boolean
     # ``disabled`` values (``"false"``, ``1``, ``null``) -- no source carries a
     # literal ``true``. The table then says "invalid value in <file>" rather than
@@ -1262,6 +1269,9 @@ def _server_from_spec(name: str, spec: dict, source: str) -> McpServerInfo:
         scopes=_spec_scopes(spec),
         client_id=_spec_client_id(spec),
         source=source,
+        registry_pointer=(
+            mcp_entry_is_registry_governed(spec) and not spec.get("command") and not spec.get("url")
+        ),
     )
 
 
@@ -1831,6 +1841,12 @@ def list_servers() -> list[McpServerInfo]:
             s.auth_challenge = cached.auth_challenge
             s.auth_grant_present = cached.auth_grant_present
             s.temp_refusals = [dict(r) for r in cached.temp_refusals]
+        # A registry pointer never has a probe result of its own, so without this
+        # it reads "unknown" until the first probe pass -- the same row the probe
+        # reports, stated without waiting for one. See ``probe_server``.
+        if s.registry_pointer and not s.command and not s.disabled:
+            s.status = "registry"
+            s.error = ""
 
     return list(servers.values())
 
@@ -2384,6 +2400,17 @@ async def probe_server(
 
     if server.is_remote:
         return await _probe_remote(server)
+
+    if server.registry_pointer and not server.command:
+        # Nothing local to spawn: kiro-cli resolves this pointer from the admin's
+        # catalog, which Kiro Crew never reads. Reported as ``registry`` -- no
+        # verdict, so not cached (a stored tool list survives) and not counted
+        # toward quarantine -- instead of an "Error / no command" the user cannot
+        # act on. ``kiro-cli mcp list`` is where it is verified.
+        _drop_temp_refusals(server)
+        server.status = "registry"
+        server.error = ""
+        return server
 
     if not server.command:
         server.status = "error"

@@ -7604,6 +7604,41 @@ class TestMcpMergePriority:
         )
         assert "srv" not in config["mcpServers"]
 
+    def test_registry_pointer_without_command_is_carried(self, tmp_path: Path):
+        """A commandless ``"type": "registry"`` pointer kiro-cli wrote into
+        ~/.kiro/settings/mcp.json reaches the spec verbatim, with its tool ref.
+
+        kiro-cli resolves it by map key against the admin's catalog, and the spec
+        pins ``includeMcpJson: false``, so this copy is the only route by which the
+        session sees it. Dropping it as "no command" would hide every governed server.
+        """
+        cfg_dir = _bundled_defaults(tmp_path)
+        pointer = {"type": "registry", "disabled": False}
+        config = _run_install_mcp_merge(
+            tmp_path,
+            cfg_dir,
+            cc_servers={},
+            kiro_servers={"aws-iac-mcp": dict(pointer)},
+        )
+        entry = config["mcpServers"].get("aws-iac-mcp")
+        assert isinstance(entry, dict), sorted(config["mcpServers"])
+        # Still a pointer: nothing local was invented for the catalog to override.
+        assert entry.get("type") == "registry"
+        assert "command" not in entry and "url" not in entry
+        assert "@aws-iac-mcp" in config["tools"]
+
+    def test_unmarked_entry_with_type_other_than_registry_is_still_dropped(self, tmp_path: Path):
+        """Only the registry marker carries a commandless entry; any other ``type``
+        with no command or url is still a broken local entry and is dropped."""
+        cfg_dir = _bundled_defaults(tmp_path)
+        config = _run_install_mcp_merge(
+            tmp_path,
+            cfg_dir,
+            cc_servers={},
+            kiro_servers={"srv": {"type": "stdio"}},
+        )
+        assert "srv" not in config["mcpServers"]
+
     def test_kirocrew_override_does_not_corrupt_global_fallback(self, tmp_path: Path):
         """Regression (review-bot): a kirocrew mcp.json override carrying an
         unresolvable command must not mutate the shared kiro-global source dict

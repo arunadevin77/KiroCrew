@@ -14134,6 +14134,7 @@
         "off_count": "({{count}} desativadas)",
         "online": "Online",
         "online_help": "O gateway iniciou este servidor por conta própria. Isso é uma verificação deste host, não uma garantia de que uma determinada sessão de chat o montou — cada sessão relata os próprios servidores no seu painel MCP.",
+        "registry_help": "{{provider}} é gerenciado pelo registro MCP da sua organização, então não há nada para corrigir aqui. A CLI do Kiro o carrega quando uma sessão começa, e esta página não consegue mostrar o status dele. Para verificar, execute kiro-cli mcp list em um terminal.",
         "outdated": "Desatualizado",
         "outdated_help": "Nenhum resultado de teste nos últimos 30 minutos. Selecione o botão de atualizar (↻, canto superior direito) para verificar novamente.",
         "pending_change_many": "{{count}} alterações pendentes",

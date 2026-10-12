@@ -6265,6 +6265,34 @@ class TestRejectedAgentSpecsNarrowReadiness:
         assert status["ready"]
 
     @pytest.mark.asyncio
+    async def test_a_registry_pointer_is_launchable_and_not_reported(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A bare ``"type": "registry"`` pointer is resolved by kiro-cli.
+
+        The spec rebuild carries kiro-cli's own catalog pointers into the required
+        spec on purpose. kiro-cli supplies the transport from the admin's catalog,
+        so reporting the pointer would put every governed host behind this gate.
+        An entry with no transport and no marker is still reported (see the
+        no-command test above).
+        """
+        agents = self._spec_dir(tmp_path)
+        (agents / "kirocrew.json").write_text(
+            json.dumps({"name": "kirocrew", "mcpServers": {"aws-iac-mcp": {"type": "registry"}}}),
+            encoding="utf-8",
+        )
+
+        async def run(_command: str, args: list[str], **_kwargs: Any) -> ProcessResult:
+            del args
+            return ProcessResult(ok=True, output="", returncode=0)
+
+        status = await self._service(tmp_path, run).snapshot(force=True)
+
+        assert status["rejected_agent_specs"] == []
+        assert status["ready"]
+
+    @pytest.mark.asyncio
     async def test_a_launchable_mcp_server_still_reaches_the_binary(
         self,
         tmp_path: Path,

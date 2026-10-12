@@ -208,6 +208,19 @@ prints an `MCP Governance (enterprise)` section on Identity Center hosts with th
 current state. Full walkthrough, including the registry JSON your administrator
 needs: `docs/guides/enterprise-mcp-governance.md`.
 
+### A server from your organization's MCP registry shows "Not verified"
+
+A server you installed from your organization's MCP registry (through Kiro IDE or
+the Kiro CLI) shows **Not verified** under Connections → MCP Servers, with no
+command. That is expected. The Kiro CLI wrote it into `~/.kiro/settings/mcp.json`
+as a pointer, `{"type": "registry"}`, and loads the real server from the registry
+when a session starts. Kiro Crew cannot read the registry, so the dashboard does
+not start or check that server itself.
+
+Kiro Crew passes the pointer on to every Kiro CLI session unchanged. To see
+whether it connected, run `kiro-cli mcp list`, or ask an agent to use one of its
+tools. Sessions on the Claude or KAS backends do not load registry servers.
+
 ### A remote MCP server shows "Not verified"
 
 Remote MCP servers that authenticate with OAuth — Atlassian, for example — can

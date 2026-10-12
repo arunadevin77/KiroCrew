@@ -284,6 +284,10 @@ function mcpStatusLabel(status: string, auth: McpAuthState): string {
       if (auth === 'sign_in_required') return i18nT('pages.overview.mcpTab.sign_in_required')
       if (auth === 'signed_in') return i18nT('pages.overview.mcpTab.signed_in')
       return i18nT('pages.overview.mcpTab.not_verified')
+    // A registry pointer: kiro-cli resolves it from the admin's catalog, which
+    // the gateway cannot read, so there is nothing local to verify.
+    case 'registry':
+      return i18nT('pages.overview.mcpTab.not_verified')
     default:
       return i18nT('pages.overview.mcpTab.unknown')
   }
@@ -355,6 +359,9 @@ function signInTargetFor(
 function mcpStatusVariant(status: string, auth: McpAuthState): 'ok' | 'err' | 'warn' | 'muted' {
   if (status === 'ok') return 'ok'
   if (status === 'error') return 'err'
+  // Muted, not amber: no local action changes a registry row, and on a governed
+  // host every governed server would otherwise sit in the "act now" colour.
+  if (status === 'registry') return 'muted'
   return auth === 'signed_in' ? 'muted' : 'warn'
 }
 
@@ -396,6 +403,7 @@ function mcpStatusHint(status: string, serverName: string, auth: McpAuthState, p
   if (status === 'outdated') {
     return probeFailing ? undefined : i18nT('pages.overview.mcpTab.outdated_help')
   }
+  if (status === 'registry') return i18nT('pages.overview.mcpTab.registry_help', { provider: serverName })
   if (status !== 'needs_auth') return undefined
   if (auth === 'sign_in_required') return i18nT('pages.overview.mcpTab.sign_in_required_next')
   if (auth === 'signed_in') return i18nT('pages.overview.mcpTab.signed_in_help', { provider: serverName })
