@@ -1,18 +1,19 @@
 # Session Control — driving another session
 
-One chat session can open, fork, seed, watch, stop, retry, close and revive another one,
-change its model, reload its agent process, and take another one under itself in
+One chat session can open, fork, seed, watch, stop, retry, rename, close and revive
+another one, change its model, reload its agent process, and take another one under itself in
 the sidebar. The tools come from the
 `kirocrew-dashboard` MCP server, so an agent that does not mount that server
 never has them — exactly like any other MCP server. This page is the reference
-for all 31 of its tools, written for the agent that is about to use them.
+for all 32 of its tools, written for the agent that is about to use them.
 
 The server is defined in `src/kiro_crew/mcp_dashboard.py`. Two halves:
 
 - **Session control** — `session_create`, `session_fork`, `session_send`,
   `session_read_message`, `session_summary`, `session_stop`, `session_end_wait`, `session_retry`,
-  `session_set_model`, `session_reload`, `session_close`, `session_revive`, `session_broadcast`,
-  `session_status`, `session_adopt`, `session_release`. These reach another session.
+  `session_set_model`, `session_reload`, `session_rename`, `session_close`, `session_revive`,
+  `session_broadcast`, `session_status`, `session_adopt`, `session_release`. These reach another
+  session.
 - **Sidebar shape** — `chat_folder_tree`, `chat_folder_create`,
   `chat_folder_move`, `chat_folder_update`, `chat_folder_move_session`, `chat_folder_delete`,
   `chat_folder_file_self`, `chat_tag_list`, `chat_tag_create`, `chat_tag_update`, `chat_tag_assign`,
@@ -92,7 +93,8 @@ Two things it deliberately does not take:
   agent, model, memory store and mode, project and folder — exactly what a human
   fork inherits, and for the same reason: a transcript belongs to the memory
   boundary it was written in, and a fork must stay inside it. A session bound to
-  a different agent is `session_create`'s job.
+  a different agent is `session_create`'s job. One difference: a person's fork of a
+  pinned session is pinned, but a fork you make is never pinned.
 - **No tail fork.** Only the head (everything up to the fork point) is offered.
 
 Forking another session is a **read** of its transcript, so naming a `source`
@@ -591,6 +593,46 @@ Refusals only a revive gives:
 | `reopen_failed` | HTTP 503: the session could not be reopened. Try again |
 | `reopen_rollback_failed` | HTTP 503: the revive was refused but the session's closed mark could not be put back, so it may come back as open. Close it again from the History tab |
 
+### `session_rename`
+
+| Argument | Required | Meaning |
+|---|---|---|
+| `target` | yes | Session key, `dashboard:<slot>` key, or exact unique title |
+| `title` | yes | New sidebar title, 1 to 200 characters after surrounding whitespace is stripped |
+
+Sets the target's sidebar title through the same code as the sidebar's own
+rename. The rename is final: the automatic titler stops refreshing that session,
+exactly as after a person renames it by hand. Nothing else about the target
+changes, and a running turn keeps running.
+
+The caller may rename itself, or any session `session_stop` would let it act
+on. A crew member, a scheduled run, an owner-DM channel session and any
+agent-created session reach only the sessions they created, so a person's own
+tabs are refused to them (`not_creator`). Archived, scheduled-run, incognito,
+app-scoped, channel-linked and mirrored sessions are refused with the same codes
+the other session tools use. The scheduled-run refusal (`unattended_target`)
+covers the caller too: a cron run's own session is not renamable, even by itself.
+
+A title over 200 characters, an empty title, one made only of invisible
+characters, or one containing control characters, text-direction controls or
+any other invisible format character (such as a zero-width space, a word joiner
+or a soft hyphen), or the blank Braille pattern U+2800 anywhere, is refused
+rather than cut down (`invalid_title`). The
+zero-width joiner and non-joiner and the tag characters stay allowed, because
+emoji sequences, flag emoji and scripts such as Persian need them. The stored title
+passes through `_scrub_text`, the scrub the dashboard applies to stored fields.
+It redacts credentials and exfiltration URLs like a `session_create` title, and
+a secret split by an invisible character (such as a zero-width joiner) is still
+redacted. A title that redaction lengthens past 200 characters is refused
+(`invalid_title`) rather than cut, so a stored title never holds a torn
+`[REDACTED]` marker.
+
+If the new title cannot be written to the session's history right away, the call
+fails with `title_persist_failed`. The sidebar already shows the new title, and
+the session's next save writes it; until then a restart brings back the previous
+one. Renaming again with the same title is safe. A call that returns `ok` has
+been saved.
+
 ## Folders
 
 The sidebar tree the person organizes their sessions in.
@@ -761,6 +803,7 @@ gateway-issued key counts. Refusals you should expect, by code:
 | `memory_delegation_denied` | HTTP 403: session_create named a crew member's agent the caller may not bind (a cron, a fenced deputy, a peer member). Use a template agent, or ask the owner |
 | `model_owner_only` | HTTP 403: `auto` and **Auto (Jev)** can only be picked by the owner from the model picker |
 | `model_rejected` | The model id is missing, malformed, looks like a credential, or is one the target's backend would refuse |
+| `effort_rejected` | session_set_model: `reasoning_effort` is not one of the five standard levels (low, medium, high, xhigh, max). `""` is refused too; set it from the target's effort dropdown |
 | `target_replaced` | HTTP 409: the target was replaced by another session under the same key while the call ran; nothing was changed. Try again |
 | `invalid_field_type` | An argument had the wrong type (for example a broadcast target list that is not a list of strings) |
 
@@ -818,6 +861,48 @@ Rate limits are per caller, per verb, over a 300-second window: **20** session
 creates (forks included), **10** folder creates, **10** tag creates, **10** board-column creates. Capacity ceilings sit behind
 them: 500 live sessions, 50 per creator, 500 folders.
 
+## Combining two chats
+
+There is no Combine button. Two chats are combined by one of them, the
+**giver**, handing its context to a fork of the other, the **taker**, with the
+tools above. The giver curates what to pass on instead of pasting a transcript,
+so the result costs the taker a few turns, not the giver's whole history.
+
+The person starts it by asking in the giver chat, for example: *"Combine what
+you know into `chat-3`. Fork it and tell the fork what it needs."* The giver
+then runs:
+
+1. `session_fork(source=<taker>, title="Merged: …")` — a new third session
+   holding a copy of the taker's transcript. Both source chats stay as they are.
+2. `session_send(target=<fork>, message=…)` — the giver introduces itself and
+   hands over the first part of what it judges relevant. The fork reads it as a
+   user turn tagged with the giver's session.
+3. `session_read_message(target=<fork>, since=…)` — read the reply, answer its
+   questions, and send the next part. Repeat 2 and 3 until nothing relevant is
+   left, then tell the person the fork's key.
+
+To combine more than two chats, combine pairwise: a merged session is an
+ordinary session, so it can be the `source` of the next fork. Nothing automates
+the tree; each merge is one giver running the three steps.
+
+What carries over is **conversation only**:
+
+- The fork is bound to the **taker's** agent, model and memory store (see
+  `session_fork` above). Nothing is copied from the giver's memory store or
+  lessons, and no tool does that.
+- What the giver writes in its messages becomes part of the fork's transcript,
+  so anything it shares is readable there, under the taker's memory boundary.
+  Hand over the work, not secrets or another store's private notes.
+- Two chats on the same agent already share one memory store, so for them
+  conversation is the only thing that was ever separate.
+
+The giver's agent must mount `kirocrew-dashboard` (see the top of this page).
+The usual reach rules apply, because forking is a read of the taker: same
+workspace, a source that is not incognito, temporary, app-scoped or
+channel-linked, and a giver that is an eligible creator. A crew member's DM
+session reaches only sessions it created, so it cannot be the giver for an
+unrelated chat.
+
 ## This or `spawn_run`?
 
 Both run work in parallel. They differ in who owns the result and whether the
@@ -829,7 +914,7 @@ person can see it happening.
 | Visibility | The person reads, steers and takes over the tab | A completion event injected into your turn |
 | Lifetime | Until closed; survives your session ending | Bounded by the spawn timeout |
 | Two-way traffic | `session_send` in, `session_read_message` out, any number of rounds | Task in, result out; `spawn_steer` for one injection |
-| Nesting | A created session can create its own | Subagents cannot spawn subagents |
+| Nesting | A created session can create its own | A subagent can spawn its own, tracked apart from the parent's wave |
 | Cost of a mistake | A tab the person can inspect and stop | A run you re-do |
 | Reach for it when | A workstream needs its own identity, a long life, or the person's oversight | You need fan-out, distillation of a large input, or a blind second opinion |
 

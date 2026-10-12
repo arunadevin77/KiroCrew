@@ -619,6 +619,7 @@ icon; an unrecognised or absent name renders a generic panel glyph.
 | `backend.healthCheck` | string | `"/health"` | Absolute health-check path beginning with `/`; unsafe or ambiguous paths are refused. Polled until it answers at startup, then re-polled for the life of the backend — keep the handler cheap and dependency-free. A backend that stops answering it is dropped from the reverse proxy and its MCP servers are deregistered until it answers again. **The route must answer an UNSIGNED loopback GET directly with a 2xx** — the probe sends no proxy credential and follows no redirect, so a path behind the backend's own auth (401/403) and a path that redirects (3xx) both fail forever and the app never becomes reachable (the gateway then returns `app '<name>' has no reachable backend`). The gateway log names the observed status. |
 | `backend.routes` | string | | Base route path for the backend |
 | `backend.type` | string | `""` | Backend runtime: `"python"`, `"asgi"`, `"node"`, `"exec"` (execute the entry point file as-is), or `""` (auto-detect from `entryPoint` — a `.sh` file or an extensionless executable with a non-Python shebang is treated as a shell launcher) |
+| `backend.signedPrincipal` | boolean | `false` | Add a signed `X-KiroCrew-Principal` claim to every request the reverse proxy forwards to this backend. Only the JSON boolean `true` turns it on. The claim says whether the gateway authenticated an `owner-session`, an `app-token`, an `agent-tool` call, or `none`. |
 
 > **Note:** the shell-launcher auto-detect reads the entry point's shebang
 > line, so a compiled/binary launcher (e.g. an ELF executable) cannot be
@@ -628,6 +629,14 @@ icon; an unrecognised or absent name renders a generic panel glyph.
 
 App backends are accessible through the Gateway's reverse proxy at
 `/apps/{name}/api/{path}`, which avoids CORS issues for dashboard UI pages.
+
+`backend.signedPrincipal` grants the app no new access. It passes on an identity
+the gateway already authenticated. Only a request that a dashboard session cookie
+authenticated for the dashboard owner receives `owner-session` and an owner id.
+App tokens, internal agent and MCP tool calls, crons and `?token=` link exchanges
+never receive that kind. The header format and the verification steps are in the
+API reference under
+[Signed principal claim](api-reference.md#signed-principal-claim).
 
 #### `backend.hooks` — In-Gateway Python Entry Points
 
@@ -686,7 +695,7 @@ absolute imports are for built-in apps only.
 
 **Python dependencies.** Runtime `requirements.txt` provisioning — the
 `data/.kirocrew-deps/` tree described in the stdio `command`-resolution passage
-above (see #7878 / #7901 for the mechanism) — runs only where app code executes
+above — runs only where app code executes
 as its own process: the `backend.entryPoint` spawn path (a real file entry
 point in the app's own tree) and stdio MCP server registration. Hook code gets
 nothing from it: the tree reaches processes **spawned on the app's behalf** —
@@ -954,7 +963,9 @@ installs do not run `onInstall`; build first, then install. The `onEnable`,
 **not run on native Windows** (which has no `/bin/bash`): the runner refuses the
 hook before any process is started and reports a failure whose message names the
 unsupported platform, rather than letting the spawn fail opaquely and look like
-your script breaking. Write hooks for POSIX shells; do not rely on them running
+your script breaking. `onInstall` also runs through `/bin/bash`, without that
+up-front refusal, so a registry install of an app that declares it fails on a
+native-Windows host. Write hooks for POSIX shells; do not rely on them running
 on a native-Windows host.
 
 **Exception — `platform.installMode: "client"` apps.** For a client app the

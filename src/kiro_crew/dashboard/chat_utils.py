@@ -4163,6 +4163,13 @@ def _broadcast_expired_oauth_banners(state: "DashboardState", slot: "_ChatSlot")
     # and the live-child probe reads the session pool — a side effect the
     # common case must not pay (and one that would burn a pool read at every
     # teardown site this helper rides).
+    #
+    # A restored sidebar row whose window is still pending has sent no row to
+    # any tab in this process (opening the tab loads the window first), so no
+    # tab shows one of its banners to withdraw; asking would load its whole
+    # transcript on the loop for nothing.
+    if getattr(slot, "window_pending", False) is True:
+        return
     candidates = [
         message
         for message in slot.messages
@@ -4251,6 +4258,21 @@ def _expire_dead_child_oauth_meta(role: str, meta: dict, live_child: str) -> dic
     out.pop("oauth_url", None)
     out["expired"] = True
     return out
+
+
+#: Key on an in-memory slot message holding the top-level fields a NEWER build wrote
+#: on its transcript row, which this build does not know (kept by restore, written
+#: back by the slot save; see ``slot_persistence.message_entries``). Server-side
+#: only: every path that sends a message out removes it with
+#: :func:`without_unknown_row_fields`.
+UNKNOWN_ROW_FIELDS_KEY = "_unknown_row_fields"
+
+
+def without_unknown_row_fields(m: dict) -> dict:
+    """A copy of *m* without :data:`UNKNOWN_ROW_FIELDS_KEY`; the one strip every egress uses."""
+    if UNKNOWN_ROW_FIELDS_KEY not in m:
+        return dict(m)
+    return {key: value for key, value in m.items() if key != UNKNOWN_ROW_FIELDS_KEY}
 
 
 def _prepare_messages(
@@ -4346,7 +4368,7 @@ def _prepare_messages_scoped(messages: list[dict], running: bool, *, live_child:
             wire = serialize_wire_content(text)
             if wire is not text:
                 m = {**m, "content": wire}
-        msg_out = dict(m)
+        msg_out = without_unknown_row_fields(m)
         if msg_out.get("variants"):
             # Snapshot for the same reason as _redact_meta — this runs in a
             # worker thread (slot-detail render offload) while the event

@@ -1511,6 +1511,31 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     }
   },
   {
+    "id": "chat.topic-tags",
+    "label": "Topic tags",
+    "labelKey": "pages.settings.chatPanel.topic_tags",
+    "description": "Tags each new session in the sidebar with up to two topics, like \"debugging\". Uses one background-model call per new session.",
+    "tab": "chat",
+    "type": "toggle",
+    "occurrence": 1,
+    "params": {
+      "sub": "sessions"
+    }
+  },
+  {
+    "id": "chat.turn-time-limit-seconds",
+    "label": "Turn Time Limit (seconds)",
+    "labelKey": "pages.settings.chatPanel.turn_time_limit",
+    "description": "A turn that reaches this limit stops and keeps the work already written to disk; resume it to continue. Raise it for long unattended turns such as full test suites. Applies from the next turn. Longest one chat turn may run before it is stopped. 300 to 86,400 s (24 h). Default 14,400 s (4 h).",
+    "tab": "chat",
+    "type": "input",
+    "occurrence": 1,
+    "params": {
+      "sub": "advanced"
+    },
+    "configKey": "agent.chat_turn_timeout_secs"
+  },
+  {
     "id": "chat.what-enter-does-while-the-agent-is-working",
     "label": "What Enter does while the agent is working",
     "labelKey": "pages.settings.chatPanel.what_enter_does_while_the_agent_is_working",
@@ -1687,7 +1712,7 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "id": "developer.chat-on-a-crew",
     "label": "Chat on a crew",
     "labelKey": "pages.developer.featurePreviewsTab.chat_on_a_crew",
-    "description": "Adds “New chat on crew” to the create menu, which starts a session on a remote crew — another machine you have connected under Settings > Remote Crew. Unfinished: the session opens in that crew’s own pane and is not listed in this dashboard’s sessions yet, so to return to it later, switch to that crew’s pane.",
+    "description": "Adds “New chat on crew” to the create menu, which starts a session on a remote crew — another machine you have connected under Settings > Remote Crew — and shows each connected crew’s sessions in their own group in the Sessions list. Unfinished.",
     "tab": "developer",
     "type": "toggle",
     "occurrence": 1
@@ -1762,15 +1787,6 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "description": "Only used when the judge above is the small model. Leave it on the judge agent's own model unless you want a cheaper one.",
     "tab": "developer",
     "type": "select",
-    "occurrence": 1
-  },
-  {
-    "id": "developer.remote-crew-sessions",
-    "label": "Remote crew sessions",
-    "labelKey": "pages.developer.featurePreviewsTab.remote_instance_sessions",
-    "description": "Merge a connected remote crew's live sessions into the Sessions list, each marked with its crew's name. A remote crew is another machine you have connected, not your agents. Functional, but not finished.",
-    "tab": "developer",
-    "type": "toggle",
     "occurrence": 1
   },
   {
@@ -2127,6 +2143,18 @@ export const SETTINGS_REGISTRY: SettingEntry[] =
     "occurrence": 1,
     "label": "Heartbeat",
     "description": "Heartbeat task results"
+  },
+  {
+    "id": "notifications.sound-category-dictation",
+    "params": {
+      "sub": "percategory"
+    },
+    "labelKey": "pages.settings.notificationsPanel.category_dictation",
+    "tab": "notifications",
+    "type": "select",
+    "occurrence": 1,
+    "label": "Interrupted dictation",
+    "description": "Plays a sound when dictation stops before you end it"
   },
   {
     "id": "notifications.mark-sessions-unread-only-when-they-need-you",

@@ -261,8 +261,8 @@ _STABLE_TEXT_SHA256 = {
     "critical_rules": "06ea61438802e0538dbf1f107e2e6b07cf2416348734f330e0cf0ec3ef52e899",
     "critical_rules_channel": "7e0dc53a1e4db382d51bb8ead062cd94ed5752dbb30b40149b6d9728ba734742",
     "docs_section": "971b6008afbd9ff048c498c06cffecc6dafc7a58b0df75ff9db0b15cf9e26c09",
-    "member_how_you_work": "fee6317b439c1bfc2799b25e4a278080985a48eb9fe77d778ccad22e09166180",
-    "member_how_you_work_unavailable": "c236aa71c582826abc550052cc35bcb2c3eefae8c914c056a915c7a0a3c990f3",
+    "member_how_you_work": "3af2135d21dc09fc6f27e7d292df544d2b3a7b46d01c10220f695689c861323d",
+    "member_how_you_work_unavailable": "c0a9bcc288c91b5b647ec92338fb3e3fa1fea9d178c2c6e3096cc5ff7e4780c1",
     "reply_answer_only": "f0bd694165ff81cdbe123048042070588b846bd43a224b31adc79d9f8768bfce",
     "reply_concise": "5d3e25d89e682469332237e46373f0e9aac8516eefd63047134d1ec0575aac2a",
     "response_preferences_frame": "08ee149ae459c828213d47643f1cdbd6661d8a77a2223b8be5d0aa6fbb6cdc18",
@@ -1223,7 +1223,7 @@ _BUILDER_MEMBERS: dict[str, tuple[str, str]] = {
     ),
     "_build_v2_essentials": (
         "method",
-        "(self, memory_store: 'str | None', *, member: 'str' = '', member_is_id: 'bool' = True, project: 'str | None' = None, workspace: 'str | None' = None, blocks_reads: 'bool' = False, context_groups: 'frozenset[str] | None' = None, profile_overrides: 'dict[str, str] | None' = None, native_documents: 'dict[str, str] | None' = None, native_envelope_out: 'list[str] | None' = None, execution_template: 'str' = '', member_template: 'str' = '', conditional_index: 'bool' = False, trigger_text: 'str' = '', steering_dirs: 'tuple[str, ...]' = (), desk_withheld: 'bool' = False, provider_type: 'str' = 'acp') -> 'str'",
+        "(self, memory_store: 'str | None', *, member: 'str' = '', member_is_id: 'bool' = True, project: 'str | None' = None, workspace: 'str | None' = None, blocks_reads: 'bool' = False, context_groups: 'frozenset[str] | None' = None, profile_overrides: 'dict[str, str] | None' = None, native_documents: 'dict[str, str] | None' = None, native_envelope_out: 'list[str] | None' = None, execution_template: 'str' = '', member_template: 'str' = '', conditional_index: 'bool' = False, trigger_text: 'str' = '', steering_dirs: 'tuple[str, ...]' = (), desk_withheld: 'bool' = False, provider_type: 'str | None' = None) -> 'str'",
     ),
     "_cap_memo_key": ("static", "(session_key: 'str') -> 'str'"),
     "_dedup_triggered_bodies": (
@@ -1263,11 +1263,11 @@ _BUILDER_MEMBERS: dict[str, tuple[str, str]] = {
     ),
     "build_message": (
         "method",
-        "(self, text: 'str', is_new_session: 'bool', session_key: 'str | None' = None, channel_id: 'str | None' = None, interactive: 'bool' = True, agent: 'str | None' = None, resumed: 'bool' = False, thread_ts: 'str | None' = None, workspace: 'str | None' = None, project: 'str | None' = None, memory_store: 'str | None' = None, user_display_name: 'str | None' = None, compressed_history: 'str | None' = None, mode: 'str' = '', blocks_reads: 'bool' = False, action_context: 'str | None' = None, thread_parent_text: 'str | None' = None, thread_meta: 'str | None' = None, provider_type: 'str' = 'acp', minimal_context: 'bool' = False, *, runtime_source: 'str | None' = None, request_prefix_context: 'str | None' = None, exclude_last_n: 'int' = 0, thread_replies_text: 'str | None' = None, folder_path: 'str | None' = None, model_window: 'int | None' = None, board_tags: 'list[tuple[str, str]] | None' = None, user_text_range: 'tuple[int, int] | None' = None, user_span_out: 'list[int] | None' = None, needs_reinjection: 'bool' = False, context_groups: 'frozenset[str] | None' = None, member: 'str' = '', execution_context: 'Any' = None, context_provider: \"'ContextPromptProvider | None'\" = None, steering_dirs: 'tuple[str, ...]' = ()) -> 'tuple[str, HookResult]'",
+        "(self, text: 'str', is_new_session: 'bool', session_key: 'str | None' = None, channel_id: 'str | None' = None, interactive: 'bool' = True, agent: 'str | None' = None, resumed: 'bool' = False, thread_ts: 'str | None' = None, workspace: 'str | None' = None, project: 'str | None' = None, memory_store: 'str | None' = None, user_display_name: 'str | None' = None, compressed_history: 'str | None' = None, mode: 'str' = '', blocks_reads: 'bool' = False, action_context: 'str | None' = None, thread_parent_text: 'str | None' = None, thread_meta: 'str | None' = None, provider_type: 'str | None' = None, minimal_context: 'bool' = False, *, runtime_source: 'str | None' = None, request_prefix_context: 'str | None' = None, exclude_last_n: 'int' = 0, thread_replies_text: 'str | None' = None, folder_path: 'str | None' = None, model_window: 'int | None' = None, board_tags: 'list[tuple[str, str]] | None' = None, user_text_range: 'tuple[int, int] | None' = None, user_span_out: 'list[int] | None' = None, needs_reinjection: 'bool' = False, context_groups: 'frozenset[str] | None' = None, member: 'str' = '', execution_context: 'Any' = None, context_provider: \"'ContextPromptProvider | None'\" = None, steering_dirs: 'tuple[str, ...]' = ()) -> 'tuple[str, HookResult]'",
     ),
     "build_session_context": (
         "method",
-        "(self, session_key: 'str | None' = None, agent: 'str | None' = None, resumed: 'bool' = False, workspace: 'str | None' = None, memory_store: 'str | None' = None, compressed_history: 'str | None' = None, mode: 'str' = '', blocks_reads: 'bool' = False, provider_type: 'str' = 'acp', minimal_context: 'bool' = False, *, runtime_source: 'str | None' = None, exclude_last_n: 'int' = 0, model_window: 'int | None' = None, context_groups: 'frozenset[str] | None' = None, query_text: 'str' = '', project: 'str | None' = None, member: 'str' = '', execution_context: 'Any' = None, steering_dirs: 'tuple[str, ...]' = (), _v2_essentials: 'str | None' = None) -> 'str'",
+        "(self, session_key: 'str | None' = None, agent: 'str | None' = None, resumed: 'bool' = False, workspace: 'str | None' = None, memory_store: 'str | None' = None, compressed_history: 'str | None' = None, mode: 'str' = '', blocks_reads: 'bool' = False, provider_type: 'str | None' = None, minimal_context: 'bool' = False, *, runtime_source: 'str | None' = None, exclude_last_n: 'int' = 0, model_window: 'int | None' = None, context_groups: 'frozenset[str] | None' = None, query_text: 'str' = '', project: 'str | None' = None, member: 'str' = '', execution_context: 'Any' = None, steering_dirs: 'tuple[str, ...]' = (), _v2_essentials: 'str | None' = None) -> 'str'",
     ),
     "commit_skill_bodies": ("method", "(self, session_key: 'str | None') -> 'None'"),
     "ensure_store": ("static", "(memory_store: 'str | None') -> \"'VectorMemoryStore | None'\""),
@@ -2140,8 +2140,8 @@ class TestPatchReach:
     def test_folder_steering_reader_and_cap(self, monkeypatch) -> None:
         seen: dict[str, object] = {}
 
-        def _collect(dirs, *, project, skip_delivered_roots):
-            seen["collect"] = (dirs, project, skip_delivered_roots)
+        def _collect(dirs, *, project, skip_delivered_roots, delivered_sources):
+            seen["collect"] = (dirs, project, skip_delivered_roots, delivered_sources)
             return "COLLECTION"
 
         def _render(collection, *, max_chars, scrub):
@@ -2150,9 +2150,11 @@ class TestPatchReach:
 
         monkeypatch.setattr(ctx, "collect_folder_steering", _collect)
         monkeypatch.setattr(ctx, "render_folder_steering", _render)
-        out = ctx._render_folder_steering_section(("d",), "/p", 77, skip_delivered_roots=False)
+        out = ctx._render_folder_steering_section(
+            ("d",), "/p", 77, skip_delivered_roots=False, delivered_sources=("/s.md",)
+        )
         assert out == "RENDERED"
-        assert seen["collect"] == (("d",), "/p", False)
+        assert seen["collect"] == (("d",), "/p", False, ("/s.md",))
         assert seen["render"] == ("COLLECTION", 77, ctx._neutralize_structural_markers)
 
     def test_thread_and_folder_screens(self, rig: _Rig, monkeypatch) -> None:

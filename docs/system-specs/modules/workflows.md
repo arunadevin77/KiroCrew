@@ -581,6 +581,12 @@ The wall-clock guard uses `asyncio.wait({task}, timeout=)`, **not**
 the inner `CancelledError` to the caller. With `wait` the loop never cancels for
 us, so the runner owns the cancellation and always converts a timeout into a clean
 `run_failed` (`test_workflows_runner.py::test_timeout_never_leaks_cancellederror`).
+`run()` takes one `time.monotonic()` deadline when it starts. The in-run author
+step (`intent` + `author_fn`) waits under that deadline through the same guard, and
+`_exec_validated` waits on the script for only what remains of it, so authoring and
+execution together never exceed `timeout_secs`. A hung author ends as
+`run_failed(where="ceiling")`, and a caller cancel during authoring returns
+`error == "cancelled"` with `run_cancelled`, as it does mid-script.
 
 **The ceiling is a backstop, not a data-loss event.** Every terminal path (ceiling,
 cancel, budget, script crash, success) returns the `agent_results` and
@@ -941,20 +947,42 @@ existence check.
 ### Resume and restart-subtree
 
 Resume is prefix replay, not checkpointing of arbitrary state. `runner.run` takes
-`replay_results` (a `call_index -> result` map from a prior run) and
-`replay_before` (an index): a call with `call_index < replay_before` that has a
-cached entry returns that entry instead of calling the model; calls at or after the
-index re-execute live. Determinism is what makes this sound: no `time`/`random` in
-scope plus a stable `call_index` means the same script and args produce the same
-call order. A replayed call whose prior result was `None` records
+`replay_results` (a `call_index -> result` map from a prior run),
+`replay_fingerprints` (a `call_index -> fingerprint` map from the same run) and
+`replay_before` (an index). A prior call is eligible when its
+`call_index < replay_before` and it has both a cached result and a fingerprint. A
+call of the new run replays the eligible prior result whose fingerprint equals its
+own instead of calling the model; any other call runs live.
+
+A call's fingerprint (`_call_fingerprint` in `runner.py`) is a SHA-256 over its
+position, its prompt and every option that reaches the model (not the display-only
+`label` and `phase`). Its position (`_CallScope`) is the path of `ctx.parallel`
+branches and `ctx.pipeline` items it runs in, plus its ordinal within that branch.
+The calls of one branch run one after another, so a position comes from the script
+and its args, not from the order the scheduler starts calls in. `call_index` does
+follow that order, and a replayed call returns without suspending, so a rerun's
+calls take their indices in a different order than the prior run's did; matching by
+index would hand a call another call's result. Every call of a run has its own
+position, so a fingerprint names at most one prior call. Determinism is what makes
+this sound: no `time`/`random` in scope, and no concurrency but `ctx.parallel` and
+`ctx.pipeline`, because a script imports nothing (B1, so no `asyncio`), reaches no
+private `ctx` attribute (B2) and runs with only `SAFE_BUILTINS` plus `ctx` (B7). A
+call whose options cannot be serialized has no fingerprint and always runs live. A
+replayed call whose prior result was `None` records
 `"replayed a call that had already failed in the prior run"`.
+
+The fingerprints persist with the run: `RunHandle.agent_fingerprints`, written to
+the record as `agent_fingerprints`. Each one lands with its call's result at the
+per-call checkpoint (`RunRegistry.record_agent_result`), so a run a gateway restart
+interrupted can still be restarted with replay. A record without fingerprints
+replays nothing: every call of its rerun runs live.
 
 `WorkflowService.rerun_subtree(run_id, from_index, source=None)` drives it from the
 stored handle. If `source` is supplied and differs from the stored script, the
 rerun is treated as **edited**: the edited source is validated first (rejected with
 errors if invalid) and the replay cache is **not** reused (`replay_before=0`,
-`replay_results={}`), because editing the script can shift call indices and a
-mismatched index would replay the wrong result into the wrong step. An unedited
+`replay_results={}`), because editing the script can change what its calls mean, and
+a cached result could then replay into a call it no longer answers. An unedited
 rerun of a saved definition retains its definition id, slug, and revision so it
 remains an exact saved invocation and cannot be promoted into a duplicate. An
 edited rerun clears that saved-definition identity because its submitted source
@@ -1247,6 +1275,12 @@ Every mutation route that accepts JSON requires a top-level object. A syntactica
 valid scalar or array is rejected with 400 and `code: invalid_json` instead of
 reaching field access and surfacing as an internal-server error.
 
+When the service layer itself raises, the author, source run, intent run and
+subtree rerun handlers catch it and return a structured JSON 500 `{error, code}`
+with a stable per-handler code (`workflow_author_failed`, `workflow_run_failed`,
+`workflow_run_intent_failed`, `workflow_rerun_failed`) instead of an opaque 500
+with no body, so a caller can tell a deterministic fault from a transient one.
+
 With no `workflow_service` on state, every route answers 503.
 
 Every response body passes through `_redact_obj`, which redacts dict **keys** as
@@ -1532,7 +1566,7 @@ by name; the two together are why a single missed AST pattern is not an escape.
 | B2 | No dunder attribute or name access (`().__class__`, `__builtins__`, and the rest), no private (`_`-prefixed) attribute access, and no `.format` / `.format_map` call — their template is interpreted at run time, so a traversal can be assembled from parts no static fold can resolve (f-strings are the replacement: their fields are real AST and are already checked). An inline adversarial-escape corpus is rejected wholesale. | `test_workflows_invariants.py::test_b2_dunder_attribute_rejected`, `::test_b2_adversarial_escapes_rejected` | `validate.py` |
 | B3 | The nondeterminism modules (`time`, `random`, `uuid`) are unreachable, statically (they cannot be imported) and at run time (no `__import__` in the sandbox namespace, and `SAFE_BUILTINS` excludes nondeterministic and I/O builtins). Determinism is what makes a run stream resume-stable. | static: `test_workflows_invariants.py::test_b3_determinism_modules_rejected`, `::test_b3_safe_builtins_exclude_nondeterminism_and_io`; runtime: `test_workflows_context.py::test_import_statement_fails_in_safe_globals`, `::test_hostile_snippet_fails_at_runtime_in_safe_globals` | `validate.py`, `context.py` (`build_safe_globals`) |
 | B4 | Event persistence is JSON only: `serialize_events` / `deserialize_events` round-trip through `json`, reject non-JSON and non-array input, and the module imports no `pickle` / `marshal` / `shelve`. | `test_workflows_events.py::test_round_trip_through_json`, `::test_serialize_output_is_pure_json`, `::test_deserialize_rejects_non_json`, `::test_events_module_has_no_pickle_import` | `events.py` |
-| B5 | A wall-clock timeout terminates a runaway run and reports it as a clean `run_failed` with `where == "ceiling"` (event error `run exceeded <N>s`) and a `RunResult` whose `error == "timeout"`. The guard must never let an `asyncio.CancelledError` escape `run()` to the caller. | `test_workflows_runner.py::test_wall_clock_timeout_kills_runaway`, `::test_timeout_never_leaks_cancellederror` | `runner.py` |
+| B5 | A wall-clock timeout terminates a runaway run and reports it as a clean `run_failed` with `where == "ceiling"` (event error `run exceeded <N>s`) and a `RunResult` whose `error == "timeout"`. The ceiling is one deadline for the whole run, taken when `run()` starts: an in-run authoring phase spends it too, and the script gets only what authoring left. The guard must never let an `asyncio.CancelledError` escape `run()` to the caller, during authoring or during the script; a caller cancel returns `error == "cancelled"` with a final `run_cancelled` event. | `test_workflows_runner.py::test_wall_clock_timeout_kills_runaway`, `::test_timeout_never_leaks_cancellederror`, `::test_wall_clock_timeout_covers_in_run_authoring`, `::test_in_run_authoring_and_its_script_share_one_deadline`, `::test_cancel_during_in_run_authoring_returns_a_result`, `::test_wall_clock_timeout_still_ends_an_authored_script` | `runner.py` |
 | B6 | `AgentCounter` caps lifetime `ctx.agent()` calls per run (default `DEFAULT_MAX_AGENTS_PER_RUN = 1000`) and the cap is enforced through the runner: an unbounded agent loop stops at the limit and ends as `run_failed` at the ceiling. | `test_workflows_context.py::test_agent_counter_raises_past_limit`, `::test_agent_counter_default_limit`; `test_workflows_runner.py::test_agent_count_cap_enforced` | `context.py` (`AgentCounter`), `runner.py` |
 | B7 | The exec namespace exposes only `SAFE_BUILTINS` plus `ctx`, so a script has no filesystem or egress reach: `open`, `eval`, `exec`, `compile`, `__import__`, `input` and `getattr` are absent, and benign safe builtins still work. | `test_workflows_context.py::test_safe_globals_only_exposes_ctx_and_safe_builtins`, `::test_hostile_snippet_fails_at_runtime_in_safe_globals`, `::test_safe_builtins_actually_usable` | `context.py` (`build_safe_globals`) |
 | B9 | Every hostile script in the on-disk escape corpus (`test/workflows/malicious/*.py`) is statically rejected, with a non-empty error. The corpus directory must exist and be non-empty, and a new escape idea is added by dropping a file in it: the test parametrizes over the directory. | `test_workflows_malicious.py::test_every_malicious_script_is_rejected`, `::test_corpus_dir_exists_and_is_populated` | `validate.py`, `test/workflows/malicious/` |

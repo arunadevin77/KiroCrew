@@ -223,6 +223,16 @@ export function createAgentsEndpoints({ post, put, del, j, jfetch: fetch, sessio
     // ever, and answers every other case with the outcome that declined it.
     memberGreet: (slug: string) =>
       post('/api/members/' + encodeURIComponent(slug) + '/greet').then(j) as Promise<{ outcome: string }>,
+    // Fresh start on a crewmate's pinned thread: stop any turn, then drop the
+    // conversation so the next turn starts clean. Same slot key; the
+    // transcript stays. `reset_at` is the server's time of the reset; `outcome`
+    // is `queued` when the session was still busy and the clear waits for it.
+    // `reset_persisted` is false when the clear landed but the fold boundary
+    // failed to append to the member log -- the clear itself is never retried
+    // for that fault, so the page's own in-session fold (set from `reset_at`
+    // regardless) is what the user sees; only a reload loses it.
+    memberFreshStart: (slug: string) =>
+      post('/api/members/' + encodeURIComponent(slug) + '/fresh-start').then(j) as Promise<{ slot: string; reset_at: string; outcome: 'cleared' | 'queued'; reset_persisted: boolean }>,
     // A member's recent activity pointers (real recorded signal only: session
     // participations and routing decisions). `member` is the exact crew name —
     // slugs are lossy, so the backend filters the shared log by exact name.
@@ -272,10 +282,13 @@ export function createAgentsEndpoints({ post, put, del, j, jfetch: fetch, sessio
     // `member` is the exact crew name, as every member route takes it (slugs are lossy).
     // `locale` is the UI language the page should render its own words in; the
     // gateway checks it against the shipped catalogs and falls back to English.
-    memberDashboard: (slug: string, member: string, locale = '') =>
+    /** `preview`: the STAGED page `dashboard_preview` set aside, which no version
+     *  records; 404 `no_preview` once nothing is staged. */
+    memberDashboard: (slug: string, member: string, locale = '', preview = false) =>
       fetch(
         '/api/members/' + encodeURIComponent(slug) + '/dashboard?member=' + encodeURIComponent(member)
-          + (locale ? '&locale=' + encodeURIComponent(locale) : ''),
+          + (locale ? '&locale=' + encodeURIComponent(locale) : '')
+          + (preview ? '&preview=1' : ''),
       ).then(j) as Promise<{
         instance_version: number
         template: { id: string; version: number }

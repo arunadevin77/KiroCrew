@@ -12,6 +12,7 @@ import { store } from '../store'
 import { TAB_ID } from '../api/tabId'
 import { applyGuideUpdate } from '../api/guide'
 import { handleGuideObserveFrame } from '../guide/liveObservation'
+import { applyCardUpdate } from '../api/cards'
 import type { Notification, TodoList, McpSessionReport } from '../types'
 import { i18nT } from '../i18n/t'
 import { teamRoots } from '../pages/chat/command-center/model'
@@ -255,6 +256,12 @@ export function useWebSocket() {
             handleGuideObserveFrame(data)
             break
           }
+          case 'card_update': {
+            // Owner-only frame; folded into that slot's change-cards cache,
+            // which is also re-read on reconnect (frames are one-shot).
+            applyCardUpdate(queryClient, (data as { card?: unknown }).card)
+            break
+          }
           case 'todo_update': {
             const d = data as unknown as { slot?: string; todo?: TodoList | null }
             if (d.slot) dispatch(sseTodoUpdate({ slot: d.slot, todo: d.todo ?? null }))
@@ -356,6 +363,11 @@ export function useWebSocket() {
             // A crewmate wrote one of its own dashboard fields mid-turn. The frame
             // carries only {slug}; the tab's refetch re-asks the server, which
             // re-composes the page and re-checks ownership.
+            handleDashboardMoved(queryClient, data)
+            break
+          case 'dashboard_instance_changed':
+            // The crewmate's dashboard PAGE changed: a template applied or a
+            // version rolled back. Same {slug}-only frame, same re-read.
             handleDashboardMoved(queryClient, data)
             break
           case 'notification_ack':

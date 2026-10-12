@@ -39,7 +39,7 @@ Use `ask_question` when a dashboard user needs to choose or supply an answer bef
 | `multiSelect` | Optional boolean; false by default. |
 | `timeout_secs` | Optional integer validated from 15 through 540, accepted for compatibility but never read, so the tool's inputSchema does not advertise it. The gateway sets the card's wait window. |
 
-Malformed nested questions and options are skipped; the request fails when no valid question remains. Duplicate normalized question text or option labels are rejected. The frontend limits a typed custom answer to the server's per-answer bound (1,485 characters, sized so four maximum-length questions and answers always fit one tool result), and the server still refuses a set of answers whose combined tool result, after credential redaction, would exceed 8,000 characters (`answers_too_long`); the card then tells you to shorten them rather than to retry.
+Malformed nested questions and options are skipped; the request fails when no valid question remains. Duplicate normalized question text or option labels are rejected. The frontend limits a typed custom answer to the server's per-answer bound (1,482 characters, sized so four maximum-length questions and answers always fit one tool result), and the server still refuses a set of answers whose combined tool result, after credential redaction, would exceed 8,000 characters (`answers_too_long`); the card then tells you to shorten them rather than to retry.
 
 ## Flow
 

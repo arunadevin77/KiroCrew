@@ -41,7 +41,7 @@ custom-rules:
       - "src/**/*.tsx"
       - "src/**/*.ts"
     regex:
-      pattern: "text-\\[[0-9](?:\\.[0-9]+)?px\\]"
+      pattern: "\\btext-\\[[0-9](?:\\.[0-9]+)?px\\]"
       check-added: true
       check-removed: false
     rule: |
@@ -65,7 +65,7 @@ custom-rules:
       - "src/**/*.tsx"
       - "src/**/*.ts"
     regex:
-      pattern: "(?:bg|text|border)-(?:gray|slate|zinc|neutral|stone)-\\d"
+      pattern: "\\b(?:bg|text|border)-(?:gray|slate|zinc|neutral|stone)-\\d"
       check-added: true
       check-removed: false
     rule: |
@@ -514,7 +514,7 @@ custom-rules:
     file-patterns:
       - "src/**/*.tsx"
     regex:
-      pattern: "<(div|span)(?![^>]*role=)[^>]*onClick"
+      pattern: "<(div|span)\\b(?!(?:=>|[^>])*\\srole=)(?:=>|[^>])*\\sonClick"
       check-added: true
       check-removed: false
     rule: |

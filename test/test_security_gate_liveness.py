@@ -217,7 +217,33 @@ def _url_payload_command(n: int) -> str:
 #: subcommand. It is a security-deciding predicate, so it cannot leave the package,
 #: and no dead code remains to offset it. Its first word is split on space and tab
 #: only, the way bash splits, so a Unicode space cannot pose as a word break.
-_PACKAGE_LINE_BUDGET = 28_665
+#:
+#: Raised again, from 28,665, for a PlantUML route in ``redaction._DOCUMENT_LINK_RE``:
+#: an encoded diagram is deflate output in a base64 alphabet, so pass 3 masked
+#: nearly every diagram link. The route admits only a ``plantuml`` host and a
+#: ``png|svg|txt|uml`` path, and the span counts only when the diagram inflates,
+#: whole, to printable text that every credential pass leaves unchanged. The
+#: text inflated per link and per call is capped so the extra scan stays that of
+#: a 16 KiB plain text. One route, the decode helpers, their comment. No pass
+#: widened and no threshold moved.
+#:
+#: Raised again, from 28,740, for the one import ``redaction_allow`` needs to publish
+#: its hosts file through ``atomic_write.replace_with_retry``, which retries the
+#: Windows sharing violation a bare ``os.replace`` lost the write on. No pattern moved.
+#:
+#: Raised again, from 28,741, for ``redaction._credential_search``: the credential
+#: scan finds the JWT-branch start with its own linear finder, which skips a failed
+#: segment run whole, so a long ``eyJ`` run costs linear time, not quadratic. It
+#: returns the same match as ``_CREDENTIAL_PATTERNS.search`` at every step. The
+#: other branches' start search guards the Telegram branch so a long digit run is
+#: walked once, not once per digit, and the JWT start keeps its run's end so an
+#: overlapping match does not re-walk that run. No pattern moved and no pass changed.
+#:
+#: Raised again, from 28,827, for ``denied_rules._exception_applies``: the
+#: deny-exception check both passes of ``is_denied`` share, which reads a deny
+#: exception through kiro-cli's one ``Running: `` title prefix so a shell title
+#: earns exactly its command's carve-out. No glob, verb or eligibility test moved.
+_PACKAGE_LINE_BUDGET = 28_844
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

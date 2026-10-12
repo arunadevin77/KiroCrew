@@ -918,6 +918,13 @@ async def api_crons_create(request: web.Request) -> web.Response:
     # mutating the returned job and calling a bare, unlocked `_save()`) closes
     # the data-loss race: two concurrent creates could interleave at the
     # `await`, and the unlocked save could overwrite the other request's job.
+    # The UI resolves a member pick to ``member_id`` client-side, but a scripted
+    # POST can still send a member NAME in ``agent``; resolve the split here so
+    # that path records a member selection too, not a template id the cron chat's
+    # reply path cannot bind. An explicit ``member_id`` is left as the caller set it.
+    from kiro_crew.cron_service.identity import split_cron_agent_member
+
+    agent_id, member_id = split_cron_agent_member(agent_id or "", member_id or "")
     add_kwargs: dict[str, Any] = {
         "channel": channel,
         "agent_id": (agent_id or ""),
@@ -1015,8 +1022,37 @@ async def api_cron_delete(request: web.Request) -> web.Response:
     app_denied = await _refuse_foreign_app_job(request, state, [job_id], "crons.delete")
     if app_denied is not None:
         return app_denied
+    from kiro_crew.dashboard.handlers.change_cards import REQ_CARD_UNDO_CRON_EXPECT
+
+    expected_revision = request.get(REQ_CARD_UNDO_CRON_EXPECT)
     try:
-        ok = await state.crons.remove_job_async(job_id, actor="dashboard", source="api_cron_delete")
+        if isinstance(expected_revision, str):
+            # Card Undo of a schedule it created: delete only while the job
+            # still fingerprints to what the card left, compared under the
+            # cron store lock so an edit another tab landed after the Undo's
+            # snapshot check cannot be clobbered.
+            from kiro_crew.dashboard.change_cards import cron_job_revision
+
+            outcome = await state.crons.remove_job_if_async(
+                job_id,
+                expected_revision=expected_revision,
+                revision_of=cron_job_revision,
+                actor="dashboard",
+                source="api_cron_delete",
+            )
+            if outcome == "changed":
+                return web.json_response(
+                    {
+                        "error": "this changed after the card was applied; undo refused",
+                        "code": "changed_since_apply",
+                    },
+                    status=409,
+                )
+            ok = outcome == "removed"
+        else:
+            ok = await state.crons.remove_job_async(
+                job_id, actor="dashboard", source="api_cron_delete"
+            )
     except CronStoreBusy:
         return web.json_response(_CRON_BUSY_BODY, status=_CRON_BUSY_STATUS)
     except CronStoreUnreadable as exc:
@@ -2779,8 +2815,9 @@ def _load_workspace_lessons(state: DashboardState, workspace: str) -> list[Lesso
 
 async def _prepare_member_lesson_store(store: str) -> web.Response | None:
     """Prepare V2 before synchronous lesson readers can borrow a handle."""
-    import sqlite3
-
+    # The member database is opened through the shim, so its errors are the shim's
+    # classes; the stdlib ``sqlite3.Error`` would let them escape as a 500.
+    from kiro_crew._sqlite_compat import sqlite3
     from kiro_crew.memory_stores import memory_store_version
 
     try:

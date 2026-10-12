@@ -17,8 +17,11 @@ superseded-by: []
 **Status:** `accepted` on 2026-10-03 by maintainer iamwhatever (see Open
 questions); now `partial`. Waves 2 and 3 are built: #16756 groups the sidebar
 per machine and #16757 opens a crew row as a window onto the peer's slot.
-Waves 4 and 5 are not. The Current state section below records main at
-`e698e8ca7a`, before either wave.
+Wave 4 is built too (#17642 stops new relay-slot births and deletes
+remote-adopt; #17662 deletes the turn relay and keeps old relay chats as
+read-only archives), so the relay model the Current state section describes is
+gone from main. Wave 5 is not. That section records main at `e698e8ca7a`,
+before waves 2 and 3.
 
 ## Summary
 

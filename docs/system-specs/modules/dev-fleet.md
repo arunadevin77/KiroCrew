@@ -1866,6 +1866,17 @@ Two different jobs live in that one dict, and they are worth keeping apart:
   leaves the other as an unpinned way to name the same exec. The trigger is pinned
   beside the programs, because a program name is a value and this is a place not
   to depend on one.
+
+  The `core.hooksPath` pin above reaches only git's hook DIRECTORY; it does
+  not reach a config-defined hook (`hook.<name>.command`, git 2.54+), whose
+  name the repo chooses. So every git command this module runs is
+  additionally given `-c hook.<name>.enabled=false` for each config hook git
+  can see, plus the submodule-recursion pins, injected per call as `-c` flags
+  by `runtime._with_config_hooks_off` (which calls
+  `git_config_hooks.config_hook_disable_args`) rather than through the env
+  dict, because the hook names are read per repository. A scan that cannot
+  list those names safely fails the command closed (`ConfigHookScanError`,
+  surfaced as `git hook config refused`).
 - **What git writes on a read.** `GIT_OPTIONAL_LOCKS=0` is also not a config key.
   `git status` refreshes the index's stat cache and saves it back under
   `index.lock`, so a command that is a read to its caller is a **write** to the

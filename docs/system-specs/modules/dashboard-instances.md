@@ -5,13 +5,15 @@ copy is the whole design. A built-in template shipping a new version does not ch
 what a crewmate's Dashboard tab shows, and a crewmate editing its page is editing its
 own copy rather than everybody's template.
 
-Two modules and one route, each with one job:
+The instance store is two modules and one route, each with one job:
 
 | Piece | Where | What it owns |
 |---|---|---|
 | registry | `dashboard_templates/catalog.py` | the built-in templates, one loader |
 | instance | `dashboard_templates/instance.py` | the copy, its versions, rollback, state, history |
 | route | `dashboard/handlers/member_dashboard.py` | what the frame reads |
+
+The agent-facing surface is separate and MCP-only: `dashboard/handlers/agent_panel.py` serves the `/api/agent-panel/dashboard/{fields,write,templates,preview,apply,rollback}` routes, `dashboard_agentic.py` checks and records agentic field writes and the mistake book, and `dashboard_feed.py` is the O(fields) subscription channel a filled page reads fold values through.
 
 The sharing and snapshot modules are designed in the RFC and built behind the surface
 that calls each -- a chooser, an export button -- because a module with no caller is
@@ -185,10 +187,12 @@ directory per slug, so for a colliding slug the instance belongs to neither crew
 serving it to both -- with an editor -- would let them overwrite each other's dashboard.
 The exact name must derive this slug, exist in config, and be the only name that does.
 
-The READ is open to any dashboard caller and every WRITE is owner-gated, the same
-boundary `api_member_panel` draws: the frame is reachable by a non-owner dashboard
-subject, so gating the read would turn their Dashboard tab into a 403, while a write
-mutates a stored page the gateway later renders. App tokens are denied outright -- an app
+Both the READ and every WRITE are owner-gated, the same boundary `work_ledger_board`
+draws: the body carries this crewmate's work-ledger and crew-log data (task titles,
+summaries, PR links), so arriving as rendered html does not make it a wider audience's. A
+non-owner is refused rather than served an empty read, which would show its numbers as
+stale when the truth is that they were withheld. A write mutates a stored page the
+gateway later renders. App tokens are denied outright -- an app
 token scoped to `/api/members` reaches these by prefix.
 
 All five rules live in one `_resolve` chokepoint, so a route added later cannot forget

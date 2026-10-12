@@ -44,7 +44,8 @@ for this goal, with milestone updates to the same slug. Treat that page as a
 presentation of ledger evidence, never another ledger or an acceptance result.
 Your no-file-writing role and the four non-delegable jobs above do not change.
 Do not bypass a tool approval or escalate approval mode to update a dashboard.
-Your own drawer board (`panel_publish`, template `kirocrew-conductor`) takes `{needs_you, done: "N of M", updated, next, tasks: [{task, state, step, pr?}]}` -- state one of done/working/testing/waiting/needs you/stuck, step one of Code/Test/PR/CI/Done (`kiro_crew.conductor_board_contract`).
+Your own drawer board (`panel_publish`, template `kirocrew-conductor`) takes `{needs_you, done: "N of M", updated, next, repo?: "owner/name", tasks: [{task, state, step, pr?}]}` (with `repo`, a task's `pr` opens its GitHub PR) -- state one of done/working/testing/waiting/needs you/stuck, step one of Code/Test/PR/CI/Done (`kiro_crew.conductor_board_contract`).
+With the "Dynamic Dashboard" Feature Preview on, the Dashboard tab's `goal-board` gives every needs-you item a Reply button. To offer answers too, `dashboard_write` its one agentic field `asks`: `{<item_id>: {options: ["short answer", ...]}}`, in the user's language, each a full answer that reads on its own beside the worker's report. Each option becomes a button that fills the user's chat box; drop an item's entry once it is answered.
 
 ### Work-item qualification
 
@@ -244,10 +245,13 @@ check AND the exit condition in the message, and pass explicit positive
 
 **`watch="work-ledger"` is mandatory.** It gates the loop on the ledger you
 dispatched into: a cycle where no worker reported anything costs no turn, and a
-worker's report, a worker session closing, or a worker turn ending pulls the
-next cycle forward to within seconds. The interval then only sets how often a
-silent fleet is re-checked, not how fast a report reaches you. A loop armed
-without it is a plain timer that pays a turn every interval. If you find yours
+worker's report of `blocked`, `question` or `done` pulls the next cycle forward
+to within seconds. Nothing else pulls it forward — a `progress` report, a
+worker ending its turn, a worker's session closing — so a worker that stops to
+wait costs you nothing, and one that crashed or went silent is found by the
+item's `stale` or `orphaned` flag on an ordinary cycle. The interval therefore
+sets how often a silent fleet is re-checked, not how fast a report reaches you.
+A loop armed without it is a plain timer that pays a turn every interval. If you find yours
 without it, fix that FIRST, before anything else that cycle, with
 `monitor_update(watch="work-ledger")` rather than re-arming.
 
@@ -298,7 +302,16 @@ python3 <this skill's dir>/scripts/patrol_budget.py renew \
 
 Each cycle:
 
-1. **`work_ledger_read` with `compact=true` first, every cycle.** It returns the
+1. **`work_ledger_read` with `compact=true` first, every cycle, unless the turn
+   already carries the board.** A cycle a worker's report woke you for arrives with a
+   `[work-ledger wake]` line naming each item that moved and a
+   `[work-ledger snapshot]` block holding the same document this read returns,
+   built when the turn was delivered. When you see that block, **act on it and
+   skip this read**: repeating it spends a round-trip to re-fetch what you are
+   already holding. Read for yourself when the turn carries no snapshot (a
+   scheduled patrol tick), or when you need a field the compact form omits.
+
+   The read returns the
    conductor record and, per item, the status columns plus the derived
    `orphaned`, `stale` and `acceptance_concrete` flags — no events, acceptance or
    `accept_batch`. This one read replaces the whole transcript-reading cycle, and
@@ -414,7 +427,9 @@ Each cycle:
    substance, a stall's shape. Never for a verdict, and never as the routine
    cycle read: the ledger is that.
 6. **Say nothing unless there is a real signal.** An item passing acceptance,
-   failing it, asking a question, or stalling. Never post "nothing changed".
+   failing it, asking a question, or stalling. Never post "nothing changed":
+   a cycle with no signal ends with a `nothing_to_do` call, because a turn
+   that stops bare after its tool calls keeps the empty-response recovery.
 
 **Shell exists for the two bundled scripts, not for work.** `execute_bash` is
 granted so patrol can run `accept_eval.py` and `patrol_budget.py`. Running a work item's build, test, or fix
@@ -492,8 +507,20 @@ finished work.
 
 One exception: if their message directly invalidates an item that is still
 running, deal with that item now — `session_stop` it and `close` its ledger item,
-or `session_send` the correction straight into it. Do not tear down the whole
-round for one item.
+or `session_send` the correction straight into it with `steer: true`. Do not
+tear down the whole round for one item.
+
+**Steer corrections, queue everything else.** A plain `session_send` to a busy
+worker waits for its current turn to end, so a correction sent that way arrives
+only after the worker has spent the whole turn — a build, a long investigation —
+going the wrong way. Pass `steer: true` for a correction, a changed direction,
+or "stop, that is already done": it lands in the running turn, and when the
+worker is idle or mid-turn injection is unavailable it starts or queues a turn
+exactly like a plain send, so it is never dropped. Leave `steer` off for answers
+to a `question`, seeds, and anything that can wait for the turn boundary.
+A steer does not withdraw what is already queued: if `session_read_message`
+reports a non-zero `queue_depth`, those messages still run after the turn, so
+say in the steered message which earlier instruction it supersedes.
 
 ## When a conductor dispatched you
 
@@ -680,7 +707,7 @@ what the composer renders:
   `autonudge_stop`, `wait`, `resource_status`, `list_sessions`,
   `session_ledger_read`, `session_ledger_record`, `skill_search`, `skill_fetch`,
   `select_crew`, `send_message`, `send_notification`, `ask_question`,
-  `reset_conversation`. That covers
+  `nothing_to_do`, `reset_conversation`. That covers
   every core call this procedure asks you to make; **any other core tool is
   mounted but prompts**, including `task_run`, `workflow_run` and the `spawn_*`
   family, which this charter forbids you to route a work item to in the first

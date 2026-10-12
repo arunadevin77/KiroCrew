@@ -726,7 +726,7 @@ Retried (intercepted so one transient `5xx` cannot dead-page the boot):
 |---|---|
 | `/assets/` | Vite content-hashed bundles a document cannot boot without; one 502 leaves a dark skeleton no reload clears |
 | `/vendor/` | Bare-specifier module stubs the import map depends on; boot-critical on standalone app-window documents |
-| `/pcm-worklet.js` | The dictation/STT worklet; `addModule` is called once with no retry. It previously fell through to the network-first shell handler, which fetched it once with no retry, so a transient `5xx` rejected `addModule`. Adding it here gives it the same bounded retry as `/assets/` and `/vendor/` |
+| `/pcm-worklet.js` | The dictation/STT worklet, fetched once by `addModule` with no retry of its own; the fetch handler routes it through `fetchAssetWithRetry`, giving it the same bounded retry as `/assets/` and `/vendor/` so one transient `5xx` cannot reject `addModule`, and the response is never cached |
 
 Declined (handed straight to the network, never intercepted):
 

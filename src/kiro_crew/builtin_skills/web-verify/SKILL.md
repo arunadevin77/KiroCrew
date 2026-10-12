@@ -19,8 +19,10 @@ here is about context cost, not permission.
 
 ## Three ways to capture, and name the one you used
 
-Not a backend here: the **`browser` MCP tool**. It opens public `http(s)` URLs
-only and refuses loopback, which is every URL in this skill — so
+Not a backend here: the **`browser` MCP tool**. Its `screenshot` op renders in
+the Browser panel and hands you no image file to read, and it refuses loopback
+unless the operator listed that exact `host:port` in
+the dashboard's local-origins setting (every URL in this skill is loopback). So
 `playwright-cli` is the local-verification path by design, not by preference.
 
 | backend | how | notes |
@@ -64,9 +66,11 @@ command -v playwright-cli    # or: command -v agent-browser
 ```
 
 `playwright-cli` (Node.js 20 or newer) is installed by Kiro Crew into its own
-managed prefix, `<data-home>/playwright-cli`, which agent shells get on `PATH`;
-the gateway also accepts a copy in a fixed system directory (`/usr/local/bin`,
-`/usr/bin`, Homebrew), never one found only through `PATH`. `agent-browser` is a
+managed prefix, `<data-home>/playwright-cli`, which agent shells get on `PATH`.
+The gateway also accepts a copy in a fixed system directory (`/usr/local/bin`,
+`/usr/bin`, a Homebrew prefix) only when the gateway user cannot write any part
+of it: a user-owned Homebrew or npm-global copy is refused even though
+`command -v` finds it, as is one found only through `PATH`. `agent-browser` is a
 separate CLI. Either may be absent.
 
 If **none** of the three backends is available, do NOT fake it and do NOT claim

@@ -342,9 +342,12 @@ order, and the order is load-bearing:
 5. Stop the cron service, then the heartbeat service.
 6. Stop the pooled MCP gateway broker and its backends (spawned in their own
    session, so they would otherwise outlive the gateway).
-7. Concurrently: cancel subagents, close all sessions, close WebSocket
-   connections and then the dashboard runner, close each channel client, and
-   cancel background tasks (model download, memory-store auto-migration, update check).
+7. Concurrently: stop the adaptive controller, cancel subagents, close all
+   sessions, close WebSocket connections and then the dashboard runner, close
+   each channel client, and cancel background tasks (model download, feature
+   video download, memory-store auto-migration, update check). Once those
+   settle, release the subagent manager's durable task store and stop memory
+   startup.
 
 ## Memory lifecycle
 

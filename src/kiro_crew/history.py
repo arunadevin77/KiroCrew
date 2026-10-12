@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Literal, overload
 
 from kiro_crew import platform_compat
-from kiro_crew.atomic_write import atomic_write, atomic_write_at
+from kiro_crew.atomic_write import append_line, atomic_write, atomic_write_at
 from kiro_crew.chat_attachments import persist_inline_images, same_text_modulo_images
 from kiro_crew.config.loader import KiroCrewConfig, config_dir
 
@@ -251,6 +251,8 @@ SLOT_OWNED_META_KEYS: frozenset[str] = frozenset(
         # unowned key would be carried forward forever by
         # ``carry_unowned_metadata`` -- the session could never be un-muted.
         "mutes_opened",
+        # Same reason: an unmute of the per-row mute writes no key.
+        "muted",
         "color_index",
         "color_hex",
         "color_theme",
@@ -2697,8 +2699,9 @@ class ConversationLog:
 
             # Session transcripts are intentionally local plaintext JSONL (the
             # documented storage format), not a credential/secret store.
-            with open(path, "a", encoding="utf-8", opener=owner_only_opener) as f:
-                f.write(json.dumps(msg) + "\n")  # lgtm[py/clear-text-storage-sensitive-data]
+            append_line(  # lgtm[py/clear-text-storage-sensitive-data]
+                path, json.dumps(msg), opener=owner_only_opener
+            )
 
             # Invalidate cache since file changed
             self._invalidate_cache(key)
@@ -3610,6 +3613,13 @@ class ConversationLog:
 
     def read_messages_chained(self, key: str) -> list[dict]:
         return self._read_projection.read_messages_chained(key)
+
+    def read_messages_chained_tail(self, key: str, limit: int) -> list[dict]:
+        """The newest *limit* rows of :meth:`read_messages_chained`, read from the end.
+
+        See ``TranscriptReadProjection.read_messages_chained_tail``.
+        """
+        return self._read_projection.read_messages_chained_tail(key, limit)
 
     def read_messages_chained_full(self, key: str) -> list[dict]:
         """Chained transcript INCLUDING each key's size-rotated archive head.

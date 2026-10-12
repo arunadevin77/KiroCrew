@@ -117,6 +117,7 @@ outstanding still returns immediately.
 | `member/config` | the roster's config-derived fields plus `changed: [field, ...]` | `dashboard.agent_admin.crew_update` (reached through the `handlers.agents` facade) after a save that changed at least one roster field; `handlers.members.api_members` when the folded roster disagrees with the agents config (hand-edited config) |
 | `member/binding` | `{slot_key}` | `handlers.members.api_member_thread` after the DM binding is written |
 | `member/rules` | `{text}` | `handlers.members.api_member_rules_put` after the rules file is written |
+| `member/reset` | `{reset_at}` — ISO-8601, the server's clear time; the chat pane folds every row written before it | `handlers.members.api_member_fresh_start`, on a `cleared` outcome only; a queued clear appends nothing |
 | `member/message` | `{ts, preview?}` — `preview` only for a SPEECH row (`user` / `assistant` with visible text); a machinery row (tool call, auto-nudge turn, envelope, say-nothing reply) carries `ts` alone, so the roster's `last_message` keeps the last thing said while `last_active_ts` still bumps. The payload is built by `eventlog_hooks.member_message_payload`, whose preview is `preview_text.speech_preview` (strip markdown → redact → cap at 120 with `…`) — the same function the cold roster read uses through `last_speech_info`, so the fold and the read agree byte for byte | `DashboardState._record_member_row`, wired as `Slot._on_row`, for every LIVE appended row on a member DM slot |
 | `activity/record` | the participation record, including `ts` | `members.record_activity` (replaces the former `activity.jsonl`) |
 | `slot/opened` · `slot/closed` | `{slot_key}` · `{slot_key, reason}` | the `slots` broadcast, diffing member-driven slots against the previous set |
@@ -150,7 +151,7 @@ One unit's state blocks the shortcut today: `DrivingProjection` holds its open s
 
 | key | view | fold |
 |---|---|---|
-| `roster` | the roster row minus `running`, with `name` and `slug` overlaid from the header | last-wins over `member/config`, `member/binding`, `member/message` — except `last_active_ts`, which is MONOTONE (see below) |
+| `roster` | the roster row minus `running`, with `name` and `slug` overlaid from the header | last-wins over `member/config`, `member/binding`, `member/reset` (→ `reset_at`), `member/message` — except `last_active_ts`, which is MONOTONE (see below) |
 | `activity` | `{recent: [record...] (≤50, newest first), today, week}` | ring buffer of `activity/record`; counts derived from each record's `ts` at view time |
 | `wake` | `{patrol: armed \| stopped \| none, slot_key?, stopped_reason?, since?}` | `patrol/started` / `patrol/stopped` last-wins |
 | `driving` | `{open: [slot_key...]}` | set add on `slot/opened`, remove on `slot/closed` |
@@ -160,6 +161,8 @@ One unit's state blocks the shortcut today: `DrivingProjection` holds its open s
 **The monotone rule has a ceiling.** Before the compare, `RosterProjection.apply` clamps the candidate `ts` to the fold's own wall clock plus `_FUTURE_TS_SKEW` (300 s). Monotone-greatest has no upper bound and the log is append-only, so a `ts` from a jumped-forward clock (VM resume, NTP step, hand-edited ISO string) would otherwise latch for the life of the store and pin the member atop Recent. A clamped future `ts` still advances a staler recency, but never past the present plus that tolerance; skew inside the tolerance passes unchanged.
 
 **The roster read takes its `last_active_ts` from this fold, floored by the transcript.** `handlers/members.py` `_recency_for_row` reads the response's own `roster` projection block and returns `max(folded, transcript)`. The fold is the authority because it sees what the transcript cannot: a machinery turn that carries no speech, and a row appended but not yet flushed to disk. The transcript's speech-only epoch stays as a FLOOR, not a rival — these events ride a best-effort hook a queue ceiling may drop, and a member whose log cannot answer at all (no log yet, a slug shared by two members, a read the store will not prove — every one of which answers an empty `values`) has only the transcript. Because the row and the projection block it ships now carry the ONE value, the client's higher-seq-wins merge has one reading to reconcile rather than two: `MembersPage` merges `last_active_ts` as the GREATER of row and pushed frame, which is what lets a live `member_projection` frame reorder the roster with no refetch. `last_message` keeps the opposite rule for the reason given under the reconcile below.
+
+**`reset_at` keeps only the latest reset.** It is last-wins like every other field here, so a second fresh start overwrites the first and the pane folds everything above the newest boundary after a reload — including rows an earlier boundary had already unfolded. The earlier `member/reset` events stay in the log as the record of when each clear happened, and no read consults them: the pane draws one divider, so the fold needs one boundary.
 
 `MemberEventLogService.snapshot(slug)` returns `{asOfSeq, values}` for all four. `history(slug, before, limit)` returns a newest-first page of envelopes.
 

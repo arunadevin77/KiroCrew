@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from kiro_crew import platform_compat, session_pid
-from kiro_crew.acp import client, runtime
+from kiro_crew.acp import client, runtime, session_mcp
 from kiro_crew.acp.types import (
     METHOD_SESSION_LOAD,
     METHOD_SESSION_NEW,
@@ -105,6 +105,13 @@ def lifecycle(monkeypatch, tmp_path):
     monkeypatch.setattr(session_pid, "_accepted_subreaper_pids", lambda: {1})
     monkeypatch.setattr(session_pid, "_PROTECTED_PIDS", set())
     monkeypatch.setattr(runtime, "pooled_session_servers", lambda *_, **__: [])
+    # load_session resolves its MCP array from the agent spec, and the spec read
+    # self-heals a missing managed spec by rebuilding EVERY managed agent config
+    # (a dozen files plus a config migration) inside the session-start hop. The
+    # per-test agents dir is always empty, so without this the load path does
+    # that whole rebuild under the test's 5 s budget while the create path, which
+    # passes an explicit array, never does. No kiro-cli reads the spec here.
+    monkeypatch.setattr(session_mcp, "ensure_agent_materialized", lambda _agent: False)
     kernel.add(900, 1, 900, "gateway")
     with ThreadPoolExecutor(max_workers=1) as pool:
         monkeypatch.setattr(runtime, "subprocess_executor", lambda: pool)

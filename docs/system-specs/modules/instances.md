@@ -110,8 +110,8 @@ Loopback origins (`http://127.0.0.1:*`, `http://localhost:*`, plus the https and
 `0.0.0.0` forms) are in `frame-src` **unconditionally** because the Web Preview
 panel needs them; only the `*.localhost` wildcard is instances-gated.
 
-With the flag off, `/api/instances/*` returns `403` and the panel shows an
-opt-in card. `GET /api/instances` also reports `active`, which is true only when
+With the flag off, `/api/instances/*` returns `403` with a `{code: "instances_disabled"}` body and the panel shows an
+opt-in card. The SPA keys its silent handling on that `code`, not on the `403` status: the route's other `403`s (`owner_only`, Slack-origin) share the status but are real authorization failures the UI still surfaces, so `isInstancesDisabledError` matches only the `instances_disabled` code. `GET /api/instances` also reports `active`, which is true only when
 the SSH manager actually exists: `enabled && !active` means the flag was set
 after startup and a restart is still pending.
 
@@ -519,7 +519,7 @@ kernel-reported argv right after spawn: `/proc/<pid>/cmdline` on Linux, the
 process fingerprint to the same value. Recorded
 and observed share one basis, so a shebang `aws` v1 entrypoint (the kernel
 shows `<interpreter> /path/aws ...`) or a compression/host/port setting edited
-since spawn no longer misses the reclaim (#5383). Because the fingerprint is
+since spawn is still reclaimed. Because the fingerprint is
 inside the MAC, erasing it from a signed record fails verification rather than
 falling back. The spawn transport is signed with it because it picks the signal
 scope (pid for ssh, process group for SSM): a record whose settings switched
@@ -545,7 +545,7 @@ recorded pointing at it. It is logged and its port stays excluded. The Windows
 check proves the command-line string, not the vector: a process that rewrote
 its own command line to that exact string would pass, so the start-time pin is
 what rules out pid reuse; a target launched through a `.cmd`/`.bat` shim runs
-under `cmd.exe`, never matches, and is left alone (#16916). Anything short of
+under `cmd.exe`, never matches, and is left alone. Anything short of
 full identity — either hint missing, start time differing or unreadable, argv
 or command line unreadable, or any argv element differing — means the identity
 cannot be confirmed: the process is left alone (logged, and SEL-audited when
@@ -553,7 +553,7 @@ anything was signalled) and allocation simply skips its port; the freed port
 returns to the pool at the next allocation rather than being re-taken by the
 same connect. Reclamation is keyed on the manager's OWN recorded identity,
 never a process-table scan — matching the table by argv pattern is what once
-SIGTERMed forwards operators had opened themselves (#1972).
+SIGTERMed forwards operators had opened themselves.
 
 `disconnect()` resets `local_port` to the unallocated sentinel together with
 `was_connected` and the forwarder identity pair in one write, so a freed port
@@ -583,9 +583,9 @@ with `403 owner_only`, and rejects a disabled feature with `403`. Every call, su
 | `POST /api/instances/{id}/disconnect` | Tear down one tunnel. |
 | `GET /api/instances/{id}/status[?diagnose=1]` | Live status; `?diagnose=1` runs the failure ladder and merges the result. For a chained crew it probes the parent hop and can answer `chain_parent_missing`. |
 | `POST /api/instances/{id}/restart` | Restart the remote gateway over SSH. Refused for a chained crew, which this dashboard cannot run commands on ("Restart it from that crew"). |
-| `GET /api/instances/{id}/capabilities` | What a CONNECTED peer can do, for a local session bound to it: `version` (+ `local_version` and `version_match`, which is `versions_compatible(local, peer)`: same major.minor, exact string equality for a non-semver build id, false for an empty peer version; the relay's `ensure_version_parity` enforces the same rule), `agents` + `default_agent`, `models`, `effort_levels`, `workspaces` + `default_workspace`. Aggregates five fixed peer reads (`/api/version`, `/api/agents`, `/api/models`, `/api/effort-levels`, `/api/workspaces`) through `SshTunnelManager.peer_capability` — a closed path set, deliberately NOT the prefix-fenced proxy below, which would have granted the peer's mutating `PUT /api/agents/{name}` in the same stroke. The reads fan out concurrently, each under `DEFAULT_CAPABILITY_PROXY_TIMEOUT_SECS` (8s) except `/api/models`, which gets `DEFAULT_MODELS_CAPABILITY_PROXY_TIMEOUT_SECS` (20s): the model list is the one read whose COLD path runs bounded subprocess work on the peer (up to 5s sandbox-backend detection + up to 10s `kiro-cli chat --list-models` + up to 3s entitlement revalidation, ~18s worst case — the named production bounds `_SANDBOX_BACKEND_PROBE_TIMEOUT_SECS`, `_LIST_MODELS_SUBPROCESS_TIMEOUT_SECS` and `_READ_PATH_PROBE_DEADLINE_SECS`), so an 8s budget killed every cold read and reported a healthy peer as `capability_unreachable` (#10621). One failed read does not fail the request: the reply is a PARTIAL document with the miss named per-field in `unavailable` (`capability_unreachable`, `capability_unauthorized`, `capability_peer_too_old`, `capability_peer_revalidating`, …), so the frontend disables exactly that control. A peer whose `/api/models` answers its deliberate `503 model_list_revalidating` (an entitlement revalidation in flight) maps to `capability_peer_revalidating`; any other non-2xx is `capability_peer_refused`. The dashboard (`useRemoteCapabilities`) re-polls a partial document every 8s while the peer is version-compatible and the per-field code is transient (`capability_unreachable` or `capability_peer_revalidating`) — never for version-skewed, disconnected, or terminally-failing peers — and its model pickers render a loading row (`aria-busy`) rather than an empty list while the model roster is pending, and an inline `ErrorNotice` with in-place retry when the read itself fails — an empty list would claim the peer offers no models. Replies are untrusted input: every string crosses the redact + clamp chain (`_cap_str` / `_cap_rows`, row cap 500) before reaching a picker. Owner-only, like the proxy and the federated search. |
-| `GET /api/instances/{id}/chat-slots` | A CONNECTED peer's live sessions for the merged Sessions sidebar (`read_peer_slots`). Read-only. Each row is re-shaped to an allowlist of fields; a peer slot this hub drives for execution is dropped, so one conversation is not listed twice, and a surviving row's `parent` citation naming such a slot is rewritten to the local driver (`{slot, hub_key}`) rather than dropped, so no peer slot key reaches the browser. See the feature map's merged-sessions row. |
-| `ANY /api/instances/{id}/proxy/{path}` | Generic chat proxy — the carrier for the remote-crew chat view. Forwards a **bounded slice** of a CONNECTED peer's `/api/` surface over the already-open tunnel via `SshTunnelManager.proxy_request`, relaying the reply redacted (a proxied chat turn streams SSE for minutes, so the client timeout is connect + read-idle, never total). Credential rules match the federated search: the manager-held token travels as the port-scoped cookie and never reaches the browser; a `401/403` gets exactly one transparent re-mint retry; `allow_redirects=False` (a compromised peer answering 30x must not steer the hub — SSRF). Path policy is a **canonicalization**, not a pattern check, and runs before any URL is built: the caller's path is percent-decoded to a fixed point (bounded by `PROXY_PATH_MAX_DECODE_PASSES`, a deeper chain is refused), then every segment must be a plainly-named token — no empty segment, no all-dots segment, and only unreserved/sub-delim characters — and the forwarded path is **rebuilt from exactly those vetted segments**. Vetting the decoded form and forwarding the rebuilt one is what closes encoded traversal at any depth: a half-decoded `%252e%252e` matches no denylist rule yet still normalizes back into the control plane. On that canonical form the vet policy is a **positive prefix allowlist** (`_PROXY_ALLOWED_PREFIXES`, `api/chat` + `api/stream` today): only the peer's `api/chat` subtree and its `api/stream` event feed are forwarded — each a prefix grant, so every route under one is reachable, which is the chat feature's own wire surface — and everything outside the named prefixes is refused by default: the peer's own `api/instances` plane (one hub cannot chain through a peer into a third machine's SSH control plane), the peer's token-minting routes (whose JSON replies would carry a minted peer credential back through the hub in-band), and any endpoint the peer grows outside the allowlisted prefixes. `api/stream` is the peer's own SSE broadcast endpoint and the out-of-turn half of the chat view: the per-turn reply streams back from `api/chat`, while session-list and slot-state changes arrive on `api/stream`. It is deliberately that endpoint and **not** its WebSocket sibling `api/ws` — a WS row would need a `101 Switching Protocols` to cross this proxy, and the reply content-type gate below exists precisely to stop a peer serving anything but JSON/SSE onto the authenticated hub origin, so an upgrade would tunnel straight through it. Note what the row admits: that feed is per-client but not per-slot, so a hub holding it receives the peer's whole notification/slot broadcast rather than only the session on screen — peer content crossing to a hub user who is already the peer's owner (this route is owner-only), so it widens volume, not privilege, and is the reason it is a named row rather than a blanket `api/` grant. A new prefix is added to the constant explicitly, never by widening back to deny-only; the constant's exact value is pinned by a test so widening is always a reviewed act. Methods limited to GET/POST/PUT/PATCH/DELETE; inbound bodies capped at `PROXY_REQUEST_BODY_MAX_BYTES` before buffering. No browser Origin or cookies are forwarded to the peer (the hub presents as a same-origin loopback client), and the hub's own `?token=` credential is **stripped from the forwarded query** — the browser may authenticate the proxy request with it, and forwarding it would hand the peer a replayable hub credential. Replies are gated to an **allowlist**: only `application/json` and `text/event-stream` content types are forwarded (a compromised peer must not serve active content that executes on the hub origin), and only allowlisted headers (`Content-Type`, `Cache-Control`, `X-Accel-Buffering`) cross back on an SSE reply — `Set-Cookie` and everything else is dropped, with `X-Content-Type-Options: nosniff` added. **Every reply is redacted before the browser sees it** (the crew window renders peer text directly), with the relay's `redact_peer_text` chain: an `application/json` body is buffered whole and redacted as one decoded document, then re-sent as a fresh JSON response; an SSE stream is cut into events (CR/CRLF normalised, an event's `data:` lines joined into one payload, the way the browser reads it) and each event is redacted before it is written. Both are bounded by `PROXY_REDACT_BUFFER_MAX_BYTES`: a JSON reply past it is refused with `proxy_reply_too_large` (502), an SSE event past it ends the stream; a reply nested past the recursion limit is refused as `proxy_reply_unredactable`. Nothing is ever forwarded unredacted, and the allowed content types are pinned to exactly the two with a redaction path. Typed failures (`proxy_peer_not_connected`, `proxy_no_credential`, `proxy_unauthorized`, `proxy_peer_unreachable`) map to 5xx with a machine-readable `code`. |
+| `GET /api/instances/{id}/capabilities` | What a CONNECTED peer can do, read by New chat on crew and the crew window: `version` (+ `local_version` and `version_match`, which is `versions_compatible(local, peer)`: same major.minor, exact string equality for a non-semver build id, false for an empty peer version), `agents` + `default_agent`, `models`, `effort_levels`, `workspaces` + `default_workspace`. Aggregates five fixed peer reads (`/api/version`, `/api/agents`, `/api/models`, `/api/effort-levels`, `/api/workspaces`) through `SshTunnelManager.peer_capability` — a closed path set, deliberately NOT the prefix-fenced proxy below, which would have granted the peer's mutating `PUT /api/agents/{name}` in the same stroke. The reads fan out concurrently, each under `DEFAULT_CAPABILITY_PROXY_TIMEOUT_SECS` (8s) except `/api/models`, which gets `DEFAULT_MODELS_CAPABILITY_PROXY_TIMEOUT_SECS` (20s): the model list is the one read whose COLD path runs bounded subprocess work on the peer (up to 5s sandbox-backend detection + up to 10s `kiro-cli chat --list-models` + up to 3s entitlement revalidation, ~18s worst case — the named production bounds `_SANDBOX_BACKEND_PROBE_TIMEOUT_SECS`, `_LIST_MODELS_SUBPROCESS_TIMEOUT_SECS` and `_READ_PATH_PROBE_DEADLINE_SECS`), so an 8s budget would kill every cold read and report a healthy peer as `capability_unreachable`. One failed read does not fail the request: the reply is a PARTIAL document with the miss named per-field in `unavailable` (`capability_unreachable`, `capability_unauthorized`, `capability_peer_too_old`, `capability_peer_revalidating`, …), so the frontend disables exactly that control. A peer whose `/api/models` answers its deliberate `503 model_list_revalidating` (an entitlement revalidation in flight) maps to `capability_peer_revalidating`; any other non-2xx is `capability_peer_refused`. The dashboard reads it in two places: New chat on crew (`chat-sidebar/create.ts`) refuses to create a session on a peer whose `version_match` is false, and the crew window (`CrewChatWindow`) re-reads it every 5s until `version_match` is true, so a reconnect unlocks the window; the window's model picker (`useCrewWindowModelPicker`) marks the model list failed when `unavailable.models` is set rather than showing an empty list. Replies are untrusted input: every string crosses the redact + clamp chain (`_cap_str` / `_cap_rows`, row cap 500) before reaching a picker. Owner-only, like the proxy and the federated search. |
+| `GET /api/instances/{id}/chat-slots` | A CONNECTED peer's live sessions for the merged Sessions sidebar (`read_peer_slots`). Read-only. Each row is re-shaped to an allowlist of fields (`_clean_peer_slot`), a `parent` citation keeps only its string `slot` and `key` halves (`_clean_peer_parent`), and the server stamps each keyed row's `row_identity` as `<instance_id>:<key>`. Every peer row is listed, including the peer's own row for a local relay archive's chat; the archive projects its own local key, so the two never share a sidebar identity. See the feature map's merged-sessions row. |
+| `ANY /api/instances/{id}/proxy/{path}` | Generic chat proxy — the carrier for the remote-crew chat view. Forwards a **bounded slice** of a CONNECTED peer's `/api/` surface over the already-open tunnel via `SshTunnelManager.proxy_request`, relaying the reply redacted (a proxied chat turn streams SSE for minutes, so the client timeout is connect + read-idle, never total). Credential rules match the federated search: the manager-held token travels as the port-scoped cookie and never reaches the browser; a `401/403` gets exactly one transparent re-mint retry; `allow_redirects=False` (a compromised peer answering 30x must not steer the hub — SSRF). Path policy is a **canonicalization**, not a pattern check, and runs before any URL is built: the caller's path is percent-decoded to a fixed point (bounded by `PROXY_PATH_MAX_DECODE_PASSES`, a deeper chain is refused), then every segment must be a plainly-named token — no empty segment, no all-dots segment, and only unreserved/sub-delim characters — and the forwarded path is **rebuilt from exactly those vetted segments**. Vetting the decoded form and forwarding the rebuilt one is what closes encoded traversal at any depth: a half-decoded `%252e%252e` matches no denylist rule yet still normalizes back into the control plane. On that canonical form the vet policy is a **positive prefix allowlist** (`_PROXY_ALLOWED_PREFIXES`, `api/chat` + `api/stream` today): only the peer's `api/chat` subtree and its `api/stream` event feed are forwarded — each a prefix grant, so every route under one is reachable, which is the chat feature's own wire surface — and everything outside the named prefixes is refused by default: the peer's own `api/instances` plane (one hub cannot chain through a peer into a third machine's SSH control plane), the peer's token-minting routes (whose JSON replies would carry a minted peer credential back through the hub in-band), and any endpoint the peer grows outside the allowlisted prefixes. `api/stream` is the peer's own SSE broadcast endpoint and the out-of-turn half of the chat view: the per-turn reply streams back from `api/chat`, while session-list and slot-state changes arrive on `api/stream`. It is deliberately that endpoint and **not** its WebSocket sibling `api/ws` — a WS row would need a `101 Switching Protocols` to cross this proxy, and the reply content-type gate below exists precisely to stop a peer serving anything but JSON/SSE onto the authenticated hub origin, so an upgrade would tunnel straight through it. Note what the row admits: that feed is per-client but not per-slot, so a hub holding it receives the peer's whole notification/slot broadcast rather than only the session on screen — peer content crossing to a hub user who is already the peer's owner (this route is owner-only), so it widens volume, not privilege, and is the reason it is a named row rather than a blanket `api/` grant. A new prefix is added to the constant explicitly, never by widening back to deny-only; the constant's exact value is pinned by a test so widening is always a reviewed act. Methods limited to GET/POST/PUT/PATCH/DELETE; inbound bodies capped at `PROXY_REQUEST_BODY_MAX_BYTES` before buffering. No browser Origin or cookies are forwarded to the peer (the hub presents as a same-origin loopback client), and the hub's own `?token=` credential is **stripped from the forwarded query** — the browser may authenticate the proxy request with it, and forwarding it would hand the peer a replayable hub credential. Replies are gated to an **allowlist**: only `application/json` and `text/event-stream` content types are forwarded (a compromised peer must not serve active content that executes on the hub origin), and only allowlisted headers (`Content-Type`, `Cache-Control`, `X-Accel-Buffering`) cross back on an SSE reply — `Set-Cookie` and everything else is dropped, with `X-Content-Type-Options: nosniff` added. **Every reply is redacted before the browser sees it** (the crew window renders peer text directly), with the `redact_peer_text` chain (`dashboard/peer_redaction.py`): an `application/json` body is buffered whole and redacted as one decoded document, then re-sent as a fresh JSON response; an SSE stream is cut into events (CR/CRLF normalised, an event's `data:` lines joined into one payload, the way the browser reads it) and each event is redacted before it is written. Both are bounded by `PROXY_REDACT_BUFFER_MAX_BYTES`: a JSON reply past it is refused with `proxy_reply_too_large` (502), an SSE event past it ends the stream; a reply nested past the recursion limit is refused as `proxy_reply_unredactable`. Nothing is ever forwarded unredacted, and the allowed content types are pinned to exactly the two with a redaction path. Typed failures (`proxy_peer_not_connected`, `proxy_no_credential`, `proxy_unauthorized`, `proxy_peer_unreachable`) map to 5xx with a machine-readable `code`. |
 
 **Three routes cross the token boundary, and they are the only three.** `connect`,
 `refresh-token` and `embed-token` each return a minted dashboard token in their
@@ -644,8 +644,8 @@ mismatch between the record and the live forward.
 
 The machinery is also not paid for by this feature alone. Every piece exists
 because a tunnel's coordinates can change under a task that already read them —
-which is equally true of the pre-existing self-heal and token-refresh loops, and
-is where two of the bugs found during this PR's review actually lived. Making the
+which is equally true of the self-heal and token-refresh loops, where the same
+coordinate-staleness hazard lives. Making the
 edit path safe hardened those seams rather than adding a new hazard: the barrier
 is what stops a backed-off self-heal from reinstalling a tunnel to a machine the
 user has moved on from, with or without an edit in flight.
@@ -696,7 +696,7 @@ what its own edit invalidated, and never reopens anything on the user's behalf.
   its key is shape-checked (`isPaneSlotKey`, `[A-Za-z0-9._:-]{1,128}`) before it
   is stored under the instance id that origin resolved to. The parent's outbound
   `postMessage` is addressed to the pane's exact origin, never `*`.
-- **Last-chat hint on reconnect (#16009).** A pane's own `mc-active-slot-<mode>`
+- **Last-chat hint on reconnect.** A pane's own `mc-active-slot-<mode>`
   lives in its origin, which carries the tunnel's local port, so a reconnect on a
   new port starts the pane with empty storage. The pane therefore reports its
   active chat (`mc-pane-active-slot`), and the hub keeps one last chat per
@@ -1496,9 +1496,9 @@ using either alone costs a platform:
 - `platform_compat.process_start_time()` is the fallback, and on **Windows** it is
   what `get_process_start_id()` dispatches to: it reads the process creation
   `FILETIME` (100-ns units) through a query-only handle. `get_process_start_id()`
-  now implements all three platforms — Linux `/proc` field 22, macOS libproc, and
+  implements all three platforms — Linux `/proc` field 22, macOS libproc, and
   the Windows `process_start_time()` leg — and answers `None` only on an
-  unrecognised host or a failed read, never on Windows categorically (issue #8473).
+  unrecognised host or a failed read, never on Windows categorically.
   Without the Windows leg the token would be empty on every Windows host, so a pod
   there could never prove ownership — an unsatisfiable requirement rather than a
   strict one. `metrics.md` records the complementary trap: `get_process_start_id`
@@ -1618,7 +1618,7 @@ offline agent is not reported as a dead remote gateway:
 2. remote dashboard up? (`send-command` + curl on the remote loopback) → no ⇒ `remote_down`
 3. local forward reachable? → no ⇒ `tunnel_down`, else `ok`
 
-`ssm_unreachable` is a new diagnosis code; the shared rungs reuse SSM-worded
+`ssm_unreachable` is an SSM-specific diagnosis code; the shared rungs reuse SSM-worded
 reasons so the copy never tells an SSM user to "check SSH access".
 
 ### Reuse of the launcher's SSM primitives
@@ -1713,9 +1713,9 @@ while the **conversation payload travels byte-exact**. That distinction is
 forced, not stylistic: thinking blocks inside `conversation_metadata` carry a
 provider `signature` over their own content, which is validated when the
 conversation is replayed, so rewriting any covered byte makes the peer's *next
-turn* fail — long after the import reported success. An earlier revision scrubbed
-Layer B on both boundaries and, measured against one developer machine's 704 real
-sessions, altered a signature in **41%** of them. Redacting this artifact and
+turn* fail — long after the import reported success. Scrubbing
+Layer B on both boundaries alters a signature in **41%** of one developer
+machine's 704 measured real sessions. Redacting this artifact and
 transplanting it cannot both hold; what bounds the exposure is the destination
 (the operator's own peer, over a tunnel they authenticated, stored `0600`), not a
 scrub of the payload. **Layer A keeps its redaction** — that text is rendered and
@@ -2269,8 +2269,8 @@ dashboard owner is unaffected, being entitled to both.
 
 **Export is never blocked by size.** There is no producer-side reject preflight:
 a session of any size exports, carrying the FULL conversation and (when the
-operator opted in) the FULL Layer B. The old "refuse a bundle the importer would
-reject" gate is gone, because the importer no longer refuses on size either — the
+operator opted in) the FULL Layer B. There is no "refuse a bundle the importer would
+reject" preflight, because the importer does not refuse on size either — the
 two halves agree by both dropping the ceiling, not by consulting one shared bound.
 The only structural refusals left are an empty transcript (`export_bundle_empty`)
 and the non-persistent/ownership guards above.
@@ -2427,7 +2427,7 @@ port-scoped cookie so it cannot land in the peer's access log, and a `401/403`
 gets exactly one transparent re-mint retry, because a retained credential can go
 stale while the tunnel stays `CONNECTED`.
 
-"Follows the same rules" is now **enforced rather than asserted**: all three
+"Follows the same rules" is **enforced rather than asserted**: all three
 peer-request methods — `send_session_bundle`, `search_sessions_remote` and
 `proxy_request` — resolve their target and credential through one shared private
 pair, `_peer_target` (connected-only, loopback target, port-scoped cookie name)
@@ -2740,10 +2740,8 @@ machine (B), and B -- not A -- is the one that can reach a third box (C): a fres
 provisioned desktop, a host whose key lives on B. Connecting from A fails when only B
 holds C's key, so B connects to C and A shows C.
 
-**The decision to allow this is recorded in issue #13744**, which this section
-implements. Chaining reverses a stated property of Remote Crew -- "a connected
-instance cannot connect onward to another instance" -- and that issue is where the
-reversal was asked for, in those words, with the reason above it: B, not A, is the
+Chaining reverses a stated property of Remote Crew -- "a connected
+instance cannot connect onward to another instance" -- because B, not A, is the
 one that can reach C.
 
 Remote Crew is present inside an embedded pane, and the depth, cycle and width rules
@@ -2963,7 +2961,7 @@ steal an ACTIVE listener, and omitting it is not enough either, so the non-POSIX
 sets `SO_EXCLUSIVEADDRUSE` instead -- the same branch, for the same reason, as
 `browser_cli.view` and the dashboard's own listener. Setting `SO_REUSEADDR`
 unconditionally holds nothing at all on Windows, which is a platform-specific no-op of
-exactly the kind #9731 exists to catch.
+exactly the kind that is easy to miss.
 
 So the handshake completes and a stale client does transmit -- "the credential is never
 sent" is not reachable -- and what is reachable is that nothing reads it. The guard

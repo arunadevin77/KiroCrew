@@ -112,8 +112,8 @@ committing:
 
 ```bash
 python3 scripts/check_black_formatting.py && python3 scripts/check_subprocess_encoding.py
-COMMENT_HISTORY_BASE_REF=origin/main python3 scripts/check_comment_history.py && isort src/kiro_crew test
-flake8 src/kiro_crew test && mypy src/kiro_crew
+COMMENT_HISTORY_BASE_REF=origin/main python3 scripts/check_comment_history.py && isort src/kiro_crew test conftest.py xdist_budget.py
+flake8 src/kiro_crew test conftest.py xdist_budget.py && mypy src/kiro_crew
 python3 scripts/local-gate.py
 ```
 

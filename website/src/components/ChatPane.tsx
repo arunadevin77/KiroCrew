@@ -16,6 +16,7 @@ import type { ChatInputProps } from './chat-input/props'
 import { busySteerFlag } from './chat-input/busySend'
 import { filterCrewmateChat } from './chat/crewmateBubbles'
 import CrewmateLiveActivity from './chat/CrewmateLiveActivity'
+import { useCrewmateGreetingShown } from './chat/useCrewmateGreetingShown'
 import type { CrewmateIdentity } from '../pages/chat/CrewmateMessage'
 import ErrorNotice from './ErrorNotice'
 import { Btn } from './ui'
@@ -106,6 +107,7 @@ import {
 
 
 import { i18nT } from '../i18n/t'
+import { earlierConversationRenderer, foldEarlierConversation } from './EarlierConversation'
 import { answerRejectedMessage } from '../utils/questionAnswers'
 import { fetchDashboardConfig } from '../api/dashboardConfigQuery'
 
@@ -146,6 +148,7 @@ export default function ChatPane({
   onArtifactOpen,
   busyMode = 'split',
   crewmate,
+  crewmateGreeting,
   onOpenCrewWorkLog,
   onOpenCommandCenter,
   threads,
@@ -153,6 +156,7 @@ export default function ChatPane({
   sessions,
   activeSession,
   crewmateCreated,
+  foldBefore,
 }: {
   slotKey: string
   onOpenCommandCenter?: () => void
@@ -205,6 +209,10 @@ export default function ChatPane({
    *  above the pane (the Members page's "Couldn't reconnect" notice) sets it,
    *  so the pane does not say "go" one line under a host that says "broken". */
   hideEmptyHint?: boolean
+  /** ISO time of a fresh start on this thread. Rows written before it fold
+   *  under one closed "Earlier conversation" divider the reader can open.
+   *  Display only: the rows stay in the transcript. */
+  foldBefore?: string
   /** Bring a Side Chat surface for this pane's slot on screen. The selection
    *  toolbar offers "Ask" only when the host provides it: the pane owns its
    *  composer (so Quote is always there) but no Side Chat of its own — the
@@ -242,6 +250,12 @@ export default function ChatPane({
    *  (components/chat/crewmateBubbles). Undefined = an ordinary transcript;
    *  decided by the host, never inferred from the slot. */
   crewmate?: CrewmateIdentity
+  /** A message from the crewmate the HOST draws after the last row (the
+   *  Members page's warm resume / cold welcome, `mateGreeting.ts`). It sits in
+   *  the transcript like a reply but is not one: never a slot row, never sent,
+   *  so it costs no model call and the model never reads it back. Only
+   *  meaningful with `crewmate`. */
+  crewmateGreeting?: React.ReactNode
   /** Focus the crewmate's Work log tab (the side-panel tab that holds what
    *  the filter hid). When given, the quiet hint's "where the work went" line
    *  is a link that opens it, so the words that read as a destination are one;
@@ -538,6 +552,9 @@ export default function ChatPane({
     () => (crewmate ? filterCrewmateChat(paneMessages) : paneMessages),
     [crewmate, paneMessages],
   )
+  // The host's greeting is drawn while it is still the newest word: a reply
+  // landing after it (a patrol / wake turn keeps it up) takes it down.
+  const greetingShown = useCrewmateGreetingShown(!!crewmate && !!crewmateGreeting, messages)
   // What the crewmate is doing right now, for the status line above the
   // working indicator: read through the SAME seam the DM header's identity
   // pill reads (`useSlotActivity` over the slot's live status record), so the
@@ -627,11 +644,16 @@ export default function ChatPane({
   }, [])
   // Same enablement the main chat honours (Settings → Chat → pin last prompt),
   // read through the hook's ref so the scroll recompute never closes over a
-  // stale config.
+  // stale config. Never in a crewmate's chat (#18346): the banner is for long
+  // agent runs where the question scrolls away while the answer streams; a DM
+  // with a colleague has short turns, the user's bubble is one row back, and
+  // under the floating glass header (#18325) a second floating card read as
+  // clutter. Ordinary chats and split panes keep it.
+  const pinOn = chatConfig.pinLastPrompt && !crewmate
   useEffect(() => {
-    pin.pinEnabledRef.current = chatConfig.pinLastPrompt
-    if (!chatConfig.pinLastPrompt) setPinned(null)
-  }, [chatConfig.pinLastPrompt, pin.pinEnabledRef, setPinned])
+    pin.pinEnabledRef.current = pinOn
+    if (!pinOn) setPinned(null)
+  }, [pinOn, pin.pinEnabledRef, setPinned])
   // The transcript row whose bubble the banner is standing in for. The list
   // hides it (ts-keyed, index fallback — see ChatMessageList.hiddenRow);
   // memoised so the memo'd list does not re-render on every pane render.
@@ -1568,7 +1590,14 @@ export default function ChatPane({
   const setToolDisclosureFor = useCallback((key: string, expanded: boolean) => {
     setToolDisclosure((prev) => ({ ...prev, [key]: expanded }))
   }, [])
-  const renderers = useMemo(
+  // The fresh-start fold opens per fresh start: a newer one closes it again.
+  const [openFold, setOpenFold] = useState<string | undefined>(undefined)
+  const foldOpen = !!foldBefore && openFold === foldBefore
+  const listMessages = useMemo(
+    () => foldEarlierConversation(messages, foldBefore, foldOpen),
+    [messages, foldBefore, foldOpen],
+  )
+  const baseRenderers = useMemo(
     () => createTranscriptRenderers({
       slot: slotKey,
       toolDisclosure,
@@ -1589,6 +1618,12 @@ export default function ChatPane({
       activeSession,
     }),
     [slotKey, toolDisclosure, setToolDisclosureFor, busyMode, onFileOpen, crewmate, crewmateTranscript, onSessionOpen, sessions, activeSession],
+  )
+  const renderers = useMemo(
+    () => (foldBefore
+      ? [earlierConversationRenderer(foldOpen, () => setOpenFold(foldOpen ? undefined : foldBefore)), ...baseRenderers]
+      : baseRenderers),
+    [baseRenderers, foldBefore, foldOpen],
   )
 
   // The composer dock floats over the bottom of the scroller (ChatPage's
@@ -1760,7 +1795,7 @@ export default function ChatPane({
             TranscriptScrollShell for the style contract it enforces. */}
         <ChatMessageList
           ref={listRef}
-          messages={messages}
+          messages={listMessages}
           // The slot's own liveness too, not only this session's stream: a
           // DM/member pane observing a turn driven elsewhere still follows.
           running={running || !!paneSlot?.running}
@@ -1870,6 +1905,7 @@ export default function ChatPane({
                  it, mounted for the whole live turn so the indicator never
                  moves while steps come and go (#18238). */
               <>
+              {greetingShown && crewmateGreeting}
               {crewmate && crewmateLive && <CrewmateLiveActivity activity={liveActivity} />}
               <ChatFooter
                 running={running || !!paneSlot?.running}
@@ -1928,7 +1964,7 @@ export default function ChatPane({
             --mc-content-width clamp, so it lines up with the messages above it
             and the composer below at every content-width setting. QuestionCard
             carries no horizontal margin of its own, so this px-4 is its only
-            gutter. Guide offers are NOT here: each is
+            gutter. Change cards and guide offers are NOT here: each is
             a row of the conversation, drawn where it was proposed
             (cards/ConversationCard). */}
         <div className="px-4 mx-auto w-full" style={{ maxWidth: 'var(--mc-content-width, 900px)' }} data-testid="chat-card-column">

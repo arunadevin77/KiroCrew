@@ -68,6 +68,7 @@ function reopenCrewCompanionAfterUpdate() {
 const { createGatewaySupervisor } = require("./gateway-supervisor");
 const { createWindowLifecycle } = require("./window-lifecycle");
 const { createIpcRegistrar } = require("./ipc-registrar");
+const { createDownloadExpectations } = require("./download-expectations");
 const { installEarlyBootGuard } = require("./early-boot-guard");
 
 // Everything from here to `app.whenReady()` runs synchronously at module load,
@@ -413,6 +414,12 @@ const gateway = createGatewaySupervisor({
   predictLocalPort: () => fallbackLocalPort(store, glog),
 });
 
+// Shared single-use registry of downloads the renderer explicitly asked for.
+// The ipc bridge registers an expectation when the export path announces a
+// download; the will-download handler consumes it, so only announced downloads
+// auto-save to Downloads (everything else keeps Chromium's default handling).
+const downloadExpectations = createDownloadExpectations();
+
 windows = createWindowLifecycle({
   electron,
   store,
@@ -426,6 +433,7 @@ windows = createWindowLifecycle({
   requestQuit,
   connectWindow: (...args) => gateway.connect(...args),
   syncTunnel: () => gateway.syncTunnel(),
+  downloadExpectations,
 });
 
 const ipcRegistrar = createIpcRegistrar({
@@ -439,6 +447,7 @@ const ipcRegistrar = createIpcRegistrar({
   closeCrewCompanionForUpdate,
   reopenCrewCompanionAfterUpdate,
   crashScan: scanCrashArtifacts,
+  downloadExpectations,
 });
 
 /**
@@ -630,7 +639,11 @@ app.whenReady().then(async () => {
   try {
     initCrewCompanion({
       backendUrl: BACKEND_URL,
-      mintLocalToken: (...args) => gateway.mintLocalToken(...args),
+      // The same credential chain Mochi and the dashboard window use. The local
+      // mint alone refuses for a remote crew's port and for a gateway this app
+      // adopted rather than spawned, which left the companion unable to ever ask
+      // whether it was enabled.
+      fetchGatewayAuth: () => fetchMochiGatewayAuth(BACKEND_URL),
       glog,
       getDashboardWindow: () => windows.focusedDashboardWindow() || null,
     });

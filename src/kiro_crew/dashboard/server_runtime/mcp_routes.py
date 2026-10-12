@@ -198,6 +198,9 @@ def _register_mcp_routes(app: web.Application) -> None:
         "/api/agent-panel/dashboard/write", _deferred("agent_panel", "api_dashboard_write")
     )
     app.router.add_get(
+        "/api/agent-panel/dashboard/types", _deferred("agent_panel", "api_dashboard_types")
+    )
+    app.router.add_get(
         "/api/agent-panel/dashboard/templates", _deferred("agent_panel", "api_dashboard_templates")
     )
     app.router.add_post(
@@ -244,6 +247,23 @@ def _register_mcp_routes(app: web.Application) -> None:
         ("POST", "/api/guide/observe", "api_guide_observe"),
     ):
         app.router.add_route(_method, _path, _deferred("guide", _name))
+    # Change cards. Same split as the guide: the agent half is MCP-only under the
+    # strict "/api/cards/agent" prefix, the browser half is owner-only cookie auth.
+    # The paths are duplicated from ``change_cards.register_change_card_routes``,
+    # and a test pins the two together.
+    for _method, _path, _name in (
+        ("GET", "/api/cards/agent/kinds", "api_cards_agent_kinds"),
+        ("GET", "/api/cards/agent/settings", "api_cards_agent_settings"),
+        ("GET", "/api/cards/agent/capabilities", "api_cards_agent_capabilities"),
+        ("GET", "/api/cards/agent/diagnose", "api_cards_agent_diagnose"),
+        ("POST", "/api/cards/agent/propose", "api_cards_agent_propose"),
+        ("GET", "/api/cards/agent/status", "api_cards_agent_status"),
+        ("GET", "/api/cards/pending", "api_cards_pending"),
+        ("POST", "/api/cards/{card_id}/preview", "api_cards_preview"),
+        ("POST", "/api/cards/{card_id}/cancel", "api_cards_cancel"),
+        ("POST", "/api/cards/{card_id}/dismiss", "api_cards_dismiss"),
+    ):
+        app.router.add_route(_method, _path, _deferred("change_cards", _name))
     app.router.add_get("/api/crons", handlers.api_crons)
     app.router.add_post("/api/crons", handlers.api_crons_create)
     app.router.add_delete("/api/crons", handlers.api_cron_batch_delete)
@@ -305,6 +325,10 @@ def _register_mcp_routes(app: web.Application) -> None:
     app.router.add_post(
         "/api/session-control/reload",
         _deferred("session_control", "api_session_control_reload"),
+    )
+    app.router.add_post(
+        "/api/session-control/rename",
+        _deferred("session_control", "api_session_control_rename"),
     )
     app.router.add_post(
         "/api/session-control/close", _deferred("session_control", "api_session_control_close")

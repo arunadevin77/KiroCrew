@@ -8,12 +8,13 @@ import { usePointerDrag } from '../../hooks/usePointerDrag'
 import { useLongPressReorder } from '../../hooks/useLongPressReorder'
 import { useScrollEdges } from '../../hooks/useScrollEdges'
 import { Reorder } from 'framer-motion'
-import { FileText, Bot, Workflow, ScrollText, MessageCircleQuestionMark, TerminalSquare, GitCompare, GitPullRequest, GitBranch, History, Plus, MoreHorizontal, X, Hash, Pen, Columns2, Component, Globe, CircleDot, Folder, Folders, Link as LinkIcon, PanelRight, PanelBottom, Layers, ListTree, Pin } from 'lucide-react'
+import { FileText, FileDiff, Bot, Workflow, ScrollText, MessageCircleQuestionMark, TerminalSquare, GitCompare, GitPullRequest, GitBranch, History, Plus, MoreHorizontal, X, Hash, Pen, Columns2, Component, Globe, CircleDot, Folder, Folders, Link as LinkIcon, PanelRight, PanelBottom, Layers, ListTree, Pin } from 'lucide-react'
 import { SidePanelDockHost, SidePanelGlyph } from '../../components/SidePanelGlyph'
 import ActivityViewer from './ActivityViewer'
 // Loaded with its tab, not the shell: the panel (attention cards, tile lists,
 // the session card frame) is only mounted once a Dashboard tab exists.
 const CommandCenterPanel = lazy(() => import('./command-center/CommandCenterPanel'))
+const DashboardPreviewPanel = lazy(() => import('./DashboardPreviewPanel'))
 import DiffPanel from '../../components/DiffPanel'
 import DetailPanel from '../../components/DetailPanel'
 import MarkdownPanel, { type MarkdownPanelHandle } from '../../components/MarkdownPanel'
@@ -51,6 +52,7 @@ import { useAppSelector } from '../../store'
 import { selectSlotSubagents, selectSlotToolLog } from '../../store/chatSlice'
 import { mcpAppKey } from '../../store/chatSlice'
 import McpAppFrame from '../../components/McpAppFrame'
+import { dashboardPreviewSlugFromRef } from '../../utils/dashboardPreview'
 import type { ExtractedLink } from '../../utils/extractChatLinks'
 import type { PullRequestLink } from '../../utils/pullRequestLinks'
 import type { ChatPin } from '../../api/pins'
@@ -67,7 +69,7 @@ const KIND_ICON: Record<BuiltinTabKind, ReactNode> = {
   logs: <ScrollText size={16} />, crewlog: <History size={16} />, context: <Layers size={16} />, side: <MessageCircleQuestionMark size={16} />, terminal: <TerminalSquare size={16} />, browser: <Globe size={16} />,
   summary: <ListTree size={16} />,
   pins: <Pin size={16} />,
-  file: <FileText size={16} />, diff: <GitCompare size={16} />, artifact: <Component size={16} />, folder: <Folder size={16} />,
+  file: <FileText size={16} />, diff: <GitCompare size={16} />, wtdiff: <FileDiff size={16} />, artifact: <Component size={16} />, folder: <Folder size={16} />,
   app: <PanelRight size={16} />, git: <GitBranch size={16} />,
 }
 
@@ -323,6 +325,13 @@ interface SidePanelProps {
    *  panel treats `slot` as confirmed. */
   persistSlot?: string
   onFileOpen?: (path: string, opts?: { replaceId?: string; line?: number; endLine?: number; diffMode?: boolean; canReplace?: () => boolean }) => void
+  /** Open a file's WORKING-TREE DIFF as its OWN tab (keyed `wtdiff:<path>`),
+   *  coexisting with the plain file tab instead of flipping it into diff mode
+   *  (#9695). The Files > Changed segment's diff control routes here. Both
+   *  standing hosts — ChatPage AND MembersPage — supply it. A host that does
+   *  not (e.g. a lightweight embedding) falls back to flipping the file tab via
+   *  onFileOpen, the documented pre-#9695 behaviour the fallback test pins. */
+  onOpenWorkingTreeDiff?: (path: string) => void
   /** Open an artifact as a panel tab (the artifact twin of onFileOpen).
    *  Threaded to the Artifacts tab so its rows open here instead of
    *  hard-navigating to the standalone detail page. */
@@ -501,7 +510,7 @@ export function sidePanelEffectiveWidth(
 }
 
 export default function SidePanel({
-  tabsCtl, slot, slotOwner, persistSlot, onFileOpen, onArtifactOpen, onAddToContext,
+  tabsCtl, slot, slotOwner, persistSlot, onFileOpen, onOpenWorkingTreeDiff, onArtifactOpen, onAddToContext,
   projectDir, navLinks, navResolving, sources, selectedSourceUrl, onSelectSource, onReconcileSource,
   issues, selectedIssueUrl, onSelectIssue, onReconcileIssue,
   onAddSourceToChat, onSubmitComments, connected = true, onFileSave, onClose, panelHidden,
@@ -591,17 +600,17 @@ export default function SidePanel({
     if (!hiddenViews) return false
     if (kind === 'terminal') return hiddenViews.has('terminal')
     if (kind === 'app' || isPanelTabKind(kind)) return hiddenViews.has('app')
-    // Document tabs are not views themselves. Every one of them — a file, diff
-    // or folder editor, an artifact preview — is slot-bound, so all of them are
-    // withheld together, keyed on 'files': a host that withholds the Files view
-    // is withholding slot-bound content as such (the Crewmates page's
-    // unconfirmed window), and a persisted document tab must not stay on the
-    // strip — and stay ACTIVE — while every slot-bound view is withdrawn.
-    // Deliberately NOT keyed on the document's own LIST view: a host may
-    // withdraw the Artifacts list and still open one artifact from a reply
+    // Document tabs are not views themselves. Every one of them — a file, diff,
+    // working-tree diff or folder editor, an artifact preview — is slot-bound,
+    // so all of them are withheld together, keyed on 'files': a host that
+    // withholds the Files view is withholding slot-bound content as such (the
+    // Crewmates page's unconfirmed window), and a persisted document tab must
+    // not stay on the strip — and stay ACTIVE — while every slot-bound view is
+    // withdrawn. Deliberately NOT keyed on the document's own LIST view: a host
+    // may withdraw the Artifacts list and still open one artifact from a reply
     // link (the Crewmates page, #18320); tying the document to the list made
     // that tab appear and vanish in the same frame.
-    if (kind === 'file' || kind === 'diff' || kind === 'folder' || kind === 'artifact') return hiddenViews.has('files')
+    if (kind === 'file' || kind === 'diff' || kind === 'wtdiff' || kind === 'folder' || kind === 'artifact') return hiddenViews.has('files')
     return hiddenViews.has(kind)
   }, [hiddenViews])
   // Restored terminal chips wait for the liveness ruling too, as the dock's do.
@@ -1385,7 +1394,15 @@ export default function SidePanel({
                 <FilesHomePanel
                   active={!panelHidden}
                   projectDir={projectDir ?? ''}
-                  onFileOpen={(abs, diff, opts) => onFileOpen?.(abs, { diffMode: diff, line: opts?.line })}
+                  // A diff open from the Changed segment opens the working-tree
+                  // diff as its OWN tab (coexisting with any plain file tab for
+                  // the same path, #9695) when the host supplies the opener;
+                  // otherwise it falls back to flipping the file tab into diff
+                  // mode, the pre-#9695 behaviour.
+                  onFileOpen={(abs, diff, opts) => {
+                    if (diff && onOpenWorkingTreeDiff) { onOpenWorkingTreeDiff(abs); return }
+                    onFileOpen?.(abs, { diffMode: diff, line: opts?.line })
+                  }}
                   onAddToContext={onAddToContext}
                   // Withheld, not disabled, when the terminal feature is off or
                   // the host withdraws the terminal view — the same withdrawal
@@ -1635,11 +1652,12 @@ function FileTabBody({ tab, active, projectDir, scrollMemoryKey, onContentChange
       onDiskContent={onDiskContent}
       savedBaseline={tab.savedContent}
       initialDiffMode={tab.diffMode}
+      readOnly={tab.kind === 'wtdiff'}
       onDiffModeChange={onDiffModeChange}
       onSave={onFileSave}
       onClose={onClose}
       liveWatch
-      onSubmitComments={onSubmitComments}
+      onSubmitComments={tab.kind === 'wtdiff' ? undefined : onSubmitComments}
       connected={connected}
       revealLine={tab.revealLine}
       onRevealConsumed={onRevealConsumed}
@@ -1790,9 +1808,12 @@ function TabBody({ tab, active, slot, projectDir, onClose, onContentChange, onDi
   // the persisted bucket, so leaving and returning to this chat resolves the
   // same key.
   const scrollMemoryKey = scrollMemoryKeyFor(slot, tab.id)
-  if (tab.kind === 'file') {
-    // Nothing is known about a restored tab until a read lands, so it gets the
-    // self-hydrating placeholder rather than an editor over an empty buffer.
+  if (tab.kind === 'file' || tab.kind === 'wtdiff') {
+    // `wtdiff` is a file-shaped tab opened in diff mode under a distinct id
+    // (#9695): it renders through the same self-hydrating file body, which is
+    // MarkdownPanel showing the current working-tree diff. Nothing is known
+    // about a restored tab until a read lands, so it gets the self-hydrating
+    // placeholder rather than an editor over an empty buffer.
     if (tab.content === undefined) {
       return <HydratingFileTab path={tab.path || ''} onDiskContent={onDiskContent} />
     }
@@ -1828,6 +1849,11 @@ function TabBody({ tab, active, slot, projectDir, onClose, onContentChange, onDi
     )
   }
   if (tab.kind === 'artifact') {
+    // A crewmate's staged dashboard rides the artifact tab (see `dashboardPreviewRef`).
+    const previewSlug = dashboardPreviewSlugFromRef(tab.artifactSlug)
+    // A local boundary: a failed chunk load must not reach the route boundary and
+    // unmount the host page (and any unsaved form on it).
+    if (previewSlug) return <ErrorBoundary scope="dashboard-preview" retryOnly><Suspense fallback={null}><DashboardPreviewPanel slug={previewSlug} /></Suspense></ErrorBoundary>
     return (
       <ArtifactPanel
         embedded

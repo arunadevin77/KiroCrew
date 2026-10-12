@@ -40,7 +40,7 @@ anything that survived a gateway crash. No single mechanism is a single point of
 | Message queue | `session.py` plus `slack/events.py` | Per Slack thread | Unbounded FIFO | No | Queues when busy; `message_deleted` cancels; `!stop` clears |
 | Orphaned dashboard reaping | `session.py` | Dashboard sessions | Immediate | Yes | `set_active_dashboard_slots()` reaps sessions whose slot is gone |
 | Empty dir cleanup | `session.py` | `sessions/` subdirs | Startup | No | Removes empty dirs left by timed-out subagents |
-| `cleanup_orphaned_sessions` | `session_pid.py` | All kiro-cli PIDs | Startup and shutdown only | No | Reads `kiro_pids.txt`, validates liveness, sends SIGKILL, clears the file. Also removes stale `session_pid_*.txt` files for dead processes, and calls `_cleanup_orphaned_mcp_servers()` internally |
+| `cleanup_orphaned_sessions` | `session_pid.py` | All kiro-cli PIDs | Startup and shutdown only | No | Reads `kiro_session_pids.txt`, validates that each PID still names the process the entry recorded (start token, so a recycled PID is spared), kills descendants bottom-up, truncates the file. Also removes stale `session_pid_*.txt` files for dead processes, and calls `_cleanup_orphaned_mcp_servers()` internally |
 | `_cleanup_orphaned_mcp_servers` | `session_pid.py` | MCP child PIDs | Every ~5 min (periodic sweep) | Yes, runs in `_cleanup_loop` | Scans for orphaned MCP processes, sends SIGKILL |
 | Idle session expiry | `session.py` | All sessions | `session.timeout_secs`, clamped up to a 60s minimum; `0` disables the sweep but keeps process hygiene | Yes, runs in `_cleanup_loop` (~5 min interval) | Calls `provider.shutdown()`, removes the session |
 | Circuit breaker | `session.py` | Per session | 5 consecutive failures (`_CIRCUIT_BREAKER_THRESHOLD`) | No | Auto-resets the session (kills the process, creates a fresh one) |
@@ -458,6 +458,19 @@ resolved from an absolute path, never a caller-influenced `PATH`, and when no `e
 exists the layer **fails closed**: the locators are not forwarded at all, so the wrapper
 fails loudly rather than handing the child a reachable bus.
 
+"Left alone" is load-bearing for the provider CLIs. A child with NO bus address is not
+inert: `gh`, `glab` and `az` probe the keyring over D-Bus, and every client library involved
+first looks for the user bus at its standard path and, failing that, autolaunches a private
+`dbus-daemon` (which then activates `gnome-keyring-daemon`), leaking both per call. So every
+allowlist-based provider-CLI environment builder applies `github_runner.apply_session_bus_address`, which
+resolves that search once in the parent: `unix:path=<path>` for the first of
+`$XDG_RUNTIME_DIR/bus` and `/run/user/<uid>/bus` that is a socket, else `INERT_SESSION_BUS_ADDRESS` (`disabled:`, a transport libdbus, godbus and GDBus
+all reject without connecting or spawning). Because the caller set it, this layer neither
+replaces it with the gateway's bus nor strips it inside the scope; and because it is never
+empty, `cgroup_scope_bus_env` (which reads an empty value as unset) never forwards the real
+locator in its place. The full rationale lives in `security.md` under the scoped user-bus
+locator forward.
+
 ## Memory-aware cap for pytest-xdist `-n auto`
 
 > **Two compositions of one Mach struct, on purpose.** `subagent._macos_vm_reclaimable_pages`
@@ -477,7 +490,7 @@ slice's aggregate ceiling OOM-kills rather than throttles). xdist honors the
 environment variable when resolving `auto`, so the launch tail both agent spawn
 boundaries share (`acp/launch.py`, for `acp/client.py` and `acp/runtime.py`) seeds it via
 `resource_status.inject_xdist_auto_cap()`:
-`min(cpus, floor(available_gb * 0.5 / 1.0))`, floored at 1, where `cpus` is the process CPU allowance (`cpu_affinity.affinity_cpu_count()`, or 1 when unknown), computed from the same
+`min(cpus, floor(available_gb * 0.5 / per_worker_gb))`, floored at 1, where `per_worker_gb` is the assumed steady-state footprint of one worker (3 GB on Linux and Windows, 16 GB on macOS; `_DEFAULT_XDIST_PER_WORKER_GB` / `_MACOS_XDIST_PER_WORKER_GB`, constants rather than config keys) and `cpus` is the process CPU allowance (`cpu_affinity.affinity_cpu_count()`, or 1 when unknown), computed from the same
 cgroup-clamped memory probe the advisory `resource_status` tool uses. Half of the
 *currently available* memory, so two sessions sizing themselves at the same instant cannot
 jointly commit more than what was free. This shapes **only** `auto`/`logical` resolution:
@@ -502,11 +515,14 @@ itself and the injection works as described above.
    still covers only the turn budget and the concurrency caps, so raising the subagent
    deadline needs the CLI or a `config.json` edit.
 
-2. **`cleanup_orphaned_sessions` only runs at startup and shutdown.** If a session's process
-   dies mid-run without triggering `AcpProcessDied` (an OOM kill, for instance), the PID
-   stays in `kiro_pids.txt` until the next gateway restart. The periodic
-   `_cleanup_orphaned_mcp_servers` sweep catches MCP children but not the root kiro-cli
-   process.
+2. **`cleanup_orphaned_sessions` only runs at startup and shutdown.** Between those, the
+   cleanup tick's `_sweep_periodic_pids` (`_periodic_pid_sweep` in `session_pid.py`) covers a
+   session whose process dies mid-run without triggering `AcpProcessDied` (an OOM kill, for
+   instance): it prunes a dead PID from `kiro_session_pids.txt`, and kills a live PID this
+   gateway tracked that is absent from the active set after a second-phase re-check.
+   `_cleanup_orphaned_mcp_servers` handles MCP children separately. What waits for the next
+   gateway start is an entry the periodic pass skips: one recorded by another gateway, or an
+   untagged one with no gateway PID.
 
 3. **cgroup enforcement depends on cgroup v2 delegation being present.** Where it is
    missing (older Linux, no systemd user session, macOS), neither the per-scope ceilings

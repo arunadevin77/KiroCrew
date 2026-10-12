@@ -5,6 +5,8 @@ import ToolCallLine from '../pages/chat/ToolCallLine'
 import { resolveByApprovalId, sseToolResult } from '../store/chatSlice'
 import type { RootState } from '../store'
 import type { ChatMessage } from '../types'
+import { __resetPathKindCache } from '../hooks/usePathKind'
+import { stubPathKinds } from './pathKindStub'
 
 type ChatState = RootState['chat']
 
@@ -21,6 +23,16 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
 }
 
 beforeEach(() => { localStorage.clear() })
+
+/** The verbatim text the pill's hover bubble carries. Focus opens it
+ *  synchronously (no intent timer); the formatted shell grid is aria-hidden,
+ *  so the verbatim copy is its sr-only span. */
+function pillTipText(): string | null {
+  fireEvent.focus(screen.getByRole('button', { name: /Show details/i }))
+  const tip = screen.queryByRole('tooltip')
+  if (!tip) return null
+  return tip.querySelector('.sr-only')?.textContent ?? tip.textContent
+}
 
 function toolMsg(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return { role: 'tool', content: '🔧 Running: echo hello', cls: '', meta: { tool_call_id: 'tc_1', purpose: 'Say hello' }, ...overrides }
@@ -67,7 +79,7 @@ describe('ToolCallLine simplifiedToolNames', () => {
     // A lone `echo` is the Print action (utils/toolCallTitle); the raw command
     // stays reachable from the pill's tooltip and the expanded chip.
     expect(screen.getByText('Print')).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Show details/i }).getAttribute('title')).toBe('echo hello')
+    expect(pillTipText()).toBe('echo hello')
   })
 
   it('substitutes the command digest for a purpose-less shell label that does not parse', () => {
@@ -219,7 +231,7 @@ describe('ToolCallLine simplifiedToolNames', () => {
     renderWithProviders(<ToolCallLine message={msg} running={false} />, { store })
     const pill = screen.getByText(/^python3 ledger\.py ticket-log --text "x+…$/)
     expect(pill.textContent?.length).toBeLessThanOrEqual(81)
-    expect(screen.getByRole('button', { name: /Show details/i }).getAttribute('title')).toBe(cmd)
+    expect(pillTipText()).toBe(cmd)
     expect(screen.queryByText('--text, x…')).toBeNull()
   })
 
@@ -479,7 +491,8 @@ describe('ToolCallLine inline expansion', () => {
 
 describe('ToolCallLine file-open icon', () => {
   beforeEach(() => {
-    globalThis.fetch = vi.fn(() => Promise.resolve({ ok: true, status: 200 })) as unknown as typeof fetch
+    __resetPathKindCache()
+    stubPathKinds(() => 'file')
   })
 
   function fileMsg(overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -543,8 +556,8 @@ describe('ToolCallLine file-open icon', () => {
     expect(screen.queryByTitle(/in side panel$/)).toBeNull()
   })
 
-  it('does not render the icon when the file does not exist (HEAD 404)', async () => {
-    globalThis.fetch = vi.fn(() => Promise.resolve({ ok: false, status: 404 })) as unknown as typeof fetch
+  it('does not render the icon when the file does not exist', async () => {
+    stubPathKinds(() => null)
     const store = fileStore('{"path":"/etc/hosts"}')
     renderWithProviders(<ToolCallLine message={fileMsg()} running={false} onFileOpen={vi.fn()} />, { store })
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled())

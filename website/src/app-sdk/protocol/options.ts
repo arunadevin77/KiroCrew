@@ -105,8 +105,8 @@ const rowIdentity = (m: ChatMessage, i: number): string =>
  *    `kind="compaction"` (see `chat_utils._broadcast_compaction_result`). It
  *    carries no `[OPTIONS:]` marker, so without this skip it would shadow the
  *    real options-bearing turn it follows and the buttons would vanish after a
- *    compaction. The marker is read from `kind` (live websocket path) or
- *    `meta.kind` (history-reload path).
+ *    compaction. The marker rides in `meta.kind` on both the live websocket
+ *    frame and the history reload; a top-level `kind` is still honoured.
  *
  * A `user`/`queued` row is only a valid stop because it means "the user has
  * answered, so the question is closed". A `user` row whose turn FAILED answered

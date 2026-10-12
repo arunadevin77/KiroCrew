@@ -91,7 +91,8 @@ families — they are ordered by how often they catch a real regression:
 4. THE NEIGHBOURS INSIDE THE SAME TIER. The composite has three checks in order
    (sensitive-command tier `sensitive-bash`, exfiltration shapes `exfil`, rule
    catalog `deny-rules`; there is no path tier, because the gate does not read
-   paths in shell command text -- see `_TIERS` in scripts/deny_diff.py). A
+   paths in shell command text -- see `SHELL_DENY_TIERS` in
+   src/kiro_crew/hooks.py, which scripts/deny_diff.py reads). A
    tightening in one tier reaches every operation that tier sees, not only the
    one the diff discusses.
 

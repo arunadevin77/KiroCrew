@@ -846,6 +846,21 @@
       "description": "Open tool call rows with their input and output showing, instead of collapsed. Rows you open or close by hand keep your choice."
     },
     {
+      "id": "chat.topic-tags",
+      "label": "Topic tags",
+      "tab": "chat",
+      "route": "/settings/chat/sessions?highlight=chat.topic-tags",
+      "description": "Tags each new session in the sidebar with up to two topics, like \"debugging\". Uses one background-model call per new session."
+    },
+    {
+      "id": "chat.turn-time-limit-seconds",
+      "label": "Turn Time Limit (seconds)",
+      "tab": "chat",
+      "route": "/settings/chat/advanced?highlight=key%3Aagent.chat_turn_timeout_secs",
+      "description": "A turn that reaches this limit stops and keeps the work already written to disk; resume it to continue. Raise it for long unattended turns such as full test suites. Applies from the next turn. Longest one chat turn may run before it is stopped. 300 to 86,400 s (24 h). Default 14,400 s (4 h).",
+      "configKey": "agent.chat_turn_timeout_secs"
+    },
+    {
       "id": "chat.what-enter-does-while-the-agent-is-working",
       "label": "What Enter does while the agent is working",
       "tab": "chat",
@@ -974,7 +989,7 @@
       "label": "Chat on a crew",
       "tab": "developer",
       "route": "/settings/developer?highlight=developer.chat-on-a-crew",
-      "description": "Adds “New chat on crew” to the create menu, which starts a session on a remote crew — another machine you have connected under Settings > Remote Crew. Unfinished: the session opens in that crew’s own pane and is not listed in this dashboard’s sessions yet, so to return to it later, switch to that crew’s pane."
+      "description": "Adds “New chat on crew” to the create menu, which starts a session on a remote crew — another machine you have connected under Settings > Remote Crew — and shows each connected crew’s sessions in their own group in the Sessions list. Unfinished."
     },
     {
       "id": "developer.composable-layout",
@@ -1031,13 +1046,6 @@
       "tab": "developer",
       "route": "/settings/developer?highlight=developer.model-for-the-small-model-judge",
       "description": "Only used when the judge above is the small model. Leave it on the judge agent's own model unless you want a cheaper one."
-    },
-    {
-      "id": "developer.remote-crew-sessions",
-      "label": "Remote crew sessions",
-      "tab": "developer",
-      "route": "/settings/developer?highlight=developer.remote-crew-sessions",
-      "description": "Merge a connected remote crew's live sessions into the Sessions list, each marked with its crew's name. A remote crew is another machine you have connected, not your agents. Functional, but not finished."
     },
     {
       "id": "developer.reply-threads-on-crewmate-chat-messages",
@@ -1256,6 +1264,13 @@
       "tab": "notifications",
       "route": "/settings/notifications/percategory?highlight=notifications.sound-category-heartbeat",
       "description": "Heartbeat task results"
+    },
+    {
+      "id": "notifications.sound-category-dictation",
+      "label": "Interrupted dictation",
+      "tab": "notifications",
+      "route": "/settings/notifications/percategory?highlight=notifications.sound-category-dictation",
+      "description": "Plays a sound when dictation stops before you end it"
     },
     {
       "id": "notifications.mark-sessions-unread-only-when-they-need-you",

@@ -1,5 +1,4 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { shallowEqual } from 'react-redux'
 import { useAppSelector, useAppDispatch } from '../../store'
 import { clearFocusToolCallId, mcpAppKey } from '../../store/chatSlice'
@@ -22,7 +21,7 @@ import { extractToolFilePath } from '../../utils/toolFilePath'
 import { countDiffStats } from '../../utils/diffLineCounts'
 import { isWaitToolTitle } from '../../utils/waitToolTitle'
 import { isSafePath } from '../../utils/safePath'
-import { fileReadUrl } from '../../utils/fileReadUrl'
+import { usePathKind } from '../../hooks/usePathKind'
 import McpAppFrame from '../../components/McpAppFrame'
 import DiffBlock, { extractFilePath as extractDiffHeaderPath } from '../../components/DiffBlock'
 import { presentToolDiff } from './toolDiff'
@@ -38,6 +37,8 @@ import { selectToolRowIndex, lookupLogEntry, denySiblingContent, isNewestOccurre
 import type { ToolActivity } from '../../types'
 import { pathBasename } from '../../utils/pathBasename'
 import { useToolCallsStartExpanded } from '../../hooks/useToolCallsStartExpanded'
+import { InstantTip, useInstantTip } from '../../components/InstantTip'
+import { PILL_TIP_OPEN_CLASS, ToolCommandTip } from './ToolCommandTip'
 
 // Lazy so the rarely-shown answers card stays out of the App chunk.
 const AskAnswersResult = lazy(() => import('./AskAnswersCard').then(m => ({ default: m.AskAnswersResult })))
@@ -731,26 +732,17 @@ export default memo(function ToolCallLine({ message, running: _running, slot, on
         ? { ...diffView, opensCard: false }
         : null
   const probeEnabled = !!filePath && isSafePath(filePath) && !!onFileOpen
-  // HEAD-probe via React Query (project guideline: no manual useState/useEffect
-  // fetch for server state). Gives request dedup across pills touching the same
-  // file and stale-while-revalidate caching so re-renders don't re-probe —
-  // replacing the manual AbortController + onFileOpenRef + setFileExists dance.
+  // The existence probe shares the transcript-wide cache and batch the markdown
+  // chips and diff headers use, so a file a chip already resolved costs no
+  // request and N pills for one path ask once.
   //
-  // The query's error is deliberately NOT read: this gates an affordance (the
-  // Open-file pill), it is not something the person asked for. A refused probe
-  // collapses to `fileExists = false` on purpose — the pill is simply not
-  // offered, which is the same outcome as the file not being there, and a
-  // failed-probe notice on every tool row would be noise about a link nobody
-  // clicked. Opening the file itself reports its own failure when pressed.
-  const { data: fileExists = false } = useQuery({
-    queryKey: ['tool-pill-file-exists', filePath],
-    queryFn: async ({ signal }) => {
-      const r = await fetch(fileReadUrl(filePath!), { method: 'HEAD', signal })
-      return r.ok
-    },
-    enabled: probeEnabled,
-    staleTime: 30_000,
-  })
+  // A refused probe collapses to "not a file" on purpose: this gates an
+  // affordance (the Open-file pill), it is not something the person asked for.
+  // The pill is simply not offered, which is the same outcome as the file not
+  // being there, and a failed-probe notice on every tool row would be noise
+  // about a link nobody clicked. Opening the file itself reports its own
+  // failure when pressed.
+  const fileExists = usePathKind(probeEnabled ? filePath : null) === 'file'
   const showFileOpen = probeEnabled && fileExists
 
   const Icon = isDone
@@ -910,6 +902,24 @@ export default memo(function ToolCallLine({ message, running: _running, slot, on
   // user's intent for after the approval resolves, but the rendered panel
   // ignores it while pending.
   const effectivelyExpanded = expanded || hasPendingPerm
+  // The verbatim command / title rides in a styled bubble rather than the
+  // native `title`: the OS tooltip wrapped a long pipeline mid-word in the UI
+  // font after a ~1s delay. Folded rows only -- an opened row already shows the
+  // exact payload in its details, and a bubble over it would repeat it. The
+  // handlers stay attached while open so a leave still closes the bubble and
+  // a fold under a resting pointer brings it back where it belongs.
+  const { tip: pillTip, tipHandlers: pillTipHandlers, tipId: pillTipId } = useInstantTip()
+  const pillTipText = effectivelyExpanded ? undefined : pillLabelTitle
+  // The bubble floats 8px above with no arrow, and tool rows stack tightly, so
+  // the row it belongs to is marked while it is open: the hover fill plus a
+  // 1px inset outline in neutral `--muted`. The fill alone is near-invisible on
+  // light palettes (`--bg-hover` sits ~1.1:1 off `--bg`); the outline
+  // measures at least 2.5:1 against that fill on every palette in index.css,
+  // and above 3:1 on all but four dark ones. It is neither the accent focus
+  // ring nor a selection colour, and `.focus-ring-accent:focus-visible`
+  // (index.css) overrides the outline with its transparent one under keyboard
+  // focus, so the focus ring stays the only mark there.
+  const pillTipOpen = !!pillTip && !!pillTipText
 
   // One line while folded, full wrap once opened. See LABEL_COLLAPSED_CLASS.
   const labelWrapClass = effectivelyExpanded ? LABEL_EXPANDED_CLASS : LABEL_COLLAPSED_CLASS
@@ -1039,9 +1049,10 @@ export default memo(function ToolCallLine({ message, running: _running, slot, on
           writes. The file-path chip below keeps mono, where it is earned. */}
       <button
         ref={pillButtonRef}
-        className={`inline-flex ${ROW_PILL_BUTTON_CLASS} focus-ring-accent ${hasPendingPerm ? 'cursor-default' : 'cursor-pointer hover:brightness-110'}`}
+        className={`inline-flex ${ROW_PILL_BUTTON_CLASS} focus-ring-accent ${hasPendingPerm ? 'cursor-default' : 'cursor-pointer hover:brightness-110'}${pillTipOpen ? ` ${PILL_TIP_OPEN_CLASS}` : ''}`}
+        data-tip-open={pillTipOpen || undefined}
         aria-expanded={effectivelyExpanded}
-        title={pillLabelTitle}
+        {...(pillLabelTitle ? pillTipHandlers : {})}
         aria-label={hasPendingPerm
           ? i18nT('pages.chat.toolCallLine.aria_awaiting_approval', { label })
           : effectivelyExpanded
@@ -1071,6 +1082,11 @@ export default memo(function ToolCallLine({ message, running: _running, slot, on
           <span data-testid="tool-pill-label" className={`${labelWrapClass} ${pillLabelFaceClass} min-w-0 leading-5 text-muted hover:text-text transition-colors`}>{pillLabelText}</span>
         )}
       </button>
+      {pillTipText && (
+        <InstantTip tip={pillTip} tipId={pillTipId}>
+          <ToolCommandTip text={pillTipText} shell={derived.shell} />
+        </InstantTip>
+      )}
 
       {/* Side-panel open: a basename CHIP hugging the open-in-pane icon, as one
           clickable unit and a SIBLING of the pill (never nested) — clicking it

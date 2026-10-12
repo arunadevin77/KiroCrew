@@ -424,6 +424,30 @@ async def api_session_control_reload(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+async def api_session_control_rename(request: web.Request) -> web.Response:
+    """POST /api/session-control/rename — rename the caller or a session it may control."""
+    refused = await _require_internal(request)
+    if refused is not None:
+        return refused
+    # No prewarm here, for the reason `api_session_control_stop` gives.
+    state: DashboardState = request.app["state"]
+    try:
+        body = await _body(request)
+        title = body.get("title")
+        if not isinstance(title, str):
+            raise sc.SessionControlError("title must be a string", code="bad_request")
+        result = await sc.rename_target(
+            state,
+            caller_session_key=_read_session_key(request),
+            target=_target(body),
+            title=title,
+            caller_fenced=_carried_fence(request),
+        )
+    except sc.SessionControlError as exc:
+        return _refusal(exc)
+    return web.json_response(result)
+
+
 async def api_session_control_close(request: web.Request) -> web.Response:
     """POST /api/session-control/close — archive another session (tab ✕)."""
     refused = await _require_internal(request)
@@ -641,8 +665,10 @@ async def api_session_control_read(request: web.Request) -> web.Response:
     # Stays at the top for read alone: everything between here and the gate is
     # synchronous query parsing (`request.query` is already available and
     # `read_messages` does not await), so there is no suspension to invalidate it.
-    await sc.prewarm_enabled_check()
+    # The target's window loads ahead of it, off the loop, for the same reason.
     state: DashboardState = request.app["state"]
+    await sc.load_target_window(state, request.query.get("target") or "")
+    await sc.prewarm_enabled_check()
     try:
         target = (request.query.get("target") or "").strip()
         if not target:

@@ -1038,8 +1038,9 @@ def resolved_command_casing(path: str | None) -> str:
     they look. ``kirocrew restart`` also routes its respawn lookup in
     ``cli_server`` through it. Other resolvers of Kiro Crew's own binaries stay
     outside it: the ``kirocrew`` lookup in ``agent._resolve_kirocrew_bin``, and
-    the kiro-cli launch path in ``acp.client``, which keeps its own
-    ``_normalize_exe_casing``.
+    the kiro-cli resolver, whose discovery in ``kiro_cli`` does its own Windows
+    ``realpath``. So do the ACP adapter ladders in ``acp.launch`` and
+    ``acp.harness.{claude,pi}``, which call ``acp.launch._normalize_exe_casing``.
 
     Looking up the matching parent-directory entry repairs the spelling while
     retaining the lexical parent route and a file symlink's own name;

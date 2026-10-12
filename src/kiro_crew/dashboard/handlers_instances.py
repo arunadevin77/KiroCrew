@@ -1814,12 +1814,12 @@ def _cap_rows(payload: object, fields: dict[str, int]) -> list[dict[str, object]
 async def api_instances_capabilities(request: web.Request) -> web.Response:
     """GET /api/instances/{id}/capabilities — what a connected peer can do.
 
-    A local session bound to a peer for execution must offer the PEER's agents,
+    A frontend building a chat that runs on a connected peer must offer the PEER's agents,
     models, effort levels and workspaces in its header — showing this machine's
     would let the user pick a crew or model that does not exist over there. Those
     rosters are gateway-wide reads, and every existing frontend control fetches
     them same-origin from the local gateway, so this route is the per-instance
-    counterpart the frontend switches to when the active slot is peer-bound.
+    counterpart those frontend controls fetch for a peer instance.
 
     Deliberately NOT served through ``/api/instances/{id}/proxy/*``: that route
     forwards a caller-supplied path and is fenced to the ``api/chat`` /
@@ -1966,6 +1966,11 @@ _PEER_SLOT_STR_FIELDS: dict[str, int] = {
     "last_turn_ts": 64,
     "last_ts": 64,
     "created": 64,
+    # The PEER's sidebar folder the row is filed in, an id in the peer's own folder
+    # space. The crew group nests the row under that folder, whose name the browser
+    # reads from the peer's ``api/chat/folders`` through the proxy. Clamped like
+    # ``key``: an opaque id, matched, never shown.
+    "folder_id": _PEER_FIELD_MAX_CHARS,
 }
 
 #: The booleans the sidebar reads, coerced with ``is True`` rather than

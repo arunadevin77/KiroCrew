@@ -18,6 +18,7 @@ from kiro_crew.agent_files import GUEST_AGENT_FILENAME as _GUEST_AGENT_FILENAME
 from kiro_crew.agent_files import KNOWLEDGE_AGENT_FILENAME as _KNOWLEDGE_AGENT_FILENAME
 from kiro_crew.agent_files import LITE_AGENT_FILENAME as _LITE_AGENT_FILENAME
 from kiro_crew.agent_files import RESEARCH_AGENT_FILENAME as _RESEARCH_AGENT_FILENAME
+from kiro_crew.agent_files import TEAM_LEAD_AGENT_FILENAME as _TEAM_LEAD_AGENT_FILENAME
 from kiro_crew.agent_materialization import auto_approve, managed_mcp
 
 
@@ -150,6 +151,80 @@ def _install_research_agent() -> None:
     path = agent_mod.kiro_agents_dir_path() / _RESEARCH_AGENT_FILENAME
     agent_mod._atomic_json_write(path, config)
     agent_mod.logger.info("Installed research agent config: %s", path)
+
+
+def _mount_team_lead_dispatch(config: dict) -> None:
+    """Mount the dispatch surface a team lead needs, in place.
+
+    ``build_agent_config`` skips every ``opt_in`` server, so a spec derived from it
+    carries no ``kirocrew-dashboard`` (``session_create``, ``chat_folder_*``) and no
+    ``kirocrew-work`` (``work_ledger_*``). Naming them in ``tools`` alone is a DEAD
+    grant: kiro-cli mounts nothing for a server the spec declares but does not
+    configure. So both entries are built here through
+    ``managed_mcp._managed_opt_in_entry`` -- the call the dashboard-manager and
+    worker installers make -- which carries the two fields that fail silently:
+    ``"type": "registry"`` (a registry-mode client drops an entry without it) and
+    the ``KIROCREW_HOME`` pin (without it session control acts on a different
+    session store than the one it reports on).
+
+    The verbs auto-approved on them are the goal conductor's own tuples,
+    ``_CONDUCTOR_DASHBOARD_GRANTS`` and ``_LEDGER_CONDUCTOR_WORK_GRANTS``, reused
+    rather than restated, and the whole ``allowedTools`` list goes back through the
+    governance ceiling before it is written. A withheld verb stays mounted and
+    prompts. The KAS ``permissions`` block is derived from the filtered list, as the
+    conductor and worker installers derive theirs.
+    """
+    servers = config.get("mcpServers")
+    if not isinstance(servers, dict):
+        servers = {}
+    servers["kirocrew-dashboard"] = managed_mcp._managed_opt_in_entry("mcp-dashboard")
+    servers["kirocrew-work"] = managed_mcp._managed_opt_in_entry("mcp-work")
+    # An inherited server's own ``autoApprove`` must pass the ceiling too, as the
+    # default-spec and worker writers enforce, or a legacy client runs a denied verb.
+    config["mcpServers"] = auto_approve._strip_ungoverned_auto_approve(servers)
+    tools = [t for t in config.get("tools") or [] if isinstance(t, str)]
+    for ref in ("@kirocrew-dashboard", "@kirocrew-work"):
+        if ref not in tools:
+            tools.append(ref)
+    config["tools"] = tools
+    allowed = [t for t in config.get("allowedTools") or [] if isinstance(t, str)]
+    grants = (*agent_mod._CONDUCTOR_DASHBOARD_GRANTS, *agent_mod._LEDGER_CONDUCTOR_WORK_GRANTS)
+    config["allowedTools"] = list(dict.fromkeys((*allowed, *grants)))
+    auto_approve._apply_allowed_tools_ceiling(config, source="_install_team_lead_agent")
+    auto_approve._write_derived_permissions(
+        config, config["allowedTools"], _TEAM_LEAD_AGENT_FILENAME
+    )
+
+
+def _install_team_lead_agent() -> None:
+    """Generate and install the kirocrew-team-lead agent config.
+
+    Derives from the kirocrew agent (MCP servers, security, tools) and swaps in the
+    team-lead charter + identity, leaving out the platform guide server
+    (:func:`_without_guide_server`) exactly as research does. On top of that surface
+    it mounts the two opt-in servers dispatch needs, ``kirocrew-dashboard`` and
+    ``kirocrew-work`` (:func:`_mount_team_lead_dispatch`), granting the goal
+    conductor's existing verb tuples through the governance ceiling.
+
+    Rewritten on every boot, like ``kirocrew-research`` and ``kirocrew-knowledge``:
+    a spec this installer wrote is replaced in place with no ceremony -- no ownership
+    digest, no refusal and no start gate, which is the whole point of the overwrite
+    design. An operator who wants a lead with different rules copies it to a different
+    agent name.
+    """
+    config = _without_guide_server(agent_mod.build_agent_config())
+    config["name"] = "kirocrew-team-lead"
+    config["description"] = (
+        "Owns a goal end to end and runs a team on it — splits it into work-ledger "
+        "items, does the small focused ones itself, dispatches a session for every "
+        "other one, and patrols that fleet."
+    )
+    config["prompt"] = agent_mod._TEAM_LEAD_SYSTEM_PROMPT
+    _mount_team_lead_dispatch(config)
+    agent_mod.kiro_agents_dir_path().mkdir(parents=True, exist_ok=True)
+    path = agent_mod.kiro_agents_dir_path() / _TEAM_LEAD_AGENT_FILENAME
+    agent_mod._atomic_json_write(path, config)
+    agent_mod.logger.info("Installed team lead agent config: %s", path)
 
 
 def _install_dashboard_manager_agent() -> None:

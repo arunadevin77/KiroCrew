@@ -1108,6 +1108,10 @@ def binary_content_is_flagged(raw: bytes) -> bool:
     NUL-interleaved ASCII is valid UTF-8, so the wide pass cannot live behind this
     function's decode-failure entry condition alone.
 
+    Latin-1 also splits a UTF-8 multi-byte space after ``Bearer``, so the
+    ``errors="replace"`` UTF-8 projection is joined on and scanned in the same
+    pass, mask and all.
+
     Four gates guard the ``file_send`` delivery path -- the MCP tool before any
     byte is copied, ``POST /api/outbox/notify``, ``GET /api/outbox/{filename}``,
     and the ``_gate_upload_file`` shared by the Slack and channel upload legs. All
@@ -1145,7 +1149,7 @@ def binary_content_is_flagged(raw: bytes) -> bool:
     off the GIL, which the regex engine holds for a whole match call; that is why
     scans run one at a time and a verdict is kept (:func:`_scan_verdict`).
     """
-    text = raw.decode("latin-1")
+    text = raw.decode("latin-1") + "\n" + raw.decode("utf-8", errors="replace")
     if redact_via_context(text) != text:
         masked = _baseline_symbol_tables_masked(text)
         if masked is text or redact_via_context(masked) != masked:

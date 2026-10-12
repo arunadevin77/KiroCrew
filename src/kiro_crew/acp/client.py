@@ -61,6 +61,7 @@ from kiro_crew import (
 )
 from kiro_crew import sel as sel_module
 from kiro_crew.acp import launch as launch_mod
+from kiro_crew.acp import managed_agent_shadow as managed_shadow_mod
 from kiro_crew.acp import runtime_models, runtime_process_tree, seed_provenance, transport_framing
 from kiro_crew.acp._dispatch import (
     ACP_BACKENDS_META_IDENTITY,
@@ -250,6 +251,7 @@ from kiro_crew.agent_sdk.backends import (
     ACP_BACKEND_LAUNCH,
     ACP_BACKEND_NODE_ADAPTER_PACKAGES,
     ACP_BACKEND_PROCESS_NAMES,
+    ACP_BACKENDS_PERMISSION_KIND_FROM_TOOL_CALL,
     NODE_ADAPTER_ENTRY_SEGMENTS,
     launch_for,
     model_refusal_phrase,
@@ -2146,10 +2148,11 @@ class AcpClient:
         # model the gateway will actually serve (the advisory carries no
         # sessionId, so the first attempt creates nothing). None = no substitution.
         self._last_substitution_model: str | None = None
-        # The pinned model a startup config-option push was refused on, or
-        # ``""``. That push is non-strict, so a refusal leaves the session on
-        # the backend default without raising. Callers that bill or label a
-        # turn by the pin read this to learn the pin never ran.
+        # The pinned model a startup config-option push was refused on, or a
+        # startup pin kiro withheld because the account does not serve it, or
+        # ``""``. Neither raises: the session stays on the backend default.
+        # Callers that bill or label a turn by the pin read this to learn the
+        # pin never ran.
         self.model_pin_refused: str = ""
         # The bare model a ``<model>[<effort>]`` pin landed as when its effort
         # half was refused, or ``""``. Set by ``_push_model_via_effort_split``.
@@ -2194,6 +2197,11 @@ class AcpClient:
         # toolCallId -> the tool's own name its tool_call frame stated, for the
         # permission event's harness_tool_id (see _dispatch.harness_tool_name).
         self._tool_call_harness_tool_name: dict[str, str] = {}
+        # toolCallId -> True when the tool_call frame PRESENTED an MCP identity half
+        # the name bound refused (``mcp_identity_unreadable``); the permission
+        # request is then refused in ``_handle_permission`` rather than judged
+        # under the empty name. Mirrors AcpSessionHandle._tool_call_identity_unreadable.
+        self._tool_call_identity_unreadable: dict[str, bool] = {}
         # Structured raw tool params (rawInput dict) keyed by toolCallId, cached
         # from the ToolCall notification so the later request_permission event —
         # which carries only a truncated title — can recover the real path/url
@@ -2545,7 +2553,17 @@ class AcpClient:
         RAISES for a backend registered in neither map, and kiro's construction
         path must not gain a failure mode in service of an adapter (H13).
         """
-        return [] if self.backend in MIRRORS else self._pooled_broker_stubs()
+        if self.backend in MIRRORS:
+            return []
+        # A mirror-less member backend's own array (``_mirrorless_member_mounts``)
+        # sits beside these stubs on the wire. Its entry carries the member's
+        # identity, so a same-named stub is dropped rather than sent twice.
+        mounted = {
+            element.get("name")
+            for element in (getattr(self, "_session_mcp_cache", None) or [])
+            if isinstance(element, dict)
+        }
+        return [s for s in self._pooled_broker_stubs() if s.get("name") not in mounted]
 
     def _resolve_session_mcp_servers(self) -> list[dict[str, Any]]:
         """Translate the agent spec into this session's ``mcpServers`` array.
@@ -2592,7 +2610,7 @@ class AcpClient:
             stubbed = frozenset()
         mirror = mirror_for(self.backend)
         if mirror is None:
-            return []
+            return self._mirrorless_member_mounts(stubbed)
         # Recorded BEFORE the projection reads the governed flag, and beside the
         # array it authorizes: the session/new envelope reads this record, so an
         # array delivered under the exclusion always ships with it.
@@ -2647,6 +2665,51 @@ class AcpClient:
             ),
             projection.restricted_servers,
             projection.disabled_servers,
+        )
+
+    def _mirrorless_member_mounts(self, stubbed: Collection[str]) -> list[dict[str, Any]]:
+        """The member mounts of a backend with no mirror, which are its whole array.
+
+        A mirror-less backend translates no spec, so the array Crew composes for it
+        carries only what Crew adds on its own: the member session-control and panel
+        entries. Empty for every backend outside both member sets, and for every
+        non-member session, so an ordinary session's array is unchanged.
+
+        The two switch-offs still bind, read from one parse of the spec and the
+        global settings file. ``disabled`` reaches the appends as it does on a
+        mirrored backend. A per-tool narrowing is recorded as UNHONOURED, so the
+        whole server is withheld: no mirror translates the spec's deny set here, so
+        nothing could refuse the narrowed tool once the server was mounted.
+
+        Fail-closed: a spec that cannot be read mounts nothing, and the thread runs
+        as plain chat.
+        """
+        if (
+            self.backend not in ACP_BACKENDS_MEMBER_DISPATCH
+            and self.backend not in ACP_BACKENDS_MEMBER_PANEL
+        ):
+            return []
+        try:
+            from kiro_crew.acp.session_mcp import session_mcp_projection
+
+            projection = session_mcp_projection(
+                self._agent, stub_server_names=stubbed, work_dir=self._work_dir
+            )
+        except Exception:
+            logger.warning(
+                "member session %s: agent spec unreadable, so no member tools are "
+                "mounted -- the DM thread runs as plain chat this session",
+                self._session_key,
+                exc_info=True,
+            )
+            return []
+        narrowed = frozenset(server for server, _tool in projection.disabled_tools)
+        self._session_mcp_unhonoured = narrowed
+        disabled = projection.disabled_servers
+        return self._append_member_panel_server(
+            self._append_member_dispatch_server([], narrowed, disabled),
+            narrowed,
+            disabled,
         )
 
     def _pooled_broker_stubs(self) -> list[dict[str, Any]]:
@@ -3117,6 +3180,16 @@ class AcpClient:
         In-memory only. The spawn path warms ``_session_mcp_cache`` off the loop, so
         this accessor adds no scheduling or failure point to a call site shared with
         kiro-cli (harness-parity H13).
+        """
+        return self._session_mcp_servers()
+
+    def _deepseek_session_mcp_servers(self) -> list:
+        """MCP server array passed to a deepseek ``session/new`` / ``session/resume``.
+
+        Only the member mounts: deepseek has no mirror, so its spec is not
+        translated and Crew's pooled tools reach it through the shared broker
+        append. Empty on every non-member session. In-memory only: the launch
+        warms the cache off the loop.
         """
         return self._session_mcp_servers()
 
@@ -3776,9 +3849,10 @@ class AcpClient:
         """Whether the adapter may ignore ``settingSources``.
 
         After a handshake, judged on the ``agentInfo.version`` it reported. Before
-        one, on the installed package's own version, read by the claude spawn arm
-        before the settings writer runs (``_claude_adapter_disk_version``). Unknown
-        reads as below the floor, so the exclusion is never taken on a guess.
+        one, on the installed package's own version, read by the claude adapter's
+        launch (``ClaudeLaunch.resolve_spawn``) before the settings writer runs
+        (``_claude_adapter_disk_version``). Unknown reads as below the floor, so the
+        exclusion is never taken on a guess.
         """
         if getattr(self, "_agent_version_read", False):
             version = getattr(self, "_agent_version", "")
@@ -5472,7 +5546,10 @@ class AcpClient:
                 # Record the session as running the default rather than the value we
                 # declined: the "!= DEFAULT_MODEL" test above is also what the
                 # warm-pool re-apply path reads (session_provider), so leaving the
-                # unusable id here would re-offer it on every claim.
+                # unusable id here would re-offer it on every claim. The declined
+                # pin never runs, so it is recorded where a caller billing or
+                # labelling the turn by the pin looks for that.
+                self.model_pin_refused = self._model
                 self._model = DEFAULT_MODEL
                 # Now inheriting, so the same served-default check applies: the
                 # default we fall back to can itself be one the account lacks.
@@ -5967,8 +6044,8 @@ class AcpClient:
             except Exception:
                 logger.warning("pre-spawn agent materialization failed", exc_info=True)
             # ALSO not best-effort, and for the same reason as the fork gate below: a
-            # DERIVED spec (kirocrew-worker) that predates the default agent's still
-            # mounts and auto-approves a server the default does not have, so
+            # DERIVED spec (kirocrew-worker, kirocrew-heartbeat) that predates the default
+            # agent's still mounts and auto-approves a server the default does not have, so
             # proceeding would run ungoverned grants. Repairs first and refuses only
             # when it cannot -- a refused dispatch is recoverable and reportable,
             # which a worker running on a revoked server is not.
@@ -5995,6 +6072,13 @@ class AcpClient:
                 await asyncio.to_thread(require_fork_governance, self._agent, self._work_dir)
             except ForkGovernanceUnresolved as exc:
                 raise AcpError(str(exc)) from exc
+            # The same cwd-first resolution makes a checkout that declares a MANAGED
+            # agent name the spec that runs, whatever Kiro Crew installed under it.
+            shadowed = await asyncio.to_thread(
+                managed_shadow_mod.managed_agent_shadow_refusal, self._agent, self._work_dir
+            )
+            if shadowed:
+                raise AcpError(shadowed)
             # The agents-tree seal is a launcher rule, and a spawn delegated to
             # kiro-cli's internal sandbox never sees the launcher — so on those
             # paths a workspace overlapping the agents directory is the one way
@@ -6740,6 +6824,72 @@ class AcpClient:
         except Exception:  # pragma: no cover - defensive; teardown must not raise
             logger.debug("could not settle Crew's settings seed at %s", path, exc_info=True)
 
+    def release_settings_seed_claim(self) -> None:
+        """Hand back this client's live ``settings.local.json`` registrations, synchronously.
+
+        The seed hand-back for a client torn down WITHOUT :meth:`shutdown`. The
+        session layer's teardown for a provider it is abandoning
+        (``_dispatch_hard_kill`` -> ``session_pid._sync_kill_provider``) ends the
+        process and drops the client object; neither
+        :meth:`_discard_claude_settings_seed` nor :meth:`_reset_state` runs on that
+        path, so without this hand-back the registrations this client took in
+        :mod:`~kiro_crew.acp.seed_provenance` outlive it for the rest of the
+        gateway process. A stale live slot keeps ``claim`` and ``held_by_another``
+        refusing every later client on this ``work_dir``, and a client whose
+        payload the stale seed cannot be shared with runs with its whole
+        ``mcpServers`` array withheld.
+
+        Both halves of each registration are withdrawn, because the persisted
+        holder carries this PROCESS's live identity and ``claim`` re-reads it under
+        the cross-process lock: dropping only the in-memory slot (``release_local``)
+        leaves the next client's adoption refused by a holder whose client is gone.
+        An owner claim is handed back with :func:`seed_provenance.release`,
+        never ``forget``: the file and its durable record stay, which is the
+        recorded-orphan shape an abrupt end already leaves and the one the next
+        session adopts, re-seeds for itself and removes on its own teardown. A
+        reader lease is withdrawn with :func:`seed_provenance.unshare`, so the
+        owner's teardown stops holding the file for a reader that is gone.
+
+        Gated on the registrations this client's own token actually holds (see
+        :func:`seed_provenance.release_held`): a client that holds neither -- every
+        kiro-backend client, a claude client that never seeded -- performs no
+        sidecar I/O at all, so no backend check is needed or made. Synchronous and
+        blocking (each withdrawal rewrites the sidecar under the cross-process
+        lock); the caller runs it OFF the event loop, on the thread the teardown
+        itself runs on. Never raises: a refused durable withdrawal leaves the
+        persisted holder reclaimable once this process exits, the same contract
+        :meth:`_discard_claude_settings_seed` carries, and an exception out of here
+        would cost the teardown that follows it. ``getattr`` throughout, because
+        the teardown may reach a client built without ``__init__``.
+        """
+        owner = getattr(self, "_seed_owner", "")
+        if not owner or getattr(self, "_work_dir", None) is None:
+            return
+        try:
+            path = self._claude_local_settings_path()
+            if not seed_provenance.release_held(path, owner):
+                logger.warning(
+                    "could not durably hand back Crew's registration on %s while its "
+                    "provider was torn down; retaining the persisted holder until process "
+                    "exit, after which it is stale and reclaimable",
+                    path,
+                )
+            if getattr(self, "_claude_settings_claim_unrevoked", False):
+                # The owner holder still owed on a file a user replaced: the same
+                # retry the discard runs, on the same off-loop footing.
+                self._hand_back_unrevoked_claim(path, owner)
+        except Exception:  # pragma: no cover - defensive; teardown must not raise
+            logger.debug("could not hand back Crew's settings seed registration", exc_info=True)
+        # The in-memory registrations are gone whatever the durable outcome, as
+        # after ``_discard_claude_settings_seed`` and ``_reset_state``; the
+        # instance flags that mirror them follow, so nothing later reads this
+        # client as still governing or still owing a hand-back.
+        self._claude_settings_authored = False
+        self._claude_settings_written = None
+        self._claude_settings_claim_unrevoked = False
+        self._claude_settings_shared = False
+        self._permission_surface_share_validated = False
+
     def _reset_state(self) -> None:
         """Reset all session state (call after process is dead)."""
         cleanup = getattr(self._process, "_windows_cleanup_state", None)
@@ -6995,6 +7145,7 @@ class AcpClient:
                 *(self._claude_session_mcp_servers() if self._is_claude else []),
                 *(self._opencode_session_mcp_servers() if self._is_opencode else []),
                 *(self._goose_session_mcp_servers() if self._is_goose else []),
+                *(self._deepseek_session_mcp_servers() if self._is_deepseek else []),
                 *(await asyncio.to_thread(self._pooled_mcp_servers)),
             ],
         }
@@ -7063,6 +7214,7 @@ class AcpClient:
                 *(self._claude_session_mcp_servers() if self._is_claude else []),
                 *(self._opencode_session_mcp_servers() if self._is_opencode else []),
                 *(self._goose_session_mcp_servers() if self._is_goose else []),
+                *(self._deepseek_session_mcp_servers() if self._is_deepseek else []),
                 *(await asyncio.to_thread(self._pooled_mcp_servers)),
             ]
             # Rebuilt AFTER the array, from the same re-seed: the envelope carries
@@ -7216,6 +7368,7 @@ class AcpClient:
                             *(self._claude_session_mcp_servers() if self._is_claude else []),
                             *(self._opencode_session_mcp_servers() if self._is_opencode else []),
                             *(self._goose_session_mcp_servers() if self._is_goose else []),
+                            *(self._deepseek_session_mcp_servers() if self._is_deepseek else []),
                             *(await asyncio.to_thread(self._pooled_mcp_servers)),
                         ],
                     }
@@ -8944,6 +9097,7 @@ class AcpClient:
         self._tool_call_mcp_server.clear()
         self._tool_call_tool_name.clear()
         self._tool_call_harness_tool_name.clear()
+        self._tool_call_identity_unreadable.clear()
         self._tool_call_params.clear()
         self._tool_call_diff_path.clear()
         # Reset the per-turn observed-tool-call bookkeeping (see __init__).
@@ -11030,6 +11184,13 @@ class AcpClient:
                 _harness_names = getattr(self, "_tool_call_harness_tool_name", None)
                 if _harness_names is not None:
                     _harness_names[tool_call_id] = harness_tool_name(update)
+                # KAS only (H13): the mark and the refusal it earns are a KAS
+                # refusal mode; a first-class harness's frame is never marked.
+                if (
+                    identity.identity_unreadable
+                    and self.backend in ACP_BACKENDS_PERMISSION_KIND_FROM_TOOL_CALL
+                ):
+                    self._tool_call_identity_unreadable[tool_call_id] = True
             title = _select_tool_title(title, raw_input, kind, is_shell=is_shell) or ""
             if title:
                 title, _ = redact_exfiltration_urls(title)
@@ -11519,6 +11680,12 @@ class AcpClient:
             mcp_server_name_cache=self._tool_call_mcp_server,
             tool_name_cache=self._tool_call_tool_name,
             harness_tool_name_cache=getattr(self, "_tool_call_harness_tool_name", None),
+            # Handed only on the KAS harness, the same gate as the kind carry (H13).
+            identity_unreadable_cache=(
+                getattr(self, "_tool_call_identity_unreadable", None)
+                if self.backend in ACP_BACKENDS_PERMISSION_KIND_FROM_TOOL_CALL
+                else None
+            ),
             # Set only for a session running Kiro Crew's gate extension, whose
             # dialogs carry the nonce this spawn issued; ``None`` everywhere else,
             # so no other harness's permission frame is ever read as an envelope.

@@ -95,7 +95,9 @@ as the tool takes them.
    person is legitimately slower than an agent dying, but must not wait forever.
 
 4. If the response reports `changed: false` (nothing claimed, nothing went
-   stale): **exit silently.** No message,
+   stale, and no `verifications` entry reads `still_firing` — a `still_firing`
+   verdict alone makes `changed: true`, and reconcile's Pass 1a says what to do
+   with it): **exit silently.** No message,
    no notification, no channel post.
 
 ## Rules

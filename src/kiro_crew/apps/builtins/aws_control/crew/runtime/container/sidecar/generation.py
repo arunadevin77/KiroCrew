@@ -18,11 +18,9 @@ reason the protocol has this shape:
 * Commitment is a single object, and a single object is either there or it is not. There
   is no state in which half a commitment is visible.
 
-The pointer's ABSENCE is meaningful rather than an error. A bucket written before this
-protocol holds the authority objects at their ``data/`` keys with no pointer, and that is
-read as GENERATION 0. Those objects are never deleted, moved or rewritten, so a bucket
-does not have to be migrated to be read, and a writer that predates the protocol keeps
-producing buckets this one understands.
+The pointer's ABSENCE is meaningful rather than an error. With no pointer the bucket holds
+no committed generation, which is a first boot. Nothing else is read in its place: there is
+no pre-protocol ``data/`` authority layout and no per-stem transcript key to fall back to.
 
 The interpretation lives here and neither process keeps its own copy, for the reason
 ``keys.py`` gives for key derivation: the writer and the reader agreeing with each other
@@ -60,8 +58,8 @@ __all__ = [
 #: storage (:func:`claim_ownership`) BEFORE restoration, and the sidecar reads at startup to
 #: ADOPT rather than mint its own. One definition here, imported by both the supervisor (which
 #: writes it) and the sidecar entrypoint (which reads it), so the two cannot drift on the name.
-#: Empty or unset means no claim was made (generation 0, or no bucket), and the sidecar mints
-#: its base token as before.
+#: Empty or unset means no token was exported (no bucket configured), and the sidecar mints
+#: its base token itself. Generation 0 DOES export a minted base token through this variable.
 ENV_CLAIMED_INCARNATION = "SMC_CLAIMED_INCARNATION"
 
 
@@ -69,7 +67,7 @@ class PointerUnusable(RuntimeError):
     """The pointer is present and cannot be used.
 
     Distinct from absent, and the distinction decides a boot. Absent means no generation
-    has been committed, so the legacy keys are generation 0 and a task starts from them.
+    has been committed and the bucket is empty, so a task starts fresh.
     Present-but-unusable means a generation may well be committed and this task cannot
     tell which -- reading that as absence would boot from objects the pointer was steering
     away from.
@@ -77,14 +75,14 @@ class PointerUnusable(RuntimeError):
 
 
 class TranscriptIndexUnusable(RuntimeError):
-    """The committed generation's transcript index is present and cannot be trusted.
+    """The committed generation's transcript index cannot be trusted.
 
-    Distinct from absent for the same reason :class:`PointerUnusable` is: an absent index
-    (generation 0, or a generation that committed no transcripts) means the front falls
-    back to the legacy per-stem key, while an index that is present and will not parse means
-    the mapping this task needs to find a blob exists and cannot be read -- and reading a
-    stem's blob from the wrong place, or from a legacy key a newer writer never wrote, would
-    serve an empty or stale history. So it is refused rather than treated as absent.
+    Generation 0 (no pointer) reads no index, and every committed generation has one (empty
+    when it holds no transcript), so a stem a readable committed index does not name is a new
+    conversation. An index that is ABSENT under a committed pointer (retention deleted it), or
+    present and will not parse, or unreadable, means the mapping this task needs to find a blob
+    exists and cannot be read -- and reading a stem's blob from the wrong place would serve an
+    empty or stale history. So it is refused rather than treated as empty.
     """
 
 
@@ -187,8 +185,8 @@ def read_pointer(
 ) -> Pointer | None:
     """The committed generation, or ``None`` when no pointer has been published.
 
-    ``None`` is the generation-0 answer: the bucket either holds the legacy authority keys
-    or holds nothing at all, and both are states a task may boot from.
+    ``None`` is the generation-0 answer: no pointer has been published, so the bucket holds
+    no committed generation, a state a task may boot from.
 
     Raises :class:`PointerUnusable` for every other way this can go -- a read that fails,
     bytes that do not parse, a slot this writer does not publish into, a missing file list.
@@ -219,7 +217,7 @@ def read_pointer(
         raise PointerUnusable(
             f"the generation pointer could not be read from the bucket ({exc}). This is "
             "not the same as it being absent: absent means no generation is committed and "
-            "the legacy keys are this bucket's truth, while unreadable means one may be "
+            "the bucket is empty, while unreadable means one may be "
             "committed and this task cannot tell which."
         ) from exc
     # ``etag`` rode the SAME ``get_object`` as the bytes (one GET), so it is the validator for
@@ -314,8 +312,9 @@ def read_pointer(
 class ClaimedOwnership:
     """The result of a writer-ownership claim, carrying what :func:`release_ownership` needs.
 
-    ``token`` is the claimed incarnation the sidecar adopts (``""`` for generation 0 / no
-    bucket, where nothing was written). ``prior_body`` is the committed OWNER's pointer bytes
+    ``token`` is the claimed incarnation the sidecar adopts (``""`` only when no bucket is
+    configured; generation 0 writes nothing but still carries the freshly minted base
+    incarnation the supervisor exports for the sidecar to adopt). ``prior_body`` is the committed OWNER's pointer bytes
     -- a real generation commit, carried through any nest of provisional claims so it is the
     LIVE predecessor's state and never a dead claimant's -- which :func:`release_ownership`
     restores on an aborted startup so the predecessor's own committed incarnation stands again
@@ -418,11 +417,12 @@ def claim_ownership(settings: Settings, store: ObjectStore) -> ClaimedOwnership:
     token the fence does not treat as superseding -- and commits normally.
 
     GENERATION 0 (no committed pointer) returns a :class:`ClaimedOwnership` whose ``token`` is
-    ``""`` and whose prior bytes are ``None`` and writes NOTHING: there is no
-    committed generation for a predecessor to roll back to, so there is nothing to fence and
-    no pointer to bump -- publishing one here would commit an empty generation and strand the
-    first real commit's legacy migration. Two generation-0 racers are settled by the commit's
-    own equal-counter rule and ETag CAS, unchanged. The sidecar mints its base token as before.
+    the freshly minted base incarnation and whose prior bytes are ``None``, and writes
+    NOTHING: there is no committed generation for a predecessor to roll back to, so there is
+    nothing to fence and no pointer to bump -- publishing one here would commit an empty
+    generation. The minted base token is exported for the sidecar to ADOPT rather than mint a
+    second one. Two generation-0 racers are settled by the commit's own equal-counter rule and
+    ETag CAS, unchanged. ``token`` is ``""`` only when no bucket is configured.
 
     :class:`PointerUnusable` PROPAGATES: a pointer that is present but unreadable must not be
     claimed from (minting a base token would be strictly LESS than a predecessor's committed
@@ -665,8 +665,7 @@ def read_transcript_index(
         raise TranscriptIndexUnusable(
             f"the transcript index for generation {generation_id} could not be read "
             f"({exc}). This is not the same as it being absent, so the front refuses to "
-            "serve a stale or empty history rather than fall back to a legacy key a newer "
-            "writer never wrote."
+            "serve a stale or empty history."
         ) from exc
     try:
         parsed = json.loads(raw.decode("utf-8"))

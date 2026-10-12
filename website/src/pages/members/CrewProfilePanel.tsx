@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useRef, useState, type HTMLAttributes, type ReactNode, type Ref, type ForwardedRef } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { AlarmClock, Brain, ChevronLeft, ChevronRight, FolderOpen, Goal, IdCard, NotebookPen, Pencil, Route, X } from 'lucide-react'
+import { AlarmClock, Brain, ChevronLeft, ChevronRight, FolderOpen, Goal, IdCard, NotebookPen, Pencil, RotateCcw, Route, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { MemberRosterRow } from '../../api/client'
 import { crewDisplayName } from '../../components/AgentSelector'
@@ -9,6 +9,7 @@ import Tablist, { type TablistTab } from '../../components/Tablist'
 import type { CronJob } from '../../types'
 import CrewScheduleList from './CrewScheduleList'
 import { cn } from '../../lib/utils'
+import { Btn } from '../../components/ui'
 import ErrorNotice from '../../components/ErrorNotice'
 import { forwardUiLocation } from '../../uiLocations/uiLocation'
 import type { UiLocationId } from '../../uiLocations/descriptors'
@@ -69,6 +70,9 @@ export interface CrewProfilePanelProps {
   onRequestBack: (proceed: () => void) => void
   onEdit: () => void
   onOpenFiles: () => void
+  /** Fresh start: stop any turn and start a clean conversation on the same
+   *  thread. Absent while the thread is unbound or a reset runs. */
+  onFreshStart?: () => void
 }
 
 const TONE: Record<'accent' | 'ok' | 'warn' | 'info', string> = {
@@ -284,6 +288,32 @@ export default function CrewProfilePanel(p: CrewProfilePanelProps) {
             {/* Face and name only: the id, the role and the activity line were
                 dropped from the head (they live in the pill and the editor). */}
             <div className="mt-1 text-[19px] font-bold tracking-tight text-text-strong leading-tight" data-testid="crew-profile-name">{name}</div>
+            {/* Fresh start: a small pill button under the name, where the
+                person is. A real button shape (border, filled background on
+                hover) rather than a bare caption-weight link, so a first-time
+                reader can tell it is a control before deciding whether to
+                risk it; muted colour and no danger tone keep it quiet. The
+                label carries the action alone: what survives the reset is the
+                confirm dialog's job, where the person is deciding. Held while
+                its own flow runs.
+
+                The shared `Btn` primitive carries the press feedback every
+                other button on a page has (`active:scale`), and `twMerge`
+                lets the pill keep its own radius, height, size and muted
+                colour over Btn's defaults. `hover:border-border` is spelled
+                out to hold Btn's brighter hover border back: this control
+                stays quiet, and only its fill and label move on hover. */}
+            {p.onFreshStart && (
+              <Btn
+                type="button"
+                onClick={p.onFreshStart}
+                className="gap-1.5 h-7 px-3 mt-1 rounded-full bg-bg text-[12px] text-muted hover:border-border hover:bg-bg-hover hover:text-text focus-ring"
+                data-testid="crew-profile-fresh-start"
+              >
+                <RotateCcw size={12} aria-hidden="true" />
+                <span>{t('pages.membersPage.fresh_start')}</span>
+              </Btn>
+            )}
             <button
               type="button"
               onClick={p.onEdit}

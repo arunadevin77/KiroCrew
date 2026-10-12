@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         durable_row_count,
         effective_session_key,
         is_channel_session_key,
+        load_window_off_loop,
         logger,
         members_mod,
         note_crew_log_class,
@@ -54,6 +55,7 @@ if TYPE_CHECKING:
         read_bounded_json,
         redact_credentials,
         redact_exfiltration_urls,
+        remember_unknown_row_fields,
         sel,
         slot_history_key,
         slot_transcript_key,
@@ -174,6 +176,7 @@ async def _reconcile_slot_window(state: DashboardState, slot: "_ChatSlot") -> No
             mint_mid=False,
         )
         carry_provenance(slot.messages[-1], msg)
+        remember_unknown_row_fields(slot, msg)
         _attach_variants(slot, msg)
     # The appended rows came from the file, so drain the replay frames and
     # mark the window as persisted (not dirty) — the next save must not
@@ -252,6 +255,10 @@ async def _live_slot_for_resume(
 
 async def _live_slot_resume_payload(state, existing) -> dict:
     """The resume endpoint's dedup body: the already-open slot's live window."""
+    # The live slot a resume resolves to can be a restored sidebar row, under a
+    # name the per-slot route's own lookup did not match (``dashboard:<key>``):
+    # its window loads here, with the read off the loop, before anything reads it.
+    await load_window_off_loop(existing)
     await _reconcile_slot_window(state, existing)
     window = _collapse_wire_rows(existing.messages)
     total = len(window)
@@ -658,6 +665,7 @@ def _hydrate_slot_from_history(
         # See the equivalent call in _rehydrate_slot_from_history: resume loads
         # the window that the next save re-serializes.
         carry_provenance(slot.messages[-1], m)
+        remember_unknown_row_fields(slot, m)
         _attach_variants(slot, m)
     slot.drain()
     slot._resumed_count = len(slot.messages)

@@ -168,6 +168,19 @@ jobs:
           fi
           candidate_count="$(printf '%s' "$candidates" | jq -r 'length')"
           if [ "$candidate_count" -eq 0 ]; then
+            # Same rule as fork-gpt-review.yml: zero candidates proves the head
+            # obsolete only when the fork branch itself READS and points at
+            # another commit. A branch read that fails or 404s is not proof, so
+            # it falls through to the fail-closed error below.
+            tip=""
+            branch_path="$(jq -rn --arg r "$WR_HEAD_REF" '$r|@uri')"
+            if tip="$(gh_read gh api "repos/$WR_HEAD_REPO/branches/$branch_path" --jq '.commit.sha')"; then
+              if [ -n "$tip" ] && [ "$tip" != "null" ] && [ "$tip" != "$head_sha" ]; then
+                echo "::notice::$head_sha is no longer the tip of $WR_HEAD_REPO:$WR_HEAD_REF (tip: $tip); obsolete revision, nothing to review"
+                echo "obsolete=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
             echo "::error::no open PR has head $head_sha on $WR_HEAD_REPO:$WR_HEAD_REF - superseded or closed while CI was queued; nothing to review"
             exit 1
           fi
@@ -223,6 +236,7 @@ jobs:
       # check-run's details_url as the check-run's own page, whatever the POST
       # passes.
       - name: Open check-run (in progress)
+        if: steps.pr.outputs.obsolete != 'true'
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -262,6 +276,7 @@ jobs:
       # then reads the record, so a record this read misses is one the handler
       # finds a row for, and the handler cancels and re-runs that run.
       - name: Resolve human override
+        if: steps.pr.outputs.obsolete != 'true'
         id: human_override
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -318,6 +333,7 @@ jobs:
 
       # Trusted BASE tree for review CONTEXT only. NEVER the fork head.
       - name: Checkout base (trusted)
+        if: steps.pr.outputs.obsolete != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.pr.outputs.base_sha }}
@@ -329,6 +345,7 @@ jobs:
       # artifact — so a faked Stage 1 diff cannot mislead the review. It is read
       # as a DATA file only — never applied to or overlaid on the tree; nothing runs it.
       - name: Fetch authentic diff (data only — never applied to the tree)
+        if: steps.pr.outputs.obsolete != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -390,7 +407,7 @@ jobs:
       # the UX lane fails its run on the same failure, so readiness already
       # holds, and this lane reports presence as unconfirmed.
       - name: Collect rendered evidence
-        if: steps.human_override.outputs.active != 'true'
+        if: steps.human_override.outputs.active != 'true' && (steps.pr.outputs.obsolete != 'true')
         id: evidence
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -460,7 +477,7 @@ jobs:
       # into the diff redirect over this job's own input files -- including
       # authentic.patch, the sha-pinned diff this review is built on.
       - name: Capture the PR intent (untrusted data file)
-        if: steps.human_override.outputs.active != 'true'
+        if: steps.human_override.outputs.active != 'true' && (steps.pr.outputs.obsolete != 'true')
         id: intent
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -493,13 +510,13 @@ jobs:
       # via the SAME dedicated least-privilege role the same-repo design reviewer
       # uses. No dependabot special-casing: forks never run as dependabot[bot].
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
-        if: steps.human_override.outputs.active != 'true'
+        if: steps.human_override.outputs.active != 'true' && (steps.pr.outputs.obsolete != 'true')
         with:
           role-to-assume: ${{ secrets.AWS_BEDROCK_ROLE_ARN }}
           aws-region: us-west-2
 
       - name: Design review (Opus 5.5)
-        if: steps.human_override.outputs.active != 'true'
+        if: steps.human_override.outputs.active != 'true' && (steps.pr.outputs.obsolete != 'true')
         id: review
         # We deliberately do NOT set continue-on-error, but this reviewer is
         # ADVISORY: the finalize step below resolves an errored/incomplete run to
@@ -883,7 +900,7 @@ jobs:
       # design-review.yml's slurp+flatten fallback and case-insensitive parse.
       - name: Capture design verdict
         id: verdict
-        if: always()
+        if: always() && steps.pr.outputs.obsolete != 'true'
         env:
           EXEC_FILE: ${{ steps.review.outputs.execution_file }}
           HEAD: ${{ steps.pr.outputs.head_sha }}
@@ -957,7 +974,7 @@ jobs:
           echo "Design review verdict: $verdict"
 
       - name: Redact credential shapes
-        if: always()
+        if: always() && steps.pr.outputs.obsolete != 'true'
         run: |
           f="$RUNNER_TEMP/design-review-output.md"
           if [ -f "$f" ]; then
@@ -969,7 +986,7 @@ jobs:
       # raw model/error text can carry internal detail). Mirrors design-review.yml.
       - name: Post/update design review comment
         id: post
-        if: always()
+        if: always() && steps.pr.outputs.obsolete != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -1732,7 +1749,7 @@ jobs:
       # same code that writes the files, so an empty directory here is a fault in
       # this mechanism and must be loud rather than silently produce no record.
       - name: Retain this run's unpublished verdict
-        if: always() && steps.post.outputs.retained_verdict_artifact != ''
+        if: always() && steps.post.outputs.retained_verdict_artifact != '' && steps.pr.outputs.obsolete != 'true'
         # NEVER fatal. A lane's conclusion is read by pr-readiness.yml, and for
         # the three advisory labels ANY non-success conclusion is reported as
         # `<label> (BLOCK)` -- a judged-wrong verdict. So a transport flake here,
@@ -1757,7 +1774,7 @@ jobs:
           # added to remove -- and leaves the republisher nothing to read.
           retention-days: 90
       - name: Finalize check-run (advisory)
-        if: always()
+        if: always() && steps.pr.outputs.obsolete != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}

@@ -35,6 +35,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from typing import Any
 
 READINESS = "PR Readiness"
@@ -84,25 +85,40 @@ def pull_for_commit(pulls: list[dict[str, Any]], sha: str) -> dict[str, Any] | N
     return None
 
 
+# The push run starts seconds after the merge, when GitHub can still refuse the
+# commit's pull-request listing; read again a little later, the same merge
+# reads clean. So a read is retried before it is reported unreadable, and the
+# report carries the last line gh printed, so the warning says why.
+READ_ATTEMPTS = 3
+READ_RETRY_SECS = 15
+
+
+def _run_gh(argv: list[str]) -> str:
+    for attempt in range(1, READ_ATTEMPTS + 1):
+        try:
+            return subprocess.run(
+                argv,
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            ).stdout
+        except subprocess.CalledProcessError as exc:
+            if attempt == READ_ATTEMPTS:
+                detail = (exc.stderr or "").strip().splitlines()
+                raise subprocess.CalledProcessError(
+                    exc.returncode, exc.cmd, exc.output, exc.stderr
+                ) from RuntimeError(detail[-1] if detail else "no stderr")
+            time.sleep(READ_RETRY_SECS)
+    raise AssertionError("unreachable")
+
+
 def _gh(path: str) -> Any:
-    out = subprocess.run(
-        ["gh", "api", path],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    ).stdout
-    return json.loads(out)
+    return json.loads(_run_gh(["gh", "api", path]))
 
 
 def _gh_all(path: str) -> list[Any]:
-    out = subprocess.run(
-        ["gh", "api", "--paginate", "--slurp", path],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    ).stdout
+    out = _run_gh(["gh", "api", "--paginate", "--slurp", path])
     return [item for page in json.loads(out) for item in page]
 
 
@@ -136,6 +152,8 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
         target_name = f"#{args.pr}" if args.pr is not None else args.commit
         message = f"could not read {target_name}: {exc}"
+        if isinstance(exc.__cause__, RuntimeError):
+            message += f" ({exc.__cause__})"
         if args.annotate:
             print(f"::warning::{message}")
             return 0

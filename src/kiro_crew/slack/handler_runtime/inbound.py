@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         config_path,
         is_allowed_user,
         is_sensitive_path,
+        load_window_off_loop,
         logger,
         privacy_mode,
         redact_credentials,
@@ -373,6 +374,24 @@ async def maybe_route_linked_thread(
     _unmentioned = re.sub(r"^<@[A-Z0-9]+(?:\|[^>]*)?>\s*", "", text.strip())
     if not route_pinned and agent_switch_target(_unmentioned) is not None:
         text = _unmentioned
+
+    if getattr(_linked_slot, "window_pending", False) is True:
+        # A tab restored as a sidebar row: its window loads with the read off
+        # the loop before the row lands. The thread can be relinked or unlinked
+        # while that awaits, so an unpinned route is resolved again and then
+        # pinned to what it resolves to, which bounds this to one more pass.
+        await load_window_off_loop(_linked_slot)
+        if not route_pinned and _dashboard_state.get_linked_slot(reply_ts) is not _linked_slot:
+            return await maybe_route_linked_thread(
+                text,
+                session_key,
+                user_id,
+                channel,
+                slack,
+                reply_ts,
+                target_slot=_dashboard_state.get_linked_slot(reply_ts),
+                route_pinned=True,
+            )
 
     _linked_slot_key = _linked_slot.key
     # Redact for UI display only — LLM receives original text so it can process

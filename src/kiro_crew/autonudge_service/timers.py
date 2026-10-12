@@ -295,11 +295,12 @@ async def release_approval_hold(
 def _schedule_release(svc: AutoNudgeService, slot_key: str, *, why: str, arm: bool = True) -> None:
     """Run :func:`release_approval_hold` detached, for a synchronous caller.
 
-    Supervised through ``_inflight_adds`` like the judge label and the conductor
-    wake: strongly referenced, and a failed write is logged rather than lost. A
-    plain helper rather than a service member, for the reason
-    ``_wake_bound_conductor`` gives. Never raises: the approval and message paths
-    that call it must not fail because a release could not be scheduled.
+    Supervised through ``_inflight_adds`` like the judge label: strongly referenced,
+    and a failed write is logged rather than lost. A plain helper taking *svc* rather
+    than a service member, because it is reached from call sites in this module alone
+    and binding it on the class would put a name on the service's surface that nothing
+    outside here can use. Never raises: the approval and message paths that call it
+    must not fail because a release could not be scheduled.
     """
     if not slot_key:
         return
@@ -545,10 +546,6 @@ def notify_turn_complete(
     the five is stored: the rule reduces them to one boolean plus two numbers and a
     flag, and that is what the loop's record and the calibration log keep.
     """
-    # TRIGGER THREE of the crew-log wake, and it has to run BEFORE the lookup below.
-    # That lookup asks for a loop on THIS slot; a worker has none, so every early return
-    # under it is the normal case for the slot this trigger is about.
-    _wake_bound_conductor(self, slot_key)
     loop = self._find_by_slot(slot_key)
     if not loop or not loop.active:
         return
@@ -604,58 +601,30 @@ def notify_turn_complete(
     if loop.id in self._firing:
         self._rearm_pending.add(loop.id)
         return
+    if loop.id in self._pending_monitor_wake:
+        # A wake this loop OWES, and the turn it was refused by has just ended.
+        #
+        # The refusal is ordinary: ``_fire_dashboard_nudge`` declines a busy slot, so
+        # a worker reporting while its conductor is mid-turn gets its wake held. The
+        # fire path already re-owes the claim and grants the next tick a gate-free
+        # retry, but nothing brought that tick FORWARD -- this hook armed toward the
+        # loop's own deadline, so on the hours-long cadence a work-ledger watch is
+        # meant to enable the report waited out a whole interval. Measured at 14 to 30
+        # minutes on a twenty-minute loop.
+        #
+        # Delay zero rather than ``_arm_from_deadline``'s overdue beat: that beat
+        # exists so an elapsed deadline does not ambush someone mid-conversation, and
+        # the turn it protects has just finished. The retry runs the ordinary
+        # ``_timer`` body, so every terminal bound still applies and a slot that
+        # became busy again simply refuses and re-owes.
+        logger.debug(
+            "AutoNudge: loop %s has a wake owed and its turn just ended -- "
+            "retrying the delivery now rather than at its deadline",
+            loop.id,
+        )
+        self._arm_timer(loop, delay=0.0)
+        return
     self._arm_from_deadline(loop)
-
-
-def _wake_bound_conductor(svc: AutoNudgeService, slot_key: str) -> None:
-    """Pull *slot_key*'s conductor forward, if *slot_key* is a bound worker's slot.
-
-    OUTCOME-BLIND on purpose, and that is what this trigger adds over the other two. The
-    hook this sits in is called for every turn end after HOOK_EVENT_STOP, so a turn that
-    raised, a turn that produced nothing, and a turn that simply forgot to report all
-    reach it identically -- and those are exactly the endings that write no
-    ``work/recorded`` entry, so trigger one never sees them. The gate still decides
-    whether a turn is spent: a worker that reported ``progress`` and then ended its turn
-    pulls the tick forward and the probe answers quiet.
-
-    DETACHED, because this hook is synchronous and its caller is the gateway finishing a
-    turn. Supervised through ``_inflight_adds`` like the judge label above it, so the task
-    is strongly referenced and its failure is logged rather than swallowed by the garbage
-    collector. Never raises: a turn end must not fail because a push could not be
-    scheduled.
-
-    A PLAIN HELPER taking *svc*, not a service member: it is reached from exactly one
-    call site in this module, and binding it on the class would put a name on the
-    service's surface that nothing outside here can use.
-    """
-    if not slot_key:
-        return
-    try:
-        # Local, for the reason the judge import below is: ``conductor_wake`` reaches the
-        # work-ledger store, and this hook runs on every turn of every session.
-        from kiro_crew import conductor_wake
-
-        asyncio.get_running_loop()
-        task = asyncio.ensure_future(conductor_wake.fire_for_worker_slot(slot_key))
-    except RuntimeError:
-        # No running loop: a synchronous test driver or a shutdown path. Nothing to
-        # schedule onto, and the conductor's own tick still covers it.
-        return
-    except Exception:  # pragma: no cover - a turn end must not fail on this
-        logger.debug("AutoNudge: could not schedule a conductor wake for %s", slot_key)
-        return
-    svc._inflight_adds.add(task)
-
-    def _finish(t: "asyncio.Task[str]") -> None:
-        svc._inflight_adds.discard(t)
-        if not t.cancelled() and t.exception() is not None:
-            logger.debug(
-                "AutoNudge: conductor wake for %s failed",
-                slot_key,
-                exc_info=t.exception(),
-            )
-
-    task.add_done_callback(_finish)
 
 
 def notify_user_input(self: AutoNudgeService, slot_key: str, *, human: bool = False) -> None:
@@ -751,7 +720,11 @@ def _cancel_timer(self: AutoNudgeService, loop_id: str, *, drop_claims: bool = T
     # and is charged as a wake as well, counting one delivered turn under two
     # counters. That trade is deliberate: an undelivered observation is lost rather
     # than attributed to a turn that did not carry it.
-    self._pending_monitor_wake.discard(loop_id)
+    # The claim carries the wake's text, so dropping the claim drops the text with
+    # it -- which is the point of keeping them in one value. A cancelled cycle's
+    # briefs must not ride the loop's next fire: they would name items a turn
+    # nobody delivered had observed.
+    self._pending_monitor_wake.pop(loop_id, None)
     self._pending_floor_tick.discard(loop_id)
 
 

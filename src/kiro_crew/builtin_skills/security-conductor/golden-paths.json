@@ -318,6 +318,13 @@
     },
     {
       "kind": "shell",
+      "surface": "gates",
+      "command_or_flow": "npx eslint src/ --max-warnings 0",
+      "platform": "any",
+      "reason": "The frontend lint gate at the ceiling CI enforces today (ci.yml runs it with --max-warnings 0). Added beside the --max-warnings 603 row above, which stays: an approved row is never retired to make the corpus tidier, and the import key is the command text, so a corrected number is a new row."
+    },
+    {
+      "kind": "shell",
       "surface": "self-health",
       "command_or_flow": "kirocrew status",
       "platform": "any",

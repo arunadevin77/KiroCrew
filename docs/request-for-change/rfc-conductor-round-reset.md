@@ -1,10 +1,10 @@
 ---
 title: Conductor round reset -- a conductor drops its chat context at a round close
-status: in-progress
+status: implemented
 author: iamwhatever, with kirocrew-worker
 created: 2026-10-08
-last-audited: 2026-10-08
-audited-at: 8c7417ea82
+last-audited: 2026-10-11
+audited-at: a84f616557
 doc-pr: null
 implementation-prs: [18113]
 tracking-issues: [18093]
@@ -14,7 +14,7 @@ superseded-by: []
 
 # RFC: Conductor round reset
 
-- Status: in-progress. The implementation is [#18113](https://github.com/kirodotdev/KiroCrew/pull/18113). The operator who owns the conductor patrol decided it on 2026-10-08. This document lands on its own first, as GOVERNANCE.md asks of an RFC, so the implementation's First Principles lane can read the decision off the base branch.
+- Status: implemented in [#18113](https://github.com/kirodotdev/KiroCrew/pull/18113). The operator who owns the conductor patrol decided it on 2026-10-08. This document lands on its own first, as GOVERNANCE.md asks of an RFC, so the implementation's First Principles lane can read the decision off the base branch.
 - Amends one rule on main, named in section 5: `reset_conversation` is no longer human-only in exactly one case.
 - Related: [rfc-conductor-work-ledger.md](rfc-conductor-work-ledger.md) (the item store a conductor resumes from) and [rfc-conductor-default-patrol.md](rfc-conductor-default-patrol.md) (the patrol loop whose wakes this applies to).
 - Measured at `8c7417ea82`.

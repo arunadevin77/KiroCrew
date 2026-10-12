@@ -594,6 +594,29 @@ class TestEffortControl:
         provider._client.set_config_option.assert_awaited_once_with("effort", "max")
 
     @pytest.mark.asyncio
+    async def test_claude_start_pushes_effort_keyed_by_configured_model_spelling(self):
+        # The factory keys the level by the configured spelling; startup records
+        # the advertised one on the client.
+        with patch("kiro_crew.providers.acp.AcpClient"):
+            provider = AcpProvider(
+                acp_backend=ACP_BACKEND_CLAUDE,
+                model="claude-opus-5.5",
+                effort_per_model={"claude-opus-5.5": "max"},
+            )
+        client = provider._client
+        client.backend = ACP_BACKEND_CLAUDE
+        client._model = "claude-opus-5.5"
+        client.supports_config_option = MagicMock(return_value=True)
+        client.set_config_option = AsyncMock()
+
+        async def _ensure_ready():
+            client._model = "claude-opus-5-5[1m]"
+
+        client.ensure_ready = AsyncMock(side_effect=_ensure_ready)
+        await provider.start()
+        client.set_config_option.assert_awaited_once_with("effort", "max")
+
+    @pytest.mark.asyncio
     async def test_apply_initial_effort_noop_on_kiro_backend(self):
         # kiro gets effort from the spawn-time overlay, not a live push.
         provider = self._effort_provider(backend="", model="claude-opus-4.7")
@@ -1538,6 +1561,8 @@ class TestStartKiroRuntimeModelEntitlement:
         handle.session_id = "kiro-sess-1"
         handle.store_session_config = MagicMock()
         handle.set_model = AsyncMock()
+        # A real AcpSessionHandle starts with no refusal recorded.
+        handle.model_pin_refused = ""
         handle.available_models = [{"modelId": m, "name": m} for m in advertised]
         # The spawn-time withhold revalidates once via refresh_available_models
         # before dropping a pin. Default: the probe agrees with the startup
@@ -1570,6 +1595,20 @@ class TestStartKiroRuntimeModelEntitlement:
     async def test_unusable_configured_model_is_never_sent(self):
         handle = await self._run("claude-opus-4.8", ["claude-sonnet-4.6"])
         handle.set_model.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_withheld_configured_model_is_recorded_as_refused(self):
+        # The pin never ran, so a caller that bills or labels a turn by it (the
+        # cron acquire step) reads it from the handle's model_pin_refused.
+        handle = await self._run("claude-opus-4.8", ["claude-sonnet-4.6"])
+        handle.set_model.assert_not_awaited()
+        assert handle.model_pin_refused == "claude-opus-4.8"
+
+    @pytest.mark.asyncio
+    async def test_an_applied_configured_model_records_no_refusal(self):
+        handle = await self._run("claude-opus-4.8", ["claude-sonnet-4.6", "claude-opus-4.8"])
+        handle.set_model.assert_awaited_once_with("claude-opus-4.8")
+        assert handle.model_pin_refused == ""
 
     @pytest.mark.asyncio
     async def test_usable_configured_model_is_applied(self):

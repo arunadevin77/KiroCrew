@@ -1447,12 +1447,18 @@ def validate_jsonrpc_request(req: dict[str, Any]) -> tuple[str, Any, dict[str, A
 #: fields a caller varies across one wave in practice (model, effort); a
 #: per-task template is ``agents``. The rest stay batch-wide and can join this
 #: object later without changing the shape again.
+#: A backend's policy-facing name ("kiro", "claude", "codex"): lowercase id
+#: characters only, so a request can never smuggle anything past the endpoint's
+#: membership check into a log line or an error message.
+_BACKEND_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
 SPAWN_RUN_TASK_ITEM_SCHEMA = ToolSchema(
     tool_name="spawn_run.tasks[]",
     fields=[
         FieldSpec("task", str, required=True, max_len=MAX_MEDIUM_STRING),
         FieldSpec("model", str, max_len=MAX_SHORT_STRING, pattern=_MODEL_NAME_RE),
         FieldSpec("reasoning_effort", str, allowed=EFFORT_VALUES),
+        FieldSpec("backend", str, max_len=MAX_SHORT_STRING, pattern=_BACKEND_NAME_RE),
     ],
 )
 
@@ -1491,6 +1497,11 @@ SPAWN_RUN_SCHEMA = ToolSchema(
         # Batch-wide, like ``model``. ``""`` (in EFFORT_VALUES) means "unset —
         # defer to the role_efforts['subagent'] pin, else the provider default".
         FieldSpec("reasoning_effort", str, allowed=EFFORT_VALUES),
+        # Optional backend (harness) for the subagent(s), spelled the way a
+        # governance rule spells it ("kiro", "claude", "codex", ...). Shape only
+        # here: whether it is selectable on this gateway is the spawn endpoint's
+        # answer, which refuses with the selectable list.
+        FieldSpec("backend", str, max_len=MAX_SHORT_STRING, pattern=_BACKEND_NAME_RE),
         # keep=True makes the run a continuable conversation: its session
         # persists (hibernated on disk) after completion, and spawn_continue
         # can dispatch follow-up turns into it with full prior context.
@@ -4020,6 +4031,18 @@ SESSION_RELOAD_SCHEMA = ToolSchema(
     ],
 )
 
+SESSION_RENAME_SCHEMA = ToolSchema(
+    tool_name="session_rename",
+    fields=[
+        FieldSpec("target", str, required=True, max_len=MAX_SHORT_STRING),
+        # A transport bound only. The 200-character title rule is applied by the
+        # route AFTER surrounding whitespace is stripped
+        # (``session_control._clean_rename_title``), so a padded title that is
+        # short once stripped is not refused here.
+        FieldSpec("title", str, required=True, max_len=MAX_SHORT_STRING),
+    ],
+)
+
 SESSION_CLOSE_SCHEMA = ToolSchema(
     tool_name="session_close",
     fields=[
@@ -4363,6 +4386,7 @@ MCP_DASHBOARD_SCHEMAS: dict[str, ToolSchema] = {
     "session_retry": SESSION_RETRY_SCHEMA,
     "session_set_model": SESSION_SET_MODEL_SCHEMA,
     "session_reload": SESSION_RELOAD_SCHEMA,
+    "session_rename": SESSION_RENAME_SCHEMA,
     "session_close": SESSION_CLOSE_SCHEMA,
     "session_revive": SESSION_REVIVE_SCHEMA,
     "session_send": SESSION_SEND_SCHEMA,
@@ -4735,6 +4759,12 @@ DASHBOARD_WRITE_SCHEMA = ToolSchema(
     ],
 )
 
+#: Empty and registered, for ``PANEL_TEMPLATES_SCHEMA``'s reason. The catalog is the
+#: same for every caller except for the seq numbers, and those come from the calling
+#: session's own identity -- so there is no argument that could narrow or widen it, and
+#: an accepted one would be a filter the tool does not apply.
+DASHBOARD_TYPES_SCHEMA = ToolSchema(tool_name="dashboard_types")
+
 DASHBOARD_TEMPLATES_SCHEMA = ToolSchema(
     tool_name="dashboard_templates",
     fields=[
@@ -4785,6 +4815,7 @@ MCP_PANEL_SCHEMAS: dict[str, ToolSchema] = {
     "panel_publish": PANEL_PUBLISH_SCHEMA,
     "panel_templates": PANEL_TEMPLATES_SCHEMA,
     "dashboard_fields": DASHBOARD_FIELDS_SCHEMA,
+    "dashboard_types": DASHBOARD_TYPES_SCHEMA,
     "dashboard_write": DASHBOARD_WRITE_SCHEMA,
     "dashboard_templates": DASHBOARD_TEMPLATES_SCHEMA,
     "dashboard_preview": DASHBOARD_PREVIEW_SCHEMA,
@@ -4825,6 +4856,33 @@ MCP_GUIDE_SCHEMAS: dict[str, ToolSchema] = {
     "guide_start": GUIDE_START_SCHEMA,
     "guide_status": GUIDE_STATUS_SCHEMA,
     "guide_cancel": GUIDE_CANCEL_SCHEMA,
+    "list_change_kinds": ToolSchema(tool_name="list_change_kinds"),
+    "find_setting": ToolSchema(
+        tool_name="find_setting",
+        fields=[FieldSpec("query", str, required=True, max_len=200)],
+    ),
+    "get_member_capabilities": ToolSchema(
+        tool_name="get_member_capabilities",
+        fields=[FieldSpec("member", str, required=True, max_len=128)],
+    ),
+    "diagnose_settings": ToolSchema(
+        tool_name="diagnose_settings",
+        fields=[FieldSpec("topic", str, max_len=200)],
+    ),
+    "propose_change": ToolSchema(
+        tool_name="propose_change",
+        fields=[
+            FieldSpec("kind", str, required=True, max_len=64),
+            FieldSpec("params", dict, required=True),
+            FieldSpec("reason", str, max_len=500),
+        ],
+    ),
+    "get_change_status": ToolSchema(
+        tool_name="get_change_status",
+        fields=[
+            FieldSpec("change_id", str, max_len=48, pattern=re.compile(r"^cc_[A-Za-z0-9_-]{8,40}$"))
+        ],
+    ),
     "rename_self": ToolSchema(
         tool_name="rename_self",
         fields=[FieldSpec("name", str, required=True, max_len=MAX_SHORT_STRING)],

@@ -38,6 +38,7 @@ other name the owners read is their own global, which a patch here does not reac
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import random  # noqa: F401 -- patch seam: tests patch kiro_crew.cron.random.uniform
 import threading
@@ -87,6 +88,7 @@ from kiro_crew.cron_service.execution import (  # noqa: F401 -- re-exported
     apply_run_record,
     close_run,
     effective_wake_budget,
+    run_parks_one_shot,
 )
 from kiro_crew.cron_service.fields import (  # noqa: F401 -- re-exported
     _CHAT_FOLDER_NEEDS_PERSISTENT,
@@ -539,6 +541,12 @@ class CronService:
         # a completed one-shot is always
         # eventually removed and can never re-fire in the meantime.
         self._pending_removals: set[str] = set()
+        # Completed runs whose result merge has not been saved yet, the newest
+        # run per job id (see _hold_run_record). The guard covers the dict and
+        # every apply of a held record: the loop holds, worker threads re-apply
+        # and release, and a hold and a re-apply never interleave on one job.
+        self._held_run_records: dict[str, CronJob] = {}
+        self._held_run_records_guard = threading.Lock()
         # True while a critical-posture episode is deferring scheduled
         # firings (see _on_timer). Log-throttle state only: the INFO line
         # fires once per deferral episode, not once per deferred tick.
@@ -726,6 +734,10 @@ class CronService:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._claims.clear()
+        # A record the store lock refused is held in memory only; save it before
+        # this process goes, or the next one finds the job due again.
+        if self._held_run_records:
+            await asyncio.to_thread(self._flush_held_run_records)
 
     # ── Reaper ──
 
@@ -2225,6 +2237,46 @@ class CronService:
             self._arm_timer()
         return ok
 
+    async def remove_job_if_async(
+        self,
+        job_id: str,
+        *,
+        expected_revision: str,
+        revision_of: Callable[["CronJob"], str],
+        actor: str,
+        source: str,
+    ) -> str:
+        """Compare-and-delete: remove *job_id* only while ``revision_of(job)`` still
+        equals *expected_revision*, read and deleted under one store lock off the
+        loop. Returns ``"removed"``, ``"not_found"`` or ``"changed"``; raises
+        :class:`CronStoreBusy` on sustained contention.
+        """
+        outcome = await asyncio.to_thread(
+            self._remove_job_if_locked, job_id, expected_revision, revision_of
+        )
+        if outcome == "changed":
+            self._audit_refused_removal(job_id, actor=actor, source=source)
+        else:
+            self._audit_requested_removal(
+                job_id, removed=outcome == "removed", actor=actor, source=source
+            )
+        if outcome == "removed":
+            self._arm_timer()
+        return outcome
+
+    def _audit_refused_removal(self, job_id: str, *, actor: str, source: str) -> None:
+        """Audit a compare-and-delete the live job's fingerprint refused."""
+        try:
+            sel.sel().log_api_access(
+                caller=actor,
+                operation="cron.remove",
+                outcome="denied",
+                source=source,
+                resources=f"job_id={job_id} reason=changed_since_apply",
+            )
+        except Exception:
+            logger.warning("SEL audit for cron removal failed (job %s)", job_id, exc_info=True)
+
     def _audit_requested_removal(
         self,
         job_id: str,
@@ -2313,6 +2365,131 @@ class CronService:
             logger.warning(
                 "SEL audit for one-shot cron removal failed (job %s)", job_id, exc_info=True
             )
+
+    def _hold_run_record(self, job: CronJob, record: CronJob) -> None:
+        """Keep a completed run's record until a save under the lock persists it.
+
+        Loop-side; the finalizer calls it before the result merge. The merge
+        is best-effort: a lock that stays contended raises
+        :class:`CronStoreBusy` before anything is merged, and the record then
+        lives only in memory. A reload of a store another writer changed
+        replaces the job with its disk copy, which never received the run, so
+        an ``every`` job is due again early and a fired one-shot is enabled
+        again. Every reload re-applies a held record
+        (:meth:`_reapply_held_run_records`), and the next save under the lock
+        (the merge, the timer tick, :meth:`stop`) persists and releases it.
+
+        Holds of one job arrive in run order (the next run cannot start before
+        this finalizer gets here), so the newest record replaces a held one.
+        ``job`` is the object the run wrote its fields on. The record is applied
+        here to the job listed under its id, whether that is ``job`` itself or
+        the disk copy a reload swapped in during the run, which adds the
+        generation and the persisted spellings (``user_paused`` for a fired
+        one-shot), so any save of it lands the record and a re-apply skips it.
+        A timer tick the store lock also refuses works from this list, so the
+        listed job must carry the run before this finalizer yields, or that
+        tick finds it due and runs it again.
+
+        A reload on a worker thread can replace the list at any point here. The
+        record is registered first, and the lookup and the apply run under the
+        same guard as a reload's re-apply: a reload that re-applies after the
+        registration applies the record to its own copies, and one that
+        re-applied before it had already swapped its copies into the list
+        (``_load`` replaces the list before it re-applies), so the lookup finds
+        them. Under the one guard, the two applies to a job never interleave.
+        """
+        with self._held_run_records_guard:
+            self._held_run_records[record.id] = record
+            listed = next((j for j in self._jobs if j.id == record.id), None)
+            if listed is not None and listed.run_generation < record.run_generation:
+                self._apply_held_run_record(listed, record)
+
+    @staticmethod
+    def _apply_held_run_record(target: CronJob, record: CronJob) -> None:
+        """Apply a held record to ``target``; a schedule edited since keeps its pause state.
+
+        ``apply_run_record`` derives a fired one-shot's disable from the record's
+        schedule. When ``target`` carries a different schedule from the one that
+        fired (another writer made the one-shot recurring, or moved it to a later
+        time), that disable belongs to the old schedule: the run's result and
+        generation are taken, the current schedule's ``enabled`` and
+        ``user_paused`` are kept.
+        """
+        enabled, user_paused = target.enabled, target.user_paused
+        apply_run_record(target, record)
+        if target.schedule != record.schedule:
+            target.user_paused = user_paused
+            target.enabled = enabled and not target.auto_paused
+
+    def _release_held_run_record(self, record: CronJob) -> None:
+        """Drop ``record`` after a save persisted it, unless a newer one is held."""
+        with self._held_run_records_guard:
+            if self._held_run_records.get(record.id) is record:
+                del self._held_run_records[record.id]
+
+    def _reapply_held_run_records(self) -> None:
+        """Apply held run records to the job list. Under the store lock.
+
+        Same fence as :meth:`_merge_job_result`: a record applies only to a job
+        whose generation is older, so it never overwrites a newer run another
+        writer stored, nor a job that already carries it. The lookup and the
+        applies run under the guard, as the hold's do (:meth:`_hold_run_record`).
+        """
+        with self._held_run_records_guard:
+            self._apply_held_run_records_to(self._jobs)
+
+    def _apply_held_run_records_to(self, jobs: list[CronJob]) -> None:
+        """Apply every held run record to its job in ``jobs``. The caller holds the guard."""
+        by_id = {j.id: j for j in jobs}
+        for record in self._held_run_records.values():
+            target = by_id.get(record.id)
+            if target is not None and target.run_generation < record.run_generation:
+                self._apply_held_run_record(target, record)
+
+    def _save_held_run_records_locked(self) -> None:
+        """Persist and release the held run records. MUST hold the store lock, after ``_sync``.
+
+        A job whose generation equals its record's was given the record, but a
+        run that started since resets its status in place (``_execute``) without
+        a new generation. So the save writes a copy of such a job with the record
+        applied, and the running job itself is left as it is. The copy keeps the
+        live job's pause state and failure count: the job already carries the
+        record's values for them, so a difference is a user edit made since the
+        hold (a re-enable, a resume), and the edit wins.
+        """
+        with self._held_run_records_guard:
+            held = list(self._held_run_records.values())
+        if not held or self._load_failed:
+            return
+        self._reapply_held_run_records()
+        by_id = {record.id: record for record in held}
+        jobs: list[CronJob] = []
+        for job in self._jobs:
+            record = by_id.get(job.id)
+            if record is not None and job.run_generation == record.run_generation:
+                live = job
+                job = copy.copy(job)
+                apply_run_record(job, record)
+                job.enabled = live.enabled
+                job.user_paused = live.user_paused
+                job.auto_paused = live.auto_paused
+                job.consecutive_failures = live.consecutive_failures
+            jobs.append(job)
+        self._save(jobs)
+        for record in held:
+            self._release_held_run_record(record)
+
+    def _flush_held_run_records(self) -> None:
+        """Persist the held run records for :meth:`stop`. WORKER-THREAD ONLY.
+
+        Best-effort: a store still contended or unwritable leaves them unsaved.
+        """
+        try:
+            with self._file_lock():
+                self._sync()
+                self._save_held_run_records_locked()
+        except (CronStoreBusy, OSError) as exc:
+            logger.warning("Cron: held run records not saved at stop: %s", exc)
 
     def _drain_pending_removals_locked(self) -> list[str]:
         """Delete jobs queued via :meth:`defer_removal`. MUST hold the store lock.
@@ -2486,6 +2663,39 @@ class CronService:
                 logger.info("Removed cron job %s", job_id)
                 return True
         return False
+
+    def _remove_job_if_locked(
+        self,
+        job_id: str,
+        expected_revision: str,
+        revision_of: Callable[["CronJob"], str],
+    ) -> str:
+        """Lock/reload/compare/mutate/save core of :meth:`remove_job_if_async`.
+
+        An exact ``revision_of``/``expected_revision`` match proceeds to the same
+        remove-rows + cascade + save the unconditional path uses; a live job that
+        differs is left untouched (``"changed"``), a missing one ``"not_found"``.
+        """
+        with self._file_lock():
+            self._sync_for_write()
+            job = next((j for j in self._jobs if j.id == job_id), None)
+            if job is None:
+                return "not_found"
+            if revision_of(job) != expected_revision:
+                return "changed"
+            # Same ordering as _remove_job_locked: the grant-epoch bump reads
+            # live rows and must precede the row filter.
+            self._bump_grant_epochs_for({job_id})
+            restore = self._remove_job_rows({job_id})
+            try:
+                self._save()
+            except BaseException:
+                for child, previous_owner in restore:
+                    child.session_key = previous_owner
+                self._reset_fingerprint()
+                raise
+            logger.info("Removed cron job %s", job_id)
+            return "removed"
 
     def _remove_job_rows(self, removed_ids: set[str]) -> list[tuple[CronJob, str]]:
         """Filter ``removed_ids`` out of ``self._jobs`` and cascade the release.
@@ -3613,6 +3823,7 @@ class CronService:
             with self._file_lock():
                 self._sync()
                 drained = self._drain_pending_removals_locked()
+                self._save_held_run_records_locked()
         except CronStoreBusy:
             logger.debug("Cron timer tick: store busy, using in-memory snapshot")
         except OSError as exc:
@@ -3926,6 +4137,13 @@ class CronService:
             # beside it. A run that is still the claim holder (a normal
             # completion, or stop()'s cancel, which takes nothing) releases
             # everything here -- the one pop covers every field.
+            # Hold this run's record BEFORE the release below. Released, the job
+            # is free for the next tick's due check, and a reload a worker thread
+            # finished meanwhile has listed the store's copy, which never got
+            # this run: held first, every reload applies it, so the listed job
+            # is either claimed or carries the run (see _hold_run_record).
+            if terminal is not None:
+                self._hold_run_record(job, terminal)
             self._runs.release(job.id, claim)
             # Notify dashboard that the job has finished (clears the badge).
             try:
@@ -4078,6 +4296,16 @@ class CronService:
             if not job.failure_recorded and not job.run_never_started:
                 job.record_failure()
             logger.error("Cron job '%s' timed out after %ds", job.name, deadline)
+        finally:
+            # A one-shot whose run FAILED (error or timeout) is auto-paused, not
+            # consumed: the pause is execution-owned, so apply_run_record persists
+            # it under the generation fence and the doctor reports it. In a finally
+            # so a cancel after the failure still parks it. A denied or
+            # never-started run is not a failed run and keeps its own handling.
+            if job.delete_after_run and job.last_status == "error" and not job.auto_paused:
+                if not (job.fire_time_denied or job.run_never_started):
+                    job.enabled, job.auto_paused = False, True
+                    job._audit_pause_change("auto_paused")
 
     async def _execute(self, job: CronJob, claim: _RunClaim | None = None) -> None:
         """Run the job callback and update runtime fields (last_run_ts, last_status).
@@ -4090,6 +4318,7 @@ class CronService:
         job.last_status = None
         job.fire_time_denied = False
         job.run_never_started = False
+        job.refusal_cannot_clear = False
         # Transient retries the callback took this run. The gateway callback only
         # INCREMENTS `_transient_attempts` (a runtime attribute on the live job);
         # this method is the one owner of reading it, clearing it and persisting
@@ -4162,8 +4391,9 @@ class CronService:
         # the merge below retains) keeps it discoverable so an operator can
         # re-enable it after a policy loosening. Recurring jobs are untouched:
         # they simply wait for their next scheduled slot and resume on their
-        # own when policy loosens.
-        if job.schedule.kind == "at" and (not job.delete_after_run or job.fire_time_denied):
+        # own when policy loosens. A fire that never started is not parked
+        # (see run_parks_one_shot): nothing ran, so it stays due and retries.
+        if run_parks_one_shot(job):
             job.enabled = False
 
     def _merge_job_result(self, job: CronJob) -> None:
@@ -4219,9 +4449,12 @@ class CronService:
             # unreadable store to an empty job list WITHOUT raising, so presence
             # is exactly what a corrupt store destroys, and the deferred queue
             # below then never fired for a delete that was still owed on disk.
-            delete_owed = job.delete_after_run and not (
+            # A failed run's auto-pause is only in memory until the save lands, so
+            # a save fault keeps the plain consume rule (as the busy path does).
+            consume_on_fault = job.delete_after_run and not (
                 job.fire_time_denied or job.run_never_started
             )
+            delete_owed = consume_on_fault and job.last_status != "error"
             removed_one_shot = False
             restore: list[tuple[CronJob, str]] = []
             consumed_row = False
@@ -4292,10 +4525,10 @@ class CronService:
                 # reload, and the save never landed, so the disk copy is still
                 # enabled. Without a queue entry the reloaded one-shot comes back
                 # enabled and runs a second time on the next tick. Keyed on
-                # delete_owed, NOT presence: an absent id proves nothing about
+                # consume_on_fault, NOT presence: an absent id proves nothing about
                 # whether the delete is owed, and the drain intersects the queue
                 # with what is present and drops the rest.
-                if delete_owed:
+                if consume_on_fault:
                     self._pending_removals.add(job.id)
                 if isinstance(exc, CronStoreUnreadable):
                     # Return WITHOUT auditing: the emit below records only a SAVED
@@ -4308,6 +4541,7 @@ class CronService:
                 # store-unreadable case: surface it rather than reporting a quiet
                 # no-op after the disk refused the write.
                 raise
+            self._release_held_run_record(job)
         if removed_one_shot:
             # The delete_after_run consume is an automated removal with no
             # handler-level caller, so the emit lives with the removal.
@@ -4819,7 +5053,6 @@ class CronService:
             # decode_jobs; every well-formed job survives, and the whole-store
             # reset below is reserved for a file that yields nothing parseable
             # at all, where there is nothing to salvage.
-            self._jobs = jobs
             # Fingerprint from the stat taken BEFORE the read: if a writer
             # replaced the file between our stat and read we may have loaded the
             # newer content under an older fingerprint, which only costs one
@@ -4830,6 +5063,14 @@ class CronService:
             self._last_mtime_ns = st.st_mtime_ns
             self._last_size = st.st_size
             self._last_digest = store_digest(raw)
+            # The disk copies never received a run whose merge the lock refused.
+            # They become the job list only once they carry it: a reader of the
+            # list while this reload runs (the timer's due check on the loop,
+            # with the reload on a worker thread) never sees a copy without it.
+            # Under the guard, as the hold's lookup and apply are.
+            with self._held_run_records_guard:
+                self._apply_held_run_records_to(jobs)
+                self._jobs = jobs
         except (OSError, ValueError, TypeError, RecursionError) as exc:
             # Same class set as _read_job_records' json.loads guard, kept
             # spelled identically so the two cannot drift. A decode-error-only
@@ -4920,8 +5161,11 @@ class CronService:
         if self._load_failed:
             raise self._unreadable_error()
 
-    def _save(self) -> None:
+    def _save(self, jobs: list[CronJob] | None = None) -> None:
         """Atomic write (tmp → rename) and update mtime tracking.
+
+        ``jobs`` is the list to write, ``self._jobs`` by default; the held-record
+        save passes copies so a running job is written without being changed.
 
         RAISES :exc:`CronStoreUnreadable` when the last :meth:`_load` could not
         read the store, instead of writing. ``_load`` degrades an unreadable
@@ -4980,7 +5224,7 @@ class CronService:
         if self._load_failed:
             raise self._unreadable_error()
         self._dir.mkdir(parents=True, exist_ok=True)
-        document = encode_store(self._jobs)
+        document = encode_store(self._jobs if jobs is None else jobs)
         # Atomic write: unique tmp → rename
         # Deferred import to avoid circular dependency (pre-existing)
         from kiro_crew.atomic_write import atomic_write

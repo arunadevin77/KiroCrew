@@ -155,7 +155,7 @@ kirocrew app install /absolute/path/to/my-dashboard
 
 Before you enable it, trust the app. Enable refuses every app that is not
 built in, even one that ships only an agent and a skill, until the operator
-trusts it in Settings → Security → Trusted apps. That setting grants this app
+trusts it in Settings → Security → Third-party apps. That setting grants this app
 (`agent.apps_trusted`) or all third-party apps (`agent.apps_allow_third_party`
 set to `true`). See
 [Publishing Guide](publishing-guide.md#third-party-executable-code-is-off-by-default).

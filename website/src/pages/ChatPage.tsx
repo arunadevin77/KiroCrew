@@ -35,6 +35,7 @@ import {
   requestSlotReveal,
   requestFolderReveal,
   mcpAppKey,
+  resumeFromHistory,
   } from '../store/chatSlice'
 import { confirmedDelivered } from '../utils/sendDelivery'
 import { sendTurn } from '../chat-core/transport/sendTurn'
@@ -262,7 +263,7 @@ import { prevUserTextFor } from './chat/share/shareSupport'
 import { turnHadPolicyBlock } from '../app-sdk/turnPolicyBlock'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { JiraHostsCtx } from '../lib/jiraHosts'
-import { SidebarFolderCtx, type SidebarFolderActions } from '../components/markdown/contexts'
+import { ClosedSessionCtx, SidebarFolderCtx, type ClosedSessionActions, type SidebarFolderActions } from '../components/markdown/contexts'
 import MessageErrorBoundary from '../components/MessageErrorBoundary'
 import SessionTitleControl from './chat/SessionTitleControl'
 import { useChatNavigation } from '../hooks/useChatNavigation'
@@ -1644,6 +1645,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     addSourceCommentToChat,
     colorThemeRef,
     handleFileOpen,
+    handleOpenWorkingTreeDiff,
     handleFolderOpen,
     handleArtifactOpen,
     handleOpenDiff,
@@ -3226,7 +3228,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // ---- Continue the thread ---------------------------------------------------
   const {
     continuable, interrupted, sendUnconfirmed, continuing, handleContinue,
-    openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities,
+    openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openTurnLimitSetting,
     featureRequestRefused, sessionStartRepeated,
   } = useTurnRecovery({
     activeSlot,
@@ -4476,6 +4478,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       onPickModel: openModelPickerFromError,
       onOpenDefaultModel: embedded || popout ? undefined : openDefaultModelSetting,
       onOpenSignIn: embedded || popout ? undefined : openKiroSignIn,
+      onOpenTurnLimit: embedded || popout ? undefined : openTurnLimitSetting,
       onOpenCapabilities: embedded || popout ? undefined : openMemberCapabilities,
       onSessionOpen: selectSessionTab,
       sessions: connected ? sessionTitles : undefined,
@@ -4514,7 +4517,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       bubble,
     ])
     return { renderers, fallback: bubble }
-  }, [slotRunning, handleFileOpen, handleArtifactOpen, selectSessionTab, sessionTitles, connected, handleFork, handleQuote, handleAsk, quoteWholeMessage, handleJumpToQuote, chatConfig, activeSlot, regenerating, activeSlotRemoteBound, handleRegenerate, handleEditResend, editLast, handleEditConsumed, slotHasMore, loadingOlder, cursorIsForActiveSlot, slotOldestIndex, handleLoadEarlier, renderUserContentCb, highlightTs, activeSlotTitle, mode, embedded, popout, handleOpenDiff, planTaskId, artifactPaths, automationId, toolDisclosure, setToolDisclosureFor, linkPreviewsOn, socialShareOn, voiceRecoverySlot, handleSubagentPanelOpen, isPinned, handleTogglePinForMessage, showRefusedPress, transcriptHot, revealAppInPanel, continuable, interrupted, continuing, handleContinue, openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, handleFolderOpen, handleSpeak, handleApplyPlan, mcpAppPanel, redactionCoachTs, setAutomationOpen])
+  }, [slotRunning, handleFileOpen, handleArtifactOpen, selectSessionTab, sessionTitles, connected, handleFork, handleQuote, handleAsk, quoteWholeMessage, handleJumpToQuote, chatConfig, activeSlot, regenerating, activeSlotRemoteBound, handleRegenerate, handleEditResend, editLast, handleEditConsumed, slotHasMore, loadingOlder, cursorIsForActiveSlot, slotOldestIndex, handleLoadEarlier, renderUserContentCb, highlightTs, activeSlotTitle, mode, embedded, popout, handleOpenDiff, planTaskId, artifactPaths, automationId, toolDisclosure, setToolDisclosureFor, linkPreviewsOn, socialShareOn, voiceRecoverySlot, handleSubagentPanelOpen, isPinned, handleTogglePinForMessage, showRefusedPress, transcriptHot, revealAppInPanel, continuable, interrupted, continuing, handleContinue, openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openTurnLimitSetting, handleFolderOpen, handleSpeak, handleApplyPlan, mcpAppPanel, redactionCoachTs, setAutomationOpen])
 
   const renderMessage = useCallback((i: number, m: ChatMessage) => {
     // Key identity rules (clientTs preference + streaming->assistant role
@@ -4777,6 +4780,34 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   // the gateway. Provided once here rather than threaded through
   // MarkdownRenderer props, so subagent and workflow cards and system notices
   // offer the same chip as a message body.
+  // A link to a CLOSED session: probe that one key (`GET /api/sessions/{key}/meta`),
+  // and resume it the way the sidebar's Older-sessions row does (#9915). Only
+  // consulted while the open roster is wired, so offline it is off as well.
+  const closedSessionActions = useMemo<ClosedSessionActions>(() => ({
+    // Background: a failure leaves the text plain and says nothing, since the
+    // reader did not ask for anything yet.
+    lookup: async (key: string) => {
+      const row = await api.sessionMeta(key)
+      return row ? { key: row.key, title: row.title || row.key } : null
+    },
+    // The click: ask again, because the session may have been deleted since
+    // the chip appeared. A failed check is said by the chip itself, inline at
+    // the spot clicked, with a retry (`ClosedSessionNotice`).
+    open: async ({ key, title }) => {
+      let row: Awaited<ReturnType<typeof api.sessionMeta>>
+      try {
+        row = await api.sessionMeta(key)
+      } catch {
+        return 'failed'
+      }
+      if (!row) {
+        showActionError(i18nT('store.chatSlice.session_gone_open_failed_named', { name: title }))
+        return 'gone'
+      }
+      void dispatch(resumeFromHistory({ key: row.key, title: row.title || title }))
+      return 'opened'
+    },
+  }), [dispatch, showActionError])
   const sidebarFolderActions = useMemo<SidebarFolderActions>(() => ({
     folders: chatFolders,
     onFolderReveal: embedMode === 'chat' ? undefined : (folderId: string) => {
@@ -5371,6 +5402,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
         chips identically wherever it renders. Cloud URLs need no provider. */}
     <JiraHostsCtx.Provider value={jiraSourceHosts}>
     <SidebarFolderCtx.Provider value={sidebarFolderActions}>
+    <ClosedSessionCtx.Provider value={closedSessionActions}>
     <div
       ref={chatContainerRef}
       /* Both sides are this page's own: a rightward drag opens the sessions
@@ -6751,6 +6783,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               onFileOpen={handleFileOpen}
               onArtifactOpen={handleArtifactOpen}
               onAddToContext={handleAddToContext}
+              onOpenWorkingTreeDiff={handleOpenWorkingTreeDiff}
               projectDir={currentSlot?.project || undefined} navLinks={chatNav.links} navResolving={chatNav.resolving}
               sources={panelSources} selectedSourceUrl={selectedSourceUrl} onSelectSource={selectSourceUrl} onReconcileSource={reconcileSourceUrl}
               issues={panelIssues} selectedIssueUrl={selectedIssueUrl} onSelectIssue={selectIssueUrl} onReconcileIssue={reconcileIssueUrl}
@@ -6792,6 +6825,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                 onFileOpen={handleFileOpen}
                 onArtifactOpen={handleArtifactOpen}
                 onAddToContext={handleAddToContext}
+                onOpenWorkingTreeDiff={handleOpenWorkingTreeDiff}
                 projectDir={currentSlot?.project || undefined} navLinks={chatNav.links} navResolving={chatNav.resolving}
                 sources={panelSources} selectedSourceUrl={selectedSourceUrl} onSelectSource={selectSourceUrl} onReconcileSource={reconcileSourceUrl}
               issues={panelIssues} selectedIssueUrl={selectedIssueUrl} onSelectIssue={selectIssueUrl} onReconcileIssue={reconcileIssueUrl}
@@ -6809,6 +6843,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
         activitySlot
       )}
     </div>
+    </ClosedSessionCtx.Provider>
     </SidebarFolderCtx.Provider>
     </JiraHostsCtx.Provider>
     </TagPopoverProvider>

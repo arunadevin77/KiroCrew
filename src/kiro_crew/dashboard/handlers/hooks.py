@@ -7,6 +7,7 @@ import functools
 import json
 import logging
 import os
+import secrets
 import time
 from pathlib import Path
 from typing import Any, Callable, TypeVar
@@ -21,16 +22,19 @@ from kiro_crew.agent import (
     agents_spec_lock,
     kiro_agents_dir_path,
 )
+from kiro_crew.agent_capabilities import CapabilityError
 from kiro_crew.agent_discovery import _read_agent_spec, list_agents
 from kiro_crew.config.loader import KiroCrewConfig, data_home
 from kiro_crew.dashboard.state import DashboardState
 from kiro_crew.execution_context import ExecutionContext, clear_session_execution
 from kiro_crew.executors import run_in_embed_pool, run_in_tool_gate_pool
+from kiro_crew.memory_startup import MemoryStartupUnavailable, wait_for_memory_preparation
 from kiro_crew.permission_floor import (
     OUTCOME_PENDING_APPROVAL,
     OUTCOME_REJECTED_TRANSPORT_FLOOR,
 )
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
+from kiro_crew.session_capabilities import CapabilityStartupError
 from kiro_crew.tool_gate_busy import hook_gate_busy
 from kiro_crew.validation import sanitize_string
 
@@ -955,7 +959,9 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
             {"error": "sessionKey must be a string", "code": "session_key_not_a_string"}, status=400
         )
     if not session_key:
-        session_key = f"hook:default:{int(time.time())}"
+        # Per call, not per second: one turn runs per key, so two deliveries in
+        # the same second that shared a key would have the second refused.
+        session_key = f"hook:default:{int(time.time())}-{secrets.token_hex(6)}"
     if not session_key.startswith(_HOOK_SESSION_PREFIX):
         return web.json_response(
             {
@@ -1170,6 +1176,41 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
 # The spelling is pinned against the source of truth by the regression tests,
 # which compare it to the real event object's kind.
 _EVENT_PERMISSION_REQUEST_KIND = "permission_request"
+
+
+def _capability_refusal_text(
+    exc: CapabilityError | CapabilityStartupError, agent: str | None
+) -> str:
+    """The run result for a member start the capability check stopped.
+
+    Both exception types carry only a bounded machine code, never file bytes,
+    so the code is safe to show. The member comes from the refusal when the
+    check recorded it, otherwise from the hook's own destination agent.
+
+    A ``CapabilityError`` refuses the member's saved spec, which the user fixes
+    in Capabilities. A ``CapabilityStartupError`` can also be a start that raced
+    a save or could not be verified after the process ran, which a resend may
+    clear, so its text asks for a resend first.
+    """
+    member = (getattr(exc, "member", "") or agent or "").strip() or "this crew member"
+    if isinstance(exc, CapabilityStartupError):
+        return (
+            f"Hook agent did not run: the start of {member} could not be verified "
+            f"({exc}). Send the webhook again; if it repeats, check {member} > Capabilities."
+        )
+    if exc.code == "materialization_changed":
+        filename = exc.file
+        where = f" ({filename})" if filename else ""
+        return (
+            f"Hook agent did not start: the agent file{where} for {member} was edited "
+            f"outside the Capabilities page. Open {member} > Capabilities, review the "
+            "change and save it, then send the webhook again."
+        )
+    return (
+        f"Hook agent did not start: the capability check for {member} refused the "
+        f"start ({exc.code}). Open {member} > Capabilities to see what needs fixing, "
+        "then send the webhook again."
+    )
 
 
 async def _run_hook_inner(
@@ -1528,6 +1569,14 @@ async def _run_hook_agent(
                 f"{message}"
             )
 
+        # The inner turn's first step opens the session's memory, which the
+        # gateway keeps closed from boot until its startup preparation task has
+        # restored and initialized every store. A dashboard chat turn waits for
+        # that task before it reads memory; this turn takes the same bounded
+        # wait, so a webhook accepted during startup runs once memory is ready
+        # instead of failing on its first read.
+        await wait_for_memory_preparation(getattr(state, "memory_startup_task", None))
+
         result_text = await asyncio.wait_for(
             _run_hook_inner(
                 state,
@@ -1544,6 +1593,24 @@ async def _run_hook_agent(
         result_text = f"Hook agent timed out after {timeout_secs}s"
         detail = result_text
         logger.warning("Hook agent timeout: %s", session_key)
+        await state.sessions.record_failure(session_key)
+    except (CapabilityError, CapabilityStartupError) as exc:
+        # The member's capability check stopped the start. The run record and
+        # the delivered result name the refusal and what to do about it, which
+        # the generic arm below cannot.
+        outcome = "error"
+        result_text = _capability_refusal_text(exc, agent)
+        detail = result_text
+        logger.warning("Hook agent %s did not start: %s", session_key, exc)
+        await state.sessions.record_failure(session_key)
+    except MemoryStartupUnavailable as exc:
+        # Memory preparation outlasted the wait, or recovery failed for this
+        # store. The run record and the delivered result name that, so the
+        # caller knows to retry or to inspect memory recovery.
+        outcome = "error"
+        result_text = f"Hook agent did not start: {exc}"
+        detail = result_text
+        logger.warning("Hook agent %s did not start: %s", session_key, exc)
         await state.sessions.record_failure(session_key)
     except Exception:
         outcome = "error"
@@ -1574,7 +1641,7 @@ async def _run_hook_agent(
             # PERSISTENT only -- `_run_hook_inner` raises for any other mode -- so
             # the bind leaves a vouched entry rather than a live carrier.
             #
-            # Hook session keys are per-request by default (`hook:default:{ts}`),
+            # Hook session keys are per-request by default (`hook:default:{ts}-{hex}`),
             # and per-event keys are the ordinary webhook pattern, so without this
             # the map would gain one permanent entry per authenticated request and
             # grow until the process restarted.

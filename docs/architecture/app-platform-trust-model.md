@@ -20,7 +20,9 @@ The `AppContext` capability permissions (`permissions.cron`,
 currently has no runtime call site and must not be treated as an execution
 boundary. Neither mechanism restricts imports, filesystem, network, or
 subprocess use by the loaded module. There is currently **no process-level
-sandbox** around app code itself.
+sandbox** around in-process app code (hooks and route handlers). An app's
+separate backend process is launched under the OS sandbox's `standard` mode
+where a sandbox backend applies, which does not bound the in-process modules.
 
 > **Admitting and enabling an app is therefore equivalent to running that code with the same privileges as Kiro Crew itself.** Only trust apps you trust.
 
@@ -191,6 +193,7 @@ internal-secret caller whose calling session belongs to an app) by ownership:
   autonudge, subagents or the task runner are never resolvable by an app, and
   `GET /api/approvals`, which lists only those, is empty for an app.
 - `GET /api/sessions`, `GET /api/sessions/search`, `GET /api/sessions/{key}`,
+  `GET /api/sessions/{key}/meta`,
   `DELETE /api/sessions/{key}` and `POST /api/sessions/summarize` reach only
   transcripts whose metadata records the calling app as owner. A delete is also
   refused when the live slot it would close is not the app's, because the slot

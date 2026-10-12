@@ -8,16 +8,19 @@ The order (``docs/system-specs/modules/aws-control.md``, "Four processes, one ta
 
 1. Gate the environment (layout, model credential, sandbox) and install the crew
    bundle. Nothing has started.
-2. The authority files are restored to completion. This is before the backend on
+2. Claim writer ownership in the bucket (``generation.claim_ownership``), so a
+   predecessor's later commit is fenced from this instant. A task that aborts
+   before it is serving releases the claim.
+3. The authority files are restored to completion. This is before the backend on
    purpose: the backend flushes the slot table from its own memory, so a backend
    that starts first persists an empty one over the restored files.
-3. The backend starts and ``wait_until_ready`` returns (port answers AND the
+4. The backend starts and ``wait_until_ready`` returns (port answers AND the
    boot secret exists).
-4. The front process starts, and then the sidecar, whose first cycle copies what
+5. The front process starts, and then the sidecar, whose first cycle copies what
    the backend has written.
 
-A task with no bucket configured has no durability: steps 2 and the sidecar are
-both no-ops, the front says so once at startup, and the task serves turns.
+A task with no bucket configured has no durability: steps 2, 3 and the sidecar are
+all no-ops, the front says so once at startup, and the task serves turns.
 
 Shutdown drains process groups, not pids (see ``process.py``): a ``kiro-cli``
 worker is a two-process tree and signalling only the launcher orphans a child
@@ -227,7 +230,8 @@ def _claim_writer_ownership(settings: Settings) -> "generation_mod.ClaimedOwners
     With no bucket there is nothing to claim and this is a no-op, the same tolerance
     :func:`restore_authority` and :func:`_start_sidecar` apply. A failure RAISES, like the
     restore's: a task that cannot establish ownership must not start and silently race a
-    predecessor. Generation 0 claims nothing and exports no token (the sidecar mints its base).
+    predecessor. Generation 0 (no committed pointer) writes nothing, so there is nothing to
+    release, but it still mints the base token and exports it for the sidecar to adopt.
 
     Returns the :class:`generation.ClaimedOwnership` the claim produced (an empty one when
     there was no bucket), so an aborted startup can hand it to :func:`generation.release_ownership`

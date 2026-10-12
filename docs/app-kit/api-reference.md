@@ -131,7 +131,8 @@ moves. Omitted, the 240-pixel default applies.
 
 `ChatPanel` mounts Kiro Crew's native chat experience for an existing session. The required
 `slotKey` selects the session. By default, the component keeps the standard embedded ChatPage
-behavior.
+behavior. A session the app has just created with `POST /api/chat/slots` can be passed straight
+away: the panel shows it before the dashboard's session list has caught up.
 
 ```tsx
 import { ChatPanel } from '@kirocrew/app-sdk'
@@ -738,9 +739,9 @@ startup call, and teardown is the only thing that stops it.
 | `setApprovalMode(mode)` | `—` (no body) | Set the chat trust mode (`normal`, `trust_reads`, `trust`, `yolo`) through `POST /api/chat/mode`; a different setting from `agent.approval_mode` |
 
 **Ownership for app callers** (a dashboard caller is unrestricted). The rule follows the request's app claim: an app token, and also an agent running in one of your app's sessions, whose internal calls carry your app's identity.
-- `POST /api/approvals/{id}/{action}` needs `permissions.sessionApproval`, exactly like `POST /api/chat/slots/{slot}/approve`: without it both answer 403 `session_approval_not_granted` to an app-token caller, even for your own slots. An agent running in your app's sessions (its cron job or subagent, calling over the internal secret) is exempt from that grant on both routes alike, and is still limited to the slots your app owns. With the grant, the id resolves a request on a slot you own or on a local user session. Request ids can recur across sessions, so an id pending on more than one session you may control is refused; name the session with the slot route instead (`resolveApproval(id, action, slotId)`). A background approval (cron, autonudge, subagent, task runner) is never resolvable by an app.
+- `POST /api/approvals/{id}/{action}` needs `permissions.sessionApproval`, exactly like `POST /api/chat/slots/{slot}/approve`: without it both answer 403 `session_approval_not_granted` to an app-token caller, even for your own slots. An agent running in your app's sessions that calls over the internal secret is NOT exempt on these routes: a bare internal-secret caller is refused 403 like a non-owner on both `POST /api/approvals/{id}/{action}` and `POST /api/chat/slots/{slot}/approve`. The one internal path still admitted is a cron script's attested `cron:` key on `setApprovalMode`'s `POST /api/chat/mode`; see `docs/system-specs/modules/app-kit-platform.md`. With the grant, the id resolves a request on a slot you own or on a local user session. Request ids can recur across sessions, so an id pending on more than one session you may control is refused; name the session with the slot route instead (`resolveApproval(id, action, slotId)`). A background approval (cron, autonudge, subagent, task runner) is never resolvable by an app.
 - `GET /api/approvals` lists only what the app could resolve. The list carries background approvals only, so for an app it is always empty. Read a slot's pending requests from its history instead.
-- `GET /api/sessions`, `GET /api/sessions/search`, `GET /api/sessions/{key}`, `DELETE /api/sessions/{key}` and `POST /api/sessions/summarize` reach only transcripts that record the calling app as their owner. `total` counts only those, search ranks only those, and summarize skips any other key as if it were missing (so `list_sessions` with `summarize` from your app's agent returns summaries for your transcripts only). A delete is also refused when a live slot holding the transcript belongs to someone else.
+- `GET /api/sessions`, `GET /api/sessions/search`, `GET /api/sessions/{key}`, `GET /api/sessions/{key}/meta`, `DELETE /api/sessions/{key}` and `POST /api/sessions/summarize` reach only transcripts that record the calling app as their owner. `total` counts only those, search ranks only those, and summarize skips any other key as if it were missing (so `list_sessions` with `summarize` from your app's agent returns summaries for your transcripts only). A delete is also refused when a live slot holding the transcript belongs to someone else.
 - `DELETE /api/sessions` (bulk clear) and `GET /api/sessions/clearable/count` act on every closed transcript at once, so an app is always refused them.
 - A new slot can only be opened on a fresh name or on a transcript your app already owns. `POST /api/chat/slots` with a `name`, `POST /api/chat` that would create its slot, and `POST /api/chat/slots/{slot}/resume` answer 404 for a transcript that belongs to someone else.
 - Apart from the missing-grant 403, every refusal returns the same body as a missing target, `{"error": "not found", "code": "slot_not_found"}`. The reason is recorded in the security-event log, and so is every access the ownership rule allows.
@@ -840,6 +841,8 @@ Use these main-package helpers in Python app backends:
 | `raw_request_target(request)` | `str` | Preserve the raw percent-encoded path and query that the Gateway signed |
 | `proxy_secret()` | `str` | Read the injected `KIROCREW_PROXY_SECRET`, or an empty string |
 | `verify_proxy_request(header, *, method, target, body, secret=None, now=None)` | `bool` | Verify the body-bound HMAC and fixed ±60-second freshness window; fail closed on malformed input |
+| `verify_proxy_principal_claim(header, *, method, target, body, replay_cache, secret=None, now=None)` | `ProxyPrincipalClaim \| None` | Verify and consume one `X-KiroCrew-Principal` claim for an app that sets `backend.signedPrincipal`. Returns `None` for any malformed, stale, mismatched or replayed claim. See [Signed principal claim](#signed-principal-claim) |
+| `ProxyPrincipalReplayCache(*, max_entries=4096)` | cache | The replay cache the verifier needs. Create one per backend process |
 
 ---
 
@@ -1110,6 +1113,107 @@ the value in the `X-KiroCrew-Proxy` header (constant-time), rejecting stale time
 > constant-time compare and the ±60s freshness window. A gateway that signs body-bound
 > HMACs fails verification against any verifier that omits the body hash, so a
 > backend that implements the HMAC itself has to be updated in lockstep with the gateway.
+
+#### Signed principal claim
+
+`X-KiroCrew-Proxy` proves that the gateway forwarded a request. It does not say who
+the gateway authenticated. An app that needs to know sets
+[`backend.signedPrincipal: true`](manifest-reference.md) in its manifest. The gateway
+then adds `X-KiroCrew-Principal` to every request it proxies to that backend. An app
+without that exact opt-in receives no new header, and its `X-KiroCrew-Proxy` bytes
+do not change. The gateway strips any `X-KiroCrew-Proxy` or `X-KiroCrew-Principal`
+header the caller sent, so a backend only ever sees the gateway's own values.
+
+The header value is the encoded claim, a period, and an HMAC:
+
+```text
+<base64url-canonical-json>.<hmac-sha256>
+```
+
+The decoded claim has exactly these five fields:
+
+```json
+{
+  "issuedAt": 1791589507,
+  "kind": "owner-session",
+  "ownerId": "demo-owner",
+  "requestId": "0123456789abcdef0123456789abcdef",
+  "version": 1
+}
+```
+
+Canonical JSON sorts the keys and adds no whitespace. The base64url encoding has no
+padding. The HMAC uses the app secret as the key, over these newline-separated lines:
+
+```text
+kirocrew-proxy-principal-v1
+<issuedAt>
+<method>
+<raw-target>
+<sha256(body)>
+<base64url-canonical-json>
+```
+
+`<raw-target>` and `<sha256(body)>` are the same values `X-KiroCrew-Proxy` signs, so
+the claim is bound to one method, target and body.
+
+The gateway assigns the first kind that matches:
+
+| Kind | Assigned when | `ownerId` |
+|---|---|---|
+| `agent-tool` | Internal authentication granted the call. MCP tools, agents, subagents and crons reach admitted gateway routes this way. | empty |
+| `app-token` | The caller authenticated with an app token. | empty |
+| `owner-session` | A dashboard session cookie authenticated the request, the request is not a `?token=` link exchange, and the caller is the dashboard owner. | the owner's user id |
+| `none` | Any other request, such as a `?token=` link exchange or an authenticated non-owner. | empty |
+
+`agent-tool` is checked first, so an internal caller never becomes `owner-session`,
+even when the same request also carries the owner's cookie.
+
+A Python backend that can import `kiro_crew` verifies the claim with the gateway's
+helper:
+
+```python
+from kiro_crew.apps.proxy_auth import (
+    PRINCIPAL_OWNER_SESSION,
+    ProxyPrincipalReplayCache,
+    raw_request_target,
+    verify_proxy_principal_claim,
+)
+
+principal_replays = ProxyPrincipalReplayCache()  # one per process, not per request
+
+body = await request.read()
+claim = verify_proxy_principal_claim(
+    request.headers.get('X-KiroCrew-Principal', ''),
+    method=request.method,
+    target=raw_request_target(request),
+    body=body,
+    replay_cache=principal_replays,
+)
+if claim is None or claim.kind != PRINCIPAL_OWNER_SESSION:
+    return Response(status=403)
+```
+
+The replay cache keeps each accepted `requestId` until its 60-second window closes,
+and it rejects the same id a second time. When the cache is full, it rejects new
+claims instead of evicting a live id.
+
+A backend that cannot import `kiro_crew` verifies the claim in this order:
+
+1. Require the header and the app secret.
+2. Split the header at its last period.
+3. Decode the claim. Reject malformed JSON and any missing or extra field.
+4. Require `version` 1 and one of the four kinds.
+5. Require a `requestId` of 32 lowercase hexadecimal characters.
+6. Require a non-empty `ownerId` for `owner-session` and an empty one for every other kind.
+7. Reject an `issuedAt` more than 60 seconds from the backend's clock.
+8. Recompute the HMAC over the lines above and compare it in constant time.
+9. Reject a `requestId` already accepted inside its window, and record the new one
+   atomically before the request runs.
+
+A valid claim proves which kind of caller the gateway authenticated for this exact
+request. It does not grant an action or a resource. The backend still runs its own
+checks on what the request asks to do and on which resource it touches.
 
 ### Backend Environment Variables
 

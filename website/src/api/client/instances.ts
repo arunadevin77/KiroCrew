@@ -262,8 +262,8 @@ export function createInstancesEndpoints({ get, post, del, patch, j, jfetch: fet
      *  must offer the peer's options, since picking a crew or model that only exists
      *  here would fail on the first send.
      *
-     *  `version_match` is the gate the backend enforces on every dispatch, surfaced
-     *  so the UI can explain a refusal before the user types rather than after.
+     *  `version_match` is the dashboard's own gate: the backend reports it and the
+     *  UI refuses a mismatched peer before the user types rather than after.
      *  `unavailable` names the reads that failed, per field, so one unreachable
      *  roster disables exactly its own control instead of blanking the shelf. */
     instancesCapabilities: (instanceId: string) =>

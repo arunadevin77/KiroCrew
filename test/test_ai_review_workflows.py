@@ -40,9 +40,9 @@ EXACT_IDENTITY_REVIEW_LANES = (
     "fork-design-review.yml",
     "fork-ux-review.yml",
 )
-# The lane whose resolver tells an obsolete head (the fork branch moved on)
-# apart from a lagging open-PR listing.
-OBSOLETE_HEAD_LANE = "fork-gpt-review.yml"
+# The lanes whose resolver tells an obsolete head (the fork branch moved on)
+# apart from a lagging open-PR listing: every exact-identity review lane.
+OBSOLETE_HEAD_LANES = EXACT_IDENTITY_REVIEW_LANES
 REVIEW_PROMPTS = ROOT / ".github" / "review-prompts"
 PREPARE_PR_SKILL = (
     ROOT
@@ -596,40 +596,52 @@ class TestForkStage2ExactHeadIdentity:
         assert "query itself failed" in result.stdout + result.stderr
         assert "superseded or closed" not in result.stdout + result.stderr
 
-    def test_zero_match_on_a_moved_branch_is_obsolete_not_red(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("lane", OBSOLETE_HEAD_LANES)
+    def test_zero_match_on_a_moved_branch_is_obsolete_not_red(
+        self, lane: str, tmp_path: Path
+    ) -> None:
         # The branch reads and points at a newer commit, so nobody can merge
         # this head: the lane records it and stops without a verdict.
-        result = self._run_review_resolver(tmp_path, OBSOLETE_HEAD_LANE, [[]], branch_tip="c" * 40)
+        result = self._run_review_resolver(tmp_path, lane, [[]], branch_tip="c" * 40)
 
         assert result.returncode == 0, _proc_log(result)
         output = (tmp_path / "github-output").read_text(encoding="utf-8")
         assert output == "obsolete=true\n"
         assert "no longer the tip" in result.stdout
 
+    @pytest.mark.parametrize("lane", OBSOLETE_HEAD_LANES)
     def test_zero_match_while_the_branch_still_points_here_fails_closed(
-        self, tmp_path: Path
+        self, lane: str, tmp_path: Path
     ) -> None:
         # A lagging listing with the head still at the branch tip proves
         # nothing, so the lane keeps failing closed.
-        result = self._run_review_resolver(tmp_path, OBSOLETE_HEAD_LANE, [[]], branch_tip=self._SHA)
+        result = self._run_review_resolver(tmp_path, lane, [[]], branch_tip=self._SHA)
 
         assert result.returncode != 0, _proc_log(result)
         assert "superseded or closed" in result.stdout + result.stderr
         assert "obsolete" not in (tmp_path / "github-output").read_text(encoding="utf-8")
 
-    def test_zero_match_with_an_unreadable_branch_fails_closed(self, tmp_path: Path) -> None:
-        result = self._run_review_resolver(tmp_path, OBSOLETE_HEAD_LANE, [[]])
+    @pytest.mark.parametrize("lane", OBSOLETE_HEAD_LANES)
+    def test_zero_match_with_an_unreadable_branch_fails_closed(
+        self, lane: str, tmp_path: Path
+    ) -> None:
+        result = self._run_review_resolver(tmp_path, lane, [[]])
 
         assert result.returncode != 0, _proc_log(result)
         assert "superseded or closed" in result.stdout + result.stderr
         assert "obsolete" not in (tmp_path / "github-output").read_text(encoding="utf-8")
 
-    def test_every_step_after_the_resolver_skips_an_obsolete_head(self) -> None:
+    @pytest.mark.parametrize("lane", OBSOLETE_HEAD_LANES)
+    def test_every_step_after_the_resolver_skips_an_obsolete_head(self, lane: str) -> None:
         # The resolver exits 0 on an obsolete head, so a later step that does
         # not check the output would run against an empty PR number -- and a
         # check-run POST would publish a verdict for nothing.
-        workflow = yaml.safe_load(_workflow(OBSOLETE_HEAD_LANE))
-        steps = workflow["jobs"]["fork-gpt-review"]["steps"]
+        workflow = yaml.safe_load(_workflow(lane))
+        steps = next(
+            job["steps"]
+            for job in workflow["jobs"].values()
+            if any(step.get("id") == "pr" for step in job.get("steps", []))
+        )
         resolver = next(i for i, step in enumerate(steps) if step.get("id") == "pr")
         later = steps[resolver + 1 :]
         assert later
@@ -4186,7 +4198,8 @@ class TestUxReviewReadsTheScreenshotsBlindFirst:
         302 points at."""
         step = _step("fork-ux-review.yml", FORK_ATTACHMENT_STEP)
         assert " ".join(step["if"].split()) == (
-            "steps.human_override.outputs.active != 'true' && (steps.scope.outputs.ui == 'true')"
+            "steps.human_override.outputs.active != 'true' && ("
+            "steps.pr.outputs.obsolete != 'true' && (steps.scope.outputs.ui == 'true'))"
         )
         env = _step_env("fork-ux-review.yml", FORK_ATTACHMENT_STEP)
         assert env["REPO"] == "${{ github.repository }}"

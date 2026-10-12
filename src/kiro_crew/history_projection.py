@@ -72,9 +72,9 @@ METADATA_LINE_CORRUPT = "corrupt"
 #: (``history_consolidation``), and every other model-bound reader already filters
 #: to conversation roles. The Slack thread-parent row, in particular, is untrusted
 #: text whose only route to the model is a fenced, injection-screened block. A
-#: ``card`` row is an agent's guide offer drawn at the point it was offered: the
-#: guide store owns its state, and the agent hears an outcome only through its
-#: own reporting path, never by reading this row back.
+#: ``card`` row is an agent's change card or guide offer drawn at the point it was
+#: proposed: the card store owns its state, and the agent hears an outcome only
+#: through its own reporting path, never by reading this row back.
 DISPLAY_ONLY_ROLES = frozenset({"notice", "card"})
 
 
@@ -403,6 +403,26 @@ class TranscriptReadProjection:
         for chained_key in keys:
             messages.extend(self._log._read_messages(chained_key))
         return messages or self._log._read_messages(key)
+
+    def read_messages_chained_tail(self, key: str, limit: int) -> list[dict]:
+        """The newest *limit* rows of :meth:`read_messages_chained`, read from the end.
+
+        Reads only the end of the chain's newest file, growing back as far as
+        *limit* rows need, and skips the lines the full read skips, so the cost
+        follows *limit* and not the transcript's size. Bytes that are not UTF-8
+        are replaced where the full read would raise, which suits a display
+        tail; anything that needs the rows themselves reads them in full. When
+        that file alone cannot fill *limit* and the chain holds other files, the
+        exact chained page read answers instead.
+        """
+        if limit <= 0:
+            return []
+        keys = self._chain_keys(key)
+        if self._log._tail_reads:
+            newest = self._log._read_tail_messages(self._log._path(keys[-1]), limit, None)
+            if len(newest) >= limit or keys == [key]:
+                return newest
+        return self.read_messages_chained_page(key, limit=limit).messages
 
     def read_rotated_messages(self, key: str) -> list[dict]:
         """Messages size-rotation archived out of *key*'s transcript, oldest first.

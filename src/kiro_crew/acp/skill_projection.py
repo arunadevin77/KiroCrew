@@ -2929,7 +2929,7 @@ def _warn_ceiling_fallback_once(directory: Path, count: int) -> None:
         "is every such file in the directory -- kiro-cli reads them "
         "all at startup regardless of which Kiro Crew home wrote them -- so a backlog another "
         "home leaked trips this too, and this gateway cannot drain that home's files. Run "
-        "`kiro-crew doctor`: it names any foreign-home share and the remedy (stop every "
+        "`kirocrew doctor`: it names any foreign-home share and the remedy (stop every "
         "gateway using this agents directory, then move the files out). A gateway restart "
         "runs the boot drain for this home's own files.",
         count,

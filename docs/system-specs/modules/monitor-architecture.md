@@ -175,6 +175,22 @@ errored (`consecutive_start_failures`, `consecutive_failed_cycles`), or when the
 revision is unknown (empty, or unreadable on load). Other kinds keep the
 shipped floor.
 
+A delivered work-ledger wake also carries the board itself, so the conductor acts
+without a first `work_ledger_read`. `compact_wake_snapshot` builds the slot's own
+`work_ledger_read(compact=true)` board at delivery (bounded by
+`WAKE_SNAPSHOT_BUDGET_CHARS`, 24000, and audited under its own
+`work_ledger_wake_snapshot` operation rather than as a tool read), and
+`ledger_wake.wake_turn_text` prefixes it onto the nudge below a `SNAPSHOT_HEADER`
+line, with the briefs naming what moved on top (truncated at `MAX_WAKE_BRIEF_CHARS`,
+4000, so an over-long list never costs the board). A wake that lands while the slot
+is already running is STEERED into that running turn (`_steer_work_ledger_wake`)
+rather than declined, because its payload is small; the steer carries the
+STRUCTURAL briefs only, never the board, because a running turn's cross-surface
+fence does not survive a requeue while the briefs disclose only item ids and
+statuses. `AutoNudgeService.notify_turn_complete` brings the busy-retry forward to
+`delay=0` on turn end instead of waiting for the loop deadline, and the per-loop
+wake text is held in `_pending_monitor_wake`, a `dict` keyed by loop id.
+
 The `monitoring/` package now has a different extension point:
 `models.MonitorProbe`, a structural Protocol with no behaviour inheritance, plus
 the data-only kind registry. The four source-provider adapters and the workflow

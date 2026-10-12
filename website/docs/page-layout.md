@@ -23,9 +23,12 @@ controls. The layout rules that belong here:
 - In chat, the dock sits above the composer, in the composer's own column
   (`--mc-input-width`), and its tiles wrap in a narrow column. Long-run status reuses
   the side-panel dock, expansion and narrow-screen overlay, not another drawer.
-- Crew's permanent **Dashboard** tab renders the crewmate's published page
-  (`CrewDashboardFrame`) straight into the panel, with no Command Center, no Published
-  view selector and no in-chat dock opener. Once visited, its body stays mounted across
+- Crew's permanent **Dashboard** tab is a standing entry either way; only what
+  fills it moves with the `PREVIEW_DASHBOARD` feature preview. With the preview
+  off the tab renders the crewmate's published page (`CrewDashboardFrame`)
+  straight into the panel; with it on it renders the crewmate's dynamic
+  dashboard (`CrewDashboardTab`). Either way there is no Command Center, no
+  Published view selector and no in-chat dock opener. Once visited, its body stays mounted across
   tab-strip switches (Dashboard to Files), so it keeps its scroll and document.
 - The All Dashboards page uses the standard page header and scroll container, with one
   column narrow and two wide.
@@ -317,9 +320,9 @@ The same reading applies at the TOP of a chat that a host crowns with a glass
 chip: the Members page's DM header (the Glass identity pill, the switcher, the
 panel opener) floats over the pane's top edge and the conversation scrolls under
 it (#18325). `ChatPane` takes the band's measured height as `topInset` and pads
-its scroller's rows below it (and hangs its pinned-prompt band under it by the
-same offset); the host measures the header with `useMeasuredHeight`, never a
-constant. Anything with controls that sits between such a header and the pane
+its scroller's rows below it (a crewmate's chat draws no pinned-prompt band,
+#18346, so the inset is the only thing it pays); the host measures the header
+with `useMeasuredHeight`, never a constant. Anything with controls that sits between such a header and the pane
 (a notice, a greeting card) stays in flow, padded below the header, and the pane
 then takes no inset: a control under the glass is an ambiguous tap. The row and
 its cells pass pointer events through; only the controls catch them. Details:

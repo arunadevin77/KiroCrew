@@ -103,6 +103,12 @@ Dashboard-user settings routes (in `dashboard/messaging_api/notifications.py`, b
 
 `mcp_tools.messaging.send_notification` requires a verified caller identity, applies the messaging governance gate, and denies channel-agent callers. `dashboard.handlers.messaging.api_notification_agent_push` fixes agent notes to the `system.agent` channel and server-derived source before `NotificationPayload` validation. The agent endpoint and the app push handler both await queued persistence before returning success.
 
+### Crewmate attribution
+
+A note published from a crewmate's pinned DM session carries `member: {slug, name}`. `members.member_identity_for_session` derives it from the caller's `X-Session-Key` and the slot's live `dm.json` binding, so the name is the binding's member, never the lossy slug; any other session, or a key whose binding is gone, yields no `member`. The key counts only through `members.attributable_session_key`: the request must not be an app caller (`request["app"]`), and `member_memory_auth.session_key_is_attested` must bind the key to the caller, either by the kernel peer attestation on the Unix socket (`peer_verified`) or by a signed per-session `X-Session-Token` that verifies to that key (what Kiro Crew's own pooled tool backends send on TCP loopback). A bare header is the caller's own word, so an app token, or a caller holding only the internal secret, that declares a crewmate's DM key gets an unattributed note. `api_notification_agent_push` (the `send_notification` path) and the `send_message` bell fallback in `messaging_api/proactive_send.py` both stamp it. `member` is a `NotificationPayload` schema field with a closed `{slug, name}` shape and is in `_RESERVED_NOTE_KEYS`, so neither a request body nor an app push's `meta` can attach a crewmate's identity to a note. `test_notification_crewmate_member.py` pins the derivation, the transport gate on both producers, the body and meta refusals, and both producers.
+
+`website/src/components/notifications/CrewmateNoteFace.tsx` draws the attribution on `NotificationCard` (bell popover and banner), the panel `NotificationFeed` row and `NotificationDetailPanel`: the crewmate's avatar replaces the kind icon and its display label sits above the title. Face and label come from the row of `membersRosterQuery` (the Crewmates page's query, invalidated by the gateway's `refresh` frame and by every crew save) whose slug and exact name match the note's `member`; while that query loads, or when no such row exists, the kind icon renders and no label shows. When that query fails, `CrewmateRosterError` renders one inline `ErrorNotice` with a Retry that refetches the roster: in a crewmate note's detail panel, and at the top of a feed showing a crewmate note unless the selected note is a crewmate note (its open detail panel already reports it), and in the footer of the first full `NotificationBanner` card showing a crewmate note (deck shells draw no face, and the banner is suppressed while the popover or the inbox is on screen, so it never repeats their notice). The notice carries no agent hand-off because all three surfaces are overlays over a page that may hold an unsaved draft; a feed with no crewmate note never reads the roster. `NotificationCrewmateFace.test.tsx` pins these states.
+
 `DashboardState.sweep_expired_notifications` removes only passive notes with a positive integer `ttl` whose parseable timestamp has elapsed; ambiguous timestamps and other priorities remain. `DashboardState` invokes the sweep while loading persisted history and before each delivery. The in-memory sweep becomes durable on a later full rewrite, so already-open clients retain an expired row until their next reload or refresh.
 
 ## Inline actions and grouping
@@ -121,7 +127,7 @@ The detail panel's hand-off buttons ("Continue in Chat", and "View last result" 
 
 ## Unread badge (client)
 
-Settings › Notifications › "Mark sessions unread only when they need you" (`localStorage` key `mc-unread-on-attention`, default off, `hooks/unreadOnAttention.ts`) limits which `chat_message` rows mark a background session unread: with it on, only a `permission` row does, while a finished turn and a question card badge on their own paths. A slot's `last_ts` is its newest durable row (`slot_projection.py` skips transient roles). The unread watermark is never taken from a transient-role row, because a restarted gateway never again reports a `last_ts` that high and the badge could never clear. The client's role set (`UNSAVED_ROLES`) mirrors `dashboard/state.py` `_TRANSIENT_ROLES`; `test_to_dict_board_fields.py` pins the mirror.
+Settings › Notifications › "Mark sessions unread only when they need you" (`localStorage` key `mc-unread-on-attention`, default off, `hooks/unreadOnAttention.ts`) limits which `chat_message` rows mark a background session unread: with it on, only a `permission` row does, while a finished turn and a question card badge on their own paths. A row carrying the watchdog's `session_recycled` notice (`meta.notice`, written by `wire_session_recycle_callback` in `dashboard/state.py` when an idle session is recycled) never marks the session unread, regardless of this opt-in: `chatMessageMarksUnread` (and `noteMemberThreadRow`) short-circuit it because the notice lands in a session that is not running and has nothing new to read. A slot's `last_ts` is its newest durable row (`slot_projection.py` skips transient roles). The unread watermark is never taken from a transient-role row, because a restarted gateway never again reports a `last_ts` that high and the badge could never clear. The client's role set (`UNSAVED_ROLES`) mirrors `dashboard/state.py` `_TRANSIENT_ROLES`; `test_to_dict_board_fields.py` pins the mirror.
 
 A member DM thread (`slot.mode === 'member'`, key prefix `member-`, which `slot_registry.py` reserves for that mode) is narrower in both modes: `memberThreadRowMarksUnread` badges it only on a row the crewmate wrote to the user, `assistant` or `permission`, with the opt-in still applied on top. Its `tool_call`, `tool_result`, `inject` and streaming rows never badge it: the Crewmates rail dot means "a crewmate said something to you", not "a crewmate ran a tool". `isMemberThreadSlot` reads the mode from `dashboard.slots` and falls back to the reserved prefix for a thread the list has not caught up to. Its `chat_done` is narrowed the same way (`turnCompletion.ts`): `chatStream` records every such row on the thread's running turn (`noteMemberThreadRow`, on or off screen), and the finished turn badges only when the turn delivered one (`takeMemberThreadSpoke`, which also clears the record) or paused for input (`needs_input` / a live question card). A patrol turn that only ran tools and ended quietly badges nothing. The question-card path is unchanged.
 
@@ -184,9 +190,16 @@ ignores `silent` degrades to the prior double-sound behavior and no worse.
 
 ### Sound events
 
-Two sound kinds are synthesized by the websocket layer. `TURN_DONE_KIND`
+Two sound kinds are synthesized by the websocket layer, and a third by the
+dictation hook. `TURN_DONE_KIND`
 (`'turn'`, on `chat_done`) is sound-only: it never appears in the feed (no Redux
-entry, no toast, no badge). `APPROVAL_KIND` (`'approval'`) is synthesized at
+entry, no toast, no badge). `DICTATION_STOPPED_KIND` (`'dictation'`) is
+synthesized by `useStreamingStt` when a live dictation stops before the user ends
+it: an `error` frame or a socket close while still capturing, or the readiness
+buffer filling up. It is sound-only for the same reason as `'turn'`: the hook
+already shows the error, and the sound is for someone dictating without watching
+the screen. A stop the user makes, a cancel and an unmount stay silent.
+`APPROVAL_KIND` (`'approval'`) is synthesized at
 three sites:
 
 - an `approval` frame (a coordinator-registry approval: a Slack, cron, or
@@ -220,8 +233,9 @@ three sites:
   accepted residual, since holding the row back until the post settles would
   hide the card, the chime and the Board's pending state for the post's whole
   duration on every linked prompt. This site is
-  the `chat_done` layering: sound only, no feed row, no toast, no producer for
-  the protected `system.approval` bus channel (which still has none). A
+  the `chat_done` layering: no feed row and no producer for the protected
+  `system.approval` bus channel (which still has none); the same gate also
+  posts this prompt's OS toast (see "OS toast"). A
   prompt already parked when a tab opens or reconnects reaches it through the
   snapshot and the transcript rehydration, not through this frame, and stays
   silent.
@@ -236,7 +250,7 @@ gated on catch-up, only the frame's live banner is (see Trigger below).
 ### Settings and resolution
 
 Settings persist in `localStorage` under `mc-notification-sound`
-(`{ enabled, volume, perCategory }`). `presetForKind(kind, settings)` resolves
+(`{ enabled, volume, perCategory, customTones? }`). `presetForKind(kind, settings)` resolves
 the preset for a kind, in order:
 
 1. `enabled === false` → `'none'` (primary switch; WebAudio never plays).
@@ -254,6 +268,46 @@ the preset for a kind, in order:
 `presetForKind` (not a naive `perCategory[cat] ?? fallback`), so the settings
 row, its Test button, and runtime playback always agree — notably for approval,
 whose built-in `pulse` default the naive form did not show.
+
+### Custom sounds
+
+A user can add named sounds of their own (Settings > Notifications > Custom
+sounds), so instances in one room can sound different. They live in the same
+blob under `customTones` (`{ [name]: ToneStep[] }`, each step
+`{ freq, start, dur, gain }`, the shape of the built-in table). A category
+selects one as `custom:<name>`, so a custom name can never collide with a
+built-in id. The built-in presets, their ids and their levels are unchanged.
+
+`validateCustomTone` holds every sound to `CUSTOM_TONE_LIMITS`: 1-32 character
+name of letters, digits, space, `-` or `_`, not a built-in, `none` or `default`
+and not already used (case-insensitive); 1-16 steps; `freq` 20-20000 Hz; `dur`
+0.02-2 s; `gain` above 0 and at most 1; every step starting at 0 or later and
+ending within 5 s; at most 20 sounds. It runs when a sound is added AND inside
+`loadSoundSettings`, because the stored blob can be hand-edited or restored from
+`ui-prefs.json`: a sound that fails is dropped, and a category pointing at a
+missing custom sound falls back as if unset. The host backup stores the blob
+as an opaque string, like every other ui-pref, and never parses it: every
+reader goes through `loadSoundSettings`, so the load-time check is the one
+gate between a stored value and the speakers. Playback scales a custom sound by
+its loudest overlap of step gains, so it never drives the output past full
+scale. The form edits one row per tone (Pitch, Start, Length, Volume), starts
+from a two-note example, and can play the draft ("Test") before it is saved;
+the draft plays under a throwaway id and is never stored. Bound failures show
+as plain hints, not error banners, each under the field it is about (a name
+problem under Name, a tone bound under its row); the offending inputs get
+`aria-invalid`, and "Add sound" stays off until the user edits. A save that
+fails (add, delete, undo, or a sound, volume or category setting) shows through
+`ErrorNotice` with a next step (free up this site's browser storage, then try
+again), without the agent hand-off because the form holds an unsaved draft.
+Deleting a sound clears every category set to it (`all` returns to `chime`) and
+offers an Undo. Undo merges into the settings as they are at that moment: it
+puts back the one sound and each category that used it unless the user has
+since set that category to something else, so a sound added or a choice made
+after the delete survives. Saving a sound under the deleted name (any case)
+withdraws the Undo, and an Undo refused because the name was reused elsewhere
+is withdrawn after its hint, so no notice says a listed sound was deleted.
+Pickers label a custom sound
+"<name> (yours)". Crew avatar sounds still offer only the built-ins.
 
 ### Persistence and cross-surface sync
 
@@ -313,6 +367,8 @@ constructed by the socket's turn-completion owner
 `website/src/hooks/websocket/turnCompletion.ts` on `chat_done`) is a separate, default-OFF
 surface with its own `kirocrew-chat-done:<slot>` tag; it shares only the away
 predicate.
+
+An interactive chat's tool prompt (the chat runner's `permission` row, which has no feed note) is toasted by the socket's transcript owner `website/src/hooks/websocket/chatStream.ts` on the row's live arrival, behind the same gate as its chime (`shouldChimeOnPermissionRow`: not `resolved`, not a reconnect replay). It is on by default, posts only with the OS permission granted and while `isWindowAway()`, is `silent`, reads like the chat-complete toast (session title as the title, `Waiting for your approval: <tool>` as the body), and carries a `kirocrew-approval:<slot>:<request_id>` tag, so one pending prompt is one banner however many windows receive the row. Neither mute suppresses it, the session's own per-row mute or its creator's: a prompt is the session waiting on the user.
 
 ## Bell sheet dismissal (client)
 

@@ -1620,9 +1620,15 @@ needed.
   tree's file with the old tree; a failed re-registration puts back the prior
   file, or removes it if there was none. Gateway-shipped builtins carry no set:
   they change with the gateway, not through an update.
-- **Backfill.** An install with no `approved-grants.json` (from before the file,
-  or a builtin) approves what its manifest declares, so no app loses access on
-  upgrade; its first update or re-registration takes that as the previous set.
+- **Backfill.** An install whose `installed.json` has never recorded
+  `approvedGrantsStored` (from before the file, or a builtin) and has no
+  `approved-grants.json` approves what its manifest declares, so no app loses
+  access on upgrade; its first update or re-registration takes that as the
+  previous set (`_effective_approved_grants`). Once the record carries
+  `approvedGrantsStored` (kept set by every record write while the file exists), a
+  missing file approves nothing, because it is a file an update's tree swap has
+  not put back yet or one that was lost; the app row shows an empty `approvedGrants`
+  the owner can approve again.
 - **Approval.** The detail page lists the held-back entries under "API access"
   and "WebSocket events" (the Permissions card's labels) with a plain-words line
   for each group, and tags them "not approved" on the Permissions card. Its
@@ -1645,7 +1651,9 @@ needed.
   `approved-grants.json` that cannot be read, or holds anything but a mapping
   (including `[]`, `false`, `null`), approves nothing; and an app directory with
   no readable record (corrupt, or mid-update between the tree swap and the new
-  record) grants no entry.
+  record) grants no entry. Grant reads also return no entry while an update is
+  swapping the app tree, whether a marker directory is held across the swap or the
+  swap spans the read (`staged_app_grants`, `_tree_swap_spanned`).
 
 `sessionApprovalConsentPending` keeps its own disable-until-consent shape: that
 grant is enforced through the enabled flag on several session routes rather
@@ -1662,10 +1670,11 @@ slot, cron job or subagent).
   order. `deny_session_approval_caller` runs first, so an app-token caller
   without the `sessionApproval` grant gets the same 403
   `session_approval_not_granted` on both routes, its own slots included. That
-  check exempts an internal-secret caller (`request["internal_auth"]`) on both
-  routes alike, so an app's cron job or subagent acting for the app skips the
-  grant and is bounded only by the ownership step that follows: it still reaches
-  no slot the app does not own. Then the live slots holding an undone
+  check admits an internal-secret caller (`request["internal_auth"]`) on
+  `chat_mode` only when it presents an attested `cron:` key; on `chat_slot_approve`
+  and `approval_resolve` every internal-secret caller is refused 403 like a
+  non-owner. An app's cron job or subagent that does carry an attested `cron:`
+  key and reaches `chat_mode` is bounded by the ownership step that follows. Then the live slots holding an undone
   future under the id are snapshotted, and `chat_handlers._app_may_send_to_slot`
   judges each one. ACP request ids are connection-scoped and recur, so the id must
   name exactly one pending request the app may control: with two or more (two of
@@ -1959,6 +1968,13 @@ trust stamping as the seed path. The bundled `app-registry.json` seed is the
 catalog's OFFLINE SNAPSHOT, not a peer source: a reachable catalog means the
 store renders the published document's list, display copy, AND installable
 inventory; an unreachable one degrades the listing to the seed.
+
+Setting `KIROCREW_SKIP_APP_STORE_FETCH=1` in the gateway environment forces that
+degradation: `official_catalog.fetch_document` answers `None` before it reaches the
+network seam, so the listing renders the seed, and `_resolve_manifest` returns a
+seed row with no cached manifest as its minimal entry instead of cloning its
+repository. Installs still use the network. The E2E harness gateway always sets it
+(`testing/harness.py`, `harness_environment`).
 
 That degradation is silent -- a failed fetch overwrites the on-disk cache with a
 failure sentinel and the seed listing renders with no error -- so the store
@@ -2611,15 +2627,15 @@ worklist, and the detail page — resolve through `installedArt` /
 `installedArtList`.
 
 The proxy reaches those same bytes by a **git clone gated by an SSRF allowlist**,
-which is the wrong mechanism for a file already on local disk and had a visible
+which is the wrong mechanism for a file already on local disk and has a visible
 failure mode: the allowlist is warmed by a network fetch a page render can
 outrun — the Library card list gates only on the installed-apps query while the
 catalog fetch rides the separate store listing — and an `<img>` does not retry a
 403, so a catalog-listed app's art vanished for that paint. Reading the file has
 no ordering, needs no network, survives a CDN outage, and names no host. It also
 takes the repo identifier off the art path: an app with no registry row, no
-manifest `repo` and no recorded `sourceUrl` now renders its real icon where
-before it fell back to the generic box.
+manifest `repo` and no recorded `sourceUrl` renders its real icon instead of the
+generic box.
 
 Two narrowings against `handle_app_ui_file`, whose shape this follows:
 
@@ -2701,18 +2717,19 @@ screening NUL at the door would admit every one of them. Three sites need it —
 opens and the `realpath` on the parent — and each is pinned separately, because a
 mutation on one reddens only its own cases. The Windows branch needs a test that
 forces `supports_pinned_walk()` False, since on a POSIX runner that branch never
-executes and its guard was untested until one existed.
+executes and its guard is exercised only by such a test.
 
 **The descriptor check is `S_ISREG` AND `st_nlink == 1` AND the size cap**, and the
 nlink half is the only one that can see a HARDLINK. An alias shares its target's
 inode, so every path-based guard is blind to it: `is_symlink()` is False, `realpath`
 yields the alias's own name so containment passes, and `O_NOFOLLOW` has no link to
-refuse. Measured before it was added: a declared `assets/icon.webp` hardlinked to a
-file outside the install directory opened cleanly, reported `S_ISREG`, sat under the
-cap, and its bytes were served with a 200 — laundering, through an unsandboxed
+refuse. Without the gate, a declared `assets/icon.webp` hardlinked to a
+file outside the install directory would open cleanly, report `S_ISREG`, sit under the
+cap, and have its bytes served with a 200 — laundering, through an unsandboxed
 gateway, a read the app's own sandboxed code can be refused. Every other
-descriptor-validated read in the tree applies the same gate (`hooks.py`, `memory.py`,
-`spec_builder`, `onboarding_scan.py`, `pinned_fs.copy_file_pinned`), so this route
+descriptor-validated read in the tree applies the same gate (`memory_files.py`,
+`memory_stores.py`, the `spec_builder` repository, `onboarding_scan.py`,
+`pinned_fs.copy_file_pinned`), so this route
 was the outlier rather than a new rule.
 
 Spelled inline rather than through `pinned_fs.refuse_hardlink_alias`, which is the
@@ -2743,21 +2760,17 @@ handler can tighten its own answer. Applied to EVERY art response, not only `.sv
 per-extension shortcut is one `if` away from a gap, and a mutation that narrows it to
 `.svg` is one of the cases pinned.
 
-The same exposure exists on `/api/apps/blob` and `handle_app_ui_file`, which also serve
-`.svg` from this origin with no per-response policy. Both are pre-existing and tracked
-rather than widened from here.
+`handle_app_ui_file` follows the same contract as this route: `_open_ui_file` opens the
+declared file through `pinned_fs.open_in_pinned_parent`, gates the descriptor on
+`S_ISREG`, `st_nlink == 1` and `_UI_MAX_BYTES`, and the handler streams from that
+descriptor and answers with the same `default-src 'none'; sandbox` policy and `nosniff`.
+It differs in serving the wider `_ALLOWED_EXTENSIONS` set (`.js`/`.json`/`.mjs`/`.css`)
+and in being UNAUTHENTICATED, which is why it streams in `_UI_STREAM_CHUNK` pieces
+instead of buffering.
 
-**The deferral against `handle_app_ui_file` is wider than the CSP, and stating only the
-CSP half would understate it.** That route serves the same app-owned tree by
-`resolve()` + `relative_to` and then RE-OPENS by path through `web.FileResponse`, so it
-carries the identical check-then-reopen window this function exists to close — with no
-pinned open, no `st_nlink` gate, and a wider extension set (`.js`/`.json`/`.mjs`/`.css`).
-It is therefore weaker on EVERY platform, not only where the pinned walk is unavailable.
-Both halves — the missing response policy and the TOCTOU/hardlink exposure — are
-deliberately left to that route rather than fixed from here, because it is not a route
-this function's change otherwise touches. Anyone hardening it should read the invariant
-list above as the checklist, and should not copy `default-src 'none'` onto it without
-first confirming nothing loads a UI asset as a document rather than a subresource.
+`/api/apps/blob` (`handle_blob_proxy`) is the one route that still serves `.svg` from
+this origin through `web.FileResponse` with no per-response policy; it reads a cache
+the gateway itself wrote, not an app-owned install tree.
 
 **`O_NONBLOCK` is in the open flags because it is what makes those checks
 reachable.** Opening a FIFO blocks until a writer appears, and the handler runs inside
@@ -2795,10 +2808,10 @@ art URL for a field the backend never declared.
 (rail, command palette, Library card, Updates list, detail page — light and dark each)
 and spelling it out at each one is not stable: four of them resolved `iconPath` first
 and four resolved `iconUrl` first, so a manifest declaring BOTH wore one icon in the
-rail and a different one on its own Library card. Nothing went red, because the order
+rail and a different one on its own Library card. Nothing goes red, because the order
 is observable ONLY for a manifest that declares both. `iconPath` wins, being the field
 that addresses a file inside the install directory; `iconUrl` is the fallback. The
-order now exists in exactly one place, and a mutation flipping it reddens one test
+order lives in exactly one place, and a mutation flipping it reddens one test
 rather than needing a test per surface.
 
 The handler's own `..` guard is load-bearing rather than belt-and-braces:
@@ -2813,7 +2826,7 @@ The route's verb must also appear in `token_auth._APPS_SPA_EXCLUDED_RE`, which
 enumerates the `/apps/` sub-namespaces that have real handlers. A verb missing
 from it is classified as a React Router navigation, so the middleware answers the
 SPA shell and an `<img>` receives HTML with a 200 and renders nothing — silent,
-because the handler is never the thing that fails. The pre-existing drift guard
+because the handler is never the thing that fails. The existing drift guard
 cannot catch this (it scans `server.py` and its `server_runtime/` owners only, and its `"{" in p` escape hatch
 treats any pattern route as a real handler without consulting the regex), so
 `test_apps_routes_get_paths_are_matched_by_the_apps_spa_regex` instantiates each
@@ -2874,7 +2887,7 @@ are `_health_check_loop` (bounded startup poll) and `_watch_backend_health`
   `outcome="allowed"`, with the attempt number) before the spawn: the restart exercises
   the app's execution grant with no operator in the loop, so the SEL trail records the
   decision rather than leaving it to be inferred from the `app_backend_spawn` that
-  follows. Boot and interactive activation are unchanged. Every deliberate
+  follows. Every deliberate
   stop and every explicit external start advances a per-app lifecycle generation; the
   spawn does not. The restart snapshots that generation when it removes the dead record:
   a later STOP tears down its exact replacement, while a later START adopts/reuses the
@@ -2971,7 +2984,7 @@ state that is no longer on disk, so nothing retries. **The scrub also re-materia
   cannot satisfy — and the remedy of pointing `backend.healthCheck` at an unauthenticated
   route. It reads as likely rather than certain, because a backend may refuse for a reason
   of its own. The adoption probe keeps its boolean answer, so the two adoption warnings
-  still report only that the check failed. The verdict itself is unchanged, and it is RECORDED by the
+  still report only that the check failed. The verdict is RECORDED by the
   probe rather than derived from the number, because the opener refuses redirects: a 3xx
   arrives as an `HTTPError` whose code is below 400 with nothing having served the health
   check, so only a status on a response the opener RETURNED can be healthy — in practice a
@@ -3032,7 +3045,7 @@ state that is no longer on disk, so nothing retries. **The scrub also re-materia
   `manager.app_enabled_state`, NOT `is_app_enabled`. That distinction is the whole
   mechanism: `_read_installed` returns None for both a missing file and a caught read
   error, so `is_app_enabled` collapses "unreadable" into False WITHOUT raising. Building
-  the tri-state on it left the unknown branch unreachable for precisely the transient
+  the tri-state on it would leave the unknown branch unreachable for precisely the transient
   fault it exists to catch. The two callers want opposite defaults on that third state. Refusing to ADD when it is unknown is
   safe: the app stays as it is. DELETING when it is unknown is not, since the cleanup
   unlinks materialized agents and `installed.json` can fail to read transiently, so
@@ -3153,8 +3166,8 @@ state that is no longer on disk, so nothing retries. **The scrub also re-materia
 the tracking record, and that pop is what ends the watch's authority to reconcile MCP for
 the app — so it has to happen BEFORE `deregister_app`. Scrubbing first leaves a window in
 which a backend that recovers re-registers the OLD manifest's servers, and entries the
-update removed survive it. Uninstall and the disable rollback already ordered it this
-way; the two update paths in `apps/routes.py` now match them, and
+update removed survive it. Uninstall, the disable rollback and the two update paths in `apps/routes.py` all
+order it this way, and
 `test_update_stops_the_backend_before_deregistering_resources` pins it.
 
 `backend_status.running` on `/api/apps` is likewise read off the record
@@ -3457,6 +3470,105 @@ shipped `data` link, the root `data` file refused before the record),
 `test/test_apps_registry.py::test_a_root_data_file_is_refused_before_any_record_is_written`.
 
 
+
+## 23. An app's worker slots are leased, one at a time by default
+
+An app that owns agent sessions acquires them with
+`apps/worker_slots.py::acquire_worker_slot(state, app, key, *, project, ...)`,
+which returns a `WorkerSlotLease`. The helper is the supported seam over the
+slot's private owner, working-directory and trust attributes: it creates the
+slot if missing and re-stamps `_app` and `project` on every acquire, because a
+slot another create path made first (ChatEmbed's own POST) carries neither.
+
+- **Limit.** Each app holds at most `limit` leases at once,
+  `DEFAULT_WORKER_SLOT_LIMIT = 1`, changed by `set_worker_slot_limit(app, n)`.
+  A lowered limit never revokes a held lease. The limit is advisory and
+  self-set: it keeps a cooperating app's own workers in line, and an app can
+  raise it or skip the helper. It is per gateway process and not persisted.
+- **One owner per slot.** A slot key is held by one lease at a time across
+  every app (requested and folded keys both count), and a slot whose `_app` is
+  another app is refused with `ValueError`, so one app's trust grant or working
+  directory never lands on another app's worker.
+- **Only app slots are adopted.** An unowned slot whose `_origin` is `user`
+  or `cron` (a chat a person or a cron job opened) is refused with
+  `ValueError` and left unchanged. Unowned `app`-origin or untagged slots are
+  still re-stamped, which keeps the ChatEmbed case working.
+- **Lost leases are reclaimed.** Every acquire, and a waiting acquire every
+  0.5s, drops leases whose slot `state.get_slot(key)` no longer returns
+  (deleted or replaced), withdrawing their trust, so a lease the app lost
+  cannot lock it out until a restart.
+- **Timeout.** An acquire that cannot proceed waits up to `timeout` seconds
+  (`DEFAULT_ACQUIRE_TIMEOUT_SECS = 30`) and then raises `WorkerSlotTimeout`,
+  whose message names the app, the held count, the limit, a busy key, the wait,
+  and how to free a slot. A timed-out or failed acquire creates no slot and
+  holds no lease.
+- **Blanket trust is a scoped grant.** `trust=True` never writes `slot._trust`:
+  that flag does not expire and `_persistable_session_policy` caches it as the
+  session's `"auto"` policy, which the subagent spawn gate and each subagent's
+  approval policy read later without re-checking. The helper instead activates
+  `SafetyOverride.activate_scoped(worker_trust_scope(app, key), source="app:<app>",
+  ttl=...)` and sets `slot._trust_scope`, which `_slot_is_trusted` re-checks on
+  every approval and which is never cached as a policy. The activation is
+  SEL-audited fail-closed by `SafetyOverride`; if it is refused,
+  `lease.trust_granted` is False and the worker falls back to interactive
+  approval. A slot already trusted by a human, or carrying a different scope, is
+  left alone.
+- **Patterns.** `trusted_patterns` are added to `slot._trusted_patterns` only
+  after their SEL row is written with `critical=True`; a failed write adds none.
+- **Withdrawal.** Both grants end on `release()` or after `trust_ttl_secs`
+  (default 1h), whichever is first. A zero, negative, non-finite or over-cap TTL
+  (`MAX_TRUST_TTL_SECS`, 24h) is refused. Only what the lease added is
+  withdrawn, and each withdrawal is a SEL row (`<app>.worker_slot_trust`,
+  outcome `revoked`).
+
+Writers: `apps/worker_slots.py`. Tests: `test/test_apps_worker_slots.py`.
+
+## 24. A backend's principal claim is opt-in and bound to one request
+
+`X-KiroCrew-Proxy` proves only that the gateway forwarded a request. An app whose
+manifest sets `backend.signedPrincipal: true` also receives
+`X-KiroCrew-Principal`, which says which kind of caller the gateway authenticated.
+The claim is signed with the same per-app secret, under its own domain tag, and
+the HMAC binds the encoded claim, the method, the raw target, the body digest and
+the issue time. The wire format and the verifier's steps are in
+[api-reference](../../app-kit/api-reference.md#signed-principal-claim).
+
+`apps/routes.py::_proxy_principal` reads the kind only from marks that
+`token_auth_middleware` set, never from a request header, and the first match wins:
+
+1. `agent-tool` when `internal_auth` is true. MCP tools, agents, subagents and
+   crons reach admitted routes through internal authentication, so this kind is
+   checked first and an internal caller cannot inherit the owner's trust.
+2. `app-token` when the request carries an app claim.
+3. `owner-session` when `is_dashboard_user` is true, `auth_from_query_token` is
+   false, and `is_owner_dashboard_request` matches. Only this kind carries an
+   owner id. Every `token_auth_middleware` branch that can set
+   `is_dashboard_user` to true also sets `auth_from_query_token` from the
+   credential it validated, including the two internal-path branches that serve
+   mixed internal routes such as `/apps/design-tweak/api/thread`. So the owner's
+   cookie reads as `owner-session` on those routes too.
+4. `none` for every other request.
+
+The proxy strips any caller-sent `X-KiroCrew-Proxy` and `X-KiroCrew-Principal`
+for every app, opted in or not, so a backend sees only the gateway's values. An
+app that does not opt in receives exactly the headers it received before. A
+signer refusal returns 502 `proxy_principal_sign_failed` rather than forwarding
+an opted-in request without its claim.
+
+`apps/proxy_auth.py::verify_proxy_principal_claim` fails closed on every
+malformed field, an issue time outside 60 seconds, and a signature mismatch, and
+compares the HMAC as bytes in constant time. It consumes each `requestId` once
+through a `ProxyPrincipalReplayCache` held for the life of the backend process.
+A full cache refuses new ids instead of evicting a live one. The claim
+authenticates who the gateway saw. It does not authorize an action or a resource:
+that stays the backend's own check.
+
+The flag is part of the manifest's `backend` dict, so an admission signature
+covers it. Only the JSON boolean `true` turns it on.
+
+Writers: `apps/routes.py`, `apps/proxy_auth.py`, `apps/manifest.py`. Tests:
+`test/test_app_proxy_auth.py`, `test/test_app_manifest.py`,
+`test/test_gateway_appkit_endpoints.py`.
 
 ## Windows stale-backend cleanup capacity
 

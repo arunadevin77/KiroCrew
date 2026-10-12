@@ -602,3 +602,32 @@ state check prescribed in `SKILL.md`. That check and its bounded fallback preven
 both silent abandonment and duplicate poll drivers. Monitor cycles are not server
 rounds, so a wall-clock bound must accompany the cycle budget. The execution
 procedure owns those budgets rather than a second copy here.
+
+## Why a pinned reviewer fleet hides a whole-design CONCERNS
+
+`pr_status.py` exits `20` on an unanswered CONCERNS only for a lane whose verdict it
+collected, and it collects a verdict only for a lane the run names: `verdicts[name]`
+is written inside `only is None or name in only`. The loop pins `--reviewers gpt,opus`
+so a lane that never posted cannot pass silently, which means Design, First Principles
+and UX are never collected and their CONCERNS never moves the exit code. The
+`Whole-design punchlines` block is printed every cycle on purpose and changes no exit
+code, so it is the place a CONCERNS for those lanes shows up; treat one there as the
+stop the exit code did not give.
+
+## Why a hold heard after arming goes into the live loop
+
+The loop's message is re-injected verbatim every cycle, so it, not the chat, is what a
+later cycle obeys. A hold the user gives after the loop is armed is not in that message:
+the next `Exit 0` cycle follows the old text and arms auto-merge over the hold, and a
+merge does not come back. Rewriting the live loop's message in place with
+`monitor_update(message=...)` on the turn the hold is heard puts the hold where every
+later cycle reads it.
+
+## How the profile resolves, and what its JSON carries
+
+Most-specific-wins: repo-root `.prepare-pr.toml` → Kiro Crew markers (auto-loads
+`profiles/kirocrew.json`) → stack auto-detect → generic fallback. The JSON always
+has `setup[]`, `gates[]`, `reviewers[]` (each
+`{name, model, model_tier, contract, rubric}`), `rule_files[]`, `single_commit`,
+`base_branch`, and `readiness{status_context, defer_label}`.
+

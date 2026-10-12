@@ -64,8 +64,12 @@ Push (new): gateway rekey() ─────────────────�
    preconditions are missing.
 4. **gatewayd applies the claim** (`_apply_claim`). It records the token binding
    even when no stub has registered yet. Among connections indexed under P, a
-   token-bearing claim retargets only a connection with the same token or no
-   token; a connection positively naming another session is left alone. A
+   token-bearing claim retargets a connection with the same token, and a
+   tokenless one only while P hosts a single live session; on a runtime serving
+   several sessions a tokenless connection cannot be attributed on PID alone, so
+   its identity is cleared and its subscriptions evicted (audited as denied) until
+   a claim carrying its own token names it. A connection positively naming
+   another session is left alone. A
    tokenless claim retains the legacy PID-wide behavior. Definite process-start
    token mismatches are skipped and audited. Each caller change is SEL-audited
    (`mcp-gateway.caller-claim`), and idempotent re-claims are silent.
@@ -77,7 +81,7 @@ Push (new): gateway rekey() ─────────────────�
   an existing identity.
 - The gateway-initiated `claim` may **replace** an existing identity, but a
   session token narrows replacement to that session's connections (plus legacy
-  tokenless connections). Trust is established by the local transport's
+  tokenless connections on a runtime that hosts a single live session). Trust is established by the local transport's
   positive same-principal check: Linux `SO_PEERCRED`, macOS `LOCAL_PEERCRED`,
   or the Windows named-pipe owning-process SID. POSIX mode bits and the Windows
   owner-only DACL are defense in depth.

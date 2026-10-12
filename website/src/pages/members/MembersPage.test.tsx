@@ -216,7 +216,7 @@ const CrewComposerRef = vi.hoisted(() => ({ current: null as unknown }))
 const chatPaneMounts = vi.hoisted(() => ({ count: 0 }))
 vi.mock('../../components/ChatPane', async () => {
   const { useEffect } = await import('react')
-  function ChatPaneStub({ slotKey, agentLocked, followContentWidth, busyMode, topInset, onOpenCommandCenter, composerInput, crewmateCreated, ...rest }: { slotKey: string; agentLocked?: boolean; followContentWidth?: boolean; busyMode?: string; topInset?: number; onOpenCommandCenter?: () => void; composerInput?: unknown; crewmateCreated?: import('react').ReactNode } & Record<string, unknown>) {
+  function ChatPaneStub({ slotKey, agentLocked, followContentWidth, busyMode, topInset, onOpenCommandCenter, composerInput, crewmateCreated, crewmateGreeting, ...rest }: { slotKey: string; agentLocked?: boolean; followContentWidth?: boolean; busyMode?: string; topInset?: number; onOpenCommandCenter?: () => void; composerInput?: unknown; crewmateCreated?: import('react').ReactNode; crewmateGreeting?: import('react').ReactNode } & Record<string, unknown>) {
     // Mount count: the guided flow must HIDE the pane, never unmount it.
     useEffect(() => { chatPaneMounts.count += 1 }, [])
     return (
@@ -224,6 +224,7 @@ vi.mock('../../components/ChatPane', async () => {
         {slotKey}
         {onOpenCommandCenter && <button onClick={onOpenCommandCenter}>Open task dashboard</button>}
         {crewmateCreated}
+        {crewmateGreeting}
         {/* A static opening card is gone: no host may pass one. */}
         {'assistantWelcome' in rest && <div data-testid="assistant-welcome-stub" />}
         {/* Stands in for rendered transcript links (markdown anchors). */}
@@ -612,10 +613,45 @@ describe('MembersPage roster', () => {
     expect(aside.className).not.toMatch(/\bmd:flex\b/)
     const notices = within(await screen.findByTestId('member-main-roster-errors', undefined, PANE_READY))
     expect(notices.getByTestId('member-main-patrol-error')).toBeInTheDocument()
-    expect(notices.getByTestId('member-main-default-agent-error')).toBeInTheDocument()
-    expect(notices.getByTestId('member-main-teams-error')).toBeInTheDocument()
+    // These two retry once before they say so (`retryThroughRestart`).
+    expect(await notices.findByTestId('member-main-default-agent-error', undefined, PANE_READY)).toBeInTheDocument()
+    expect(await notices.findByTestId('member-main-teams-error', undefined, PANE_READY)).toBeInTheDocument()
     // No hand-off from above the thread: Profile may hold an unsaved schedule draft.
     expect(notices.queryByRole('button', { name: /ask the agent/i })).toBeNull()
+  })
+
+  it('each roster read notice dismisses for the outage, returns on a failure after a good read, and clears on a good read', async () => {
+    vi.mocked(api.defaultAgent).mockRejectedValue(new Error('default unavailable'))
+    vi.mocked(api.teams.list).mockRejectedValue(new Error('teams unavailable'))
+    const { queryClient } = await renderPage([row()], 'kirocrew', { route: '/members?member=oncall' })
+    const notices = () => within(screen.getByTestId('member-main-roster-errors'))
+    await screen.findByTestId('member-main-teams-error', undefined, PANE_READY)
+    await screen.findByTestId('member-main-default-agent-error', undefined, PANE_READY)
+
+    // A real, named button on each; pressing it removes that notice everywhere.
+    fireEvent.click(within(screen.getByTestId('member-main-teams-error')).getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.queryByTestId('member-main-teams-error')).toBeNull())
+    expect(screen.queryByTestId('member-roster-teams-error')).toBeNull()
+    expect(notices().getByTestId('member-main-default-agent-error')).toBeInTheDocument()
+    fireEvent.click(within(screen.getByTestId('member-main-default-agent-error')).getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.queryByTestId('member-main-roster-errors')).toBeNull())
+    expect(screen.queryByTestId('member-default-agent-error')).toBeNull()
+
+    // The same outage re-read (the 30s poll) fails again: the dismiss holds.
+    await act(async () => { await queryClient.refetchQueries({ queryKey: ['crew-teams'] }) })
+    expect(screen.queryByTestId('member-main-teams-error')).toBeNull()
+
+    // A good read ends the outage; a failure after it is new, and says so.
+    vi.mocked(api.teams.list).mockResolvedValueOnce({ teams: [] })
+    await act(async () => { await queryClient.refetchQueries({ queryKey: ['crew-teams'] }) })
+    await act(async () => { await queryClient.refetchQueries({ queryKey: ['crew-teams'] }) })
+    await screen.findByTestId('member-main-teams-error', undefined, PANE_READY)
+    expect(screen.queryByTestId('member-main-default-agent-error')).toBeNull()
+
+    // A good read clears it with no press.
+    vi.mocked(api.teams.list).mockResolvedValue({ teams: [] })
+    await act(async () => { await queryClient.refetchQueries({ queryKey: ['crew-teams'] }) })
+    await waitFor(() => expect(screen.queryByTestId('member-main-teams-error')).toBeNull())
   })
 
   it('renders one row per member from the API', async () => {
@@ -1187,11 +1223,14 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
     // Still folded below md: the back control is the phone's way to the roster.
     expect(classes()).toContain('hidden')
     expect(screen.getByTestId('member-roster-hide')).toHaveAccessibleName('Hide the roster')
-    // Reopened, the action now offers to fold it again.
-    fireEvent.click(screen.getByTestId('crewmate-switcher'))
-    expect(await screen.findByTestId('crewmate-switcher-roster')).toHaveTextContent('Hide the roster')
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
-    await waitFor(() => expect(screen.queryByTestId('crewmate-switcher-list')).toBeNull())
+    // The open column IS the list the chip folds, so the chip fades out in
+    // place while the pin holds; the identity pill stays.
+    const slotClasses = () => screen.getByTestId('crewmate-switcher-slot').className.split(/\s+/)
+    await waitFor(() => expect(slotClasses()).toContain('invisible'))
+    expect(slotClasses()).toContain('opacity-0')
+    expect(screen.getByTestId('member-identity-pill')).toBeVisible()
+    // Keyboard focus follows into the column's search, not onto the page body.
+    await waitFor(() => expect(screen.getByTestId('member-search')).toHaveFocus())
 
     // The pinned roster's "+" offers the crewmate door and nothing else:
     // team creation is hidden for the phase.
@@ -1220,10 +1259,17 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
     fireEvent.click(await rosterRow('research'))
     await waitFor(() => expect(screen.getByTestId('member-identity-pill')).toHaveTextContent('research'))
     expect(classes()).toContain('md:flex')
+    // A keyboard press: focus sits on the X, which the close unmounts.
+    screen.getByTestId('member-roster-hide').focus()
     fireEvent.click(screen.getByTestId('member-roster-hide'))
     await waitFor(() => expect(classes()).not.toContain('md:flex'))
     expect(classes()).toContain('hidden')
     expect(screen.queryByTestId('member-roster-hide')).toBeNull()
+    // The column closed, the chip is back, and focus returns to it from the
+    // X that just unmounted.
+    expect(slotClasses()).toContain('visible')
+    expect(slotClasses()).not.toContain('invisible')
+    await waitFor(() => expect(screen.getByTestId('crewmate-switcher')).toHaveFocus())
   })
 
   it('a team view keeps the roster column beside it on desktop, pinned or not — it is the only way back', async () => {
@@ -1469,6 +1515,37 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
     expect(await screen.findByTestId('crew-profile-modal')).toBeInTheDocument()
     expect(screen.getByTestId('side-panel-root')).toBeInTheDocument()
     expect(screen.getByTestId('member-identity-pill')).toBeInTheDocument()
+    // The face is IN the card now: the pill keeps its slot but paints no face.
+    expect(screen.getByTestId('member-pill-face')).toHaveStyle({ visibility: 'hidden' })
+    expect(screen.getByTestId('crew-profile-face')).not.toHaveStyle({ visibility: 'hidden' })
+  })
+
+  it('with the side panel open, the pill face flies into the floating card and back on close', async () => {
+    // #18329: the floating card used to appear in place with no tie to the pill
+    // that opened it, and vanish in one frame. Same flight as the docked card.
+    await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
+    fireEvent.click(await rosterRow('oncall'))
+    await screen.findByTestId('side-panel-root')
+    const box = (left: number, size: number) =>
+      ({ x: left, y: 14, left, top: 14, right: left + size, bottom: 14 + size, width: size, height: size, toJSON: () => ({}) }) as DOMRect
+    vi.spyOn(await screen.findByTestId('member-pill-face'), 'getBoundingClientRect').mockReturnValue(box(640, 30))
+    fireEvent.click(screen.getByTestId('member-identity-pill'))
+
+    const flight = await screen.findByTestId('crew-face-flight')
+    expect(flight.parentElement).toBe(document.body)
+    expect(screen.getByTestId('crew-profile-modal')).toBeInTheDocument()
+    expect(screen.getByTestId('crew-profile-face')).toHaveStyle({ visibility: 'hidden' })
+    await waitFor(() => expect(screen.queryByTestId('crew-face-flight')).toBeNull(), { timeout: 3000 })
+    expect(screen.getByTestId('crew-profile-face')).not.toHaveStyle({ visibility: 'hidden' })
+    expect(screen.getByTestId('member-pill-face')).toHaveStyle({ visibility: 'hidden' })
+
+    // Close: the face flies back to the pill while the card fades out.
+    vi.spyOn(screen.getByTestId('crew-profile-face'), 'getBoundingClientRect').mockReturnValue(box(900, 84))
+    fireEvent.click(screen.getByTestId('crew-profile-close'))
+    await screen.findByTestId('crew-face-flight')
+    await waitFor(() => expect(screen.queryByTestId('crew-face-flight')).toBeNull(), { timeout: 3000 })
+    await waitFor(() => expect(screen.queryByTestId('crew-profile-modal')).toBeNull(), { timeout: 3000 })
+    expect(screen.getByTestId('member-pill-face')).not.toHaveStyle({ visibility: 'hidden' })
   })
 
   it('switching crewmates drops an open Profile instead of reopening it over the next one on the old tab', async () => {
@@ -1540,11 +1617,12 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
       expect(screen.getByTestId('crew-profile-modal')).toBeInTheDocument()
       expect(screen.getByTestId('crew-profile-panel')).toBeInTheDocument()
       expect(screen.getByTestId('member-identity-pill')).toHaveAttribute('aria-expanded', 'true')
-      // Still one card, no flight: the floating card's face is painted, the
-      // pill's face too, and no copy is in the air.
+      // Still one card, no flight: the floating card's face is painted and no
+      // copy is in the air. The pill's face slot is held empty, as it is for
+      // every floating card — the face is in the card.
       expect(screen.queryByTestId('crew-face-flight')).toBeNull()
       expect(screen.getByTestId('crew-profile-face')).not.toHaveStyle({ visibility: 'hidden' })
-      expect(screen.getByTestId('member-pill-face')).not.toHaveStyle({ visibility: 'hidden' })
+      expect(screen.getByTestId('member-pill-face')).toHaveStyle({ visibility: 'hidden' })
     } finally {
       window.matchMedia = orig
       setWindowWidth(WIDE_WINDOW)
@@ -2038,7 +2116,7 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
     fireEvent.click(screen.getByTestId('team-dialog-save'))
     // The failed refetch is a notice, not silence -- the cached list is on
     // screen and must be said to be possibly stale ...
-    await screen.findByTestId('member-roster-teams-error')
+    await screen.findByTestId('member-roster-teams-error', undefined, PANE_READY)
     // ... and that list is the route's answer to the save, not the mount-time one.
     expect(screen.getAllByTestId('team-group-header')[0]).toHaveTextContent('Release')
   })
@@ -2065,7 +2143,7 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
     await screen.findByTestId('team-dialog-body')
     fireEvent.click(screen.getByLabelText('scribe'))
     fireEvent.click(screen.getByTestId('team-dialog-save'))
-    await screen.findByTestId('member-roster-teams-error')
+    await screen.findByTestId('member-roster-teams-error', undefined, PANE_READY)
     // One scribe row, and it sits under the Release header -- the Triage
     // group lost it in the same cache write that gave it to Release.
     const roster = screen.getByTestId('member-roster')
@@ -2113,7 +2191,7 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
     // Both surfaces carry the notice; the pane's copy is the one a narrow
     // viewport can see (the roster's is inside the `hidden md:flex` aside),
     // and it steps aside at md where the roster's own notice is beside it.
-    const paneNotice = await screen.findByTestId('team-view-teams-error')
+    const paneNotice = await screen.findByTestId('team-view-teams-error', undefined, PANE_READY)
     expect(screen.getByTestId('team-view')).toBeTruthy()
     expect(screen.getByTestId('member-roster-teams-error')).toBeTruthy()
     expect(screen.getByTestId('member-roster').className.split(/\s+/)).toContain('hidden')
@@ -2141,7 +2219,7 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
     await screen.findByTestId('team-dialog-body')
     fireEvent.change(screen.getByTestId('team-dialog-name'), { target: { value: 'Release' } })
     fireEvent.click(screen.getByTestId('team-dialog-save'))
-    const paneNotice = await screen.findByTestId('team-view-teams-error')
+    const paneNotice = await screen.findByTestId('team-view-teams-error', undefined, PANE_READY)
     // The roster's own copy is on screen beside the pane from md up, so the
     // pane's copy is the below-md one — exactly the roster's hidden range.
     expect(screen.getByTestId('member-roster').className.split(/\s+/)).toContain('md:flex')
@@ -5999,6 +6077,16 @@ describe('MembersPage colliding slugs (live projection)', () => {
   })
 })
 
+/** The greeting is drawn INSIDE the chat (ChatPane's `crewmateGreeting`), in
+ *  the crewmate's own message bubble, not as a card above the transcript. */
+function expectCrewmateMessage(card: HTMLElement) {
+  expect(within(screen.getByTestId('chat-pane-stub')).getByTestId(card.dataset.testid!)).toBe(card)
+  expect(card.closest('[data-testid="crewmate-message"]')).not.toBeNull()
+  expect(card.querySelector('.message-bubble.crewmate-bubble')).not.toBeNull()
+  // Never wider than the chat column: a long goal must not size it past a 320px chat.
+  expect(within(card).getByTestId('mate-greeting-bubble').style.maxWidth).toBe('min(100%, 72ch)')
+}
+
 describe('MembersPage cold welcome (a new or long-idle thread)', () => {
   beforeEach(() => { localStorage.clear(); sessionStorage.clear() })
 
@@ -6011,6 +6099,8 @@ describe('MembersPage cold welcome (a new or long-idle thread)', () => {
     await renderPage([row({ last_active_ts: 1 })])
     fireEvent.click(await rosterRow('oncall'))
     const card = await screen.findByTestId('member-welcome-card', undefined, PANE_READY)
+    // A message from the crewmate in its chat, not a card above it.
+    expectCrewmateMessage(card)
     expect(api.memberRecap).toHaveBeenCalledExactlyOnceWith('oncall', 'oncall')
     expect(within(card).getByTestId('member-welcome-items')).toHaveTextContent('Paused: Rotate the pager keys (next: confirm with Sam)')
     expect(within(card).getByTestId('member-welcome-items')).toHaveTextContent("Recent session, may be finished: Triage last night's alarms")
@@ -6033,11 +6123,12 @@ describe('MembersPage warm greeting (a return in the middle of a goal)', () => {
   }
   beforeEach(() => { sessionStorage.clear() })
 
-  it('opening a crewmate mid-goal says where the goal stands and the next step, above the chat, without a chat turn', async () => {
+  it('opening a crewmate mid-goal says where the goal stands and the next step, as its message in the chat, without a chat turn', async () => {
     vi.mocked(api.crewBoard).mockResolvedValue(midGoal as never)
     await renderPage([row()])
     fireEvent.click(await rosterRow('oncall'))
     const card = await screen.findByTestId('member-resume-card', undefined, PANE_READY)
+    expectCrewmateMessage(card)
     expect(api.crewBoard).toHaveBeenCalledExactlyOnceWith('member-oncall')
     expect(within(card).getByTestId('member-resume-goal')).toHaveTextContent('Ship the crew page')
     expect(within(card).getByTestId('member-resume-counts')).toHaveTextContent('Finished 1 · Running 1 · Idle 0 · Needs a look 1')

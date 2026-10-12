@@ -156,7 +156,10 @@ fails on connection refused.
 **In CI these specs run through the backend gate, not through npm.**
 `python setup.py test_e2e` boots a real gateway wired to a packaged fake ACP
 backend and shells this suite against it, entirely offline. That is the harness to
-match when you are debugging a CI-only failure.
+match when you are debugging a CI-only failure. Offline includes the app store:
+the harness gateway runs with `KIROCREW_SKIP_APP_STORE_FETCH=1`, so Discover
+renders the bundled seed, not the live catalog, and a spec's verdict never waits
+on the CDN. A gateway you start by hand for a local run does not set it.
 
 ## CI gates
 
@@ -276,9 +279,10 @@ TypeScript under `src`, `integration` and `playwright`, and a new `waitForTimeou
 shapes no semgrep rule reads (promise-sleeps in the Electron tests, unpinned `Date`, `isVisible` branches,
 elapsed-time upper bounds, unrestored fake timers) and fails a change that raises a
 file's count above its count at the change's merge-base; a line that keeps one on
-purpose carries `// flake-ok: <reason>` with a reason of ten characters or more. CI's
-backend checkout is depth 1 today, so the ratchet is a local, pre-push gate: run
-`python -m pytest -n0 test/test_flake_pattern_ratchet.py` before pushing.
+purpose carries `// flake-ok: <reason>` with a reason of ten characters or more. The
+ratchet is a local, pre-push gate (the
+[Determinism contract](../../docs/system-specs/common/testing-conventions.md#determinism-contract-read-this-first)
+says why): run `python -m pytest -n0 test/test_flake_pattern_ratchet.py` before pushing.
 
 - **Time.** A test whose output reads the clock pins it with `vi.setSystemTime(...)`,
   set after the last real-timer wait (with fake timers, see the fake-timer rule below).

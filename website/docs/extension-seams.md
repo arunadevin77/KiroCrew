@@ -474,10 +474,10 @@ On desktop the measured ladder counts the component too and folds built-ins to
 make room, while the component itself never collapses with the measured level.
 The narrowest desktop width leaves the group about 206px, of which the built-in
 dot, metric icon, credit icon and bell already claim roughly 139px. At the last
-rungs the capsule is reduced to its connection dot, which hides registered
+rungs the capsule is reduced to its connection glyph, which hides registered
 segments along with the core readouts, and the measured ladder folds the update
 pill to its icon. A group that still overflows clips instead of overflowing the
-header: on desktop from its far end, the bell first and the connection dot last;
+header: on desktop from its far end, the bell first and the connection glyph last;
 on phones from its leading edge.
 
 **An update pending takes room from the readouts.** While an update is pending,

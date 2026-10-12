@@ -925,7 +925,16 @@ drop an ack stored in the config document. Three properties of that file matter:
   between the listing and the call would otherwise be acknowledged at its superseded
   snapshot, which then suppresses the report for a value the operator never affirmed.
   The ack write happens inside that same config lock hold; lock order is
-  config-then-ack at the only site that nests them.
+  config-then-ack wherever they nest.
+
+A settings save is itself an answer, exactly as `--keep` is. When a config PATCH
+writes the old default of an `auto_adopt` row, `api_kirocrew_config_patch` calls
+`ack_explicit_write` under the config write lock and BEFORE the write (the same
+config-then-ack order), so the value is acked and the next load does not
+un-materialize the choice the operator just made. A refused ack raises `OSError`
+and aborts the write, rather than persisting a value the next load would delete.
+Only `auto_adopt` rows are acked this way; a report-only row loses nothing on
+load and is left untouched.
 
 `--adopt` also drops the ack for a key it removed, since the acked value is no
 longer stored and keeping it would silence a genuinely deliberate choice made
@@ -1215,11 +1224,39 @@ Contract:
 **HTTP refusals** of `/api/portability/*` (`dashboard/handlers/portability.py`)
 each carry a machine-readable `code`: `file_field_required` (400),
 `invalid_import_mode` (400), `import_archive_invalid` (400, with the validator's
-detail), `import_archive_too_large` (413), `auth_required` (401), a 409 with the
+detail), `invalid_components` (400, a `?components=` value other than `memory`),
+`memory_only_merge_only` (400, a Replace asked for memory only or given a memory
+bundle), `import_archive_too_large` (413), `auth_required` (401), a 409 with the
 refusal's own code, and `export_failed` / `import_failed` / `preview_failed`
 (500, opaque prose). A 4xx carries an actionable detail; a coded 5xx does not, so
 the dashboard's `PortabilityTab` `refusalText` shows its own localized fallback for
 a coded 5xx and the server's text otherwise.
+
+**Memory only.** `GET /api/portability/export?components=memory` builds an
+archive holding only the snapshot `memory` component (`memory.db`,
+`memory_index.db`, `workspace/memory/`, `workspace/knowledge/`, `memory_stores/`),
+never chats. Its manifest declares `components: ["memory"]` and carries
+`portability.MEMORY_EXPORT_MANIFEST_VERSION`, which lies outside the
+`1..EXPORT_MANIFEST_VERSION` range a whole-install import accepts, so a reader
+that does not know memory bundles refuses one rather than applying it as a whole
+install. `POST /api/portability/import?mode=merge&components=memory` extracts and
+merges only the memory members of any archive; an archive whose manifest declares
+memory only is imported that way without the parameter. The manifest is the one
+member at `<prefix>/MANIFEST.json` (`portability._top_manifest`); both the
+validator and the import read only that one, so a deeper file with that name is
+ordinary content. No top-level manifest, or more than one, is refused. Memory is
+not redacted: the dashboard shows a confirm step listing what the file holds
+before it builds the export.
+
+**Member names.** Because the memory filter reads member NAMES, both
+`validate_import_zip` and `apply_import_zip` refuse a name an extractor could
+place elsewhere (`portability._unsafe_member_name`): `..`, an absolute name, a
+drive prefix (`C:/x`, which Windows `zipfile` strips), and, only on a host where a
+backslash is a path separator, a backslash-spelled form of those. On POSIX a
+backslash is an ordinary filename character and is kept. After each extract the
+import also refuses a member that did not land under its own top directory. The
+manifest is capped at `_MAX_SETTINGS_DOCUMENT_BYTES` (8 MiB, the budget the export
+sizes its own manifest to, session times included) before it is decoded.
 
 The dashboard export (`portability.create_export_zip`) carries every document a
 Settings choice is persisted in: `config.json`, `config.local.json`,
@@ -2000,7 +2037,8 @@ this is what closes the torn-read window for everyone else. Mode-preserving
 because tmp+rename creates a NEW inode, so the umask default (typically `0644`)
 would silently replace an operator's tightened `0600`; `config.json` can hold
 inline credentials, so a settings write must never widen who can read it. An
-existing file's mode carries over and a newly created one is owner-only. On
+existing file's mode carries over, minus group/other access when the file is inside the
+data home (see security.md "Data Home File Modes"); a newly created one is owner-only. On
 Windows it also applies a real owner-only DACL via
 `platform_compat.restrict_to_owner` (`restrict_on_error="warn"`, so a DACL that
 cannot be applied warns rather than making the config unwritable).
@@ -2466,6 +2504,15 @@ own the shared agent home (`wrote=False`) takes the same failure path, notify an
 defer, rather than reading as applied; a successful rebuild also re-runs
 `SessionManager.refresh_defaults` so warm-pool providers minted from the old spec
 are reconciled (`dashboard/server_runtime/config_watch.py` `_apply_default_model`).
+The `wrote=False` refusal is one case of a general ownership guard: every write through
+the shared-spec primitive (`agent.py` `_atomic_json_write`) is refused with
+`SharedAgentHomeRefused` when the data home does not own the shared agents directory. The
+derived worker, conductor and service-agent specs and the read-only side spec all take
+that refusal, so the worker's stale mirror raises `DerivedSpecStale` rather than
+re-deriving, and the dashboard spec editor and the MCP toggle, remove, sync and apply
+handlers answer HTTP 409 `agent_home_not_owned` (listed in learn-cron-dashboard.md)
+instead of recording a change the file never took. Every admitted or refused shared-home
+write is audited as the SEL `agent_home_write` operation, allowed or denied.
 The provider applier only schedules the switch: `reload_provider_factory` clears
 the session registry and then shuts the retired providers down one at a time,
 which can outlast the applier bound, and a timed-out applier is retried on the
@@ -2573,7 +2620,11 @@ that constant is what has to rise instead. Because the key's help text is the
 only statement of this an operator reads, `test_config_baseline.py` pins the
 sentence against that arithmetic rather than leaving it to review;
 `initialize_timeout_secs` (10) bounds a fresh backend's first
-`initialize` and is threaded onto each `Backend` as a constructor field;
+`initialize` and is threaded onto each `Backend` as a constructor field (on Windows the
+effective deadline is floored to 30 s by `_WINDOWS_INITIALIZE_TIMEOUT_FLOOR_SECS` through
+`_effective_initialize_timeout_secs`, since a Windows cold start routinely overruns the
+POSIX-measured 10 s default and would otherwise be reaped and respawned; a configured
+value already above the floor and every POSIX host are unchanged);
 `host_budget_max_procs` / `host_budget_max_rss_mb` / `host_budget_max_fds` (all
 0) cap what the host budget admits across pooled, private and fallback
 backends, where `0` means derive from the available-memory sample the gateway
@@ -2646,6 +2697,7 @@ class AgentConfig:
     streaming: bool = True
     model: str = "auto"            # resolved from agent config
     provider: str = "acp"          # fixed to "acp" (kiro-cli) — the only provider
+    bot_name: str = ""             # the name the agent identifies as in conversations (the {bot_name} placeholder in prompts); "" = the provider's default (Kiro). Loaded through _sanitize_bot_name (sections.py): NFC-normalized, capped at 50 code points (_BOT_NAME_MAX), then filtered to Unicode letters (Lu/Ll/Lt/Lm/Lo), the combining marks that attach to them (Mn/Mc), decimal digits (Nd) and letter numbers (Nl, the ideographic zero) in any script, plus the ASCII space, "_", "-" and "." -- the character policy of the artifact tag rule (artifacts.md § Validation & Limits), applied as a filter that drops instead of a validator that refuses. Everything else is dropped: braces (the placeholder must not recurse), other punctuation, symbols and emoji, enclosing marks (the keycap), other numbers (², ½), controls, format characters (zero-width, bidi), the letters and marks that render as nothing (variation selectors, Hangul fillers: terminal_safe._is_invisible, the one shared table), surrogates and private-use. A non-ASCII space (NO-BREAK SPACE, IDEOGRAPHIC SPACE) becomes the plain space; a space run a removal leaves behind folds to one and a leading or trailing one is stripped; a double space the user typed is kept; the result is NFC-normalized again, since a removal can leave a composable pair adjacent. Three tag rules are not applied: compatibility forms (full-width ｋｉｒｏ) are kept as typed because a drop cannot name the plain spelling; a name may open with a separator; and a run of combining marks is not bounded, since the bound guards a chip's width and nothing draws this name. A name that filters to "" takes the default. Nothing is logged when a name changes, and the CLI `config set` echo shows the raw value (#18728 follow-ups). dashboard.bot_name is a separate field and is not filtered.
     sandbox: str = "auto"          # "auto" (default: standard tier -- namespace on Linux, seatbelt on macOS; leaves ~/.aws, ~/.ssh, ~/.kube visible for credential tooling; delegates to kiro-cli's internal sandbox on macOS when enabled) | "strict" (opt-in: also hides ~/.aws incl. sso/cache, ~/.ssh bar known_hosts, ~/.kube, ~/.config/gh and the _CC_FILES credential files; applies to sessions started after the change) | "off" (skips Kiro Crew's sandbox). Any other value falls back to "auto"
     sandbox_allow_no_isolation: bool = False  # SEC-009: acknowledge running un-isolated when no sandbox backend exists; false = loud SECURITY warning, true = info-level
     soft_stop_budget_secs: float = 10.0  # seconds to wait for cooperative cancel before hard kill [0.5, 60.0]
@@ -2662,14 +2714,14 @@ class AgentConfig:
     task_queue_enabled: bool = True   # persist every accepted subagent spawn to $KIROCREW_HOME/tasks/tasks.db before its id is returned; memory pressure defers instead of refusing, and with false (or no store) a floor miss also queues, in memory. false = the in-memory spawn queue, for one release (tasks.db left in place, unread). See modules/taskq.md
     task_dispatch_window: int = 64    # max queued spawns held in memory; the rest are rows read FIFO as the window drains. Load-time clamped to [1, 4096]; restart=True
     task_store_journal_mode: str = "auto"  # tasks.db SQLite journal: "auto" = WAL locally, DELETE when $KIROCREW_HOME is on a network filesystem; "wal" | "delete" force one (RFC overload-resilience §13 Q6 reversal). Unknown -> "auto"; restart=True
-    admit_wait_secs: int = 30         # admitted -> queued after this, and how long a memory-deferred spawn waits before re-check. Load-time clamped to [1, 3600]; restart=True
+    admit_wait_secs: int = 30         # admitted -> queued after this, and the longest a memory-deferred spawn waits before its re-check (a memory event re-checks it sooner). Load-time clamped to [1, 3600]; restart=True
     subagent_queue_max_wait_secs: int = 1800  # DEFAULT_SUBAGENT_QUEUE_MAX_WAIT_SECS; longest a spawn deferred by spawn_min_memory_gb stays parked (spawns are not gated on the memory posture tier) (time spent eligible, queued for a slot, is not counted) before it ends as 'never started: waiting for memory' (delivered, depth 0). Also the per-start and per-episode bound of the macOS kernel memory-pressure hold. 0 = no bound. Load-time clamped to [0, 86400]. Live (SubagentManager.LIVE_CONFIG_PATHS). See modules/subagent.md § Durable task queue and § macOS: the kernel memory-pressure hold
     start_collect_timeout_secs: int = 300  # how long the session-start gate's StartCollector keeps a timed-out session/new (row `recovering`) to adopt a late answer before the attempt is abandoned. Load-time clamped to [10, 3600]; restart=True
     session_start_concurrency: int | str = "auto"  # ACP session/new requests outstanding per gateway event loop (SessionStartGate; fixed, not adaptive). Queue time behind it is not start time. "auto" is sized once per process by session_start_sizing: clamp(min(cpus // 4, available_GB // 3), 2, 16), cpus = affinity capped by cgroup v2 cpu.max; an integer is load-time clamped to [1, 64]; junk falls back to "auto"; restart=True
     child_env_defaults: dict[str, str] = {}  # env vars set on every spawned kiro-cli child (AcpRuntime via KiroHarness/KasHarness.apply_spawn_env, auxiliary AcpClient via _resolve_spawn_env(kiro_api_key=True)) ONLY when the key is absent from the inherited env (ambient or per-session overlay; an explicit empty value wins). Applied before the agent-env scrub. Opt-in tuning, e.g. {"TOKIO_WORKER_THREADS": "4", "RAYON_NUM_THREADS": "4"} to cap kiro-cli's core-count-sized pools. Allowlist only (CHILD_ENV_DEFAULT_NAMES): TOKIO_WORKER_THREADS and RAYON_NUM_THREADS, each a decimal integer string (ASCII digits, nothing stripped) in [1, 1024], stored as str(int) ("04" -> "4"); any other name or value is dropped with a warning (key named, never value). Live (next spawn). See acp/child_env_defaults.py
     cold_start_concurrency: int | str = "auto"   # background cold starts one SessionManager runs at once (_start_sem; a person's start has one more reserved permit). "auto" = the effective session_start_concurrency width clamped to [4, 16] (cold_start_sizing). Integer load-time clamped to [1, 32]; junk -> "auto"; restart=True
     runtime_spawn_concurrency: int | str = "auto"  # ACP runtime spawn + initialize handshakes per gateway event loop (cold-start admission). "auto" = half the effective session_start_concurrency width clamped to [2, 8]. Integer load-time clamped to [1, 32]; junk -> "auto"; restart=True
-    lane_weights: dict[str, int] = {}    # per-lane weight overrides keyed by root session key or 'system'; unlisted lanes weigh 1, and a weight shapes the share of picks, never a hard cap. Each value load-time clamped to [1, 64]; non-string and empty keys dropped. Live
+    lane_weights: dict[str, int] = {}    # per-lane weight overrides keyed by root session key or 'system'; unlisted lanes weigh 1, and a weight shapes the share of picks and, while a lane waits for memory, that lane's share of running dedicated subagents, never a hard cap. Each value load-time clamped to [1, 64]; non-string and empty keys dropped. Live
     child_reserve: int = 1               # execution slots a depth-0 task may never take while a nested task is queued or a parent waits on children; also lifts an adaptive squeeze to adaptive_floor + child_reserve while a parent waits (never above max_subagents). 0 disables. Load-time clamped to [0, 8]. Live. See modules/subagent.md § Fairness lanes and the child reserve
     recovery_backoff_base_secs: float = 2.0    # first retry delay of the shared recovery ladder (tool call / backend / ACP runtime) and of a dependency wait; doubles with equal jitter. Snapshotted onto the process ladder by `recovery.ladder.configure_default_ladder(cfg)` in `GatewayOrchestrator._init_subagents`; the gatewayd supervisor's rung is pinned and does not follow it, and the two import-time readers (`acp/client._ACP_RESPAWN_BACKOFF_S`, `taskq/model.recovery_backoff_secs`) keep the static defaults. Load-time clamped to [0.1, 60]; restart=True. See modules/session.md § Recovery ladder
     recovery_backoff_max_secs: float = 120.0   # cap on that delay; a server retry hint is honoured up to it. Same snapshot seam and same exclusions as the base. Load-time clamped to [1, 3600], never below the base; restart=True
@@ -2689,7 +2741,7 @@ class AgentConfig:
 @dataclass
 class SessionConfig:
     timeout_secs: int = 3600       # 60 min idle timeout (DEFAULT_SESSION_TIMEOUT)
-    idle_exempt_keys: list[str] = []  # session keys the idle sweep never expires on the clock (a dashboard chat is dashboard:<sid>; a tab linked to a cron job or channel thread uses that link's key, e.g. cron:<job>, per chat_utils.session_key_for). Loaded as stripped non-empty strings, at most IDLE_EXEMPT_KEYS_MAX (= POOL_SIZE_MAX, 10: each listed key can keep a whole kiro-cli process tree running, the warm pool's per-entry cost) keys of at most IDLE_EXEMPT_KEY_MAX_CHARS (512) characters each; a longer key is dropped rather than truncated, and one warning is logged per load when any key is dropped; a non-list loads as []. Read at every sweep. A listed dashboard or cron-linked session is still reaped when its tab closes (a channel thread's session is channel-owned, so closing its viewer never reaps it), and the RSS recycle, when enabled, still applies. A listed key that never had a tab, such as a cron job run without one, is reaped on neither axis, even after its job is deleted; that recycle or a restart still ends it, and so does the identity sweep (retire_kiro_identity_sessions, which reads no list). Before each dashboard chat turn (chat_runner._retire_sessions_on_identity_change) it retires a kiro-backed one once the live Kiro account is no longer the one it was spawned under; a Kiro sign-out from the dashboard (kas_login._retire_runtimes_after_sign_out) runs it with no live account, which retires every idle kiro-backed session at once, whatever account each signed in with; a busy session is flagged and retired later. See session.md "Idle cleanup".
+    idle_exempt_keys: list[str] = []  # session keys the idle sweep never expires on the clock (a dashboard chat is dashboard:<sid>; a tab linked to a cron job or channel thread uses that link's key, e.g. cron:<job>, per chat_utils.session_key_for). Loaded as stripped non-empty strings, at most IDLE_EXEMPT_KEYS_MAX (= POOL_SIZE_MAX, 10: each listed key can keep a whole kiro-cli process tree running, the warm pool's per-entry cost) keys of at most IDLE_EXEMPT_KEY_MAX_CHARS (512) characters each; a longer key is dropped rather than truncated, and one warning is logged per load when any key is dropped; a non-list loads as []. Read at every sweep. A listed dashboard or cron-linked session is still reaped when its tab closes (a channel thread's session is channel-owned, so closing its viewer never reaps it), and the RSS recycle, when enabled, still applies. A listed key that never had a tab, such as a cron job run without one, is reaped on neither axis, even after its job is deleted; that recycle or a restart still ends it, and so does the identity sweep (retire_kiro_identity_sessions, which reads no list). Before each dashboard chat turn and each agent cron run (chat_runner._retire_sessions_on_identity_change) it retires a kiro-backed one once the live Kiro account is no longer the one it was spawned under, except that an agent cron run touches no session when the live fingerprint is empty without proving a sign-out (a social login the reader cannot identify, an unreadable or relocated store); a Kiro sign-out from the dashboard (kas_login._retire_runtimes_after_sign_out) runs it with no live account, which retires every idle kiro-backed session at once, whatever account each signed in with; a busy session is flagged and retired later. See session.md "Idle cleanup".
     empty_response_auto_continue: bool = True  # after TWO consecutive empty model responses, auto-send synthetic "continue" nudges on the same live session (transcript-visible notice; count bounded by empty_response_max_continues; the config gate fails OPEN to the default so a config-load hiccup cannot disable self-healing). See session.md "Empty-response recovery ladder".
     empty_response_max_continues: int = 1  # how many continue nudges may run back to back before the give-up card (EMPTY_RESPONSE_MAX_CONTINUES_MIN/MAX; load-time clamped to [1, 10] so a hand-edited 0 cannot disable recovery and a large value cannot arm an unbounded ladder). Default 1 keeps the pre-knob behavior byte-identical; above 1 the notice numbers each recovery ("recovery 2 of 3").
     autocompact_pct: float = 70.0  # context usage % at which auto-compaction triggers (DEFAULT_AUTOCOMPACT_PCT). Load-time clamped to [5.0, 90.0] (one constant pair shared with the dashboard write gate)
@@ -3481,7 +3533,7 @@ Two consequences fall out of naming in a non-latin script:
 - **The reveal animation needs characters.** The sidebar types a new title in one
   word at a time; a single-token title skipped the animation entirely, so
   `_title_reveal_prefixes` steps unspaced scripts two characters at a time
-  instead, landing in the same step count as an equivalent latin title.
+  instead, landing in the same step count as an equivalent latin title. Every cut is extended to the end of the grapheme cluster it lands in (`_grapheme_end`), so a frame never shows half a Thai tone mark, flag, skin-tone or ZWJ emoji sequence.
 
 `_clean_title` strips the full-width and CJK quote/period forms (`「」`, `“”`,
 `。`) alongside the ASCII ones, since that is what a zh/ja reply wraps a name in.
@@ -3521,7 +3573,7 @@ minted only after the scrub, exactly as the post-compaction skills index is.
 A `subagent:` session is the one kind that does NOT receive the frame
 (`_response_preferences_apply`, resolved through the same runtime-source seam
 as `[RUNTIME]`): its final message is read by its parent agent, which needs the
-caveats and edge cases the `ultra` and `answer_only` levels tell the writer to
+caveats and edge cases the `answer_only` level tells the writer to
 drop.
 
 Session-start context is what compaction drops, so `build_message` re-injects
@@ -3582,10 +3634,13 @@ config sections cannot enter configuration through this path.
 ### Meet CrewMates first-run state
 
 `DashboardConfig.crewmates_onboarded` records completion of the "Meet CrewMates"
-creation flow (`website/src/components/MeetCrewmatesFlow.tsx`). It no longer
-controls automatic presentation: neither completing the tour nor entering
-Crewmates opens a fullscreen chapter. The Crewmates page owns the flow and
-opens it only on an explicit create action.
+creation flow (`website/src/components/MeetCrewmatesFlow.tsx`). It gates automatic
+presentation but does not trigger it: the first-run host owns automatic entry
+and the Crewmates page owns explicit creation (`useMeetCrewmatesGate`). The flow
+opens automatically at the first of the first-run tour's end (while the Crew
+preview is on and `crewmates_onboarded` is unset) or the first Crewmates visit
+(while the seen flag is unset), and the page's own create action opens it through
+`START_MEET_CREWMATES_EVENT`.
 The embedded steps collect a goal, choose a name, review the run schedule and
 confirm the result. They reuse the chapter shell without a portal or modal focus
 trap. Technical template selection stays under Advanced. The default is
@@ -3612,9 +3667,13 @@ The today/tomorrow label is calculated when creation completes, at minute
 precision; the selected minute itself counts as passed. Failed schedule writes
 show their recovery notice without a next-run claim. This flow creates a crew
 and optional recurring schedule, not a separate goal-completion control loop.
-`useMeetCrewmatesGate` listens only for the explicit create event
-(`START_MEET_CREWMATES_EVENT`); it does not inspect the roster, installed
-agents, tour completion or prior completion flag before opening. The crewmate name is free-form: `POST /api/agents` keeps it as the crew's
+`useMeetCrewmatesGate` opens on the explicit create event
+(`START_MEET_CREWMATES_EVENT`) and automatically: `tourEndDue` fires at first-run
+tour completion while the Crew preview is on and `crewmates_onboarded` is unset,
+and `pageEntryDue` fires on the first Crewmates visit while the seen flag is
+unset. It reads the roster (`membersRosterQuery`) to hold the flow for a pending
+Mate, so it does inspect tour completion, the seen flags and the roster before
+opening. The crewmate name is free-form: `POST /api/agents` keeps it as the crew's
 label and derives an id-shaped key from it (`members.key_new_crew`), so spaces
 and CJK are accepted. The flow disables Next only on a blank name; the server's
 `validate_member_name` is the gate, and a 400 `invalid_member_name` or
