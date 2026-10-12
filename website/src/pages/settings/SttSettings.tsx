@@ -353,6 +353,9 @@ function TranscribeVocabularyPicker({
     ? dictationLanguages.find(set => set.length > 0 && !set.includes(selected.language_code))
     : undefined
   const languageMismatch = !!mismatchedWith
+  // A set of two or more is the mixed-languages candidates, which dictation picks
+  // among rather than being "set to" one of, so it gets its own sentence.
+  const mixedMismatch = !!mismatchedWith && mismatchedWith.length > 1
   // Read off the error's body rather than through `instanceof ApiError`: only a
   // structured refusal carries a body, and a transport failure falls through to the
   // generic sentence either way. The IAM action comes from the backend, which knows
@@ -388,10 +391,15 @@ function TranscribeVocabularyPicker({
       )}
       {languageMismatch && selected && mismatchedWith && (
         <p role="alert" className="text-[12px] text-warn -mt-1 mb-1" data-testid="stt-vocabulary-language-mismatch">
-          {i18nT('pages.settings.sttSettings.transcribe_vocabulary_language_mismatch', {
-            vocabularyLanguage: selected.language_code,
-            dictationLanguage: fmtList(mismatchedWith, { type: 'disjunction' }),
-          })}
+          {mixedMismatch
+            ? i18nT('pages.settings.sttSettings.transcribe_vocabulary_language_mismatch_mixed', {
+              vocabularyLanguage: selected.language_code,
+              languages: fmtList(mismatchedWith),
+            })
+            : i18nT('pages.settings.sttSettings.transcribe_vocabulary_language_mismatch', {
+              vocabularyLanguage: selected.language_code,
+              dictationLanguage: mismatchedWith[0],
+            })}
         </p>
       )}
       {!!listError && (

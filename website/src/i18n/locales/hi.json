@@ -16866,6 +16866,7 @@
         "transcribe_vocabulary_loading": "शब्दावलियाँ लोड हो रही हैं…",
         "transcribe_vocabulary_option": "{{name}} ({{language}})",
         "transcribe_vocabulary_language_mismatch": "यह शब्दावली {{vocabularyLanguage}} के लिए है, लेकिन डिक्टेशन {{dictationLanguage}} पर सेट है। Amazon Transcribe किसी दूसरी भाषा की शब्दावली को अस्वीकार कर देता है, इसलिए जब तक तुम कोई दूसरी शब्दावली या \"कोई नहीं\" नहीं चुनते, डिक्टेशन विफल होता रहेगा।",
+        "transcribe_vocabulary_language_mismatch_mixed": "यह शब्दावली {{vocabularyLanguage}} के लिए है, जो तुम्हारी मिश्रित भाषाओं ({{languages}}) में शामिल नहीं है। Amazon Transcribe किसी दूसरी भाषा की शब्दावली को अस्वीकार कर देता है, इसलिए जब तक तुम कोई दूसरी शब्दावली या \"कोई नहीं\" नहीं चुनते, स्ट्रीमिंग डिक्टेशन विफल होता रहेगा।",
         "transcribe_vocabulary_unavailable": "{{region}} में Amazon Transcribe के पास {{name}} नाम की कोई तैयार शब्दावली नहीं है। जब तक तुम कोई दूसरी शब्दावली या \"कोई नहीं\" नहीं चुनते, डिक्टेशन विफल होता रहेगा।",
         "transcribe_vocabulary_access_denied": "इन AWS क्रेडेंशियल्स को कस्टम शब्दावलियाँ सूचीबद्ध करने की अनुमति नहीं है। उन्हें यहाँ देखने के लिए {{permission}} की अनुमति दो।",
         "transcribe_vocabulary_list_failed": "तुम्हारी कस्टम शब्दावलियाँ AWS से लोड नहीं हो सकीं।",

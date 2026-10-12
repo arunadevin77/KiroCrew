@@ -16866,6 +16866,7 @@
         "transcribe_vocabulary_loading": "Vokabulare werden geladen…",
         "transcribe_vocabulary_option": "{{name}} ({{language}})",
         "transcribe_vocabulary_language_mismatch": "Dieses Vokabular ist für {{vocabularyLanguage}}, aber das Diktat ist auf {{dictationLanguage}} eingestellt. Amazon Transcribe lehnt ein Vokabular in einer anderen Sprache ab, deshalb schlägt das Diktat fehl, bis du ein anderes oder „Keines“ auswählst.",
+        "transcribe_vocabulary_language_mismatch_mixed": "Dieses Vokabular ist für {{vocabularyLanguage}}, und diese Sprache gehört nicht zu deinen gemischten Sprachen ({{languages}}). Amazon Transcribe lehnt ein Vokabular in einer anderen Sprache ab, deshalb schlägt das Streaming-Diktat fehl, bis du ein anderes oder „Keines“ auswählst.",
         "transcribe_vocabulary_unavailable": "Amazon Transcribe hat in {{region}} kein bereites Vokabular namens {{name}}. Das Diktat schlägt fehl, bis du ein anderes oder „Keines“ auswählst.",
         "transcribe_vocabulary_access_denied": "Diese AWS-Anmeldedaten dürfen keine benutzerdefinierten Vokabulare auflisten. Erteile {{permission}}, um sie hier zu sehen.",
         "transcribe_vocabulary_list_failed": "Deine benutzerdefinierten Vokabulare konnten nicht aus AWS geladen werden.",

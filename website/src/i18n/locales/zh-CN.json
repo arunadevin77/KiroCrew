@@ -16622,6 +16622,7 @@
         "transcribe_vocabulary_loading": "正在加载词汇表…",
         "transcribe_vocabulary_option": "{{name}} ({{language}})",
         "transcribe_vocabulary_language_mismatch": "此词汇表适用于 {{vocabularyLanguage}}，但口述语言设置为 {{dictationLanguage}}。Amazon Transcribe 会拒绝其他语言的词汇表，因此在你选择其他词汇表或“无”之前，口述会一直失败。",
+        "transcribe_vocabulary_language_mismatch_mixed": "此词汇表适用于 {{vocabularyLanguage}}，但这一语言不在你的混合语言（{{languages}}）之中。Amazon Transcribe 会拒绝其他语言的词汇表，因此在你选择其他词汇表或“无”之前，流式口述会一直失败。",
         "transcribe_vocabulary_unavailable": "Amazon Transcribe 在 {{region}} 中没有名为 {{name}} 的可用词汇表。在你选择其他词汇表或“无”之前，口述会一直失败。",
         "transcribe_vocabulary_access_denied": "这些 AWS 凭证无权列出自定义词汇表。授予 {{permission}} 权限即可在此处查看。",
         "transcribe_vocabulary_list_failed": "无法从 AWS 加载你的自定义词汇表。",

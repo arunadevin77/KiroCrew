@@ -17110,6 +17110,7 @@
         "transcribe_vocabulary_loading": "Cargando vocabularios…",
         "transcribe_vocabulary_option": "{{name}} ({{language}})",
         "transcribe_vocabulary_language_mismatch": "Este vocabulario es para {{vocabularyLanguage}}, pero el dictado está configurado en {{dictationLanguage}}. Amazon Transcribe rechaza los vocabularios en otro idioma, así que el dictado fallará hasta que elijas otro o Ninguno.",
+        "transcribe_vocabulary_language_mismatch_mixed": "Este vocabulario es para {{vocabularyLanguage}}, que no está entre tus Idiomas mezclados ({{languages}}). Amazon Transcribe rechaza los vocabularios en otro idioma, así que el dictado en streaming fallará hasta que elijas otro o Ninguno.",
         "transcribe_vocabulary_unavailable": "Amazon Transcribe no tiene ningún vocabulario listo llamado {{name}} en {{region}}. El dictado fallará hasta que elijas otro o Ninguno.",
         "transcribe_vocabulary_access_denied": "Estas credenciales de AWS no tienen permiso para listar vocabularios personalizados. Concede {{permission}} para verlos aquí.",
         "transcribe_vocabulary_list_failed": "No se pudieron cargar tus vocabularios personalizados desde AWS.",

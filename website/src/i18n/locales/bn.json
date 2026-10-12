@@ -16866,6 +16866,7 @@
         "transcribe_vocabulary_loading": "শব্দভান্ডারগুলো লোড হচ্ছে…",
         "transcribe_vocabulary_option": "{{name}} ({{language}})",
         "transcribe_vocabulary_language_mismatch": "এই শব্দভান্ডারটি {{vocabularyLanguage}}-এর জন্য, কিন্তু ডিকটেশন {{dictationLanguage}}-এ সেট করা আছে। Amazon Transcribe অন্য ভাষার শব্দভান্ডার প্রত্যাখ্যান করে, তাই তুমি অন্য একটি বা \"কোনোটি নয়\" বেছে না নেওয়া পর্যন্ত ডিকটেশন ব্যর্থ হবে।",
+        "transcribe_vocabulary_language_mismatch_mixed": "এই শব্দভান্ডারটি {{vocabularyLanguage}}-এর জন্য, যা তোমার মিশ্র ভাষার ({{languages}}) মধ্যে নেই। Amazon Transcribe অন্য ভাষার শব্দভান্ডার প্রত্যাখ্যান করে, তাই তুমি অন্য একটি বা \"কোনোটি নয়\" বেছে না নেওয়া পর্যন্ত স্ট্রিমিং ডিকটেশন ব্যর্থ হবে।",
         "transcribe_vocabulary_unavailable": "{{region}}-এ Amazon Transcribe-এর {{name}} নামে কোনো প্রস্তুত শব্দভান্ডার নেই। তুমি অন্য একটি বা \"কোনোটি নয়\" বেছে না নেওয়া পর্যন্ত ডিকটেশন ব্যর্থ হবে।",
         "transcribe_vocabulary_access_denied": "এই AWS ক্রেডেনশিয়ালগুলোর কাস্টম শব্দভান্ডারের তালিকা দেখার অনুমতি নেই। সেগুলো এখানে দেখতে {{permission}} অনুমতি দাও।",
         "transcribe_vocabulary_list_failed": "AWS থেকে তোমার কাস্টম শব্দভান্ডারগুলো লোড করা যায়নি।",

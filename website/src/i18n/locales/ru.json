@@ -17354,6 +17354,7 @@
         "transcribe_vocabulary_loading": "Загрузка словарей…",
         "transcribe_vocabulary_option": "{{name}} ({{language}})",
         "transcribe_vocabulary_language_mismatch": "Этот словарь предназначен для {{vocabularyLanguage}}, а для диктовки выбран {{dictationLanguage}}. Amazon Transcribe отклоняет словарь на другом языке, поэтому диктовка не будет работать, пока ты не выберешь другой словарь или «Нет».",
+        "transcribe_vocabulary_language_mismatch_mixed": "Этот словарь предназначен для {{vocabularyLanguage}}, а этого языка нет среди твоих смешанных языков ({{languages}}). Amazon Transcribe отклоняет словарь на другом языке, поэтому потоковая диктовка не будет работать, пока ты не выберешь другой словарь или «Нет».",
         "transcribe_vocabulary_unavailable": "В {{region}} у Amazon Transcribe нет готового словаря с именем {{name}}. Диктовка не будет работать, пока ты не выберешь другой словарь или «Нет».",
         "transcribe_vocabulary_access_denied": "Этим учётным данным AWS не разрешено получать список пользовательских словарей. Выдай разрешение {{permission}}, чтобы видеть их здесь.",
         "transcribe_vocabulary_list_failed": "Не удалось загрузить твои пользовательские словари из AWS.",

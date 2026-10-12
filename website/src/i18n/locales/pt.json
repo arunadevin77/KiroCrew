@@ -17110,6 +17110,7 @@
         "transcribe_vocabulary_loading": "Carregando vocabulários…",
         "transcribe_vocabulary_option": "{{name}} ({{language}})",
         "transcribe_vocabulary_language_mismatch": "Este vocabulário é para {{vocabularyLanguage}}, mas o ditado está configurado para {{dictationLanguage}}. O Amazon Transcribe recusa vocabulários em outro idioma, então o ditado vai falhar até você escolher outro ou Nenhum.",
+        "transcribe_vocabulary_language_mismatch_mixed": "Este vocabulário é para {{vocabularyLanguage}}, que não está entre os seus Idiomas misturados ({{languages}}). O Amazon Transcribe recusa vocabulários em outro idioma, então o ditado em streaming vai falhar até você escolher outro ou Nenhum.",
         "transcribe_vocabulary_unavailable": "O Amazon Transcribe não tem nenhum vocabulário pronto chamado {{name}} em {{region}}. O ditado vai falhar até você escolher outro ou Nenhum.",
         "transcribe_vocabulary_access_denied": "Estas credenciais AWS não têm permissão para listar vocabulários personalizados. Conceda {{permission}} para vê-los aqui.",
         "transcribe_vocabulary_list_failed": "Não foi possível carregar seus vocabulários personalizados da AWS.",

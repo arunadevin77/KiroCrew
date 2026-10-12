@@ -17110,6 +17110,7 @@
         "transcribe_vocabulary_loading": "Caricamento dei vocabolari…",
         "transcribe_vocabulary_option": "{{name}} ({{language}})",
         "transcribe_vocabulary_language_mismatch": "Questo vocabolario è per {{vocabularyLanguage}}, ma la dettatura è impostata su {{dictationLanguage}}. Amazon Transcribe rifiuta un vocabolario in un’altra lingua, quindi la dettatura non funzionerà finché non ne scegli un altro o Nessuno.",
+        "transcribe_vocabulary_language_mismatch_mixed": "Questo vocabolario è per {{vocabularyLanguage}}, che non è tra le tue Lingue miste ({{languages}}). Amazon Transcribe rifiuta un vocabolario in un’altra lingua, quindi la dettatura in streaming non funzionerà finché non ne scegli un altro o Nessuno.",
         "transcribe_vocabulary_unavailable": "Amazon Transcribe non ha nessun vocabolario pronto chiamato {{name}} in {{region}}. La dettatura non funzionerà finché non ne scegli un altro o Nessuno.",
         "transcribe_vocabulary_access_denied": "Queste credenziali AWS non sono autorizzate a elencare i vocabolari personalizzati. Concedi {{permission}} per vederli qui.",
         "transcribe_vocabulary_list_failed": "Impossibile caricare i tuoi vocabolari personalizzati da AWS.",

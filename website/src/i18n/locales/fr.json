@@ -17110,6 +17110,7 @@
         "transcribe_vocabulary_loading": "Chargement des vocabulaires…",
         "transcribe_vocabulary_option": "{{name}} ({{language}})",
         "transcribe_vocabulary_language_mismatch": "Ce vocabulaire est destiné à {{vocabularyLanguage}}, mais la dictée est réglée sur {{dictationLanguage}}. Amazon Transcribe refuse un vocabulaire dans une autre langue, donc la dictée échouera tant que tu n’en auras pas choisi un autre ou Aucun.",
+        "transcribe_vocabulary_language_mismatch_mixed": "Ce vocabulaire est destiné à {{vocabularyLanguage}}, qui ne fait pas partie de tes Langues mélangées ({{languages}}). Amazon Transcribe refuse un vocabulaire dans une autre langue, donc la dictée en diffusion en continu échouera tant que tu n’en auras pas choisi un autre ou Aucun.",
         "transcribe_vocabulary_unavailable": "Amazon Transcribe n’a aucun vocabulaire prêt nommé {{name}} dans {{region}}. La dictée échouera tant que tu n’en auras pas choisi un autre ou Aucun.",
         "transcribe_vocabulary_access_denied": "Ces identifiants AWS ne sont pas autorisés à lister les vocabulaires personnalisés. Accorde {{permission}} pour les voir ici.",
         "transcribe_vocabulary_list_failed": "Impossible de charger tes vocabulaires personnalisés depuis AWS.",

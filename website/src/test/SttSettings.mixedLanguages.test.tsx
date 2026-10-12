@@ -305,6 +305,8 @@ describe('SttSettings Transcribe mixed languages', () => {
       { timeout: VOCABULARY_CHAIN_TIMEOUT_MS },
     )
     expect(warning).toHaveTextContent('vi-VN')
+    expect(warning).toHaveTextContent(/dictation is set to vi-VN\./)
+    expect(warning).not.toHaveTextContent(/Mixed languages/)
   })
 
   it('warns when the vocabulary is in none of the candidate languages', async () => {
@@ -321,5 +323,8 @@ describe('SttSettings Transcribe mixed languages', () => {
     )
     expect(warning).toHaveTextContent('vi-VN')
     expect(warning).toHaveTextContent('fr-FR')
+    // Dictation picks among the candidates; it is not "set to" either of them.
+    expect(warning).toHaveTextContent(/not one of your Mixed languages \(vi-VN and fr-FR\)/)
+    expect(warning).not.toHaveTextContent(/dictation is set to/)
   })
 })

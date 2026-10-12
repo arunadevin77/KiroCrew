@@ -16622,6 +16622,7 @@
         "transcribe_vocabulary_loading": "어휘를 불러오는 중…",
         "transcribe_vocabulary_option": "{{name}} ({{language}})",
         "transcribe_vocabulary_language_mismatch": "이 어휘는 {{vocabularyLanguage}}용이지만 구술 언어는 {{dictationLanguage}}(으)로 설정되어 있습니다. Amazon Transcribe는 다른 언어의 어휘를 거부하므로, 다른 어휘나 ‘없음’을 선택할 때까지 구술이 실패합니다.",
+        "transcribe_vocabulary_language_mismatch_mixed": "이 어휘는 {{vocabularyLanguage}}용이지만 이 언어는 여러 언어({{languages}})에 포함되어 있지 않습니다. Amazon Transcribe는 다른 언어의 어휘를 거부하므로, 다른 어휘나 ‘없음’을 선택할 때까지 스트리밍 구술이 실패합니다.",
         "transcribe_vocabulary_unavailable": "{{region}}의 Amazon Transcribe에는 이름이 {{name}}인 준비된 어휘가 없습니다. 다른 어휘나 ‘없음’을 선택할 때까지 구술이 실패합니다.",
         "transcribe_vocabulary_access_denied": "이 AWS 자격 증명에는 사용자 지정 어휘 목록을 조회할 권한이 없습니다. 여기에서 보려면 {{permission}} 권한을 부여하세요.",
         "transcribe_vocabulary_list_failed": "AWS에서 사용자 지정 어휘를 불러오지 못했습니다.",

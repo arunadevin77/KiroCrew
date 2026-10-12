@@ -16622,6 +16622,7 @@
         "transcribe_vocabulary_loading": "語彙を読み込み中…",
         "transcribe_vocabulary_option": "{{name}} ({{language}})",
         "transcribe_vocabulary_language_mismatch": "この語彙は {{vocabularyLanguage}} 用ですが、口述は {{dictationLanguage}} に設定されています。Amazon Transcribe は別の言語の語彙を拒否するため、別の語彙か「なし」を選ぶまで、口述は失敗します。",
+        "transcribe_vocabulary_language_mismatch_mixed": "この語彙は {{vocabularyLanguage}} 用ですが、この言語は複数言語（{{languages}}）に含まれていません。Amazon Transcribe は別の言語の語彙を拒否するため、別の語彙か「なし」を選ぶまで、ストリーミングの口述は失敗します。",
         "transcribe_vocabulary_unavailable": "Amazon Transcribe の {{region}} には、{{name}} という名前の使用可能な語彙がありません。別の語彙か「なし」を選ぶまで、口述は失敗します。",
         "transcribe_vocabulary_access_denied": "この AWS 認証情報には、カスタム語彙を一覧表示する権限がありません。ここに表示するには {{permission}} を許可してください。",
         "transcribe_vocabulary_list_failed": "AWS からカスタム語彙を読み込めませんでした。",
