@@ -381,6 +381,7 @@ class TestWhatThisSetGrants:
         # the End-wait button writes; nothing discarded, same target fence.
         "session_end_wait",
         "session_retry",
+        "session_continue",
         "session_set_model",
         "session_reload",
         # Relabels a session the caller may already stop, or itself; same gate.

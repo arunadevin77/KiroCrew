@@ -899,6 +899,34 @@ def _session_tools() -> tuple[Tool, ...]:
             routes=("POST /api/session-control/retry",),
         ),
         Tool(
+            name="session_continue",
+            description=(
+                "Hand another session's thread back to its agent, the same as pressing "
+                "Continue in that tab. Use it when a turn was cut short by a gateway "
+                "restart or a killed process: such a turn leaves no error row and looks "
+                "finished, so session_retry refuses it. The session is sent one of two "
+                "fixed messages and the result says which: 'resumed' (its last turn was "
+                "interrupted, pick it up) or 'continued' (its last turn ended cleanly, "
+                "carry on). Takes no prompt text; to ask for something new use "
+                "session_send. Refused while the target is running, busy or has queued "
+                "messages, and after two failed session starts in a row "
+                "(session_start_repeat)."
+            ),
+            schema={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Session key from list_sessions, or its exact title.",
+                    },
+                },
+                "required": ["target"],
+            },
+            run=_run_session_continue,
+            identity="strict",
+            routes=("POST /api/session-control/continue",),
+        ),
+        Tool(
             name="session_set_model",
             description=(
                 "Change the model and/or reasoning effort another session runs on; "
@@ -2882,6 +2910,27 @@ def _run_session_retry(args: dict[str, Any], ctx: ToolContext) -> str:
     return redact(
         f"\U0001f501 Retry started in `{target}`. Its transcript shows the resume row; "
         "read it with session_read_message."
+    )
+
+
+def _run_session_continue(args: dict[str, Any], ctx: ToolContext) -> str:
+    try:
+        resp = ctx.client.post(
+            "/api/session-control/continue",
+            {"target": args["target"]},
+            session_key=ctx.caller_key,
+        )
+    except DashboardError as refused:
+        return f"Error: could not continue that session: {refused.error}"
+    target = resp.get("target", args["target"])
+    body = resp.get("body", "continued")
+    if body == "resumed":
+        how = "its last turn was interrupted, so it was told to pick that turn up"
+    else:
+        how = "its last turn had ended, so it was told to carry on"
+    return redact(
+        f"\u25b6\ufe0f Continue sent to `{target}` ({body}): {how}. "
+        "Read the result with session_read_message."
     )
 
 

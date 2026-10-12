@@ -5551,6 +5551,10 @@ handle immediately.
 #:   any turn that did not fail. But it still starts a turn in a session that is
 #:   not the caller's own, and the conductor has no ownership fence to bound which
 #:   session that is.
+#: * ``session_continue`` — WITHHELD here AND from members. Unlike
+#:   ``session_retry`` it does not refuse a turn that finished: it tells the
+#:   target to carry on, so every call asks for an approval until an owner
+#:   decides it belongs in the member set.
 #:
 #: Every withheld verb stays MOUNTED (``@kirocrew-dashboard`` is still in
 #: ``tools``) — it just passes through ``hooks.on_tool_call`` like any ungranted

@@ -160,6 +160,8 @@ CHANNEL_AGENT_BLOCKED_TOOLS: tuple[str, ...] = (
     # Re-running a turn spends the target's model and tools on work a channel
     # message did not ask for; same containment reason as stop.
     "session_retry",
+    # Continuing a thread spends the target's model and tools the same way.
+    "session_continue",
     # Changing a session's model decides what the user's next turn there runs
     # on and spends; same containment reason as stop.
     "session_set_model",

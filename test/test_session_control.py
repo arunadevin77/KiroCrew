@@ -4278,6 +4278,7 @@ _DASHBOARD_TOOL_CALLS = {
     "session_stop": {"target": "chat-2"},
     "session_end_wait": {"target": "chat-2"},
     "session_retry": {"target": "chat-2"},
+    "session_continue": {"target": "chat-2"},
     "session_set_model": {"target": "chat-2", "model": "sonnet"},
     "session_reload": {"target": "chat-2"},
     "session_rename": {"target": "chat-2", "title": "Worker"},

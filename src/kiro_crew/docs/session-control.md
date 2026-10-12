@@ -1,17 +1,17 @@
 # Session Control — driving another session
 
-One chat session can open, fork, seed, watch, stop, retry, rename, close and revive
+One chat session can open, fork, seed, watch, stop, retry, continue, rename, close and revive
 another one, change its model, reload its agent process, and take another one under itself in
 the sidebar. The tools come from the
 `kirocrew-dashboard` MCP server, so an agent that does not mount that server
 never has them — exactly like any other MCP server. This page is the reference
-for all 32 of its tools, written for the agent that is about to use them.
+for all 33 of its tools, written for the agent that is about to use them.
 
 The server is defined in `src/kiro_crew/mcp_dashboard.py`. Two halves:
 
 - **Session control** — `session_create`, `session_fork`, `session_send`,
   `session_read_message`, `session_summary`, `session_stop`, `session_end_wait`, `session_retry`,
-  `session_set_model`, `session_reload`, `session_rename`, `session_close`, `session_revive`,
+  `session_continue`, `session_set_model`, `session_reload`, `session_rename`, `session_close`, `session_revive`,
   `session_broadcast`, `session_status`, `session_adopt`, `session_release`. These reach another
   session.
 - **Sidebar shape** — `chat_folder_tree`, `chat_folder_create`,
@@ -548,6 +548,37 @@ remote crew and is read-only now, is refused with `relay_archive_read_only`.
 
 The session-control audit line records your session key as the caller, and the
 target's own `dashboard_continue` line records `via=session_control`.
+
+### `session_continue`
+
+| Argument | Required | Meaning |
+|---|---|---|
+| `target` | yes | Session key or exact title |
+
+Hands a session's thread back to its agent, the same way the Continue button in
+that tab does. Use it after a gateway restart or a killed process cut a turn
+short. Such a turn runs no cleanup, so it leaves no error row and looks
+finished, and `session_retry` refuses it with `turn_not_failed`.
+
+The target is sent one of two fixed messages, chosen the same way the button
+chooses, and the result's `body` says which:
+
+| `body` | When | What the target is told |
+|---|---|---|
+| `resumed` | its last turn was interrupted | pick that turn up where it stopped |
+| `continued` | its last turn ended cleanly | carry on from there |
+
+There is no prompt argument. To ask for something new, use `session_send`.
+
+The refusals are Continue's own: `slot_running`, `slot_stopping`,
+`slot_queue_pending`, `slot_approval_pending`, `slot_subagents_running` and
+`slot_empty`. After two failed session starts in a row the call is refused too,
+and the refusal says to restart the gateway. An old relay chat is refused with
+`relay_archive_read_only`. Target reach is the same as `session_retry`'s.
+
+The session-control audit line records your session key as the caller and the
+`body` that was sent; the target's own `dashboard_continue` line records
+`via=session_control`.
 
 ### `session_revive`
 

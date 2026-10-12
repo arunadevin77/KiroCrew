@@ -4137,12 +4137,15 @@ async def continue_slot_turn(
     before_dispatch: Callable[[], None] | None = None,
     extra_meta: dict[str, Any] | None = None,
     replaced: Callable[[], bool] | None = None,
-) -> None:
+) -> str:
     """Queue the Resume/Continue body at the head of *slot* and dispatch it.
 
     The mechanism behind ``api_chat_slot_continue``, shared with
-    ``session_control.retry_target`` so the button and the ``session_retry``
-    tool run one path and refuse the same states. Authorization is the
+    ``session_control.retry_target`` and ``session_control.continue_target`` so
+    the button and the ``session_retry`` / ``session_continue`` tools run one
+    path and refuse the same states. Returns which body was queued:
+    ``"resumed"`` for the interrupted pick-up, ``"continued"`` for the carry-on
+    message a cleanly finished slot gets. Authorization is the
     caller's: this function checks only whether the slot can take a
     continuation right now, and raises :class:`SlotContinueRefusal` when it
     cannot.
@@ -4280,6 +4283,7 @@ async def continue_slot_turn(
         # The turn is running either way, so this is not an error for the caller.
         logger.info("continue: queue entry consumed by a concurrent dequeue (slot %s)", slot.key)
     state.push_slots_update()
+    return "resumed" if interrupted else "continued"
 
 
 #: Consecutive tagged session-start failures at which Continue stops re-running

@@ -335,6 +335,10 @@ def _register_mcp_routes(app: web.Application) -> None:
         "/api/session-control/retry", _deferred("session_control", "api_session_control_retry")
     )
     app.router.add_post(
+        "/api/session-control/continue",
+        _deferred("session_control", "api_session_control_continue"),
+    )
+    app.router.add_post(
         "/api/session-control/set-model",
         _deferred("session_control", "api_session_control_set_model"),
     )
