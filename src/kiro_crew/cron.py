@@ -1039,6 +1039,16 @@ class CronService:
                 job.last_status = "error"
                 job.last_error = last_error
                 job.last_run_ts = last_run_ts
+                # A reaped one-shot is parked the way a timed-out one is: both are
+                # the system ending a run it judged stuck, and the finalizer skips
+                # the result merge for a reaped run, so _execute's own disable
+                # never runs. Held off the schedule here at once, with the pause
+                # saved by the merge below. A delete_after_run one is kept and
+                # auto-paused as a failed run; a run whose payload never started
+                # parks nothing and stays due.
+                park_one_shot = taken.started_monotonic is not None and run_parks_one_shot(job)
+                if park_one_shot:
+                    job.enabled = False
                 try:
                     await asyncio.to_thread(
                         self._merge_terminal_state_locked,
@@ -1053,6 +1063,7 @@ class CronService:
                         count_failure=taken.started_monotonic is not None
                         and not job.failure_recorded
                         and not job.run_never_started,
+                        park_one_shot=park_one_shot,
                     )
                 except Exception:
                     logger.exception("Reaper: failed to persist state for cron %s", job_id)
@@ -4429,6 +4440,11 @@ class CronService:
             # _execute resets the marker to False before invoking the callback.
             if not job.failure_recorded and not job.run_never_started:
                 job.record_failure()
+            # The deadline cancelled _execute before its one-shot disable, so it
+            # is done here (the result merge persists it). A delete_after_run
+            # one-shot is a failed run: the finally below auto-pauses it.
+            if run_parks_one_shot(job):
+                job.enabled = False
             logger.error("Cron job '%s' timed out after %ds", job.name, deadline)
         finally:
             # A one-shot whose run FAILED (error or timeout) is auto-paused, not
@@ -4776,7 +4792,8 @@ class CronService:
             # can re-enable it. Written to the disk copy for the save below; a
             # failed save takes ``user_paused`` back off, so a park the store
             # did not take is never reported, and leaves the caller's
-            # provisional hold (``enabled`` False) in place.
+            # provisional hold (``enabled`` False) in place. The reaper parks a
+            # plain one-shot it kills the same way.
             parking = park_one_shot and target.schedule.kind == "at"
             if park_one_shot and not parking:
                 # Recurring in the store: it keeps that schedule, so the caller's
@@ -4810,7 +4827,7 @@ class CronService:
                 target.enabled, target.auto_paused, target.consecutive_failures = counted
                 target.user_paused = paused_before
                 if parking:
-                    target.enabled = False  # the cancel's provisional hold
+                    target.enabled = False  # the caller's provisional hold
                 if not isinstance(exc, CronStoreUnreadable):
                     raise
                 logger.warning("Cron terminal state not persisted: %s", exc)
