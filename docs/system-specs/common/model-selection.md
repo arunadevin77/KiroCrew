@@ -415,10 +415,20 @@ its own once the cache refreshes with a list that carries it.
   set with one write, keep `auto` selected, and preserve hidden IDs absent from the
   current catalog. Enabling the configured effort default moves the slider thumb to
   that level before the setting write completes.
-- **Pin a cheaper model** only through `agent.role_models.<role>` (`background`,
-  `subagent`), read by `AgentConfig.resolve_model(role)` in `config/sections.py`. Roles
-  default to `"auto"` and deliberately do NOT inherit `agent.model`, so a user's chat
-  model does not silently become the price of every background task.
+- **Pin a cheaper model** for the worker roles only through
+  `agent.role_models.<role>` (`background`, `subagent`), read by
+  `AgentConfig.resolve_model(role)` in `config/sections.py`. Roles default to
+  `"auto"` and deliberately do NOT inherit `agent.model`, so a user's chat model
+  does not silently become the price of every background task. The sessions a
+  crewmate dispatches with `session_create` are the one decided exception
+  ([rfc-worker-model-inheritance](../../request-for-change/rfc-worker-model-inheritance.md),
+  pending its implementation in
+  [#19368](https://github.com/kirodotdev/KiroCrew/pull/19368)): once that lands
+  they inherit the CREWMATE's own model and effort (the pin the person chose on
+  that crewmate's profile, never the user's chat model), and the per-crewmate
+  cost cap is that profile's `worker_model` / `worker_reasoning_effort`, where
+  `"auto"` is a real pin on the backend default. Until then a dispatched session
+  starts on the default like any other.
 - **Entitlement checks** always use the shared predicate
   `acp.client.model_is_unusable(id, advertised)` together with
   `advertised_model_ids(...)`. It is one predicate on purpose: two spellings of "can

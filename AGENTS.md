@@ -178,8 +178,10 @@ Detail and rationale: [security](docs/system-specs/modules/security.md),
 `claude-*`, `opus*`, `sonnet*`, `haiku*`, `gpt-*` or `fable*` as a default or
 fallback fails at runtime for anyone not entitled to it, silently until the first
 prompt. The default is `"auto"`; resolve a substitute choice through
-`acp.client.resolve_usable_model`; pin a cheaper model only via
-`agent.role_models.<role>`. `code-review.yml` fails on a newly added hardcoded
+`acp.client.resolve_usable_model`; pin a cheaper model for the worker roles only
+via `agent.role_models.<role>` (and, once rfc-worker-model-inheritance's
+implementation #19368 lands, for one crewmate's dispatched sessions via that
+crewmate's `worker_model`). `code-review.yml` fails on a newly added hardcoded
 literal. Rules and the one exception:
 [model-selection](docs/system-specs/common/model-selection.md).
 
