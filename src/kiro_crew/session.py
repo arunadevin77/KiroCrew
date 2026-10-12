@@ -1109,6 +1109,8 @@ class _Session:
     # site and read by ``reset``: a session popped while its permit is held
     # remembers WHO held it, so that task's later key-only ``release`` is
     # absorbed instead of unlocking whatever successor now occupies the key.
+    # The release that ends a recorded holding clears it in the same step, so it
+    # never names a task that has let the permit go.
     turn_owner: Any = None
     # Set by the allocation layer when a claim or registration adopted entries a
     # forced stop parked (``session_lifecycle.adopt_parked_queue``); ``release``

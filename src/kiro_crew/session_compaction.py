@@ -389,6 +389,18 @@ class CompactionCoordinator:
         True only when the permit is held by a live task other than the
         compaction's own. Every other state answers False, including a compaction
         with no recorded task, so the Stop decline keeps its old reach there.
+
+        The holder is read from ``turn_owner``, so the answer is only as good as
+        that record. Each compaction path names itself there in the step its
+        acquire returns (the Claude arm of ``_compact_session``,
+        ``_recycle_unmanaged``, ``_compact_in_place``), and every release of a
+        holding that named itself clears it in the same step
+        (``SessionManager.release``, those three paths, ``recycle_background``).
+        So the record never names a task that has let the permit go. When a turn
+        releases the permit to the parked compaction, the record names nobody
+        until the compaction's task runs, and a Stop in that hand-off is
+        declined: the permit is the compaction's from the release on. A holder
+        that has not named itself reads the same way and keeps the decline.
         """
         folded = self._owner._fold_key(key)
         task = self.state.compaction_tasks.get(folded)
@@ -761,6 +773,7 @@ class CompactionCoordinator:
                     finally:
                         if not owner.absorb_orphaned_release(key):
                             claude_session.semaphore.release()
+                            claude_session.turn_owner = None
 
                 timeout = self._deps.compact_wait_timeout_secs()
                 try:
@@ -1077,6 +1090,7 @@ class CompactionCoordinator:
             # a second release here would raise in that claimant's own release.
             if not self._owner.absorb_orphaned_release(key):
                 session.semaphore.release()
+                session.turn_owner = None
         return "recycled"
 
     async def _compact_in_place(self, key: str, session: Any, pct: float) -> str:
@@ -1184,6 +1198,7 @@ class CompactionCoordinator:
             # claimant parked on the permit wakes.
             if not self._owner.absorb_orphaned_release(key):
                 session.semaphore.release()
+                session.turn_owner = None
 
         escalate = self._owner._settle_compact_cooldown(key, session.provider, pct)
         self._deps.logger.info("Compacted session %s in place (context overflow)", key)

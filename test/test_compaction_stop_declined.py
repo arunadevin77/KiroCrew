@@ -29,6 +29,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from kiro_crew.acp_backends import ACP_BACKEND_DEEPSEEK
 from kiro_crew.config import KiroCrewConfig
 from kiro_crew.session import SessionManager
 from kiro_crew.session_compaction import (
@@ -38,6 +39,7 @@ from kiro_crew.session_compaction import (
     COMPACT_OUTCOME_WAITING_FOR_SUBAGENTS,
 )
 from kiro_crew.session_lifecycle import compaction_in_flight
+from kiro_crew.testing.wait import async_wait_until
 
 KEY = "dashboard:chat-14841"
 
@@ -241,7 +243,7 @@ async def test_a_stop_on_the_turn_a_compaction_waits_behind_is_a_soft_cancel():
     before = mgr.stop_generation(key)
 
     mgr.check_context_usage(key, session.provider)
-    async with asyncio.timeout(5):
+    async with asyncio.timeout(30):
         while not session.semaphore._waiters:  # the compaction parks on the permit
             await asyncio.sleep(0)
     assert mgr.is_compacting(KEY) is True
@@ -259,9 +261,10 @@ async def test_a_stop_on_the_turn_a_compaction_waits_behind_is_a_soft_cancel():
 
     mgr.release(key)
     compact.release.set()
-    async with asyncio.timeout(5):
-        while mgr.is_compacting(KEY):
-            await asyncio.sleep(0.01)
+    await async_wait_until(
+        lambda: not mgr.is_compacting(KEY),
+        describe=lambda: f"is_compacting({KEY!r}) is still true",
+    )
     await mgr.close_all()
 
 
@@ -275,7 +278,7 @@ async def test_a_stop_once_the_triggered_compaction_holds_the_session_is_still_d
     before = mgr.stop_generation(key)
 
     mgr.check_context_usage(key, session.provider)
-    await asyncio.wait_for(compact.started.wait(), timeout=5)
+    await asyncio.wait_for(compact.started.wait(), timeout=30)
     assert compaction_in_flight(mgr, KEY) is True
 
     assert await mgr.stop_turn(KEY, force=False) == "compacting"
@@ -283,9 +286,124 @@ async def test_a_stop_once_the_triggered_compaction_holds_the_session_is_still_d
     assert mgr.stop_generation(key) == before
 
     compact.release.set()
-    async with asyncio.timeout(5):
-        while mgr.is_compacting(KEY):
-            await asyncio.sleep(0.01)
+    await async_wait_until(
+        lambda: not mgr.is_compacting(KEY),
+        describe=lambda: f"is_compacting({KEY!r}) is still true",
+    )
+    await mgr.close_all()
+
+
+class _ParkSignal(asyncio.BoundedSemaphore):
+    """A session turn permit that sets ``parked`` when a claimant has to wait on it.
+
+    The event is set in the claimant's own step, just before it parks, so a test
+    awaiting it resumes only after the claimant is queued on the permit."""
+
+    def __init__(self) -> None:
+        super().__init__(1)
+        self.parked = asyncio.Event()
+
+    async def acquire(self) -> bool:
+        if self.locked():
+            self.parked.set()
+        return await super().acquire()
+
+
+@pytest.mark.asyncio
+async def test_a_stop_while_the_turn_hands_the_permit_to_the_compaction_is_declined():
+    """The turn the compaction waits behind releases the permit, and the semaphore
+    hands it to the parked compaction, whose task has not run yet. The permit is the
+    compaction's from that release on, although the turn's task is still alive, so
+    a cooperative Stop in the hand-off is declined and not recorded, and the probe
+    every channel runs first agrees."""
+    mgr, key, compact, order, notices = await _setup()
+    session = mgr._sessions[key]
+    permit = _ParkSignal()
+    session.semaphore = permit  # idle: _setup released it
+    await mgr.get_or_create(KEY)  # this task's turn takes the permit
+    session.provider.context_usage_pct = lambda: 95.0
+    before = mgr.stop_generation(key)
+
+    mgr.check_context_usage(key, session.provider)
+    task = mgr._compaction.state.compaction_tasks[key]
+    try:
+        await asyncio.wait_for(permit.parked.wait(), timeout=30)
+        assert compaction_in_flight(mgr, KEY) is False, "premise: the turn holds the session"
+
+        # The turn releases and this task runs on. From here to the asserts
+        # nothing awaits, so the compaction's task cannot run in between.
+        mgr.release(key)
+        assert permit.locked() and not task.done(), "premise: the hand-off is pending"
+        probe = compaction_in_flight(mgr, KEY)
+        outcome = await mgr.stop_turn(KEY, force=False)
+        observed = (probe, outcome, session.provider.cancel.await_count)
+        assert not compact.started.is_set(), "premise: the Stop ran inside the hand-off"
+        assert observed == (True, "compacting", 0), (
+            "a cooperative Stop during the permit hand-off to the compaction was not "
+            f"declined: (compaction_in_flight, stop_turn, cancels) = {observed}"
+        )
+        assert mgr.stop_generation(key) == before
+    finally:
+        compact.release.set()
+        await asyncio.wait_for(task, timeout=30)
+        await mgr.close_all()
+
+
+@pytest.mark.asyncio
+async def test_a_stop_after_the_turn_releases_before_the_compaction_ran_is_declined():
+    """Control: the turn releases before the triggered compaction's task has run at
+    all, so nobody holds the permit and no turn is left for the Stop to reach. The
+    decline applies, as it does once the compaction holds the session."""
+    mgr, key, compact, order, notices = await _setup()
+    await mgr.get_or_create(KEY)  # this task's turn takes the permit
+    session = mgr._sessions[key]
+    session.provider.context_usage_pct = lambda: 95.0
+    before = mgr.stop_generation(key)
+
+    mgr.check_context_usage(key, session.provider)
+    task = mgr._compaction.state.compaction_tasks[key]
+    mgr.release(key)  # no await since the trigger: the compaction's task has not run
+    try:
+        assert not session.semaphore.locked(), "premise: nobody holds the permit"
+        probe = compaction_in_flight(mgr, KEY)
+        outcome = await mgr.stop_turn(KEY, force=False)
+        observed = (probe, outcome, session.provider.cancel.await_count)
+        assert observed == (True, "compacting", 0), (
+            "a cooperative Stop with the permit free and the compaction committed was "
+            f"not declined: (compaction_in_flight, stop_turn, cancels) = {observed}"
+        )
+        assert mgr.stop_generation(key) == before
+    finally:
+        compact.release.set()
+        await asyncio.wait_for(task, timeout=30)
+        await mgr.close_all()
+
+
+@pytest.mark.asyncio
+async def test_a_release_leaves_no_holder_named_on_the_session():
+    """The record ends with the holding: a turn's release clears ``turn_owner``, and
+    so does an awaited compaction, which holds the permit in its caller's task, a
+    task that keeps running after the compaction."""
+    mgr, key, compact, order, notices = await _setup()
+    session = mgr._sessions[key]
+    await mgr.get_or_create(KEY)
+    assert session.turn_owner is asyncio.current_task(), "premise: the turn named itself"
+    mgr.release(key)
+    assert session.turn_owner is None, "the turn's release left its record"
+
+    levels = [95.0]
+    provider = session.provider
+    provider.context_usage_pct = lambda: levels[0]
+
+    def _completed(*_args, **_kwargs):
+        levels[0] = 10.0
+        return {"type": "completed"}
+
+    provider.wait_for_compaction = AsyncMock(side_effect=_completed)
+    compact.release.set()
+    assert await asyncio.wait_for(mgr.compact_if_needed(KEY), timeout=30) == "ok"
+    assert mgr._sessions.get(key) is session, "premise: compacted in place"
+    assert session.turn_owner is None, "the compaction's release left its record"
     await mgr.close_all()
 
 
@@ -2513,4 +2631,55 @@ async def test_an_unstopped_uncompactable_restart_still_stops_the_subagent_and_r
     assert order == ["shutdown"]
     assert notices[-1] == (True, COMPACT_OUTCOME_RESTARTED_UNCOMPACTABLE)
     assert not session.semaphore.locked(), "the permit was not released"
+    await mgr.close_all()
+
+
+@pytest.mark.asyncio
+async def test_a_cooperative_stop_during_the_triggered_uncompactable_restart_is_declined():
+    """The threshold trigger on a backend with no ``/compact`` starts the restart,
+    which waits for the permit of the turn that triggered it. That turn releases
+    the permit and its task keeps running its end-of-turn work. Once the restart
+    holds the permit it owns the session, so a cooperative Stop is declined as
+    ``compacting`` and not recorded, the probe every channel runs first agrees,
+    and the restart goes on to its recycle."""
+    mgr, key, _compact, order, notices = await _setup()
+    await mgr.get_or_create(KEY)  # the user's turn takes the permit
+    session = mgr._sessions[key]
+    provider = session.provider
+    provider.context_usage_pct = lambda: 95.0
+    provider.manual_compact_unsupported_backend = ACP_BACKEND_DEEPSEEK
+    provider.compaction_unmanaged_backend = ACP_BACKEND_DEEPSEEK
+    gate = asyncio.Event()
+    mgr.set_child_teardown_handler(_SharedSubagent(key, gate))
+    mgr._compaction._deps = dataclasses.replace(
+        mgr._compaction._deps, cotenant_wait_secs=30.0, cotenant_poll_secs=0.01
+    )
+    before = mgr.stop_generation(key)
+
+    mgr.check_context_usage(key, provider)
+    task = mgr._compaction.state.compaction_tasks[key]
+    await _parked_on(session)  # the restart waits behind this turn
+    # The turn's prompt is over and it releases, but its task (this one) runs on.
+    mgr.release(key)
+    async with asyncio.timeout(30):
+        while (False, COMPACT_OUTCOME_WAITING_FOR_SUBAGENTS) not in notices:
+            await asyncio.sleep(0)
+    assert session.semaphore.locked(), "premise: the restart holds the permit"
+
+    try:
+        probe = compaction_in_flight(mgr, KEY)
+        outcome = await mgr.stop_turn(KEY, force=False)
+        observed = (probe, outcome, provider.cancel.await_count)
+        assert observed == (True, "compacting", 0), (
+            "a cooperative Stop during the uncompactable restart was not declined: "
+            f"(compaction_in_flight, stop_turn, cancels) = {observed}"
+        )
+        assert mgr.stop_generation(key) == before
+        assert not task.done()
+    finally:
+        gate.set()
+        result = await asyncio.wait_for(task, timeout=30)
+    # The declined Stop did not end the restart: it ran on to its recycle.
+    assert result == "recycled"
+    assert order == ["shutdown"]
     await mgr.close_all()

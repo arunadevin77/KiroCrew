@@ -1801,7 +1801,10 @@ applier — a raised turn budget is in force on the next prompt.
    A compaction still waiting for the turn permit does not hold the session yet:
    while a live task other than the compaction holds the permit
    (`compaction_waits_for_turn`), the Stop goes to that turn as usual, and
-   `compaction_in_flight` gives the same answer.
+   `compaction_in_flight` gives the same answer. The holder is read from
+   `turn_owner`, which the release ending a recorded holding clears in the same
+   step, so a permit the releasing turn hands to the parked compaction is the
+   compaction's from that release on and a Stop in the hand-off is declined.
 1. Record the Stop: `stop_requests[key] += 1` (per folded key, on
    `SessionLifecycleState`). This runs BEFORE anything is awaited so the
    dashboard runner's end-of-turn gates -- which may run the moment the

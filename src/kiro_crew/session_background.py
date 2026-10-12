@@ -57,6 +57,8 @@ class _BackgroundSessionEntry(Protocol):
 
     provider: LLMProvider
     semaphore: asyncio.BoundedSemaphore
+    #: The task holding ``semaphore``, as ``_Session.turn_owner`` records it.
+    turn_owner: Any
     prompt_count: int
 
     def adopt_provider(self, provider: LLMProvider) -> None: ...
@@ -1076,6 +1078,9 @@ class BackgroundSessionRuntime:
                 )
         finally:
             session.semaphore.release()
+            # ``_reacquire_and_validate`` named this task the holder; the
+            # holding ends with this release.
+            session.turn_owner = None
 
     async def recycle_heartbeat(self) -> None:
         """Tear down the heartbeat session at the end of a cycle."""

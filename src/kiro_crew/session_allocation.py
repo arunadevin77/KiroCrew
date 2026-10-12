@@ -1665,6 +1665,12 @@ class SessionAllocationService:
                     key,
                 )
             else:
+                # The holding this release ends is over, so its record goes in the
+                # same step. A waiter the permit was just handed to names itself
+                # when it next runs; until then the record names nobody, rather
+                # than a task that has let the permit go
+                # (``compaction_waits_for_turn``, ``cancel_owned_turn``).
+                session.turn_owner = None
                 # A release marks the end of a live turn, not the start of
                 # idleness: refresh liveness so the idle sweep measures from
                 # when the session went quiet rather than when it was
