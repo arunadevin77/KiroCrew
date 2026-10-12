@@ -7879,12 +7879,14 @@ class DashboardState:
         actions: list[dict[str, Any]] | None = None,
         channel: str | None = None,
         member: dict[str, str] | None = None,
+        publisher_session: str | None = None,
     ) -> None:
         """Validate and deliver a legacy notification without raising.
 
         ``channel`` overrides the system channel ``kind`` maps to (see
         :func:`payload_from_legacy`); ``kind`` still reaches the frontend.
         ``member`` attributes the note to the crewmate that published it.
+        ``publisher_session`` is the attested session publishing it; its mute applies.
         """
         _notifications_for(self).notify(
             self,
@@ -7896,6 +7898,7 @@ class DashboardState:
             actions=actions,
             channel=channel,
             member=member,
+            publisher_session=publisher_session,
         )
 
     def _deliver_note(self, note: dict[str, Any]) -> None:

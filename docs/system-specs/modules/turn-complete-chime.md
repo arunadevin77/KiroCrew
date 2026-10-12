@@ -24,7 +24,7 @@ The deferred-compaction boundary explicitly marks itself continuing. These hints
 - `ThemeExperienceLayer.tsx` observes the same eligible notification event, so a theme's notification sound cannot bypass the conversation gate.
 - `NotificationsPanel.tsx` retains the existing `turn` and `approval` rows and controls. Their copy states the gate: the `turn` row is **Conversation handoffs** ("When a conversation finishes or pauses for your input") and the `approval` row is **Approvals and questions** ("When the agent needs a tool approval or an answer"), because a question card plays the approval sound. The stored ids stay `turn` and `approval`, each row keeps its per-category select, and the settings registry re-exports these English labels. The gate has no setting of its own.
 
-The chime branch adds no notification-feed record or badge. Unread marks, slot refresh, voice-tail delivery, and ordinary feed notifications remain separate. App/cron/explicit agent notifications retain their own priority and channel-mute behavior.
+The chime branch adds no notification-feed record or badge. Unread marks, slot refresh, voice-tail delivery, and ordinary feed notifications remain separate. App/cron notifications retain their own priority and channel-mute behavior, and an explicit agent notification also honors its publishing session's mute (see [app-notifications](app-notifications.md) under "Per-channel settings").
 
 ## Opt-in background-completion toast
 

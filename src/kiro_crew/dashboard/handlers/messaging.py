@@ -759,6 +759,7 @@ async def api_notification_agent_push(request: web.Request) -> web.Response:
         group_key=body.get("group_key"),
         actions=actions,
         member=member,
+        publisher_session=attribution_key or None,
     )
     try:
         note = state.notification_bus.push(payload)

@@ -112,6 +112,9 @@ _RESERVED_NOTE_KEYS = frozenset(
         # app push forwards from its request body) must not be able to forge
         # a crewmate's face onto a note.
         "member",
+        # Which session published the note; set only by gateway handlers from an
+        # attested key, and read by the delivery sink for that session's mute.
+        "publisher_session",
         # Sink/frontend-owned status fields: a caller must not be able to
         # pre-suppress or pre-acknowledge a note it is pushing.
         "silenced",
@@ -172,6 +175,10 @@ class NotificationPayload:
     # the gateway from the caller's verified session key; never caller-supplied.
     member: dict[str, str] | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+    # Session key of the session that published the note, from the caller's
+    # attested key; never caller-supplied. The delivery sink reads it to apply
+    # that session's mute and drops it, so it is not stored or broadcast.
+    publisher_session: str | None = None
 
     def validate(self) -> None:
         """Raise :class:`NotificationValidationError` on any schema violation."""
@@ -285,6 +292,10 @@ class NotificationPayload:
             raise NotificationValidationError(
                 "member must be {slug, name} with non-empty string values"
             )
+        if self.publisher_session is not None and (
+            not isinstance(self.publisher_session, str) or not self.publisher_session
+        ):
+            raise NotificationValidationError("publisher_session must be a non-empty string")
 
 
 def _channel_for_kind(kind: str) -> str:
@@ -307,6 +318,7 @@ def payload_from_legacy(
     actions: list[dict[str, Any]] | None = None,
     channel: str | None = None,
     member: dict[str, str] | None = None,
+    publisher_session: str | None = None,
 ) -> NotificationPayload:
     """Build a v2 payload from the legacy ``notify(kind, ...)`` call shape.
 
@@ -360,6 +372,7 @@ def payload_from_legacy(
         url=url,
         actions=actions,
         member=member,
+        publisher_session=publisher_session,
         meta=dict(meta) if meta else {},
     )
 
@@ -458,6 +471,7 @@ class NotificationBus:
             ("icon", payload.icon),
             ("ttl", payload.ttl),
             ("member", payload.member),
+            ("publisher_session", payload.publisher_session),
         ):
             if value is not None:
                 note[key] = value

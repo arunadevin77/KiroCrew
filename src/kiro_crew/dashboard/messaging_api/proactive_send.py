@@ -780,7 +780,9 @@ async def _deliver_send_message_fallback(
     # Only an attested, non-app caller's key names the publishing crewmate
     # (``attributable_session_key``); a bare TCP or app-token header does not.
     member = await asyncio.to_thread(member_identity_for_session, attribution_session)
-    state.notify("agent", title, text, member=member)
+    # A message that offers [OPTIONS:] asks the user to choose, so it is not muted.
+    publisher = None if options else attribution_session or None
+    state.notify("agent", title, text, member=member, publisher_session=publisher)
     # No widget on either channel path, so a parsed [OPTIONS:] trailer is
     # re-attached as a numbered list rather than dropped: the user still
     # learns the choices exist and can answer by typing one. Built from the
