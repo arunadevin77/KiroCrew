@@ -52,6 +52,7 @@ const OWNER_MODULES = [
   'composerCards.ts',
   'connection.ts',
   'contextTraceRefresh.ts',
+  'dashboardFields.ts',
   'frames.ts',
   'idleRowRefresh.ts',
   'reconnectCatchUp.ts',
@@ -82,7 +83,12 @@ function ownerValueImports(file: string): string[] {
 describe('the websocket owner directory is fully classified', () => {
   it('every module is a listed owner', () => {
     // A new file has to be added here, which puts it under the rules below.
-    const files = readdirSync(DIR).filter((f) => /\.tsx?$/.test(f)).sort()
+    // A co-located `*.test.ts` is NOT one of them: it is not part of the
+    // composition the facade builds, and it is already inside the directory, so
+    // rule 1's "nothing outside imports an owner" covers it with nothing to list.
+    const files = readdirSync(DIR)
+      .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
+      .sort()
     expect(files).toEqual([...OWNER_MODULES].sort())
   })
 })
@@ -91,6 +97,7 @@ describe('one public surface', () => {
   it('the facade exports exactly its original names', () => {
     expect(Object.keys(facade).sort()).toEqual([
       'CONTEXT_TRACE_COALESCE_MS',
+      'DASHBOARD_FIELDS_FRAME',
       'MEMBER_DASHBOARD_QUERY_PREFIX',
       'ROW_STALL_MS',
       'ROW_STALL_TICK_MS',
@@ -121,6 +128,7 @@ describe('one public surface', () => {
       'resolvedSince',
       'seedFoldedProjection',
       'staleAskIds',
+      'subscribeDashboardFields',
       'takeFoldedSlotProjection',
       'useWebSocket',
     ])

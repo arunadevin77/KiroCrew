@@ -1138,8 +1138,11 @@ migration that rewrites or drops the stranded tags first.
 
 A `dashboard` artifact holds one crewmate's layout package — `bound_to`,
 `model`, `view` and `theme` — canonicalised by
-`kiro_crew.artifact_store.dashboard_package` on every write. Two rules differ
-from every other kind, both enforced in `kiro_crew.artifacts`:
+`kiro_crew.artifact_store.dashboard_package` on every write. Five rules differ
+from every other kind. The first three are enforced in `kiro_crew.artifacts`,
+because they are about the record a write lands on; the last two are enforced
+where the thing they judge is known — the writer's identity at the HTTP layer,
+the page's shape in the canonicaliser:
 
 - **The caller's `snapshot` is ignored; `layout_changed()` decides, either
   way.** In `ArtifactStore.update`, a write that changes the layout versions
@@ -1155,6 +1158,69 @@ from every other kind, both enforced in `kiro_crew.artifacts`:
   `ArtifactStore.update` refuses to keep a live pointer when it switches an
   artifact INTO this kind, and `ArtifactStore.relocate` refuses one on an
   artifact already of this kind.
+- **A write naming no snapshot is REFUSED, and that is the whole invariant: a
+  record whose CURRENT kind is `dashboard` is never written without a matching
+  snapshot token, and an ABSENT token is a refusal.** `ArtifactStore.update`
+  takes `snapshot_token`, the `content_token` of the read the write was
+  authorized against, and fences every write that can move a page to another
+  owner — a `kind` write, a `content` write, or a write naming a token at all —
+  on a record that is a dashboard *now* and is not a live pointer. No token
+  raises `ArtifactConflictError` carrying the current one; a token that does not
+  match raises the same. Keyed on the STORED kind rather than on anything the
+  request declares, because the hazard is a time-of-use gap: a caller authorized
+  against a prose document can be answered by a record that became a dashboard
+  in between, and a check in the handler cannot close a gap in the store. The
+  caller's own `expected_token` is asked INDEPENDENTLY and still applies to
+  every kind: the fence asks whether the write names the record it is landing
+  on, `expected_token` asks whether that record still holds what this client
+  last saw, and satisfying the first never skips the second — an agent and an
+  open tab editing one dashboard is the ordinary case here. An update carrying
+  no content, no kind and no token is unfenced, which is how a rename stays a
+  rename.
+- **Only the crewmate or session the package is BOUND TO may write it, and an
+  app may not write one at all.** Asked by
+  `member_dashboard_fields.package_write_refusal` on every artifact write path
+  both doors reach, which compares the caller against `bound_to` through
+  `dashboard_package.binding_refusal`. A refusal is RETURNED as a sentence
+  rather than raised, because the party that reads it is a worker agent that can
+  act on it: whose dashboard this is, and to use `work_report` instead. Three
+  callers are answered differently. A worker is refused. The person at the
+  dashboard is exempt, positively identified rather than defaulted. An APP token
+  (`request["app"]` holding a non-empty string) is refused outright and never
+  binding-checked: a page runs script beside the owner's fold values, an app has
+  no crewmate identity to compare against `bound_to`, and the identification is
+  the id STRING — any truthy value in that slot used to read as an app. A caller
+  that can prove neither identity is refused, because a gate whose default is
+  "no identity, no objection" is not a gate. BOTH bindings are authorized and
+  the STORED one is checked first: authorizing only the SUBMITTED binding
+  authorizes the caller against a claim the caller wrote, so a worker could send
+  a package bound to itself, pass, and rebind the addressed crewmate's page to
+  itself in one write. A crewmate binding also needs the roster to name exactly
+  one owner for the slug — slugification is lossy, so a roster holding both
+  `Atlas` and `atlas` derives one slug from two names, and ambiguity refuses
+  rather than authorizing either of them for the other's page. This is the
+  WRITER's half; the binding TARGET's eligibility is a separate question, asked
+  at the HTTP layer and described below.
+- **`view.html` is an agent-written page, and its shape is checked while its
+  author is still there.** Exactly one of `view.html` or `view.blocks`, never
+  both and never neither. The HTML is an inline BODY: the host supplies
+  `<!doctype>`, `<html>`, `<head>` and `<body>` and owns the page's security
+  policy, so a document tag in the field is refused — by
+  `dashboard_frame.validate_page`, called here so the author meets the frame's
+  own refusals at save time rather than seeing a page that renders wrong.
+  Non-empty, and at most `MAX_VIEW_HTML_BYTES` (128 KiB) of UTF-8 — a page past
+  that usually has values baked in, which belong in the crew log and reach the
+  page through the fold / bus / controller path. Every field the page binds with
+  a `data-dashboard-field` attribute must be declared in `model.types`, because
+  the model is also the list of fields the controller will push: a name only the
+  page knows is a cell nothing ever fills. A name read only through
+  `window.kirocrew.subscribe` is not scanned for — the attribute is static text
+  this validator can read, and a script's argument is not — so the model stays
+  the authority on what a page is sent. What is NOT checked is the point of
+  the shape — the markup and the script are free and nothing here looks for a
+  dangerous construct. Containment is `kiro_crew.dashboard_frame`, and a page
+  cannot loosen that policy by being written differently; a denylist here would
+  be a second, weaker gate an author would read as the real one.
 
 **The binding lookup, and when "absent" is a claim it will not make.**
 `resolve_bound_slug(bound_to)` names the package bound to a crewmate or a slot.

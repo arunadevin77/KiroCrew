@@ -118,6 +118,35 @@ export interface DashboardFieldSpec {
   source: { agentic: true } | { fold: string; path: string }
 }
 
+/** One dynamic-dashboard read, as both dashboard routes answer it.
+ *
+ *  Declared once because the two routes serve the SAME body out of the same handler
+ *  module -- a crewmate's by slug, a root session's by slot -- so two spellings of it
+ *  would be two things to keep in step, and a reader comparing them would have to work
+ *  out whether a field missing from one is absent or merely unwritten. */
+export interface DashboardRead {
+  instance_version: number
+  template: { id: string; version: number }
+  html: string
+  /** The live page with its values already filled in by the gateway (data island +
+   *  bootstrap + page), absent when the fill failed or the state is not live. The frame
+   *  prefers it; the raw `html` is the fallback. */
+  rendered_html?: string
+  manifest: DashboardManifest
+  state: 'empty' | 'live' | 'stale' | 'error'
+  /** Every field this page can ever be sent, off the package's own model. */
+  fields?: string[]
+  /** The `kind="dashboard"` package this response rendered, when the binding resolved
+   *  to one. The tab carries it back on a refetch and drops any pushed frame belonging
+   *  to a different package. Absent where no package is bound, which is every root
+   *  session today: only a crewmate carries a binding. */
+  dashboard?: string
+  /** The person's layout lock: while true the crewmate cannot apply or roll back a page. */
+  structure_locked?: boolean
+  /** Set on a `preview` read: this body is the staged page, not the record. */
+  preview?: boolean
+}
+
 /** A dashboard template's manifest. Mirrors `TemplateManifest`. */
 export interface DashboardManifest {
   id: string
@@ -250,21 +279,7 @@ export function createAgentsEndpoints({ post, put, del, j, jfetch: fetch, sessio
         '/api/members/' + encodeURIComponent(slug) + '/dashboard?member=' + encodeURIComponent(member)
           + (locale ? '&locale=' + encodeURIComponent(locale) : '')
           + (preview ? '&preview=1' : ''),
-      ).then(j) as Promise<{
-        instance_version: number
-        template: { id: string; version: number }
-        html: string
-        /** The live page with its values already filled in by the gateway (data
-         * island + bootstrap + page), absent when the fill failed or the state is not
-         * live. The frame prefers it; the raw `html` is the fallback. */
-        rendered_html?: string
-        manifest: DashboardManifest
-        state: 'empty' | 'live' | 'stale' | 'error'
-        /** Set on a `preview` read: this body is the staged page, not the record. */
-        preview?: boolean
-        /** The person's layout lock: while true the crewmate cannot apply or roll back a page. */
-        structure_locked?: boolean
-      } | null>,
+      ).then(j) as Promise<DashboardRead | null>,
     // Set or clear that lock. Owner-only on the gateway, and refused to an agent's
     // internal-secret caller: only the person, from the crewmate's Profile card, can move it.
     memberDashboardLock: (slug: string, member: string, locked: boolean) =>
@@ -279,15 +294,21 @@ export function createAgentsEndpoints({ post, put, del, j, jfetch: fetch, sessio
       if (locale) p.set('locale', locale)
       if (preview) p.set('preview', '1')
       const query = p.toString()
-      return fetch('/api/chat/slots/' + encodeURIComponent(slot) + '/dashboard' + (query ? '?' + query : '')).then(j) as Promise<{
-        instance_version: number
-        template: { id: string; version: number }
-        html: string
-        rendered_html?: string
-        manifest: DashboardManifest
-        state: 'empty' | 'live' | 'stale' | 'error'
-      } | null>
+      return fetch('/api/chat/slots/' + encodeURIComponent(slot) + '/dashboard' + (query ? '?' + query : '')).then(j) as Promise<DashboardRead | null>
     },
+    /** The whole read, after the page refused a patch it could not place in order.
+     *
+     *  The host's half of the frame's gap rule. A page applies patches in sequence
+     *  and asks for this when one skips a version -- applying it anyway would show
+     *  one field from after a change and the rest from before it, with nothing on the
+     *  page saying so. 409 `no_live_page` when nothing is armed; the remedy is to
+     *  re-read the dashboard, which arms one. */
+    memberDashboardRefetch: (slug: string, member: string, dashboard: string) =>
+      fetch(
+        '/api/members/' + encodeURIComponent(slug) + '/dashboard/refetch?member='
+          + encodeURIComponent(member) + '&dashboard=' + encodeURIComponent(dashboard),
+        { method: 'POST' },
+      ).then(j) as Promise<{ dashboard?: string; read: { [key: string]: unknown } } | null>,
     // The crewmate's self-maintained briefing markdown. Read-only from the UI
     // (no editor: the file is agent-written and edited where the crewmate keeps
     // it). `member` is the exact crew name (slugs are lossy).

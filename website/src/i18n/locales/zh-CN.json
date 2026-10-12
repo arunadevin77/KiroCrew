@@ -17921,7 +17921,8 @@
       "profile_dashboard_lock_failed": "无法锁定仪表板。它仍未锁定。请重试。",
       "profile_dashboard_unlock_failed": "无法解锁仪表板。它仍处于锁定状态。请重试。",
       "profile_dashboard_lock_unreadable": "无法读取仪表板是否已锁定。 尝试刷新页面。",
-      "dashboard_owner_only": "只有这个助手的所有者才能看到它的仪表板。"
+      "dashboard_owner_only": "只有这个助手的所有者才能看到它的仪表板。",
+      "dashboard_values_stale": "实时数据已停止更新，以下是最后收到的数值。"
     },
     "tasksCapacityCard": {
       "title": "任务与容量",

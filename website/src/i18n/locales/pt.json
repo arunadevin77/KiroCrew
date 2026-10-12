@@ -18445,7 +18445,8 @@
       "profile_dashboard_lock_failed": "Não foi possível bloquear o painel. Ele continua desbloqueado. Tente novamente.",
       "profile_dashboard_unlock_failed": "Não foi possível desbloquear o painel. Ele continua bloqueado. Tente novamente.",
       "profile_dashboard_lock_unreadable": "Não foi possível ler se o painel está bloqueado. Tente recarregar a página.",
-      "dashboard_owner_only": "Só o dono deste colega pode ver o painel dele."
+      "dashboard_owner_only": "Só o dono deste colega pode ver o painel dele.",
+      "dashboard_values_stale": "Os valores ao vivo pararam de atualizar, portanto estes são os últimos recebidos."
     },
     "tasksCapacityCard": {
       "title": "Tarefas e capacidade",

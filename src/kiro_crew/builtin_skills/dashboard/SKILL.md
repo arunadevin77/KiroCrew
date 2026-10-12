@@ -21,13 +21,10 @@ Then `dashboard_preview` the one that fits. It takes a `template_id` and nothing
 It records NOTHING: the page they are reading is untouched, no version is written. Give
 them the link it hands back and ask.
 
-If nothing in the catalog fits, say so. **You cannot write the page yourself.** A
-dashboard page runs its own script against this crewmate's task titles and summaries,
-inside a frame that can navigate itself, so a page nobody here has looked at could
-carry them out. Only pages that shipped with the product render. A page somebody writes
-themselves is a later change and needs a wrapper document this gateway mints -- until
-then, "none of these fit" is the honest answer, and it is worth telling the person which
-template came closest.
+If nothing in the catalog fits, say so. A dashboard page runs its own script against
+this crewmate's task titles and summaries, inside a frame that can navigate itself, so a
+page nobody here has looked at could carry them out. "None of these fit" is the honest
+answer, and it is worth telling the person which template came closest.
 
 ## 2. "Keep this one"
 
@@ -81,3 +78,35 @@ the list that is true today.
   sees it first, and skipping it makes them undo your work instead of approving it.
 - Do not report what the page shows. They are looking at it. Say what you changed.
 - Do not keep previewing. Stage one, ask, and wait for an answer.
+
+## The gallery: pages to copy
+
+`gallery/` holds whole working packages. Copy one, change its `bound_to`, change what it
+binds, and save it -- nothing loads a gallery page by id, so an edit to your copy cannot
+reach anybody else's.
+
+`gallery/dispatch-tree/package.json` is a page its owner wrote rather than a layout
+assembled from blocks: its `view.html` is the markup, the CSS and the script, and the
+`model` lists the five fields it may be sent. Read it for three things you will need in
+any page you write:
+
+- **Bind a cell, or subscribe.** `data-dashboard-field="roots"` makes the host set that
+  element's text. For anything you DRAW -- a tree, a chart, a scene --
+  `window.kirocrew.subscribe('boards', draw)` calls you back on first load and again on
+  every push that carries that field, and returns a disposer.
+- **Build rows as text.** The page creates elements and sets `textContent`. A board's
+  goal is whatever a conductor wrote in the crew log, so a template string assigned to
+  `innerHTML` is how a recorded value becomes markup on your page.
+- **Declare every field you bind.** The `model` is also the list of fields the controller
+  will push, so a name only the page knows is a cell nothing ever fills -- the save is
+  refused and says so.
+
+The page has no network and no agent-authored code reaches outside it: the frame runs
+under `default-src 'none'` with `connect-src 'none'`, sandboxed with `allow-scripts` and
+nothing else. Numbers come from bindings, never typed into the markup.
+
+If your page needs a script to draw itself, carry a `<noscript>` fallback saying so, and
+ship anything a script fills HIDDEN so the script reveals it. `allow-scripts` is withheld
+wherever an admin ceiling restricts the owner agent's network egress, and a page that
+shows a placeholder or an empty-state line in that mode states something about the
+owner's data that is not true.

@@ -7832,7 +7832,8 @@
       "profile_dashboard_lock_failed": "Couldn't lock the dashboard. It's still unlocked. Try again.",
       "profile_dashboard_unlock_failed": "Couldn't unlock the dashboard. It's still locked. Try again.",
       "profile_dashboard_lock_unreadable": "Couldn't read whether the dashboard is locked. Try refreshing the page.",
-      "dashboard_owner_only": "Only this crewmate's owner can see its dashboard."
+      "dashboard_owner_only": "Only this crewmate's owner can see its dashboard.",
+      "dashboard_values_stale": "Live values stopped updating, so these are the last ones received."
     },
     "migrationPage": {
       "app_migration": "App Migration",

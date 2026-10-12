@@ -856,6 +856,15 @@ def history(slug: str, *, session_id: str = "") -> tuple[dict[str, Any], ...]:
 #: ``shared`` -- a page imported from a sender -- is not renderable, and neither is a
 #: page an agent wrote: not at preview, not at adopt. See
 #: ``docs/request-for-change/rfc-crewmate-dynamic-dashboard.md``.
+#:
+#: A TEMPLATE INSTANCE is what this set governs, and an agent-written template page is
+#: refused here on exactly that reasoning. A ``kind="dashboard"`` PACKAGE is a separate
+#: surface with a separate rule: the "supersedes P2" amendment in that same RFC admits a
+#: page its own owner wrote, because only that owner may write it, values reach it as
+#: text, the frame carries only its model's allowlist, and the owner agent reaches the
+#: network through its own tools anyway. That amendment turns on the author, so it leaves
+#: this set alone: a sender's page, and any page an agent other than the dashboard's
+#: owner wrote, is still unrenderable.
 RENDERABLE_SOURCES: Final[frozenset[str]] = frozenset({catalog.BUILTIN_SOURCE, catalog.USER_SOURCE})
 
 

@@ -17921,7 +17921,8 @@
       "profile_dashboard_lock_failed": "ダッシュボードをロックできませんでした。ロックされていないままです。もう一度お試しください。",
       "profile_dashboard_unlock_failed": "ダッシュボードのロックを解除できませんでした。ロックされたままです。もう一度お試しください。",
       "profile_dashboard_lock_unreadable": "ダッシュボードがロックされているか読み取れませんでした。 ページを再読み込みしてみてください。",
-      "dashboard_owner_only": "このクルーメイトのダッシュボードを見られるのはオーナーだけです。"
+      "dashboard_owner_only": "このクルーメイトのダッシュボードを見られるのはオーナーだけです。",
+      "dashboard_values_stale": "ライブ値の更新が停止したため、最後に受信した値を表示しています。"
     },
     "tasksCapacityCard": {
       "title": "タスクと処理能力",

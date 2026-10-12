@@ -5,6 +5,7 @@
       "name": "status",
       "mode": "session",
       "advertised": true,
+      "package_only": false,
       "affects": null,
       "answers": "Is this session open, what agent and model is it on, how many turns has it taken, and what stopped it last",
       "fields": [
@@ -130,6 +131,7 @@
       "name": "usage",
       "mode": "session",
       "advertised": true,
+      "package_only": false,
       "affects": [
         "background/completed",
         "compaction/applied",
@@ -208,6 +210,7 @@
       "name": "timeline",
       "mode": "session",
       "advertised": true,
+      "package_only": false,
       "affects": [
         "approval/decided",
         "approval/requested",
@@ -261,6 +264,7 @@
       "name": "tools",
       "mode": "session",
       "advertised": true,
+      "package_only": false,
       "affects": [
         "tool/called",
         "tool/completed"
@@ -348,6 +352,7 @@
       "name": "approvals",
       "mode": "session",
       "advertised": true,
+      "package_only": false,
       "affects": [
         "approval/decided",
         "approval/requested"
@@ -417,6 +422,7 @@
       "name": "subagents",
       "mode": "session",
       "advertised": true,
+      "package_only": false,
       "affects": [
         "subagent/completed",
         "subagent/dismissed",
@@ -464,6 +470,7 @@
       "name": "class",
       "mode": "session",
       "advertised": false,
+      "package_only": false,
       "affects": null,
       "answers": "What KIND of session this log belongs to, over the log's whole life",
       "fields": [
@@ -513,6 +520,7 @@
       "name": "outline",
       "mode": "session",
       "advertised": false,
+      "package_only": false,
       "affects": [
         "message/received",
         "message/sent",
@@ -569,6 +577,7 @@
       "name": "ledger",
       "mode": "slot",
       "advertised": true,
+      "package_only": false,
       "affects": [
         "ledger/recorded"
       ],
@@ -631,6 +640,7 @@
       "name": "radar",
       "mode": "slot",
       "advertised": true,
+      "package_only": false,
       "affects": [
         "radar/recorded"
       ],
@@ -688,6 +698,7 @@
       "name": "work",
       "mode": "slot",
       "advertised": true,
+      "package_only": false,
       "affects": [
         "work/recorded"
       ],
@@ -720,6 +731,7 @@
       "name": "panel",
       "mode": "slot",
       "advertised": true,
+      "package_only": false,
       "affects": [
         "panel/published"
       ],
@@ -795,6 +807,7 @@
       "name": "agentic",
       "mode": "slot",
       "advertised": true,
+      "package_only": false,
       "affects": [
         "dashboard/agentic_value"
       ],
@@ -823,6 +836,7 @@
       "name": "mistakes",
       "mode": "slot",
       "advertised": true,
+      "package_only": false,
       "affects": [
         "dashboard/agentic_refused"
       ],
@@ -851,6 +865,7 @@
       "name": "workstreams",
       "mode": "slot",
       "advertised": true,
+      "package_only": false,
       "affects": [
         "background/completed",
         "session/opened",
@@ -916,6 +931,7 @@
       "name": "worktree",
       "mode": "tree",
       "advertised": false,
+      "package_only": true,
       "affects": [
         "work/recorded"
       ],

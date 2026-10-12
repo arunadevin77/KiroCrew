@@ -7,8 +7,8 @@ text cannot be a dashboard. So the fragment is treated the way dsh-visualize
 treats a visualization: the page author writes the body, and the host writes
 everything around it.
 
-Two ways a value reaches the page, and the page chooses per element
-------------------------------------------------------------------
+Three ways a value reaches the page, and the page chooses per element
+--------------------------------------------------------------------
 1. ``data-dashboard-field="<name>"`` on an element: the host sets that element's
    TEXT to the field's value. No markup, no attributes, no HTML -- a text node, so
    a value can never become an element. This is the path for every cell a reader
@@ -17,9 +17,14 @@ Two ways a value reaches the page, and the page chooses per element
    draw from. :data:`WINDOW_GLOBAL` also carries ``agentic`` (the names the
    crewmate wrote rather than the gateway folded), ``seq`` (the fold watermark) and
    ``stale``.
+3. ``window.kirocrew.subscribe(name, cb)``: ``cb(value, name)`` on first load and
+   again on every push that carries that field, returning a disposer. For a page
+   that DRAWS -- a tree, a chart, a scene -- where (2) is a value read once and the
+   generic :data:`PAGE_EVENT` only says that something landed, leaving the page to
+   diff a whole read to find out what.
 
-The host fills (1) itself, from the same object it hands to (2), so a page cannot
-show one number in a cell and a different one in its chart.
+The host fills (1) itself, from the same object it hands to (2) and (3), so a page
+cannot show one number in a cell and a different one in its chart.
 
 What the host refuses to let the page do
 ----------------------------------------
@@ -285,19 +290,108 @@ _BOOTSTRAP_JS: Final[str] = f"""
     for (var key of Object.keys(value)) freeze(value[key]);
     return Object.freeze(value);
   }}
-  // CONFIGURABLE, which looks like a weakening and is not. The REFILL below has
-  // to redefine this property, so a non-configurable definition here makes the
-  // first refill throw -- and the same throw hits any host that puts a second
-  // document in one window, where the first document's definition is still
-  // standing. What protects the values is the deep freeze, not the descriptor: a
-  // page that wanted to lie about its numbers could draw anything it liked
-  // regardless, so an attribute that only breaks the refill buys nothing.
-  Object.defineProperty(window, {WINDOW_GLOBAL!r}, {{
-    value: freeze(read),
-    writable: false,
-    configurable: true,
-    enumerable: true,
-  }});
+  // ONE REGISTRY for the whole document's lifetime, held in this closure rather
+  // than on the global the refill replaces. A page subscribes once, during parse,
+  // and keeps drawing across every push: a registry living on the published object
+  // would be discarded with it and every callback would silently stop.
+  var subscribers = [];
+  function deliver(entry, source) {{
+    if (!entry.live) return;
+    var fields = source && source.fields;
+    if (!fields || typeof fields !== 'object') return;
+    // PRESENCE, not truthiness. A field is ABSENT when its fold path did not
+    // resolve, and `0`, `''` and `false` are values a fold legitimately holds --
+    // reading them as absent would stop a counter's subscriber at exactly the
+    // moment the counter reached zero.
+    if (!Object.prototype.hasOwnProperty.call(fields, entry.name)) return;
+    try {{
+      entry.cb(fields[entry.name], entry.name);
+    }} catch (err) {{
+      // ONE SUBSCRIBER'S THROW COSTS ONLY ITSELF. Two blocks on one page redraw
+      // from one push, and letting the first one's error abort the loop leaves the
+      // second showing the value from before it -- a page of fields at two
+      // different ages with nothing on it saying so.
+    }}
+  }}
+  function notify(source) {{
+    // A COPY of the list, because a callback may subscribe or dispose during
+    // delivery and mutating the array under the loop would skip its neighbour.
+    var current = subscribers.slice();
+    for (var i = 0; i < current.length; i++) deliver(current[i], source);
+  }}
+  function subscribe(name, cb) {{
+    if (typeof name !== 'string' || typeof cb !== 'function') return function () {{}};
+    var entry = {{ name: name, cb: cb, live: true }};
+    subscribers.push(entry);
+    // FIRES NOW, against the read the page already holds. A page's inline script
+    // runs during parse, before a single binding is filled, so a callback that only
+    // fired on a push would draw nothing on first paint -- over a log that has the
+    // numbers in it. This is what makes the callback a page's one entry point
+    // rather than something it needs a binding beside.
+    deliver(entry, read);
+    return function () {{ entry.live = false; }};
+  }}
+  // The push version the page HOLDS, taken from the ISLAND rather than started at
+  // zero: the document is composed from a full read that already carries one, so a
+  // page that began at zero would accept the first patch whatever its version and
+  // apply a frame computed against a read it never saw.
+  var held = typeof read.version === 'number' ? read.version : 0;
+  // WHOSE COUNTER `held` BELONGS TO. Versions are only comparable inside one armed
+  // page: a page the host re-arms starts its counter again, so a lower number can
+  // belong to a newer read. The generation says which counter a number came from, and
+  // the fence below compares numbers only when both carry the same one.
+  var generation = typeof read.generation === 'string' ? read.generation : '';
+  function mergePatch(base, patch) {{
+    // A PATCH CARRIES WHAT MOVED and says nothing about what did not, so the fields
+    // it omits are kept. Without this a push of one field would leave the global
+    // holding that field alone -- a chart reading a second one would find
+    // `undefined` and the host's own fill would mark every other cell missing, so
+    // the page would go blank one field at a time with no state saying why.
+    var fields = {{}};
+    var key;
+    var from = (base && base.fields) || {{}};
+    for (key of Object.keys(from)) fields[key] = from[key];
+    var moved = patch.fields || {{}};
+    for (key of Object.keys(moved)) fields[key] = moved[key];
+    return {{
+      fields: fields,
+      // The REST of the read is the patch's, not merged: `stale`, `missing` and the
+      // agentic marks are statements about the read as a whole, and a merge of two
+      // of them would describe neither. The host sends them on every patch for that
+      // reason.
+      agentic: patch.agentic || [],
+      seq: typeof patch.seq === 'number' ? patch.seq : 0,
+      stale: patch.stale === true,
+      missing: patch.missing || [],
+      written_at: patch.written_at || {{}},
+      locale: typeof patch.locale === 'string' ? patch.locale : (base || {{}}).locale,
+      version: typeof patch.version === 'number' ? patch.version : 0,
+      generation:
+        typeof patch.generation === 'string' ? patch.generation : (base || {{}}).generation,
+    }};
+  }}
+  function publish(value) {{
+    // `subscribe` travels ON the published object, because the object is replaced
+    // wholesale by every refill: a page that read `window.kirocrew.subscribe` on
+    // first load and called it after a push would otherwise meet `undefined`. The
+    // function is the same one every time, so two blocks subscribing from either
+    // side of a push land in one registry.
+    value.subscribe = subscribe;
+    // CONFIGURABLE, which looks like a weakening and is not. The REFILL below has
+    // to redefine this property, so a non-configurable definition here makes the
+    // first refill throw -- and the same throw hits any host that puts a second
+    // document in one window, where the first document's definition is still
+    // standing. What protects the values is the deep freeze, not the descriptor: a
+    // page that wanted to lie about its numbers could draw anything it liked
+    // regardless, so an attribute that only breaks the refill buys nothing.
+    Object.defineProperty(window, {WINDOW_GLOBAL!r}, {{
+      value: freeze(value),
+      writable: false,
+      configurable: true,
+      enumerable: true,
+    }});
+  }}
+  publish(read);
   function text(value) {{
     if (value === null || value === undefined) return '\\u2014';
     if (typeof value === 'object') return JSON.stringify(value);
@@ -350,14 +444,63 @@ _BOOTSTRAP_JS: Final[str] = f"""
     var data = event.data;
     if (!data || data.type !== {'"kirocrew-dashboard:data"'}) return;
     if (!data.read || typeof data.read !== 'object') return;
+    var arrived = data.read;
+    var version = typeof arrived.version === 'number' ? arrived.version : 0;
+    var arrivedGeneration = typeof arrived.generation === 'string' ? arrived.generation : '';
+    // A SUPERSEDED FULL READ, dropped. Two gaps can be in flight at once, their
+    // answers can arrive in either order, and a full read REPLACES -- so the older
+    // answer puts back the values the newer one already moved past, and reports
+    // `stale: false` while doing it, which is the one case where nothing on the page
+    // says the number is behind. Only the full read is fenced: a patch out of order is
+    // the gap check's business one line below, and it asks for a fresh read.
+    //
+    // Same generation only. A re-armed page restarts the counter, so its first read is
+    // newer than this one despite a smaller number -- fencing across generations would
+    // leave that tab unable to ever accept its own recovery.
+    if (arrived.patch !== true && arrivedGeneration === generation && version < held) return;
+    if (arrived.patch === true) {{
+      // A GAP, and the one condition this frame cannot recover from on its own: the
+      // patch is not the next one, so a frame was dropped and nothing on the page
+      // would show it. NO EXEMPTION for a page holding zero: a gateway restart
+      // restarts the counter, and the refetch this asks for answers with a full read
+      // that replaces -- one extra round trip, where the exemption instead applied a
+      // patch computed against a read this page never held.
+      // A DIFFERENT GENERATION IS A GAP TOO, whatever the number says. The host can
+      // replace the live page under an open tab -- a second tab's load disarms the old
+      // one and arms a new one -- and the replacement's counter starts again, so its
+      // patch 2 can look like the next one to a tab holding 1. Merging it would mix
+      // fields computed from two different reads, which is the state the gap check
+      // exists to refuse, so the same refetch answers it.
+      if (version !== held + 1 || arrivedGeneration !== generation) {{
+        // The literal, like its two siblings in this script: the named constants are
+        // declared below it. `test_a_patch_that_skips_a_version_asks_for_a_full_read`
+        // reads the posted message and compares it to REFETCH_MESSAGE_TYPE, so a
+        // drift between the two fails rather than going quiet.
+        parent.postMessage(
+          {{ type: {'"kirocrew-dashboard:refetch"'}, held: held }}, '*'
+        );
+        // NOT APPLIED. Asking for the whole read and applying the patch anyway
+        // would reach the same wrong page one round trip later.
+        return;
+      }}
+      arrived = mergePatch(read, arrived);
+    }}
+    held = version;
+    generation = arrivedGeneration;
     // The FROZEN global is replaced wholesale rather than mutated, for the reason
     // it is frozen: a page holding a reference to the old object keeps reading
     // consistent numbers from it, and nothing half-updates.
-    read = freeze(data.read);
-    Object.defineProperty(window, {WINDOW_GLOBAL!r}, {{
-      value: read, writable: false, configurable: true, enumerable: true,
-    }});
+    read = arrived;
+    publish(read);
     fill();
+    // AFTER the fill, so a callback that reads its own bound element finds the text
+    // the host wrote for this push rather than the previous one's. Before the
+    // generic event, so a page using both hears the specific signal first.
+    //
+    // Notified with WHAT ARRIVED, never with the merged read: `deliver` fires on the
+    // presence of a field, so handing it the merge would fire every subscriber on
+    // every push and make the callback another spelling of the generic event.
+    notify(data.read);
     window.dispatchEvent(new Event({'"kirocrew-dashboard"'}));
   }});
   if (document.readyState === 'loading') addEventListener('DOMContentLoaded', fill);
@@ -403,6 +546,16 @@ DATA_MESSAGE_TYPE: Final[str] = "kirocrew-dashboard:data"
 #: The event the page may listen for to know a refill landed. A page drawing a chart
 #: redraws on this rather than polling.
 PAGE_EVENT: Final[str] = "kirocrew-dashboard"
+
+#: What the page posts when it cannot place a patch in order: send the whole read.
+#:
+#: The ONLY thing that detects a dropped frame. A patch says what moved and nothing
+#: about what did not, so a page that applied one out of order shows one field from
+#: after a change and the rest from before it -- and no band, no marker and no seq says
+#: so, because every value on the page did arrive from the host. The message carries
+#: ``held``, the version the page has, so the host can answer with a full read rather
+#: than re-deriving which patches to resend.
+REFETCH_MESSAGE_TYPE: Final[str] = "kirocrew-dashboard:refetch"
 
 #: The readiness beacon, which runs AFTER the page.
 #:
@@ -626,6 +779,61 @@ def compose(html: str, read: Mapping[str, Any], title: str = "") -> str:
         "</body>\n"
         "</html>\n"
     )
+
+
+#: A text binding on an element with NO nested markup, which is every valid one: the
+#: bootstrap fills a binding by setting ``textContent``, so an element holding tags is
+#: not a text cell and is left alone rather than rewritten.
+_SIMPLE_BINDING_CELL = re.compile(
+    r"(<(?P<tag>[a-zA-Z][\w-]*)\b[^>]*?"
+    + BINDING_ATTRIBUTE
+    + r"\s*=\s*(?:\"(?P<dq>[^\"]*)\"|'(?P<sq>[^']*)'|(?P<bare>[^\s\"'>=`]+))"
+    + r"[^>]*>)(?P<body>[^<]*)(?P<close></(?P=tag)\s*>)"
+)
+
+
+def _as_text(value: Any) -> str:
+    """A value as the page would show it, matching the bootstrap's own ``text()``.
+
+    Spelled twice because the two run in different languages on the same contract; a
+    test pins them to the same three rules so a page filled here and a page filled by
+    the script cannot disagree about one value.
+    """
+    if value is None:
+        return "\u2014"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (Mapping, list, tuple)):
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    return str(value)
+
+
+def fill_bindings_as_text(html: str, read: Mapping[str, Any]) -> str:
+    """Fill each text binding in *html* with its value, HTML-ESCAPED.
+
+    For the page that is served with no script. The bootstrap is what normally fills a
+    binding, so a page mounted without it drew every bound cell EMPTY while its stale
+    band stayed hidden -- an empty page that reads as a current one, which is the one
+    thing this surface must not do.
+
+    The value is escaped before it is placed, so this path keeps the frame's own
+    guarantee that a value can never become markup: it is the same promise the
+    ``textContent`` assignment makes, made here instead.
+
+    Only a cell with NO nested markup is filled. A binding is a text cell by
+    definition, so an element holding tags was never one, and rewriting it would be
+    this function guessing at a structure the contract does not describe.
+    """
+    fields = read.get("fields") if isinstance(read, Mapping) else None
+    values = fields if isinstance(fields, Mapping) else {}
+
+    def _fill(m: "re.Match[str]") -> str:
+        name = m.group("dq") or m.group("sq") or m.group("bare") or ""
+        if name not in values:
+            return m.group(0)
+        return m.group(1) + _escape_html_text(_as_text(values[name])) + m.group("close")
+
+    return _SIMPLE_BINDING_CELL.sub(_fill, html)
 
 
 def compose_body(html: str, read: Mapping[str, Any]) -> str:

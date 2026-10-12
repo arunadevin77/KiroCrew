@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Lock, RotateCw } from 'lucide-react'
 import { api, type DashboardManifest } from '../../api/client'
@@ -12,7 +12,7 @@ import { useFrameOpenLink } from '../../hooks/useFrameOpenLink'
 import { buildSrcdoc, readThemeVars } from '../../lib/widgetSrcdoc'
 import { i18nT } from '../../i18n/t'
 import { useLanguage } from '../../i18n/LanguageProvider'
-import { MEMBER_DASHBOARD_QUERY_PREFIX, SESSION_DASHBOARD_QUERY_PREFIX } from '../../hooks/useWebSocket'
+import { MEMBER_DASHBOARD_QUERY_PREFIX, SESSION_DASHBOARD_QUERY_PREFIX, subscribeDashboardFields } from '../../hooks/useWebSocket'
 
 /**
  * The sandbox grants for a crewmate's dynamic dashboard, and the ONE line of
@@ -40,6 +40,32 @@ import { MEMBER_DASHBOARD_QUERY_PREFIX, SESSION_DASHBOARD_QUERY_PREFIX } from '.
  */
 export const CREW_DASHBOARD_SANDBOX = 'allow-scripts'
 
+/**
+ * The grant set for a page the server says may NOT run script: empty, which is
+ * every sandbox restriction applied.
+ *
+ * An agent-written page is licensed to run by the RFC amendment's fourth reason
+ * -- the owner agent already reaches the network, so a page navigating its own
+ * frame opens no path that agent lacked. Under an admin ceiling that DENIES the
+ * agent egress that reason is false, and nothing else here stops navigation: a
+ * closed `connect-src` does not. So the server answers `scripts: false` and the
+ * page is mounted static.
+ *
+ * It still SHOWS its values, because the GATEWAY fills them. A
+ * `data-dashboard-field` binding is normally filled by the composed document's
+ * own bootstrap, which does not run here -- so when the server withholds script
+ * it writes each bound cell's text itself, HTML-escaped
+ * (`dashboard_frame.fill_bindings_as_text`). Without that the page drew every
+ * bound cell empty with its stale band still hidden, which reads as a current
+ * page showing nothing.
+ */
+export const CREW_DASHBOARD_SANDBOX_STATIC = ''
+
+/** The grant set this page gets: the server decides, not the page. */
+export function crewDashboardSandbox(scripts: boolean): string {
+  return scripts ? CREW_DASHBOARD_SANDBOX : CREW_DASHBOARD_SANDBOX_STATIC
+}
+
 /** The gateway's refill message type. Mirrors `dashboard_frame.DATA_MESSAGE_TYPE`. */
 const DATA_MESSAGE_TYPE = 'kirocrew-dashboard:data'
 
@@ -52,6 +78,9 @@ const READY_MESSAGE_TYPE = 'kirocrew-dashboard:ready'
  * fills the composer, and the person presses send. That is the whole safety
  * line -- a page that could send would be a page that could speak as the user. */
 const ACT_MESSAGE_TYPE = 'kirocrew-dashboard:act'
+/** What the page posts when it cannot place a patch in order. Mirrors
+ *  `dashboard_frame.REFETCH_MESSAGE_TYPE`. */
+const REFETCH_MESSAGE_TYPE = 'kirocrew-dashboard:refetch'
 /** Longest reply a page may put in the composer. Longer is refused, not cut. */
 const ACT_MAX_CHARS = 600
 
@@ -158,6 +187,18 @@ interface Loaded {
   instanceVersion: number
   templateId: string
   templateVersion: number
+  /** Whether this page may run script. Carried WITH the page rather than read
+   *  from the latest response, so the grants always match the markup mounted. */
+  scripts: boolean
+  /** The SURFACE this page belongs to: the package slug it was read for, or `''` for
+   *  the crewmate's template instance.
+   *
+   *  Carried with the page because the two are different surfaces rather than two
+   *  versions of one, and every other thing that could tell them apart is reusable.
+   *  An instance version restarts per record and the html can coincide, so a read
+   *  that moves this tab between them would otherwise reconcile against the held
+   *  document and keep it. */
+  dashboard: string
 }
 
 /**
@@ -198,7 +239,7 @@ export function dashboardQueryKey(target: DashboardTarget): readonly string[] {
     : [SESSION_DASHBOARD_QUERY_PREFIX, target.slot]
 }
 
-export default function CrewDynamicDashboard({ target, displayName, onAct, preview = false, onPreviewGone, onOpenProfileTab }: {
+export default function CrewDynamicDashboard({ target, displayName, onAct, preview = false, onPreviewGone, onOpenProfileTab, dashboardSlug = '' }: {
   target: DashboardTarget
   displayName: string
   /** Put a reply the page offered into the chat box. Absent: the page's options do nothing. */
@@ -211,22 +252,23 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   onPreviewGone?: (gone: boolean) => void
   /** Called when the person clicks the Locked badge to jump to the Profile tab. */
   onOpenProfileTab?: () => void
+  /** The `kind="dashboard"` package to show instead of the crewmate's template page.
+   *  Empty shows the template instance, which is every crewmate today: no caller
+   *  resolves a package slug yet (that lookup is #18707). Carried here so the frames
+   *  this tab accepts and the refetch it asks for both name one package. */
+  dashboardSlug?: string
 }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
+  /** A gap recovery that did not arrive. The page keeps its values; this says they
+   *  are older than the record, which nothing else on screen can say: the page's
+   *  own stale band is driven by a read that never came. */
+  const [refetchError, setRefetchError] = useState<string | null>(null)
+  /** A whole-read request is in flight. The notice's Retry is disabled on it, which is
+   *  what acknowledges the press: the notice itself stays up until the read arrives, so
+   *  without this nothing on screen changes and the button reads as dead. */
+  const [refetchPending, setRefetchPending] = useState(false)
   const onActRef = useRef(onAct)
   onActRef.current = onAct
-  // The page's options. Only a message from THIS frame's window counts: any other
-  // window posting the same shape is ignored.
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      const win = frameRef.current?.contentWindow
-      if (!win || event.source !== win) return
-      const text = actText(event.data)
-      if (text && onActRef.current) onActRef.current(text)
-    }
-    window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
-  }, [])
   // A pull request the page links to: this frame only, GitHub PR URLs only.
   useFrameOpenLink([frameRef])
   const { theme, colorTheme, themeVersion } = useTheme()
@@ -262,6 +304,141 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
     refetchInterval: DASHBOARD_FALLBACK_REFETCH_MS,
     refetchIntervalInBackground: false,
   })
+  // The crewmate behind a member target; empty for a root-session target, which has
+  // neither a slug nor a package and so arms neither the refetch nor the push below.
+  const memberSlug = target.kind === 'member' ? target.slug : ''
+  const memberName = target.kind === 'member' ? target.member : ''
+  /** The package this tab is showing. The ROUTE resolves the crewmate's binding, so
+   *  the server's answer wins over the prop: a mount does not know a package slug and
+   *  should not have to. The prop stays for a host that opens one explicitly. */
+  const livePackage = data?.dashboard || dashboardSlug
+  /** The same value, readable from inside a pending promise. A refetch started under
+   *  one package must not deliver into the document that replaced it, and the closure
+   *  the request was made in holds the old value by definition. */
+  const livePackageRef = useRef(livePackage)
+  livePackageRef.current = livePackage
+
+  /** THE WHOLE READ, asked for once and repeatable.
+   *
+   *  One function for both callers -- the page's own gap message, and the Retry beside
+   *  the notice that gap raised. The notice exists because THIS request did not arrive,
+   *  so its button has to repeat THIS request; the dashboard query's `refetch` re-reads
+   *  the record, which is a different question and leaves the page's numbers exactly as
+   *  behind as they were.
+   *
+   *  WHICH DOCUMENT ASKED. A refetch is a round trip, and the frame under it can be
+   *  replaced while it is open -- the ordinary dashboard read remounts the document when
+   *  the package or the page changes. Posting a late answer into the document that
+   *  replaced the asker hands it values computed for a page it is not, and the reply
+   *  looks current to its bootstrap: a different generation is all it sees, which it
+   *  accepts. So the asking window and the package it asked for are captured here and
+   *  compared on delivery; a reply that outlived either is dropped, and the page it was
+   *  for is gone anyway. */
+  const askWholeRead = useCallback(() => {
+    // A root session's page has no crewmate slug and no refetch route; its liveness
+    // is the fallback read alone, so there is nothing to ask for here.
+    if (!memberSlug) return
+    const askedFor = livePackageRef.current
+    // AND THERE IS NOTHING TO ASK FOR WITHOUT A PACKAGE. The route refetches one
+    // package's armed page and answers 400 `missing_dashboard` to an empty name, so
+    // asking anyway turns a page this tab is not even showing into an error band the
+    // Retry can never clear.
+    if (!askedFor) return
+    const askedBy = frameRef.current?.contentWindow
+    setRefetchPending(true)
+    api.memberDashboardRefetch(memberSlug, memberName, askedFor)
+      .then((answer) => {
+        const read = answer?.read
+        const current = frameRef.current?.contentWindow
+        if (!current || current !== askedBy || askedFor !== livePackageRef.current) return
+        if (read && typeof read === 'object') {
+          // '*' is REQUIRED, not a laxity: this frame is sandboxed with
+          // `allow-scripts` and WITHOUT `allow-same-origin`, so its origin is
+          // opaque and no non-wildcard targetOrigin can ever match it. The
+          // message is posted to THIS frame's own contentWindow and carries only
+          // the fields the page's own model declares, already redacted by the
+          // controller -- so the wildcard reaches exactly one window.
+          // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
+          current.postMessage({ type: DATA_MESSAGE_TYPE, read }, '*')
+          // AFTER the values are in the page, never before. Clearing it at click time
+          // states the numbers are current again while the read that would make that
+          // true is still in flight -- and if it fails, nothing on screen ever says so.
+          setRefetchError(null)
+        }
+      })
+      .catch((err) => {
+        // REPORTED, not swallowed. The page keeps the values it has, which is right,
+        // but those values are now known to be older than the record and the reader
+        // cannot tell: the page's own stale band is driven by the host's read, and a
+        // refetch that never arrived leaves it saying nothing. The notice sits beside
+        // the page rather than over it, and a retry that fails again leaves it there.
+        setRefetchError(apiErrorCode(err) || 'refetch_failed')
+      })
+      .finally(() => setRefetchPending(false))
+  }, [memberSlug, memberName])
+
+  // The page's options, and its request for a whole read. Only a message from THIS
+  // frame's window counts: any other window posting the same shape is ignored.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const win = frameRef.current?.contentWindow
+      if (!win || event.source !== win) return
+      const text = actText(event.data)
+      if (text && onActRef.current) {
+        onActRef.current(text)
+        return
+      }
+      // THE GAP. The page applies patches in sequence and asks for the whole read
+      // when one skips a version; answering with another patch would reach the same
+      // half-updated page one round trip later.
+      const kind = (event.data ?? {}) as { type?: unknown }
+      if (kind.type !== REFETCH_MESSAGE_TYPE) return
+      askWholeRead()
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [askWholeRead])
+
+  // THE PUSH. The gateway sends the fields that MOVED; this posts them into the
+  // frame, whose bootstrap merges the patch, refills the bindings and calls back
+  // only the subscribers for the fields the patch carried.
+  //
+  // `postMessage` and not a re-render: the page owns its own DOM and the parent
+  // cannot reach into it, which is the whole point of the sandbox. A refetch of the
+  // route would work and is what the other two liveness frames do -- and it would
+  // throw away the page's own state (a chart's animation, a tree's scroll position,
+  // a 3D scene) on every value change, which is what the push exists to avoid.
+  //
+  // Only a member target has a crewmate slug the push bus is keyed by; a root
+  // session's page is not pushed and the subscription is not armed for it.
+  useEffect(() => {
+    if (!memberSlug) return
+    return subscribeDashboardFields(memberSlug, (read, fromPackage) => {
+      // NOT MINE: one crewmate can be shown through two packages at once, and the
+      // socket delivers every frame to every tab. Applying another package's patch
+      // would replace this page's values with values computed for a different layout.
+      //
+      // Read through the REF, not the value. This subscription is keyed on the slug
+      // alone on purpose: taking `livePackage` as a dependency would tear the socket
+      // subscription down and build it again every time the shown package changes,
+      // and a push that arrives in the gap is simply lost. The ref is the same value
+      // readable from inside a long-lived callback, which is what it exists for.
+      // NO PACKAGE OF MINE IS ALSO AN ANSWER, so the empty case is a drop and not a
+      // pass. This tab shows a template page -- because none is bound, or because the
+      // person locked the layout and the gateway stopped selecting one -- while the
+      // (crewmate, package) page can still be armed from before. Letting its pushes
+      // through gave the template's bootstrap a generation it cannot place, so it asked
+      // for a whole read with no package to name, the gateway answered 400
+      // `missing_dashboard`, and the stale band came back on every push.
+      const mine = livePackageRef.current
+      if (fromPackage !== mine) return
+      // Same reason as the refetch answer above: an opaque origin cannot be named,
+      // and the post reaches this one frame's contentWindow with model-declared,
+      // already-redacted fields.
+      // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
+      frameRef.current?.contentWindow?.postMessage({ type: DATA_MESSAGE_TYPE, read }, '*')
+    })
+  }, [memberSlug])
   const previewGone = staged && isError && apiErrorCode(error) === 'no_preview'
   useEffect(() => { onPreviewGone?.(previewGone) }, [onPreviewGone, previewGone])
 
@@ -280,34 +457,124 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   const [good, setGood] = useState<Loaded | null>(null)
   const [candidate, setCandidate] = useState<Loaded | null>(null)
   const [reverted, setReverted] = useState(false)
+  /**
+   * The SERVER's latest word on whether this page may run script, held apart from the
+   * document that happens to be promoted.
+   *
+   * Withdrawing script is a governance act, so it cannot wait on anything the PAGE
+   * does -- and both promotion paths are things the page does or does not do. A new
+   * version waits on the readiness beacon, which a page mounted without script can
+   * never send; a same-version read is swapped in place only when the html differs,
+   * so a read whose only change is this flag is dropped. Either way the frame on
+   * screen would keep `allow-scripts` the server had already taken back.
+   *
+   * Absent means allowed, the same reading `Loaded.scripts` uses: only a server that
+   * has decided the ceiling denies the owner agent's egress sends `false`.
+   */
+  const [mayRunScript, setMayRunScript] = useState(true)
+  /**
+   * The SURFACE the page currently held belongs to, or `null` when none is.
+   *
+   * A ref and not a dependency: the read effect below is what promotes a page, so
+   * depending on the promoted page would make it re-run on its own output. Written at
+   * exactly the two moments the held page changes surface -- when a read establishes
+   * one, and when any branch clears it -- so it never lags behind what is mounted.
+   */
+  const heldSurfaceRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!data || !data.html) return
-    // STATE `error` NEVER becomes a page. The read answers 200 for it and `wire()`
-    // always carries `html`, but the gateway deliberately does not compose that state
-    // -- `_render` is skipped, so there is no data island, no bootstrap and no ready
-    // beacon. Promoting it would draw the template's own placeholder markup as a
-    // healthy dashboard: every cell empty, nothing marked missing, no band, and no
-    // sign to a reader that what they are looking at is not their data.
+    if (!data) return
+    // THE SURFACE THIS READ IS FOR. The route resolves the crewmate's binding, so its
+    // answer wins over the prop; `''` is the crewmate's template instance.
+    const identity = livePackage ?? ''
+    // THE SURFACE IS ANSWERED FIRST, AHEAD OF EVERY STATE BRANCH BELOW.
+    //
+    // This is the root of the rule and the only place it is asked. A page belonging to
+    // another surface is not an older version of this read's page, so NO branch below
+    // may return while one is still mounted -- and each of them returns for its own
+    // good reason, which is exactly how one of them ends up keeping a page the tab has
+    // moved off. `state: 'error'` was that branch: a read that moves this tab from a
+    // package to the template instance AND reports the stored copy unparseable kept the
+    // package document, `allow-scripts` and all, because the error branch answered
+    // first and the surface was never compared.
+    //
+    // So the comparison happens before any of them, and the clear is the same one the
+    // no-page guard does: the page, its candidate and the script decision. Asking it
+    // here rather than inside the two promotion setters is what makes it unskippable --
+    // a setter only runs on a read that got as far as promoting something.
+    if (heldSurfaceRef.current !== null && heldSurfaceRef.current !== identity) {
+      setCandidate(null)
+      setGood(null)
+      setMayRunScript(false)
+      heldSurfaceRef.current = null
+    }
+    // STATE `error` NEVER becomes a page, AND is the one read that leaves a page on THIS
+    // surface alone. The read answers 200 for it and `wire()` always carries `html`, but
+    // the gateway deliberately does not compose that state -- `_render` is skipped, so
+    // there is no data island, no bootstrap and no ready beacon. Promoting it would
+    // draw the template's own placeholder markup as a healthy dashboard: every cell
+    // empty, nothing marked missing, no band, and no sign to a reader that what they
+    // are looking at is not their data.
+    //
+    // It is not the same answer as the guard below, which is why it is asked separately.
+    // `error` is the route saying this read SUCCEEDED and the crewmate's NEWER stored
+    // copy does not parse; the page already on screen is still the record's last good
+    // page for this surface, and it stays, under a band that says so. The guard below is
+    // for a read that gives this tab no page to be on at all.
     if (data.state === 'error') return
+    // FAIL CLOSED ON EVERY READ THAT ESTABLISHES NO PAGE, in one place, with no case
+    // exempted for being merely stale.
+    //
     // ONLY the composed page is ever mounted. `data.html` is the crewmate's STORED
-    // copy, out of a writable `instance.json`; `data.rendered_html` is what the
-    // gateway built from the catalog's own template for the id that record names.
-    // Falling back to the stored copy handed the sandbox -- which runs scripts --
-    // exactly the bytes the gateway had just declined to run, so the refusal bought
-    // nothing. No composed page means there is no page to show, which the
-    // unavailable state below says truthfully.
-    if (!data.rendered_html) return
+    // copy, out of a writable `instance.json`; `data.rendered_html` is what the gateway
+    // built from the catalog's own template, or from the package bytes a person
+    // approved. Falling back to the stored copy handed the sandbox -- which runs
+    // scripts -- exactly the bytes the gateway had just declined to run.
+    //
+    // Returning early on the missing page alone left the held document MOUNTED with the
+    // grant it loaded under. Several reads arrive that way and none of them is evidence
+    // that the held page is still the record's: a bound package with nothing applied
+    // (`state: empty` -- version pruned, or nobody approved one), and a record whose
+    // locked `template_id` the catalog no longer has, which resolves to no package slug
+    // and composes nothing. Under any of them a reader goes on looking at a page the
+    // record does not have, and if an admin ceiling has since restricted the owner
+    // agent's egress that document still holds `allow-scripts` and can navigate its own
+    // frame to a host now forbidden.
+    //
+    // So the page, its candidate and the script decision all go. `mayRunScript` drops
+    // to `false` rather than to the permissive default because an absent `scripts`
+    // field here is the ABSENCE OF A DECISION, and that cannot be read as the last
+    // decision: the next read that does establish a page sets it from that page's own
+    // answer, so nothing stays static that the server says may run. The tab then draws
+    // its own empty or unavailable state, which is the honest answer for a binding with
+    // nothing behind it.
+    if (!data.rendered_html) {
+      setCandidate(null)
+      setGood(null)
+      setMayRunScript(false)
+      heldSurfaceRef.current = null
+      return
+    }
     const next: Loaded = {
       html: data.rendered_html,
       manifest: data.manifest,
       instanceVersion: data.instance_version,
       templateId: data.template?.id ?? '',
       templateVersion: data.template?.version ?? 0,
+      // Absent means allowed: only a server that has decided the ceiling denies
+      // the owner agent's egress sends `false`, so an older gateway keeps the
+      // behaviour it shipped with instead of going silently static.
+      scripts: (data as { scripts?: boolean }).scripts !== false,
+      dashboard: identity,
     }
-    // Keyed on the INSTANCE VERSION, not the html: contract v3 says every change
-    // bumps it, so it is the server's own statement that this is a different page,
-    // and a different page is what probation exists for.
+    // Keyed on the INSTANCE VERSION. Contract v3 says every change bumps it, so it is
+    // the server's own statement that this is a different page, and a different page is
+    // what probation exists for.
+    //
+    // No surface comparison HERE: the guard at the top of this effect has already
+    // cleared anything from another surface, so `prev` is either null or this surface's
+    // own page. A second comparison in this setter would be unreachable, and an
+    // unreachable guard is one a later reader trusts to be doing the work.
     setCandidate(prev => {
       if (!prev) return next
       if (prev.instanceVersion !== next.instanceVersion) return next
@@ -319,11 +586,19 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
     // probation: the page on screen has already proved it loads, so withholding its
     // own fresher numbers behind a readiness beacon would freeze the tab on the
     // values it happened to open with.
+    //
     setGood(prev => {
-      if (!prev || prev.instanceVersion !== next.instanceVersion) return prev
+      if (!prev) return prev
+      if (prev.instanceVersion !== next.instanceVersion) return prev
       return prev.html === next.html ? prev : next
     })
-  }, [data])
+    // Recorded on EVERY read, before and regardless of either promotion above. This is
+    // the half that makes a revocation independent of the layout: the two setters can
+    // both decline to move, and this one still carries the answer to the sandbox.
+    setMayRunScript(next.scripts)
+    // The surface this read established, for the guard at the top of the next one.
+    heldSurfaceRef.current = next.dashboard
+  }, [data, livePackage])
 
   // The FIRST page is shown without probation: there is no previous page to keep,
   // so withholding it would leave the tab empty to protect nothing.
@@ -460,8 +735,26 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
    * unreachable from the parent -- `postMessage` is the only channel, which is the
    * same constraint that makes the height reporter a message rather than a read.
    */
-  const probating = Boolean(candidate && good && candidate.instanceVersion !== good.instanceVersion)
+  // A candidate that may NOT run script never probates. The beacon is the page saying
+  // "I came up", sent by script -- so asking a static page for one is asking for a
+  // message that cannot arrive, and the page it was meant to replace would stay on
+  // screen with the grant the server just withdrew. Nothing is being trusted here that
+  // probation was protecting: a static document cannot fail the way probation catches,
+  // because the host fills its bindings itself and no script of its own has to run.
+  const probating = Boolean(
+    candidate && good && candidate.instanceVersion !== good.instanceVersion && candidate.scripts,
+  )
   const timer = useRef<number | null>(null)
+
+  // Promoted at once, for the reason above. Separate from the probation effect so the
+  // two paths cannot both act on one candidate.
+  useEffect(() => {
+    if (!candidate || !good) return
+    if (candidate.instanceVersion === good.instanceVersion) return
+    if (candidate.scripts) return
+    setGood(candidate)
+    setReverted(false)
+  }, [candidate, good])
 
   // A new page must actually be MOUNTED to get the chance to beacon, so the
   // probating candidate is what the srcdoc is built from while it is on probation.
@@ -743,11 +1036,69 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
           </Btn>
         </div>
       )}
+      {refetchError && (
+        <div
+          className="shrink-0 border-b border-border p-2 flex items-start gap-2"
+          data-testid="crew-dashboard-refetch-error-band"
+        >
+          {/* The page keeps its values, which is right. What a reader cannot otherwise
+              learn is that those values are older than the record: the page's own stale
+              band is raised by a read, and this is the case where the read never came.
+              Beside the page rather than over it, like the two bands above.
+
+              ITS OWN SENTENCE, not the kept-last-good one. That string says a newer
+              VERSION of the page did not load, which is a different situation with a
+              different remedy: here the page is the right one and only its numbers are
+              behind. Reusing it would tell the reader to expect a new page that is not
+              coming. */}
+          {/* No hand-off: the Members page's unsaved Profile and crew-editor
+              drafts, as at the two bands above. This notice only reports that the
+              values on screen are behind; nothing is discarded by showing it, and
+              the Retry beside it re-reads rather than navigating away. */}
+          <ErrorNotice
+            message={i18nT('pages.membersPage.dashboard_values_stale')}
+            className="flex-1 min-w-0"
+            testId="crew-dashboard-refetch-error"
+          />
+          {/* REDOES WHAT FAILED. The notice is raised by one thing -- the whole read
+              the page asked for did not arrive -- so this asks for that read again.
+              `refetch()` on the dashboard query would re-read the RECORD, which is not
+              what failed: the page on screen is the right page and only its numbers are
+              behind, so a reader would watch the notice clear with the same stale
+              values under it. */}
+          <Btn
+            disabled={refetchPending}
+            onClick={askWholeRead}
+            className="shrink-0"
+            data-testid="crew-dashboard-refetch-retry"
+          >
+            <RotateCw className="lucide-inline" aria-hidden />
+            {i18nT('pages.membersPage.webview_retry')}
+          </Btn>
+        </div>
+      )}
       {url ? (
         <iframe
+          // THE GRANT IS PART OF THE FRAME'S IDENTITY, and it has to be.
+          //
+          // A frame's sandbox flags are computed when its document is NAVIGATED, so
+          // rewriting the attribute on a frame that already holds a running document
+          // leaves that document with the grants it loaded under: it keeps running, keeps
+          // taking pushed values, and can still navigate itself to a host the ceiling now
+          // forbids. Withdrawing script is a governance act, so it may not wait for the
+          // page to do anything -- and a same-version revocation changes nothing else at
+          // all, so there is no other reason for this element to be replaced.
+          //
+          // Keyed on the GRANT alone rather than on the read: a key that moved with every
+          // poll would discard the page state the push exists to keep (a scroll position,
+          // an animation, a 3D camera) once a minute.
+          key={`grant-${crewDashboardSandbox(mayRunScript && shown.scripts)}`}
           ref={frameRef}
           src={url}
-          sandbox={CREW_DASHBOARD_SANDBOX}
+          // The SERVER's latest answer, not the promoted document's. A revocation that
+          // arrived after this document was promoted has to reach the frame that is
+          // mounted, which is what the key above makes happen.
+          sandbox={crewDashboardSandbox(mayRunScript && shown.scripts)}
           className="flex-1 min-h-0 w-full border-none bg-bg"
           style={{ colorScheme: theme }}
           title={i18nT('pages.membersPage.dashboard_frame_title', { crew: displayName })}
@@ -763,8 +1114,17 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
         // scripts, and a candidate that never runs can never prove itself -- which
         // would make every new page look broken.
         <iframe
+          // Keyed on its own grant for the reason the mounted frame is: a candidate
+          // whose grant narrows while it is proving itself must be re-navigated, or it
+          // goes on running under the wider one it started with.
+          key={`probe-grant-${crewDashboardSandbox(
+            mayRunScript && (candidate ? candidate.scripts : shown.scripts),
+          )}`}
           src={probe.url}
-          sandbox={CREW_DASHBOARD_SANDBOX}
+          // A candidate on probation gets the SAME grants its own response
+          // decided, so a page cannot earn promotion while running under looser
+          // ones than it will be mounted with.
+          sandbox={crewDashboardSandbox(mayRunScript && (candidate ? candidate.scripts : shown.scripts))}
           aria-hidden
           tabIndex={-1}
           className="absolute w-px h-px opacity-0 pointer-events-none border-none"
@@ -780,4 +1140,4 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   )
 }
 
-export { ACT_MESSAGE_TYPE, DATA_MESSAGE_TYPE, READY_MESSAGE_TYPE, READY_TIMEOUT_MS }
+export { ACT_MESSAGE_TYPE, DATA_MESSAGE_TYPE, REFETCH_MESSAGE_TYPE, READY_MESSAGE_TYPE, READY_TIMEOUT_MS }

@@ -250,9 +250,16 @@ def test_the_served_page_is_framed_exactly_like_a_built_in_one() -> None:
     """Same composition, so the same frame head, CSP and sandbox apply.
 
     The gateway sends a BODY; the dashboard frame builds the head and its CSP and
-    mounts it with one sandbox constant. So "same CSP and sandbox" is two facts: the
+    mounts it through one sandbox function. So "same CSP and sandbox" is two facts: the
     body composed for a user page is byte-identical to a built-in one with the same
     markup, and the frame never branches on where a page came from.
+
+    The grant a page gets is not always the same STRING -- a page whose owner the admin
+    ceiling denies egress is mounted with none of it -- so the pin is the function and
+    its argument rather than the literal: every mount calls the one helper, and every
+    mount hands it the server's own answer. A page cannot be wrapped more loosely than
+    its sibling by naming a different spelling, nor by passing a literal that skips the
+    server.
     """
     _operator_page("my-board")
     instance.adopt(SLUG, "fixture-board", session_id="")
@@ -272,9 +279,30 @@ def test_the_served_page_is_framed_exactly_like_a_built_in_one() -> None:
         encoding="utf-8"
     )
     assert "export const CREW_DASHBOARD_SANDBOX = 'allow-scripts'" in frame
-    assert re.findall(r"sandbox=\{([^}]*)\}", frame) == ["CREW_DASHBOARD_SANDBOX"] * len(
-        re.findall(r"sandbox=\{", frame)
-    )
+    assert "export const CREW_DASHBOARD_SANDBOX_STATIC = ''" in frame
+    # ONE function wraps every page. A mount that named anything else -- a constant, a
+    # local, a ternary of its own -- could wrap an operator page differently from a
+    # built-in one, which is the whole point of this test.
+    mounts = re.findall(r"sandbox=\{([^}]*)\}", frame)
+    assert len(mounts) == len(re.findall(r"sandbox=\{", frame))
+    assert mounts, "the frame mounts no page at all"
+    assert all(
+        m.startswith("crewDashboardSandbox(") for m in mounts
+    ), f"a mount wraps its page by some other means: {mounts}"
+    # ... and that one function answers only with the frame's own two grant sets, so
+    # going through it is the same as being wrapped in the constant when script is on.
+    assert re.search(
+        r"export function crewDashboardSandbox\(scripts: boolean\): string \{\s*"
+        r"return scripts \? CREW_DASHBOARD_SANDBOX : CREW_DASHBOARD_SANDBOX_STATIC\s*\}",
+        frame,
+    ), "the sandbox helper answers with something other than the two declared grant sets"
+    # Same AUTHORIZATION SOURCE at every mount: the server's answer, never a literal.
+    # `mayRunScript` is what the server said about the owner agent's egress, and
+    # `scripts` is what it said about this page; a mount passing `true` would license
+    # itself.
+    assert all(
+        "mayRunScript" in m and "scripts" in m for m in mounts
+    ), f"a mount decides its own grant instead of asking the server: {mounts}"
     assert not re.search(
         r"manifest\??\.source|\.origin\b|'user'", frame
     ), "the frame reads a page's provenance, so a user page could be framed differently"

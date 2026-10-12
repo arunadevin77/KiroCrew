@@ -3899,3 +3899,56 @@ class TestDashboardUserGrantsAreAudited:
             "the periodic dashboard frame's grant must be recorded for the "
             "dashboard user too, i.e. outside the app-token-only branch"
         )
+
+
+# ---------------------------------------------------------------------------
+# Owner-only: a crewmate's dashboard field frame
+# ---------------------------------------------------------------------------
+
+class TestDashboardFieldFrameIsOwnerOnly:
+    """The field frame carries work-ledger and crew-log values, which is exactly what
+    the whole ``/api/members`` surface withholds from an app token.
+
+    An app never receives it either way -- it goes out on ``broadcast_ws_owners``,
+    which no app socket is in, and an unclassified event is denied by the floor. What
+    the classification buys is the AUDIT: an operator reading the trail sees a
+    deliberate ``owner_only`` and not ``unknown_event``, which reads as somebody's
+    manifest being wrong. It also means a later caller broadcasting the name literally
+    cannot silently start reaching an app token.
+    """
+
+    FRAME = {"slug": "atlas", "dashboard": "atlas-dashboard", "read": {"goal": "x"}}
+
+    def test_a_wildcard_manifest_does_not_receive_it(self):
+        state = _make_state()
+        assert ws_event_allowed(
+            "dashboard_fields", self.FRAME,
+            app="mochi-pet", allowed_events=build_allowed_event_set(["*"]), state=state,
+        ) is False
+
+    def test_the_denial_is_audited_as_owner_only_and_not_as_an_unknown_event(self):
+        """The whole difference this classification makes, and the only place it shows."""
+        state = _make_state()
+        with patch("kiro_crew.sel.sel") as sel_mock:
+            ws_event_allowed(
+                "dashboard_fields", self.FRAME,
+                app="mochi-pet",
+                allowed_events=build_allowed_event_set(["*"]),
+                state=state,
+            )
+        outcomes = [
+            c.kwargs.get("outcome")
+            for c in sel_mock.return_value.log_api_access.call_args_list
+        ]
+        assert outcomes == ["denied:owner_only"], (
+            "the trail reports this denial as a misconfiguration rather than as the "
+            f"deliberate one it is: {outcomes}"
+        )
+
+    def test_it_is_the_name_the_push_actually_broadcasts(self):
+        """Pinned against the emitter's own constant, so a rename cannot leave the
+        classification behind on a string nothing sends."""
+        from kiro_crew.dashboard import ws_event_scope
+        from kiro_crew.dashboard.handlers import member_dashboard_fields
+
+        assert member_dashboard_fields.FIELD_FRAME in ws_event_scope._OWNER_ONLY_EVENTS

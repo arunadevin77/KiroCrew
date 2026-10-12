@@ -146,7 +146,7 @@ def _catalog() -> dict[str, dt.FoldType]:
 
 
 def _manifest_fold_names() -> frozenset[str]:
-    """The folds a dashboard block may actually BIND.
+    """The folds a TEMPLATE block may actually BIND.
 
     Imported here rather than at module scope because this script runs as a gate on a
     checkout, and the manifest module pulls the template loader in with it; the two
@@ -155,6 +155,21 @@ def _manifest_fold_names() -> frozenset[str]:
     from kiro_crew.dashboard_templates.manifest import FOLD_NAMES
 
     return FOLD_NAMES
+
+
+def _package_fold_names() -> frozenset[str]:
+    """The folds a PACKAGE block may bind, which is a wider set.
+
+    The two surfaces have different readers, so they accept different bindings: a
+    package's page is drawn by ``member_dashboard_fields.LivePage``, which READS a
+    tree-keyed fold, and a template is rendered by a feed that reaches a fold only by
+    its bus scope. A fold only one of them can reach is advertised to only one of them,
+    and the catalogue has to say which -- dropping it outright would leave a package
+    author with no way to learn the fold exists.
+    """
+    from kiro_crew.dashboard_templates.manifest import PACKAGE_FOLD_NAMES
+
+    return PACKAGE_FOLD_NAMES
 
 
 def _field_rows(entry: dt.FoldType) -> list[dict[str, Any]]:
@@ -246,14 +261,27 @@ def catalogue() -> dict[str, Any]:
                 # `outline` are session-keyed and perfectly bindable, and are withheld
                 # anyway because they answer about the product rather than the crew.
                 #
-                # `manifest.FOLD_NAMES` is the mechanical half: it is the set the save
-                # gate accepts a binding from, so a name outside it is a binding that
-                # would be REFUSED -- which is the case for a registered fold whose key
-                # kind the manifest does not accept yet (a tree fold, until its read
-                # path lands beside it). Read off that set rather than restated here,
-                # so the catalogue cannot promise a binding the gate turns down.
+                # `manifest.FOLD_NAMES` is the mechanical half: it is the set the
+                # TEMPLATE save gate accepts a binding from, so a name outside it is a
+                # binding that surface would REFUSE. Read off that set rather than
+                # restated here, so the catalogue cannot promise a binding the gate
+                # turns down.
                 "advertised": (
                     name not in proj.INTERNAL_PROJECTION_NAMES and name in _manifest_fold_names()
+                ),
+                # PACKAGE-ONLY: bindable, but on the other surface. A tree-keyed fold has
+                # no bus scope, so the template feed cannot reach it and the template
+                # gate refuses it -- while a package's page host reads it directly and
+                # the package gate admits it. Said rather than left as a bare `false`,
+                # because `advertised: false` alone reads as "not for you" to BOTH
+                # authors and a package author would never learn the fold is theirs to
+                # bind. Derived from the same two sets, so it cannot drift from either
+                # gate, and it is false for an editorially withheld fold: `class` and
+                # `outline` are bindable on neither surface.
+                "package_only": (
+                    name not in proj.INTERNAL_PROJECTION_NAMES
+                    and name not in _manifest_fold_names()
+                    and name in _package_fold_names()
                 ),
                 # ``None`` means every entry moves this fold -- whether the registry
                 # leaves ``affects`` unset or spells out the whole vocabulary, which is
@@ -304,8 +332,11 @@ def render_markdown(doc: dict[str, Any]) -> str:
         "root and folded over the logs of every slot the tree reaches, so it is the kind a",
         "block binding a tree names. It cannot be pushed, because its value is stale when",
         "any member's log grows and no bus scope covers that, so it belongs to the read on",
-        "a page load and on a refetch. That read ships with the first block that consumes",
-        "it: bind a tree fold today and the block shows the stale band until then.",
+        "a page load and on a refetch. That read belongs to the page host that draws a",
+        "dashboard PACKAGE, so a tree fold is marked *(package only)*: a package block may",
+        "bind it and a template block may not, because the feed that renders a template",
+        "reaches a fold by its bus scope and a tree fold has none. A fold marked",
+        "*(internal)* is bindable on neither surface.",
         "",
         "## Which fold answers what",
         "",
@@ -313,8 +344,13 @@ def render_markdown(doc: dict[str, Any]) -> str:
         "|---|---|---|",
     ]
     for fold in doc["folds"]:
-        internal = "" if fold["advertised"] else " *(internal)*"
-        lines.append(f"| `{fold['name']}`{internal} | {fold['mode']} | {fold['answers']} |")
+        if fold["advertised"]:
+            label = ""
+        elif fold["package_only"]:
+            label = " *(package only)*"
+        else:
+            label = " *(internal)*"
+        lines.append(f"| `{fold['name']}`{label} | {fold['mode']} | {fold['answers']} |")
     lines.append("")
 
     for fold in doc["folds"]:

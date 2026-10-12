@@ -67,7 +67,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Mapping
 
-from kiro_crew.crew_log.projection import SESSION_FOLD_NAMES, SLOT_PROJECTION_NAMES
+from kiro_crew.crew_log.projection import (
+    SESSION_FOLD_NAMES,
+    SLOT_PROJECTION_NAMES,
+    TREE_PROJECTION_NAMES,
+)
 from kiro_crew.dashboard_templates.parity import ExtractionRefused, html_fields
 
 __all__ = [
@@ -75,6 +79,7 @@ __all__ = [
     "FOLD_NAMES",
     "FieldSpec",
     "ManifestError",
+    "PACKAGE_FOLD_NAMES",
     "Shape",
     "TemplateManifest",
     "Upkeep",
@@ -87,20 +92,29 @@ __all__ = [
 #: list or an object where a name belongs, and an unhashable candidate raises out of
 #: the loader instead of being collected as one more refusal.
 FIELD_TYPES: Final[frozenset[str]] = frozenset({"number", "string", "boolean", "array", "object"})
-#: Every fold a block may bind, as the union of the kernel's key-kind sets rather than
-#: as a list here, so a fold added to a listed kind is bindable without this file being
+#: Every fold a block may bind, as the union of the kernel's THREE key-kind sets rather
+#: than as a list here, so a fold added to the kernel is bindable without this file being
 #: edited.
 #:
-#: :data:`TREE_PROJECTION_NAMES` is deliberately NOT one of them yet. A tree-keyed fold
-#: is registered in the kernel -- the key-kind machinery and the generalized placement
-#: rules are what this change is for -- but it has no bus scope, and on this base no
-#: read path either: its reader belongs with the page host that draws it. A name this
-#: set accepts is a name the save gate admits, so admitting one the feed can neither
-#: key nor read would hand a block author a binding that only ever draws the stale
-#: band. The tree set joins this union in the change that brings the read beside it,
-#: which is the one moment both halves exist; ``test_dynamic_dashboard`` pins both
-#: directions so neither can arrive alone.
+#: A name this set accepts is a name the save gate admits, so admitting one the feed can
+#: neither key nor read would hand a block author a binding that only ever draws the
+#: stale band. A TEMPLATE's reader is :func:`~kiro_crew.dashboard_feed.DashboardFeed`,
+#: which reaches a fold by its bus scope, so this set is the two SCOPED families and the
+#: tree family is deliberately not in it.
 FOLD_NAMES: Final[frozenset[str]] = frozenset(SESSION_FOLD_NAMES) | frozenset(SLOT_PROJECTION_NAMES)
+#: The same question for a dashboard PACKAGE, which has a reader the template path does
+#: not.
+#:
+#: SEPARATE FROM :data:`FOLD_NAMES` BECAUSE THE TWO SURFACES HAVE DIFFERENT READERS, and
+#: reachability is what either set is for. A tree-keyed fold has no bus scope by design
+#: -- it joins the logs of many slots, so no event can carry a key saying which one
+#: moved -- so it is READ instead, by ``member_dashboard_fields.LivePage``, the host that
+#: draws a package's page. A template is rendered by ``member_dashboard._render``, whose
+#: feed subscribes by scope and has no tree read, so a template binding a tree fold would
+#: leave that field missing on every read: the permanently stale block this gate exists
+#: to refuse. Widening the template set to admit the package's extra family would hand an
+#: operator writing a ``panel-templates`` page exactly that binding.
+PACKAGE_FOLD_NAMES: Final[frozenset[str]] = FOLD_NAMES | frozenset(TREE_PROJECTION_NAMES)
 #: Where a manifest came from. Every value names a template DIRECTORY, which is what
 #: lets two consumers read this word and both be right: ``instance.RENDERABLE_SOURCES``
 #: gates whether a page may EXECUTE, and the catalogue's scan checks a directory's

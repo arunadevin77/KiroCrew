@@ -1707,6 +1707,16 @@ _REDACTION_SINKS: tuple[tuple[str, str, str], ...] = (
         "scrubbed result, because a value that fit before the scrub can be over the "
         "cap after it.",
     ),
+    (
+        "Field values pushed to a crewmate's dashboard page",
+        "dashboard/handlers/member_dashboard_fields.py",
+        "Every subscribed field's value on its way to the owner's socket and into the "
+        "page's data island. This is the ONE place such a value is produced -- the "
+        "initial read and every later patch both come out of `_values` -- which is what "
+        "makes one scrub here cover both rather than each sender remembering. The "
+        "redactor is handed in by the route rather than chosen here, so the module "
+        "applies the gateway's own redactor and cannot substitute a weaker one.",
+    ),
 )
 
 # Modules that call a redactor but are NOT an output egress boundary, so they do
@@ -1728,6 +1738,13 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         # change it, so a zero-click fetch never carries what redaction removes.
         # Nothing it returns is redacted text, so it is a gate, not an egress sink.
         "dashboard/handlers/link_meta.py",
+        # Validator only: a dashboard package's model field NAME is run through the
+        # redactor and the package is REFUSED when the output differs, because a
+        # field name is served in the package's `fields` list and written into the
+        # page's data island, where only VALUES are scrubbed. The redacted form is
+        # used solely to name the offending field in the refusal, never emitted as
+        # content, so this classifies a name rather than being an output boundary.
+        "artifact_store/dashboard_package.py",
         # Drives the backup redaction pass and reports what it did, but applies no
         # redactor itself: the outbound bytes are rewritten in `snapshot_redact.py`,
         # which is the registered sink. What matches the call-site scan here are the

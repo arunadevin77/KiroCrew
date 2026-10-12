@@ -18183,7 +18183,8 @@
       "profile_dashboard_lock_failed": "Das Dashboard konnte nicht gesperrt werden und bleibt entsperrt. Versuche es erneut.",
       "profile_dashboard_unlock_failed": "Das Dashboard konnte nicht entsperrt werden und bleibt gesperrt. Versuche es erneut.",
       "profile_dashboard_lock_unreadable": "Es konnte nicht gelesen werden, ob das Dashboard gesperrt ist. Versuche, die Seite neu zu laden.",
-      "dashboard_owner_only": "Nur der Besitzer dieses Crewmates kann sein Dashboard sehen."
+      "dashboard_owner_only": "Nur der Besitzer dieses Crewmates kann sein Dashboard sehen.",
+      "dashboard_values_stale": "Die Live-Werte werden nicht mehr aktualisiert; dies sind die letzten empfangenen Werte."
     },
     "tasksCapacityCard": {
       "title": "Aufgaben & Kapazität",

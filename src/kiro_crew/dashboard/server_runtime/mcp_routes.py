@@ -226,6 +226,13 @@ def _register_mcp_routes(app: web.Application) -> None:
         "/api/members/{slug}/dashboard/lock",
         _deferred("member_dashboard", "api_member_dashboard_lock"),
     )
+    # The gap refetch: a page that cannot place a patch in order asks for the whole
+    # read. A strict suffix of the ``/dashboard`` read path, separated by METHOD, so
+    # the resolver needs no ordering between them.
+    app.router.add_post(
+        "/api/members/{slug}/dashboard/refetch",
+        _deferred("member_dashboard", "api_member_dashboard_refetch"),
+    )
     # UI guides (``kirocrew-guide``). The agent half is MCP-only and sits under
     # the strict "/api/guide/agent" prefix; the browser half is cookie-authed and
     # owner-only, deliberately OFF that prefix. Deferred like the panel: the server

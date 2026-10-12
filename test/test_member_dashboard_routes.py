@@ -965,3 +965,198 @@ class TestAStoredPageCannotBeEdited:
         assert edited.instance_version == 2
         assert edited.manifest["title"] == "Retitled"
         assert edited.html == PAGE, "a manifest edit moved the page"
+
+
+class TestAStagedPageReachesOnlyItsOwnersPreview:
+    """WHERE A STAGED PAGE CAN BE SEEN, enumerated from the source rather than claimed.
+
+    A staged page is bytes nobody has applied. It carries this crewmate's fold values
+    exactly as the applied page does, and it is written beside the record without moving
+    the version -- so the question that matters is not whether staging is safe but
+    whether a staged page can be SERVED anywhere except to the one person entitled to
+    look at it and say yes.
+
+    Three facts answer it, and each is read off the modules rather than restated:
+
+    1. there is exactly ONE place staged bytes are turned into a record to render, and
+       it sits behind the same owner gate as the applied read;
+    2. every route that emits a page is owner-gated, so there is no second door;
+    3. the link handed back by the staging call is that same owner-gated read, not a
+       route of its own and not a capability token.
+
+    Source-level on purpose. A behavioural test proves one request was refused; what is
+    worth guarding here is that no OTHER caller exists, which is a property of the call
+    graph and is exactly what a later edit breaks silently.
+    """
+
+    def _source(self, module) -> str:
+        import inspect
+
+        return inspect.getsource(module)
+
+    def test_staged_bytes_have_exactly_one_reader_in_the_product(self) -> None:
+        """`instance.staged_preview` is the only way to read what is staged, and the
+        only caller outside the store itself is `member_dashboard._preview_record`."""
+        import pathlib
+
+        from kiro_crew.dashboard.handlers import member_dashboard
+        from kiro_crew.dashboard_templates import instance as instance_store
+
+        root = pathlib.Path(instance_store.__file__).resolve().parents[1]
+        callers = sorted(
+            # `as_posix` so the expected paths below read the same on Windows, where
+            # `str()` spells them with backslashes.
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*.py")
+            if "staged_preview(" in path.read_text(encoding="utf-8")
+        )
+        assert callers == [
+            "dashboard/handlers/member_dashboard.py",
+            "dashboard_templates/instance.py",
+        ], f"a new reader of staged bytes appeared: {callers}"
+        # In the store itself the second caller is `apply_preview`, which CONSUMES the
+        # preview into a version rather than serving it.
+        assert "staged_preview(slug)" in self._source(instance_store.apply_preview)
+        # And in the handler, the one reader is the preview record builder.
+        assert "instance.staged_preview(slug)" in self._source(member_dashboard._preview_record)
+
+    def test_the_preview_record_is_built_only_under_the_preview_query(self) -> None:
+        """`_preview_record` has one call site, and it is guarded by `preview=1`."""
+        from kiro_crew.dashboard.handlers import member_dashboard
+
+        body = self._source(member_dashboard._serve)
+        assert body.count("_preview_record(") == 1
+        guard = 'if request.query.get("preview") == "1":'
+        assert guard in body
+        # The guard precedes the only call, so the staged read is inside the branch.
+        assert body.index(guard) < body.index("_preview_record(")
+
+    def test_every_route_that_emits_a_page_is_owner_gated(self) -> None:
+        """Both page routes, and the refetch that answers their values.
+
+        The preview is served by `_serve`, which neither route reaches before its own
+        `_owner_only` call -- so the staged page inherits the applied page's gate rather
+        than carrying one of its own.
+        """
+        from kiro_crew.dashboard.handlers import member_dashboard
+
+        for handler in (
+            member_dashboard.api_member_dashboard,
+            member_dashboard.api_session_dashboard,
+            member_dashboard.api_member_dashboard_refetch,
+        ):
+            source = self._source(handler)
+            assert "_owner_only(" in source, handler.__name__
+            # Returned on refusal, not merely computed: a gate whose answer is dropped
+            # is not a gate.
+            assert "return owner_denied" in source, handler.__name__
+        # `_serve` is reached only from those two page routes.
+        module_source = self._source(member_dashboard)
+        assert module_source.count("await _serve(request") == 2
+
+    def test_a_non_preview_read_serves_the_applied_record(self) -> None:
+        """The other branch reads the stored record, or the shipped default when the
+        crewmate adopted nothing. Neither is a staged page."""
+        from kiro_crew.dashboard.handlers import member_dashboard
+
+        body = self._source(member_dashboard._serve)
+        assert "instance.read(slug)" in body
+        assert "instance.default_instance(slug)" in body
+        # The applied read sits AFTER the preview branch returns, so the two cannot both
+        # run for one request.
+        assert body.index('if request.query.get("preview") == "1":') < body.index(
+            "instance.read(slug)"
+        )
+
+    def test_the_package_route_cannot_serve_a_staged_page(self) -> None:
+        """A `view.html` package page is read from the artifact store, which has no
+        staged side at all, so the third page producer is outside this question."""
+        from kiro_crew.dashboard.handlers import member_dashboard
+
+        source = self._source(member_dashboard._serve_package)
+        assert "staged_preview" not in source
+        assert "_preview_record" not in source
+
+    def test_the_preview_link_is_the_owner_gated_read(self) -> None:
+        """Not a route of its own and not a capability token: a second door would be a
+        second place to get the gate right, and a token would be a second credential
+        for data its holder can already read.
+
+        The link is the PAGE with this crewmate open and its Dashboard tab on the
+        staged read, named by the exact crew name -- slugification is lossy, so the
+        page and the read it makes both refuse a slug alone.
+        """
+        from urllib.parse import parse_qs, urlparse
+
+        from kiro_crew.dashboard_templates import instance as instance_store
+
+        link = instance_store.preview_url(MEMBER)
+        parsed = urlparse(link)
+        assert parsed.path == "/members", "the link is a JSON read rather than a page"
+        query = parse_qs(parsed.query)
+        # The exact crew name, read back through the decoder because it is encoded.
+        assert query.get("member") == [MEMBER], "the link names a slug, which this read refuses"
+        assert query.get("dashboard") == ["preview"]
+        # No second credential rides along: the gate is the route's own owner check.
+        assert "token" not in query
+        assert instance_store.session_preview_url("slot-1") == (
+            "/api/chat/slots/slot-1/dashboard?preview=1"
+        )
+        for link in (instance_store.preview_url(SLUG), instance_store.session_preview_url("s")):
+            assert "token" not in link and "sig" not in link
+
+    def test_the_staging_route_hands_back_a_link_and_no_page(self) -> None:
+        """`api_dashboard_preview` stages and returns the wire record. It composes
+        nothing, so there is no rendered staged page anywhere but behind the gate."""
+        from kiro_crew.dashboard.handlers import agent_panel
+
+        source = self._source(agent_panel.api_dashboard_preview)
+        assert "stage_preview(" in source
+        assert "rendered_html" not in source
+        assert "render_package_page" not in source
+
+    def test_the_preview_branch_is_reached_before_any_binding_is_resolved(self) -> None:
+        """THE CONVERSE, and the half that is easy to lose: a preview must reach the
+        staged page rather than some other page.
+
+        The tab's preview link carries no `dashboard=`, so a binding resolved before
+        this branch would serve the live PACKAGE page to a person deciding whether to
+        apply a staged one. Pinned as an ORDER, because an order is what a later edit
+        undoes without changing any single line's meaning.
+        """
+        from kiro_crew.dashboard.handlers import member_dashboard
+
+        body = self._source(member_dashboard._serve)
+        decided = 'staged_only = request.query.get("preview") == "1" and not package_slug'
+        guarded = "if not package_slug and not staged_only:"
+        assert decided in body, "the preview decision is no longer taken from the query alone"
+        assert guarded in body, "the binding resolution is no longer guarded by that decision"
+        assert body.index(decided) < body.index(guarded), (
+            "the binding is resolved before the preview branch is decided, so a preview "
+            "can reach the package page again"
+        )
+        # That the resolution really is INSIDE the guard is measured on behaviour
+        # instead: `test_a_preview_read_does_not_even_look_the_binding_up` in
+        # `test_member_dashboard_package_route.py` counts the calls. The resolver's name
+        # is deliberately not spelled here -- that file owns the only two mentions of
+        # it, which is itself a pinned invariant.
+
+    def test_only_three_places_in_the_product_emit_a_page(self) -> None:
+        """The whole-file count, so a fourth producer added later fails here.
+
+        Two are the branches of `_serve` (staged under the preview guard, applied
+        otherwise) and the third is the package route. All three are behind the same
+        owner gate.
+        """
+        import pathlib
+
+        from kiro_crew.dashboard_templates import instance as instance_store
+
+        root = pathlib.Path(instance_store.__file__).resolve().parents[1]
+        emitters: dict[str, int] = {}
+        for path in root.rglob("*.py"):
+            count = path.read_text(encoding="utf-8").count('"rendered_html"')
+            if count:
+                # `as_posix` for the same reason as the reader scan above.
+                emitters[path.relative_to(root).as_posix()] = count
+        assert emitters == {"dashboard/handlers/member_dashboard.py": 3}, emitters

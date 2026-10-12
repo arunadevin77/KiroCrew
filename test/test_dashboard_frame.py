@@ -94,14 +94,26 @@ class TestTheFramesSecurityPolicy:
         )
         source = component.read_text(encoding="utf-8")
         assert "export const CREW_DASHBOARD_SANDBOX = 'allow-scripts'" in source
-        # Every `sandbox=` attribute in the file must be the constant, so a grant
-        # cannot be widened by one frame spelling its own. Checked on the
-        # ATTRIBUTES rather than on the prose: the constant's own comment names the
+        # The static mount is the empty attribute, which is every restriction
+        # applied; a non-empty value here would be a second grant set.
+        assert "export const CREW_DASHBOARD_SANDBOX_STATIC = ''" in source
+        # The one chooser between the two, and the only thing it may read is the
+        # flag the SERVER sent: a page that could influence this value would be a
+        # page that could grant itself script.
+        assert (
+            "export function crewDashboardSandbox(scripts: boolean): string {\n"
+            "  return scripts ? CREW_DASHBOARD_SANDBOX : CREW_DASHBOARD_SANDBOX_STATIC\n"
+            "}"
+        ) in source
+        # Every `sandbox=` attribute in the file must go through that chooser, so a
+        # grant cannot be widened by one frame spelling its own. Checked on the
+        # ATTRIBUTES rather than on the prose: the constants' own comments name the
         # withheld grants in order to explain why they are withheld.
         attributes = [line.strip() for line in source.splitlines() if "sandbox=" in line]
         assert attributes, "no sandboxed frame found; did the component change shape?"
         for line in attributes:
-            assert line == "sandbox={CREW_DASHBOARD_SANDBOX}", line
+            assert line.startswith("sandbox={crewDashboardSandbox("), line
+            assert line.endswith(")}"), line
 
 
 class TestTheComposedDocument:
@@ -250,7 +262,15 @@ class TestTheComposedDocument:
         values; the descriptor only decides whether a refill is possible."""
         doc = self.doc()
         assert "configurable: false" not in doc
-        assert doc.count("configurable: true") == 2
+        defines = doc.count("Object.defineProperty(window")
+        assert defines == 1, (
+            "the global is defined from more than one site, so each one is its own "
+            "chance to drop the descriptor the refill needs"
+        )
+        assert doc.count("configurable: true") == defines
+        # The refill reaches that ONE definition rather than carrying its own, which is
+        # what keeps the count above worth asserting.
+        assert doc.count("publish(read);") == 2, "first load and the refill must both publish"
 
     def test_a_title_cannot_carry_markup_into_the_head(self) -> None:
         read = dashboard_frame.read_payload({})

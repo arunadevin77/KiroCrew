@@ -18445,7 +18445,8 @@
       "profile_dashboard_lock_failed": "Impossible de verrouiller le tableau de bord. Il reste déverrouillé. Réessaie.",
       "profile_dashboard_unlock_failed": "Impossible de déverrouiller le tableau de bord. Il reste verrouillé. Réessaie.",
       "profile_dashboard_lock_unreadable": "Impossible de lire si le tableau de bord est verrouillé. Réessaie de rafraîchir la page.",
-      "dashboard_owner_only": "Seul le propriétaire de ce coéquipier peut voir son tableau de bord."
+      "dashboard_owner_only": "Seul le propriétaire de ce coéquipier peut voir son tableau de bord.",
+      "dashboard_values_stale": "Les valeurs en direct ne sont plus mises à jour : voici les dernières reçues."
     },
     "tasksCapacityCard": {
       "title": "Tâches et capacité",

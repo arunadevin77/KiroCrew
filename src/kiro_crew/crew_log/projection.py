@@ -8046,6 +8046,95 @@ def _worktree_render(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Reading a tree's folds
+# --------------------------------------------------------------------------- #
+
+
+def tree_fold_units(root: str, name: str) -> "tuple[tuple[str, ...], int]":
+    """The units *name* is folded over for the tree rooted at *root*, and how many the
+    selection refused.
+
+    THE THIRD KEY KIND'S unit resolver, and the reason it is a third kind: this answer is
+    not a property of the key. It walks what the record SAYS -- the root's own units,
+    every worker those units recorded a bind for, and every board those workers conduct,
+    to closure (:func:`_board_closure_units`) -- so a bind appended after the last read
+    changes the population with nothing about *root* having changed. A slot fold's units
+    come from the store's listing for one slot and cannot do that.
+    """
+    if require_name(name) not in TREE_PROJECTION_NAMES:
+        # The same refusal shape ``require_name`` raises for a name this module does not
+        # fold at all, because the consequence is the same: answering here for a slot
+        # fold would fold it over a whole tree's units and serve several boards' entries
+        # as one board's, which is a complete-looking wrong answer.
+        raise CrewLogError(
+            f"{name!r} is not a tree-keyed projection; expected one of "
+            f"{list(TREE_PROJECTION_NAMES)}",
+            code=CODE_BAD_DATA,
+            field="name",
+        )
+    return _board_closure_units(root)
+
+
+def fold_tree_checkpoint(name: str, root: str) -> Checkpoint:
+    """*name* folded over every unit of the tree rooted at *root*, OLDEST UNIT FIRST.
+
+    :func:`fold_slot_checkpoint`'s counterpart for the third key kind, and it re-bases
+    the seq guard per unit for the same reason that one does: a ``seq`` is comparable only
+    WITHIN one file, so handing the units' own seqs over unchanged would see the second
+    unit's entries sit at or below the first's and refuse them as a re-fold.
+
+    ``last_seq`` is the last entry folded from the NEWEST unit, which is the only figure
+    a later read can compare against -- not a sum across files, which is a number no file
+    carries.
+
+    The refused-unit count is NOT returned here. It belongs to the rendered value (the
+    fold's ``dropped``), and it is folded in as the state's own ``omitted`` so that a
+    checkpoint resumed from a savepoint cannot read it as zero.
+    """
+    fold_spec = _FOLDS[require_name(name)]
+    units, dropped = tree_fold_units(root, name)
+    state = fold_spec.start()
+    if fold_spec.bind_slot is not None:
+        fold_spec.bind_slot(state, root)
+    state["omitted"] = state.get("omitted", 0) + dropped
+    reached = 0
+    for unit_id in units:
+        handle = open_session_log(unit_id)
+        if handle is None:
+            continue
+        grown = advance(
+            Checkpoint(name=name, last_seq=0, state=state),
+            handle.iter_from(1, known=KNOWN_TYPES),
+        )
+        state = grown.state
+        reached = grown.last_seq
+    return Checkpoint(name=name, last_seq=reached, state=state)
+
+
+def read_tree_projection(root: str, name: str) -> Projection:
+    """One tree-keyed projection for the tree rooted at *root*. The read a block gets.
+
+    COLD every time, and that is the posture the key kind earns rather than an omission:
+    a warm cell would be invalidated by growth in ANY member's log, including a member
+    the cell did not know existed, and there is no publisher for that event. So this fold
+    is lazy, has no bus scope, and belongs on a page load and on a refetch -- which the
+    controller contract already covers, since a gap triggers a full refetch anyway.
+
+    Its production caller is the dashboard controller:
+    :meth:`kiro_crew.dashboard.handlers.member_dashboard_fields.LivePage._read_trees`,
+    reached from ``GET /api/members/{slug}/dashboard`` when the page's model binds a
+    tree fold, and again from that route's refetch. The controller calls it on arm and
+    on refetch and never from the fold worker, which is what keeps this read off the
+    thread that folds.
+
+    BOTH routes that take a fold name -- the owner's per-session read and the internal
+    per-unit one -- REFUSE a tree-keyed name rather than folding the one unit they
+    address, so this is the only way in.
+    """
+    return projection_of(fold_tree_checkpoint(require_name(name), root))
+
+
 # panel -- a crew's own webview, keyed by the publishing member's slot
 # --------------------------------------------------------------------------- #
 

@@ -1221,6 +1221,7 @@ class ArtifactStore:
         from_version: int | None = None,
         snapshot: bool = False,
         expected_token: str | None = None,
+        snapshot_token: str | None = None,
     ) -> Artifact:
         """Update an artifact in place. Content writes always update the live
         state (source_path on disk for file-backed artifacts, current.html
@@ -1248,23 +1249,96 @@ class ArtifactStore:
         detected. Omitted, the write is last-write-wins. It applies to
         store-backed artifacts only; a live file-backed artifact serves no token
         and ignores it, because its content is owned by the source file.
+
+        ``snapshot_token`` is the ``content_token`` of the read a request-driven
+        caller authorized against, carried for EVERY write it makes rather than only
+        the ones it classified. It exists because a dashboard package may never be
+        written against a snapshot that has moved on, and that is decided here --
+        against the record as this lock finds it -- not by what the caller saw.
         """
         slug = _validate_slug(slug)
-        if expected_token is not None and not (
-            isinstance(expected_token, str) and _TOKEN_RE.fullmatch(expected_token)
+        for label, value in (
+            ("expected_token", expected_token),
+            ("snapshot_token", snapshot_token),
         ):
-            raise ArtifactValidationError(
-                "expected_token must be the 64-character hex content_token from a prior read"
-            )
+            if value is not None and not (isinstance(value, str) and _TOKEN_RE.fullmatch(value)):
+                raise ArtifactValidationError(
+                    f"{label} must be the 64-character hex content_token from a prior read"
+                )
         with self._lock:
             art = self._load_meta(slug)
-            guarded = (
-                expected_token is not None
-                and content is not None
-                and not self._is_live_pointer(art)
+            # CONTENT IS NOT THE ONLY THING WORTH FENCING, for one kind.
+            #
+            # A content write is guarded because it replaces bytes. A metadata-only
+            # write is deliberately NOT, because a rename or a pin flip must never
+            # become a conflict the person never caused -- the editor's autosave and
+            # every tag edit depend on last-write-wins.
+            #
+            # A dashboard package is the exception, and it gets ONE rule, stated on
+            # the record THIS LOCK LOADED:
+            #
+            #   a record whose CURRENT kind is `dashboard` is never written without a
+            #   matching snapshot token, and an ABSENT token is a REFUSAL.
+            #
+            # WHY IT LIVES HERE AND NOWHERE ELSE. Every caller authorizes against a
+            # snapshot it read a moment earlier, so every caller's judgement is of a
+            # record that may already have moved. Three rounds of fixing that in the
+            # caller, each scoped by what the caller had classified, each time left the
+            # race in the case it had not: an event type it did not count, then a
+            # content-less `kind` PATCH, then a read that found prose or nothing and so
+            # sent no token at all -- which rewrote both the kind AND the bytes of
+            # whatever the slug held by then. A time-of-check guard in the caller
+            # cannot close a time-of-use hole here. This is the time of use.
+            #
+            # FAIL CLOSED ON ABSENT, which is the half the earlier fixes left open. A
+            # caller repeatedly PATCHing a predictable empty slug spends most of its
+            # time inside the read-to-write gap, so an owner creating a dashboard there
+            # lands in it often, with nothing else having to line up. And `dashboard` is
+            # not a user-selectable kind, so nothing puts the kind back without a human.
+            #
+            # SCOPED BY THE STORED KIND, never the submitted one. What makes a write
+            # dangerous is what the slug HOLDS: the dangerous PATCH submits
+            # `kind="markdown"`, so reading the submitted value would let exactly the
+            # write this guards against escape the guard.
+            #
+            # SCOPED TO WRITES THAT CAN TAKE THE PAGE AWAY -- its `kind`, its bytes, or
+            # any write whose caller named a snapshot. A rename or a tag edit that names
+            # none keeps last-write-wins: `publish_sync` asks for a snapshot bump and the
+            # deploy route writes `webapp_metadata`, neither can move a page to another
+            # owner, and neither reads the record first.
+            live_pointer = self._is_live_pointer(art)
+            dashboard_fence = (
+                not live_pointer
+                and art.kind == _dashboard.DASHBOARD_KIND
+                and (kind is not None or content is not None or snapshot_token is not None)
             )
-            if guarded:
-                assert expected_token is not None  # narrowed by ``guarded``
+            if dashboard_fence:
+                self._ensure_content_token_locked(art)
+                assert art.content_token is not None
+                authorized = snapshot_token or expected_token
+                if authorized is None:
+                    raise ArtifactConflictError(
+                        f"artifact {slug!r} holds a dashboard package, which is never "
+                        "written without the content_token of the read it was authorized "
+                        "against; nothing was written -- refetch and re-base",
+                        current_token=art.content_token,
+                    )
+                if not _hmac.compare_digest(art.content_token, authorized):
+                    raise ArtifactConflictError(
+                        f"artifact {slug!r} changed since it was read; refetch and re-base",
+                        current_token=art.content_token,
+                    )
+            # AND THE CALLER'S OWN COMPARE-AND-SET IS A SEPARATE QUESTION, asked of
+            # every kind including this one.
+            #
+            # The fence above asks whether the write names the record it is landing
+            # on, and a request-driven caller can always answer it with its own fresh
+            # read. ``expected_token`` asks something else: whether the record still
+            # holds what THAT client last saw. Satisfying the first and skipping the
+            # second let an owner's stale tab overwrite a newer layout with no
+            # conflict reported -- an agent and an open tab editing one dashboard is
+            # the ordinary case for this feature. So both run, independently.
+            if expected_token is not None and not live_pointer and content is not None:
                 self._ensure_content_token_locked(art)
                 assert art.content_token is not None
                 if not _hmac.compare_digest(art.content_token, expected_token):

@@ -24,12 +24,13 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Final, Mapping
 
 from aiohttp import web
 
 from kiro_crew import members as members_mod
 from kiro_crew.config.loader import KiroCrewConfig
+from kiro_crew.dashboard.handlers import member_dashboard_fields
 from kiro_crew.dashboard.handlers._shared import require_owner_dashboard_request
 from kiro_crew.dashboard.handlers.members import (
     _deny_app_caller,
@@ -53,6 +54,24 @@ def _bad(code: str, message: str, status: int = 400) -> web.Response:
     user ``instance_refused``.
     """
     return web.json_response({"error": message, "code": code}, status=status)
+
+
+def _name_unsafe(name: str) -> bool:
+    """``True`` when *name* is a string the egress redactor would rewrite.
+
+    Asked of an IDENTIFIER rather than of prose, which is why it answers a boolean and
+    not a safe copy. Every other string on this surface is scrubbed by replacing it --
+    ``_page_safe`` for a value, ``_template_text_safe`` for markup -- because nothing
+    downstream joins on its bytes. A slug is joined on: the body names the package the
+    tab mounts, the frame names the package a patch belongs to, and the refetch names
+    the package it wants. Rewriting it would make those three disagree, so the only
+    answers available are "serve it raw" and "do not serve it".
+
+    ``redact_via_context`` for the reason ``_page_safe`` uses it: it is the canonical
+    egress shim, so a host with a loaded companion applies that companion's patterns
+    too, and the question here is exactly "would this leave the machine rewritten".
+    """
+    return bool(name) and redact_via_context(name) != name
 
 
 async def _resolve(request: web.Request) -> tuple[str, str] | web.Response:
@@ -155,6 +174,46 @@ def _newest_unit(slot: str) -> str:
 
 async def _owner_only(request: web.Request, operation: str) -> web.Response | None:
     return await require_owner_dashboard_request(request, operation)
+
+
+def _bound_package_slug(member: str) -> str:
+    """The ``kind="dashboard"`` artifact bound to *member*, or ``""``.
+
+    :func:`~kiro_crew.artifact_store.dashboard_package.resolve_bound_slug` with this
+    route's own answer for the cases it raises on. It raises because its other caller
+    must tell "no package" from "cannot prove there is none" -- a write validated
+    against the wrong Model replaces a cell with a value of the wrong shape. THIS
+    caller is a read that draws a page, and the page it draws when the answer is empty
+    is the template instance every crewmate already has. So an unprovable answer is
+    answered the same way as an absent one: the crewmate keeps the page it has, and a
+    failed lookup costs a package page rather than showing the wrong one.
+
+    ``BindingAmbiguous`` arrives through the same ``except`` by being a subclass of
+    ``BindingLookupIncomplete``, and wants the same answer here for the same reason.
+
+    Blocking file IO: it lists the artifact library and reads each candidate. Callers
+    run it off the event loop.
+    """
+    try:
+        from kiro_crew import members as members_mod
+        from kiro_crew.artifact_store.dashboard_package import (
+            BindingLookupIncomplete,
+            resolve_bound_slug,
+        )
+
+        slug = members_mod.member_slug(member)
+        if not slug:
+            return ""
+        try:
+            return resolve_bound_slug(f"crewmate:{slug}") or ""
+        except BindingLookupIncomplete as exc:
+            # Logged, not swallowed: the remedy is a library to prune or a duplicate
+            # binding to delete, and neither is visible from the page that results.
+            logger.info("dashboard: %r's package binding is unresolved: %s", member, exc)
+            return ""
+    except Exception:
+        logger.debug("dashboard: %r's package binding could not be resolved", member, exc_info=True)
+        return ""
 
 
 async def _run(fn: Callable[[], Any]) -> Any:
@@ -277,6 +336,100 @@ async def _serve(request: web.Request, slug: str, member: str, slot: str | None)
     # The reader's UI language, as the browser resolved it. Checked against the
     # shipped catalogs in `dashboard_frame.page_locale`; anything else is English.
     locale = request.query.get("locale", "")
+    package_slug = request.query.get("dashboard", "")
+    #: A PREVIEW SHOWS THE STAGED PAGE OR NOTHING. `instance.preview_url` carries no
+    #: `dashboard=`, so filling the slug in from the crewmate's binding would serve the
+    #: LIVE package page under a panel labelled "not applied yet" -- the person then
+    #: approves a page they never saw, which is the one thing this route must not do.
+    #: It also armed that package's live page, re-pointing the push machinery mid-look.
+    #:
+    #: Checked BEFORE the lookup rather than after it, so a preview costs no library
+    #: listing and the package branch is not left one condition away from running. A
+    #: caller that NAMES a package asked for that package and still gets it; the tab
+    #: never sends both.
+    staged_only = request.query.get("preview") == "1" and not package_slug
+    if not package_slug and not staged_only:
+        # RESOLVED HERE, which is what makes the package page reachable at all: no
+        # caller knows a package's slug, so without this the route, the push and the
+        # refetch were unreachable code. Named by the crewmate's own binding, off the
+        # event loop because it lists the artifact library.
+        #
+        # THE PACKAGE LINE'S OWN LOOKUP answers this -- one implementation of "which
+        # package is bound here" for every caller that asks, so the two cannot drift.
+        package_slug = await _run(lambda: _bound_package_slug(_member))
+    if _name_unsafe(package_slug):
+        # A SLUG IS A NAME TOO, and it travels further than the others: the body carries
+        # it twice, every pushed frame carries it, and the refetch answers with it. An
+        # artifact slug is `[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?`, which forbids `_` and
+        # upper case and so cannot be a `ghp_` or an AWS key -- but it CAN be a Slack
+        # bot token (`xoxb-<digits>-<chars>`) or a GitLab PAT (`glpat-<chars>`), and
+        # both are shapes the redactor rewrites.
+        #
+        # HERE, where the slug ENTERS, rather than at each of the three places it
+        # leaves: this is the one point both sources pass through, and refusing before
+        # `_serve_package` means no package is read and no page is armed -- which also
+        # settles the refetch, since it answers from an armed page or 409s.
+        #
+        # The two sources get different answers because they are different requests.
+        if request.query.get("dashboard", ""):
+            # THE CALLER NAMED IT, so the caller is told. A code rather than a
+            # sentence about secrets, and the slug is not echoed back.
+            logger.warning("dashboard: %r named a package slug that would be redacted", slug)
+            return _bad(
+                "dashboard_slug_refused",
+                "that dashboard package cannot be served: its slug would be rewritten "
+                "on its way to a page, and the page and its pushes join on that slug",
+                status=409,
+            )
+        # NOBODY ASKED FOR IT: this slug came from the crewmate's own binding. Treated
+        # as an unresolved binding, which is the template page every crewmate has on
+        # this branch -- so a credential pasted into an artifact's NAME costs its owner
+        # the package page and never the tab. Logged, so the rename is findable.
+        logger.warning(
+            "dashboard: %r's bound package has a slug that would be redacted; serving "
+            "the template page instead",
+            slug,
+        )
+        package_slug = ""
+    if package_slug and await _run(lambda: instance.is_locked(slug)):
+        # THE PERSON'S LOCK IS A CEILING OVER THE CREWMATE, so it is read BEFORE the
+        # package branch takes the response, not after.
+        #
+        # The lock exists so a crewmate cannot change which page the tab shows. Package
+        # selection is the crewmate doing exactly that by another route: writing its own
+        # `kind="dashboard"` artifact is ordinary agent work, and this branch returns
+        # before `instance.read` below -- the only reader of the lock -- so the locked
+        # page would be replaced, and an unapplied package would replace it with the
+        # empty state. Nothing unusual has to happen for that.
+        #
+        # The lock is answered by serving the record it pinned, which is the branch
+        # below: same answer the person had before the crewmate wrote anything. A lock
+        # that pins a PACKAGE is a separate thing nothing can set today, so there is no
+        # locked package to preserve here.
+        logger.info(
+            "dashboard: %r has a bound package but its layout is locked; serving the "
+            "locked record instead",
+            slug,
+        )
+        package_slug = ""
+    if package_slug:
+        # A PAGE ITS OWNER WROTE, served from the same route and behind the same owner
+        # check as a template instance. The body keeps the shape the tab already reads
+        # -- `rendered_html` is what it mounts -- so a package page needs no second
+        # route and no second frame contract, which are the two places this surface
+        # cannot afford to get the gate wrong twice.
+        return await _serve_package(
+            request,
+            slug,
+            _member,
+            package_slug,
+            locale,
+            # WHO NAMED THE PACKAGE, which decides what an absent one answers. The
+            # caller that asked for a slug by name gets a code; a slug that came from
+            # the crewmate's own binding does not, because nobody asked -- the same
+            # split this route already makes for a slug it refuses above.
+            asked_for=bool(request.query.get("dashboard", "")),
+        )
     if request.query.get("preview") == "1":
         # The STAGED page, which no version records. Served from the same route and
         # behind the same owner check: a staged page carries this crewmate's fold
@@ -727,10 +880,14 @@ async def api_member_dashboard_lock(request: web.Request) -> web.Response:
 
 
 def register_member_dashboard_routes(app: web.Application) -> None:
-    """Register the dynamic dashboard's read routes: a crewmate's and a root session's.
+    """Register the dynamic dashboard's read routes, its layout lock and the gap refetch.
 
-    Neither path is a prefix of another route's pattern, so there is no ordering question
-    here yet. ``server.py`` duplicates the paths through its deferred binder rather than calling this function, because calling
+    Four routes: a crewmate's read, a root session's read, the person's layout lock,
+    and the member read's gap refetch. The lock and refetch paths are strict suffixes
+    of the member read path, so aiohttp's own resolver separates them by METHOD; the
+    session read's path is not a prefix of another route's pattern, so there is no
+    ordering question here either.
+    ``server.py`` duplicates the paths through its deferred binder rather than calling this function, because calling
     it would import this module at boot and the boot-path rule forbids that for an
     optional subsystem; ``test_member_dashboard_routes`` pins the two spellings against
     each other.
@@ -738,3 +895,717 @@ def register_member_dashboard_routes(app: web.Application) -> None:
     app.router.add_get("/api/members/{slug}/dashboard", api_member_dashboard)
     app.router.add_get("/api/chat/slots/{slot}/dashboard", api_session_dashboard)
     app.router.add_post("/api/members/{slug}/dashboard/lock", api_member_dashboard_lock)
+    app.router.add_post("/api/members/{slug}/dashboard/refetch", api_member_dashboard_refetch)
+
+
+#: One armed page per (crewmate, package), on the app so a reload replaces rather than
+#: stacks. Keyed by BOTH because one crewmate can be shown through two packages at once
+#: and each needs its own subscriptions and its own version counter.
+_LIVE_PAGES = "member_dashboard_live_pages"
+
+#: How many pages may be armed at once. Each one holds a bus subscription per fold its
+#: model reads, and nothing disarms a page when its tab closes -- the browser cannot
+#: say so -- so an operator who opens every crewmate's dashboard over a long-running
+#: gateway leaves every one of those subscriptions behind for its life.
+#:
+#: The least recently armed page is disarmed when the cap is passed. That costs its tab
+#: its pushes until its next read arms it again, and its next read is a refetch of the
+#: whole value set -- so the failure mode is a page that stops moving, never one that
+#: presents a stale value as the current one.
+_MAX_LIVE_PAGES: Final[int] = 32
+
+
+def _live_pages(request: web.Request) -> dict[tuple[str, str], Any]:
+    pages: dict[tuple[str, str], Any] | None = request.app.get(_LIVE_PAGES)
+    if pages is None:
+        pages = {}
+        request.app[_LIVE_PAGES] = pages
+    return pages
+
+
+def _push_frame(state: Any, slug: str, package_slug: str, frame: dict[str, Any]) -> None:
+    """Send one field frame to the owner's sockets. Called on the FOLD WORKER thread.
+
+    ``broadcast_ws_owners`` -- the same hub and the same owner-socket set every other
+    fold-driven frame goes out on, so the owner gate, the backpressure and the
+    reconnect are not re-implemented for a second channel.
+    """
+    try:
+        # THE PACKAGE IS NAMED on every frame. The socket is per connection, so a
+        # frame reaches every tab the owner has open -- and one crewmate can be shown
+        # through two different packages at once (two tabs, or a template page beside a
+        # package page). Without the id each tab applies the other's patches, and its
+        # refetch answers with the other package's read.
+        state.broadcast_ws_owners(
+            member_dashboard_fields.FIELD_FRAME,
+            {"slug": slug, "dashboard": package_slug, "read": frame},
+        )
+    except Exception:  # pragma: no cover - a failed send must not cost the folder
+        logger.debug("dashboard: a field frame for %s could not be broadcast", slug)
+
+
+def governance_session_key(slot: str) -> str:
+    """The session key governance resolves a member dashboard's profile under.
+
+    A profile is BOUND to a surface and the surface is read off this key's prefix by
+    ``sel._infer_source``, the one classifier governance delegates to. A crewmate's
+    slot is a bare ``member-*`` string, which that classifier sends to its Slack
+    fallback -- so a key built from the slot alone skips every dashboard-bound profile.
+
+    Named here because the product has no shared builder for it: the ``dashboard:``
+    prefix is spelled inline at about a dozen call sites, and a surface whose key is
+    assembled by each caller is a surface one of them will eventually spell wrong.
+    This is the dashboard handler's single spelling, and
+    ``test_dashboard_page_scripts_ceiling`` pins it by asking the CLASSIFIER what it
+    resolves to rather than by comparing it to a literal.
+    """
+    return f"dashboard:{slot}"
+
+
+@dataclasses.dataclass(frozen=True)
+class _EgressDecision:
+    """One script-grant decision, with the layer and reason that produced it.
+
+    The reason exists because this decision is AUDITED, and an audit row saying only
+    "withheld" cannot be acted on: an operator reconstructing why a crewmate's page went
+    static needs to know whether the ceiling restricts egress, a profile narrows it, or
+    neither could be read at all. The three have different remedies and only one of them
+    is a misconfiguration.
+    """
+
+    granted: bool
+    #: Which layer decided: ``policy``, ``profile``, or ``resolution`` when a read failed.
+    layer: str
+    #: Why, as a token stable enough to query a log by.
+    reason: str
+
+
+def owner_agent_egress_unrestricted(owner_agent: str = "", session_key: str = "") -> bool:
+    """Whether POLICY AND PROFILE both put NO network restriction on the owner agent.
+
+    The BOOLEAN half of :func:`_egress_decision`, which is the whole answer for every
+    caller that only mounts a page. The audited call site reads the decision itself,
+    because an audit row needs the layer and the reason as well as the verdict.
+    """
+    return _egress_decision(owner_agent, session_key).granted
+
+
+def _egress_decision(owner_agent: str = "", session_key: str = "") -> _EgressDecision:
+    """Whether POLICY AND PROFILE both put NO network restriction on the owner agent.
+
+    This decides whether an agent-written page may run script, and it enforces
+    the RFC amendment's fourth reason. That reason licenses a running page by
+    saying the owner agent already reaches the network, so a page navigating its
+    own frame opens no path the agent lacked. The reason therefore holds only
+    while the agent's egress is UNRESTRICTED.
+
+    A host allowlist is a restriction, and it is the case worth spelling out: the
+    agent may fetch ``api.github.com`` and nothing else, but a frame that runs
+    script can navigate ITSELF anywhere, so the page would reach hosts the
+    ceiling never permitted. "Some egress" is not the premise; "no restriction"
+    is. Deny-all and allowlist both withhold ``allow-scripts``.
+
+    Answers True only for an agent nothing restricts:
+
+    * no ceiling, or ``network.egress`` absent from its controls -- True, the
+      standalone default, which is every install that configures no policy;
+    * ``deny`` mode with an EMPTY deny list -- True, a ruleset that denies
+      nothing;
+    * ``allow`` mode, with any contents -- False. An allow-mode ruleset is a
+      closed set, so it restricts even when it names hosts;
+    * ``deny`` mode naming anything -- False;
+    * any other archetype governing the scope -- False. The scope is governed by
+      something this handler cannot read, and guessing "unrestricted" would hand
+      out script on a ceiling nobody here understood.
+
+    FAILS CLOSED. An exception reading the ceiling answers False, so a page runs
+    only when the ceiling was read and found to restrict nothing. The cost is
+    that a broken governance read makes dashboards static rather than scripted,
+    which is the direction that cannot open an egress path.
+    """
+    from kiro_crew.platform.governance import MODE_DENY, ScopedRuleset
+
+    try:
+        from kiro_crew.platform.governance import last_composed_ceiling
+
+        ceiling = last_composed_ceiling()
+        controls = (ceiling.controls or {}) if ceiling is not None else {}
+        # NO CEILING, OR NONE GOVERNING EGRESS, IS NOT AN ANSWER -- it only means the
+        # outer bound restricts nothing, and the profile below still decides. Returning
+        # True here was the hole: the standalone default is every install that
+        # configures no policy, and a profile can restrict egress in all of them.
+        if "network.egress" in controls:
+            control = controls["network.egress"]
+            if not isinstance(control, ScopedRuleset):
+                return _EgressDecision(False, "policy", "ceiling_egress_control_unreadable")
+            # Only one shape leaves the agent unrestricted: deny-mode denying nothing.
+            if not (control.mode == MODE_DENY and not control.deny):
+                return _EgressDecision(False, "policy", "ceiling_restricts_egress")
+    except Exception:
+        logger.debug("could not read the egress ceiling; withholding the page's scripts")
+        return _EgressDecision(False, "resolution", "ceiling_unreadable")
+    # AND THE ACTIVE PROFILE, because the ceiling is only the outer bound.
+    #
+    # A profile narrows what the ceiling permits, and the two come apart in the
+    # ordinary case: an open policy with a profile that restricts `network.egress` is
+    # an agent whose real egress is restricted, and reading the ceiling alone calls
+    # that agent unrestricted and hands its page script. The page can then navigate its
+    # own frame, carrying fold values, to a host the profile forbids.
+    #
+    # THE SAME ARCHETYPE TEST AS THE CEILING, not a permitted-host probe. Asking
+    # whether one host is permitted answers only about that host: a profile denying
+    # `github.com` permits every other name, so any probe it happens to allow reads as
+    # "unrestricted" while the restriction is still there. The question is whether the
+    # scope is RESTRICTED AT ALL, and only one ruleset shape is not.
+    #
+    # The profile is resolved for the SURFACE this page belongs to -- a profile is
+    # bound to one, and the resolver infers it from the session key. Without the key
+    # the scope resolves to "unknown", which matches no surface profile, so the
+    # intersection falls back to policy alone.
+    try:
+        from kiro_crew.platform.governance_profiles import resolve_active_scope
+
+        profile = resolve_active_scope(session_key, agent=owner_agent)
+    except Exception:
+        logger.debug("could not resolve the active profile; withholding the page's scripts")
+        return _EgressDecision(False, "resolution", "profile_unresolvable")
+    if profile is None:
+        # POLICY-ONLY, which the ceiling above has already answered. No profile is
+        # bound to this surface, so there is no second narrowing to apply.
+        return _EgressDecision(True, "policy", "no_restriction")
+    control = (getattr(profile, "controls", None) or {}).get("network.egress")
+    if control is None:
+        # This profile governs other scopes and not this one, so it narrows nothing here.
+        return _EgressDecision(True, "policy", "no_restriction")
+    if not isinstance(control, ScopedRuleset):
+        return _EgressDecision(False, "profile", "profile_egress_control_unreadable")
+    if control.mode == MODE_DENY and not control.deny:
+        return _EgressDecision(True, "profile", "no_restriction")
+    return _EgressDecision(False, "profile", "profile_restricts_egress")
+
+
+#: How many (crewmate, package) pairs the grant audit remembers its last decision for.
+#: Bounded for the reason the live-page registry is: the key is a pair an operator can
+#: create, so an unbounded map is a slow leak on a long-lived gateway. Evicting the
+#: oldest costs at most one repeated audit row, never a missed change.
+_GRANT_AUDIT_REMEMBERED: Final[int] = 256
+
+#: ``(crewmate, package) -> (version, granted, layer, reason)`` for the last decision
+#: AUDITED, which is what makes the audit a record of decisions rather than of reads.
+_grant_audited: dict[tuple[str, str], tuple[int, bool, str, str]] = {}
+
+
+def _audit_page_script_grant(
+    *,
+    member: str,
+    package_slug: str,
+    version: int,
+    session_key: str,
+    decision: _EgressDecision,
+) -> None:
+    """Record ONE script-grant decision on the security event log; never raise.
+
+    THIS IS AN AUTHORIZATION DECISION, which is why it is audited at all: it decides
+    whether a page a crewmate wrote may run script against that crewmate's own fold
+    values, and the repository's backend security controls require a decision of that
+    kind to leave a record. Both directions, because "which of my crewmates' pages
+    ever ran script" is the question an operator reconstructs afterwards and a
+    withheld-only log cannot answer it.
+
+    DEDUPED ON ``(crewmate, package, version, decision)``. The tab polls on a timer and
+    refetches on two WS frames, so one open dashboard re-decides this every few minutes
+    with the same answer; emitting per read would turn an authorization log into a
+    page-view log and push the rows that matter out of any practical retention window.
+    A row is written when any part of that tuple changes -- a new applied version, or a
+    profile edit that flips the verdict -- which is exactly when there is something new
+    to record.
+
+    BEST EFFORT. ``log_governance_decision`` without ``critical`` enqueues to the
+    background writer, which swallows persistence failures; everything here is inside
+    one ``except`` besides. A page's grant is decided by policy and profile and must
+    not change because an audit write failed, and the caller has already computed it:
+    this function cannot reach the value it records. Redaction is the writer's own --
+    the shared helper applies ``redact_via_context`` to ``operation``, ``item`` and
+    ``reason`` before it logs, the same pass every other governance row gets.
+    """
+    try:
+        key = (member, package_slug)
+        current = (version, decision.granted, decision.layer, decision.reason)
+        if _grant_audited.get(key) == current:
+            return
+        if key not in _grant_audited and len(_grant_audited) >= _GRANT_AUDIT_REMEMBERED:
+            _grant_audited.pop(next(iter(_grant_audited)), None)
+        _grant_audited[key] = current
+
+        from kiro_crew import sel as _sel_mod
+
+        _sel_mod.sel().log_governance_decision(
+            session_key=session_key,
+            tool_name=f"dashboard_package:{package_slug}",
+            scope="network.egress",
+            item=f"{member}/{package_slug}@{version}",
+            # The vocabulary `log_governance_decision` pins in its own docstring, and
+            # the one the canonical governance helper emits. A local spelling would
+            # make these rows the ones a query for allowed decisions misses.
+            outcome="allowed" if decision.granted else "denied",
+            rule="dashboard_page_scripts",
+            layer=decision.layer,
+            reason=decision.reason,
+        )
+    except Exception:
+        logger.debug(
+            "dashboard page script-grant audit failed for %r/%r",
+            member,
+            package_slug,
+            exc_info=True,
+        )
+
+
+#: The lifecycle event types whose actor is decided by the AUTH PATH, out of
+#: ``artifact_store.records.ALLOWED_EVENT_TYPES``. Both come from
+#: :meth:`~kiro_crew.artifacts.ArtifactStore.update`, where the actor is
+#: ``"agent" if is_mcp else "user"`` -- read off the request's headers, reachable from
+#: no field a caller sends.
+#:
+#: THE OTHER THREE ARE EXCLUDED, each for its own reason, and the reasons are not
+#: interchangeable:
+#:
+#: * ``referenced`` and ``comment`` name a version they did not create. The chat panel
+#:   posts the first every time a person opens an artifact, the second follows a comment
+#:   action, and both are stamped with the record's CURRENT version -- so counting them
+#:   reads a glance as an approval of whatever the agent wrote last.
+#: * ``created`` takes its actor from ``create``'s ``source``, which the request body
+#:   may supply -- and that turns out to be no way in at all. ``source`` is validated
+#:   against ``artifact_store.rules.ALLOWED_SOURCES``, which has no ``user`` member, so
+#:   a ``created`` event's actor is one of those labels or ``agent`` and never the
+#:   person. Listing it would add a rule that matches nothing while telling the next
+#:   reader that creating a page approves it.
+#:
+#: AN ALLOWLIST, never a denylist of annotations: a lifecycle type the store gains
+#: later is excluded until somebody decides otherwise, which is the safe default and the
+#: opposite of how ``referenced`` came to count. ``TestTheApprovingTypeSetIsAnAllowlist``
+#: pins all three premises -- that every name here is a type the store emits, that every
+#: type it emits is either here or excluded for a stated reason, and that
+#: ``ALLOWED_SOURCES`` still has no ``user`` -- so each one fails where its reason is
+#: written rather than silently widening this set.
+_VERSION_CUTTING_EVENTS: Final[frozenset[str]] = frozenset({"edited", "reverted"})
+
+
+def _record_identity(art: Any) -> tuple[str, str]:
+    """What makes a record THIS record, for comparing two reads of one slug.
+
+    A slug is reusable and a version number restarts at 1 for a recreated record, so
+    neither tells two records apart. ``created_at`` is minted once when the record is
+    created and never rewritten, and the slug is carried with it so a comparison cannot
+    accidentally pass between two records that share a timestamp.
+
+    An absent ``created_at`` answers the empty string, which compares EQUAL to another
+    absent one and UNEQUAL to any real timestamp -- so a store that does not stamp
+    records is not turned into a permanent refusal, while a record that has one is
+    never matched against a record that does not.
+    """
+    return (
+        str(getattr(art, "slug", "") or ""),
+        str(getattr(art, "created_at", "") or ""),
+    )
+
+
+def applied_package_version(loaded: Any) -> int:
+    """The newest version of this package a PERSON cut, or ``0`` when there is none.
+
+    THE APPLIED MARKER, and it is not a new field. A version exists only because
+    :meth:`~kiro_crew.artifacts.ArtifactStore.update` was called with ``snapshot=True``,
+    and every such cut appends a lifecycle event carrying ``by=<actor>``. That actor is
+    derived from HOW the request authenticated -- ``actor = "agent" if is_mcp else
+    "user"``, where ``is_mcp`` is the presence of the ``X-Internal-Secret`` header the
+    MCP loopback helpers attach -- so it is not a value a caller spells for itself.
+
+    BOTH HALVES ARE REQUIRED, and each answers a different way in.
+
+    ``by == "user"`` is the half an agent cannot forge: the actor comes from the auth
+    path, so neither a body field nor an MCP tool call produces it. On its own it is not
+    enough, because ``by`` is stamped on EVERY lifecycle event and two of them are things
+    a person does while merely looking -- ``referenced``, which the chat panel posts each
+    time a person opens an artifact in a slot, and ``comment``. Both are stamped with the
+    record's CURRENT version, so counting them reads ordinary reading as approval and
+    serves the agent's latest draft.
+
+    So the type must be one whose actor the auth path decided -- see
+    :data:`_VERSION_CUTTING_EVENTS`, which is ``edited`` and ``reverted``. An annotation
+    names a version it did not create, and a ``created`` event's actor is one of the
+    store's ``source`` labels, none of which is a person.
+
+    The type alone would be the wrong half to keep: ``event_type`` is settable from the
+    request body, so an agent can spell its own save ``edited``. It still arrives with
+    ``by="agent"``.
+
+    WHY THIS IS THE QUESTION. Serving the record's CURRENT content serves whatever was
+    written last, and an agent writing over MCP cuts a version on every save with no
+    person involved -- so "this package has versions" says nothing about whether anyone
+    approved one. The newest user-actor version is the newest page a person's own action
+    put there.
+
+    WHAT THIS DOES NOT CLAIM. The actor is unforgeable from the REQUEST -- neither a
+    body field nor an MCP tool call can produce ``by="user"``. It is not a proof of
+    approval against a writer that already runs as this OS user: such a writer can read
+    the dashboard's own credential off disk and call the API as the browser, exactly as
+    it could rewrite the stored bytes or this module. That residual is the one named at
+    the stored-bytes read below, bounded the same way -- the page runs with no network on
+    an opaque origin and is sent only the fields its model declares. What this closes is
+    the write path every agent and app actually has.
+
+    A version whose event has been evicted (the log is FIFO-capped) is not counted, and
+    a version whose bytes were pruned fails the read that follows. Both answer "nothing
+    applied", which is the fail-closed direction: an unprovable approval is not one.
+    """
+    best = 0
+    for event in getattr(loaded, "events", None) or []:
+        if not isinstance(event, Mapping):
+            continue
+        if str(event.get("by") or "") != "user":
+            continue
+        if str(event.get("type") or "") not in _VERSION_CUTTING_EVENTS:
+            continue
+        version = event.get("version")
+        # `bool` is an `int`, and `True` would compare as version 1.
+        if isinstance(version, bool) or not isinstance(version, int):
+            continue
+        if version > best:
+            best = version
+    return best
+
+
+def _nothing_to_serve(slug: str, package_slug: str) -> web.Response:
+    """A BOUND PACKAGE WITH NOTHING TO SERVE RENDERS NOTHING AT ALL.
+
+    ``rfc-crewmate-dynamic-dashboard.md``'s decision 3 puts it in those words: naming a
+    package and publishing one are different acts. The binding
+    answers WHICH package a reader would see; whether there is yet anything to see is a
+    separate question, and when the answer is no, the frame draws its empty state.
+
+    Three other answers were reachable and all three are wrong. A CODE is wrong because
+    nobody asked a question -- this slug came from the crewmate's own binding, and the
+    tab would draw the refusal as a failure the reader could clear. The DEFAULT
+    TEMPLATE is worse: the no-package path serves the shipped default so that every
+    crewmate has a page, and reaching it here draws a page that is not this crewmate's
+    under this crewmate's name, labelled ``instance_version`` 0 like an ordinary fresh
+    crewmate. And the LAST PAGE THAT LOADED would say the record still has one.
+
+    ``instance_version`` 0 with ``state: empty`` is the shape the tab already reads for
+    a crewmate that adopted nothing, so this needs no new client branch. The reason is
+    carried in ``state_reason``, which is where this body says things a reader of one
+    response could not otherwise work out.
+    """
+    logger.info(
+        "dashboard: %r is bound to package %r, which has no version to serve", slug, package_slug
+    )
+    return web.json_response(
+        {
+            "instance_version": 0,
+            # NOT the package's id. A template id names a page the body carries, and
+            # this body carries none; filling it in would make a reader look for one.
+            "template": {"id": "", "version": 0},
+            "dashboard": package_slug,
+            "html": "",
+            "manifest": {},
+            "state": instance.STATE_EMPTY,
+            "state_reason": "the bound dashboard package has no applied version",
+            "fields": [],
+            "locale": "",
+        }
+    )
+
+
+async def _serve_package(
+    request: web.Request,
+    slug: str,
+    member: str,
+    package_slug: str,
+    locale: str,
+    *,
+    asked_for: bool = True,
+) -> web.Response:
+    """Serve the ``kind="dashboard"`` artifact *package_slug* as this crewmate's page.
+
+    *asked_for* is whether a CALLER named this slug. False means it came from the
+    crewmate's own binding, and it changes one answer: a package with nothing to serve
+    renders the frame's empty state rather than a code, because nobody asked a question
+    for the code to answer. See :func:`_nothing_to_serve`.
+
+    THE BINDING IS CHECKED, not looked up. The tab names the package it is opening and
+    this asks whether that package is THIS crewmate's -- which is the question that
+    matters, and the one a scan of the artifact library would answer less directly. A
+    package bound elsewhere is refused rather than rendered, because a page carries the
+    binding's own fold values and rendering it here would show one crewmate's work
+    under another's name.
+
+    Arming the live page is part of serving it: the first paint and every later patch
+    come from one :class:`~kiro_crew.dashboard.handlers.member_dashboard_fields.LivePage`,
+    so the version the body carries is the one the first patch is checked against.
+    """
+    from kiro_crew.artifact_store.dashboard_package import (
+        DASHBOARD_KIND,
+        binding_refusal,
+        parse_package,
+        subscribed_fields,
+    )
+    from kiro_crew.artifacts import ArtifactError, get_default_store
+
+    try:
+        loaded = await _run(lambda: get_default_store().get(package_slug))
+    except ArtifactError:
+        if not asked_for:
+            return _nothing_to_serve(slug, package_slug)
+        return _bad("dashboard_not_found", "no dashboard package at that slug", status=404)
+    except OSError:
+        logger.warning("dashboard: package %r could not be read", package_slug)
+        return _bad("dashboard_failed", "the dashboard package could not be read", status=500)
+    # THE RECORD'S OWN KIND, checked before anything is parsed. Content alone is not
+    # enough: a LINKED artifact's bytes come from a file on disk, so its content can be
+    # changed without passing the artifact write gate at all -- and parsing whatever is
+    # there would arm a page nobody authorized. Only a stored `kind="dashboard"`
+    # artifact that owns its own bytes reaches the parse below.
+    if str(getattr(loaded, "kind", "")) != DASHBOARD_KIND:
+        return _bad(
+            "dashboard_not_a_package",
+            "that artifact is not a dashboard package",
+            status=409,
+        )
+    if str(getattr(loaded, "source_path", "") or "") and not bool(
+        getattr(loaded, "source_copy_only", False)
+    ):
+        # A live pointer: the artifact serves a file's current bytes, which nothing in
+        # the artifact API gates. Refused rather than rendered, because the page RUNS.
+        return _bad(
+            "dashboard_live_source",
+            "a dashboard package cannot be served from a linked file: its bytes would "
+            "bypass the write gate that decides whose page this is",
+            status=409,
+        )
+    # THE RESIDUAL, named where it bites. These are the record's OWN bytes, and the
+    # store rotates a random `content_token` per write rather than hashing them, so a
+    # write made straight into the stored file -- around the artifact API and so around
+    # the owner gate -- is not detectable at this line. Nor can a check here close it: a
+    # writer reaching that file is the same OS user as this process, so any digest or key
+    # this handler compared against sits in a file that writer can rewrite too, and it
+    # could edit this module instead. What bounds the damage is the frame rather than the
+    # gate -- the page runs with no network on an opaque origin and is sent only the
+    # fields the model declares, so tampered markup can mislead the owner reading it and
+    # reach nothing beyond that tab. The gate's own job is the write that arrives over
+    # the API, which is the one every agent and app actually has.
+    # THE APPLIED VERSION, and the bytes come from IT rather than from the record's
+    # current content. `get(slug)` with no version answers whatever was written last,
+    # and an agent writing over MCP cuts a version on every save, so the current bytes
+    # are the agent's latest draft and not a page anyone approved. See
+    # `applied_package_version` for why the marker is the event's actor.
+    version = applied_package_version(loaded)
+    if version <= 0:
+        # NOTHING APPLIED, so nothing renders -- for a caller that named the slug too.
+        # This is not "no such package": the package is here and its owner has written
+        # pages into it. There is just no page a person has said yes to, and the one
+        # honest thing to draw for that is nothing.
+        return _nothing_to_serve(slug, package_slug)
+    try:
+        applied = await _run(lambda: get_default_store().get(package_slug, version=version))
+        # THE SAME RECORD, not merely the same slug and number.
+        #
+        # The approval was read off `loaded` and the bytes are fetched by slug and
+        # version in a second call, so a delete-and-recreate in between answers with a
+        # DIFFERENT artifact's version N -- and that one's v2 is whatever its agent
+        # wrote, served under an approval a person gave to the record that is gone.
+        # A slug is reusable and a version number restarts at 1, so neither identifies
+        # the record; `created_at` is minted once per record and does.
+        if _record_identity(applied) != _record_identity(loaded):
+            logger.warning(
+                "dashboard: package %r was replaced between its approval read and its "
+                "versioned read; serving nothing",
+                package_slug,
+            )
+            return _nothing_to_serve(slug, package_slug)
+    except (ArtifactError, OSError):
+        # The approval is recorded and its bytes are gone -- a pruned version, or a
+        # history this process cannot read. Fail closed: an approval whose page cannot
+        # be produced is not a page to serve.
+        logger.warning(
+            "dashboard: package %r has an applied version %d whose bytes could not be read",
+            package_slug,
+            version,
+        )
+        return _nothing_to_serve(slug, package_slug)
+    try:
+        package = await _run(lambda: parse_package(applied.content or ""))
+    except Exception as exc:
+        # THE VALIDATOR QUOTES THE VALUE IT REFUSED, and this sentence is an HTTP body.
+        #
+        # A refusal names the offending key and its value so the author can fix the
+        # page -- and a value in a stored package can be credential-shaped, so the
+        # quoted text goes through the redactor before it leaves the process. The same
+        # rule the declared-name check, the `view.html` validator and `binding_refusal`
+        # follow: every name this surface says out loud is redacted first.
+        from kiro_crew.platform.context import redact_via_context
+
+        return _bad(
+            "dashboard_refused",
+            f"the dashboard package does not load: {redact_via_context(str(exc))}",
+            status=409,
+        )
+    # OFF THE LOOP: `binding_refusal` resolves the caller's slug through the roster,
+    # which loads the config from disk.
+    refused = await _run(lambda: binding_refusal(package.get("bound_to"), crew=member))
+    if refused:
+        return _bad("dashboard_not_bound", refused, status=403)
+    state = request.app["state"]
+    pages = _live_pages(request)
+    # KEYED BY (crewmate, package), because one crewmate can have two packages open and
+    # each needs its own subscriptions and its own version counter.
+    key = (slug, package_slug)
+    previous = pages.pop(key, None)
+    if previous is not None:
+        # DISARMED FIRST. A reload or a layout change would otherwise leave the old
+        # page's subscriptions on the bus, pushing frames computed under a layout
+        # nothing is rendering.
+        await _run(previous.disarm)
+    # BOTH RESOLVERS ARE FILE IO and neither may run here: `_dashboard_slot` loads the
+    # config and `_write_session` walks the slot's unit succession, reading each unit's
+    # opening entry. On the event loop that blocks every other session's chat and the
+    # heartbeat for as long as the walk takes.
+    slot, session_unit = await _run(
+        lambda: (_dashboard_slot(member, slug), _write_session(slug, member))
+    )
+    page = member_dashboard_fields.LivePage(
+        slug,
+        slot,
+        package,
+        lambda frame: _push_frame(state, slug, package_slug, frame),
+        session_unit=session_unit,
+        layout_version=version,
+        # The reader's own UI language, so a patch describes the same read the first
+        # paint did. Without it every frame carries the default and a non-English
+        # reader is handed an English page on every push.
+        locale=locale,
+        # THE SAME masking and redaction pass the template path applies, handed in
+        # rather than re-implemented: this is the one place a package's values are
+        # produced, so a value that did not cross it cannot reach a browser.
+        redact=_page_safe,
+    )
+    read = await _run(page.arm)
+    # RE-CHECKED AFTER ARMING, because arming awaits: two GETs for one crewmate (two
+    # tabs, or both tabs refetching after a reconnect) each pop before either assigns,
+    # so without this the first armed page is replaced without ever being disarmed --
+    # and it stays subscribed to the bus for the life of the gateway, pushing frames
+    # from its own version counter that the open page can only read as gaps.
+    raced = pages.get(key)
+    if raced is not None and raced is not page:
+        await _run(raced.disarm)
+    pages[key] = page
+    # THE CAP, applied after the assignment so the page this request serves is never
+    # the one evicted. A dict iterates in insertion order and every serve pops its key
+    # before re-inserting it, so the first key is the least recently ARMED one -- the
+    # order the eviction wants, with no second structure to keep in step with it.
+    while len(pages) > _MAX_LIVE_PAGES:
+        oldest = next(iter(pages))
+        if oldest == key:
+            break
+        stale = pages.pop(oldest)
+        await _run(stale.disarm)
+    # SCRUBBED BEFORE COMPOSING, with the same pass the `html` field below gets. The
+    # composed document is the half that RUNS, so scrubbing only the raw field left a
+    # credential pasted into the page's own markup in the response one key away.
+    safe_page = dict(package)
+    safe_view = dict(package.get("view") or {})
+    safe_view["html"] = _template_text_safe(safe_view.get("html") or "")
+    safe_page["view"] = safe_view
+    try:
+        # DECIDED BEFORE THE PAGE IS COMPOSED, because it changes what is composed.
+        # OFF THE EVENT LOOP. Resolving the profile makes the store check its
+        # directory's freshness -- an enumerate plus a stat per file, and a reload of
+        # any that moved -- so running it here pauses every other session's chat and
+        # the heartbeat for as long as that filesystem work takes. The two resolvers
+        # above are offloaded for the same reason.
+        # THE CANONICAL DASHBOARD KEY, not the bare slot. The surface classifier reads
+        # the key's PREFIX: `dashboard:<slot>` is this surface, and a bare `member-*`
+        # falls through to the Slack fallback -- so a dashboard-bound egress profile is
+        # skipped and the page runs script the operator restricted.
+        grant_key = governance_session_key(slot)
+        decision = await _run(lambda: _egress_decision(member, grant_key))
+        scripts = decision.granted
+        # AUDITED HERE RATHER THAN INSIDE THE DECISION, because the row names the page
+        # the decision was made for and only this frame knows the package and version.
+        # After `scripts` is bound, so the grant is already settled when the audit runs.
+        _audit_page_script_grant(
+            member=member,
+            package_slug=package_slug,
+            version=version,
+            session_key=grant_key,
+            decision=decision,
+        )
+        html = member_dashboard_fields.render_package_page(safe_page, read, scripts=scripts)
+    except Exception as exc:
+        await _run(page.disarm)
+        pages.pop(key, None)
+        # REDACTED for the reason the parse refusal above gives: the frame's own
+        # validator quotes the markup or the binding name it refused, and a stored
+        # package's values are not re-validated by whoever wrote them.
+        from kiro_crew.platform.context import redact_via_context
+
+        return _bad(
+            "dashboard_refused",
+            f"the page cannot be framed: {redact_via_context(str(exc))}",
+            status=409,
+        )
+    return web.json_response(
+        {
+            "instance_version": version,
+            "template": {"id": package_slug, "version": version},
+            # NAMED for the tab: it carries this back on a refetch and drops any frame
+            # that belongs to a different package.
+            "dashboard": package_slug,
+            # The package's own page, kept beside the composed one exactly as the
+            # template path keeps its stored copy, and scrubbed by the same pass.
+            "html": safe_view["html"],
+            "manifest": _manifest_text_safe(package.get("model") or {}),
+            "state": instance.STATE_LIVE,
+            "rendered_html": html,
+            # THE ALLOWLIST, named in the body so a reader of one response can see
+            # exactly which fields this page can ever be sent.
+            "fields": sorted(subscribed_fields(package)),
+            # Whether this page may run script, decided by POLICY AND the owner's
+            # active PROFILE rather than by the page. False withholds
+            # `allow-scripts` in the host's frame; see
+            # owner_agent_egress_unrestricted for why that follows from the RFC
+            # amendment's fourth reason, and why the profile has to be read too.
+            "scripts": scripts,
+            "locale": read.get("locale", locale) if isinstance(read, dict) else locale,
+        }
+    )
+
+
+async def api_member_dashboard_refetch(request: web.Request) -> web.Response:
+    """POST /api/members/{slug}/dashboard/refetch -- the whole read, after a version gap.
+
+    The host's half of the frame's own gap rule: a page that cannot place a patch in
+    order asks for a full read rather than applying one out of order, and this answers
+    it. The tree-keyed folds are re-read here too, which is the other half of why a
+    refetch exists -- nothing can push a tree, so this is the only moment its value
+    moves.
+
+    Owner-gated like the read it belongs to. A page nothing has armed answers 409: the
+    remedy is to re-read the dashboard, which arms one.
+    """
+    resolved = await _resolve(request)
+    if isinstance(resolved, web.Response):
+        return resolved
+    owner_denied = await _owner_only(request, "members.dashboard")
+    if owner_denied is not None:
+        return owner_denied
+    slug, _member = resolved
+    # The PACKAGE is named, for the same reason a frame names it: a crewmate can have
+    # two open, and answering the wrong one's read would replace a page's values with
+    # another page's wholesale.
+    package_slug = request.query.get("dashboard", "")
+    if not package_slug:
+        return _bad("missing_dashboard", "name the dashboard package to refetch")
+    page = _live_pages(request).get((slug, package_slug))
+    if page is None:
+        return _bad("no_live_page", "no dashboard page is armed for this package", status=409)
+    return web.json_response({"dashboard": package_slug, "read": await _run(page.refetch)})
