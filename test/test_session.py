@@ -7022,13 +7022,16 @@ class TestParentEndCancelsItsChildren:
         on_store_probe=None,
         fenced_children: dict[str, bool] | None = None,
         pending_work: dict[str, bool] | None = None,
+        unfinished_reports: dict[str, bool] | None = None,
     ):
         """A handler shaped like ``SubagentManager``'s teardown halves.
 
         ``pending_work`` drives both halves of the manager's pending-work signal
         (``has_pending_work_for_async`` and ``has_in_memory_pending_work_for``):
         work the live/queued probe cannot see, such as a finished child whose
-        terminal report is not yet registered. Default: none.
+        terminal report is not yet registered. ``unfinished_reports`` drives
+        ``has_unfinished_report_for``: a registered report still delivering after
+        its run's task ended. Default: none.
 
         Records the keys it was asked to snapshot and the id tuples it was asked
         to cancel, so a test can tell "asked about the right parent" apart from
@@ -7053,6 +7056,7 @@ class TestParentEndCancelsItsChildren:
         owned_store = store_children if store_children is not None else {}
         owned_fenced = fenced_children if fenced_children is not None else {}
         owed = pending_work if pending_work is not None else {}
+        reporting = unfinished_reports if unfinished_reports is not None else {}
 
         class _Handler:
             def has_in_memory_pending_work_for(self, parent_session_key, *, exclude_id=""):
@@ -7060,6 +7064,9 @@ class TestParentEndCancelsItsChildren:
 
             async def has_pending_work_for_async(self, parent_session_key: str) -> bool:
                 return bool(owed.get(parent_session_key, False))
+
+            def has_unfinished_report_for(self, parent_session_key: str) -> bool:
+                return bool(reporting.get(parent_session_key, False))
 
             def snapshot_teardown_children(self, parent_session_key: str) -> tuple[str, ...]:
                 snapshotted.append(parent_session_key)
@@ -7296,13 +7303,21 @@ class TestParentEndCancelsItsChildren:
 
     @pytest.mark.parametrize(
         "owes",
-        ["pending_work", "store_children", "fenced_children", "store_read_raises"],
+        [
+            "pending_work",
+            "unfinished_reports",
+            "store_children",
+            "fenced_children",
+            "store_read_raises",
+        ],
     )
     @pytest.mark.asyncio
     async def test_remove_if_unclaimed_keeps_a_parent_that_owes_work(self, cfg, owes):
         """Work the live-child probe cannot see still keeps the parent.
 
         ``pending_work``: a finished child whose report is not registered yet.
+        ``unfinished_reports``: a registered report still delivering after its
+        run's task ended (a reaped run's report waits across the reap's awaits).
         ``store_children``: a row only the task store holds. ``fenced_children``:
         a child admitted while the read ran. ``store_read_raises``: an unreadable
         store is read as attached, never as childless.
@@ -7310,6 +7325,7 @@ class TestParentEndCancelsItsChildren:
         key = "dashboard:chat-9"
         kwargs: dict = {
             "pending_work": {key: True},
+            "unfinished_reports": {key: True},
             "store_children": {key: True},
             "fenced_children": {key: True},
             "store_read_raises": True,

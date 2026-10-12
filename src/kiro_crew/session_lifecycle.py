@@ -525,6 +525,8 @@ class _ChildTeardownHandler(Protocol):
 
     async def has_pending_work_for_async(self, parent_session_key: str) -> bool: ...
 
+    def has_unfinished_report_for(self, parent_session_key: str) -> bool: ...
+
     async def has_pending_store_children(self, parent_session_key: str) -> bool: ...
 
     def open_teardown_fence(self, parent_session_key: str) -> "AbstractSet[str] | None": ...
@@ -2743,7 +2745,10 @@ class SessionLifecycleService:
         the off-loop read asks the manager's single pending-work signal
         (``has_pending_work_for_async``) plus the fence-aware store read, and the
         commit re-asks the in-memory half under the lock before promoting the
-        fence. Any child, a failed read, or a pending injection keeps the parent.
+        fence. A report still running for a child whose task is gone
+        (``has_unfinished_report_for``) is asked at both points, because the
+        pending-work signal stops seeing a run once its task ends. Any child, an
+        unfinished report, a failed read, or a pending injection keeps the parent.
         """
         owner = self._owner
         constants = self._deps.constants()
@@ -2763,9 +2768,11 @@ class SessionLifecycleService:
         try:
             if handler is not None:
                 try:
-                    if await handler.has_pending_work_for_async(
-                        key
-                    ) or await self._parent_has_sparable_child(key):
+                    if (
+                        handler.has_unfinished_report_for(key)
+                        or await handler.has_pending_work_for_async(key)
+                        or await self._parent_has_sparable_child(key)
+                    ):
                         return False
                 except Exception:
                     self._deps.logger.warning(
@@ -2783,9 +2790,11 @@ class SessionLifecycleService:
                 ):
                     return False
                 if handler is not None:
-                    if handler.has_live_or_queued_children(
-                        key
-                    ) or handler.has_in_memory_pending_work_for(key):
+                    if (
+                        handler.has_live_or_queued_children(key)
+                        or handler.has_in_memory_pending_work_for(key)
+                        or handler.has_unfinished_report_for(key)
+                    ):
                         return False
                     if fence is not None and not handler.commit_identity_sweep_retire(key, fence):
                         return False

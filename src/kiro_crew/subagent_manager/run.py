@@ -1448,6 +1448,23 @@ class RunEventCoordinator(ManagerComponent):
                 return True
         return False
 
+    def has_unfinished_report_for_impl(self, parent_session_key: str) -> bool:
+        """Whether a terminal report owned by *parent_session_key* is still running.
+
+        The span after :meth:`_has_live_parent_run_task` goes false: the run's
+        task is gone, and its report sits in ``_report_owners`` until delivery
+        resolves -- for a reaped run, across the reap's reset and kill awaits. A
+        parent teardown in that span marks the child teardown-cancelled and the
+        report skips ``_on_done``, so a caller deciding whether a parent may be
+        torn down must count it. Synchronous, in-memory, loop-safe.
+        """
+        if not parent_session_key:
+            return False
+        return any(
+            owner.parent_session_key == parent_session_key and not task.done()
+            for task, owner in self._manager._report_owners.items()
+        )
+
     def _has_live_parent_followup_watcher(self, parent_session_key: str) -> bool:
         """Whether a live follow-up watcher still owns work for this parent."""
         parents = getattr(self._manager, "_followup_watcher_parents", {})

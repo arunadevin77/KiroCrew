@@ -6229,6 +6229,9 @@ class SubagentManager:
             parent_session_key, exclude_id=exclude_id
         )
 
+    def has_unfinished_report_for(self, parent_session_key: str) -> bool:
+        return self._run_events.has_unfinished_report_for_impl(parent_session_key)
+
     async def queued_count_or_none_async(self, parent_session_key: str) -> int | None:
         return await self._run_events.queued_count_or_none_async_impl(parent_session_key)
 

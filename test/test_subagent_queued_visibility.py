@@ -389,6 +389,36 @@ def test_in_memory_pending_work_is_the_arms_whole_view() -> None:
         loop.close()
 
 
+@pytest.mark.usefixtures("close_subagent_managers")
+def test_an_unfinished_report_is_owed_after_its_run_task_ends() -> None:
+    """A report in ``_report_owners`` counts for its own parent until it is done,
+    even once the run's task is gone and the pending-work signal does not see it."""
+    from kiro_crew.subagent import SubagentInfo
+
+    loop = asyncio.new_event_loop()
+    try:
+        mgr = SubagentManager(sessions=mock_sessions(), ctx_builder=mock_ctx())
+        parent = "dash:report"
+        assert mgr.has_unfinished_report_for(parent) is False
+        assert mgr.has_unfinished_report_for("") is False
+
+        child = SubagentInfo(id="c1", task="t", parent_session_key=parent)
+        child.done = True
+        mgr._agents[child.id] = child
+        report = loop.create_future()
+        mgr._report_owners[report] = child  # type: ignore[index]
+
+        assert mgr.has_in_memory_pending_work_for(parent) is False
+        assert mgr.has_unfinished_report_for(parent) is True
+        assert mgr.has_unfinished_report_for("dash:other") is False
+
+        report.set_result(None)
+        assert mgr.has_unfinished_report_for(parent) is False
+    finally:
+        mgr._report_owners.clear()
+        loop.close()
+
+
 # ── the status and list routes ───────────────────────────────────────────────
 
 
@@ -636,6 +666,7 @@ def test_no_child_probe_spells_a_slots_session_key_by_hand() -> None:
         "has_pending_work_for",
         "has_pending_work_for_async",
         "has_in_memory_pending_work_for",
+        "has_unfinished_report_for",
     }
     src = Path(__file__).resolve().parents[1] / "src" / "kiro_crew"
     offenders: list[str] = []
