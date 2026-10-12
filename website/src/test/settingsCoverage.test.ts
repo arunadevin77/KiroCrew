@@ -253,8 +253,8 @@ const WAIVED_BARE_CONTROLS: Record<string, { counts: BareCounts; reason: string 
       'primitive (manual: notifications.volume)',
   },
   'PortabilityTab.tsx': {
-    counts: { input: 4, SimpleSelect: 1 },
-    reason: 'backup-restore form: the export\'s include-chat-history and memory-only boxes, the export zip file picker, the import\'s memory-only box and the merge/replace mode for that one import — per-export and per-import arguments, not persistent settings',
+    counts: { input: 6, SimpleSelect: 1 },
+    reason: 'backup-restore form: the export\'s include-chat-history, include-agent-templates and memory-only boxes, the export zip file picker, the import\'s memory-only box, the import preview\'s per-template install box (one control rendered once per bundled template) and the merge/replace mode for that one import — per-export and per-import arguments, not persistent settings',
   },
   'RemoteCrewPanel.tsx': {
     counts: { input: 7, Toggle: 1 },

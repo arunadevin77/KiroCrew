@@ -6651,7 +6651,20 @@
         "archive_has_no_chats": "This archive has no chats. To bring chats, export again with Include chat history ticked.",
         "export_chats_skipped_size": "Older chats left out because they didn't fit in this archive: {{chats}}.",
         "import_chats_result": "Chats added: {{added}}. Already on this install: {{existing}}.",
-        "import_chats_withheld": "Chats not imported because they are Incognito, Temporary or unreadable: {{withheld}}."
+        "import_chats_withheld": "Chats not imported because they are Incognito, Temporary or unreadable: {{withheld}}.",
+        "include_agent_templates": "Include agent templates",
+        "include_agent_templates_hint": "Adds the agent templates your crews use, so the crews work on the other machine. Keys and passwords in their tool settings (environment values, headers, sign-in secrets) are blanked out, so fill them in after you import; anything inside a command or web address is copied as is.",
+        "archive_agent_templates": "Agent templates in this file. Tick the ones to add here.",
+        "archive_agent_template_exists": "Already installed",
+        "import_agent_templates_installed": "Installed agent templates: {{names}}",
+        "import_agent_templates_skipped": "These agent templates were not installed: {{names}}",
+        "agent_template_skip_exists": "already installed",
+        "agent_template_skip_invalid": "unreadable in the archive",
+        "agent_template_skip_not_in_archive": "not in this archive",
+        "agent_template_skip_unwritable": "could not be written",
+        "agent_template_skip_over_limit": "past the archive limit",
+        "archive_agent_templates_more": "Templates past the archive limit, not offered: {{templates}}",
+        "include_agent_templates_memory_hint": "A memory export never carries agent templates."
       },
       "usageTab": {
         "credits": "Credits",

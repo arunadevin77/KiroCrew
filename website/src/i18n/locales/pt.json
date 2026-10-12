@@ -14253,7 +14253,20 @@
         "archive_memory_only": "Este arquivo contém apenas memória, então é importado com Mesclar.",
         "download_memory_only_description": "Baixe apenas a memória como arquivo zip. Configurações, tarefas cron, skills, outros arquivos do espaço de trabalho e chats ficam de fora.",
         "download_memory_export_zip": "Baixar exportação da memória (.zip)",
-        "export_memory_title": "Exportar memória"
+        "export_memory_title": "Exportar memória",
+        "include_agent_templates": "Incluir modelos de agente",
+        "include_agent_templates_hint": "Adiciona os modelos de agente que suas equipes usam, para que elas funcionem na outra máquina. Chaves e senhas nas configurações das ferramentas (valores de ambiente, cabeçalhos, segredos de login) ficam em branco, então preencha-as depois de importar; o que estiver dentro de um comando ou endereço web é copiado como está.",
+        "archive_agent_templates": "Modelos de agente deste arquivo. Marque os que deseja adicionar aqui.",
+        "archive_agent_template_exists": "Já instalado",
+        "import_agent_templates_installed": "Modelos de agente instalados: {{names}}",
+        "import_agent_templates_skipped": "Estes modelos de agente não foram instalados: {{names}}",
+        "agent_template_skip_exists": "já instalado",
+        "agent_template_skip_invalid": "ilegível no arquivo",
+        "agent_template_skip_not_in_archive": "não está neste arquivo",
+        "agent_template_skip_unwritable": "não foi possível gravar",
+        "agent_template_skip_over_limit": "acima do limite do arquivo",
+        "archive_agent_templates_more": "Modelos acima do limite do arquivo, não oferecidos: {{templates}}",
+        "include_agent_templates_memory_hint": "Uma exportação de memória nunca inclui modelos de agente."
       },
       "promptsTab": {
         "agent_sop_name": "@agent-sop:name",

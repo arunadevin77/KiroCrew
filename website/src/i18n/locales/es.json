@@ -14253,7 +14253,20 @@
         "archive_memory_only": "Este archivo solo contiene memoria, así que se importa con Combinar.",
         "download_memory_only_description": "Descarga solo la memoria como archivo zip. Quedan fuera los ajustes, las tareas cron, las skills, otros archivos del espacio de trabajo y los chats.",
         "download_memory_export_zip": "Descargar exportación de memoria (.zip)",
-        "export_memory_title": "Exportar memoria"
+        "export_memory_title": "Exportar memoria",
+        "include_agent_templates": "Incluir plantillas de agente",
+        "include_agent_templates_hint": "Añade las plantillas de agente que usan tus equipos, para que funcionen en la otra máquina. Las claves y contraseñas de la configuración de sus herramientas (valores de entorno, encabezados, secretos de inicio de sesión) se vacían, así que complétalas después de importar; lo que esté dentro de un comando o una dirección web se copia tal cual.",
+        "archive_agent_templates": "Plantillas de agente de este archivo. Marca las que quieras añadir aquí.",
+        "archive_agent_template_exists": "Ya instalada",
+        "import_agent_templates_installed": "Plantillas de agente instaladas: {{names}}",
+        "import_agent_templates_skipped": "Estas plantillas de agente no se instalaron: {{names}}",
+        "agent_template_skip_exists": "ya instalada",
+        "agent_template_skip_invalid": "ilegible en el archivo",
+        "agent_template_skip_not_in_archive": "no está en este archivo",
+        "agent_template_skip_unwritable": "no se pudo escribir",
+        "agent_template_skip_over_limit": "por encima del límite del archivo",
+        "archive_agent_templates_more": "Plantillas por encima del límite del archivo, no ofrecidas: {{templates}}",
+        "include_agent_templates_memory_hint": "Una exportación de memoria nunca incluye plantillas de agente."
       },
       "promptsTab": {
         "agent_sop_name": "@agent-sop:name",

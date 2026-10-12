@@ -13825,7 +13825,20 @@
         "archive_memory_only": "このアーカイブにはメモリのみが含まれるため、マージでインポートされます。",
         "download_memory_only_description": "メモリだけを zip ファイルとしてダウンロードします。設定、cron、スキル、その他のワークスペースのファイル、チャットは含まれません。",
         "download_memory_export_zip": "メモリのエクスポートをダウンロード (.zip)",
-        "export_memory_title": "メモリをエクスポート"
+        "export_memory_title": "メモリをエクスポート",
+        "include_agent_templates": "エージェントテンプレートを含める",
+        "include_agent_templates_hint": "クルーが使うエージェントテンプレートを追加し、別のマシンでもクルーが動くようにします。ツール設定のキーとパスワード（環境変数、ヘッダー、サインインのシークレット）は空になるため、インポート後に入力してください。コマンドや Web アドレスに含まれる内容はそのままコピーされます。",
+        "archive_agent_templates": "このファイル内のエージェントテンプレート。ここに追加するものを選択してください。",
+        "archive_agent_template_exists": "インストール済み",
+        "import_agent_templates_installed": "インストールしたエージェントテンプレート: {{names}}",
+        "import_agent_templates_skipped": "次のエージェントテンプレートはインストールされませんでした: {{names}}",
+        "agent_template_skip_exists": "インストール済み",
+        "agent_template_skip_invalid": "アーカイブ内で読み取れません",
+        "agent_template_skip_not_in_archive": "このアーカイブにありません",
+        "agent_template_skip_unwritable": "書き込めませんでした",
+        "agent_template_skip_over_limit": "アーカイブの上限超過",
+        "archive_agent_templates_more": "アーカイブの上限を超えたため表示されないテンプレート: {{templates}}",
+        "include_agent_templates_memory_hint": "メモリのエクスポートにエージェントテンプレートは含まれません。"
       },
       "promptsTab": {
         "agent_sop_name": "@agent-sop:name",

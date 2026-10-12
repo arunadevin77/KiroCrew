@@ -13825,7 +13825,20 @@
         "archive_memory_only": "이 아카이브에는 메모리만 있으므로 병합으로 가져옵니다.",
         "download_memory_only_description": "메모리만 zip 파일로 다운로드합니다. 설정, 크론, 스킬, 다른 작업 공간 파일, 채팅은 제외됩니다.",
         "download_memory_export_zip": "메모리 내보내기 다운로드 (.zip)",
-        "export_memory_title": "메모리 내보내기"
+        "export_memory_title": "메모리 내보내기",
+        "include_agent_templates": "에이전트 템플릿 포함",
+        "include_agent_templates_hint": "크루가 사용하는 에이전트 템플릿을 추가해 다른 컴퓨터에서도 크루가 동작하게 합니다. 도구 설정의 키와 비밀번호(환경 변수, 헤더, 로그인 시크릿)는 비워지므로 가져온 후에 입력하세요. 명령이나 웹 주소 안에 있는 내용은 그대로 복사됩니다.",
+        "archive_agent_templates": "이 파일의 에이전트 템플릿. 여기에 추가할 항목을 선택하세요.",
+        "archive_agent_template_exists": "이미 설치됨",
+        "import_agent_templates_installed": "설치된 에이전트 템플릿: {{names}}",
+        "import_agent_templates_skipped": "다음 에이전트 템플릿은 설치되지 않았습니다: {{names}}",
+        "agent_template_skip_exists": "이미 설치됨",
+        "agent_template_skip_invalid": "아카이브에서 읽을 수 없음",
+        "agent_template_skip_not_in_archive": "이 아카이브에 없음",
+        "agent_template_skip_unwritable": "쓸 수 없음",
+        "agent_template_skip_over_limit": "아카이브 한도 초과",
+        "archive_agent_templates_more": "아카이브 한도를 넘어 표시되지 않은 템플릿: {{templates}}",
+        "include_agent_templates_memory_hint": "메모리 내보내기에는 에이전트 템플릿이 들어가지 않습니다."
       },
       "promptsTab": {
         "agent_sop_name": "@agent-sop:name",

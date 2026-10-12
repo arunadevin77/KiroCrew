@@ -14253,7 +14253,20 @@
         "archive_memory_only": "Questo archivio contiene solo memoria, quindi viene importato con Unisci.",
         "download_memory_only_description": "Scarica solo la memoria come file zip. Impostazioni, cron, skill, altri file dell'area di lavoro e chat restano fuori.",
         "download_memory_export_zip": "Scarica l’esportazione della memoria (.zip)",
-        "export_memory_title": "Esporta memoria"
+        "export_memory_title": "Esporta memoria",
+        "include_agent_templates": "Includi i modelli di agente",
+        "include_agent_templates_hint": "Aggiunge i modelli di agente usati dalle tue crew, così funzionano anche sull'altra macchina. Chiavi e password nelle impostazioni dei loro strumenti (valori d'ambiente, intestazioni, segreti di accesso) vengono svuotate, quindi compilale dopo l'importazione; tutto ciò che si trova in un comando o in un indirizzo web viene copiato così com'è.",
+        "archive_agent_templates": "Modelli di agente in questo file. Seleziona quelli da aggiungere qui.",
+        "archive_agent_template_exists": "Già installato",
+        "import_agent_templates_installed": "Modelli di agente installati: {{names}}",
+        "import_agent_templates_skipped": "Questi modelli di agente non sono stati installati: {{names}}",
+        "agent_template_skip_exists": "già installato",
+        "agent_template_skip_invalid": "illeggibile nell'archivio",
+        "agent_template_skip_not_in_archive": "non presente in questo archivio",
+        "agent_template_skip_unwritable": "impossibile scriverlo",
+        "agent_template_skip_over_limit": "oltre il limite dell'archivio",
+        "archive_agent_templates_more": "Modelli oltre il limite dell'archivio, non proposti: {{templates}}",
+        "include_agent_templates_memory_hint": "Un'esportazione della memoria non include mai modelli di agente."
       },
       "promptsTab": {
         "agent_sop_name": "@agent-sop:name",

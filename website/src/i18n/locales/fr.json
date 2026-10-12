@@ -14253,7 +14253,20 @@
         "archive_memory_only": "Cette archive ne contient que de la mémoire, elle s’importe donc avec Fusionner.",
         "download_memory_only_description": "Télécharge uniquement la mémoire dans un fichier zip. Les paramètres, tâches cron, skills, autres fichiers de l’espace de travail et discussions sont exclus.",
         "download_memory_export_zip": "Télécharger l’export de la mémoire (.zip)",
-        "export_memory_title": "Exporter la mémoire"
+        "export_memory_title": "Exporter la mémoire",
+        "include_agent_templates": "Inclure les modèles d'agent",
+        "include_agent_templates_hint": "Ajoute les modèles d'agent utilisés par tes équipes, pour qu'elles fonctionnent sur l'autre machine. Les clés et mots de passe des réglages de leurs outils (valeurs d'environnement, en-têtes, secrets de connexion) sont vidés, alors renseigne-les après l'import. Tout ce qui figure dans une commande ou une adresse web est copié tel quel.",
+        "archive_agent_templates": "Modèles d'agent de ce fichier. Coche ceux à ajouter ici.",
+        "archive_agent_template_exists": "Déjà installé",
+        "import_agent_templates_installed": "Modèles d'agent installés : {{names}}",
+        "import_agent_templates_skipped": "Ces modèles d'agent n'ont pas été installés : {{names}}",
+        "agent_template_skip_exists": "déjà installé",
+        "agent_template_skip_invalid": "illisible dans l'archive",
+        "agent_template_skip_not_in_archive": "absent de cette archive",
+        "agent_template_skip_unwritable": "écriture impossible",
+        "agent_template_skip_over_limit": "au-delà de la limite de l'archive",
+        "archive_agent_templates_more": "Modèles au-delà de la limite de l'archive, non proposés : {{templates}}",
+        "include_agent_templates_memory_hint": "Un export de mémoire ne contient jamais de modèles d'agent."
       },
       "promptsTab": {
         "agent_sop_name": "@agent-sop:name",

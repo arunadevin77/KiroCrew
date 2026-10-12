@@ -14039,7 +14039,20 @@
         "archive_memory_only": "इस आर्काइव में केवल मेमोरी है, इसलिए यह मर्ज से आयात होता है।",
         "download_memory_only_description": "केवल मेमोरी को zip फ़ाइल के रूप में डाउनलोड करो। सेटिंग, क्रॉन, स्किल, अन्य वर्कस्पेस फ़ाइलें और चैट शामिल नहीं होतीं।",
         "download_memory_export_zip": "मेमोरी एक्सपोर्ट डाउनलोड करो (.zip)",
-        "export_memory_title": "मेमोरी निर्यात"
+        "export_memory_title": "मेमोरी निर्यात",
+        "include_agent_templates": "एजेंट टेम्पलेट शामिल करो",
+        "include_agent_templates_hint": "तुम्हारे क्रू जिन एजेंट टेम्पलेट का उपयोग करते हैं, उन्हें जोड़ता है, ताकि क्रू दूसरी मशीन पर भी काम करें। उनकी टूल सेटिंग में मौजूद कुंजियाँ और पासवर्ड (एनवायरनमेंट मान, हेडर, साइन-इन सीक्रेट) खाली कर दिए जाते हैं, इसलिए इम्पोर्ट के बाद उन्हें भरो; कमांड या वेब पते के अंदर लिखी कोई भी चीज़ जैसी है वैसी ही कॉपी होती है।",
+        "archive_agent_templates": "इस फ़ाइल के एजेंट टेम्पलेट। जिन्हें यहाँ जोड़ना है उन्हें चुनो।",
+        "archive_agent_template_exists": "पहले से इंस्टॉल है",
+        "import_agent_templates_installed": "इंस्टॉल किए गए एजेंट टेम्पलेट: {{names}}",
+        "import_agent_templates_skipped": "ये एजेंट टेम्पलेट इंस्टॉल नहीं किए गए: {{names}}",
+        "agent_template_skip_exists": "पहले से इंस्टॉल है",
+        "agent_template_skip_invalid": "आर्काइव में पढ़ा नहीं जा सका",
+        "agent_template_skip_not_in_archive": "इस आर्काइव में नहीं है",
+        "agent_template_skip_unwritable": "लिखा नहीं जा सका",
+        "agent_template_skip_over_limit": "आर्काइव सीमा से ज़्यादा",
+        "archive_agent_templates_more": "आर्काइव सीमा से ज़्यादा टेम्पलेट, जो नहीं दिखाए गए: {{templates}}",
+        "include_agent_templates_memory_hint": "मेमोरी एक्सपोर्ट में एजेंट टेम्पलेट कभी नहीं जाते।"
       },
       "promptsTab": {
         "agent_sop_name": "@agent-sop:name",

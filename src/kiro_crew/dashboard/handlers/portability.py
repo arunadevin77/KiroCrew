@@ -17,7 +17,9 @@ from kiro_crew.dashboard.handlers._shared import require_owner_dashboard_request
 from kiro_crew.portability import (
     apply_import_zip,
     create_export_zip,
+    is_agent_template_stem,
     manifest_is_memory_only,
+    preview_agent_templates,
     unbundled_agent_templates,
     validate_import_zip,
 )
@@ -66,6 +68,29 @@ def _requested_components(
     return None, web.json_response(
         {"error": "components must be 'memory'", "code": "invalid_components"}, status=400
     )
+
+
+#: Most bundled agent templates one import request may pick.
+_MAX_PICKED_TEMPLATES = 200
+
+
+def _requested_agent_templates(
+    request: web.Request,
+) -> tuple[tuple[str, ...], web.Response | None]:
+    """The ``?agent_templates=`` pick: comma-separated bundled template names to
+    install. Absent or empty installs none; a name that is not a plain file name is
+    refused rather than dropped."""
+    raw = request.query.get("agent_templates", "")
+    names = tuple(name for name in raw.split(",") if name) if raw else ()
+    if len(names) > _MAX_PICKED_TEMPLATES or not all(is_agent_template_stem(n) for n in names):
+        return (), web.json_response(
+            {
+                "error": "agent_templates must name bundled templates",
+                "code": "invalid_agent_templates",
+            },
+            status=400,
+        )
+    return names, None
 
 
 async def _read_upload_file(request: web.Request) -> tuple[Path | None, web.Response | None]:
@@ -131,12 +156,14 @@ async def api_portability_export(request: web.Request) -> web.Response:
     if memory_only:
         include_sessions = False
         include_agent_templates = False
+    # Passed only when asked, so an export without the choice is the same call as before.
+    extra = {"include_agent_templates": True} if include_agent_templates else {}
     try:
         zip_bytes, manifest = await asyncio.to_thread(
             create_export_zip,
             include_sessions=include_sessions,
             memory_only=memory_only,
-            include_agent_templates=include_agent_templates,
+            **extra,
         )
     except Exception as e:
         logger.exception("Export failed")
@@ -183,10 +210,21 @@ async def api_portability_export(request: web.Request) -> web.Response:
     # Bounded upstream (count and length), so the header stays small; the left-out
     # count rides along as a trailing "+N".
     # A memory export carries no crews or config, so the template warning does not apply.
-    unbundled, more = ([], 0) if memory_only else await asyncio.to_thread(unbundled_agent_templates)
-    bundled = manifest.get("agent_templates") or []
-    unbundled = [name for name in unbundled if name not in bundled]
-    if unbundled:
+    # The templates the archive carries are not warned about: filtered before the
+    # bound is applied, so the "+N" count covers only templates still left out.
+    bundled = [s for s in manifest.get("agent_templates") or [] if isinstance(s, str)]
+    unbundled: list[str]
+    if memory_only:
+        unbundled, more = [], 0
+    elif bundled:
+        unbundled, more = await asyncio.to_thread(unbundled_agent_templates, bundled)
+    else:
+        unbundled, more = await asyncio.to_thread(unbundled_agent_templates)
+    # Templates the walk reached past the bundle cap that no crew names directly.
+    past_cap = contents.get("agent_templates_past_cap", 0)
+    if isinstance(past_cap, int) and not isinstance(past_cap, bool) and past_cap > 0:
+        more += past_cap
+    if unbundled or more:
         headers[UNBUNDLED_TEMPLATES_HEADER] = json.dumps(unbundled + ([f"+{more}"] if more else []))
     if include_sessions:
         headers[SESSIONS_SKIPPED_SIZE_HEADER] = str(skipped_size)
@@ -223,6 +261,9 @@ async def api_portability_import(request: web.Request) -> web.Response:
             {"error": "a memory-only import is merge only", "code": "memory_only_merge_only"},
             status=400,
         )
+    picked_templates, bad = _requested_agent_templates(request)
+    if bad is not None:
+        return bad
 
     zip_path, err_resp = await _read_upload_file(request)
     if err_resp is not None:
@@ -268,6 +309,7 @@ async def api_portability_import(request: web.Request) -> web.Response:
             mode,
             channel_settings=channel_settings,
             memory_only=memory_only or manifest_is_memory_only(manifest),
+            **({"agent_templates": picked_templates} if picked_templates else {}),
         )
 
         # `staging` is recorded here, not only returned. Nothing renders it, and
@@ -287,6 +329,11 @@ async def api_portability_import(request: web.Request) -> web.Response:
                 f"mode={mode},items={len(summary.get('items', []))},"
                 f"staging={summary.get('staging', 'unknown')}"
                 + (",components=memory" if summary.get("components") == ["memory"] else "")
+                + (
+                    f",agent_templates_installed={len(summary['agent_templates_installed'])}"
+                    if summary.get("agent_templates_installed")
+                    else ""
+                )
                 + (f",refused={';'.join(refused)}" if refused else "")
             ),
         )
@@ -351,7 +398,11 @@ async def api_portability_preview(request: web.Request) -> web.Response:
             operation="portability.preview",
             outcome="ok",
         )
-        return web.json_response({"ok": True, "manifest": manifest})
+        templates, more_templates = await asyncio.to_thread(preview_agent_templates, zip_path)
+        body: dict = {"ok": True, "manifest": manifest, "agent_templates": templates}
+        if more_templates:
+            body["agent_templates_more"] = more_templates
+        return web.json_response(body)
     except Exception as e:
         logger.exception("Preview failed")
         _sel().log_api_access(

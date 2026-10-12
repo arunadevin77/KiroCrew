@@ -14039,7 +14039,20 @@
         "archive_memory_only": "Dieses Archiv enthält nur das Gedächtnis und wird daher mit Zusammenführen importiert.",
         "download_memory_only_description": "Lädt nur das Gedächtnis als ZIP-Datei herunter. Einstellungen, Cron-Jobs, Skills, andere Arbeitsbereichsdateien und Chats bleiben außen vor.",
         "download_memory_export_zip": "Gedächtnis-Export herunterladen (.zip)",
-        "export_memory_title": "Gedächtnis exportieren"
+        "export_memory_title": "Gedächtnis exportieren",
+        "include_agent_templates": "Agentenvorlagen einbeziehen",
+        "include_agent_templates_hint": "Fügt die Agentenvorlagen hinzu, die deine Crews verwenden, damit sie auf dem anderen Rechner funktionieren. Schlüssel und Passwörter in den Tool-Einstellungen (Umgebungswerte, Header, Anmelde-Secrets) werden geleert, also trage sie nach dem Import ein; alles, was in einem Befehl oder einer Webadresse steht, wird unverändert kopiert.",
+        "archive_agent_templates": "Agentenvorlagen in dieser Datei. Wähle die aus, die hier hinzugefügt werden sollen.",
+        "archive_agent_template_exists": "Bereits installiert",
+        "import_agent_templates_installed": "Installierte Agentenvorlagen: {{names}}",
+        "import_agent_templates_skipped": "Diese Agentenvorlagen wurden nicht installiert: {{names}}",
+        "agent_template_skip_exists": "bereits installiert",
+        "agent_template_skip_invalid": "im Archiv nicht lesbar",
+        "agent_template_skip_not_in_archive": "nicht in diesem Archiv",
+        "agent_template_skip_unwritable": "konnte nicht geschrieben werden",
+        "agent_template_skip_over_limit": "über dem Archivlimit",
+        "archive_agent_templates_more": "Vorlagen über dem Archivlimit, nicht angeboten: {{templates}}",
+        "include_agent_templates_memory_hint": "Ein Gedächtnis-Export enthält nie Agentenvorlagen."
       },
       "promptsTab": {
         "agent_sop_name": "@agent-sop:name",

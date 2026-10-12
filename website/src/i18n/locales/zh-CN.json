@@ -13825,7 +13825,20 @@
         "archive_memory_only": "此归档只包含记忆，因此会以合并方式导入。",
         "download_memory_only_description": "只把记忆下载为 zip 文件。不含设置、定时任务、技能、其他工作区文件和聊天。",
         "download_memory_export_zip": "下载记忆导出 (.zip)",
-        "export_memory_title": "导出记忆"
+        "export_memory_title": "导出记忆",
+        "include_agent_templates": "包含智能体模板",
+        "include_agent_templates_hint": "添加团队所用智能体模板，让团队在另一台机器上也能工作。工具设置中的密钥和密码（环境变量、请求头、登录密钥）会被清空，导入后请重新填写；命令或网址里的内容会原样复制。",
+        "archive_agent_templates": "此文件中的智能体模板。勾选要添加到这里的模板。",
+        "archive_agent_template_exists": "已安装",
+        "import_agent_templates_installed": "已安装的智能体模板：{{names}}",
+        "import_agent_templates_skipped": "以下智能体模板未安装：{{names}}",
+        "agent_template_skip_exists": "已安装",
+        "agent_template_skip_invalid": "归档中无法读取",
+        "agent_template_skip_not_in_archive": "不在此归档中",
+        "agent_template_skip_unwritable": "无法写入",
+        "agent_template_skip_over_limit": "超出归档上限",
+        "archive_agent_templates_more": "超出归档上限、未提供的模板：{{templates}}",
+        "include_agent_templates_memory_hint": "记忆导出从不包含智能体模板。"
       },
       "promptsTab": {
         "agent_sop_name": "@agent-sop:name",

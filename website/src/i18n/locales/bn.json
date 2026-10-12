@@ -14039,7 +14039,20 @@
         "archive_memory_only": "এই আর্কাইভে শুধু মেমরি আছে, তাই এটি মার্জ দিয়ে ইমপোর্ট হয়।",
         "download_memory_only_description": "শুধু মেমরি zip ফাইল হিসেবে ডাউনলোড করো। সেটিংস, ক্রন, স্কিল, অন্য ওয়ার্কস্পেস ফাইল ও চ্যাট বাদ থাকে।",
         "download_memory_export_zip": "মেমরি এক্সপোর্ট ডাউনলোড করো (.zip)",
-        "export_memory_title": "মেমরি এক্সপোর্ট"
+        "export_memory_title": "মেমরি এক্সপোর্ট",
+        "include_agent_templates": "এজেন্ট টেমপ্লেট অন্তর্ভুক্ত করো",
+        "include_agent_templates_hint": "তোমার ক্রু যে এজেন্ট টেমপ্লেটগুলি ব্যবহার করে সেগুলি যোগ করে, যাতে ক্রু অন্য মেশিনেও কাজ করে। তাদের টুল সেটিংসের কী ও পাসওয়ার্ড (এনভায়রনমেন্ট মান, হেডার, সাইন-ইন সিক্রেট) খালি করে দেওয়া হয়, তাই ইমপোর্টের পরে সেগুলি পূরণ করো; কমান্ড বা ওয়েব ঠিকানার ভেতরের যেকোনো কিছু যেমন আছে তেমনই কপি হয়।",
+        "archive_agent_templates": "এই ফাইলের এজেন্ট টেমপ্লেট। যেগুলি এখানে যোগ করতে চাও সেগুলিতে টিক দাও।",
+        "archive_agent_template_exists": "আগে থেকেই ইনস্টল করা",
+        "import_agent_templates_installed": "ইনস্টল করা এজেন্ট টেমপ্লেট: {{names}}",
+        "import_agent_templates_skipped": "এই এজেন্ট টেমপ্লেটগুলি ইনস্টল করা হয়নি: {{names}}",
+        "agent_template_skip_exists": "আগে থেকেই ইনস্টল করা",
+        "agent_template_skip_invalid": "আর্কাইভে পড়া যায়নি",
+        "agent_template_skip_not_in_archive": "এই আর্কাইভে নেই",
+        "agent_template_skip_unwritable": "লেখা যায়নি",
+        "agent_template_skip_over_limit": "আর্কাইভের সীমার বাইরে",
+        "archive_agent_templates_more": "আর্কাইভের সীমার বাইরে থাকা টেমপ্লেট, যা দেখানো হয়নি: {{templates}}",
+        "include_agent_templates_memory_hint": "মেমরি এক্সপোর্টে এজেন্ট টেমপ্লেট কখনো যায় না।"
       },
       "promptsTab": {
         "agent_sop_name": "@agent-sop:name",

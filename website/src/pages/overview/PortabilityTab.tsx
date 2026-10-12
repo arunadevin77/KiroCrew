@@ -134,6 +134,50 @@ export function unbundledTemplates(header: string | null): { names: string[]; mo
   }
 }
 
+/** One agent template an archive carries, from the preview's `agent_templates`. */
+export interface BundledTemplate {
+  name: string
+  /** A template by that name is already installed here, so an import skips it. */
+  exists: boolean
+}
+
+/** The preview's `agent_templates` list; anything malformed is dropped. */
+export function bundledTemplateRows(raw: unknown): BundledTemplate[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap(row => {
+    if (!row || typeof row !== 'object') return []
+    const { name, exists } = row as { name?: unknown; exists?: unknown }
+    return typeof name === 'string' && name ? [{ name, exists: exists === true }] : []
+  })
+}
+
+/** Why the import left a picked template out, as `agent_templates_skipped` names it. */
+export type TemplateSkipReason = 'exists' | 'invalid' | 'not_in_archive' | 'over_limit' | 'unwritable'
+
+/** The catalog key that says each skip reason in words. */
+export const SKIP_REASON_KEYS: Record<TemplateSkipReason, string> = {
+  exists: 'pages.overview.portabilityTab.agent_template_skip_exists',
+  invalid: 'pages.overview.portabilityTab.agent_template_skip_invalid',
+  not_in_archive: 'pages.overview.portabilityTab.agent_template_skip_not_in_archive',
+  over_limit: 'pages.overview.portabilityTab.agent_template_skip_over_limit',
+  unwritable: 'pages.overview.portabilityTab.agent_template_skip_unwritable',
+}
+
+/**
+ * The import summary's skipped templates. An unknown reason reads as `invalid`,
+ * the one that promises least.
+ */
+export function skippedTemplateRows(raw: unknown): { name: string; reason: TemplateSkipReason }[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap(row => {
+    if (!row || typeof row !== 'object') return []
+    const { name, reason } = row as { name?: unknown; reason?: unknown }
+    if (typeof name !== 'string' || !name) return []
+    const known = typeof reason === 'string' && reason in SKIP_REASON_KEYS
+    return [{ name, reason: known ? (reason as TemplateSkipReason) : 'invalid' }]
+  })
+}
+
 /**
  * The export's `X-Kirocrew-Sessions-Skipped-Size` header: how many chats the server
  * left out so the archive stays within what import accepts. A bare non-negative
@@ -263,6 +307,10 @@ export default function PortabilityTab() {
   const [previewError, setPreviewError] = useState('')
   const [mode, setMode] = useState<'merge' | 'replace'>('merge')
   const [includeChats, setIncludeChats] = useState(false)
+  const [includeTemplates, setIncludeTemplates] = useState(false)
+  const [bundledTemplates, setBundledTemplates] = useState<BundledTemplate[]>([])
+  const [pickedTemplates, setPickedTemplates] = useState<string[]>([])
+  const [bundledTemplatesMore, setBundledTemplatesMore] = useState(0)
   const [memoryOnly, setMemoryOnly] = useState(false)
   const [importMemoryOnly, setImportMemoryOnly] = useState(false)
   const [chatLines, setChatLines] = useState<string[]>(carried?.chats ?? [])
@@ -302,9 +350,12 @@ export default function PortabilityTab() {
     setExportChatsSkipped('')
     const withChats = includeChats && !memoryOnly
     try {
-      const exportUrl = memoryOnly
-        ? '/api/portability/export?components=memory'
-        : withChats ? '/api/portability/export?include_sessions=true' : '/api/portability/export'
+      const exportParams = new URLSearchParams()
+      if (memoryOnly) exportParams.set('components', 'memory')
+      if (withChats) exportParams.set('include_sessions', 'true')
+      if (includeTemplates && !memoryOnly) exportParams.set('include_agent_templates', 'true')
+      const query = exportParams.toString()
+      const exportUrl = query ? `/api/portability/export?${query}` : '/api/portability/export'
       const resp = await fetch(exportUrl)
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: resp.statusText }))
@@ -318,7 +369,7 @@ export default function PortabilityTab() {
       downloadBlob(blob, m ? m[1] : 'kirocrew-export.zip')
       setExportStatus({ type: 'ok', msg: i18nT('pages.overview.portabilityTab.download_started') })
       const { names, more } = unbundledTemplates(resp.headers.get('X-Kirocrew-Unbundled-Templates'))
-      if (names.length) setExportWarning(i18nT('pages.overview.portabilityTab.export_templates_not_included', { names: joinWithMore(names, more) }))
+      if (names.length || more) setExportWarning(i18nT('pages.overview.portabilityTab.export_templates_not_included', { names: joinWithMore(names, more) }))
       const skipped = withChats ? skippedChats(resp.headers.get('X-Kirocrew-Sessions-Skipped-Size')) : 0
       if (skipped > 0) setExportChatsSkipped(i18nT('pages.overview.portabilityTab.export_chats_skipped_size', { chats: skipped }))
     } catch (e: unknown) {
@@ -330,6 +381,9 @@ export default function PortabilityTab() {
     const file = fileRef.current?.files?.[0]
     setPreview(null)
     setPreviewError('')
+    setBundledTemplates([])
+    setBundledTemplatesMore(0)
+    setPickedTemplates([])
     setImportStatus({ type: 'idle', msg: '' })
     setImportWarnings([])
     setImportErrors([])
@@ -343,6 +397,9 @@ export default function PortabilityTab() {
       const data = await resp.json()
       if (data.ok) {
         setPreview(data.manifest)
+        setBundledTemplates(bundledTemplateRows(data.agent_templates))
+        const more = data.agent_templates_more
+        setBundledTemplatesMore(Number.isInteger(more) && more > 0 ? more : 0)
       } else {
         setPreviewError(refusalText(resp.status, data, i18nT('pages.overview.portabilityTab.invalid_archive')))
       }
@@ -370,11 +427,31 @@ export default function PortabilityTab() {
     try {
       const params = new URLSearchParams({ mode: effectiveMode })
       if (memoryImport && effectiveMode === 'merge') params.set('components', 'memory')
+      if (!memoryImport && pickedTemplates.length) params.set('agent_templates', pickedTemplates.join(','))
       const resp = await fetch(`/api/portability/import?${params}`, { method: 'POST', body: fd })
       const data = await resp.json()
       if (data.ok) {
         const summary = data.summary || {}
         const warnings: string[] = []
+        // An installed template is a result, so it renders with the neutral
+        // status lines; a skipped one is a caveat and names its own reason.
+        const installedTemplates: string[] = Array.isArray(summary.agent_templates_installed)
+          ? summary.agent_templates_installed.filter((n: unknown): n is string => typeof n === 'string')
+          : []
+        const templateLines = installedTemplates.length
+          ? [i18nT('pages.overview.portabilityTab.import_agent_templates_installed', { names: installedTemplates.join(', ') })]
+          : []
+        const skippedTemplates = skippedTemplateRows(summary.agent_templates_skipped)
+        const describeSkipped = (rows: { name: string; reason: TemplateSkipReason }[]) => rows
+          .map(row => `${row.name} (${i18nT(SKIP_REASON_KEYS[row.reason])})`)
+          .join(', ')
+        // A template this install could not write is a failure, so it joins the
+        // errors below; every other skip is a caveat.
+        const failedTemplates = skippedTemplates.filter(row => row.reason === 'unwritable')
+        const caveatTemplates = skippedTemplates.filter(row => row.reason !== 'unwritable')
+        if (caveatTemplates.length) {
+          warnings.push(i18nT('pages.overview.portabilityTab.import_agent_templates_skipped', { names: describeSkipped(caveatTemplates) }))
+        }
         const missing: { crew: string; kiro_agent: string }[] = summary.missing_agent_templates || []
         if (missing.length) {
           const more: number = summary.missing_agent_templates_more || 0
@@ -388,12 +465,15 @@ export default function PortabilityTab() {
         if (refused.names.length) {
           errors.push(i18nT('pages.overview.portabilityTab.import_items_refused', { names: joinWithMore(refused.names, refused.more) }))
         }
+        if (failedTemplates.length) {
+          errors.push(i18nT('pages.overview.portabilityTab.import_agent_templates_skipped', { names: describeSkipped(failedTemplates) }))
+        }
         const keptFiles = keptSettingsFiles(summary.settings_kept)
         if (keptFiles.length) {
           warnings.push(i18nT('pages.overview.portabilityTab.import_settings_kept', { files: keptFiles.map(settingsFileLabel).join(', ') }))
         }
         const msg = i18nT('pages.overview.portabilityTab.import_complete_restart_gateway', { count: importedItemCount(summary.items) })
-        const chats = chatImportLines(summary)
+        const chats = [...templateLines, ...chatImportLines(summary)]
         setImportWarnings(warnings)
         setImportErrors(errors)
         setChatLines(chats)
@@ -478,6 +558,25 @@ export default function PortabilityTab() {
           {memoryOnly
             ? i18nT('pages.overview.portabilityTab.include_chat_history_memory_hint')
             : i18nT('pages.overview.portabilityTab.include_chat_history_hint')}
+        </p>
+        {/* Off by default, and never part of a memory export. */}
+        <label className={`flex min-h-11 items-center gap-2 text-[13px] ${memoryOnly ? 'cursor-not-allowed text-muted' : 'cursor-pointer'}`}>
+          <input
+            type="checkbox"
+            data-testid="portability-include-agent-templates"
+            aria-label={i18nT('pages.overview.portabilityTab.include_agent_templates')}
+            className="h-4 w-4 shrink-0 accent-accent"
+            checked={includeTemplates && !memoryOnly}
+            disabled={memoryOnly || exportStatus.type === 'loading'}
+            aria-describedby="portability-include-templates-hint"
+            onChange={event => setIncludeTemplates(event.target.checked)}
+          />
+          {i18nT('pages.overview.portabilityTab.include_agent_templates')}
+        </label>
+        <p id="portability-include-templates-hint" className="text-text text-[12px] mb-3">
+          {memoryOnly
+            ? i18nT('pages.overview.portabilityTab.include_agent_templates_memory_hint')
+            : i18nT('pages.overview.portabilityTab.include_agent_templates_hint')}
         </p>
         <div className="flex items-center gap-3">
           <button
@@ -605,6 +704,35 @@ export default function PortabilityTab() {
             {preview.contents.session_count != null
               ? <div className={outside}>{i18nT('pages.overview.portabilityTab.chats_count', { chats: preview.contents.session_count })}{skipped}</div>
               : !memoryImport && <div data-testid="portability-preview-no-chats" className="text-muted">{i18nT('pages.overview.portabilityTab.archive_has_no_chats')}</div>}
+            {/* Each template installs only when ticked; one already installed
+                here is shown but cannot be ticked, because an import never
+                writes over it. */}
+            {!memoryImport && (bundledTemplates.length > 0 || bundledTemplatesMore > 0) && (
+              <fieldset data-testid="portability-preview-templates" className="pt-1">
+                <legend className="text-text">{i18nT('pages.overview.portabilityTab.archive_agent_templates')}</legend>
+                {bundledTemplates.map(row => (
+                  <label key={row.name} className={`flex min-h-11 items-center gap-2 ${row.exists ? 'cursor-not-allowed text-muted' : 'cursor-pointer'}`}>
+                    <input
+                      type="checkbox"
+                      aria-label={row.name}
+                      className="h-4 w-4 shrink-0 accent-accent"
+                      checked={!row.exists && pickedTemplates.includes(row.name)}
+                      disabled={row.exists || importStatus.type === 'loading'}
+                      onChange={event => setPickedTemplates(current => event.target.checked
+                        ? [...current.filter(n => n !== row.name), row.name]
+                        : current.filter(n => n !== row.name))}
+                    />
+                    {row.name}
+                    {row.exists && <span className="text-muted">({i18nT('pages.overview.portabilityTab.archive_agent_template_exists')})</span>}
+                  </label>
+                ))}
+                {bundledTemplatesMore > 0 && (
+                  <div data-testid="portability-preview-templates-more" className="text-muted">
+                    {i18nT('pages.overview.portabilityTab.archive_agent_templates_more', { templates: bundledTemplatesMore })}
+                  </div>
+                )}
+              </fieldset>
+            )}
             <div className="pt-1 border-t border-border mt-1 text-muted">
               {i18nT('pages.overview.portabilityTab.created')} {preview.created_at} {i18nT('pages.overview.portabilityTab.from')} {preview.user}@{preview.hostname}
             </div>

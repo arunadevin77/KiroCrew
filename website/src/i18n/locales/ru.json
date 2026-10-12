@@ -14467,7 +14467,20 @@
         "archive_memory_only": "В этом архиве только память, поэтому он импортируется в режиме объединения.",
         "download_memory_only_description": "Скачать только память в zip-файле. Настройки, задачи cron, навыки, другие файлы рабочей области и чаты не включаются.",
         "download_memory_export_zip": "Скачать экспорт памяти (.zip)",
-        "export_memory_title": "Экспорт памяти"
+        "export_memory_title": "Экспорт памяти",
+        "include_agent_templates": "Включить шаблоны агентов",
+        "include_agent_templates_hint": "Добавляет шаблоны агентов, которые используют твои команды, чтобы они работали на другой машине. Ключи и пароли в настройках инструментов (переменные окружения, заголовки, секреты входа) очищаются, поэтому укажи их после импорта; всё, что записано в команде или веб-адресе, копируется как есть.",
+        "archive_agent_templates": "Шаблоны агентов в этом файле. Отметь те, которые нужно добавить сюда.",
+        "archive_agent_template_exists": "Уже установлен",
+        "import_agent_templates_installed": "Установленные шаблоны агентов: {{names}}",
+        "import_agent_templates_skipped": "Эти шаблоны агентов не установлены: {{names}}",
+        "agent_template_skip_exists": "уже установлен",
+        "agent_template_skip_invalid": "не читается в архиве",
+        "agent_template_skip_not_in_archive": "нет в этом архиве",
+        "agent_template_skip_unwritable": "не удалось записать",
+        "agent_template_skip_over_limit": "сверх лимита архива",
+        "archive_agent_templates_more": "Шаблоны сверх лимита архива, не предложены: {{templates}}",
+        "include_agent_templates_memory_hint": "Экспорт памяти никогда не включает шаблоны агентов."
       },
       "promptsTab": {
         "agent_sop_name": "@agent-sop:name",
