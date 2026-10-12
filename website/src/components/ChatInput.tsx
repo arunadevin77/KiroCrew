@@ -1062,6 +1062,7 @@ function ChatInput({
                 sendOnEnter={sendOnEnter}
                 spellCheck={spellCheck}
                 inlineMarkdown={inlineMarkdown}
+                onMentionKey={onMentionKey}
                 className={manualHeight !== null ? 'flex-1 min-h-0' : ''}
               />
             </Suspense>
