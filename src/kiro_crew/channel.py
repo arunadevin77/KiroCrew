@@ -40,6 +40,7 @@ from kiro_crew.llm_helpers import (
     acp_error_is_session_not_found,
     is_prompt_busy,
 )
+from kiro_crew.messaging.renderer import count_redaction_tags, redaction_notice
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 from kiro_crew.trust_patterns import extract_bash_command
 
@@ -559,7 +560,11 @@ class Channel:
         msg_type: str = "progress",
         thread_id: str | None = None,
         meta: dict[str, str] | None = None,
+        notify_members: bool = True,
     ) -> ChannelMessage:
+        # ``notify_members=False`` records, broadcasts and saves the message but
+        # queues it for no member: a display-only notice for the human reader that
+        # must not wake the agent whose thread it lands in.
         # Normalize mentions to a set
         mentions: set[str] = set()
         if isinstance(mention, list):
@@ -610,7 +615,7 @@ class Channel:
         # that changed after it was queued.
         queued = replace(msg)
 
-        for agent in self.members.values():
+        for agent in self.members.values() if notify_members else ():
             if agent.id == from_id or agent.state in ("done", "failed"):
                 continue
             if agent.listen_mode == ListenMode.SILENT:
@@ -1763,4 +1768,25 @@ async def _stream_task(
         thread_id=thread_id,
         mention=mention_ids or None,
     )
+    # A reply carrying a redaction placeholder is followed by the same notice
+    # every other channel posts, counted over the text that shipped. It lands in
+    # the reply's thread for the human reader and wakes no member. Best-effort:
+    # the reply is already posted, so a failed notice is logged, never raised.
+    cred_count, url_count = count_redaction_tags(full_text)
+    if cred_count or url_count:
+        try:
+            await channel.post(
+                agent.id,
+                redaction_notice(cred_count, url_count),
+                from_role=agent.role,
+                msg_type="system",
+                thread_id=thread_id,
+                notify_members=False,
+            )
+        except Exception:
+            logger.warning(
+                "Could not post the redaction notice for channel agent %s (reply already posted)",
+                agent.id,
+                exc_info=True,
+            )
     return _STREAM_OK
