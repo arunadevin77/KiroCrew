@@ -497,7 +497,6 @@
   2 test_wake_judge_feedback.py
   5 test_webhook_generated_session_key.py
   4 test_webhook_memory_preparation.py
-  2 test_webhook_permission_requests.py
   4 test_wecom_client.py
   1 test_wecom_client_cov80.py
   5 test_wheel_apply.py

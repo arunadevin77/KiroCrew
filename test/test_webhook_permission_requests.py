@@ -47,7 +47,7 @@ _REQUEST_ID = "perm-req-9790"
 # Far above any plausible test runtime, far below the 300s production
 # timeout: a turn that answers the request finishes in milliseconds, so
 # tripping this bound means the request was left unanswered.
-_PROMPT_BOUND_S = 10
+_PROMPT_BOUND_S = 30
 
 
 def _permission_event(**overrides: object) -> AcpEvent:

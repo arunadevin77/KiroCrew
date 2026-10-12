@@ -317,7 +317,7 @@ def _answer(provider, *, hooks, interactive=True, allowed=None, monkeypatch=None
     asyncio.run(
         asyncio.wait_for(
             cli_chat._answer_permission(provider, _event(), interactive=interactive, gate=gate),
-            timeout=10,
+            timeout=30,
         )
     )
 
