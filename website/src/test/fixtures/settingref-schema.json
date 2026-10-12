@@ -33,5 +33,12 @@
   "label": "Browser Live-View Port",
   "help": "Pin the browser live-view server (playwright-cli show) to this loopback port.",
   "tags": []
+ },
+ {
+  "path": "dashboard.url",
+  "type": "string",
+  "label": "Dashboard URL",
+  "help": "Public URL for the dashboard (used in Slack links).",
+  "tags": []
  }
 ]

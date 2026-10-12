@@ -50,7 +50,11 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from kiro_crew.dashboard.tailnet import _cli_path, is_governance_pinned_off
+from kiro_crew.dashboard.tailnet import (
+    _cli_path,
+    is_governance_pinned_off,
+    refused_cli_detail,
+)
 from kiro_crew.sandbox import scrub_env
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
@@ -425,7 +429,10 @@ def serve_state(port: int) -> ServeState:
     rc, out, err = _run(["serve", "status", "--json"], _READ_TIMEOUT_SECS)
     if rc == -1:
         return ServeState(
-            None, None, "The tailscale CLI was not found in a standard install location."
+            None,
+            None,
+            refused_cli_detail()
+            or "The tailscale CLI was not found in a standard install location.",
         )
     if rc == -2:
         said = _daemon_output(out=out, err=err)
@@ -520,6 +527,41 @@ def serve_state(port: int) -> ServeState:
     )
 
 
+def manual_publish_command(port: int) -> str:
+    """The ``tailscale serve`` command that publishes the dashboard on *port*.
+
+    The same write :func:`publish` runs, spelled for an operator to run by hand
+    when this process cannot or will not run it.
+    """
+    return f"tailscale serve --bg --https={SERVE_HTTPS_PORT} http://127.0.0.1:{port}"
+
+
+def _no_cli_result(port: int) -> ServeResult:
+    """``publish``'s refusal when no CLI can run, naming a refused one if present.
+
+    A Tailscale install the planted-binary check refuses is not a missing one:
+    telling its owner to install Tailscale sends them to download what is
+    already running, so that case names the binary and only the remedy that
+    works for it: publish by hand, then point ``dashboard.url`` at the result.
+    """
+    refused = refused_cli_detail()
+    if refused:
+        return ServeResult(
+            False,
+            "no_cli",
+            f"{refused} Nothing was published. Publish the dashboard yourself with "
+            f"`{manual_publish_command(port)}`, then set dashboard.url to its "
+            "address and restart the gateway.",
+        )
+    return ServeResult(
+        False,
+        "no_cli",
+        "The tailscale CLI was not found in a standard install location, so "
+        "nothing was published. Install Tailscale, or publish the dashboard "
+        "yourself and set dashboard.url instead.",
+    )
+
+
 def publish(port: int, *, audit_tool: str = "tailnet_publish") -> ServeResult:
     """Publish the dashboard on this machine's tailnet over HTTPS.
 
@@ -550,13 +592,7 @@ def publish(port: int, *, audit_tool: str = "tailnet_publish") -> ServeResult:
     # No binary at all: say so before the occupancy guard, or "tailscale is not
     # installed" would be reported as "could not confirm the mount is free".
     if _cli_path() is None:
-        return ServeResult(
-            False,
-            "no_cli",
-            "The tailscale CLI was not found in a standard install location, so "
-            "nothing was published. Install Tailscale, or publish the dashboard "
-            "yourself and set dashboard.url instead.",
-        )
+        return _no_cli_result(port)
     # Proceed ONLY when OUR PORT is explicitly free or the mount is already ours.
     # Anything else — including a state we could not determine — refuses, because the
     # costs are not symmetric: overwriting destroys configuration the operator
@@ -578,21 +614,14 @@ def publish(port: int, *, audit_tool: str = "tailnet_publish") -> ServeResult:
             f"{state.detail} Refusing to publish, because `tailscale serve` would "
             f"REPLACE whatever is at {SERVE_HTTPS_PORT}{SERVE_MOUNT} and this check "
             f"could not confirm it is free or already this dashboard. If you are "
-            f"sure, run `tailscale serve --bg --https={SERVE_HTTPS_PORT} "
-            f"http://127.0.0.1:{port}` yourself.",
+            f"sure, run `{manual_publish_command(port)}` yourself.",
         )
     rc, out, err = _run(
         ["serve", "--bg", f"--https={SERVE_HTTPS_PORT}", f"http://127.0.0.1:{port}"],
         _WRITE_TIMEOUT_SECS,
     )
     if rc == -1:
-        return ServeResult(
-            False,
-            "no_cli",
-            "The tailscale CLI was not found in a standard install location, so "
-            "nothing was published. Install Tailscale, or publish the dashboard "
-            "yourself and set dashboard.url instead.",
-        )
+        return _no_cli_result(port)
     if rc == -2:
         # The most common way to land here is a Serve-disabled tailnet: the CLI
         # prints the enablement URL to stdout and then blocks waiting for the

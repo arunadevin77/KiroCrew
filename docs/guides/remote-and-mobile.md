@@ -398,6 +398,15 @@ the same and the difference is the whole security story:
   refused, the card and command print what Tailscale itself said rather than a
   generic failure.
 
+  The Tailscale CLI is run only from its standard install locations, and only
+  when the binary and its folder need administrator rights to change, so no
+  other program can swap in a fake one. A Homebrew install on macOS usually
+  belongs to your own account, so it is refused: the card says Tailscale is
+  installed but will not be run, and `tailnet up` and `tailnet status` name the
+  refused binary. For that setup, publish the dashboard with `tailscale serve`
+  yourself, set `dashboard.url` to the exact address your browser opens, and
+  restart Kiro Crew.
+
   `kirocrew tailnet status` shows the three things that are independently
   required — whether the setting is on, whether a MagicDNS name resolves right
   now, and whether serve is actually pointing at this dashboard. Any one of them
