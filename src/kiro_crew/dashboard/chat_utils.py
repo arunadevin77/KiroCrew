@@ -3748,6 +3748,13 @@ TRANSIENT_RETRY_KIND = "transient_retry"
 #: tag (``crewmateBubbles.isCrewmateChatRow``), never by matching their words.
 EMPTY_TURN_NOTICE_KIND = "empty_turn"
 
+#: ``meta.kind`` of the session-start notice that informs the user their agent
+#: spec's ``hooks`` are withheld (project spec not trusted) or never run (backend
+#: has no hook channel). Both are status-only and carry no action for the person.
+#: Crewmate chat drops them (``crewmateBubbles.isCrewmateChatRow``); Sessions
+#: draws them.
+SPEC_HOOKS_NOTICE_KIND = "spec_hooks"
+
 #: ``meta["notice"]`` on the three `error` rows the transient-5xx ladder appends
 #: (chat_runner ``acp_error_is_transient`` branches). The row's CONTENT is the
 #: English fallback below, read verbatim by non-dashboard consumers (channel

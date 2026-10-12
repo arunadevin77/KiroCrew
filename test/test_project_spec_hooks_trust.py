@@ -142,3 +142,48 @@ def test_backends_crew_does_not_fire_spec_hooks_for_read_no_spec(
     assert _chat(backend, repo) == ([], False)
     turn = asyncio.run(spec_hooks.turn_spec_hooks(_provider(backend, str(repo)), _AGENT))
     assert turn == spec_hooks._NOT_GATED
+
+
+def _notices(backend: str, cwd: Path, monkeypatch, *, is_new: bool = True) -> list[str]:
+    rows: list[str] = []
+
+    def _surface(_state, _slot, role, text, *_a, **_k):
+        assert role == "notice"
+        rows.append(text)
+
+    monkeypatch.setattr(chat_runner, "append_and_surface", _surface)
+    asyncio.run(
+        chat_runner._prepare_spec_hooks(
+            None, None, _provider(backend, str(cwd)), _AGENT, is_new=is_new
+        )
+    )
+    return rows
+
+
+@pytest.mark.parametrize("backend", _MIRRORS)
+def test_withheld_project_hooks_show_one_notice_on_a_new_session(
+    backend, agents_dir, tmp_path, monkeypatch
+):
+    _write(agents_dir / f"{_AGENT}.json", _hooks(_USER_CMD))
+    repo = _repo(tmp_path)
+    rows = _notices(backend, repo, monkeypatch)
+    assert rows == [chat_runner._spec_withheld_hooks_notice(_AGENT)]
+    assert _AGENT in rows[0] and "hooks" in rows[0]
+    assert _notices(backend, repo, monkeypatch, is_new=False) == []
+
+
+@pytest.mark.parametrize("backend", _MIRRORS)
+def test_no_withheld_notice_when_the_checkout_is_trusted_or_sets_no_hooks(
+    backend, agents_dir, tmp_path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    _write(repo / ".kiro" / "agents" / f"{_AGENT}.json", {})
+    assert _notices(backend, repo, monkeypatch) == []
+    repo = _repo(tmp_path)
+    monkeypatch.setattr(session_mcp, "_project_mcp_trusted", lambda _w: True)
+    assert _notices(backend, repo, monkeypatch) == []
+
+
+def test_kiro_shows_no_withheld_notice(agents_dir, tmp_path, monkeypatch):
+    # kiro-cli runs the spec's hooks itself, so Crew withholds nothing there.
+    assert _notices(ACP_BACKEND_KIRO, _repo(tmp_path), monkeypatch) == []

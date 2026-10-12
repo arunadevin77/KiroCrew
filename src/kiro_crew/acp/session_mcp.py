@@ -509,6 +509,21 @@ def trusted_project_agent_spec(agent: str, work_dir: str | Path | None) -> tuple
     return False, None
 
 
+def project_spec_hooks_withheld(agent: str, work_dir: str | Path | None) -> bool:
+    """Whether the checkout's own spec for *agent* sets ``hooks`` that do not run.
+
+    True when that spec reads, sets a non-empty ``hooks`` field, and
+    :func:`_project_mcp_trusted` refuses it, which is the refusal
+    :func:`trusted_project_agent_spec` applies. The session-start notice asks
+    this, so a repository's hooks never stop running unseen. A spec that cannot
+    be read answers ``False``: that case already fails PreToolUse closed.
+    """
+    declared, spec = project_agent_spec(agent, work_dir)
+    if not declared or not isinstance(spec, dict) or not spec.get("hooks"):
+        return False
+    return not _project_mcp_trusted(work_dir)
+
+
 def _agent_spec_for(agent: str, work_dir: str | Path | None = None) -> dict[str, Any] | None:
     """The materialized kiro spec for *agent*, or ``None`` when unreadable.
 

@@ -76,7 +76,9 @@ def _prepare(client, agent, *, is_new=False):
 def notices(monkeypatch) -> list:
     seen: list = []
     monkeypatch.setattr(
-        chat_runner, "append_and_surface", lambda state, slot, role, text, cls: seen.append(text)
+        chat_runner,
+        "append_and_surface",
+        lambda state, slot, role, text, cls, **kw: seen.append(text),
     )
     return seen
 

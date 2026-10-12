@@ -425,6 +425,21 @@ def kas_spec_load_error(agents_dir: Path, agent_id: str) -> str | None:
     return None
 
 
+def withheld_project_spec_hooks(agent_id: str, project_dir: str | None) -> bool:
+    """Whether *project_dir*'s own spec for *agent_id* sets ``hooks`` that do not run.
+
+    The agent-SDK face of ``session_mcp.project_spec_hooks_withheld``, for the
+    session-start notice. ``False`` when there is no checkout (KAS).
+    """
+    if not project_dir:
+        return False
+    # circular import: the ACP layer imports the config loader, which sits below
+    # this module; resolved at call time like the other driver seams here.
+    from kiro_crew.acp.session_mcp import project_spec_hooks_withheld
+
+    return project_spec_hooks_withheld(agent_id, project_dir)
+
+
 def spec_project_dir(provider: object) -> str | None:
     """The checkout *provider*'s session resolves its agent spec against, or ``None``.
 
