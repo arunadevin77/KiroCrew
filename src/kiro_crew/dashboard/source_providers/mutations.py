@@ -150,6 +150,7 @@ async def _github_pull_request_node(ref: SourceRef) -> tuple[str, dict[str, Any]
         f"repo={ref.repo}",
         "-F",
         f"number={ref.number}",
+        host=ref.host,
     )
     repository = _github_repository_node(payload)
     pull_request = repository.get("pullRequest")
@@ -197,6 +198,7 @@ async def _github_thread_ref(raw_url: str, thread_id: str) -> SourceRef:
         f"repo={ref.repo}",
         "-F",
         f"number={ref.number}",
+        host=ref.host,
     )
     if thread_id not in github._github_thread_ids(threads):
         raise ValueError("Review thread does not belong to this pull request.")
@@ -254,6 +256,7 @@ async def reply_to_review_thread(raw_url: str, thread_id: str, body: str) -> Non
         f"threadId={thread_id}",
         "-f",
         f"body={text}",
+        host=ref.host,
     )
     _raise_on_graphql_errors(payload, "could not post the reply")
 
@@ -302,6 +305,7 @@ async def unresolve_pull_request_thread(raw_url: str, thread_id: str) -> None:
         f"query={_GITHUB_UNRESOLVE_MUTATION}",
         "-f",
         f"threadId={thread_id}",
+        host=ref.host,
     )
     _raise_on_graphql_errors(payload, "could not reopen the thread")
 
@@ -351,6 +355,7 @@ async def comment_on_pull_request(raw_url: str, body: str) -> None:
         f"repos/{ref.owner}/{ref.repo}/issues/{ref.number}/comments",
         "-f",
         f"body={text}",
+        host=ref.host,
     )
 
 
@@ -382,6 +387,7 @@ async def resolve_pull_request_thread(raw_url: str, thread_id: str) -> None:
             f"repo={ref.repo}",
             "-F",
             f"number={ref.number}",
+            host=ref.host,
         )
         if thread_id not in github._github_thread_ids(threads):
             raise ValueError("Review thread does not belong to this pull request.")
@@ -397,6 +403,7 @@ async def resolve_pull_request_thread(raw_url: str, thread_id: str) -> None:
             f"query={_GITHUB_RESOLVE_MUTATION}",
             "-f",
             f"threadId={thread_id}",
+            host=ref.host,
         )
     else:
         project = quote(ref.project, safe="")
@@ -512,6 +519,7 @@ async def enable_pull_request_auto_merge(
             f"pullRequestId={node_id}",
             "-f",
             f"mergeMethod={method}",
+            host=ref.host,
         )
         _raise_on_graphql_errors(payload, "GitHub refused to enable auto-merge")
         return method.lower()
@@ -573,6 +581,7 @@ async def mark_pull_request_ready(raw_url: str) -> None:
             f"query={_GITHUB_READY_MUTATION}",
             "-f",
             f"pullRequestId={node_id}",
+            host=ref.host,
         )
         _raise_on_graphql_errors(payload, "GitHub refused to mark the pull request ready")
         return

@@ -328,8 +328,22 @@ export function jiraHostSet(hosts: readonly string[] | undefined): ReadonlySet<s
   )
 }
 
+/** Normalize the configured GitHub Enterprise hosts to a lookup set.
+ * Same normalization as gitlabHostSet — entries are exact hostnames from
+ * operator config (dashboard.github_hosts, which refuses a ported entry).
+ * github.com needs no entry; any other GitHub host is recognized only when it
+ * is listed here exactly. */
+export function githubHostSet(hosts: readonly string[] | undefined): ReadonlySet<string> {
+  return new Set(
+    (hosts ?? [])
+      .map(host => host.trim().toLowerCase().replace(/:443$/, ''))
+      .filter(Boolean),
+  )
+}
+
 const NO_GITLAB_HOSTS: ReadonlySet<string> = new Set<string>()
 const NO_JIRA_HOSTS: ReadonlySet<string> = new Set<string>()
+const NO_GITHUB_HOSTS: ReadonlySet<string> = new Set<string>()
 
 /** GitLab path markers, in match order. Both a merge request and an issue live
  * under the project's `/-/` namespace and end in a numeric id, so the marker
@@ -404,12 +418,30 @@ function githubSegmentKind(segment: string): SourceLinkKind | null {
   return null
 }
 
+/** A GitHub pull request or issue on `origin` (github.com or a listed
+ *  Enterprise host): `[owner, repo, 'pull' | 'issues', number]`. */
+function githubLink(origin: string, path: string): PullRequestLink | null {
+  const parts = path.split('/').filter(Boolean)
+  if (parts.length !== 4 || !/^\d+$/.test(parts[3])) return null
+  const kind = githubSegmentKind(parts[2])
+  if (!kind) return null
+  return {
+    url: `https://${origin}/${parts[0]}/${parts[1]}/${parts[2]}/${parts[3]}`,
+    provider: 'github',
+    number: Number(parts[3]),
+    repo: parts[1],
+    kind,
+  }
+}
+
 function parseCandidate(
   raw: string,
   gitlabHosts: ReadonlySet<string> = NO_GITLAB_HOSTS,
   anyGitlabHost = false,
   jiraHosts: ReadonlySet<string> = NO_JIRA_HOSTS,
   anyJiraHost = false,
+  githubHosts: ReadonlySet<string> = NO_GITHUB_HOSTS,
+  anyGithubHost = false,
 ): PullRequestLink | null {
   // Trim trailing punctuation and markdown emphasis (**bold**, *italic*,
   // `code`, _underscore_, ~~strike~~) that the candidate scan may have
@@ -432,26 +464,16 @@ function parseCandidate(
     .replace(/\.+$/, '')
     .replace(/^www\./, '')
   const path = url.pathname.replace(/\/+$/, '')
-  if (host === 'github.com') {
-    // [owner, repo, 'pull' | 'issues', number]
-    const parts = path.split('/').filter(Boolean)
-    if (parts.length !== 4 || !/^\d+$/.test(parts[3])) return null
-    const kind = githubSegmentKind(parts[2])
-    if (!kind) return null
-    return {
-      url: `https://github.com/${parts[0]}/${parts[1]}/${parts[2]}/${parts[3]}`,
-      provider: 'github',
-      number: Number(parts[3]),
-      repo: parts[1],
-      kind,
-    }
-  }
+  if (host === 'github.com') return githubLink('github.com', path)
   if (host === 'gitlab.com') return gitlabLink('gitlab.com', path)
   // Self-managed instance: the exact host (with its port, when the URL carries
   // one) must be allowlisted. `www.` is not stripped here — the allowlist and
   // the backend both match the host as configured.
   const rawHost = url.hostname.toLowerCase().replace(/\.+$/, '')
   const hostWithPort = url.port ? `${rawHost}:${url.port}` : rawHost
+  // GitHub Enterprise first, matching the backend's order; config load refuses
+  // a host listed under two providers.
+  if (anyGithubHost || githubHosts.has(hostWithPort)) return githubLink(hostWithPort, path)
   if (anyGitlabHost || gitlabHosts.has(hostWithPort)) return gitlabLink(hostWithPort, path)
   // Jira: Atlassian Cloud (*.atlassian.net) is recognized automatically;
   // self-hosted Jira/Data Center instances require explicit allowlisting via
@@ -496,6 +518,11 @@ function parseStoredCanonicalLink(value: string): PullRequestLink | null {
     // reload — the same class of bug a mismatched write/read probe caused for
     // Jira. Every reader of a persisted url goes through this one helper.
     ?? parseCandidate(value)
+    // Fourth probe, permissive, for GitHub Enterprise: the stored url is checked
+    // before the allowlist loads, so the host cannot be matched here, exactly as
+    // the first probe does for self-hosted GitLab. It runs after the registry
+    // probe so a registered provider with GitHub-shaped paths keeps its own id.
+    ?? parseCandidate(value, NO_GITLAB_HOSTS, false, NO_JIRA_HOSTS, false, NO_GITHUB_HOSTS, true)
 }
 
 function isCanonicalStoredUrl(value: string): boolean {
@@ -506,6 +533,7 @@ function linksInMessage(
   message: ChatMessage | undefined,
   gitlabHosts: ReadonlySet<string> = NO_GITLAB_HOSTS,
   jiraHosts: ReadonlySet<string> = NO_JIRA_HOSTS,
+  githubHosts: ReadonlySet<string> = NO_GITHUB_HOSTS,
   limit = MAX_PULL_REQUEST_SOURCES,
 ): AttributedLink[] {
   if (message?.role === 'streaming' || message?.role === 'chunk' || limit <= 0) return []
@@ -518,7 +546,7 @@ function linksInMessage(
   const content = typeof rawContent === 'string' ? rawContent : ''
   URL_CANDIDATE_RE.lastIndex = 0
   for (const match of content.matchAll(URL_CANDIDATE_RE)) {
-    const link = parseCandidate(match[0], gitlabHosts, false, jiraHosts)
+    const link = parseCandidate(match[0], gitlabHosts, false, jiraHosts, false, githubHosts)
     if (!link || found.has(link.url)) continue
     found.set(link.url, { ...link, mentionedBy })
     if (found.size >= limit) break
@@ -538,8 +566,16 @@ export function parseSourceLinkUrl(
   url: string,
   gitlabHosts: readonly string[] = [],
   jiraHosts: readonly string[] = [],
+  githubHosts: readonly string[] = [],
 ): PullRequestLink | null {
-  return parseCandidate(url, gitlabHostSet(gitlabHosts), false, jiraHostSet(jiraHosts))
+  return parseCandidate(
+    url,
+    gitlabHostSet(gitlabHosts),
+    false,
+    jiraHostSet(jiraHosts),
+    false,
+    githubHostSet(githubHosts),
+  )
 }
 
 /** Chip label for a GitHub / GitLab link, in each forge's own reference
@@ -649,12 +685,14 @@ export function extractPullRequestLinks(
   messages: ChatMessage[],
   gitlabHosts: readonly string[] = [],
   jiraHosts: readonly string[] = [],
+  githubHosts: readonly string[] = [],
 ): PullRequestLink[] {
   const hosts = gitlabHostSet(gitlabHosts)
   const jHosts = jiraHostSet(jiraHosts)
+  const ghHosts = githubHostSet(githubHosts)
   const found = new Map<string, AttributedLink>()
   for (const message of messages) {
-    addLinks(found, linksInMessage(message, hosts, jHosts))
+    addLinks(found, linksInMessage(message, hosts, jHosts, ghHosts))
     // Once MAX agent sources are captured, no further message can add an emitted
     // Change source, so stop scanning (user links past this point are moot).
     if (roleCount(found, 'agent') >= MAX_PULL_REQUEST_SOURCES) break
@@ -688,6 +726,7 @@ export class PullRequestLinkIndex {
   private result: PullRequestLink[] = []
   private hosts: ReadonlySet<string> = NO_GITLAB_HOSTS
   private jHosts: ReadonlySet<string> = NO_JIRA_HOSTS
+  private ghHosts: ReadonlySet<string> = NO_GITHUB_HOSTS
   private hostsKey = ''
 
   update(
@@ -695,16 +734,19 @@ export class PullRequestLinkIndex {
     messages: ChatMessage[],
     gitlabHosts: readonly string[] = [],
     jiraHosts: readonly string[] = [],
+    githubHosts: readonly string[] = [],
   ): PullRequestLink[] {
     // An operator adding a self-managed host mid-session must retro-detect the
     // MRs already in the transcript, so a changed allowlist forces a full
     // rescan rather than only applying to future messages.
     const hostsKey = [...gitlabHostSet(gitlabHosts)].sort().join(',')
       + '|' + [...jiraHostSet(jiraHosts)].sort().join(',')
+      + '|' + [...githubHostSet(githubHosts)].sort().join(',')
     if (hostsKey !== this.hostsKey) {
       this.hostsKey = hostsKey
       this.hosts = gitlabHostSet(gitlabHosts)
       this.jHosts = jiraHostSet(jiraHosts)
+      this.ghHosts = githubHostSet(githubHosts)
       this.rebuild(slot, messages)
       return this.result
     }
@@ -727,7 +769,7 @@ export class PullRequestLinkIndex {
     if (appended) {
       if (!this.tailTransient) addLinks(this.settled, this.tail)
       for (let index = previousLength; index < nextLength - 1; index += 1) {
-        addLinks(this.settled, linksInMessage(messages[index], this.hosts, this.jHosts))
+        addLinks(this.settled, linksInMessage(messages[index], this.hosts, this.jHosts, this.ghHosts))
         if (roleCount(this.settled, 'agent') >= MAX_PULL_REQUEST_SOURCES) break
       }
       this.setTail(messages[nextLength - 1])
@@ -748,7 +790,7 @@ export class PullRequestLinkIndex {
     this.messages = messages
     this.settled = new Map()
     for (let index = 0; index < Math.max(0, messages.length - 1); index += 1) {
-      addLinks(this.settled, linksInMessage(messages[index], this.hosts, this.jHosts))
+      addLinks(this.settled, linksInMessage(messages[index], this.hosts, this.jHosts, this.ghHosts))
       if (roleCount(this.settled, 'agent') >= MAX_PULL_REQUEST_SOURCES) break
     }
     this.setTail(messages.at(-1))
@@ -757,7 +799,7 @@ export class PullRequestLinkIndex {
 
   private setTail(message: ChatMessage | undefined): void {
     this.tailTransient = message?.role === 'streaming' || message?.role === 'chunk'
-    this.tail = linksInMessage(message, this.hosts, this.jHosts)
+    this.tail = linksInMessage(message, this.hosts, this.jHosts, this.ghHosts)
   }
 
   private materialize(): void {

@@ -8,6 +8,7 @@ from a provider echo.
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from kiro_crew.dashboard.source_providers import projection, runner
@@ -189,7 +190,7 @@ async def _github_settled_merge_state(ref: SourceRef, details: dict[str, Any]) -
         await asyncio.sleep(projection._MERGE_STATE_REREAD_DELAY_SECS)
         try:
             data = await runner._run_json(
-                "gh", "pr", "view", ref.url, "--json", "mergeable,mergeStateStatus"
+                "gh", "pr", "view", ref.url, "--json", "mergeable,mergeStateStatus", host=ref.host
             )
         except SourceProviderError:
             break
@@ -233,7 +234,7 @@ async def _fetch_github(ref: SourceRef) -> dict[str, Any]:
         ]
     )
     repo_api = f"repos/{ref.owner}/{ref.repo}/pulls/{ref.number}"
-    details = await runner._run_json("gh", "pr", "view", ref.url, "--json", fields)
+    details = await runner._run_json("gh", "pr", "view", ref.url, "--json", fields, host=ref.host)
     if not isinstance(details, dict):
         raise SourceProviderError("GitHub returned an invalid pull-request payload")
 
@@ -256,12 +257,14 @@ async def _fetch_github(ref: SourceRef) -> dict[str, Any]:
             "api",
             f"{repo_api}/files?per_page={projection._SECONDARY_PAGE_SIZE}",
             max_output_bytes=runner._DIFF_OUTPUT_BYTES,
+            host=ref.host,
         ),
         runner._run_json(
             "gh",
             "api",
             f"{repo_api}/comments?per_page={projection._SECONDARY_PAGE_SIZE}",
             max_output_bytes=runner._DISCUSSION_OUTPUT_BYTES,
+            host=ref.host,
         ),
         runner._run_json(
             "gh",
@@ -276,6 +279,7 @@ async def _fetch_github(ref: SourceRef) -> dict[str, Any]:
             "-F",
             f"number={ref.number}",
             max_output_bytes=runner._DISCUSSION_OUTPUT_BYTES,
+            host=ref.host,
         ),
         # Runs alongside the secondary calls so its re-read wait overlaps with
         # fetches this request was making anyway.
@@ -357,7 +361,7 @@ async def _fetch_github(ref: SourceRef) -> dict[str, Any]:
                 "author": projection._author(authors[0]) if authors else "",
                 "date": item.get("committedDate") or item.get("authoredDate") or "",
                 "url": (
-                    f"https://github.com/{ref.owner}/{ref.repo}/commit/{item.get('oid')}"
+                    f"https://{ref.host}/{ref.owner}/{ref.repo}/commit/{item.get('oid')}"
                     if item.get("oid")
                     else ""
                 ),
@@ -414,6 +418,107 @@ async def _fetch_github(ref: SourceRef) -> dict[str, Any]:
 async def _github_rollup_read(ref: SourceRef) -> tuple[list[dict[str, Any]], str]:
     """Read the check rollup ALONE, paired with the head sha it was read at.
 
+    On a GitHub Enterprise host a failed GraphQL rollup is retried once through
+    the REST check-run and commit-status endpoints (:func:`_github_rollup_rest`):
+    an Enterprise Server release can lack a field the rollup query names, and an
+    unknown field fails the whole GraphQL document. github.com keeps the GraphQL
+    read alone. See :func:`_github_rollup_graphql` for the read itself.
+    """
+    try:
+        return await _github_rollup_graphql(ref)
+    except SourceProviderError:
+        if ref.host == "github.com":
+            raise
+        return await _github_rollup_rest(ref)
+
+
+# A commit sha as REST returns it (SHA-1 or SHA-256 object names). It is checked
+# before it is placed in an API path, since it arrives from the provider.
+_GITHUB_SHA_RE = re.compile(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}")
+_GITHUB_REST_CHECKS_PAGE = 100
+
+
+def _rest_rows(payload: Any, key: str, head: str) -> list[dict[str, Any]]:
+    """The rows under ``key`` of one REST checks page, or raise when it is partial.
+
+    A page that does not hold every row raises, like a GraphQL board past the page
+    cap: a partial board could hide a live failure on the rows never fetched.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get(key), list):
+        raise SourceProviderError("GitHub returned an invalid checks payload")
+    rows = [row for row in payload[key] if isinstance(row, dict)]
+    total = payload.get("total_count")
+    if isinstance(total, int) and total > len(rows):
+        raise SourceProviderError("GitHub check rollup exceeds the page limit")
+    for row in rows:
+        row_head = row.get("head_sha")
+        if row_head and row_head != head:
+            raise SourceProviderError("GitHub returned checks for a different commit")
+    return rows
+
+
+async def _github_rollup_rest(ref: SourceRef) -> tuple[list[dict[str, Any]], str]:
+    """The check rollup from REST, in the row shape the GraphQL read produces.
+
+    Reads the pull request's head sha, then that commit's check runs and its
+    combined commit status. The rows carry no workflow-run identity, so the
+    superseded-row collapse keeps every one of them: over-counting is cosmetic,
+    hiding a live failure is not. Any failure raises, and the caller degrades the
+    checks section as it does for a failed GraphQL read.
+    """
+    repo_api = f"repos/{ref.owner}/{ref.repo}"
+    pull = await runner._run_json("gh", "api", f"{repo_api}/pulls/{ref.number}", host=ref.host)
+    head_ref = pull.get("head") if isinstance(pull, dict) else None
+    head = str(head_ref.get("sha") or "") if isinstance(head_ref, dict) else ""
+    if not _GITHUB_SHA_RE.fullmatch(head):
+        raise SourceProviderError("GitHub returned an invalid pull-request payload")
+    query = f"per_page={_GITHUB_REST_CHECKS_PAGE}"
+    runs_raw, status_raw = await asyncio.gather(
+        runner._run_json(
+            "gh",
+            "api",
+            f"{repo_api}/commits/{head}/check-runs?{query}",
+            max_output_bytes=runner._CHECKS_OUTPUT_BYTES,
+            host=ref.host,
+        ),
+        runner._run_json(
+            "gh",
+            "api",
+            f"{repo_api}/commits/{head}/status?{query}",
+            max_output_bytes=runner._CHECKS_OUTPUT_BYTES,
+            host=ref.host,
+        ),
+    )
+    if isinstance(status_raw, dict) and status_raw.get("sha") not in (None, "", head):
+        raise SourceProviderError("GitHub returned checks for a different commit")
+    rows: list[dict[str, Any]] = [
+        {
+            "__typename": "CheckRun",
+            "name": run.get("name") or "",
+            "status": run.get("status") or "",
+            "conclusion": run.get("conclusion") or "",
+            "startedAt": run.get("started_at") or "",
+            "completedAt": run.get("completed_at") or "",
+            "detailsUrl": run.get("details_url") or run.get("html_url") or "",
+        }
+        for run in _rest_rows(runs_raw, "check_runs", head)
+    ]
+    rows.extend(
+        {
+            "__typename": "StatusContext",
+            "context": status.get("context") or "",
+            "state": status.get("state") or "",
+            "targetUrl": status.get("target_url") or "",
+            "createdAt": status.get("created_at") or "",
+        }
+        for status in _rest_rows(status_raw, "statuses", head)
+    )
+    return _github_checks(rows), head
+
+
+async def _github_rollup_graphql(ref: SourceRef) -> tuple[list[dict[str, Any]], str]:
+    """Read the check rollup through GraphQL, paired with the head sha it was read at.
+
     ``gh pr view`` resolves a ``--json`` field set atomically: one unreadable
     field fails the whole read. ``statusCheckRollup`` needs Checks read access
     that fine-grained tokens commonly lack, so it must never share a field set
@@ -442,7 +547,9 @@ async def _github_rollup_read(ref: SourceRef) -> tuple[list[dict[str, Any]], str
         if cursor:
             argv += ["-f", f"c={cursor}"]
         argv += ["-f", f"o={ref.owner}", "-f", f"r={ref.repo}", "-F", f"n={ref.number}"]
-        data = await runner._run_json(*argv, max_output_bytes=runner._CHECKS_OUTPUT_BYTES)
+        data = await runner._run_json(
+            *argv, max_output_bytes=runner._CHECKS_OUTPUT_BYTES, host=ref.host
+        )
         try:
             if not isinstance(data, dict) or data.get("errors"):
                 raise TypeError
@@ -531,7 +638,7 @@ def _github_linked_changes(timeline: Any) -> list[dict[str, Any]]:
 
 async def _fetch_github_issue(ref: SourceRef) -> dict[str, Any]:
     issue_api = f"repos/{ref.owner}/{ref.repo}/issues/{ref.number}"
-    details = await runner._run_json("gh", "api", issue_api)
+    details = await runner._run_json("gh", "api", issue_api, host=ref.host)
     if not isinstance(details, dict):
         raise SourceProviderError("GitHub returned an invalid issue payload")
 
@@ -545,12 +652,14 @@ async def _fetch_github_issue(ref: SourceRef) -> dict[str, Any]:
             "api",
             f"{issue_api}/comments?per_page={projection._SECONDARY_PAGE_SIZE}",
             max_output_bytes=runner._DISCUSSION_OUTPUT_BYTES,
+            host=ref.host,
         ),
         runner._run_json(
             "gh",
             "api",
             f"{issue_api}/timeline?per_page={projection._SECONDARY_PAGE_SIZE}",
             max_output_bytes=runner._DISCUSSION_OUTPUT_BYTES,
+            host=ref.host,
         ),
         return_exceptions=True,
     )

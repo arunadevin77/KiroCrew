@@ -345,6 +345,7 @@ async def _fetch_check_status(url: str) -> dict[str, str] | None:
                 ref.url,
                 "--json",
                 "state,isDraft,mergeable,mergeStateStatus,headRefOid",
+                host=ref.host,
             ),
             github._github_rollup_read(ref),
             return_exceptions=True,

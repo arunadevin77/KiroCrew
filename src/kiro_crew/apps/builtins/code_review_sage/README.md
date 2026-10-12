@@ -122,5 +122,11 @@ for it:
 gh auth login --hostname ghe.example.com
 ```
 
+This list is separate from the dashboard's `dashboard.github_hosts` in
+`~/.kiro/crew/config.json`, which decides which Enterprise pull-request and
+issue links the dashboard's chips and Changes/Issues panels recognize. Neither
+reads the other, so list a host in both to use it in both places; the one
+`gh auth login --hostname` entry serves both.
+
 Hosts are matched exactly against the parsed URL hostname — never as a
 substring — so lookalike hosts are refused.

@@ -109,6 +109,12 @@ _PROVIDER_AUTH_ENV_KEYS = {
     "gh": frozenset(_GH_ENV_PASSTHROUGH) - {"GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"},
     "glab": frozenset({"GLAB_CONFIG_DIR", "GITLAB_TOKEN"}),
 }
+# The github.com credentials gh reads from the environment. A GitHub Enterprise
+# target never receives them: gh would also send them to a ``*.ghe.com`` tenant,
+# and the operator listed an Enterprise host to reach that host with its own
+# ``gh auth login --hostname`` entry, not with the github.com token.
+_GH_PUBLIC_TOKEN_ENV_KEYS = frozenset({"GH_TOKEN", "GITHUB_TOKEN"})
+_GITHUB_PUBLIC_HOSTS = frozenset({"github.com", "www.github.com"})
 _provider_semaphore = asyncio.Semaphore(_PROVIDER_CONCURRENCY)
 _PROVIDER_TOOL_NAME = "source_provider_cli"
 
@@ -474,9 +480,10 @@ _GLAB_AUTH_FAILURE_MARKERS = _AUTH_FAILURE_MARKERS + ("401 unauthorized", "http 
 def _provider_failure(executable: str, stderr: bytes, host: str = "") -> SourceProviderError:
     """The error for a failed provider call: redacted stderr plus a sign-in hint.
 
-    For a self-managed GitLab the hint names the host: a bare ``glab auth login``
-    signs in to gitlab.com by default, so it sends the user to the wrong server.
-    ``glab auth login --hostname <host>`` signs in to the right one. That command
+    For a self-managed GitLab or a GitHub Enterprise host the hint names the
+    host: a bare ``glab auth login`` / ``gh auth login`` signs in to the public
+    instance by default, so it sends the user to the wrong server.
+    ``<cli> auth login --hostname <host>`` signs in to the right one. That command
     also rides on the error as ``login_command``, built only from the allowlisted
     host, so the dashboard shows it without parsing provider-controlled text.
     """
@@ -485,8 +492,11 @@ def _provider_failure(executable: str, stderr: bytes, host: str = "") -> SourceP
     markers = _GLAB_AUTH_FAILURE_MARKERS if executable == "glab" else _AUTH_FAILURE_MARKERS
     if not any(marker in lowered for marker in markers):
         return SourceProviderError(message)
-    if executable == "glab" and host and host.casefold() != "gitlab.com":
-        login_command = f"glab auth login --hostname {host}"
+    if host and (
+        (executable == "glab" and host.casefold() != "gitlab.com")
+        or (executable == "gh" and host.casefold() not in _GITHUB_PUBLIC_HOSTS)
+    ):
+        login_command = f"{executable} auth login --hostname {host}"
         return SourceProviderError(
             f"{message} Run `{login_command}`, then retry.",
             login_command=login_command,
@@ -594,6 +604,11 @@ async def _run_provider(
     :func:`parse_source_url`; it is re-checked here so a caller cannot reach an
     unauthorized instance even if a future code path forgets to validate, and an
     omitted host is refused rather than silently resolved to gitlab.com.
+
+    For ``gh`` an omitted host (or ``github.com``) is github.com. Any other host
+    must be in ``dashboard.github_hosts``; the child is then pinned to it through
+    ``GH_HOST`` and, for ``gh api``, an explicit ``--hostname`` that only this
+    function adds, and it does not receive the github.com tokens.
     """
     executable = argv[0] if argv else ""
     if max_output_bytes <= 0 or max_output_bytes > _DIFF_OUTPUT_BYTES:
@@ -603,6 +618,21 @@ async def _run_provider(
         _audit_provider_cli(executable, "denied", "unsupported_provider")
         raise SourceProviderError("unsupported provider command")
     gitlab_host = "gitlab.com"
+    github_host = "github.com"
+    if executable == "gh":
+        # The host is pinned below from the validated ``host`` alone, so a
+        # caller-supplied flag could only disagree with it.
+        if any(arg == "--hostname" or arg.startswith("--hostname=") for arg in argv[1:]):
+            _audit_provider_cli(executable, "denied", "hostname_in_argv")
+            raise SourceProviderError("the GitHub host is set by the runner, not the caller")
+        if host and host.casefold() not in _GITHUB_PUBLIC_HOSTS:
+            # gh cannot address a GitHub host on a non-default port (it rejects a
+            # port in --hostname and drops it from a URL), so a ported host would
+            # reach a different origin than the one authorized.
+            if ":" in host or host not in hosts._allowed_github_hosts():
+                _audit_provider_cli(executable, "denied", "host_not_allowlisted")
+                raise SourceProviderError("GitHub host is not allowlisted")
+            github_host = host
     if executable == "glab":
         # Required, not defaulted: a call site that forgets `host` would
         # otherwise silently target gitlab.com, so an allowlisted self-managed MR
@@ -642,6 +672,8 @@ async def _run_provider(
         raise
 
     allowed_env_keys = _PROVIDER_BASE_ENV_KEYS | _PROVIDER_AUTH_ENV_KEYS[executable]
+    if executable == "gh" and github_host != "github.com":
+        allowed_env_keys = allowed_env_keys - _GH_PUBLIC_TOKEN_ENV_KEYS
     if executable == "glab" and not gitlab_ambient_token_allowed(gitlab_host):
         # GITLAB_TOKEN is a single ambient credential with no host binding, so
         # forwarding it while GITLAB_HOST points at a self-managed instance would
@@ -673,9 +705,10 @@ async def _run_provider(
     # value, not an allowlist key.
     apply_session_bus_address(base_env)
     if executable == "gh":
-        # All accepted GitHub URLs normalize to github.com. Pin bare API paths
-        # to the same host instead of honoring a configured enterprise default.
-        base_env["GH_HOST"] = "github.com"
+        # Pin bare API paths to the host parse_source_url authorized (github.com
+        # unless the ref is on a listed Enterprise host) instead of honoring a
+        # configured default in gh's own config.
+        base_env["GH_HOST"] = github_host
     else:
         # Pin the CLI to the host parse_source_url authorized for this URL, so a
         # self-managed default in glab config can't redirect the bare API paths
@@ -686,9 +719,12 @@ async def _run_provider(
     invoked = False
     try:
         async with _provider_semaphore:
+            child_args = list(argv[1:])
+            if executable == "gh" and github_host != "github.com" and child_args[:1] == ["api"]:
+                child_args[1:1] = ["--hostname", github_host]
             try:
                 wrapped_argv, env, cleanup_path = await sandboxed_spawn_argv_async(
-                    [resolved_executable, *argv[1:]],
+                    [resolved_executable, *child_args],
                     mode="standard",
                     env=base_env,
                     _prepare=sandboxed_spawn_argv,

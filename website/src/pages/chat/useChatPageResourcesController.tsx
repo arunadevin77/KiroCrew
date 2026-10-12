@@ -164,7 +164,7 @@ export function useChatPageResourcesController({
   // on each tick. Instead the WS 'slots' push carries the allowlist generation
   // (see useWebSocket), which invalidates this query only when the allowlist
   // actually changes — an edit on disk still propagates, without the churn.
-  const { data: sourceHostCfg, error: sourceHostError, errorUpdatedAt: sourceHostErrorAt } = useQuery<{ gitlab_hosts?: string[]; jira_hosts?: string[]; upload_max_mb?: number }>({
+  const { data: sourceHostCfg, error: sourceHostError, errorUpdatedAt: sourceHostErrorAt } = useQuery<{ gitlab_hosts?: string[]; jira_hosts?: string[]; github_hosts?: string[]; upload_max_mb?: number }>({
     queryKey: ['dashboardConfig'],
     queryFn: fetchDashboardConfig,
     staleTime: 30_000,
@@ -178,6 +178,7 @@ export function useChatPageResourcesController({
   }, [sourceHostErrorAt])
   const sourceHosts = sourceHostCfg?.gitlab_hosts ?? []
   const jiraSourceHosts = sourceHostCfg?.jira_hosts ?? []
+  const githubSourceHosts = sourceHostCfg?.github_hosts ?? []
   // Operator link rules (dashboard.link_patterns) are registered into the
   // autolink registry by the app shell (useConfigAutolinkRules), so every
   // surface linkifies regardless of whether a chat page has rendered. This
@@ -188,11 +189,14 @@ export function useChatPageResourcesController({
   sourceHostsRef.current = sourceHosts
   const jiraSourceHostsRef = useRef(jiraSourceHosts)
   jiraSourceHostsRef.current = jiraSourceHosts
+  const githubSourceHostsRef = useRef(githubSourceHosts)
+  githubSourceHostsRef.current = githubSourceHosts
   const indexedSourceLinks = sourceLinkIndex.current.update(
     activeSlot,
     messages,
     sourceHosts,
     jiraSourceHosts,
+    githubSourceHosts,
   )
   // One scan, one dedup map, two panels: the extractor returns pull requests and
   // issues together (they share the per-role cap), and the two side-panel tabs
@@ -828,6 +832,7 @@ export function useChatPageResourcesController({
     sourceHostsRef,
     jiraSourceHosts,
     jiraSourceHostsRef,
+    githubSourceHostsRef,
     panelSources,
     panelIssues,
     selectedSourceUrl,

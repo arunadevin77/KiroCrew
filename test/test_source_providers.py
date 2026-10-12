@@ -4119,6 +4119,7 @@ async def test_fetch_github_checks_uses_one_call_without_rewriting_cache(monkeyp
         "-F",
         "n=12",
         max_output_bytes=source._CHECKS_OUTPUT_BYTES,
+        host="github.com",
     )
     assert checks[0]["bucket"] == "pending"
     assert source._CACHE[url] == cached

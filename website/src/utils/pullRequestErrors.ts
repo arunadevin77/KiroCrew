@@ -11,7 +11,7 @@
  */
 export function pullRequestErrorDetails(error: unknown): {
   message: string
-  /** The command to run: `gh auth login`, `glab auth login`, or `glab auth login --hostname <host>` for a self-managed GitLab. */
+  /** The command to run: `gh auth login`, `glab auth login`, or `<gh|glab> auth login --hostname <host>` for a GitHub Enterprise or self-managed GitLab host. */
   loginCommand: string
   /** The server refused pending an acknowledgement the client may now offer. */
   confirmationRequired: boolean
@@ -35,7 +35,11 @@ export function pullRequestErrorDetails(error: unknown): {
       loginCommand?: unknown
     }
     if (typeof payload.error === 'string') message = payload.error
-    if (typeof payload.loginCommand === 'string' && payload.loginCommand.startsWith('glab auth login --hostname ')) {
+    if (
+      typeof payload.loginCommand === 'string'
+      && (payload.loginCommand.startsWith('glab auth login --hostname ')
+        || payload.loginCommand.startsWith('gh auth login --hostname '))
+    ) {
       hostScoped = payload.loginCommand
     }
     confirmationRequired = payload.confirmationRequired === true
@@ -48,10 +52,10 @@ export function pullRequestErrorDetails(error: unknown): {
   const authenticationFailure = /\b(?:not logged in(?:to)?|unauthenticated|authentication (?:failed|required)|requires authentication|401 unauthorized|http 401)\b/i.test(message)
   // The bare command literals pass the i18n gate via the enumerated
   // `^(?:gh|glab) auth login$` exclusion in eslint.i18n.config.js — terminal
-  // commands are wire strings, never display copy. A self-managed GitLab's
-  // host-scoped command arrives as its own `loginCommand` field instead: the
-  // gateway builds it from the allowlisted host, so nothing is parsed out of
-  // provider-controlled message text.
+  // commands are wire strings, never display copy. A GitHub Enterprise or
+  // self-managed GitLab host-scoped command arrives as its own `loginCommand`
+  // field instead: the gateway builds it from the allowlisted host, so nothing
+  // is parsed out of provider-controlled message text.
   const loginCommand: string = hostScoped
     ? hostScoped
     : authenticationFailure && /(?:`|\b)gh auth login(?:`|\b)/i.test(message)

@@ -3636,15 +3636,18 @@ class DashboardConfig:
         default_factory=list,
         metadata=_meta(
             "GitHub Enterprise Hosts",
-            "Exact hostnames (optionally host:port) of GitHub Enterprise Server "
-            "instances that gh-backed features may reach: the Changes and Issues "
-            "panels and session source links. "
+            "Exact hostnames of GitHub Enterprise Server instances that gh-backed "
+            "features may reach: the Changes and Issues panels and session source "
+            "links. "
             "Empty = github.com only (deny-by-default): a pull-request or issue "
             "URL on any other host is only sent to the gh CLI if its host is an "
-            "exact member of this list. Suffixes and wildcards are not matched. "
+            "exact member of this list. Suffixes, wildcards and ports are not "
+            "accepted (gh cannot address a host on a non-default port). "
             "Each listed host authenticates only from its own `gh auth login "
             "--hostname <host>` entry; the github.com token is never sent to it. "
-            "A host that is also listed in gitlab_hosts or jira_hosts is refused.",
+            "A host that is also listed in gitlab_hosts or jira_hosts is refused. "
+            "The Code Review Sage app reads its own github_hosts list from its "
+            "app config, not this one; list a host in both to use it in both.",
         ),
     )
     gitlab_hosts: list[str] = field(
@@ -6012,12 +6015,15 @@ _GITHUB_PUBLIC_HOSTS = frozenset({"github.com", "www.github.com"})
 
 
 def _coerce_github_hosts(raw: object, *, claimed: Iterable[str] = ()) -> list[str]:
-    """Coerce the GitHub Enterprise allowlist to clean ``host[:port]`` entries.
+    """Coerce the GitHub Enterprise allowlist to clean hostname entries.
 
-    Entries follow the self-hosted GitLab grammar exactly (see
+    Entries follow the self-hosted GitLab grammar (see
     :func:`_coerce_gitlab_hosts`), so the same malformed entries are dropped and
     the same canonical form reaches the exact-match check. github.com needs no
     entry and is dropped, as is gitlab.com, which that grammar already refuses.
+    An entry with a non-default port is refused with a warning: ``gh`` rejects a
+    port in ``--hostname``, so such a host can never be reached, and pinning the
+    bare name instead would aim the call at a different port.
 
     ``claimed`` holds the hosts another provider allowlist already owns
     (``gitlab_hosts``, ``jira_hosts``). Such an entry is refused here with a
@@ -6028,6 +6034,13 @@ def _coerce_github_hosts(raw: object, *, claimed: Iterable[str] = ()) -> list[st
     out: list[str] = []
     for host in _coerce_gitlab_hosts(raw):
         if host in _GITHUB_PUBLIC_HOSTS:
+            continue
+        if ":" in host:
+            logger.warning(
+                "dashboard.github_hosts entry %r names a port; gh cannot reach a "
+                "GitHub host on a non-default port, so it is ignored",
+                host,
+            )
             continue
         if host in taken:
             logger.warning(

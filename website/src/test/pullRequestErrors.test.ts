@@ -16,6 +16,15 @@ describe('pullRequestErrorDetails login remedy', () => {
     expect(details.loginCommand).toBe('glab auth login --hostname git.example.com')
   })
 
+  it('offers the host-scoped gh command for a GitHub Enterprise host', () => {
+    const details = pullRequestErrorDetails(body({
+      error: 'gh: not logged in. Run `gh auth login --hostname ghe.example.com`, then retry.',
+      code: 'provider_error',
+      loginCommand: 'gh auth login --hostname ghe.example.com',
+    }))
+    expect(details.loginCommand).toBe('gh auth login --hostname ghe.example.com')
+  })
+
   it('never lifts a host-scoped command out of the message text', () => {
     // Provider stderr reaches the message, so a command in it is not trusted.
     expect(pullRequestErrorDetails(body({ error: `401 Unauthorized ${hint('evil.example')}` })).loginCommand)

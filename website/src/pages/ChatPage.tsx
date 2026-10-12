@@ -1641,6 +1641,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     sourceHostsRef,
     jiraSourceHosts,
     jiraSourceHostsRef,
+    githubSourceHostsRef,
     panelSources,
     panelIssues,
     selectedSourceUrl,
@@ -5113,7 +5114,12 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
    *  empty if it fails), so every self-hosted chip parses to null in that window
    *  even though the backend scan accepted it. */
   const revealSourceLink = useCallback((slot: string, chip: { url: string; kind: SourceLinkKind }): boolean => {
-    const link = parseSourceLinkUrl(chip.url, sourceHostsRef.current, jiraSourceHostsRef.current)
+    const link = parseSourceLinkUrl(
+      chip.url,
+      sourceHostsRef.current,
+      jiraSourceHostsRef.current,
+      githubSourceHostsRef.current,
+    )
     if (!link) return false
     const view = link.kind === 'issue' ? 'issues' : 'changes'
     // Durable BEFORE the state update, and one key at a time. Writing inside the
