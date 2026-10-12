@@ -88,6 +88,21 @@ class TestConversationLog:
             log.append("t1", "user", f"msg {i}")
         assert log.unconsolidated_count("t1") == 10
 
+    def test_uncached_count_matches_and_leaves_the_cache_empty(self, tmp_path):
+        log = ConversationLog(base_dir=tmp_path)
+        for i in range(6):
+            log.append("t1", "user", f"msg {i} with a\u2028separator")
+        log.mark_consolidated("t1", 2)
+        with open(log._path("t1"), "a", encoding="utf-8") as fh:
+            fh.write("not json\n[1, 2]\n\n")
+        log._msg_cache.clear()
+        assert log.unconsolidated_count("t1") == 4
+        assert "t1" not in log._msg_cache
+        assert len(log._read_messages("t1")) - 2 == 4  # the cached path agrees
+        assert "t1" in log._msg_cache
+        assert log.unconsolidated_count("t1") == 4  # and a hit is reused
+        assert log.unconsolidated_count("missing") == 0
+
     def test_mark_consolidated(self, tmp_path):
         log = ConversationLog(base_dir=tmp_path)
         for i in range(10):
@@ -4800,6 +4815,40 @@ class TestConsolidateSession:
 
 class TestLRUCache:
     """Unit tests for the bounded _LRUCache primitive backing the caches."""
+
+    def test_idle_entries_are_dropped_and_recent_ones_kept(self):
+        from kiro_crew.history import _LRUCache
+
+        c: _LRUCache[int] = _LRUCache(maxsize=8, idle_ttl=100.0)
+        c["old"] = 1
+        c["read-late"] = 2
+        c["new"] = 3
+        now = time.monotonic()
+        c._stamps["old"] = now - 500
+        c._stamps["read-late"] = now - 500
+        assert c.get("read-late") == 2  # a read refreshes the entry
+        assert c.drop_idle() == 1
+        assert "old" not in c
+        assert c.get("read-late") == 2 and c.get("new") == 3
+
+    def test_without_a_ttl_nothing_expires(self):
+        from kiro_crew.history import _LRUCache
+
+        c: _LRUCache[int] = _LRUCache(maxsize=8)
+        c["a"] = 1
+        assert c.drop_idle(now=time.monotonic() + 10**6) == 0
+        assert c.get("a") == 1
+
+    def test_the_transcript_caches_expire_and_the_sweep_reaches_them(self, tmp_path):
+        from kiro_crew import history_cache
+
+        log = ConversationLog(tmp_path)
+        log._msg_cache["k"] = ((0, 0, 0), 0, [{"role": "user", "content": "x"}])
+        log._recent_cache["k\x00"] = ((0, 0, 0), 0, [])
+        later = time.monotonic() + history_cache._TRANSCRIPT_CACHE_IDLE_TTL + 1
+        assert history_cache.sweep_idle_caches(now=later) >= 2
+        assert "k" not in log._msg_cache
+        assert "k\x00" not in log._recent_cache
 
     def test_hit_returns_value(self):
         from kiro_crew.history import _LRUCache
