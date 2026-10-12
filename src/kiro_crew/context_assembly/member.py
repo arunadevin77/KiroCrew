@@ -107,6 +107,18 @@ def _fit_folder_steering_into_envelope(
         dropped = len(candidates) - len(fitted)
         if not dropped and not ceilings:
             return fitted
+        # Imported at call time, like every Kiro Crew name an owner reads. Each pass
+        # gives back one more document, and the last pass is the one the envelope
+        # carries, so a later record replaces this one.
+        from kiro_crew import context_omissions
+
+        context_omissions.record(
+            context_omissions.FOLDER_STEERING,
+            "cap",
+            omitted=dropped,
+            total=len(candidates),
+            budget_chars=ctx.ESSENTIAL_MAX_CHARS,
+        )
         lines = [ctx.render_omission_notice(omission) for omission in ceilings]
         if dropped:
             lines.append(

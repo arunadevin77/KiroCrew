@@ -191,6 +191,7 @@ _OMISSION_NOTES: dict[str, str] = {
     _omissions.PREFERENCES_FILE: "Preferences text past the protected-content ceiling.",
     _omissions.BACKGROUND: "Background sections the admission pool had no room for.",
     _omissions.MEMBER_BRIEFING: "A member briefing cut at its character cap.",
+    _omissions.FOLDER_STEERING: "Folder steering documents a collection or size ceiling left out.",
 }
 _OMISSION_KINDS: tuple[tuple[str, str], ...] = tuple(
     (kind, _OMISSION_NOTES[kind]) for kind in _omissions.KINDS

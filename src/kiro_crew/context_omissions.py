@@ -1,11 +1,12 @@
 """Record what the context composer left out, at the decision that left it out.
 
 Every budgeted block of an assembled prompt -- the two lesson tiers, the preference
-facts, the preferences file, the background pool and a member briefing -- writes an
-omission notice INTO the prompt when it cuts. The model reads that notice and nothing
-else does, so a reader of the usage record could see how big a block was but not
-whether anything was dropped to reach that size. This module is the structured twin
-of those notices: the code that decides a cut and formats its notice also calls
+facts, the preferences file, the background pool, a member briefing and folder
+steering -- writes an omission notice INTO the prompt when it cuts. The model reads
+that notice and nothing else does, so a reader of the usage record could see how big
+a block was but not whether anything was dropped to reach that size. This module is
+the structured twin of those notices: the code that decides a cut and formats its
+notice also calls
 :func:`record`, and the turn that composed the prompt gathers the records with
 :func:`collect` and writes them beside the block sizes on ``context/composed``.
 
@@ -39,6 +40,7 @@ PREFERENCE_FACTS: Final = "preference_facts"
 PREFERENCES_FILE: Final = "preferences_file"
 BACKGROUND: Final = "background"
 MEMBER_BRIEFING: Final = "member_briefing"
+FOLDER_STEERING: Final = "folder_steering"
 
 #: Every block that can record a cut. The record is keyed by these names only.
 KINDS: Final[tuple[str, ...]] = (
@@ -48,6 +50,7 @@ KINDS: Final[tuple[str, ...]] = (
     PREFERENCES_FILE,
     BACKGROUND,
     MEMBER_BRIEFING,
+    FOLDER_STEERING,
 )
 
 #: Why a block was cut. ``budget`` is a character budget the block shares or owns,
@@ -123,54 +126,3 @@ def clear(kind: str) -> None:
     sink = _SINK.get()
     if sink is not None:
         sink.pop(kind, None)
-
-
-def as_record(raw: object) -> dict[str, dict[str, Any]]:
-    """A clean copy of a collected record, holding only the declared vocabulary.
-
-    The crew log refuses an entry whose data carries an undeclared member, and a
-    refusal would lose the block sizes written beside this record, so anything
-    outside :data:`KINDS`, :data:`REASONS`, :data:`COUNT_FIELDS` and the background
-    section names is dropped here rather than sent.
-    """
-    out: dict[str, dict[str, Any]] = {}
-    if not isinstance(raw, dict):
-        return out
-    known_sections = set(BACKGROUND_SECTIONS.values())
-    for kind in KINDS:
-        entry = raw.get(kind)
-        if not isinstance(entry, dict) or entry.get("reason") not in REASONS:
-            continue
-        clean: dict[str, Any] = {"reason": entry["reason"]}
-        for name in COUNT_FIELDS:
-            value = entry.get(name)
-            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-                clean[name] = value
-        sections = entry.get("sections")
-        if isinstance(sections, list):
-            named = sorted({s for s in sections if isinstance(s, str) and s in known_sections})
-            if named:
-                clean["sections"] = named
-        out[kind] = clean
-    return out
-
-
-def summary(record_: dict[str, dict[str, Any]]) -> str:
-    """One short line naming each cut, for the live activity feed.
-
-    ``lesson rules 23 of 92`` for a counted cut, the section names for the background
-    pool, and the bare block name for a cut that carries no count.
-    """
-    parts: list[str] = []
-    for kind in KINDS:
-        entry = record_.get(kind)
-        if not entry:
-            continue
-        label = kind.replace("_", " ")
-        if entry.get("omitted") and entry.get("total"):
-            parts.append(f"{label} {entry['omitted']} of {entry['total']}")
-        elif entry.get("sections"):
-            parts.append(f"{label} ({', '.join(s.replace('_', ' ') for s in entry['sections'])})")
-        else:
-            parts.append(label)
-    return ", ".join(parts)

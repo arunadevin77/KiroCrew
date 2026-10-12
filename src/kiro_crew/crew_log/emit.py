@@ -98,7 +98,6 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final
 
-from kiro_crew import context_omissions
 from kiro_crew.constants import CREW_LOG_ENV, crew_log_enabled
 from kiro_crew.executors import crew_log_executor
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
@@ -3026,9 +3025,10 @@ def on_context_composed(
         data["step"] = int(step)
     if phase:
         data["phase"] = str(phase)
-    cut = context_omissions.as_record(omitted)
-    if cut:
-        data["omitted"] = cut
+    if omitted:
+        # ``context_omissions.record`` is the only writer of this mapping and admits
+        # only the vocabulary the entry declares, so it passes through as recorded.
+        data["omitted"] = {str(kind): dict(entry) for kind, entry in omitted.items()}
     _write(session_id, "context/composed", data, src=_SRC_GATEWAY)
 
 

@@ -678,7 +678,7 @@ there are no blocks to tally.
 | `tokens_estimated` | bool | required | Always `true`. | `true` |
 | `step` | int | optional | Model call ordinal. Omitted when 0. A turn-opening composition is written before the first `step/started`, so it is step-less; join it to the turn's FIRST model call. | |
 | `phase` | string | optional | Which population this composition belongs to: the one-off session-start injection or a per-turn one. Absent when the composer does not state it. | `session_start`, `per_turn` |
-| `omitted` | object | optional | What the composer's budgets cut, keyed by block: `lesson_rules`, `lesson_findings`, `preference_facts`, `preferences_file`, `background`, `member_briefing`. Each entry carries a `reason` (`budget`, `cap` or `relevance`) and whichever of `omitted`, `total`, `budget_chars`, `omitted_chars` and `sections` that block's decision has. Counts and budgets only, never omitted content. Absent when nothing was cut. | |
+| `omitted` | object | optional | What the composer's budgets cut, keyed by block: `lesson_rules`, `lesson_findings`, `preference_facts`, `preferences_file`, `background`, `member_briefing`, `folder_steering`. Each entry carries a `reason` (`budget`, `cap` or `relevance`) and whichever of `omitted`, `total`, `budget_chars`, `omitted_chars` and `sections` that block's decision has. Counts and budgets only, never omitted content. Absent when nothing was cut. | |
 
 **Invariants** — `tokens` is an estimate derived from `chars`, which is why
 `tokens_estimated` is written on every entry rather than only when it is true.

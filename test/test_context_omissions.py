@@ -21,7 +21,10 @@ from kiro_crew import context_omissions
 from kiro_crew.context import ContextBuilder
 from kiro_crew.context_assembly import budget as _budgets
 from kiro_crew.crew_log import emit as crew_log_emit
+from kiro_crew.crew_log.entry_types import validate_data
+from kiro_crew.crew_log.schema import KIND_SESSION
 from kiro_crew.dashboard import chat_runner
+from kiro_crew.folder_steering import SteeringCollection, SteeringOmission, render_folder_steering
 from kiro_crew.learn import Lesson, LessonStore
 from kiro_crew.lesson_validation import render_lesson_tier, render_withheld_tier
 from kiro_crew.memory import MemoryStore
@@ -136,63 +139,85 @@ class TestTheRecordIsBounded:
         with pytest.raises(ValueError):
             context_omissions.record(context_omissions.LESSON_RULES, "space", omitted=1)
 
-    def test_the_written_record_holds_only_the_declared_vocabulary(self):
-        raw = {
-            context_omissions.LESSON_RULES: {
-                "reason": "budget",
-                "omitted": 3,
-                "total": 9,
-                "rule_text": "never copied",
-                "sections": ["skills", "a stored key"],
-            },
-            "unknown_kind": {"reason": "budget", "omitted": 1},
-            context_omissions.BACKGROUND: {"reason": "not-a-reason"},
-            context_omissions.PREFERENCES_FILE: {"reason": "cap", "omitted_chars": True},
-        }
-        assert context_omissions.as_record(raw) == {
-            context_omissions.LESSON_RULES: {
-                "reason": "budget",
-                "omitted": 3,
-                "total": 9,
-                "sections": ["skills"],
-            },
-            context_omissions.PREFERENCES_FILE: {"reason": "cap"},
-        }
-
-    def test_a_record_with_every_kind_cut_stays_small(self):
-        with context_omissions.collect() as cut:
-            for kind in context_omissions.KINDS:
-                context_omissions.record(
-                    kind,
-                    "budget",
-                    omitted=10**9,
-                    total=10**9,
-                    budget_chars=10**9,
-                    omitted_chars=10**9,
-                    sections=list(context_omissions.BACKGROUND_SECTIONS),
-                )
-        written = json.dumps(context_omissions.as_record(cut), separators=(",", ":"))
-        assert len(written) < 2_048
-
-    def test_the_activity_summary_names_each_cut(self):
-        summary = context_omissions.summary(
-            {
-                context_omissions.LESSON_RULES: {"reason": "budget", "omitted": 23, "total": 92},
-                context_omissions.BACKGROUND: {"reason": "budget", "sections": ["skills"]},
-                context_omissions.MEMBER_BRIEFING: {"reason": "cap", "budget_chars": 4000},
+    def test_every_shape_record_can_write_passes_the_entry_declaration(self):
+        # The crew log refuses an entry with an undeclared member, which would also
+        # lose the block sizes; the declaration and the writer must stay one set.
+        for reason in context_omissions.REASONS:
+            with context_omissions.collect() as cut:
+                for kind in context_omissions.KINDS:
+                    context_omissions.record(
+                        kind,
+                        reason,
+                        omitted=10**9,
+                        total=10**9,
+                        budget_chars=10**9,
+                        omitted_chars=10**9,
+                        sections=list(context_omissions.BACKGROUND_SECTIONS),
+                    )
+            data = {
+                "turn": 1,
+                "sources": [{"kind": "lessons", "chars": 4, "tokens": 1}],
+                "chars": 4,
+                "tokens": 1,
+                "tokens_estimated": True,
+                "omitted": cut,
             }
+            validate_data(KIND_SESSION, "context/composed", data)
+            assert len(json.dumps(cut, separators=(",", ":"))) < 2_048
+
+    def test_only_known_section_names_are_recorded(self):
+        with context_omissions.collect() as cut:
+            context_omissions.record(
+                context_omissions.BACKGROUND, "budget", sections=["skills", "a stored key"]
+            )
+        assert cut == {context_omissions.BACKGROUND: {"reason": "budget", "sections": ["skills"]}}
+
+
+class TestFolderSteeringRecordsItsCuts:
+    def test_a_size_cut_records_the_documents_not_loaded_whole(self):
+        documents = [(f"doc{i}.md", "standard text " * 40) for i in range(5)]
+        with context_omissions.collect() as cut:
+            section = render_folder_steering(SteeringCollection(documents=documents), max_chars=900)
+        assert "more document(s) not loaded" in section or "document cut short" in section
+        entry = cut[context_omissions.FOLDER_STEERING]
+        assert entry["reason"] == "budget"
+        assert entry["total"] == 5
+        assert entry["budget_chars"] == 900
+        assert 0 < entry["omitted"] <= 5
+
+    @pytest.mark.parametrize("sizes", [(3_050, 400), (400, 3_050), (2_000, 2_000, 2_000)])
+    def test_the_count_is_the_final_fit_after_a_document_is_given_back(self, sizes):
+        # Fitting the budget notice can give back a document the first pass admitted;
+        # the record must count what the returned section actually left out.
+        documents = [(f"guide{i}.md", chr(ord("a") + i) * size) for i, size in enumerate(sizes)]
+        with context_omissions.collect() as cut:
+            section = render_folder_steering(
+                SteeringCollection(documents=documents), max_chars=3_300
+            )
+        not_whole = sum(1 for path, body in documents if f"# {path}\n{body}" not in section)
+        assert not_whole > 0, "the fixture must overflow the section cap"
+        assert cut[context_omissions.FOLDER_STEERING]["omitted"] == not_whole
+
+    def test_a_collection_ceiling_records_that_the_section_is_incomplete(self):
+        collection = SteeringCollection(
+            documents=[("doc.md", "standard")],
+            omissions=[SteeringOmission(kind="documents", root="org", count=3)],
         )
-        assert summary == "lesson rules 23 of 92, background (skills), member briefing"
-        assert context_omissions.summary({}) == ""
+        with context_omissions.collect() as cut:
+            render_folder_steering(collection)
+        assert cut == {context_omissions.FOLDER_STEERING: {"reason": "cap"}}
+
+    def test_a_section_that_fits_records_nothing(self):
+        with context_omissions.collect() as cut:
+            render_folder_steering(SteeringCollection(documents=[("a.md", "x")]), max_chars=9_000)
+        assert cut == {}
 
 
 class TestTheTurnWritesTheRecord:
     """The runner gathers the cuts around the build and writes them with the turn."""
 
     @pytest.mark.asyncio
-    async def test_a_cut_made_while_building_reaches_the_entry_and_the_activity_line(
-        self, tmp_path, monkeypatch
-    ):
+    async def test_a_cut_made_while_building_reaches_the_entry(self, tmp_path, monkeypatch):
         builder = ContextBuilder(
             memory=MemoryStore(workspace=tmp_path / "workspace"),
             skills=SkillsLoader(skills_path=tmp_path / "skills", install_builtins=False),
@@ -242,9 +267,3 @@ class TestTheTurnWritesTheRecord:
                 "budget_chars": 500,
             }
         }
-        texts = [
-            call.args[1].get("text", "")
-            for call in state.broadcast_ws.call_args_list
-            if call.args and call.args[0] == "activity_event"
-        ]
-        assert any(text.endswith("; budget omitted lesson rules 3 of 9") for text in texts), texts

@@ -11657,19 +11657,15 @@ async def _run_chat(
                 for label, _ in sorted(slot_ctx_blocks.items(), key=lambda kv: -kv[1])
                 if label != USER_LABEL
             )
-            # The cuts the budgets made, so the activity feed shows what did NOT reach
-            # the model as well as what did. Empty when nothing was cut.
-            _cut = context_omissions.summary(slot_ctx_omitted)
-            _cut_note = f"; budget omitted {_cut}" if _cut else ""
             state.broadcast_ws(
                 "activity_event",
                 {
                     "slot": slot.key,
                     "kind": "context",
                     "text": (
-                        f"Injected {ctx_len:,} chars of context ({_named}){_cut_note}"
+                        f"Injected {ctx_len:,} chars of context ({_named})"
                         if _named
-                        else f"Injected {ctx_len:,} chars of context{_cut_note}"
+                        else f"Injected {ctx_len:,} chars of context"
                     ),
                 },
             )
