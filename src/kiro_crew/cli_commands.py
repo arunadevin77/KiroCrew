@@ -3579,10 +3579,10 @@ def _memory_search_embedding(store: VectorMemoryStore, query: str) -> list[float
     if store_embedding_space_is_stale(store):
         print(_SEARCH_KEYWORD_ONLY_STALE_SPACE, file=sys.stderr)
         return None
-    # BLOCK once, here. The callable from make_sync_embed_fn() never waits on the
-    # model load — it kicks the background load and returns None — so binding it
-    # alone leaves the very invocation the user typed on keyword search. A
-    # one-shot read is exactly the sync context wait_ready() exists for.
+    # BLOCK once, here. The callable from make_sync_embed_fn() waits at most
+    # _COLD_LOAD_WAIT_SECS for the model load, which a slow host can exceed, so
+    # binding it alone could leave the very invocation the user typed on keyword
+    # search. A one-shot read is exactly the sync context wait_ready() exists for.
     # wait_ready is the llama.cpp backend's seam and NOT on the EmbeddingBackend
     # ABC, so probe for it, same as the dashboard and the re-embed sweep.
     embedder = get_shared_embedder()

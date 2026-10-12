@@ -522,7 +522,10 @@ class KnowledgeWatcher:
         embedder = getattr(self.pipeline, "embedder", None)
         if not embedder:
             return
-        if not await embedder.is_available_async():
+        # Strict residency check: a bulk self-heal never waits for a model load,
+        # so a loadable-but-unloaded model must not start one.
+        resident = getattr(embedder, "model_resident_async", None)
+        if not await (resident() if callable(resident) else embedder.is_available_async()):
             return
         if self._reembed_task and not self._reembed_task.done():
             return

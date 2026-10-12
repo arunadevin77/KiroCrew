@@ -87,6 +87,15 @@ class MemoryConfig:
             "Settings is never paced.",
         ),
     )
+    embedding_idle_evict_secs: int = field(
+        default=3600,
+        metadata=_meta(
+            "Unload Embedding Model When Idle (seconds)",
+            "Seconds without any embedding before the embedding model is unloaded "
+            "from memory. The next search or memory write loads it again, which takes "
+            "a few seconds. 0 keeps the model loaded.",
+        ),
+    )
     embed_model_url: str = field(
         default="",
         metadata=_meta(

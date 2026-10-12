@@ -193,6 +193,10 @@ def _build_memory_config(memory_data: dict) -> MemoryConfig:
         # deliberate opt-in to the interactive pool.
         embedding_bulk_threads=section.read("embedding_bulk_threads", _safe_int, 0, 256),
         embedding_bulk_duty=section.read("embedding_bulk_duty", _safe_float, 0.05, 1.0),
+        # 0 is the documented "never unload" sentinel, so the floor is 0.
+        embedding_idle_evict_secs=section.read(
+            "embedding_idle_evict_secs", _safe_int, 0, 365 * 24 * 3600
+        ),
         embed_model_url=section.get("embed_model_url"),
         embed_model_path=section.get("embed_model_path"),
         embed_model_id=section.get("embed_model_id"),

@@ -49,6 +49,18 @@ def _initialize_memory_worker(self: GatewayOrchestrator) -> bool:
         return False
     try:
         with startup.worker():
+            # The first recall after readiness embeds its query, and an embed
+            # off the loop waits for a cold model load rather than answering
+            # keyword-only, so that recall would pay the whole load. Boot never loads the model on its own (see
+            # _wait_then_backfill), so start the load now, beside preparation;
+            # it never blocks, and a gateway that never recalls unloads the
+            # model on the usual idle clock. Only when vector memory has a
+            # model to use (no model file: keyword-only recall).
+            if getattr(self.vector_memory, "embed_fn", None) is not None:
+                try:
+                    get_shared_embedder().prefetch()
+                except Exception:  # noqa: BLE001 -- a hint; recall makes the same attempt
+                    logger.debug("Embedding model prefetch skipped", exc_info=True)
             try:
                 assert self.ctx_builder is not None
                 memory = self.ctx_builder.memory

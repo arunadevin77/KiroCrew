@@ -226,6 +226,18 @@ _LLM_LOAD_RETRY_SECS = 300.0  # re-attempt a failed model load after this long
 # exit. Bounded so an unload never wedges a shutdown; the thread is a daemon, so
 # a straggler cannot hold the interpreter open either.
 _INFER_STOP_TIMEOUT_SECS = 30.0
+# Idle eviction. The loaded model is the largest single cost of an idle gateway:
+# the GGUF mapping (~600 MB resident) plus llama.cpp's context buffers (~400 MB),
+# held for the process lifetime once anything embedded. After this many seconds
+# with no embed the model is unloaded; the next embed loads it again. 0 keeps it
+# resident forever. Overridable as memory.embedding_idle_evict_secs.
+_DEFAULT_IDLE_EVICT_SECS = 3600.0
+# Longest the evictor sleeps between checks, so a config change is seen promptly.
+_EVICT_POLL_MAX_SECS = 60.0
+# How long a caller that can wait (an interactive or normal embed, off the event
+# loop) blocks for a load it triggered, instead of getting None and falling back
+# to keyword search. Bounded again by the caller's own EmbeddingWork deadline.
+_COLD_LOAD_WAIT_SECS = 30.0
 # llama.cpp sizes its compute pools from the HOST CPU COUNT when the caller does
 # not pass them: n_threads = cpu//2 and n_threads_batch = cpu (see the vendored
 # llama.py). Embedding is prompt processing, so it runs on the BATCH pool — on a
@@ -1047,6 +1059,38 @@ def _read_memory_config() -> dict:
     except Exception:
         logger.debug("Could not read the memory config section", exc_info=True)
     return {}
+
+
+def embedding_idle_evict_secs() -> float:
+    """Seconds without an embed before the model is unloaded; 0 means never.
+
+    Raw ``memory`` section, like the thread counts: read by the evictor thread,
+    which must not pull in the config dataclass graph. A missing, negative or
+    non-numeric value is the default.
+    """
+    raw = _read_memory_config().get("embedding_idle_evict_secs")
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw >= 0:
+        return float(raw)
+    return _DEFAULT_IDLE_EVICT_SECS
+
+
+def _trim_native_heap() -> None:
+    """Return freed heap pages to the OS after an unload. Best effort, no-op off glibc."""
+    try:
+        from kiro_crew.platform_compat import _malloc_trim
+
+        _malloc_trim()
+    except Exception:  # noqa: BLE001 - trimming is an optimisation only
+        logger.debug("malloc_trim after the embedding unload failed", exc_info=True)
+
+
+def _caller_may_wait_for_load() -> bool:
+    """Whether this thread may block on a model load: never on an event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return True
+    return False
 
 
 def _embed_threads() -> int:
@@ -1954,6 +1998,13 @@ class EmbeddingBackend(abc.ABC):
     def is_ready(self) -> bool:
         """True when the backend can produce vectors right now (model loaded)."""
 
+    def prefetch(self) -> None:
+        """Start loading the model if an embed is about to need it. Never blocks.
+
+        A hint, not a request: the default does nothing, and an implementation
+        must not change what a later ``embed`` returns, only when it can start.
+        """
+
     @abc.abstractmethod
     def embed(self, text: str, *, priority: int = PRIORITY_NORMAL) -> "list[float] | None":
         """Embed one text, or None when unavailable.
@@ -2038,6 +2089,11 @@ class LlamaCppEmbedder(EmbeddingBackend):
         # embed_batch() (which would otherwise kick a fresh background load).
         self._closed = False
         self._load_failed_at: float = 0.0
+        # File stamp of the first published load. A reload after an idle unload
+        # must map the same weights: model_id (the vector-space identity) was
+        # fixed when this backend was built, so different weights at the same
+        # path would store vectors under the wrong identity. Never cleared.
+        self._published_stamp: tuple[int, ...] | None = None
         self._lock = threading.Lock()  # serializes inference (Llama is not thread-safe)
         self._load_lock = threading.Lock()  # guards loader-thread spawn state
         self._load_thread: threading.Thread | None = None
@@ -2071,6 +2127,12 @@ class LlamaCppEmbedder(EmbeddingBackend):
         # a join, or a model load.
         self._dispatch_lock = threading.Lock()
         self._infer_thread: threading.Thread | None = None
+        # Idle eviction (see _DEFAULT_IDLE_EVICT_SECS). ``_last_used`` is stamped
+        # at the START of every embed and at publish, so a long job or a model
+        # that just loaded is never mistaken for an idle one.
+        self._last_used = time.monotonic()
+        self._evict_thread: threading.Thread | None = None
+        self._evict_wake = threading.Event()
 
     def _next_seq(self) -> int:
         with self._seq_lock:
@@ -2108,6 +2170,20 @@ class LlamaCppEmbedder(EmbeddingBackend):
         out can never be compared against un-reconciled old-model vectors.
         """
         self._serving = True
+
+    def prefetch(self) -> None:
+        """Kick the background load an ``embed`` would kick, a little earlier.
+
+        Same gates as ``embed``: nothing when closed or not serving (a candidate
+        mid-swap), and ``_kick_background_load`` keeps its own (already loaded,
+        loading, failed-load cooldown, file missing, protected path). So a load
+        that would fail or never start behaves exactly as before; one that
+        succeeds is published with ``_last_used`` stamped, which starts the idle
+        clock the evictor reads, as any load does.
+        """
+        if self._closed or not self._serving or self._llm is not None:
+            return
+        self._kick_background_load()
 
     def _kick_background_load(self) -> None:
         """Start loading the model on a daemon thread. Idempotent, returns fast.
@@ -2171,6 +2247,19 @@ class LlamaCppEmbedder(EmbeddingBackend):
             # context sized from the previous header (decoder sizes on an
             # encoder are the >512-token abort the policy exists to prevent).
             stamp = _model_file_stamp(self._model_path)
+            if self._published_stamp is not None and stamp != self._published_stamp:
+                # Reload after an idle unload, but the file is not the one this
+                # backend first loaded (replaced or rewritten in place). Its
+                # vectors would be stored under the old model_id, so refuse:
+                # search stays keyword-only until a restart or a model change
+                # re-verifies the file and reconciles stored vectors.
+                logger.error(
+                    "Embedding model %s changed on disk since it was first loaded; "
+                    "refusing to reload it. Restart the gateway to use the new file.",
+                    self._model_path.name,
+                )
+                self._load_failed_at = time.monotonic()
+                return
             policy = _model_context_policy(self._model_path)
             if policy.n_ctx < _N_CTX:
                 # Once per model load, not per embed call: the binding truncates
@@ -2299,7 +2388,11 @@ class LlamaCppEmbedder(EmbeddingBackend):
             # worker; both are single plain-attribute accesses (GIL-atomic), and
             # the only cost of racing is one redundant set_n_threads call.
             self._applied_threads = None
+            self._last_used = time.monotonic()
+            if self._published_stamp is None:
+                self._published_stamp = stamp
             self._llm = llm  # atomic publish (GIL)
+            self._start_evictor()
         except Exception:
             logger.warning("Failed to load embedding model %s", self._model_path, exc_info=True)
             self._load_failed_at = time.monotonic()
@@ -2548,10 +2641,13 @@ class LlamaCppEmbedder(EmbeddingBackend):
     ) -> list[list[float]] | None:
         """Embed multiple texts. Returns None on any failure (incl. model not loaded yet).
 
-        Never blocks on the model load: when the model isn't in memory yet this
-        kicks a background load and returns ``None`` immediately. Inference is
-        serialized onto one owned thread; *priority* decides the order that
-        single model serves competing callers (see ``PRIORITY_*``).
+        When the model isn't in memory this kicks a background load. Bulk work
+        and event-loop callers get ``None`` immediately; an interactive or normal
+        caller on a worker thread waits for that load (bounded, see
+        :meth:`_wait_for_cold_load`), so the first query after an idle unload
+        still gets vectors. Inference is serialized onto one owned thread;
+        *priority* decides the order that single model serves competing callers
+        (see ``PRIORITY_*``).
         """
         if not texts or not any(t.strip() for t in texts):
             return None
@@ -2569,10 +2665,13 @@ class LlamaCppEmbedder(EmbeddingBackend):
             # Closed: terminal, never reload. Not serving: a candidate mid-swap,
             # whose vectors would be in a space the store has not reconciled to.
             return None
+        self._last_used = time.monotonic()
         llm = self._llm
         if llm is None:
             self._kick_background_load()
-            return None
+            llm = self._wait_for_cold_load(priority)
+            if llm is None:
+                return None
         clipped: list[str] = []
         for t in texts:
             if len(t) > _MAX_EMBED_CHARS:
@@ -2618,6 +2717,121 @@ class LlamaCppEmbedder(EmbeddingBackend):
             return None
         return vectors
 
+    def can_load_on_demand(self) -> bool:
+        """True when an embed would load the model now and then produce vectors.
+
+        Lets an availability check answer yes for a model that is merely not in
+        memory (never loaded yet, or unloaded when idle), so a search uses
+        semantic results and pays the load once instead of silently falling
+        back to keyword search. False once a load has failed (a dim mismatch,
+        a corrupt file, missing native libs, a model changed on disk), even
+        after its retry cooldown: such a model would never yield vectors, so
+        it must not be reported as available. ``close()`` clears the failure,
+        so a later unload-and-reload starts fresh. Also False when the file is
+        missing, or once the backend is closed or not serving.
+        """
+        if self._closed or not self._serving:
+            return False
+        if self._load_failed_at:
+            return False
+        if _is_sensitive_model_path(self._model_path):
+            return False
+        return model_file_present(self._model_path)
+
+    def _wait_for_cold_load(self, priority: int) -> object | None:
+        """Wait for a load this call kicked, when the caller can afford to.
+
+        Only an interactive or normal embed off the event loop waits; bulk work
+        and loop threads keep the old non-blocking answer (``None``, so the
+        caller degrades to keyword search and retries later). The wait is
+        bounded by ``_COLD_LOAD_WAIT_SECS`` and by the caller's own deadline.
+        This is what keeps idle eviction from costing a query its semantic
+        results: the first query after an unload pays the load time once.
+        """
+        if priority >= PRIORITY_BULK or not _caller_may_wait_for_load():
+            return None
+        work = embedding_work.get()
+        give_up = time.monotonic() + _COLD_LOAD_WAIT_SECS
+        while True:
+            llm = self._llm
+            if llm is not None:
+                return llm
+            with self._load_lock:
+                thread = self._load_thread
+            if thread is None or not thread.is_alive():
+                # Nothing loading (no file yet, failed load in cooldown): the
+                # result is decided, so do not sleep on it.
+                return self._llm
+            if time.monotonic() >= give_up or (work is not None and work.expired()):
+                return None
+            thread.join(0.05)
+
+    def _start_evictor(self) -> None:
+        """Start the idle evictor for the model just published. Idempotent."""
+        with self._load_lock:
+            if self._evict_thread is not None and self._evict_thread.is_alive():
+                return
+            self._evict_wake = threading.Event()
+            self._evict_thread = threading.Thread(
+                target=self._evict_loop, name="kc-embed-evict", daemon=True
+            )
+            self._evict_thread.start()
+
+    def _evict_loop(self) -> None:
+        """Unload the model once it has gone unused for the configured time.
+
+        Exits after an unload (the next load starts a fresh evictor) or when the
+        backend is closed or unloaded by someone else.
+        """
+        while True:
+            secs = embedding_idle_evict_secs()
+            self._evict_wake.wait(
+                min(_EVICT_POLL_MAX_SECS, max(1.0, secs / 4)) if secs > 0 else _EVICT_POLL_MAX_SECS
+            )
+            if self._closed or self._llm is None or self._evict_wake.is_set():
+                return
+            if secs <= 0 or time.monotonic() - self._last_used < secs:
+                continue
+            if self.evict_if_idle(secs):
+                return
+
+    def evict_if_idle(self, idle_secs: float) -> bool:
+        """Unload the model when nothing used it for ``idle_secs``. Returns True if unloaded.
+
+        Refuses while work is queued or running, so an eviction never fails a job;
+        an embed racing the unload is refused by the dispatch check and degrades
+        exactly as any embed before the first load does.
+        """
+        llm = self._llm
+        if llm is None or self._closed:
+            return False
+        if time.monotonic() - self._last_used < idle_secs or self._jobs.qsize():
+            return False
+        if not self._lock.acquire(blocking=False):
+            return False  # inference running right now
+        self._lock.release()
+        with self._load_lock:
+            if self._load_thread is not None and self._load_thread.is_alive():
+                return False
+        # Decide on the model and worker close() actually retired, not a snapshot
+        # taken before it: a first embed can start the worker between the two,
+        # and a concurrent close/retire can take the model and its (possibly
+        # still running) worker first. Freeing the context under a job is a
+        # native use-after-free, so free only what THIS close retired.
+        retired, thread = self._close_retiring_worker()
+        if retired is llm and (thread is None or not thread.is_alive()):
+            # The worker that could still touch the native context has exited,
+            # so free it now rather than whenever the last reference is dropped.
+            _free_llama(llm)
+        # Otherwise the last reference (a job's ``llm``) frees it on drop.
+        del llm, retired
+        _trim_native_heap()
+        logger.info(
+            "Unloaded the embedding model after %.0f s idle; the next embed reloads it",
+            idle_secs,
+        )
+        return True
+
     def wait_ready(self, timeout: float | None = None) -> bool:
         """Block until the model is loaded (or the load fails/times out).
 
@@ -2653,8 +2867,21 @@ class LlamaCppEmbedder(EmbeddingBackend):
         Also stops the inference thread: llama.cpp's compute pool is owned by
         that thread, so it is only released when the thread exits.
         """
+        self._close_retiring_worker()  # result only matters to the evictor
+
+    def _close_retiring_worker(self) -> tuple[object | None, threading.Thread | None]:
+        """:meth:`close`, returning the model and inference worker it actually retired.
+
+        Both are read and cleared in one critical section (the worker under
+        ``_dispatch_lock``, the lock every dispatch takes), so the returned thread
+        is the only one that can still hold a job on the returned model. A caller
+        that frees the native context (the idle evictor) must decide on THIS pair,
+        never on a snapshot taken before ``close()``: a first embed can start the
+        worker in between, and a concurrent close/retire can take the model and
+        its worker first, leaving this call nothing to free.
+        """
         with self._lock, self._load_lock:
-            self._llm = None
+            llm, self._llm = self._llm, None
             self._load_failed_at = 0.0
             self._load_thread = None
             # Same lock the submitters use, so a retirement can never interleave
@@ -2677,6 +2904,14 @@ class LlamaCppEmbedder(EmbeddingBackend):
         # just before the sentinel until the timeout expired.
         if thread is not None and thread.is_alive():
             thread.join(_INFER_STOP_TIMEOUT_SECS)
+        # Stop the idle evictor too: nothing is loaded for it to watch, and the
+        # next load starts a fresh one. Not joined from the evictor itself, which
+        # is the caller when the unload IS the eviction.
+        self._evict_wake.set()
+        evictor = self._evict_thread
+        if evictor is not None and evictor is not threading.current_thread() and evictor.is_alive():
+            evictor.join(_INFER_STOP_TIMEOUT_SECS)
+        return llm, thread
 
 
 _shared_embedder: EmbeddingBackend | None = None
