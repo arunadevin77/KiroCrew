@@ -41,7 +41,7 @@ const API_KEY_ORDER = [
   'governancePolicy', 'suggestions', 'branding',
   'listInstances', 'addInstance', 'updateInstance', 'removeInstance',
   'instanceStatus', 'connectInstance', 'refreshInstanceToken', 'disconnectInstance',
-  'restartInstance', 'exportSession', 'importSessionFromFile', 'sendSessionToInstance',
+  'restartInstance', 'updateRemoteInstance', 'remoteUpdateStatus', 'exportSession', 'importSessionFromFile', 'sendSessionToInstance',
   'cloudPreflight', 'cloudIamPolicy', 'cloudProvisioners', 'cloudLaunches',
   'cloudIdentity', 'cloudLaunch', 'cloudLaunchStatus', 'cloudLaunchTask',
   'cloudLaunchCancel', 'cloudLaunchSignin', 'cloudLaunchSigninRestart', 'cloudStop',

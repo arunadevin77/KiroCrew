@@ -16,6 +16,7 @@
  *  must not draw from its own state). */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { Server, X } from 'lucide-react'
 import { api } from '../../../api/client'
 import { crewPeerUrl } from '../../../api/client/instances'
@@ -327,19 +328,28 @@ export default function CrewChatWindow({ target, onClose = closeCrewWindow }: { 
         <Server size={14} className="text-info shrink-0" aria-hidden="true" />
         <span className="truncate font-semibold min-w-0">{title}</span>
         <span className="text-muted truncate">{i18nT('pages.chat.crewWindow.running_on_header', { name })}</span>
-        {/* The incompatible case already has its own notice below; the badge
-            covers the skew that still chats (a patch or pre-release behind). */}
-        {capsQ.data?.version_match && (
+        <span className="ml-auto text-muted truncate hidden sm:inline">{i18nT('pages.chat.crewWindow.close_hint', { name })}</span>
+        <Btn className="shrink-0" onClick={onClose}><X size={14} aria-hidden="true" />{i18nT('pages.chat.crewWindow.close')}</Btn>
+      </div>
+      {/* Its own line under the title row, so a long version pair never
+          competes with Close in a narrow pane. The incompatible case already
+          has its own notice below; this covers the skew that still chats (a
+          patch or pre-release behind). */}
+      {capsQ.data?.version_match && capsQ.data.behind && (
+        <div className="px-4 py-1.5 border-b border-border flex items-center gap-2 flex-wrap">
           <RemoteBehindBadge
-            className="shrink-0"
+            className="whitespace-normal"
             behind={capsQ.data.behind}
             remote={capsQ.data.version}
             local={capsQ.data.local_version}
           />
-        )}
-        <span className="ml-auto text-muted truncate hidden sm:inline">{i18nT('pages.chat.crewWindow.close_hint', { name })}</span>
-        <Btn className="shrink-0" onClick={onClose}><X size={14} aria-hidden="true" />{i18nT('pages.chat.crewWindow.close')}</Btn>
-      </div>
+          {/* The update itself lives on the crew's Remote Crew row; the
+              composer's draft is kept in session storage across the move. */}
+          <Link to="/settings/instances" className="text-[12px] text-accent hover:underline">
+            {i18nT('pages.chat.crewWindow.update_in_remote_crew', { name })}
+          </Link>
+        </div>
+      )}
       <div className="relative flex-1 min-h-0">
       <div className="absolute inset-0 overflow-y-auto pt-3 flex flex-col gap-1" aria-live="polite" style={{ paddingBottom: dockH + 16 }}>
         <div className="px-4 flex flex-col gap-3">

@@ -9653,7 +9653,37 @@
     },
     "remoteBehindBadge": {
       "label": "뒤처짐: 원격 {{remote}}, 로컬 {{local}}",
-      "hint": "이 크루는 이 컴퓨터의 {{local}}보다 오래된 빌드인 {{remote}}을(를) 실행합니다."
+      "hint": "이 크루는 이 컴퓨터의 {{local}}보다 오래된 버전인 {{remote}}을(를) 실행합니다.",
+      "read_failed": "원격 크루의 버전을 읽을 수 없습니다",
+      "row_read_failed": "{{name}}의 버전을 읽을 수 없습니다({{code}})."
+    },
+    "remoteUpdate": {
+      "update": "업데이트",
+      "update_aria": "{{name}} 업데이트",
+      "confirm_hint": "‘{{name}}’에서 업데이트를 실행한 뒤 다시 시작합니다.",
+      "confirm": "지금 ‘{{name}}’ 업데이트",
+      "cancel": "취소",
+      "updating": "{{name}} 업데이트 중…",
+      "restarting": "{{name}} 다시 시작 중…",
+      "succeeded": "{{name}}이(가) 이제 {{version}}을(를) 실행합니다.",
+      "failed_update": "{{name}}의 업데이트에 실패했습니다: {{error}}",
+      "failed_restart": "{{name}}에 새 버전이 설치되었지만 다시 시작하지 못했습니다: {{error}}",
+      "verifying": "{{name}}의 버전 확인 중…",
+      "succeeded_unknown": "{{name}}이(가) 업데이트되고 다시 시작되었습니다. 자동으로 다시 연결됩니다.",
+      "unchanged": "{{name}}이(가) 다시 시작되었지만 여전히 {{version}}을(를) 실행합니다. 업데이트 도구가 아무것도 설치하지 않았습니다. 이 컴퓨터의 버전을 아직 제공하지 않는 릴리스 채널을 따르거나 다른 방식으로 업데이트될 수 있습니다. 해당 크루에서 업데이트하거나 나중에 다시 시도를 선택하세요.",
+      "unverified": "{{name}}이(가) 업데이트를 실행하고 다시 시작했지만 버전을 확인할 수 있도록 아직 다시 연결되지 않았습니다. 다시 연결되면 이 내용이 업데이트됩니다.",
+      "failed_next_step": "{{name}}에서 원인(예: 네트워크나 로그인)을 해결한 다음 다시 시도를 선택하세요.",
+      "try_again": "다시 시도",
+      "failed_restart_next_step": "{{name}}은(는) 다시 시작할 때까지 이전 버전을 계속 실행합니다. 해당 크루에서 {{command}}을(를) 실행하거나 다시 시도를 선택해 여기서 다시 시작하세요.",
+      "status_read_failed": "{{name}}의 업데이트 상태를 읽을 수 없습니다: {{error}}"
+    },
+    "remoteUpdateOffer": {
+      "title": "일부 원격 크루가 이전 버전을 실행 중입니다",
+      "body": "이 컴퓨터는 이제 {{local}}을(를) 실행합니다. 각 업데이트는 먼저 확인을 요청합니다.",
+      "row": "{{name}}: {{remote}}",
+      "dismiss": "닫기",
+      "read_failed_title": "이번 업데이트 후 원격 크루의 버전을 확인할 수 없습니다",
+      "unread": "{{names}}에서 아직 버전 정보가 없으므로 이들도 뒤처져 있을 수 있습니다."
     }
   },
   "hooks": {
@@ -11593,7 +11623,8 @@
         "running_on_header": "{{name}}에서",
         "approval_elsewhere": "{{name}}의 에이전트가 이 창에서는 응답할 수 없는 승인을 기다리고 있습니다. 크루의 자체 대시보드에서 응답하세요.",
         "yolo_elsewhere": "YOLO는 {{name}}의 모든 세션에 적용됩니다. 크루의 대시보드에서 변경하세요.",
-        "mode_unknown": "{{name}}의 승인 모드를 읽을 수 없습니다. 다시 시도하는 중…"
+        "mode_unknown": "{{name}}의 승인 모드를 읽을 수 없습니다. 다시 시도하는 중…",
+        "update_in_remote_crew": "원격 크루에서 {{name}} 업데이트"
       },
       "messageContextMenu": {
         "copy_link_text": "링크 텍스트 복사",

@@ -4,7 +4,7 @@
  * connected peer's federated session search, capabilities and live slots.
  */
 
-import type { InstanceVersions, RemoteCrewApprovalState, RemoteCrewCapabilities } from '../../types'
+import type { InstanceVersions, RemoteCrewApprovalState, RemoteCrewCapabilities, RemoteUpdateJob } from '../../types'
 import { toApiError } from '../apiError'
 import type { ClientTransport } from './transport'
 
@@ -183,6 +183,19 @@ export function createInstancesEndpoints({ get, post, del, patch, j, jfetch: fet
       post('/api/instances/' + encodeURIComponent(id) + '/restart').then(j) as Promise<{
         ok: boolean
         message: string
+      }>,
+    /** Start the crew's own `kirocrew update` (then a restart) as a background
+     *  job. Sends no body: the remote command is a fixed literal. A chained or
+     *  headless crew, and a crew already updating, are refused 409. */
+    updateRemoteInstance: (id: string) =>
+      post('/api/instances/' + encodeURIComponent(id) + '/update').then(j) as Promise<{
+        ok: boolean
+        job: RemoteUpdateJob
+      }>,
+    /** The latest update job for this crew; `job: null` when none has run. */
+    remoteUpdateStatus: (id: string) =>
+      get('/api/instances/' + encodeURIComponent(id) + '/update').then(j) as Promise<{
+        job: RemoteUpdateJob | null
       }>,
     // Copies a session to another instance. The local session is left untouched:
     // the peer allocates its own key, so this is a copy and never a move.

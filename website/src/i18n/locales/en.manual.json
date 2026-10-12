@@ -4172,7 +4172,37 @@
     },
     "remoteBehindBadge": {
       "label": "Behind: remote {{remote}}, local {{local}}",
-      "hint": "This crew runs {{remote}}, an older build than this machine's {{local}}."
+      "hint": "This crew runs {{remote}}, an older version than this machine's {{local}}.",
+      "read_failed": "Could not read your remote crews' versions",
+      "row_read_failed": "Could not read {{name}}'s version ({{code}})."
+    },
+    "remoteUpdate": {
+      "update": "Update",
+      "update_aria": "Update {{name}}",
+      "confirm_hint": "Runs the update on “{{name}}”, then restarts it.",
+      "confirm": "Update “{{name}}” now",
+      "cancel": "Cancel",
+      "updating": "Updating {{name}}…",
+      "restarting": "Restarting {{name}}…",
+      "succeeded": "{{name}} now runs {{version}}.",
+      "failed_update": "The update on {{name}} failed: {{error}}",
+      "failed_restart": "The new version is installed on {{name}}, but its restart failed: {{error}}",
+      "verifying": "Checking {{name}}'s version…",
+      "succeeded_unknown": "{{name}} is updated and restarted. It reconnects on its own.",
+      "unchanged": "{{name}} restarted but still runs {{version}}: its updater installed nothing. It may follow a release channel that does not offer this machine's version yet, or be updated another way. Update it on that crew, or select Try again later.",
+      "unverified": "{{name}} ran its update and restarted, but has not reconnected yet to confirm its version. This updates when it reconnects.",
+      "failed_next_step": "Fix the cause on {{name}} (for example its network or sign-in), then select Try again.",
+      "try_again": "Try again",
+      "failed_restart_next_step": "{{name}} keeps running its old version until it restarts. Run {{command}} on that crew, or select Try again to restart it from here.",
+      "status_read_failed": "Could not read {{name}}'s update status: {{error}}"
+    },
+    "remoteUpdateOffer": {
+      "title": "Some remote crews run an older version",
+      "body": "This machine now runs {{local}}. Each update asks you to confirm first.",
+      "row": "{{name}}: {{remote}}",
+      "dismiss": "Dismiss",
+      "read_failed_title": "Could not check your remote crews' versions after this update",
+      "unread": "No version from {{names}} yet, so they may be behind too."
     }
   },
   "hooks": {
@@ -5380,7 +5410,8 @@
         "running_on_header": "On {{name}}",
         "approval_elsewhere": "The agent on {{name}} is waiting for an approval this window cannot answer. Answer it on the crew's own dashboard.",
         "yolo_elsewhere": "YOLO covers every session on {{name}}. Change it on the crew's own dashboard.",
-        "mode_unknown": "Couldn't read the approval mode on {{name}}. Trying again…"
+        "mode_unknown": "Couldn't read the approval mode on {{name}}. Trying again…",
+        "update_in_remote_crew": "Update {{name}} in Remote Crew"
       }
     },
     "chatPage": {

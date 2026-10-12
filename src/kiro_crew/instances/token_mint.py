@@ -608,6 +608,7 @@ async def run_remote_kirocrew(
     marker_port: int | None = None,
     timeout_secs: float = 60.0,
     connect_timeout_secs: float = 10.0,
+    stdout_tail: bool = False,
 ) -> tuple[int, str]:
     """Run ``kirocrew <subcommand>`` on *ssh_host* over SSH.
 
@@ -631,6 +632,11 @@ async def run_remote_kirocrew(
     tunable for exactly this. Independent of *timeout_secs* (the overall
     wait_for budget): the outer wait_for is still the ultimate bound
     regardless of what ``ConnectTimeout`` allows internally.
+
+    *stdout_tail* — on a non-zero exit, append a redacted tail of the remote's
+    stdout to the message. For a subcommand such as ``update``, which prints
+    its failure reasons to stdout; off by default, so ``restart`` keeps its
+    stderr-only message.
     """
     remote_command = build_remote_command(
         remote_bin, subcommand, marker_port=_validate_port(marker_port)
@@ -650,7 +656,7 @@ async def run_remote_kirocrew(
     except OSError as e:
         return -1, f"failed to spawn ssh: {e}"
     try:
-        _out, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout_secs)
+        out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout_secs)
     except asyncio.TimeoutError:
         await kill_and_reap(proc)
         return -1, f"timed out after {timeout_secs}s"
@@ -658,4 +664,8 @@ async def run_remote_kirocrew(
     # Proxy-controlled stderr (e.g. a WSSH banner) can carry credential-looking
     # text or exfil URLs; redact before returning since callers surface this tail.
     safe_err = redact(err) if err else ""
-    return (proc.returncode if proc.returncode is not None else -1), safe_err[:300]
+    rc = proc.returncode if proc.returncode is not None else -1
+    if stdout_tail and rc != 0:
+        safe_out = _redacted_output_tail(out_b.decode("utf-8", "replace"))
+        return rc, _with_stdout_tail(safe_err[:300], safe_out)
+    return rc, safe_err[:300]

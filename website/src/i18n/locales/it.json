@@ -9915,7 +9915,37 @@
     },
     "remoteBehindBadge": {
       "label": "Non aggiornato: remoto {{remote}}, locale {{local}}",
-      "hint": "Questo equipaggio esegue {{remote}}, una build più vecchia della {{local}} di questa macchina."
+      "hint": "Questo equipaggio esegue {{remote}}, una versione più vecchia della {{local}} di questa macchina.",
+      "read_failed": "Impossibile leggere le versioni dei tuoi equipaggi remoti",
+      "row_read_failed": "Impossibile leggere la versione di {{name}} ({{code}})."
+    },
+    "remoteUpdate": {
+      "update": "Aggiorna",
+      "update_aria": "Aggiorna {{name}}",
+      "confirm_hint": "Esegue l'aggiornamento su «{{name}}», poi lo riavvia.",
+      "confirm": "Aggiorna «{{name}}» ora",
+      "cancel": "Annulla",
+      "updating": "Aggiornamento di {{name}}…",
+      "restarting": "Riavvio di {{name}}…",
+      "succeeded": "{{name}} ora esegue {{version}}.",
+      "failed_update": "L'aggiornamento su {{name}} non è riuscito: {{error}}",
+      "failed_restart": "La nuova versione è installata su {{name}}, ma il riavvio non è riuscito: {{error}}",
+      "verifying": "Verifica della versione di {{name}}…",
+      "succeeded_unknown": "{{name}} è aggiornato e riavviato. Si riconnette da solo.",
+      "unchanged": "{{name}} si è riavviato ma esegue ancora {{version}}: il suo programma di aggiornamento non ha installato nulla. Forse segue un canale che non offre ancora la versione di questa macchina, o si aggiorna in un altro modo. Aggiornalo su quell'equipaggio, oppure seleziona Riprova più tardi.",
+      "unverified": "{{name}} ha eseguito l'aggiornamento e si è riavviato, ma non si è ancora riconnesso per confermare la versione. Questo si aggiorna quando si riconnette.",
+      "failed_next_step": "Correggi la causa su {{name}} (ad esempio la rete o l'accesso), poi seleziona Riprova.",
+      "try_again": "Riprova",
+      "failed_restart_next_step": "{{name}} continua a eseguire la versione precedente finché non si riavvia. Esegui {{command}} su quell'equipaggio, oppure seleziona Riprova per riavviarlo da qui.",
+      "status_read_failed": "Impossibile leggere lo stato dell'aggiornamento di {{name}}: {{error}}"
+    },
+    "remoteUpdateOffer": {
+      "title": "Alcuni equipaggi remoti eseguono una versione più vecchia",
+      "body": "Questa macchina ora esegue {{local}}. Ogni aggiornamento ti chiede prima una conferma.",
+      "row": "{{name}}: {{remote}}",
+      "dismiss": "Ignora",
+      "read_failed_title": "Impossibile verificare le versioni dei tuoi equipaggi remoti dopo questo aggiornamento",
+      "unread": "Nessuna versione ancora da {{names}}, quindi potrebbero essere anch'essi non aggiornati."
     }
   },
   "hooks": {
@@ -11925,7 +11955,8 @@
         "running_on_header": "Su {{name}}",
         "approval_elsewhere": "L’agente su {{name}} attende un’approvazione a cui questa finestra non può rispondere. Rispondi nella dashboard dell’equipaggio.",
         "yolo_elsewhere": "YOLO vale per ogni sessione su {{name}}. Cambialo nella dashboard della crew.",
-        "mode_unknown": "Impossibile leggere la modalità di approvazione su {{name}}. Nuovo tentativo…"
+        "mode_unknown": "Impossibile leggere la modalità di approvazione su {{name}}. Nuovo tentativo…",
+        "update_in_remote_crew": "Aggiorna {{name}} in Crew remota"
       },
       "messageContextMenu": {
         "copy_link_text": "Copia testo del link",

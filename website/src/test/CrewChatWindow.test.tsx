@@ -407,6 +407,7 @@ describe('CrewChatWindow', () => {
     mocks.instancesCapabilities.mockResolvedValue({ version_match: true, behind: true, version: '0.9.0', local_version: '0.9.1' })
     renderWindow()
     expect(await screen.findByText('Behind: remote 0.9.0, local 0.9.1')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Update devbox in Remote Crew' }).getAttribute('href')).toBe('/settings/instances')
   })
 
   it('shows no Behind badge when the crew runs the same build', async () => {

@@ -1130,11 +1130,37 @@ export interface InstanceVersionRow {
   version: string
   /** Strictly older than `local_version`; never true for an unknown version. */
   behind: boolean
+  /** This dashboard can run the crew's updater: false for a chained crew
+   *  (no shell from here) and a fargate or headless one (no gateway). */
+  updatable: boolean
+  /** Why the crew's version could not be read (the carrier's code), or "" when
+   *  it answered. A crew with an error is never `behind`: its version is unknown. */
+  error?: string
 }
 
 export interface InstanceVersions {
   local_version: string
   instances: InstanceVersionRow[]
+}
+
+/** The latest "Update remote" job for one crew (`GET /api/instances/{id}/update`). */
+export interface RemoteUpdateJob {
+  /** `succeeded`: the crew came back on a different version. `unchanged`: both
+   *  commands exited 0 but it came back on the same version (its updater
+   *  installed nothing). `unverified`: it did not answer with a version in time. */
+  state: 'running' | 'succeeded' | 'unchanged' | 'unverified' | 'failed'
+  /** Where the job is, or where it failed: the remote `kirocrew update`, then
+   *  `kirocrew restart`, then reading the crew's version back. */
+  phase: 'updating' | 'restarting' | 'verifying' | 'done'
+  started_at: number
+  finished_at: number | null
+  elapsed_secs: number
+  /** The remote's redacted error tail on a failure, else "". */
+  error: string
+  /** The crew's version before the update and after its restart; "" when it
+   *  did not answer. */
+  version_before: string
+  version_after: string
 }
 
 export interface ChatSlot {

@@ -71,6 +71,7 @@ const UNMAPPED_PANELS: Record<string, string> = {
   'ChannelFolderBackfill.tsx': 'one action button shared by the channel panels; files existing conversations into the folder the OWNING panel configures, and holds no setting of its own',
   'CustomSoundsSection.tsx': 'the Notifications tab\'s add-a-sound form (name + tones) and the list of saved sounds; it creates entries rather than holding settings, and the sounds it saves are chosen through the per-category pickers NotificationsPanel already indexes',
   'ChannelsPanel.tsx': 'list-detail shell routing to per-channel panels; carries no controls of its own',
+  'CrewVersionStatus.tsx': "a connected Remote Crew row's version badge and its Update action; it reports and acts on one crew, and holds no setting",
   'DecisionsProviderPicker.tsx': 'the Decisions card\'s provider choice writes a preset id through the owner-only PUT /api/decisions/provider, not a config path, so there is no configKey to index; it is reached through the card the developer.decisions-jev entry deep-links to',
   'DiscordPanel.tsx': 'thin BotChannelSpec wrapper; BotChannelPanel fans its entries out to channel=discord',
   'TelegramPanel.tsx': 'thin BotChannelSpec wrapper; BotChannelPanel fans its entries out to channel=telegram',

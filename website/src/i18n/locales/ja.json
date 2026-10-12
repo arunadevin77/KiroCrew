@@ -9653,7 +9653,37 @@
     },
     "remoteBehindBadge": {
       "label": "遅れています: リモート {{remote}}、ローカル {{local}}",
-      "hint": "このクルーは {{remote}} を実行しています。このマシンの {{local}} より古いビルドです。"
+      "hint": "このクルーは {{remote}} を実行しています。このマシンの {{local}} より古いバージョンです。",
+      "read_failed": "リモートクルーのバージョンを読み取れませんでした",
+      "row_read_failed": "{{name}} のバージョンを読み取れませんでした（{{code}}）。"
+    },
+    "remoteUpdate": {
+      "update": "更新",
+      "update_aria": "{{name}} を更新",
+      "confirm_hint": "「{{name}}」で更新を実行し、その後再起動します。",
+      "confirm": "今すぐ「{{name}}」を更新",
+      "cancel": "キャンセル",
+      "updating": "{{name}} を更新しています…",
+      "restarting": "{{name}} を再起動しています…",
+      "succeeded": "{{name}} は現在 {{version}} を実行しています。",
+      "failed_update": "{{name}} の更新に失敗しました: {{error}}",
+      "failed_restart": "{{name}} に新しいバージョンはインストールされましたが、再起動に失敗しました: {{error}}",
+      "verifying": "{{name}} のバージョンを確認しています…",
+      "succeeded_unknown": "{{name}} は更新され、再起動しました。自動で再接続します。",
+      "unchanged": "{{name}} は再起動しましたが、まだ {{version}} を実行しています。アップデーターは何もインストールしませんでした。このマシンのバージョンをまだ提供していないリリースチャネルを使っているか、別の方法で更新される可能性があります。そのクルーで更新するか、後で［再試行］を選択してください。",
+      "unverified": "{{name}} は更新を実行して再起動しましたが、バージョンを確認するための再接続がまだです。再接続すると表示が更新されます。",
+      "failed_next_step": "{{name}} 側の原因（ネットワークやサインインなど）を解消してから、［再試行］を選択してください。",
+      "try_again": "再試行",
+      "failed_restart_next_step": "{{name}} は再起動するまで古いバージョンのままです。そのクルーで {{command}} を実行するか、［再試行］を選択してここから再起動してください。",
+      "status_read_failed": "{{name}} の更新状況を読み取れませんでした: {{error}}"
+    },
+    "remoteUpdateOffer": {
+      "title": "一部のリモートクルーが古いバージョンを実行しています",
+      "body": "このマシンは現在 {{local}} を実行しています。各更新の前に確認を求めます。",
+      "row": "{{name}}: {{remote}}",
+      "dismiss": "閉じる",
+      "read_failed_title": "この更新の後、リモートクルーのバージョンを確認できませんでした",
+      "unread": "{{names}} からはまだバージョンが届いていないため、これらも遅れている可能性があります。"
     }
   },
   "hooks": {
@@ -11593,7 +11623,8 @@
         "running_on_header": "{{name}} 上",
         "approval_elsewhere": "{{name}} のエージェントは、このウィンドウでは応答できない承認を待っています。クルー自身のダッシュボードで応答してください。",
         "yolo_elsewhere": "YOLO は {{name}} のすべてのセッションに適用されます。クルー自身のダッシュボードで変更してください。",
-        "mode_unknown": "{{name}} の承認モードを読み取れませんでした。再試行しています…"
+        "mode_unknown": "{{name}} の承認モードを読み取れませんでした。再試行しています…",
+        "update_in_remote_crew": "リモートクルーで {{name}} を更新"
       },
       "messageContextMenu": {
         "copy_link_text": "リンクのテキストをコピー",

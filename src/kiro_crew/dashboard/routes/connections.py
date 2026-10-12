@@ -126,6 +126,14 @@ def register(app: web.Application) -> None:
         "/api/instances/{id}/disconnect", handlers_instances.api_instances_disconnect
     )
     app.router.add_post("/api/instances/{id}/restart", handlers_instances.api_instances_restart)
+    # Explicit "Update remote": runs the crew's own `kirocrew update`, then a
+    # restart, as a background job polled on the same path.
+    app.router.add_post(
+        "/api/instances/{id}/update", handlers_instances.api_instances_update_remote
+    )
+    app.router.add_get(
+        "/api/instances/{id}/update", handlers_instances.api_instances_update_remote_status
+    )
     app.router.add_post(
         "/api/instances/{id}/send-session", handlers_instances.api_instances_send_session
     )

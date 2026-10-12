@@ -96,7 +96,7 @@ import { setCrewEnabled } from '../../lib/crewEnabled'
 import { i18nT } from '../../i18n/t'
 import { guideCaution } from '../../guide/trustRoot'
 import { AddInstanceForm, StatusBadge } from './InstancesPanel'
-import CrewVersionStatus from './CrewVersionStatus'
+import CrewVersionStatus, { CrewVersionsReadError } from './CrewVersionStatus'
 import {
   EditInstanceForm,
   instanceFormFromView,
@@ -1001,7 +1001,7 @@ function CrewRow({
                 <KeyRound className="lucide-inline" /> {i18nT('pages.settings.remoteCrewPanel.needs_sign_in')}
               </Badge>
             )}
-            <CrewVersionStatus instanceId={inst.id} connected={connected && !inst.disabled} />
+            <CrewVersionStatus instanceId={inst.id} name={inst.name} connected={connected && !inst.disabled} />
           </div>
           <div className="text-[11px] text-muted-strong mt-1">
             {isCloud
@@ -2345,6 +2345,7 @@ export function RemoteCrewPanel() {
                 {inProgress.filter(job => !isRegistered(job)).map(job => (
                   <SettingUpRow key={job.id} job={job} cancelling={cancelMutation.isPending && cancelMutation.variables === job.id} onCancel={id => cancelMutation.mutate(id)} />
                 ))}
+                <CrewVersionsReadError anyConnected={instances.some(i => !i.disabled && i.status.state === 'connected')} />
                 {instances.map(inst => (
                   <CrewRow
                     key={inst.id}

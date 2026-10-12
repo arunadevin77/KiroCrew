@@ -9914,8 +9914,38 @@
       "turn_5_assistant": "Poussé. En bref : une nouvelle tentative autour du rafraîchissement du jeton, un test de régression pour la déconnexion et la ligne du CHANGELOG. La PR #12 contient les trois et est liée à #7."
     },
     "remoteBehindBadge": {
-      "label": "En retard : distant {{remote}}, local {{local}}",
-      "hint": "Cet équipage exécute {{remote}}, une version plus ancienne que la {{local}} de cette machine."
+      "label": "En retard : distant {{remote}}, local {{local}}",
+      "hint": "Cet équipage exécute {{remote}}, une version plus ancienne que la {{local}} de cette machine.",
+      "read_failed": "Impossible de lire les versions de tes équipages distants",
+      "row_read_failed": "Impossible de lire la version de {{name}} ({{code}})."
+    },
+    "remoteUpdate": {
+      "update": "Mettre à jour",
+      "update_aria": "Mettre à jour {{name}}",
+      "confirm_hint": "Lance la mise à jour sur « {{name}} », puis le redémarre.",
+      "confirm": "Mettre à jour « {{name}} » maintenant",
+      "cancel": "Annuler",
+      "updating": "Mise à jour de {{name}}…",
+      "restarting": "Redémarrage de {{name}}…",
+      "succeeded": "{{name}} exécute maintenant {{version}}.",
+      "failed_update": "La mise à jour sur {{name}} a échoué : {{error}}",
+      "failed_restart": "La nouvelle version est installée sur {{name}}, mais son redémarrage a échoué : {{error}}",
+      "verifying": "Vérification de la version de {{name}}…",
+      "succeeded_unknown": "{{name}} est mis à jour et redémarré. Il se reconnecte tout seul.",
+      "unchanged": "{{name}} a redémarré mais exécute toujours {{version}} : son outil de mise à jour n’a rien installé. Il suit peut-être un canal qui ne propose pas encore la version de cette machine, ou se met à jour autrement. Mets-le à jour sur cet équipage, ou sélectionne Réessayer plus tard.",
+      "unverified": "{{name}} a lancé sa mise à jour et redémarré, mais ne s’est pas encore reconnecté pour confirmer sa version. Ceci se met à jour dès qu’il se reconnecte.",
+      "failed_next_step": "Corrige la cause sur {{name}} (par exemple son réseau ou sa connexion), puis sélectionne Réessayer.",
+      "try_again": "Réessayer",
+      "failed_restart_next_step": "{{name}} continue d’exécuter son ancienne version jusqu’à son redémarrage. Lance {{command}} sur cet équipage, ou sélectionne Réessayer pour le redémarrer d’ici.",
+      "status_read_failed": "Impossible de lire l’état de la mise à jour de {{name}} : {{error}}"
+    },
+    "remoteUpdateOffer": {
+      "title": "Certains équipages distants exécutent une version plus ancienne",
+      "body": "Cette machine exécute maintenant {{local}}. Chaque mise à jour te demande d’abord une confirmation.",
+      "row": "{{name}} : {{remote}}",
+      "dismiss": "Ignorer",
+      "read_failed_title": "Impossible de vérifier les versions de tes équipages distants après cette mise à jour",
+      "unread": "Pas encore de version de {{names}}, ils sont donc peut-être aussi en retard."
     }
   },
   "hooks": {
@@ -11925,7 +11955,8 @@
         "running_on_header": "Sur {{name}}",
         "approval_elsewhere": "L’agent sur {{name}} attend une approbation à laquelle cette fenêtre ne peut pas répondre. Réponds-y sur le tableau de bord de l’équipage.",
         "yolo_elsewhere": "YOLO s'applique à toutes les sessions de {{name}}. Modifie-le dans le tableau de bord de l'équipe.",
-        "mode_unknown": "Impossible de lire le mode d'approbation sur {{name}}. Nouvelle tentative…"
+        "mode_unknown": "Impossible de lire le mode d'approbation sur {{name}}. Nouvelle tentative…",
+        "update_in_remote_crew": "Mettre à jour {{name}} dans Crew distante"
       },
       "messageContextMenu": {
         "copy_link_text": "Copier le texte du lien",

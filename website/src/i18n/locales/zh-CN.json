@@ -9653,7 +9653,37 @@
     },
     "remoteBehindBadge": {
       "label": "落后：远程 {{remote}}，本地 {{local}}",
-      "hint": "此团队运行 {{remote}}，比本机的 {{local}} 更旧。"
+      "hint": "此团队运行 {{remote}}，比本机的 {{local}} 版本更旧。",
+      "read_failed": "无法读取远程团队的版本",
+      "row_read_failed": "无法读取 {{name}} 的版本（{{code}}）。"
+    },
+    "remoteUpdate": {
+      "update": "更新",
+      "update_aria": "更新 {{name}}",
+      "confirm_hint": "在“{{name}}”上运行更新，然后重启它。",
+      "confirm": "立即更新“{{name}}”",
+      "cancel": "取消",
+      "updating": "正在更新 {{name}}…",
+      "restarting": "正在重启 {{name}}…",
+      "succeeded": "{{name}} 现在运行 {{version}}。",
+      "failed_update": "{{name}} 上的更新失败：{{error}}",
+      "failed_restart": "新版本已安装到 {{name}}，但重启失败：{{error}}",
+      "verifying": "正在检查 {{name}} 的版本…",
+      "succeeded_unknown": "{{name}} 已更新并重启，会自动重新连接。",
+      "unchanged": "{{name}} 已重启，但仍运行 {{version}}：其更新程序没有安装任何内容。它可能使用尚未提供本机版本的发布渠道，或通过其他方式更新。请在该团队上更新它，或稍后选择“重试”。",
+      "unverified": "{{name}} 已运行更新并重启，但尚未重新连接以确认版本。重新连接后此处会更新。",
+      "failed_next_step": "请先解决 {{name}} 上的问题（例如网络或登录），然后选择“重试”。",
+      "try_again": "重试",
+      "failed_restart_next_step": "{{name}} 在重启前会继续运行旧版本。请在该团队上运行 {{command}}，或选择“重试”从这里重启它。",
+      "status_read_failed": "无法读取 {{name}} 的更新状态：{{error}}"
+    },
+    "remoteUpdateOffer": {
+      "title": "部分远程团队运行的是较旧的版本",
+      "body": "本机现在运行 {{local}}。每次更新前都会先请你确认。",
+      "row": "{{name}}：{{remote}}",
+      "dismiss": "关闭",
+      "read_failed_title": "此次更新后无法检查远程团队的版本",
+      "unread": "尚未收到 {{names}} 的版本，因此它们也可能已落后。"
     }
   },
   "hooks": {
@@ -11593,7 +11623,8 @@
         "running_on_header": "在 {{name}} 上",
         "approval_elsewhere": "{{name}} 上的代理正在等待一项此窗口无法回应的批准。请在该团队自己的控制台中回应。",
         "yolo_elsewhere": "YOLO 作用于 {{name}} 上的所有会话。请在该机组自己的仪表板中更改。",
-        "mode_unknown": "无法读取 {{name}} 上的审批模式。正在重试…"
+        "mode_unknown": "无法读取 {{name}} 上的审批模式。正在重试…",
+        "update_in_remote_crew": "在远程 Crew 中更新 {{name}}"
       },
       "messageContextMenu": {
         "copy_link_text": "复制链接文本",

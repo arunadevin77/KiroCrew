@@ -148,6 +148,19 @@ from kiro_crew.instances.registry import (
     is_headless_provisioner,
     validate_ttl,
 )
+from kiro_crew.instances.remote_update import (
+    PHASE_RESTARTING,
+    PHASE_VERIFYING,
+    REMOTE_UPDATE_TIMEOUT_SECS,
+    REMOTE_UPDATE_VERIFY_INTERVAL_SECS,
+    REMOTE_UPDATE_VERIFY_SECS,
+    STATE_SUCCEEDED,
+    STATE_UNCHANGED,
+    STATE_UNVERIFIED,
+    RemoteUpdateJob,
+    RemoteUpdateJobs,
+    clean_version,
+)
 from kiro_crew.instances.ssm_token_mint import (
     mint_remote_token_ssm,
     run_remote_kirocrew_ssm,
@@ -2006,6 +2019,13 @@ class SshTunnelManager:
         # recovery in flight for ITS instance only, and a recovery that
         # captured the pre-edit record cannot be allowed to reinstall it.
         self._recovery_by_instance: dict[str, set[asyncio.Task]] = {}  # type: ignore[type-arg]
+        # The explicit "Update remote" jobs: the latest one per instance plus
+        # the task refs that keep each running job alive until it finishes.
+        self._remote_updates = RemoteUpdateJobs()
+        # The post-restart version check's window and cadence; attributes so a
+        # test can close the window without waiting it out.
+        self._remote_update_verify_secs = REMOTE_UPDATE_VERIFY_SECS
+        self._remote_update_verify_interval_secs = REMOTE_UPDATE_VERIFY_INTERVAL_SECS
         # Instances whose coordinates are being rewritten right now. Self-heal
         # reads the record before it takes the lock, so cancelling the recoveries
         # in flight is not enough on its own: a tunnel exiting mid-edit schedules
@@ -4205,6 +4225,7 @@ class SshTunnelManager:
             for task in list(self._recovery_tasks):
                 if not task.done():
                     task.cancel()
+            self._remote_updates.cancel_all()
             self._recover_attempts.clear()
             for instance_id in list(self._refresh_tasks):
                 self._cancel_token_refresh(instance_id)
@@ -4851,61 +4872,227 @@ class SshTunnelManager:
         probe detects the drop and self-heals (Stage 2) — no manual reconnect
         needed. Returns ``{ok, message}``.
         """
-        inst = await asyncio.to_thread(self._registry.get, instance_id)
-        if inst is None:
-            return {"ok": False, "message": "unknown instance"}
-        try:
-            params = self._resolve_transport(inst, await self._with_parent(inst))
-        except (SshValidationError, SsmValidationError) as e:
-            return {"ok": False, "message": f"invalid {inst.connection_method} settings: {e}"}
-        if params.is_chained:
-            # A chained crew is reached through another crew's hop, so this
-            # gateway has no shell on it: `kirocrew restart` would have to be
-            # dispatched at the PARENT, restarting the wrong machine. Restart it
-            # from the crew that reaches it.
-            return {
-                "ok": False,
-                "message": (
-                    f"{inst.name} is reached through {params.via_instance_id}, so this "
-                    f"dashboard cannot run commands on it. Restart it from that crew."
-                ),
-            }
-        if params.method == "fargate" or params.headless:
-            # Refused before any command is built: the far end runs no kirocrew
-            # gateway, so a restart dispatched at it would only fail remotely --
-            # and on the MicroVM lane it fails as ``sudo: unknown user``, which
-            # reads like a misconfigured row rather than a verb that does not
-            # apply to this crew.
-            return {
-                "ok": False,
-                "message": (
-                    "a headless crew runs no Kiro Crew gateway to restart; "
-                    "stop and relaunch it instead"
-                ),
-            }
-        if params.method == "ssm":
-            rc, err = await run_remote_kirocrew_ssm(
-                params.ssm_target,
-                "restart",
-                aws_profile=params.aws_profile,
-                aws_region=params.aws_region,
-                ssm_run_as=params.ssm_run_as,
-                remote_bin=params.remote_bin,
-                marker_port=inst.remote_port,
-            )
-        else:
-            rc, err = await run_remote_kirocrew(
-                params.ssh_host,
-                "restart",
-                remote_bin=params.remote_bin,
-                marker_port=inst.remote_port,
-                connect_timeout_secs=self._mint_timeout_for(params.method),
-            )
+        target = await self._remote_command_target(instance_id, "restart")
+        if isinstance(target, dict):
+            return {"ok": False, "message": target["message"]}
+        inst, params = target
+        rc, err = await self._run_remote_subcommand(inst, params, "restart")
         if rc == 0:
             logger.info("Restarted remote gateway for %s", instance_id)
             return {"ok": True, "message": "remote gateway restart requested"}
         logger.warning("Remote restart for %s failed (rc=%s): %s", instance_id, rc, err)
         return {"ok": False, "message": err or f"restart exited {rc}"}
+
+    async def _remote_command_target(
+        self, instance_id: str, verb: str
+    ) -> tuple[Instance, _TransportParams] | dict:
+        """Resolve where a fixed ``kirocrew <verb>`` would run, or why it cannot.
+
+        The ONE gate every remote CLI verb shares (restart, update), so each
+        refuses the same instances for the same reasons, before any command is
+        built. Returns ``(inst, params)`` or a refusal ``{code, message}`` with
+        ``code`` one of ``not_found`` / ``invalid_transport`` / ``chained`` /
+        ``headless``.
+        """
+        inst = await asyncio.to_thread(self._registry.get, instance_id)
+        if inst is None:
+            return {"code": "not_found", "message": "unknown instance"}
+        try:
+            params = self._resolve_transport(inst, await self._with_parent(inst))
+        except (SshValidationError, SsmValidationError) as e:
+            return {
+                "code": "invalid_transport",
+                "message": f"invalid {inst.connection_method} settings: {e}",
+            }
+        if params.is_chained:
+            # A chained crew is reached through another crew's hop, so this
+            # gateway has no shell on it: the verb would have to be dispatched
+            # at the PARENT, acting on the wrong machine. Run it from the crew
+            # that reaches it.
+            return {
+                "code": "chained",
+                "message": (
+                    f"{inst.name} is reached through {params.via_instance_id}, so this "
+                    f"dashboard cannot run commands on it. {verb.capitalize()} it from "
+                    f"that crew."
+                ),
+            }
+        if params.method == "fargate" or params.headless:
+            # Refused before any command is built: the far end runs no kirocrew
+            # gateway, so a verb dispatched at it would only fail remotely --
+            # and on the MicroVM lane it fails as ``sudo: unknown user``, which
+            # reads like a misconfigured row rather than a verb that does not
+            # apply to this crew.
+            return {
+                "code": "headless",
+                "message": (
+                    f"a headless crew runs no Kiro Crew gateway to {verb}; "
+                    "stop and relaunch it instead"
+                ),
+            }
+        return inst, params
+
+    async def _run_remote_subcommand(
+        self,
+        inst: Instance,
+        params: _TransportParams,
+        subcommand: str,
+        *,
+        timeout_secs: float | None = None,
+        stdout_tail: bool = False,
+    ) -> tuple[int, str]:
+        """Run the fixed literal ``kirocrew <subcommand>`` over *params*' transport.
+
+        *subcommand* is always a literal from this module, never caller input.
+        *timeout_secs* overrides the runner's own default budget, and
+        *stdout_tail* asks the runner to add a redacted stdout tail to a
+        failure's message; both are passed only when set, so the default
+        call is the same one restart has always made.
+        """
+        extra: dict[str, Any] = {}
+        if timeout_secs is not None:
+            extra["timeout_secs"] = timeout_secs
+        if stdout_tail:
+            extra["stdout_tail"] = True
+        if params.method == "ssm":
+            return await run_remote_kirocrew_ssm(
+                params.ssm_target,
+                subcommand,
+                aws_profile=params.aws_profile,
+                aws_region=params.aws_region,
+                ssm_run_as=params.ssm_run_as,
+                remote_bin=params.remote_bin,
+                marker_port=inst.remote_port,
+                **extra,
+            )
+        return await run_remote_kirocrew(
+            params.ssh_host,
+            subcommand,
+            remote_bin=params.remote_bin,
+            marker_port=inst.remote_port,
+            connect_timeout_secs=self._mint_timeout_for(params.method),
+            **extra,
+        )
+
+    async def start_remote_update(self, instance_id: str) -> dict:
+        """Start the explicit "Update remote" job, or say why it cannot start.
+
+        Refused exactly like :meth:`restart_remote` (unknown, invalid transport,
+        chained, headless), checked HERE before anything is scheduled, so the
+        caller learns of a refusal synchronously. A crew already updating is
+        refused ``already_running`` rather than queued. Otherwise the job runs
+        in the background (:meth:`_update_then_restart`) and this returns
+        ``{ok: True, job}`` at once. Returns ``{ok: False, code, message}`` on
+        a refusal.
+        """
+        target = await self._remote_command_target(instance_id, "update")
+        if isinstance(target, dict):
+            return {"ok": False, **target}
+        inst, params = target
+        job = self._remote_updates.start(
+            instance_id, lambda j: self._update_then_restart(j, inst, params)
+        )
+        if job is None:
+            return {
+                "ok": False,
+                "code": "already_running",
+                "message": f"{inst.name} is already updating",
+            }
+        logger.info("Remote update started for %s", instance_id)
+        return {"ok": True, "job": job.to_dict()}
+
+    async def _update_then_restart(
+        self, job: RemoteUpdateJob, inst: Instance, params: _TransportParams
+    ) -> None:
+        """The job body: ``kirocrew update``, ``kirocrew restart``, then a version check.
+
+        ``update`` gets the long :data:`REMOTE_UPDATE_TIMEOUT_SECS` budget (a
+        wheel download plus install) and a redacted stdout tail on failure,
+        because the CLI prints its failure reasons to stdout. A failed
+        ``update`` never restarts, so the remote keeps serving the build it
+        has. The remote's own policy provider, install layout and updater
+        decide what ``update`` does.
+
+        A zero exit does not prove an install: ``kirocrew update`` also exits 0
+        when it is already on its channel's newest build and when the install
+        is managed elsewhere. The running gateway only reports a new version
+        after its restart, so the outcome is read from the crew's own
+        ``/api/version`` once it is back: a different version than before is
+        ``succeeded``, the same one is ``unchanged``, and no answer within
+        :data:`REMOTE_UPDATE_VERIFY_SECS` is ``unverified``.
+        """
+        iid = inst.id
+        job.version_before = await self._peer_version(iid)
+        rc, err = await self._run_remote_subcommand(
+            inst,
+            params,
+            "update",
+            timeout_secs=REMOTE_UPDATE_TIMEOUT_SECS,
+            stdout_tail=True,
+        )
+        if rc != 0:
+            logger.warning("Remote update for %s failed (rc=%s): %s", iid, rc, err)
+            job.fail(err or f"update exited {rc}")
+            return
+        job.advance(PHASE_RESTARTING)
+        rc, err = await self._run_remote_subcommand(inst, params, "restart")
+        if rc != 0:
+            logger.warning("Remote restart after update for %s failed (rc=%s): %s", iid, rc, err)
+            job.fail(err or f"restart exited {rc}")
+            return
+        job.advance(PHASE_VERIFYING)
+        after = await self._await_peer_version_change(iid, job.version_before)
+        if not after:
+            outcome = STATE_UNVERIFIED
+        elif job.version_before and after == job.version_before:
+            outcome = STATE_UNCHANGED
+        else:
+            outcome = STATE_SUCCEEDED
+        logger.info(
+            "Remote update for %s finished: %s (%s -> %s)", iid, outcome, job.version_before, after
+        )
+        job.finish(outcome, version_after=after)
+
+    async def _peer_version(self, instance_id: str) -> str:
+        """The crew's own ``/api/version``, or ``""`` when it does not answer.
+
+        A peer is untrusted input and the value is kept in the job and logged,
+        so it must be version-shaped AND come through the credential redactor
+        unchanged: a token that happens to fit the version shape is dropped,
+        never stored.
+        """
+        try:
+            ok, raw = await self.peer_version(instance_id)
+        except Exception:
+            return ""
+        if not ok:
+            return ""
+        version = clean_version(raw)
+        return version if version and redact(version) == version else ""
+
+    async def _await_peer_version_change(self, instance_id: str, before: str) -> str:
+        """Read the restarted crew's version until it differs from *before*.
+
+        Returns the first version that differs, or, once the
+        ``_remote_update_verify_secs`` window closes, whatever the crew last
+        answered (``before`` itself, or ``""`` if it never answered). The old
+        gateway can still answer for a moment after ``restart`` returns, so one
+        read is not enough.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._remote_update_verify_secs
+        while True:
+            after = await self._peer_version(instance_id)
+            if after and after != before:
+                return after
+            if loop.time() >= deadline:
+                return after
+            await asyncio.sleep(self._remote_update_verify_interval_secs)
+
+    def remote_update_job(self, instance_id: str) -> dict | None:
+        """The latest update job for *instance_id* as a dict, or ``None``."""
+        job = self._remote_updates.get(instance_id)
+        return job.to_dict() if job is not None else None
 
     def _schedule_diagnosis(self, instance_id: str) -> None:
         """Fire-and-forget a diagnosis run (tracked so it isn't GC'd)."""

@@ -9915,7 +9915,37 @@
     },
     "remoteBehindBadge": {
       "label": "Desatualizada: remota {{remote}}, local {{local}}",
-      "hint": "Esta equipe executa {{remote}}, uma build mais antiga que a {{local}} desta máquina."
+      "hint": "Esta equipe executa {{remote}}, uma versão mais antiga que a {{local}} desta máquina.",
+      "read_failed": "Não foi possível ler as versões das suas equipes remotas",
+      "row_read_failed": "Não foi possível ler a versão de {{name}} ({{code}})."
+    },
+    "remoteUpdate": {
+      "update": "Atualizar",
+      "update_aria": "Atualizar {{name}}",
+      "confirm_hint": "Executa a atualização em “{{name}}” e depois o reinicia.",
+      "confirm": "Atualizar “{{name}}” agora",
+      "cancel": "Cancelar",
+      "updating": "Atualizando {{name}}…",
+      "restarting": "Reiniciando {{name}}…",
+      "succeeded": "{{name}} agora executa {{version}}.",
+      "failed_update": "A atualização em {{name}} falhou: {{error}}",
+      "failed_restart": "A nova versão está instalada em {{name}}, mas o reinício falhou: {{error}}",
+      "verifying": "Verificando a versão de {{name}}…",
+      "succeeded_unknown": "{{name}} foi atualizado e reiniciado. Ele se reconecta sozinho.",
+      "unchanged": "{{name}} reiniciou, mas ainda executa {{version}}: o atualizador não instalou nada. Talvez siga um canal que ainda não oferece a versão desta máquina, ou seja atualizado de outra forma. Atualize-o nessa equipe ou selecione Tentar novamente mais tarde.",
+      "unverified": "{{name}} executou a atualização e reiniciou, mas ainda não se reconectou para confirmar a versão. Isto é atualizado quando ele se reconectar.",
+      "failed_next_step": "Corrija a causa em {{name}} (por exemplo, a rede ou o login) e selecione Tentar novamente.",
+      "try_again": "Tentar novamente",
+      "failed_restart_next_step": "{{name}} continua executando a versão antiga até reiniciar. Execute {{command}} nessa equipe ou selecione Tentar novamente para reiniciá-la daqui.",
+      "status_read_failed": "Não foi possível ler o status da atualização de {{name}}: {{error}}"
+    },
+    "remoteUpdateOffer": {
+      "title": "Algumas equipes remotas executam uma versão mais antiga",
+      "body": "Esta máquina agora executa {{local}}. Cada atualização pede sua confirmação primeiro.",
+      "row": "{{name}}: {{remote}}",
+      "dismiss": "Dispensar",
+      "read_failed_title": "Não foi possível verificar as versões das suas equipes remotas após esta atualização",
+      "unread": "Ainda não há versão de {{names}}, então elas também podem estar desatualizadas."
     }
   },
   "hooks": {
@@ -11925,7 +11955,8 @@
         "running_on_header": "Em {{name}}",
         "approval_elsewhere": "O agente em {{name}} aguarda uma aprovação que esta janela não pode responder. Responda no painel da própria equipe.",
         "yolo_elsewhere": "O YOLO vale para todas as sessões em {{name}}. Altere-o no painel da própria crew.",
-        "mode_unknown": "Não foi possível ler o modo de aprovação em {{name}}. Tentando novamente…"
+        "mode_unknown": "Não foi possível ler o modo de aprovação em {{name}}. Tentando novamente…",
+        "update_in_remote_crew": "Atualizar {{name}} em Crew remota"
       },
       "messageContextMenu": {
         "copy_link_text": "Copiar texto do link",

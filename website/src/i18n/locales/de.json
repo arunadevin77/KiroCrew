@@ -9784,7 +9784,37 @@
     },
     "remoteBehindBadge": {
       "label": "Veraltet: Remote {{remote}}, lokal {{local}}",
-      "hint": "Diese Crew nutzt {{remote}}, einen älteren Build als {{local}} auf diesem Rechner."
+      "hint": "Diese Crew nutzt {{remote}}, eine ältere Version als {{local}} auf diesem Rechner.",
+      "read_failed": "Die Versionen deiner Remote-Crews konnten nicht gelesen werden",
+      "row_read_failed": "Die Version von {{name}} konnte nicht gelesen werden ({{code}})."
+    },
+    "remoteUpdate": {
+      "update": "Aktualisieren",
+      "update_aria": "{{name}} aktualisieren",
+      "confirm_hint": "Führt das Update auf „{{name}}“ aus und startet es danach neu.",
+      "confirm": "„{{name}}“ jetzt aktualisieren",
+      "cancel": "Abbrechen",
+      "updating": "{{name}} wird aktualisiert…",
+      "restarting": "{{name}} wird neu gestartet…",
+      "succeeded": "{{name}} nutzt jetzt {{version}}.",
+      "failed_update": "Das Update auf {{name}} ist fehlgeschlagen: {{error}}",
+      "failed_restart": "Die neue Version ist auf {{name}} installiert, aber der Neustart ist fehlgeschlagen: {{error}}",
+      "verifying": "Version von {{name}} wird geprüft…",
+      "succeeded_unknown": "{{name}} ist aktualisiert und neu gestartet. Es verbindet sich von selbst wieder.",
+      "unchanged": "{{name}} wurde neu gestartet, nutzt aber weiter {{version}}: Sein Updater hat nichts installiert. Vielleicht folgt es einem Release-Kanal, der die Version dieses Rechners noch nicht anbietet, oder es wird anders aktualisiert. Aktualisiere es auf dieser Crew oder wähle später „Erneut versuchen“.",
+      "unverified": "{{name}} hat sein Update ausgeführt und neu gestartet, sich aber noch nicht wieder verbunden, um seine Version zu bestätigen. Das aktualisiert sich, sobald es wieder verbunden ist.",
+      "failed_next_step": "Behebe die Ursache auf {{name}} (zum Beispiel Netzwerk oder Anmeldung) und wähle dann Erneut versuchen.",
+      "try_again": "Erneut versuchen",
+      "failed_restart_next_step": "{{name}} nutzt die alte Version weiter, bis es neu startet. Führe {{command}} auf dieser Crew aus oder wähle „Erneut versuchen“, um es von hier neu zu starten.",
+      "status_read_failed": "Der Update-Status von {{name}} konnte nicht gelesen werden: {{error}}"
+    },
+    "remoteUpdateOffer": {
+      "title": "Einige Remote-Crews nutzen eine ältere Version",
+      "body": "Dieser Rechner nutzt jetzt {{local}}. Jedes Update fragt dich zuerst nach einer Bestätigung.",
+      "row": "{{name}}: {{remote}}",
+      "dismiss": "Schließen",
+      "read_failed_title": "Die Versionen deiner Remote-Crews konnten nach diesem Update nicht geprüft werden",
+      "unread": "Von {{names}} liegt noch keine Version vor, sie könnten also ebenfalls veraltet sein."
     }
   },
   "hooks": {
@@ -11759,7 +11789,8 @@
         "running_on_header": "Auf {{name}}",
         "approval_elsewhere": "Der Agent auf {{name}} wartet auf eine Genehmigung, die dieses Fenster nicht beantworten kann. Beantworte sie im Dashboard der Crew.",
         "yolo_elsewhere": "YOLO gilt für jede Sitzung auf {{name}}. Ändere es im Dashboard der Crew.",
-        "mode_unknown": "Der Genehmigungsmodus auf {{name}} konnte nicht gelesen werden. Neuer Versuch läuft…"
+        "mode_unknown": "Der Genehmigungsmodus auf {{name}} konnte nicht gelesen werden. Neuer Versuch läuft…",
+        "update_in_remote_crew": "{{name}} unter Remote-Crew aktualisieren"
       },
       "messageContextMenu": {
         "copy_link_text": "Linktext kopieren",

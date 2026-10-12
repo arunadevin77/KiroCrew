@@ -114,6 +114,7 @@ import './utils/terminalExitClose'
 import { useTerminalPoppedOut, focusPopout as focusTerminalPopout } from './utils/terminalPopout'
 import MigrationCheck from './components/MigrationCheck'
 import CrashReportNotice from './components/CrashReportNotice'
+import RemoteUpdateOffer from './components/RemoteUpdateOffer'
 import { ImportSessionOutcomeNotice } from './components/ImportSessionItem'
 import BuiltinAppRoute from './apps/BuiltinAppRoute'
 import { getBuiltinIcon } from './apps/builtinIcons'
@@ -2359,6 +2360,7 @@ export default function App() {
           )}
           <StartupVideo startupVideo={startupVideo} />
           <MobileConnectDialog mobileConnect={mobileConnect} />
+          <RemoteUpdateOffer />
 
           <FirstRunChapters firstRun={firstRun} onboarded={onboarded} privacyAcked={privacyAcked} markOnboarded={markOnboarded} markImportOnboarded={markImportOnboarded} markPrivacyAcked={markPrivacyAcked} />
         </>
