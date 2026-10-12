@@ -1833,14 +1833,20 @@ def _make_unified_diff(old: str, new: str, path: str, max_len: int = 65536) -> s
 
 
 def _exit_origin(code: int | None, sent: tuple[int, str] | None) -> str:
-    """Name the signal behind a negative exit code and who sent it."""
+    """Name the signal behind a negative exit code and whether this client sent it.
+
+    A signal this client did not send is not necessarily an outside one: the
+    child raises SIGSEGV or SIGABRT on itself, and another Crew path (the
+    orphan sweep) signals it without touching ``sent``. The client cannot tell
+    those apart, so it claims only that it did not send the signal.
+    """
     if code is None or code >= 0:
         return ""
     try:
         name = signal.Signals(-code).name
     except ValueError:
         name = f"signal {-code}"
-    who = f"killed by Crew ({sent[1]})" if sent and sent[0] == -code else "external"
+    who = f"killed by Crew ({sent[1]})" if sent and sent[0] == -code else "not sent by this client"
     return f", {name}, {who}"
 
 
