@@ -1521,6 +1521,11 @@ block by one of those extra fields is still refused as
 `connected without provenance`; it works on a release that stamps `origin:
 client`.
 
+Every managed stdio element in the returned array, caller entries included,
+carries `_meta.kiro.versionNegotiation: "legacy"`, so KAS starts each of Crew's
+own servers once instead of twice. A non-managed or command-less entry keeps the
+host default, and the agent-block path carries no pin.
+
 For a derived worker, the projected payload carries both its checked specification
 snapshot and its runtime session key through create and load. Activation checks
 that same snapshot before readiness: connected tools cannot admit a revoked

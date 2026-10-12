@@ -1252,6 +1252,30 @@ def build_kas_custom_agents(
 _HOISTABLE_ENTRY_KEYS = frozenset({"command", "args", "env", "type"})
 
 
+def _pin_legacy_negotiation(servers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """*servers* with Crew's own stdio servers pinned to legacy version negotiation.
+
+    Crew's servers speak the classic ``initialize`` handshake only, and under the
+    host's default negotiation each one is cold-started twice per session.
+    ``legacy`` starts it once. A server Crew does not own keeps the host's
+    default. Copies, never mutates: the caller's entries are shared.
+    """
+    out: list[dict[str, Any]] = []
+    for element in servers:
+        if (
+            isinstance(element, dict)
+            and element.get("name") in MANAGED_MCP_SERVER_NAMES
+            and element.get("command")
+        ):
+            meta = element.get("_meta")
+            meta = meta if isinstance(meta, dict) else {}
+            kiro = meta.get("kiro")
+            kiro = {**(kiro if isinstance(kiro, dict) else {}), "versionNegotiation": "legacy"}
+            element = {**element, "_meta": {**meta, "kiro": kiro}}
+        out.append(element)
+    return out
+
+
 def hoist_managed_servers(
     custom_agents: list[dict[str, Any]] | None,
     agent_id: str,
@@ -1319,6 +1343,9 @@ def hoist_managed_servers(
     The agent's ``tools`` / ``excludedTools`` / ``permissions`` are untouched:
     ``@server`` refs resolve wherever the server was declared, which is the same
     property ``member_dispatch`` already relies on for ``@kirocrew-dashboard``.
+
+    Every managed element in the returned array, caller entries included, is
+    pinned to legacy version negotiation (:func:`_pin_legacy_negotiation`).
     """
     if not custom_agents:
         # The kiro path (no wire payload) returns here without importing the
@@ -1365,7 +1392,7 @@ def hoist_managed_servers(
             del copied["mcpServers"]
         out_agents.append(copied)
     if not hoisted:
-        return custom_agents, session_servers
+        return custom_agents, _pin_legacy_negotiation(session_servers)
     hoisted.sort(key=lambda element: element["name"])
     if session_token:
         # Deferred like session_mcp above: the kiro path returns before this, and
@@ -1376,7 +1403,7 @@ def hoist_managed_servers(
             _tokened_managed_element(element, session_token, attach_stub_session_token)
             for element in hoisted
         ]
-    return out_agents, [*session_servers, *hoisted]
+    return out_agents, _pin_legacy_negotiation([*session_servers, *hoisted])
 
 
 #: Env keys a tokened hoisted element keeps from its projection. Both are set by

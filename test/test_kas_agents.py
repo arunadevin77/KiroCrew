@@ -2133,6 +2133,9 @@ class TestHoistManagedServers:
         )
         return to_client_custom_agent("kirocrew", spec, "p", session_key="subagent:k")
 
+    #: What every managed element in the returned array carries.
+    _LEGACY = {"_meta": {"kiro": {"versionNegotiation": "legacy"}}}
+
     def test_active_managed_stdio_entry_moves_into_the_array_as_an_acp_element(self):
         projected = self._projected()
         before = json.loads(json.dumps(projected))
@@ -2145,6 +2148,7 @@ class TestHoistManagedServers:
                 "args": ["mcp"],
                 "env": [{"name": "KIROCREW_SESSION_KEY", "value": "subagent:k"}],
                 "type": "stdio",
+                **self._LEGACY,
             }
         ], "the ALREADY projected entry travels: secret withheld, session key kept"
         assert agents[0]["mcpServers"] == {"third-party": {"command": "tp"}}
@@ -2179,7 +2183,7 @@ class TestHoistManagedServers:
             [projected], "kirocrew", [member], session_token="tok-1"
         )
         assert calls == [("kirocrew-core", True)], "the daemon's include_opt_in form"
-        assert array[0] == member, "a caller entry is not re-stamped"
+        assert array[0] == {**member, **self._LEGACY}, "a caller entry gets no token"
         assert array[1]["name"] == "kirocrew-core"
         assert array[1]["env"] == [
             {"name": "KIROCREW_SESSION_KEY", "value": "subagent:k"},
@@ -2259,7 +2263,10 @@ class TestHoistManagedServers:
             "type": "stdio",
         }
         agents, array = hoist_managed_servers([projected], "kirocrew", [member, stub])
-        assert array == [member, stub], "an injected name is authoritative and appears once"
+        assert array == [
+            {**member, **self._LEGACY},
+            {**stub, **self._LEGACY},
+        ], "an injected name is authoritative and appears once"
         assert agents[0] is projected, "nothing hoisted, nothing rewritten"
 
     def test_inactive_agents_are_left_alone(self):
@@ -2301,7 +2308,7 @@ class TestHoistManagedServers:
         assert hoist_managed_servers([], "kirocrew", array) == ([], array)
         bare = {"id": "kirocrew", "prompt": "p", "tools": []}
         agents, out = hoist_managed_servers([bare], "kirocrew", array)
-        assert agents[0] is bare and out is array
+        assert agents[0] is bare and out == array
 
     def test_the_no_payload_path_imports_nothing(self, monkeypatch):
         # The kiro path (no custom agents) must return before the lazy import of
@@ -2328,3 +2335,43 @@ class TestHoistManagedServers:
         projected = to_client_custom_agent("kirocrew", spec, "p")
         _, array = hoist_managed_servers([projected], "kirocrew", [])
         assert [e["name"] for e in array] == ["kirocrew-core", "kirocrew-work"]
+
+    def test_every_managed_element_is_pinned_to_legacy_negotiation(self):
+        # Hoisted and caller-supplied managed elements alike, on both start paths
+        # (session/new and session/load both route through this function).
+        member = {
+            "name": "kirocrew-dashboard",
+            "command": "d",
+            "args": [],
+            "env": [],
+            "type": "stdio",
+            "_meta": {"kiro": {"waitForReady": True}, "other": 1},
+        }
+        before = json.loads(json.dumps(member))
+        _, array = hoist_managed_servers([self._projected()], "kirocrew", [member])
+        by_name = {e["name"]: e for e in array}
+        assert set(by_name) == {"kirocrew-dashboard", "kirocrew-core"}
+        for element in by_name.values():
+            assert element["_meta"]["kiro"]["versionNegotiation"] == "legacy"
+        assert by_name["kirocrew-dashboard"]["_meta"] == {
+            "kiro": {"waitForReady": True, "versionNegotiation": "legacy"},
+            "other": 1,
+        }, "existing _meta keys survive the pin"
+        assert member == before, "the caller's entry is copied, never mutated"
+
+    def test_a_user_declared_server_keeps_the_host_default(self):
+        user_stdio = {"name": "third-party", "command": "tp", "args": [], "env": []}
+        user_remote = {"name": "kirocrew-core", "type": "http", "url": "https://x", "headers": []}
+        agents, array = hoist_managed_servers(
+            [self._projected()], "kirocrew", [user_stdio, user_remote]
+        )
+        assert array[0] is user_stdio, "a server Crew does not own is untouched"
+        assert array[1] is user_remote, "a managed name with no command is not Crew's launch"
+        assert "versionNegotiation" not in json.dumps(agents), "the block path carries no pin"
+
+    def test_the_non_kas_path_returns_its_array_unpinned(self):
+        # The kiro backend sends no custom agents; its array must stay as built.
+        array = [{"name": "kirocrew-core", "command": "kc", "args": [], "env": []}]
+        agents, out = hoist_managed_servers(None, "kirocrew", array)
+        assert agents is None and out is array
+        assert "_meta" not in out[0]
