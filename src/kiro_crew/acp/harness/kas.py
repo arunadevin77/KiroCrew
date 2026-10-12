@@ -31,7 +31,6 @@ from typing import Any
 # compared by identity, never substituted.
 from kiro_crew import agent as agent_mod
 from kiro_crew.acp import kas_agents as kas_agents_mod
-from kiro_crew.acp import kas_bundle as kas_bundle_mod
 from kiro_crew.acp._dispatch import advertised_mode_origin
 from kiro_crew.acp.child_env_defaults import apply_child_env_defaults
 from kiro_crew.acp.harness._common import (
@@ -285,6 +284,11 @@ class KasHarness(MembershipHarness):
         from kiro_crew.acp.session_handle import AcpRuntimeError
 
         if await asyncio.to_thread(_bundle_route_selected):
+            # Imported here, not at module top: the installer module is the
+            # bundle route's alone, and this harness is imported on every KAS
+            # gateway whether or not that route is on.
+            from kiro_crew.acp import kas_bundle as kas_bundle_mod
+
             bundle = await asyncio.to_thread(kas_bundle_mod.installed_bundle)
             if bundle is None:
                 raise AcpRuntimeError(

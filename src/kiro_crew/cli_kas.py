@@ -3,7 +3,7 @@
 Operator-facing, like ``kirocrew doctor`` and ``kirocrew sandbox``: it runs in the
 operator's own terminal, outside the agent sandbox, which is the only place the
 ``engines`` leaf is writable (``sandbox._CREW_READONLY_LEAVES``). The work itself
-lives in :mod:`kiro_crew.acp.kas_bundle`; this module is argument parsing and
+is reached through :mod:`kiro_crew.agent_sdk.kas_bundle`; this module is argument parsing and
 wording.
 """
 
@@ -14,8 +14,8 @@ import shutil
 import sys
 from pathlib import Path
 
-from kiro_crew.acp import kas_bundle
-from kiro_crew.acp.kas_pin import (
+from kiro_crew.agent_sdk import kas_bundle
+from kiro_crew.agent_sdk.kas_bundle import (
     KAS_PIN_MANIFEST_SHA256,
     KAS_PIN_VERSION,
     KAS_VERSION_OVERRIDE_ENV,
@@ -102,9 +102,17 @@ def _install(args: argparse.Namespace) -> int:
                 return 1
             import json
 
-            manifest = kas_bundle.parse_manifest(
-                json.loads(manifest_path.read_text(encoding="utf-8"))
-            )
+            # One read: the bytes checked against the pin are the bytes parsed.
+            # A second read of a directory this process does not own (a shared
+            # offline mirror) could hand the pin check a different file than
+            # the one whose artifact hashes the install then trusts.
+            try:
+                manifest_bytes = manifest_path.read_bytes()
+                manifest_doc = json.loads(manifest_bytes.decode("utf-8"))
+            except (OSError, UnicodeDecodeError, ValueError) as exc:
+                print(f"❌ {manifest_path} is not a readable JSON manifest: {exc}", file=sys.stderr)
+                return 1
+            manifest = kas_bundle.parse_manifest(manifest_doc)
             want = args.version or KAS_PIN_VERSION
             if manifest.version != want:
                 print(
@@ -114,7 +122,7 @@ def _install(args: argparse.Namespace) -> int:
                 return 1
             if not args.unpinned and (
                 manifest.version != KAS_PIN_VERSION
-                or kas_bundle._sha256_file(manifest_path) != KAS_PIN_MANIFEST_SHA256
+                or kas_bundle.sha256_bytes(manifest_bytes) != KAS_PIN_MANIFEST_SHA256
             ):
                 print(
                     f"❌ {manifest_path} is not the manifest this release pins "

@@ -1646,10 +1646,10 @@ class AgentConfig:
         default=KAS_BUNDLE_DEFAULT_URL,
         metadata=_meta(
             "KAS bundle base URL",
-            "https:// base the KAS engine manifest is fetched from: "
-            "<base>/kas/latest.json names the current manifest, and every artifact "
-            "is sha256-pinned by that manifest, so the url chooses WHICH pinned "
-            "build is offered and never what is trusted. Only an https:// url is "
+            "https:// base the KAS engine manifest is fetched from "
+            "(<base>/kas/<version>/manifest.json). Every artifact is sha256-pinned by "
+            "that manifest and the manifest by this release, so the url chooses WHERE "
+            "the pinned build is fetched from and never what is trusted. Only an https:// url is "
             "accepted; redirects that leave the host are refused.",
         ),
     )

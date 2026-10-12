@@ -74,7 +74,6 @@ from kiro_crew.acp.client import KIRO_CLI_BIN
 from kiro_crew.acp.kas_transport import (
     KAS_RELAY_ENGINE,
     build_kas_argv,
-    build_kas_bundle_argv,
 )
 
 # The one skill-view count ceiling, enforced in the projection and reused as the
@@ -1630,7 +1629,7 @@ def _report_kas_bundle(issues: list[str]) -> None:
     operator to install a binary nothing will use. Crew is the auth owner
     unconditionally, so the vault row is the only credential row.
     """
-    from kiro_crew.acp import kas_bundle
+    from kiro_crew.agent_sdk import kas_bundle
 
     installed = kas_bundle.installed_bundle()
     if installed is None:
@@ -1639,9 +1638,7 @@ def _report_kas_bundle(issues: list[str]) -> None:
         issues.append("agent.kas_bundle is on but no KAS engine bundle is installed")
         return
     print(f"  bundle:      ✅ KAS {installed.version}, Node {installed.node_version or '?'}")
-    print(
-        f"  spawn:       {' '.join(build_kas_bundle_argv(str(installed.node_bin), str(installed.acp_server)))}"
-    )
+    print(f"  spawn:       {' '.join(kas_bundle.bundle_spawn_argv(installed))}")
     print("  auth owner:  Kiro Crew vault (the only owner on this route)")
     try:
         from kiro_crew.auth.bridge import describe_vault_identity, vault_holds_identity
@@ -1655,7 +1652,16 @@ def _report_kas_bundle(issues: list[str]) -> None:
         print(f"  crew vault:  {identity_line}")
     if not signed_in:
         print("  crew vault:  ⚠  not signed in; the first prompt will ask for a sign-in")
-    _report_kas_spec_permissions(issues)
+    # Not ``_report_kas_spec_permissions``: that row asks the installed kiro-cli's
+    # version, and a working bundle-only host has none to ask. The spec writer
+    # gates the ``permissions`` block on kiro-cli's version
+    # (``auto_approve._write_derived_permissions``), so the honest row here names
+    # that rule rather than reporting a kiro-cli fault on a route that never runs
+    # it; the printed row links the issue that moves the gate to the bundled engine.
+    print(
+        "  auto-approve: spec `permissions` block follows the installed kiro-cli's version"
+        " gate for now (kirodotdev/KiroCrew#20730); without kiro-cli it is withheld"
+    )
 
 
 def _report_kas_backend(issues: list[str]) -> None:

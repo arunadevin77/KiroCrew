@@ -9,16 +9,16 @@ installer's remedy text.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import threading
 from types import SimpleNamespace
 
 import pytest
 
-from kiro_crew.acp import kas_bundle
-from kiro_crew.acp.kas_pin import KAS_PIN_VERSION
+from kiro_crew.agent_sdk import kas_bundle
+from kiro_crew.agent_sdk.kas_bundle import KAS_PIN_VERSION
 from kiro_crew.dashboard.handlers import kas_bundle as handler
+from kiro_crew.testing.wait import async_wait_until
 
 
 class _FakeState:
@@ -54,6 +54,14 @@ def cfg(monkeypatch):
     )
     monkeypatch.setattr(handler, "sel", lambda: SimpleNamespace(log_api_access=lambda **k: None))
     return agent
+
+
+def test_the_switch_is_patchable_as_a_bool():
+    """The card saves through PATCH /api/config/kirocrew; a path missing from the
+    allowlist is a 400 "field not editable", and the switch could never turn on."""
+    from kiro_crew.dashboard.handlers.core import _EDITABLE_CONFIG
+
+    assert _EDITABLE_CONFIG["agent.kas_bundle"] == {"type": "bool"}
 
 
 @pytest.mark.asyncio
@@ -116,10 +124,9 @@ async def test_install_runs_once_reports_progress_and_finishes(cfg, monkeypatch)
 
     first = await handler.api_kas_bundle_install(_FakeRequest(app))
     assert first.status == 202
-    for _ in range(100):
-        if app[handler._STATE_KEY]["total"]:
-            break
-        await asyncio.sleep(0.01)
+    # Both progress callbacks have landed once the total reaches 100; waiting on a
+    # truthy total alone could read the state between them (40, not 100).
+    await async_wait_until(lambda: app[handler._STATE_KEY]["total"] == 100)
     # A second click while it runs answers the running install; it starts nothing.
     second = _body(await handler.api_kas_bundle_install(_FakeRequest(app)))
     assert second["installing"] is True

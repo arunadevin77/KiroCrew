@@ -7,7 +7,12 @@
  * - the switch writes `agent.kas_bundle` through the ordinary config PATCH;
  * - "Install" starts the gateway's install, and the card shows its progress from
  *   the status the server returns;
- * - an install failure renders the server's remedy text.
+ * - an install failure renders the server's remedy text;
+ * - a saved switch is reported as pending a restart, because the setting is
+ *   boot-only, and nothing says so before a save;
+ * - a status poll that fails while an earlier status is still cached is reported,
+ *   so stale progress never reads as current;
+ * - a status read that fails with nothing cached offers Retry, which re-reads.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
@@ -69,7 +74,7 @@ describe('KasBundleCard', () => {
     kasBundleStatus.mockResolvedValue(BASE)
     renderWithProviders(<KasBundleCard />)
     await screen.findByTestId('kas-bundle-install')
-    expect(screen.getByText('KAS 0.66.33 is not installed.')).toBeInTheDocument()
+    expect(screen.getByText('Built-in engine 0.66.33 is not installed yet.')).toBeInTheDocument()
     expect(toggle()).toHaveAttribute('aria-disabled', 'true')
     expect(screen.getByTestId('restart-badge')).toHaveAttribute('data-key', KAS_BUNDLE_CONFIG_KEY)
   })
@@ -77,11 +82,22 @@ describe('KasBundleCard', () => {
   it('lets the switch be turned on once installed, through the config PATCH', async () => {
     kasBundleStatus.mockResolvedValue(INSTALLED)
     renderWithProviders(<KasBundleCard />)
-    await screen.findByText('KAS 0.66.33 installed (Node 22.23.3)')
+    await screen.findByText('Built-in engine 0.66.33 installed')
     expect(screen.queryByTestId('kas-bundle-install')).toBeNull()
     expect(toggle()).not.toHaveAttribute('aria-disabled')
     fireEvent.click(toggle())
     await waitFor(() => expect(patchConfig).toHaveBeenCalledWith('agent.kas_bundle', true))
+  })
+
+  it('reports a saved switch as pending a restart, and only after the save', async () => {
+    kasBundleStatus.mockResolvedValue(INSTALLED)
+    renderWithProviders(<KasBundleCard />)
+    await screen.findByText('Built-in engine 0.66.33 installed')
+    expect(screen.queryByTestId('kas-bundle-restart-pending')).toBeNull()
+    fireEvent.click(toggle())
+    const pending = await screen.findByTestId('kas-bundle-restart-pending')
+    expect(pending.textContent).toContain('Restart gateway')
+    expect(pending).toHaveAttribute('role', 'status')
   })
 
   it('always lets an enabled switch be turned off, even with nothing installed', async () => {
@@ -108,6 +124,30 @@ describe('KasBundleCard', () => {
     expect(live.textContent).toContain('Installing KAS 0.66.33')
     expect(live.textContent).toContain('50')
     expect(toggle()).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('reports a failed re-read beside the cached status instead of showing stale progress as current', async () => {
+    kasBundleStatus.mockResolvedValueOnce({
+      ...BASE,
+      installing: true,
+      progress: { done: 10 * 1024 * 1024, total: 100 * 1024 * 1024 },
+    })
+    kasBundleStatus.mockRejectedValue(new Error('gateway gone'))
+    renderWithProviders(<KasBundleCard />)
+    await screen.findByRole('status')
+    // The install poll fires once a second while the server says installing.
+    await screen.findByText('Could not read the KAS engine status.', {}, { timeout: 5000 })
+    expect(screen.getByTestId('kas-bundle-card')).toBeInTheDocument()
+  })
+
+  it('offers Retry when the status cannot be read, and Retry re-reads it', async () => {
+    kasBundleStatus.mockRejectedValueOnce(new Error('gateway gone'))
+    kasBundleStatus.mockResolvedValue(INSTALLED)
+    renderWithProviders(<KasBundleCard />)
+    await screen.findByText('Could not read the KAS engine status.')
+    fireEvent.click(screen.getByTestId('kas-bundle-retry'))
+    await screen.findByText('Built-in engine 0.66.33 installed')
+    expect(kasBundleStatus).toHaveBeenCalledTimes(2)
   })
 
   it("renders the server's remedy when the last install failed", async () => {

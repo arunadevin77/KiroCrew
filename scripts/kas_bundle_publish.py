@@ -7,14 +7,13 @@ adds one official Node build per host architecture from nodejs.org -- verified
 against that release's ``SHASUMS256.txt`` -- and writes the manifest
 :mod:`kiro_crew.acp.kas_bundle` reads::
 
-    <out>/kas/<version>/kas-*.tar.zst        (copied)
+    <out>/kas/<version>/kas-*.tar.xz         (recompressed from the build's .tar.zst)
     <out>/kas/<version>/node-v<N>-*.{tar.xz,zip}
     <out>/kas/<version>/manifest.json
-    <out>/kas/latest.json
 
-With ``--s3 s3://<bucket>`` the same tree is uploaded with the ``aws`` CLI,
-``latest.json`` last so a reader never sees a pointer to a half-uploaded
-release. The script never reads a credential itself; the CLI resolves its own.
+With ``--s3 s3://<bucket>`` the same tree is uploaded with the ``aws`` CLI. The
+script never reads a credential itself; the CLI resolves its own. Nothing points
+at a "current" release: each Kiro Crew release pins the one version it runs.
 
 Why a Node per architecture when the engine's Mac build is universal: Node
 ships no universal binary, so ``node.builds`` is keyed by ``<os>-<arch>`` and
@@ -34,6 +33,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import lzma
+import re
 import shutil
 import subprocess
 import sys
@@ -67,16 +68,25 @@ def ref(path: Path) -> dict:
 
 
 def fetch(url: str, dest: Path) -> None:
+    # Every url this script opens is NODE_DIST + a path it assembled from a
+    # validated version and a fixed archive name; refuse anything else so a
+    # future caller cannot hand it a file:// or foreign host.
+    if not url.startswith(NODE_DIST + "/"):
+        sys.exit(f"refusing to fetch outside {NODE_DIST}: {url}")
     if dest.exists():
         return
     print(f"  GET {url}")
     tmp = dest.with_suffix(dest.suffix + ".part")
-    with urllib.request.urlopen(url, timeout=600) as resp, open(tmp, "wb") as out:
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- host pinned to NODE_DIST above, https only, and every byte is checked against SHASUMS256.txt
+    resp = urllib.request.urlopen(url, timeout=600)
+    with resp, open(tmp, "wb") as out:
         shutil.copyfileobj(resp, out)
     tmp.replace(dest)
 
 
 def node_builds(version: str, out_dir: Path) -> dict[str, dict]:
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        sys.exit(f"Node version must look like 22.23.3, got {version!r}")
     parts = tuple(int(x) for x in version.split("."))
     if parts < NODE_MIN:
         sys.exit(f"Node {version} is below the engine's floor {'.'.join(map(str, NODE_MIN))}")
@@ -101,6 +111,45 @@ def node_builds(version: str, out_dir: Path) -> dict[str, dict]:
     return builds
 
 
+def _recompress_zst_to_xz(src: Path, dest: Path) -> None:
+    """Rewrite a ``.tar.zst`` engine tarball as ``.tar.xz``, byte-identical inside.
+
+    The KAS build emits zstd, but CPython 3.12 cannot read zstd without a third
+    party package or a ``zstd`` executable, and stock macOS and Windows have
+    neither. xz is read by ``tarfile`` on every supported interpreter with nothing
+    but the standard library, so that is what the published manifest names. The
+    tar stream is not re-packed: zstd is decoded and lzma encoded over the same
+    bytes, so member names, modes and contents are exactly the KAS build's.
+    """
+    zstd = shutil.which("zstd")
+    if not zstd:
+        sys.exit(f"recompressing {src.name} needs a 'zstd' executable on PATH")
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    with (
+        subprocess.Popen(
+            [zstd, "-d", "-c", "--", str(src)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        ) as proc,
+        lzma.open(tmp, "wb", preset=6) as out,
+    ):
+        assert proc.stdout is not None
+        shutil.copyfileobj(proc.stdout, out, 1 << 20)
+    if proc.returncode != 0:
+        tmp.unlink(missing_ok=True)
+        sys.exit(f"zstd exited {proc.returncode} while reading {src.name}")
+    tmp.replace(dest)
+
+
+def _xz_is_complete(path: Path) -> bool:
+    """True when *path* decompresses to its end without error."""
+    try:
+        with lzma.open(path, "rb") as fh:
+            while fh.read(1 << 20):
+                pass
+    except (OSError, lzma.LZMAError, EOFError):
+        return False
+    return True
+
+
 def engine_platforms(kas_dir: Path, out_dir: Path) -> dict[str, dict]:
     platforms: dict[str, dict] = {}
     upstream = kas_dir / "manifest.json"
@@ -113,13 +162,46 @@ def engine_platforms(kas_dir: Path, out_dir: Path) -> dict[str, dict]:
         if not src.is_file():
             print(f"  ! no engine tarball for {key} ({src.name}); skipping that platform")
             continue
-        dest = out_dir / name
-        if not dest.exists():
-            shutil.copyfile(src, dest)
-        platforms[key] = ref(dest)
-        if declared.get(key) and declared[key].get("sha256") != platforms[key]["sha256"]:
+        if declared.get(key) and declared[key].get("sha256") != sha256_of(src):
             sys.exit(f"{name}: sha256 differs from the upstream manifest.json beside it")
-        print(f"  ✓ {name}")
+        if name.endswith(".tar.zst"):
+            dest = out_dir / (name[: -len(".tar.zst")] + ".tar.xz")
+            # An xz already at the destination is kept only if it is a complete
+            # archive AND was made from this exact source: the sidecar records the
+            # zst's sha256 at recompression time, so a run against a refreshed
+            # upstream drop (same filename, new bytes) regenerates instead of
+            # pinning the previous drop's archive under the new manifest.
+            src_sha = sha256_of(src)
+            sidecar = dest.with_suffix(dest.suffix + ".src-sha256")
+            if dest.exists():
+                stale = not _xz_is_complete(dest)
+                if stale:
+                    print(f"  ! {dest.name} is truncated; regenerating")
+                elif not (sidecar.is_file() and sidecar.read_text().strip() == src_sha):
+                    stale = True
+                    print(f"  ! {dest.name} was made from a different {name}; regenerating")
+                if stale:
+                    dest.unlink()
+                    sidecar.unlink(missing_ok=True)
+            if not dest.exists():
+                print(
+                    f"  ~ {name} -> {dest.name} (recompressing; zstd has no stdlib reader on 3.12)"
+                )
+                _recompress_zst_to_xz(src, dest)
+                sidecar.write_text(src_sha + "\n")
+        else:
+            dest = out_dir / name
+            # Through a sibling and one rename, so an interrupted copy never leaves a
+            # partial file at the final name for a rerun to pin; and a destination that
+            # is already there is checked against its source, never trusted.
+            if dest.exists() and sha256_of(dest) != sha256_of(src):
+                dest.unlink()
+            if not dest.exists():
+                tmp = dest.with_suffix(dest.suffix + ".part")
+                shutil.copyfile(src, tmp)
+                tmp.replace(dest)
+        platforms[key] = ref(dest)
+        print(f"  ✓ {dest.name}")
     if not platforms:
         sys.exit(f"no kas-*.tar.zst found in {kas_dir}")
     return platforms
@@ -128,11 +210,11 @@ def engine_platforms(kas_dir: Path, out_dir: Path) -> dict[str, dict]:
 def upload(out_root: Path, version: str, s3_base: str, *, dry_run: bool) -> None:
     s3_base = s3_base.rstrip("/")
     release = out_root / "kas" / version
-    files = sorted(p for p in release.iterdir() if p.is_file())
-    cmds = [["aws", "s3", "cp", str(p), f"{s3_base}/kas/{version}/{p.name}"] for p in files]
-    cmds.append(
-        ["aws", "s3", "cp", str(out_root / "kas" / "latest.json"), f"{s3_base}/kas/latest.json"]
+    # The .src-sha256 sidecars are local recompression bookkeeping, not release files.
+    files = sorted(
+        p for p in release.iterdir() if p.is_file() and not p.name.endswith(".src-sha256")
     )
+    cmds = [["aws", "s3", "cp", str(p), f"{s3_base}/kas/{version}/{p.name}"] for p in files]
     for cmd in cmds:
         print("  $", " ".join(cmd))
         if not dry_run:
@@ -167,12 +249,7 @@ def main() -> None:
         "node": {"version": args.node_version, "builds": builds},
     }
     (release / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    (args.out / "kas" / "latest.json").write_text(
-        json.dumps({"version": args.version, "manifest": f"kas/{args.version}/manifest.json"})
-        + "\n",
-        encoding="utf-8",
-    )
-    print(f"Wrote {release / 'manifest.json'} and {args.out / 'kas' / 'latest.json'}")
+    print(f"Wrote {release / 'manifest.json'}")
     print("Pin it in src/kiro_crew/acp/kas_pin.py (after testing):")
     print(f'  KAS_PIN_VERSION = "{args.version}"')
     print(f'  KAS_PIN_MANIFEST_SHA256 = "{sha256_of(release / "manifest.json")}"')

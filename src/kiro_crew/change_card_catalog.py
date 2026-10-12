@@ -237,10 +237,15 @@ _CANNOT_WIDEN_SETTINGS: frozenset[str] = frozenset(
 #: (``agent_sdk.backends.ACP_BACKEND_ROUTING``), so no fixed order fits it either.
 #: ``session.pool_agent`` names the agent spec warm-pool processes start with, and
 #: a session that names no agent claims one (``session_pool._claim_from_pool``),
-#: so it picks which tool grants that session runs under.
+#: so it picks which tool grants that session runs under. ``agent.kas_bundle``
+#: swaps the program the KAS harness is spawned from (the installed kiro-cli or
+#: Kiro Crew's own pinned engine bundle, ``acp.harness.kas.KasHarness.resolve_spawn``); a
+#: different binary with its own update cadence is a different program, so a
+#: bool flip here is code exec, not a widen or tighten.
 _CODE_EXEC_SETTINGS: frozenset[str] = frozenset(
     {
         "agent.acp_backend",
+        "agent.kas_bundle",
         "dashboard.terminal.shell",
         "session.pool_agent",
     }

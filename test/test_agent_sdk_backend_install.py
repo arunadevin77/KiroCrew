@@ -522,6 +522,65 @@ class TestKasTracksKiro:
         assert calls == [1]
 
 
+class TestKasBundleRouteAnswersFromTheInstalledEngine:
+    """With ``agent.kas_bundle`` on, KAS runs Crew's own engine and never kiro-cli.
+
+    The row then has to say what THAT route is missing. A host with no kiro-cli
+    is INSTALLED once the engine is; a host with kiro-cli but no engine is
+    MISSING the bundle, named with the command that lays it down -- and kiro's
+    resolver is not consulted either way, since nothing on this route spawns it.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _bundle_route(self, _floor_monkeypatch):
+        # The floor stack, not the test's own: a case that calls ``monkeypatch.undo()``
+        # must not lift the route pin from under its own assertions.
+        _floor_monkeypatch.setattr(probe, "_kas_bundle_route", lambda: True)
+
+    @pytest.mark.parametrize("kiro_bin", ["/usr/local/bin/kiro-cli", None])
+    def test_installed_engine_is_installed_whatever_kiro_cli_says(self, monkeypatch, kiro_bin):
+        from kiro_crew.agent_sdk import kas_bundle
+
+        _stub_resolvers(monkeypatch, kiro=kiro_bin)
+        monkeypatch.setattr(kas_bundle, "installed_bundle", lambda *a, **k: object())
+        kas = probe.probe_backend(ACP_BACKEND_KAS)
+        assert kas.installed == probe.INSTALLED
+        assert kas.missing_components == ()
+        assert kas.policy_id == "kas"
+
+    @pytest.mark.parametrize("kiro_bin", ["/usr/local/bin/kiro-cli", None])
+    def test_no_engine_is_missing_the_bundle_not_kiro_cli(self, monkeypatch, kiro_bin):
+        from kiro_crew.agent_sdk import kas_bundle
+
+        _stub_resolvers(monkeypatch, kiro=kiro_bin)
+        monkeypatch.setattr(kas_bundle, "installed_bundle", lambda *a, **k: None)
+        kas = probe.probe_backend(ACP_BACKEND_KAS)
+        assert kas.installed == probe.MISSING
+        assert kas.missing_components == (probe.COMPONENT_KAS_BUNDLE,)
+        assert kas.install_command == probe.KAS_BUNDLE_INSTALL_COMMAND
+        assert probe.COMPONENT_KIRO_CLI not in kas.missing_components
+
+    def test_kiro_resolver_is_not_consulted_on_the_bundle_route(self, monkeypatch):
+        from kiro_crew.acp import client
+        from kiro_crew.agent_sdk import kas_bundle
+
+        monkeypatch.setattr(kas_bundle, "installed_bundle", lambda *a, **k: object())
+        monkeypatch.setattr(
+            client,
+            "_resolve_kiro_bin",
+            lambda **_kw: (_ for _ in ()).throw(AssertionError("kiro resolver consulted")),
+        )
+        assert probe.probe_backend(ACP_BACKEND_KAS).installed == probe.INSTALLED
+
+    def test_the_relay_route_is_unchanged(self, monkeypatch):
+        # The default (switch off) keeps kas as a copy of kiro's verdict.
+        monkeypatch.setattr(probe, "_kas_bundle_route", lambda: False)
+        _stub_resolvers(monkeypatch, kiro=None)
+        kas = probe.probe_backend(ACP_BACKEND_KAS)
+        assert kas.installed == probe.MISSING
+        assert kas.missing_components == (probe.COMPONENT_KIRO_CLI,)
+
+
 class TestUnknownIsNeverMissing:
     """A failed CHECK is its own state; collapsing it produces bad advice."""
 

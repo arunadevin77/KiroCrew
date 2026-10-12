@@ -326,6 +326,11 @@ def apply_kas_cli_floor(cfg: "KiroCrewConfig") -> str | None:
     agent = cfg.agent
     if ACP_BACKEND_KAS not in (agent.acp_backend, agent.member_acp_backend):
         return None
+    if agent.kas_bundle:
+        # The bundle route spawns Kiro Crew's own engine and never runs kiro-cli,
+        # so kiro-cli's engine support is not a fact about this host's KAS. Acting
+        # on it would silently move a bundle-route user back onto kiro-cli.
+        return None
     if ACP_BACKEND_KAS not in selectable_backends():
         return None
     from kiro_crew.agent_sdk import kas_engine_unsupported_reason

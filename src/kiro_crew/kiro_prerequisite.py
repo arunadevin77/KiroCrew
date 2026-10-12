@@ -3069,6 +3069,16 @@ class KiroPrerequisiteService:
 
         return self._initial_setup_complete
 
+    @staticmethod
+    def _kas_bundle_route() -> bool:
+        """Whether ``agent.kas_bundle`` is on, read from the config at call time."""
+        from kiro_crew.config import KiroCrewConfig
+
+        try:
+            return bool(KiroCrewConfig.load().agent.kas_bundle)
+        except Exception:
+            return False
+
     async def record_independent_backend_setup(self, backend: str) -> bool:
         """Persist first-run completion after the configured harness is usable.
 
@@ -3084,6 +3094,12 @@ class KiroPrerequisiteService:
         the SAME rule the onboarding gate admits KAS on, kept in lock-step here
         so a KAS first run actually records the marker instead of leaving
         ``initial_setup_complete`` false forever.
+
+        On the BUNDLE route (``agent.kas_bundle`` on) KAS runs Crew's own installed
+        engine and never kiro-cli, so none of the kiro-cli checks apply: the
+        prerequisite is the installed engine (``installed_bundle()``), and a host
+        with no kiro-cli at all completes here once ``kirocrew kas install`` has
+        run. The install probe below answers from the same reader on that route.
         """
         from kiro_crew.acp_backends import selectable_backend_values
         from kiro_crew.agent_sdk.backend_install import INSTALLED, probe_backend
@@ -3092,7 +3108,12 @@ class KiroPrerequisiteService:
             ACP_BACKENDS_INDEPENDENT_SETUP,
         )
 
-        if backend == ACP_BACKEND_KAS:
+        if backend == ACP_BACKEND_KAS and self._kas_bundle_route():
+            from kiro_crew.agent_sdk import kas_bundle
+
+            if await asyncio.to_thread(kas_bundle.installed_bundle) is None:
+                return False
+        elif backend == ACP_BACKEND_KAS:
             # KAS runs ON kiro-cli, so it is deliberately absent from
             # ACP_BACKENDS_INDEPENDENT_SETUP. Its prerequisite is a kiro-cli new
             # enough to expose the ``acp`` subcommand; only a clean "too old"

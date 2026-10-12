@@ -13432,11 +13432,12 @@
         "folder_conductor_desc": "Porta in cima alla cartella la chat che ha avviato le altre chat di quella cartella: una barra colorata sul bordo sinistro e una piccola etichetta conductor accanto al nome dell'agente. Questo cambia l'ordine dell'elenco delle sessioni, quindi l'elenco resta com'è finché non la attivi. La voce di chat nel menu della cartella c'è sempre."
       },
       "kasBundleCard": {
-        "toggle_label": "Usa il motore KAS integrato di {{productName}}",
-        "toggle_description": "Esegue KAS senza kiro-cli, con l'account Kiro qui sopra. Installa prima il motore.",
-        "installed": "KAS {{version}} installato (Node {{node}})",
-        "not_installed": "KAS {{version}} non è installato.",
-        "install": "Installa",
+        "toggle_label": "Usa il motore KAS integrato",
+        "toggle_description": "Esegue la versione del motore KAS testata con questa versione di {{productName}}, senza installare kiro-cli a parte. Accede con l'account Kiro qui sopra. Il cambio ha effetto quando {{productName}} si riavvia.",
+        "installed": "Motore integrato {{version}} installato",
+        "saved_restart_pending": "Salvato. {{productName}} usa ancora il percorso del motore precedente; il cambio avviene al riavvio: Impostazioni → Informazioni → Riavvia il gateway.",
+        "not_installed": "Il motore integrato {{version}} non è ancora installato.",
+        "install": "Installa il motore KAS",
         "installing": "Installazione di KAS {{version}}…",
         "installing_progress": "Installazione di KAS {{version}}: {{percent}} ({{done}} di {{total}})",
         "install_failed": "Impossibile avviare l'installazione del motore KAS.",

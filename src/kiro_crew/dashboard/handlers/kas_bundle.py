@@ -1,6 +1,6 @@
 """Dashboard handlers for Kiro Crew's own KAS engine bundle (Settings > Agent Harness).
 
-Two routes, both thin over :mod:`kiro_crew.acp.kas_bundle`:
+Two routes, both thin over :mod:`kiro_crew.agent_sdk.kas_bundle`:
 
 * ``GET /api/kas-bundle`` -- the pinned version, whether it is installed, whether
   ``agent.kas_bundle`` is on, and the state of an install this gateway is running.
@@ -51,8 +51,8 @@ def _installing(state: dict[str, Any]) -> bool:
 
 def _status_payload(app: web.Application) -> dict[str, Any]:
     """Blocking (reads config and the engines directory); call off the loop."""
-    from kiro_crew.acp import kas_bundle
-    from kiro_crew.acp.kas_pin import KAS_PIN_VERSION, pinned_version
+    from kiro_crew.agent_sdk import kas_bundle
+    from kiro_crew.agent_sdk.kas_bundle import KAS_PIN_VERSION, pinned_version
     from kiro_crew.config.loader import KiroCrewConfig
 
     cfg = KiroCrewConfig.load().agent
@@ -98,7 +98,7 @@ async def _audit(request: web.Request, outcome: str, error: str = "") -> None:
 
 def _run_install(state: dict[str, Any]) -> None:
     """The blocking install. Progress is summed across the two artifacts."""
-    from kiro_crew.acp import kas_bundle
+    from kiro_crew.agent_sdk import kas_bundle
     from kiro_crew.config.loader import KiroCrewConfig
 
     totals: dict[str, tuple[int, int]] = {}
@@ -112,10 +112,16 @@ def _run_install(state: dict[str, Any]) -> None:
 
 
 async def _install_task(state: dict[str, Any]) -> None:
-    from kiro_crew.acp.kas_bundle import KasBundleError
+    from kiro_crew.agent_sdk.backend_install import forget_probe
+    from kiro_crew.agent_sdk.backends import ACP_BACKEND_KAS
+    from kiro_crew.agent_sdk.kas_bundle import KasBundleError
 
     try:
         await asyncio.to_thread(_run_install, state)
+        # The Agent Harness panel's KAS row answers from the install probe, which
+        # on the bundle route reads the engine this just laid down; its cached
+        # "missing" verdict would otherwise outlive the install for the TTL.
+        forget_probe(ACP_BACKEND_KAS)
     except KasBundleError as exc:
         # KasBundleError's text is the remedy and names no credential.
         state["error"] = str(exc)

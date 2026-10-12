@@ -3110,8 +3110,9 @@ engaged for this backend and KAS is excluded from
 **KAS bundle route: the same harness, no kiro-cli.** `agent.kas_bundle = true`
 makes `KasHarness.resolve_spawn` spawn the engine from Kiro Crew's OWN install
 instead of kiro-cli's relay. `kirocrew kas install` (`cli_kas.py` →
-`acp/kas_bundle.py`) fetches a manifest from `agent.kas_bundle_url`
-(`<base>/kas/latest.json` → `<base>/kas/<version>/manifest.json`), picks this
+`acp/kas_bundle.py`) fetches the pinned version's manifest from `agent.kas_bundle_url`
+(`<base>/kas/<version>/manifest.json`; there is no "current" pointer, because the
+release's pin is the only version anything asks for), picks this
 host's engine tarball (`platforms[<os>-<arch>]`; Mac is `darwin-universal`) and
 Node archive (`node.builds[<os>-<arch>]`, one binary per architecture), transfers
 both through `asset_downloader.download_to` (https-only, same-host redirects,
@@ -3131,9 +3132,13 @@ only; never read from config). A manifest whose `node` is the string
 `"electron-builtin"` (a build that expected Kiro's own Electron) is refused with
 the remedy. `--from DIR` installs from a local manifest and artifacts (offline,
 mirrors, development). The publishing side is `scripts/kas_bundle_publish.py`:
-engine tarballs in, official Node builds from nodejs.org verified against that
-release's `SHASUMS256.txt`, manifest out, optional `aws s3 cp` with
-`latest.json` uploaded last. The harness reads the flag off the loop and, when
+the KAS build's `.tar.zst` engine tarballs in, recompressed to `.tar.xz` (same tar
+bytes; CPython 3.12 reads xz with the standard library and zstd with nothing, and
+stock macOS and Windows carry no `zstd` executable), official Node builds from
+nodejs.org verified against that release's `SHASUMS256.txt`, manifest out,
+optional `aws s3 cp`. The installer still accepts a `.tar.zst` manifest entry
+(stdlib on 3.14+, the `zstandard` package, or a `zstd` executable) for a
+locally built bundle handed to `--from`. The harness reads the flag off the loop and, when
 on, resolves `kas_bundle.installed_bundle()`; nothing installed is an
 `AcpRuntimeError` naming `kirocrew kas install`, never a fallback to the relay —
 the operator chose the route, and a silent relay spawn would make a kiro-cli
@@ -3155,6 +3160,8 @@ executes its engine, and nothing in a sandbox rewrites the code the next session
 runs. `kirocrew doctor` reports the route when selected (`_report_kas_bundle`:
 installed version, the exact spawn argv, the vault as the only owner) and never
 mentions kiro-cli there; `kirocrew kas status` is the same facts alone.
+
+**Setup and the install probe follow the route.** With `agent.kas_bundle` on, KAS never runs kiro-cli, so the two places that decide "is KAS usable on this host" ask the installed engine instead of the binary: `agent_sdk.backend_install._probe_kas` answers `installed` when `installed_bundle()` finds the pinned engine and `missing` with the one component `COMPONENT_KAS_BUNDLE` (and `kirocrew kas install` as the install command) when it does not, consulting kiro's resolver on neither path; and `KiroPrerequisiteService.record_independent_backend_setup("kas")` records first-run completion on the same reader, spawning no `--version` / `acp --help` probe. A host with no kiro-cli at all therefore completes setup once the engine is installed, which is what the switch's help text promises. The dashboard's install handler evicts the KAS probe (`forget_probe`) when an install lands, so the Agent Harness row flips without waiting out the probe TTL. With the switch off both checks are unchanged: KAS is kiro-cli's relay and its verdict is a copy of kiro's. The spec `permissions` block is still gated on kiro-cli's version on this route (#20730); `kirocrew doctor`'s bundle branch says so instead of reporting a kiro-cli fault.
 
 **Off-loop answers are bounded.** The off-loop answers — the unroutable-permission
 auto-reject, the KAS access-token answer and the MCP sign-in answer

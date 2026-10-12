@@ -17,7 +17,8 @@ rollback of Kiro Crew moves it back (each version is its own directory under
 
 Bumping: publish with ``scripts/kas_bundle_publish.py``, test against it, then
 change BOTH constants below in one commit. The publish script prints the
-digest. ``test_kas_pin.py`` refuses a version without a well-formed digest.
+digest. ``test/test_kas_pin.py`` refuses a pin whose version or digest is not
+well-formed, and the installer refuses a manifest whose bytes do not hash to it.
 
 ``KIROCREW_KAS_VERSION`` overrides the version the harness looks for (a
 developer testing another engine installed with ``kirocrew kas install
@@ -40,7 +41,7 @@ __all__ = [
 KAS_PIN_VERSION = "0.66.33"
 
 #: sha256 of ``<base>/kas/<KAS_PIN_VERSION>/manifest.json`` as published.
-KAS_PIN_MANIFEST_SHA256 = "3d830401627799540a56483d01e1fae30b7b610ab4c314ede8a8b7d333252c33"
+KAS_PIN_MANIFEST_SHA256 = "9cbd8dd91092b056ef61893614f6e4deec8b5694a3f6dcfcf9dddc2f659f604a"
 
 #: Operator/developer override of the version the harness resolves.
 KAS_VERSION_OVERRIDE_ENV = "KIROCREW_KAS_VERSION"

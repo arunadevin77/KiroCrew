@@ -1692,20 +1692,22 @@ class TestDoctorKasBundle:
             self.agent = type("A", (), {"acp_backend": "kas", "kas_bundle": True})()
 
     @pytest.fixture(autouse=True)
-    def _cfg(self, monkeypatch):
-        monkeypatch.setattr(cli_doctor.KiroCrewConfig, "load", classmethod(lambda cls: self._Cfg()))
+    def _cfg(self, _floor_monkeypatch):
+        _floor_monkeypatch.setattr(
+            cli_doctor.KiroCrewConfig, "load", classmethod(lambda cls: self._Cfg())
+        )
         # A kiro-cli resolver that would fail the test if consulted.
-        monkeypatch.setattr(
+        _floor_monkeypatch.setattr(
             cli_doctor,
             "resolve_kiro_cli",
             lambda: pytest.fail("kiro-cli consulted on bundle route"),
         )
-        monkeypatch.setattr(cli_doctor, "_report_kas_spec_permissions", lambda issues: None)
-        monkeypatch.setattr("kiro_crew.auth.bridge.vault_holds_identity", lambda: False)
-        monkeypatch.setattr("kiro_crew.auth.bridge.describe_vault_identity", lambda: None)
+        _floor_monkeypatch.setattr(cli_doctor, "_report_kas_spec_permissions", lambda issues: None)
+        _floor_monkeypatch.setattr("kiro_crew.auth.bridge.vault_holds_identity", lambda: False)
+        _floor_monkeypatch.setattr("kiro_crew.auth.bridge.describe_vault_identity", lambda: None)
 
     def test_nothing_installed_is_an_issue_naming_the_install(self, monkeypatch, capsys):
-        from kiro_crew.acp import kas_bundle
+        from kiro_crew.agent_sdk import kas_bundle
 
         monkeypatch.setattr(kas_bundle, "installed_bundle", lambda: None)
         issues: list[str] = []
@@ -1717,8 +1719,7 @@ class TestDoctorKasBundle:
         assert "relay:" not in out
 
     def test_an_installed_engine_prints_the_exact_spawn_argv(self, monkeypatch, capsys, tmp_path):
-        from kiro_crew.acp import kas_bundle
-        from kiro_crew.acp.kas_transport import build_kas_bundle_argv
+        from kiro_crew.agent_sdk import kas_bundle
 
         installed = kas_bundle.InstalledKasBundle(
             version="0.66.33",
@@ -1732,7 +1733,7 @@ class TestDoctorKasBundle:
         cli_doctor._doctor_kas(issues)
         out = capsys.readouterr().out
         assert "bundle:      ✅ KAS 0.66.33, Node 22.23.3" in out
-        argv = " ".join(build_kas_bundle_argv(str(installed.node_bin), str(installed.acp_server)))
+        argv = " ".join(kas_bundle.bundle_spawn_argv(installed))
         assert argv in out
         assert "auth owner:  Kiro Crew vault" in out
         assert "not signed in" in out

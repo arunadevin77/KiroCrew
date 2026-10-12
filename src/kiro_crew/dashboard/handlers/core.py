@@ -2999,6 +2999,10 @@ _EDITABLE_CONFIG: dict[str, dict] = {
     # against the one code owner, so this cannot drift from what ``AcpProvider``
     # will actually serve.
     "agent.acp_backend": {"type": "enum", "values_fn": _selectable_acp_backends},
+    # The KAS bundle route switch (Settings → Agent Harness → KAS). Boot-only on the
+    # schema; the card says so after a save. No install is implied by turning it on:
+    # a true value with nothing installed refuses the next KAS spawn by name.
+    "agent.kas_bundle": {"type": "bool"},
     # Default model for new sessions. Membership can NOT be validated against a
     # fixed list: the real vocabulary is whatever the live kiro-cli advertises
     # (/api/models spawns it to find out), and it spans both canonical registry

@@ -202,24 +202,18 @@ class TestManifest:
     def test_manifest_url_shapes(self):
         base = "https://example.test/mirror/"
         assert (
-            kas_bundle.manifest_url_for(base, None) == "https://example.test/mirror/kas/latest.json"
-        )
-        assert (
             kas_bundle.manifest_url_for(base, "0.66.33")
             == "https://example.test/mirror/kas/0.66.33/manifest.json"
         )
 
     def test_fetch_refuses_a_plaintext_base(self):
         with pytest.raises(kas_bundle.KasBundleError, match="https://"):
-            kas_bundle.fetch_manifest("http://example.test")
+            kas_bundle.fetch_manifest("http://example.test", version="0.66.33")
 
-    def test_fetch_follows_latest_json_to_the_manifest(self, source_dir):
-        """Without a version, ``latest.json`` names the manifest; artifacts then resolve
-        beside THAT url, which is why the resolved url is returned with the manifest."""
+    def test_fetch_reads_the_versioned_manifest_and_returns_its_url(self, source_dir):
+        """Artifacts resolve beside the manifest's own url, which is why that url is
+        returned with the manifest."""
         docs = {
-            "https://h.test/kas/latest.json": json.dumps(
-                {"version": "0.66.33", "manifest": "kas/0.66.33/manifest.json"}
-            ).encode(),
             "https://h.test/kas/0.66.33/manifest.json": (source_dir / "manifest.json").read_bytes(),
         }
 
@@ -234,9 +228,17 @@ class TestManifest:
             def open(self, url, timeout):
                 return _Resp(docs[url])
 
-        manifest, url = kas_bundle.fetch_manifest("https://h.test", opener=_Opener())
+        manifest, url = kas_bundle.fetch_manifest(
+            "https://h.test", version="0.66.33", opener=_Opener()
+        )
         assert manifest.version == "0.66.33"
         assert url == "https://h.test/kas/0.66.33/manifest.json"
+
+    def test_fetch_from_a_malformed_url_is_a_refusal_not_a_traceback(self):
+        """urllib raises ValueError for a url it cannot parse; the operator typed it, so
+        the answer is the installer's one error type, which the CLI prints and exits."""
+        with pytest.raises(kas_bundle.KasBundleError, match="could not fetch"):
+            kas_bundle.fetch_manifest("https://[mirror", version="0.66.33")
 
     def test_fetch_pinned_version_must_match_the_document(self, source_dir):
         class _Resp(io.BytesIO):
@@ -325,6 +327,89 @@ class TestInstall:
             _install(source_dir, root)
         _install(source_dir, root, force=True)
         assert kas_bundle.installed_bundle(root=root, version="0.66.33") is not None
+
+    def test_a_concurrent_install_that_won_is_a_refusal_not_a_swap(
+        self, source_dir, tmp_path, monkeypatch
+    ):
+        """Two non-force installs of the same absent version: the loser finds the
+        winner's directory at publish time and refuses, leaving it in place."""
+        root = tmp_path / "root"
+        winner_marker = root / "0.66.33" / "winner"
+
+        real_probe = kas_bundle._probe_node
+        raced = False
+
+        def probe_then_race(node_bin, version):
+            nonlocal raced
+            real_probe(node_bin, version)
+            if raced:
+                return
+            raced = True
+            # The other install publishes between this one's probe and its rename.
+            _install(source_dir, root)
+            winner_marker.write_text("won")
+
+        monkeypatch.setattr(kas_bundle, "_probe_node", probe_then_race)
+        with pytest.raises(kas_bundle.KasBundleError, match="installed by another process"):
+            _install(source_dir, root)
+        assert winner_marker.read_text() == "won"
+        assert kas_bundle.installed_bundle(root=root, version="0.66.33") is not None
+        assert [p.name for p in root.iterdir() if p.name.startswith(".staging-")] == []
+
+    def test_a_zstd_engine_archive_installs_like_the_published_one(
+        self, source_dir, tmp_path, monkeypatch
+    ):
+        """The live manifest publishes every engine as .tar.zst; the fixture here is
+        the same shape, compressed with whichever decoder this host has, and the
+        archive directory is removed right after extraction -- which needs every
+        decoder handle closed and the zstd child reaped first."""
+        import subprocess
+
+        raw = io.BytesIO()
+        with tarfile.open(fileobj=raw, mode="w") as tf:
+            pkg = "node_modules/@kiro/agent"
+            for name, data in {
+                f"{pkg}/package.json": json.dumps(
+                    {"name": "@kiro/agent", "bin": {"kiro-agent": "dist/server/acp-server.js"}}
+                ).encode(),
+                f"{pkg}/dist/server/acp-server.js": b"// engine\n",
+            }.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+        try:
+            import zstandard
+
+            engine = zstandard.ZstdCompressor().compress(raw.getvalue())
+        except ImportError:
+            import shutil as _shutil
+
+            if not _shutil.which("zstd"):
+                pytest.skip("no zstd decoder on this host")
+            engine = subprocess.run(
+                ["zstd", "-c", "-q"], input=raw.getvalue(), capture_output=True, check=True
+            ).stdout
+        (source_dir / "kas-linux-x64.tar.zst").write_bytes(engine)
+        manifest = json.loads((source_dir / "manifest.json").read_text(encoding="utf-8"))
+        manifest["platforms"]["linux-x64"] = _ref("kas-linux-x64.tar.zst", engine)
+        (source_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        root = tmp_path / "root"
+        installed = _install(source_dir, root)
+        assert installed.acp_server.is_file()
+        assert not (installed.root / "downloads").exists()
+
+    def test_a_zstd_archive_with_no_decoder_is_a_named_refusal(self, tmp_path, monkeypatch):
+        import sys as _sys
+
+        monkeypatch.setitem(_sys.modules, "zstandard", None)
+        monkeypatch.setattr(kas_bundle.shutil, "which", lambda name: None)
+        monkeypatch.delattr(tarfile.TarFile, "zstopen", raising=False)
+        archive = tmp_path / "kas-linux-x64.tar.zst"
+        archive.write_bytes(b"\x28\xb5\x2f\xfd")
+        with pytest.raises(kas_bundle.KasBundleError, match="neither the 'zstandard'"):
+            with kas_bundle._open_tar(archive):
+                pass
 
     def test_a_tar_member_that_escapes_is_refused(self, source_dir, tmp_path):
         evil = _tar_bytes({"../../outside.js": b"x"})
@@ -435,9 +520,7 @@ class TestSpawnRoute:
         with (
             patch("kiro_crew.acp.harness.kas._bundle_route_selected", return_value=True),
             patch.object(kas_bundle, "installed_bundle", return_value=None),
-            patch(
-                "kiro_crew.acp.harness.kas.kas_bundle_mod.kas_engines_root", return_value=tmp_path
-            ),
+            patch.object(kas_bundle, "kas_engines_root", return_value=tmp_path),
         ):
             with pytest.raises(AcpRuntimeError, match="kirocrew kas install"):
                 await KasHarness().resolve_spawn(_ctx(tmp_path))

@@ -13008,11 +13008,12 @@
         "folder_conductor_desc": "폴더의 다른 채팅을 시작한 채팅을 그 폴더의 맨 위로 올립니다. 왼쪽 가장자리에 강조 막대가 생기고 에이전트 이름 옆에 작은 conductor 태그가 붙습니다. 세션 목록의 순서가 바뀌므로 켜기 전에는 목록이 그대로입니다. 폴더 메뉴의 채팅 항목은 항상 있습니다."
       },
       "kasBundleCard": {
-        "toggle_label": "{{productName}} 내장 KAS 엔진 사용",
-        "toggle_description": "kiro-cli 없이 KAS를 실행하며, 위의 Kiro 계정으로 로그인합니다. 먼저 엔진을 설치하세요.",
-        "installed": "KAS {{version}} 설치됨 (Node {{node}})",
-        "not_installed": "KAS {{version}}이(가) 설치되어 있지 않습니다.",
-        "install": "설치",
+        "toggle_label": "내장 KAS 엔진 사용",
+        "toggle_description": "이 {{productName}} 릴리스에서 테스트한 KAS 엔진 버전을 실행합니다. kiro-cli를 따로 설치할 필요가 없습니다. 위의 Kiro 계정으로 로그인합니다. 전환은 {{productName}}을(를) 다시 시작하면 적용됩니다.",
+        "installed": "내장 엔진 {{version}} 설치됨",
+        "saved_restart_pending": "저장했습니다. {{productName}}은(는) 아직 이전 엔진 경로로 실행 중이며, 다시 시작하면 전환됩니다: 설정 → 정보 → 게이트웨이 다시 시작.",
+        "not_installed": "내장 엔진 {{version}}이(가) 아직 설치되지 않았습니다.",
+        "install": "KAS 엔진 설치",
         "installing": "KAS {{version}} 설치 중…",
         "installing_progress": "KAS {{version}} 설치 중: {{percent}} ({{done}} / {{total}})",
         "install_failed": "KAS 엔진 설치를 시작할 수 없습니다.",

@@ -1040,6 +1040,38 @@ class TestKasRecordsFirstRunSetup:
         )
         return service
 
+    @pytest.mark.parametrize("installed", [False, True], ids=["no-engine", "engine-installed"])
+    async def test_kas_bundle_route_records_setup_from_the_installed_engine_not_kiro_cli(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installed: bool
+    ) -> None:
+        # agent.kas_bundle on, and NO kiro-cli anywhere on this host: the route
+        # never runs kiro-cli, so the marker must follow the installed engine --
+        # and nothing may try to spawn the absent binary while deciding.
+        from kiro_crew.agent_sdk import kas_bundle
+
+        calls: list[tuple[str, list[str]]] = []
+
+        async def _no_binary_runner(executable: str, args: list[str], **_kw: Any) -> Any:
+            calls.append((executable, args))
+            raise AssertionError("the bundle route must not spawn kiro-cli")
+
+        service = self._service(
+            tmp_path, monkeypatch, acp_supported=True, runner=_no_binary_runner, resolved=False
+        )
+        monkeypatch.setattr(
+            KiroPrerequisiteService, "_kas_bundle_route", staticmethod(lambda: True)
+        )
+        monkeypatch.setattr(
+            kas_bundle,
+            "installed_bundle",
+            lambda *a, **k: object() if installed else None,
+        )
+
+        assert await service.record_independent_backend_setup("kas") is installed
+        assert service.initial_setup_complete is installed
+        assert service._setup_marker.exists() is installed
+        assert calls == []
+
     @pytest.mark.parametrize("acp_supported", [False, True], ids=["too-old", "acp-capable"])
     async def test_signed_out_kas_setup_uses_probed_acp_support(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, acp_supported: bool

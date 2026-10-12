@@ -13220,11 +13220,12 @@
         "folder_conductor_desc": "Hebt den Chat, der die anderen Chats eines Ordners gestartet hat, an den Anfang dieses Ordners: ein farbiger Balken am linken Rand und ein kleines conductor-Label neben dem Agentennamen. Das ändert die Reihenfolge der Sitzungsliste, daher bleibt die Liste unverändert, bis du es einschaltest. Der Chat-Eintrag im Ordnermenü ist immer da."
       },
       "kasBundleCard": {
-        "toggle_label": "Integrierte KAS-Engine von {{productName}} verwenden",
-        "toggle_description": "Führt KAS ohne kiro-cli aus, angemeldet mit dem Kiro-Konto oben. Installiere zuerst die Engine.",
-        "installed": "KAS {{version}} installiert (Node {{node}})",
-        "not_installed": "KAS {{version}} ist nicht installiert.",
-        "install": "Installieren",
+        "toggle_label": "Integrierte KAS-Engine verwenden",
+        "toggle_description": "Führt die KAS-Engine-Version aus, mit der diese {{productName}}-Version getestet wurde, ohne separate kiro-cli-Installation. Meldet sich mit dem Kiro-Konto oben an. Der Wechsel gilt, sobald {{productName}} neu startet.",
+        "installed": "Integrierte Engine {{version}} installiert",
+        "saved_restart_pending": "Gespeichert. {{productName}} läuft noch mit der bisherigen Engine-Route; der Wechsel passiert beim Neustart: Einstellungen → Über → Gateway neu starten.",
+        "not_installed": "Integrierte Engine {{version}} ist noch nicht installiert.",
+        "install": "KAS-Engine installieren",
         "installing": "KAS {{version}} wird installiert…",
         "installing_progress": "KAS {{version}} wird installiert: {{percent}} ({{done}} von {{total}})",
         "install_failed": "Die Installation der KAS-Engine konnte nicht gestartet werden.",

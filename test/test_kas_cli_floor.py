@@ -76,7 +76,11 @@ def _help(monkeypatch, text):
 
 def _cfg(acp_backend=KAS, member_acp_backend=""):
     return SimpleNamespace(
-        agent=SimpleNamespace(acp_backend=acp_backend, member_acp_backend=member_acp_backend)
+        agent=SimpleNamespace(
+            acp_backend=acp_backend,
+            member_acp_backend=member_acp_backend,
+            kas_bundle=False,
+        )
     )
 
 
@@ -146,6 +150,17 @@ class TestBootFloor:
         assert "Kiro Crew is using kiro-cli instead" in notice
         assert f"no {KAS_RELAY_ENGINE_FLAG} flag" in notice
         assert notice in caplog.text
+
+    def test_bundle_route_never_probes_kiro_cli(self, monkeypatch, pinned_cli, kas_selectable):
+        """agent.kas_bundle spawns Kiro Crew's own engine, so an old kiro-cli on PATH is
+        not a fact about this host's KAS; the floor must not move the user off it."""
+        calls = _help(monkeypatch, _OLD_HELP)
+        cfg = _cfg(KAS)
+        cfg.agent.kas_bundle = True
+        assert bootstrap.apply_kas_cli_floor(cfg) is None
+        assert cfg.agent.acp_backend == KAS
+        assert KAS in registry.selectable_backends()
+        assert calls == []
 
     def test_supported_cli_keeps_kas(self, monkeypatch, pinned_cli, kas_selectable):
         _help(monkeypatch, _NEW_HELP)

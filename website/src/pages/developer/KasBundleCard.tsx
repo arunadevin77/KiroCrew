@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle2, Download, Loader2 } from 'lucide-react'
+import { CheckCircle2, Download, Loader2, RotateCcw } from 'lucide-react'
+import { useState } from 'react'
 
 import { api, type KasBundleStatus } from '../../api/client'
 import ErrorNotice from '../../components/ErrorNotice'
@@ -30,6 +31,11 @@ const INSTALL_POLL_MS = 1000
  * The install runs in the gateway; this card starts it and polls status once a
  * second while it runs. Status is the single authority: nothing here mirrors
  * the server's answer in local state.
+ *
+ * `agent.kas_bundle` is boot-only (the running KAS process keeps its route until
+ * it is replaced), so a saved switch is not yet an applied one. The card says so
+ * in its own words after a save -- what restarts and that it has not happened --
+ * rather than leaving the restart pill to imply it.
  */
 export function KasBundleCard() {
   const qc = useQueryClient()
@@ -47,9 +53,13 @@ export function KasBundleCard() {
     onSuccess: data => qc.setQueryData(STATUS_QUERY_KEY, data),
   })
 
+  // Saved but not applied: true from the first successful save until this card
+  // unmounts, because the setting cannot take effect while this gateway runs.
+  const [restartPending, setRestartPending] = useState(false)
   const toggleMut = useMutation({
     mutationFn: (value: boolean) => api.patchConfig(KAS_BUNDLE_CONFIG_KEY, value),
     onSuccess: () => {
+      setRestartPending(true)
       void qc.invalidateQueries({ queryKey: STATUS_QUERY_KEY })
       void qc.invalidateQueries({ queryKey: ['kirocrewConfig'] })
     },
@@ -59,12 +69,19 @@ export function KasBundleCard() {
   const installing = status?.installing === true || installMut.isPending
 
   if (!status) {
+    // The same recovery the tab offers when its own config read fails: a read
+    // that failed once is not a dead end, and a page reload is not the remedy.
     return statusQ.isError ? (
-      <ErrorNotice
-        message={i18nT('pages.developer.kasBundleCard.status_unavailable')}
-        variant="inline"
-        askAgent
-      />
+      <div className="space-y-2 pt-2 border-t border-border" data-testid="kas-bundle-card">
+        <ErrorNotice
+          message={i18nT('pages.developer.kasBundleCard.status_unavailable')}
+          variant="inline"
+          askAgent
+        />
+        <Btn type="button" onClick={() => void statusQ.refetch()} data-testid="kas-bundle-retry">
+          {i18nT('pages.developer.agentBackendTab.retry')}
+        </Btn>
+      </div>
     ) : null
   }
 
@@ -97,7 +114,18 @@ export function KasBundleCard() {
         <SchemaRestartBadge configKey={KAS_BUNDLE_CONFIG_KEY} />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="kas-bundle-state">
+      {restartPending && (
+        <div
+          className="flex items-center gap-2 text-[12px] text-warn"
+          role="status"
+          data-testid="kas-bundle-restart-pending"
+        >
+          <RotateCcw className="lucide-inline" aria-hidden="true" />
+          <span>{i18nT('pages.developer.kasBundleCard.saved_restart_pending')}</span>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 text-[12px]" data-testid="kas-bundle-state">
         {installing ? (
           <>
             <Loader2 className="lucide-inline animate-spin text-muted" aria-hidden="true" />
@@ -107,10 +135,7 @@ export function KasBundleCard() {
           <>
             <CheckCircle2 className="lucide-inline text-ok" aria-hidden="true" />
             <span>
-              {i18nT('pages.developer.kasBundleCard.installed', {
-                version: installed.version,
-                node: installed.node_version,
-              })}
+              {i18nT('pages.developer.kasBundleCard.installed', { version: installed.version })}
             </span>
           </>
         ) : (
@@ -126,16 +151,20 @@ export function KasBundleCard() {
         )}
       </div>
 
-      {/* No hand-off draft to lose: the install and the switch are both server state. */}
+      {/* No hand-off draft to lose: the install and the switch are both server state.
+          A failed re-read comes first: with an earlier status still cached, the
+          lines above are that stale answer, and this notice is what says so. */}
       <ErrorNotice
         message={
-          status.error
-            ? status.error
-            : installMut.isError
-              ? i18nT('pages.developer.kasBundleCard.install_failed')
-              : toggleMut.isError
-                ? i18nT('pages.developer.kasBundleCard.save_failed')
-                : undefined
+          statusQ.isError
+            ? i18nT('pages.developer.kasBundleCard.status_unavailable')
+            : status.error
+              ? status.error
+              : installMut.isError
+                ? i18nT('pages.developer.kasBundleCard.install_failed')
+                : toggleMut.isError
+                  ? i18nT('pages.developer.kasBundleCard.save_failed')
+                  : undefined
         }
         variant="inline"
         askAgent
