@@ -53,6 +53,7 @@ from kiro_crew.providers.base import (
     EVENT_TEXT_CHUNK,
     LLMEvent,
 )
+from kiro_crew.testing.wait import await_until
 
 _SRC = pathlib.Path(__file__).resolve().parents[1] / "src/kiro_crew"
 _GENERIC = "User denied tool execution"
@@ -314,12 +315,17 @@ def _answer(provider, *, hooks, interactive=True, allowed=None, monkeypatch=None
 
         monkeypatch.setattr(cli_chat, "_prompt_allows", _prompt)
     gate = cli_chat._ToolGate(hooks=hooks, agent="cli-tester")
-    asyncio.run(
-        asyncio.wait_for(
-            cli_chat._answer_permission(provider, _event(), interactive=interactive, gate=gate),
-            timeout=10,
+
+    async def _answered() -> None:
+        # The answer lands in milliseconds; the bound only names a hang.
+        await await_until(
+            asyncio.ensure_future(
+                cli_chat._answer_permission(provider, _event(), interactive=interactive, gate=gate)
+            ),
+            what="the permission answer",
         )
-    )
+
+    asyncio.run(_answered())
 
 
 def _steered_then_rejected(provider: _SteeringProvider, *fragments: str) -> str:

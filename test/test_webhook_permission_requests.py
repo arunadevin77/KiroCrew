@@ -41,6 +41,7 @@ from kiro_crew.permission_floor import (
     OUTCOME_PENDING_APPROVAL,
     OUTCOME_REJECTED_TRANSPORT_FLOOR,
 )
+from kiro_crew.testing.wait import await_until
 
 _REQUEST_ID = "perm-req-9790"
 
@@ -436,12 +437,16 @@ def test_an_unauditable_auto_approve_steers_the_audit_cause(monkeypatch):
     monkeypatch.setattr(usage, "_write_token_record", lambda _record, _now: None)
     client = _SteeringClient()
     builder = _FakeContextBuilder(_FakeGate(ToolHookResult(action=TOOL_AUTO_APPROVE)))
-    asyncio.run(
-        asyncio.wait_for(
-            _run_hook_inner(_FakeState(client, builder), "hook:test:9790", "go", None),
-            timeout=_PROMPT_BOUND_S,
+
+    async def _turn() -> None:
+        await await_until(
+            asyncio.ensure_future(
+                _run_hook_inner(_FakeState(client, builder), "hook:test:9790", "go", None)
+            ),
+            what="the webhook turn",
         )
-    )
+
+    asyncio.run(_turn())
     text = _notice(client)
     assert "could not write the audit record" in text
     assert client.approved == []
