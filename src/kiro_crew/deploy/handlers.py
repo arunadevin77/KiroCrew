@@ -37,6 +37,7 @@ from kiro_crew.deploy import profiles as profiles_mod
 from kiro_crew.deploy.render import render_standalone
 from kiro_crew.deploy.scan import Finding, is_credential_finding, scan_content, summarize
 from kiro_crew.publish_governance import DEPLOY_WEB_PROVIDER_ID, publish_denied_reason
+from kiro_crew.sandbox import SandboxUnavailableError
 from kiro_crew.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from kiro_crew.sel import sel
 from kiro_crew.validation import FieldSpec, ValidationError, validate_field
@@ -1861,7 +1862,33 @@ async def _handle_pricing(request: web.Request) -> web.Response:
 async def _handle_profiles_get(_request: web.Request) -> web.Response:
     """Registry + AWS-CLI-discovered profile names (names only, read-only)."""
     reg = await asyncio.to_thread(profiles_mod.load_registry)
-    discovered = await asyncio.to_thread(profiles_mod.discover_aws_profiles)
+    try:
+        discovered = await asyncio.to_thread(profiles_mod.discover_aws_profiles)
+    except SandboxUnavailableError as exc:
+        # Discovery spawns the AWS CLI through wrap_argv, and on a host with no
+        # sandbox backend (`unshare` EPERM) and allow_unsandboxed_exec unset
+        # that raises. SandboxUnavailableError subclasses RuntimeError -- the
+        # shape nothing here caught -- so it escaped and aiohttp answered its
+        # bare "Server got itself in trouble" 500. This is the one degraded
+        # cause no retry clears, so it must not be an anonymous 500: answer the
+        # typed 503 the chat path renders for the same condition
+        # (dashboard/handlers/agents.py api_models), carrying the machine
+        # -readable code plus the probe detail and remedy the exception has.
+        logger.warning(
+            "deploy-web: profile discovery refused by the sandbox "
+            "(kind=%s, detail=%s); returning 503. Retrying will not clear this.",
+            exc.kind, exc.detail,
+        )
+        return web.json_response(
+            {
+                "error": "profile discovery unavailable: no sandbox backend on this host",
+                "code": "sandbox_unavailable",
+                "kind": exc.kind,
+                "detail": exc.detail,
+                "remedy": exc.remedy,
+            },
+            status=503,
+        )
     registered = {p["name"] for p in reg["profiles"]}
     # The blocking credential-redaction rule applies to EVERY
     # profile-related string in the response -- `default` and the discovered
