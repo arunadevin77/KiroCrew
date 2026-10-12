@@ -132,11 +132,12 @@
   1 test_conpty_exit_status.py
   1 test_context_bar_reopen.py
   1 test_context_composition_contract.py
+  1 test_context_omissions.py
   3 test_coordinator_approval_slot_lane.py
   1 test_crew_log_real_crash.py
   4 test_crew_main_contract.py
   3 test_crewmate_prune_migration.py
-  1 test_cron_cancel.py
+ 17 test_cron_cancel.py
   4 test_cron_chat_folder.py
   1 test_cron_gateway_integration.py
   2 test_cron_jitter.py
@@ -309,7 +310,7 @@
   1 test_messaging_attachments.py
   1 test_messaging_auto_title.py
   3 test_messaging_driver.py
- 11 test_messaging_privacy_mode.py
+ 12 test_messaging_privacy_mode.py
   1 test_mochi_activity.py
   1 test_mochi_autonomous_unfreeze.py
   4 test_mochi_poller_freestyle_backoff.py
@@ -333,6 +334,7 @@
   2 test_private_cron_proxy.py
   4 test_private_spawn_approval.py
   1 test_proc_non_utf8_kill_paths.py
+  1 test_provider_spawn_off_loop_18172.py
   4 test_publish_delete_race.py
   4 test_published_queue_depth.py
   3 test_push_guard.py
@@ -406,6 +408,7 @@
   2 test_slack_handler_coverage.py
   1 test_slack_home_tab.py
   1 test_slack_sessions_view.py
+ 13 test_slack_thread_override_slots.py
   1 test_slot_close_recreation_race.py
   1 test_slot_create_default_agent.py
   3 test_slot_ownership_checkpoint.py
@@ -423,6 +426,7 @@
  21 test_spawn_floor_defaults.py
  12 test_spawn_followup.py
   4 test_spawn_reasoning_effort.py
+  3 test_spawn_release_queued.py
   6 test_ssh_tunnel_manager_cov80.py
  16 test_stale_asset_watchdog.py
   2 test_stall_enrichment.py

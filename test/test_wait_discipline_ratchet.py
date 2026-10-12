@@ -126,6 +126,13 @@ MOVE_HINT = (
     "line so the parts sum to the old count."
 )
 
+DRIFT_HINT = (
+    "Not your sites -- main itself is red here, because a change merged after this "
+    "baseline was generated added them? Then the baseline is behind main: raise exactly "
+    "those lines to main's real counts in a separate, baseline-only pull request "
+    "(`--write-baseline` will not do it; it only lowers), and rebase this one on it."
+)
+
 HELPERS_HINT = (
     "Wait on the signal instead: await the event, future or state the code emits with "
     "kiro_crew.testing.wait (await_until for an Event or a future; "
@@ -412,7 +419,7 @@ def test_no_file_gains_a_short_fixed_wait() -> None:
         f".result(timeout) under {LOST_RUN_FLOOR_SECS:g}s, or a sleep under "
         f"{SHORT_POLL_SLEEP_SECS:g}s inside a loop):\n" + "\n".join(report) + "\n"
         f"{HELPERS_HINT}\n{BASELINE_FILE.name} is a ratchet: a count may only go down. "
-        f"{MOVE_HINT}"
+        f"{MOVE_HINT}\n{DRIFT_HINT}"
     )
 
 
