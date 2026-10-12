@@ -195,16 +195,35 @@ MAX_ITEMS_PER_CONDUCTOR = 32
 #: run its course: once every item is closed, ``kirocrew ledger-sweep --purge``
 #: removes the finished ledger whole.
 MAX_STORED_ITEMS_PER_CONDUCTOR = WORK_STORED_ITEM_LIMIT
-#: How many items one GOAL may create, every round and re-plan together, when the
-#: user set no budget of their own. A spend bound, where the two above bound the
-#: store: reaching it means the conductor asks the user, then raises the cap with
-#: ``work_ledger_record action=goal item_cap=N``. Stored per board as
-#: :attr:`ConductorRecord.item_cap` and enforced by :func:`_create_item` on a board
-#: that has recorded a goal -- a queue board that never writes one (the pipeline
-#: and security conductors) keeps only the open and stored bounds.
+#: How many OPEN items one GOAL may hold at once when the user set no bound of
+#: their own -- the goal's own fan-out bound, tighter than
+#: :data:`MAX_ITEMS_PER_CONDUCTOR`, which bounds the store. A worker per open item
+#: is a worker running, so this is the bound on parallel work, the one thing the
+#: user asked to be capped in code. Stored per board as
+#: :attr:`ConductorRecord.concurrency_cap`, set with
+#: ``work_ledger_record action=goal concurrency_cap=N`` and enforced by
+#: :func:`_create_item` on a board that has recorded a goal -- a queue board that
+#: never writes one (the pipeline and security conductors) keeps only the open and
+#: stored bounds. Closed items do not count: a create refused here is refused for
+#: what is running, never for what has run.
+DEFAULT_GOAL_CONCURRENCY_CAP = 6
+#: The highest ``concurrency_cap`` a goal write accepts: a cap past the store's
+#: open bound could never be reached, so it would only hide that bound behind a
+#: different refusal.
+MAX_GOAL_CONCURRENCY_CAP = MAX_ITEMS_PER_CONDUCTOR
+#: How many items one GOAL is expected to create, every round and re-plan together,
+#: when the user set no budget of their own. An ADVISORY line, not a bound: a
+#: create past it is admitted, and :attr:`ConductorRecord.cap_exceeded` turns true
+#: so the conductor's round report can say so and the user can decide whether the
+#: goal is spending more than they meant. Nothing refuses on it: a refusal here
+#: would stall a goal whose items land and close quickly on its own finished
+#: history while nothing was running, and the bound on spend is the concurrency
+#: cap above. Stored per board as :attr:`ConductorRecord.item_cap`, set with
+#: ``work_ledger_record action=goal item_cap=N`` and measured against
+#: :attr:`ConductorRecord.goal_items_used`.
 DEFAULT_GOAL_ITEM_CAP = 20
-#: The highest ``item_cap`` a goal write accepts: a cap past the stored bound could
-#: never be reached, so it would only hide that bound behind a different refusal.
+#: The highest ``item_cap`` a goal write accepts: a line past the stored bound
+#: could never be crossed, so it would say nothing.
 MAX_GOAL_ITEM_CAP = MAX_STORED_ITEMS_PER_CONDUCTOR
 MAX_EVENTS_PER_ITEM = 200
 MAX_DEPTH = 2
@@ -243,7 +262,7 @@ CODE_ALREADY_BOUND = "already_bound"
 CODE_ITEM_CLOSED = "item_closed"
 CODE_ITEM_CAP_EXCEEDED = "item_cap_exceeded"
 CODE_ITEM_STORE_FULL = "item_store_full"
-CODE_GOAL_ITEM_CAP_REACHED = "goal_item_cap_reached"
+CODE_GOAL_CONCURRENCY_CAP_REACHED = "goal_concurrency_cap_reached"
 CODE_CREW_LOG_INCOMPLETE = "crew_log_incomplete"
 CODE_CACHE_DIRTY = "cache_dirty"
 CODE_DEPTH_EXCEEDED = "depth_exceeded"
@@ -312,9 +331,14 @@ class ConductorRecord:
     #: sets it to the count the log holds. Zero on records from before it; the
     #: first create on such a board seeds it from the records on the board.
     created_total: int = 0
-    #: How many items the current goal may create -- :data:`DEFAULT_GOAL_ITEM_CAP`
-    #: unless a ``goal`` write set it. Measured against :attr:`goal_items_used`.
+    #: How many items the current goal is expected to create --
+    #: :data:`DEFAULT_GOAL_ITEM_CAP` unless a ``goal`` write set it. Measured
+    #: against :attr:`goal_items_used` by :attr:`cap_exceeded`; advisory only.
     item_cap: int = DEFAULT_GOAL_ITEM_CAP
+    #: How many items the current goal may hold OPEN at once --
+    #: :data:`DEFAULT_GOAL_CONCURRENCY_CAP` unless a ``goal`` write set it. The
+    #: bound :func:`_create_item` refuses on, once the board has recorded a goal.
+    concurrency_cap: int = DEFAULT_GOAL_CONCURRENCY_CAP
     #: :attr:`created_total` when the current goal started, so the goal's own
     #: creates are the difference. Only a goal write with ``new_goal=True`` moves
     #: it: a reworded goal text, a round bump or a cap raise keeps the count.
@@ -330,6 +354,18 @@ class ConductorRecord:
             return 0
         return max(0, self.created_total - self.goal_items_base)
 
+    @property
+    def cap_exceeded(self) -> bool:
+        """Whether the current goal has created more items than :attr:`item_cap`.
+
+        True from the first create past the cap, not at the cap: a goal at twenty
+        of twenty has spent what it was allowed. Advisory -- the read reports it beside
+        ``items used: N of M`` and the conductor tells the user; nothing blocks on
+        it. False on a board that never recorded a goal, which has no goal to
+        measure: a queue board's count is its whole history.
+        """
+        return self.goal_version > 0 and self.goal_items_used > self.item_cap
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema": self.schema,
@@ -344,6 +380,7 @@ class ConductorRecord:
             "recorded_at": self.recorded_at,
             "created_total": self.created_total,
             "item_cap": self.item_cap,
+            "concurrency_cap": self.concurrency_cap,
             "goal_items_base": self.goal_items_base,
         }
 
@@ -370,6 +407,7 @@ class ConductorRecord:
             recorded_at=_as_str(raw.get("recorded_at")),
             created_total=max(0, _as_int(raw.get("created_total"), 0)),
             item_cap=_stored_item_cap(raw.get("item_cap")),
+            concurrency_cap=_stored_concurrency_cap(raw.get("concurrency_cap")),
             goal_items_base=(
                 max(0, _as_int(raw.get("goal_items_base"), 0))
                 if "goal_items_base" in raw
@@ -399,6 +437,18 @@ def _stored_item_cap(value: Any) -> int:
     number = _finite_int(value)
     if number is None or not 1 <= number <= MAX_GOAL_ITEM_CAP:
         return DEFAULT_GOAL_ITEM_CAP
+    return number
+
+
+def _stored_concurrency_cap(value: Any) -> int:
+    """A stored ``concurrency_cap``, or the default when absent or out of range.
+
+    A header from before the field reads as the default, so an upgraded board's
+    fan-out is bounded the same way a new one's is.
+    """
+    number = _finite_int(value)
+    if number is None or not 1 <= number <= MAX_GOAL_CONCURRENCY_CAP:
+        return DEFAULT_GOAL_CONCURRENCY_CAP
     return number
 
 
@@ -1796,6 +1846,7 @@ def apply_conductor_action(
     round_number: Any = None,
     fails: Any = None,
     item_cap: Any = None,
+    concurrency_cap: Any = None,
     new_goal: Any = None,
 ) -> dict[str, Any]:
     """Write the fields the CONDUCTOR owns, and append the one event that explains it.
@@ -1813,8 +1864,8 @@ def apply_conductor_action(
     ``decide``  ``item_id``, ``decision``, optional ``round_number``.
     ``verdict`` ``item_id``, ``verdict``, optional ``fails``.
     ``close``   ``item_id``, ``state``, optional ``decision`` — stamps ``closed_at``.
-    ``goal``    ``goal``, optional ``round_number``, ``item_cap`` and ``new_goal``
-                — the conductor record only.
+    ``goal``    ``goal``, optional ``round_number``, ``item_cap``,
+                ``concurrency_cap`` and ``new_goal`` — the conductor record only.
 
     Returns ``{"conductor", "item", "event"}``; ``item`` and ``event`` are ``None``
     for ``goal``. Raises :class:`WorkLedgerError` with a ``code`` from the ``CODE_*``
@@ -1833,7 +1884,15 @@ def apply_conductor_action(
 
     if action == "goal":
         return {
-            "conductor": _write_goal(slot_key, record, goal, round_number, item_cap, new_goal),
+            "conductor": _write_goal(
+                slot_key,
+                record,
+                goal,
+                round_number,
+                item_cap,
+                new_goal,
+                concurrency_cap=concurrency_cap,
+            ),
             "item": None,
             "event": None,
         }
@@ -1899,6 +1958,8 @@ def _write_goal(
     round_number: Any,
     item_cap: Any = None,
     new_goal: Any = None,
+    *,
+    concurrency_cap: Any = None,
 ) -> ConductorRecord:
     """Partial update of the conductor header, merged UNDER the lock.
 
@@ -1912,7 +1973,7 @@ def _write_goal(
     ``new_goal=True`` starts a new goal, so its item count starts again:
     :attr:`ConductorRecord.goal_items_base` moves to the board's create total. It
     is an explicit signal and needs the new goal text with it; a goal text that
-    merely differs keeps the count, so rewording cannot reset the spend bound.
+    merely differs keeps the count, so rewording cannot reset the spend line.
     """
     checked_goal = None if goal is None else _require_text(goal, MAX_GOAL_CHARS, "goal")
     checked_round = None if round_number is None else _require_count(round_number, "round")
@@ -1922,6 +1983,16 @@ def _write_goal(
             f"item_cap must be between 1 and {MAX_GOAL_ITEM_CAP}; got {checked_cap}",
             code=CODE_INVALID_VALUE,
             field="item_cap",
+        )
+    checked_concurrency = (
+        None if concurrency_cap is None else _require_count(concurrency_cap, "concurrency_cap")
+    )
+    if checked_concurrency is not None and not 1 <= checked_concurrency <= MAX_GOAL_CONCURRENCY_CAP:
+        raise WorkLedgerError(
+            f"concurrency_cap must be between 1 and {MAX_GOAL_CONCURRENCY_CAP}; "
+            f"got {checked_concurrency}",
+            code=CODE_INVALID_VALUE,
+            field="concurrency_cap",
         )
     if new_goal is not None and not isinstance(new_goal, bool):
         raise WorkLedgerError(
@@ -1955,6 +2026,8 @@ def _write_goal(
             current.round = checked_round
         if checked_cap is not None:
             current.item_cap = checked_cap
+        if checked_concurrency is not None:
+            current.concurrency_cap = checked_concurrency
         current.goal_version += 1
         _write_record(conductor_dir(slot_key) / _CONDUCTOR_FILE, current.to_dict())
         return current
@@ -1984,11 +2057,14 @@ def _create_item(
     A header from before the counter holds zero: the first create on such a board
     seeds it from the records the board holds (:func:`_stored_item_ids`), once,
     before the compare -- a backfill that can only over-count the log, never under.
-    Then the OPEN count: :data:`MAX_ITEMS_PER_CONDUCTOR` bounds live fan-out, read
-    off :func:`list_work_items`, so an item in a terminal state is listed but not
+    Then the OPEN count, against two caps: :data:`MAX_ITEMS_PER_CONDUCTOR` bounds
+    the store's live fan-out for every board, and :attr:`ConductorRecord.concurrency_cap`
+    bounds the goal's for a board that recorded one. Both are read off
+    :func:`list_work_items`, so an item in a terminal state is listed but not
     counted there, and a torn record -- whose state cannot be read -- counts toward
     neither. Closed items stay on the board until the stored bound; nothing here
-    evicts one.
+    evicts one. The goal's item cap (:attr:`ConductorRecord.item_cap`) refuses
+    nothing: it is the advisory line :attr:`ConductorRecord.cap_exceeded` reports.
 
     The header is written FIRST, then the item. A failure between the two leaves
     the counter one ahead of the board -- a create the fold never sees, so the
@@ -2052,23 +2128,10 @@ def _create_item(
                 code=CODE_ITEM_STORE_FULL,
                 field="items",
             )
-        # The goal's own spend bound: every item this goal created, closed ones
-        # and every round's re-plans included. A person decides past it. Only a
-        # board that recorded a goal has one: a queue board never writes ``goal``.
-        if live.goal_version > 0 and live.goal_items_used >= live.item_cap:
-            raise WorkLedgerError(
-                f"this goal has created {live.goal_items_used} items and its item cap "
-                f"is {live.item_cap}. Dispatch nothing new and keep patrolling what is "
-                "in flight; ask the user whether to spend more, and if they agree "
-                "raise the cap with work_ledger_record action=goal item_cap=<new cap> "
-                f"(at most {MAX_GOAL_ITEM_CAP})",
-                code=CODE_GOAL_ITEM_CAP_REACHED,
-                field="item_cap",
-            )
-        # Only OPEN items count toward the fan-out cap: a closed item is history, not
-        # fan-out. It stays on the board and ``list_work_items`` still returns it; it
-        # does not block a create. Read off the listing, since only a readable record
-        # has a state.
+        # Only OPEN items count toward either fan-out cap: a closed item is history,
+        # not fan-out. It stays on the board and ``list_work_items`` still returns
+        # it; it does not block a create. Read off the listing, since only a
+        # readable record has a state.
         open_items = [
             item for item in list_work_items(slot_key) if item.state not in TERMINAL_ITEM_STATES
         ]
@@ -2078,6 +2141,20 @@ def _create_item(
                 f"{MAX_ITEMS_PER_CONDUCTOR}",
                 code=CODE_ITEM_CAP_EXCEEDED,
                 field="items",
+            )
+        # The goal's own fan-out bound: how much of this goal may run at once. A
+        # person decides past it. Only a board that recorded a goal has one: a
+        # queue board never writes ``goal``. The goal's item cap is NOT checked
+        # here -- what the goal has spent over its life is reported, not refused.
+        if live.goal_version > 0 and len(open_items) >= live.concurrency_cap:
+            raise WorkLedgerError(
+                f"this goal holds {len(open_items)} open items and its concurrency cap "
+                f"is {live.concurrency_cap}. Dispatch nothing new until one lands; to "
+                "run more at once, ask the user, and if they agree raise the cap with "
+                "work_ledger_record action=goal concurrency_cap=<new cap> "
+                f"(at most {MAX_GOAL_CONCURRENCY_CAP})",
+                code=CODE_GOAL_CONCURRENCY_CAP_REACHED,
+                field="concurrency_cap",
             )
         item_id = mint_item_id()
         while (items_dir(slot_key) / f"{item_id}.json").exists():
@@ -3443,14 +3520,17 @@ def _rebuild_locked(
             record = dataclasses.replace(record, generation=existing.generation)
         if existing.recorded_at:
             record = dataclasses.replace(record, recorded_at=existing.recorded_at)
-        # The goal's spend cap and where its count starts ride no crew-log entry,
+        # The goal's two caps and where its count starts ride no crew-log entry,
         # so they are the cache's to keep -- but only while the cache holds no
         # goal write the record lacks. A dirty cache, or one a goal write ahead
-        # of the record, may carry a refused write's cap and count start; those
+        # of the record, may carry a refused write's caps and count start; those
         # are dropped for the defaults below, as for a board with no cache header.
         if not cache_dirty(slot_key) and existing.goal_version == record.goal_version:
             record = dataclasses.replace(
-                record, item_cap=existing.item_cap, goal_items_base=existing.goal_items_base
+                record,
+                item_cap=existing.item_cap,
+                concurrency_cap=existing.concurrency_cap,
+                goal_items_base=existing.goal_items_base,
             )
             # A trusted header from before the per-goal count keeps its legacy
             # status, settled below against the rebuilt total.
@@ -3515,8 +3595,9 @@ def _rebuild_locked(
     # a non-zero ``omitted`` there counts entries that are not this board's creates
     # (stragglers of a purged board, parked lines), which would refuse creates a
     # board has room for.
-    # Defaults for a cap the cache could not vouch for: cap 20, counted from the
-    # board's first create -- the side that asks the user sooner, never later. A
+    # Defaults for caps the cache could not vouch for: 6 open, a line at 20,
+    # counted from the board's first create -- the side that tells the user
+    # sooner, never later. A
     # kept count start past the new total is clamped so the count cannot go negative.
     total = len(kept) + len(legacy)
     if not trusted_base:

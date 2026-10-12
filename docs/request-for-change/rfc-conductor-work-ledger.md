@@ -582,7 +582,7 @@ Caller: conductor. One `action` selects the operation, because the field sets ar
 | `decide` | `item_id`, `decision`, optional `round` | appends `decision` |
 | `verdict` | `item_id`, `verdict`, optional `fails` | appends `verdict` |
 | `close` | `item_id`, `state`, optional `decision` | stamps `closed_at`, appends `close` |
-| `goal` | `goal`, `round` | conductor record only |
+| `goal` | `goal`, `round`, optional `item_cap` (advisory total, 1..256, default 20), `concurrency_cap` (open items at once, 1..32, default 6; a `create` past it is refused `goal_concurrency_cap_reached`), `new_goal` | conductor record only |
 | `channel` | `item_a`, `item_b`, optional `ttl_secs` (≤ 86400), optional `max_messages` (≤ 50) | writes `channels/<pair-id>.json`, appends `channel_open` to **both** items |
 | `channel_close` | `item_a`, `item_b` | removes the record, appends `channel_close` to both items |
 
@@ -591,7 +591,7 @@ which is checked against the derived item list rather than trusted from the argu
 `ttl_secs` and `max_messages` default to the caps rather than to unbounded, so a
 conductor that grants a channel carelessly still grants a channel that ends.
 
-Errors: `identity_unresolved` (403), `no_ledger` (404), `unknown_item` (404), `already_bound` (409), `item_closed` (409), `item_cap_exceeded` (409), `item_store_full` (409), `goal_item_cap_reached` (409), `depth_exceeded` (409), `channel_cap_exceeded` (409), `field_too_long` (400), `invalid_action` (400), `invalid_value` (400).
+Errors: `identity_unresolved` (403), `no_ledger` (404), `unknown_item` (404), `already_bound` (409), `item_closed` (409), `item_cap_exceeded` (409), `item_store_full` (409), `goal_concurrency_cap_reached` (409), `depth_exceeded` (409), `channel_cap_exceeded` (409), `field_too_long` (400), `invalid_action` (400), `invalid_value` (400).
 
 ### Worker-to-worker communication
 

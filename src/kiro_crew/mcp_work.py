@@ -123,6 +123,7 @@ _RECORD_FIELDS: tuple[str, ...] = (
     "round",
     "fails",
     "item_cap",
+    "concurrency_cap",
     "new_goal",
 )
 
@@ -597,9 +598,21 @@ def _tool_definitions() -> list[dict[str, Any]]:
                         "minimum": 1,
                         "maximum": 256,
                         "description": (
-                            "goal: how many items this goal may create in total, every "
-                            "round included; default 20. A create past it is refused "
-                            "goal_item_cap_reached: ask the user, then raise it here."
+                            "goal: how many items this goal is expected to create in "
+                            "total, every round included; default 20. Advisory: nothing "
+                            "is refused past it; work_ledger_read reports "
+                            "cap_exceeded=true and you tell the user."
+                        ),
+                    },
+                    "concurrency_cap": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 32,
+                        "description": (
+                            "goal: how many items this goal may hold open at once; "
+                            "default 6. A create past it is refused "
+                            "goal_concurrency_cap_reached: wait for an item to land, or "
+                            "ask the user and raise it here."
                         ),
                     },
                     "new_goal": {

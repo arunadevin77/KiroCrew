@@ -553,17 +553,26 @@ class TestConductorInstaller:
             assert "Can I pick a default?" not in text
 
     def test_back_to_back_rounds_keep_a_spend_bound(self, tmp_path, monkeypatch):
-        """Without a pause between rounds, a default item cap and a no-progress
-        back-off are the only spend gates when the user set no budget.
+        """Without a pause between rounds, a default concurrency cap and a no-progress
+        back-off are the only hard spend gates when the user set no bound; the item
+        total is a line the conductor reports, not a refusal it asks about.
         """
         prompt = " ".join(self._install(tmp_path, monkeypatch)["prompt"].split())
         body = " ".join((SKILL_DIR / "SKILL.md").read_text(encoding="utf-8").split())
         for text in (prompt, body):
             assert "spend is bounded" in text
             assert "two rounds in a row" in text
-            assert "re-plan may add items only" in text
-        assert "at most 20 ledger items" in prompt
-        assert "at most **20 ledger items**" in body
+            assert "goal_concurrency_cap_reached" in text
+            assert "concurrency_cap=<N>" in text
+            assert "items used: N of <item_cap>" in text
+            assert "cap_exceeded" in text
+            # The old refusal is gone from both, so neither tells the conductor to
+            # stop and ask when the total is passed.
+            assert "goal_item_cap_reached" not in text
+        assert "at most 6 ledger items OPEN at once" in prompt
+        assert "at most 20 ledger items in all" in prompt
+        assert "at most **6 ledger items open at once**" in body
+        assert "at most **20 ledger items** in total" in body
 
     def test_prompt_names_its_own_skill_and_not_the_deprecated_alias(self, tmp_path, monkeypatch):
         """The procedure lives in ``goal-conductor``. ``goal-ledger-conductor`` is a

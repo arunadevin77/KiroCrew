@@ -4689,8 +4689,9 @@ WORK_LEDGER_RECORD_SCHEMA = ToolSchema(
         FieldSpec("goal", str, max_len=2000),
         FieldSpec("round", int, min_val=0, max_val=1_000_000),
         FieldSpec("fails", int, min_val=0, max_val=1_000_000),
-        # The store re-checks the same range; refusing here names the field early.
+        # The store re-checks the same ranges; refusing here names the field early.
         FieldSpec("item_cap", int, min_val=1, max_val=256),
+        FieldSpec("concurrency_cap", int, min_val=1, max_val=32),
         FieldSpec("new_goal", bool),
     ],
 )

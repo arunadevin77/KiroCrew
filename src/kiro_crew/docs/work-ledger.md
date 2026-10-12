@@ -227,16 +227,25 @@ or time budget they set. An item that fails acceptance three times is closed
 `rejected` and the rest keep going. A decision that needs a person parks only
 that item: the conductor asks about it and keeps patrolling the others.
 
-Spend is bounded in code, not only in the prompt. Each goal may create at most
-`item_cap` items, closed ones and every round's re-plans included. The default
-is 20; a `goal` write sets it (`item_cap`, 1 to 256). A `create` past it is
-refused `goal_item_cap_reached`, and the board writes nothing. That is a
-needs-human spend stop: the conductor pauses, asks the user, and raises
-`item_cap` if they agree. The loop is not stopped. Only a goal write with
-`new_goal=true` (a goal the user replaced) starts a new count; rewording the
-goal, moving the round or raising the cap keeps it. A board that never records
-a goal, such as a pipeline or security conductor's queue, has no goal cap. Two rounds in a row with nothing accepted also stop new dispatches
-until the user answers.
+Parallel work is bounded in code, not only in the prompt. Each goal may hold at
+most `concurrency_cap` items open at once. The default is 6; a `goal` write sets
+it (`concurrency_cap`, 1 to 32). A `create` past it is refused
+`goal_concurrency_cap_reached`, and the board writes nothing. That is not a
+stop: the next item that lands frees a seat, and the conductor asks the user
+only when it wants more running at once, raising `concurrency_cap` if they
+agree. Closed items never count toward it.
+
+The total is advisory. Each goal is expected to create at most `item_cap` items,
+closed ones and every round's re-plans included; the default is 20 and a `goal`
+write sets it (`item_cap`, 1 to 256). Nothing is refused past it. The read
+returns `goal_items_used` and `cap_exceeded` on the `conductor` block, compact
+reads included; the conductor puts `items used: N of <item_cap>` in every round
+report and, when `cap_exceeded` is true, tells the user the goal has spent past
+its line. Only a goal write with `new_goal=true` (a goal the user replaced)
+starts a new count; rewording the goal, moving the round or changing a cap
+keeps it. A board that never records a goal, such as a pipeline or security
+conductor's queue, has neither goal cap. Two rounds in a row with nothing
+accepted stop new dispatches until the user answers.
 
 ## Not the same as the session ledger, or subagents
 

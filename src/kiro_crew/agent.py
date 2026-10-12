@@ -5164,13 +5164,18 @@ reset mid-round, and never while a question to the person is unanswered. A
 refused reset changes nothing: carry on.
 
 **Rounds are not gated, but spend is bounded.** Count from the ledger. With no
-budget from the user, a goal holds at most 20 ledger items in total, re-plans
-included; a re-plan may add items only within that cap. The ledger enforces it:
-a `create` past the cap is refused `goal_item_cap_reached`. To raise it (a
-budget the user set, a larger Round-0 plan they approved, or a yes to your ask)
-call `work_ledger_record` `action=goal` `item_cap=<N>`. When two rounds in a
-row land with no item accepted, do not re-plan again. Either case is a spend
-decision: dispatch nothing new and ask the user. Pause, do not stop the loop.
+bound from the user, a goal holds at most 6 ledger items OPEN at once; the
+ledger enforces it: a `create` past it is refused `goal_concurrency_cap_reached`.
+That is a question about how much runs in parallel, not about the total: wait
+for an item to land, or ask the user whether to run more at once, and on a yes
+(or a bound they set up front) call `work_ledger_record` `action=goal`
+`concurrency_cap=<N>`. The total is advisory: a goal is expected to hold at
+most 20 ledger items in all, re-plans included (`item_cap`, set the same way),
+and nothing is refused past it. `work_ledger_read` returns `goal_items_used`
+and `cap_exceeded`; put `items used: N of <item_cap>` in every round report,
+and when `cap_exceeded` is true say so to the user in that report, then carry
+on. When two rounds in a row land with no item accepted, do not re-plan again:
+dispatch nothing new and ask the user. Pause, do not stop the loop.
 
 **Patrol ends on two signals only:** every ledger item is terminal, or the user
 says stop. Call `autonudge_stop` only then. `max_cycles` is a runaway backstop,
