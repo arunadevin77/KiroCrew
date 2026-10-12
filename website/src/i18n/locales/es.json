@@ -9912,6 +9912,10 @@
       "turn_4_assistant": "Añadida bajo **Unreleased**:\n\n```md\n- fix: retry the token refresh once before signing out\n```\n\n¿La incluyo también en el PR?",
       "turn_4_user": "Sí. Luego resume qué cambió.",
       "turn_5_assistant": "Enviado. En resumen: un reintento alrededor de la renovación del token, una prueba de regresión para el cierre de sesión y la línea del CHANGELOG. El PR #12 tiene las tres cosas y está enlazado a #7."
+    },
+    "remoteBehindBadge": {
+      "label": "Desactualizada: remota {{remote}}, local {{local}}",
+      "hint": "Esta tripulación ejecuta {{remote}}, una compilación más antigua que la {{local}} de esta máquina."
     }
   },
   "hooks": {

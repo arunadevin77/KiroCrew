@@ -1105,6 +1105,9 @@ export interface RemoteCrewCapabilities {
   /** The equality gate the backend enforces on every dispatch. False also covers
    *  "could not be read": an unknown version cannot be proven equal. */
   version_match: boolean
+  /** The peer runs a strictly older build than this machine (exact version,
+   *  so a patch skew counts). Absent from a gateway that predates the field. */
+  behind?: boolean
   agents: { name: string; description: string; scope: string; model: string }[]
   /** The agent the PEER falls back to when the session has picked none. "" when
    *  the roster read failed — never substitute this machine's default, which
@@ -1117,6 +1120,21 @@ export interface RemoteCrewCapabilities {
   /** Per-field failure codes for the reads that did not land, so one unreachable
    *  roster disables its own control rather than blanking the whole shelf. */
   unavailable: Record<string, string>
+}
+
+/** One CONNECTED crew's version beside this machine's (`GET /api/instances/versions`). */
+export interface InstanceVersionRow {
+  id: string
+  name: string
+  /** The peer's gateway version, or "" when it did not answer. */
+  version: string
+  /** Strictly older than `local_version`; never true for an unknown version. */
+  behind: boolean
+}
+
+export interface InstanceVersions {
+  local_version: string
+  instances: InstanceVersionRow[]
 }
 
 export interface ChatSlot {

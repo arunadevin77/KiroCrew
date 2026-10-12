@@ -403,6 +403,19 @@ describe('CrewChatWindow', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
   })
 
+  it('shows the Behind badge in the header for a compatible crew on an older build', async () => {
+    mocks.instancesCapabilities.mockResolvedValue({ version_match: true, behind: true, version: '0.9.0', local_version: '0.9.1' })
+    renderWindow()
+    expect(await screen.findByText('Behind: remote 0.9.0, local 0.9.1')).toBeTruthy()
+  })
+
+  it('shows no Behind badge when the crew runs the same build', async () => {
+    mocks.instancesCapabilities.mockResolvedValue({ version_match: true, behind: false, version: '0.9.0', local_version: '0.9.0' })
+    renderWindow()
+    await screen.findByRole('textbox', { name: 'Message the agent on devbox…' })
+    expect(screen.queryByTestId('remote-behind-badge')).toBeNull()
+  })
+
   it('keeps an unsent draft across switching to another crew session and back', async () => {
     const view = renderWindow()
     const box = await screen.findByRole('textbox', { name: 'Message the agent on devbox…' })

@@ -9912,6 +9912,10 @@
       "turn_4_assistant": "Aggiunta sotto **Unreleased**:\n\n```md\n- fix: retry the token refresh once before signing out\n```\n\nLa metto anche nella PR?",
       "turn_4_user": "Sì. Poi riassumi cosa è cambiato.",
       "turn_5_assistant": "Inviato. In breve: un nuovo tentativo attorno al refresh del token, un test di regressione per il percorso di logout e la riga del CHANGELOG. La PR #12 contiene tutte e tre le cose ed è collegata a #7."
+    },
+    "remoteBehindBadge": {
+      "label": "Non aggiornato: remoto {{remote}}, locale {{local}}",
+      "hint": "Questo equipaggio esegue {{remote}}, una build più vecchia della {{local}} di questa macchina."
     }
   },
   "hooks": {

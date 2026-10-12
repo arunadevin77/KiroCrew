@@ -9781,6 +9781,10 @@
       "turn_4_assistant": "**Unreleased**-এর নিচে যোগ করেছি:\n\n```md\n- fix: retry the token refresh once before signing out\n```\n\nPR-এও রাখব?",
       "turn_4_user": "হ্যাঁ। তারপর কী বদলেছে সংক্ষেপে বলো।",
       "turn_5_assistant": "পুশ করেছি। সংক্ষেপে: টোকেন রিফ্রেশে একবার রিট্রাই, সাইন-আউট পথের জন্য একটা রিগ্রেশন টেস্ট, আর CHANGELOG-এর লাইনটা। তিনটাই PR #12-এ আছে আর সেটা #7-এর সাথে লিংক করা।"
+    },
+    "remoteBehindBadge": {
+      "label": "পিছিয়ে: রিমোট {{remote}}, লোকাল {{local}}",
+      "hint": "এই ক্রু {{remote}} চালায়, যা এই মেশিনের {{local}}-এর চেয়ে পুরোনো বিল্ড।"
     }
   },
   "hooks": {

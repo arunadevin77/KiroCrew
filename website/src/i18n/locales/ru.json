@@ -10043,6 +10043,10 @@
       "turn_4_assistant": "Добавил в **Unreleased**:\n\n```md\n- fix: retry the token refresh once before signing out\n```\n\nДобавить и в PR?",
       "turn_4_user": "Да. Потом кратко опиши, что изменилось.",
       "turn_5_assistant": "Отправил. Кратко: одна повторная попытка обновления токена, регрессионный тест для выхода из системы и строка в CHANGELOG. Всё три в PR #12, он привязан к #7."
+    },
+    "remoteBehindBadge": {
+      "label": "Отстаёт: удалённо {{remote}}, локально {{local}}",
+      "hint": "Эта команда использует {{remote}} — сборку старше, чем {{local}} на этой машине."
     }
   },
   "hooks": {

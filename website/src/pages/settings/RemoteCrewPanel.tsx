@@ -96,6 +96,7 @@ import { setCrewEnabled } from '../../lib/crewEnabled'
 import { i18nT } from '../../i18n/t'
 import { guideCaution } from '../../guide/trustRoot'
 import { AddInstanceForm, StatusBadge } from './InstancesPanel'
+import CrewVersionStatus from './CrewVersionStatus'
 import {
   EditInstanceForm,
   instanceFormFromView,
@@ -1000,6 +1001,7 @@ function CrewRow({
                 <KeyRound className="lucide-inline" /> {i18nT('pages.settings.remoteCrewPanel.needs_sign_in')}
               </Badge>
             )}
+            <CrewVersionStatus instanceId={inst.id} connected={connected && !inst.disabled} />
           </div>
           <div className="text-[11px] text-muted-strong mt-1">
             {isCloud

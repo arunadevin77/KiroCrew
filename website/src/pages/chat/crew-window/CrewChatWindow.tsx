@@ -22,6 +22,7 @@ import { crewPeerUrl } from '../../../api/client/instances'
 import { useAppSelector } from '../../../store'
 import { Btn } from '../../../components/ui'
 import ErrorNotice from '../../../components/ErrorNotice'
+import RemoteBehindBadge from '../../../components/RemoteBehindBadge'
 import Glass from '../../../components/Glass'
 import ChatInput from '../../../components/ChatInput'
 import ChatMessageList from '../../../app-sdk/ChatMessageList'
@@ -326,6 +327,16 @@ export default function CrewChatWindow({ target, onClose = closeCrewWindow }: { 
         <Server size={14} className="text-info shrink-0" aria-hidden="true" />
         <span className="truncate font-semibold min-w-0">{title}</span>
         <span className="text-muted truncate">{i18nT('pages.chat.crewWindow.running_on_header', { name })}</span>
+        {/* The incompatible case already has its own notice below; the badge
+            covers the skew that still chats (a patch or pre-release behind). */}
+        {capsQ.data?.version_match && (
+          <RemoteBehindBadge
+            className="shrink-0"
+            behind={capsQ.data.behind}
+            remote={capsQ.data.version}
+            local={capsQ.data.local_version}
+          />
+        )}
         <span className="ml-auto text-muted truncate hidden sm:inline">{i18nT('pages.chat.crewWindow.close_hint', { name })}</span>
         <Btn className="shrink-0" onClick={onClose}><X size={14} aria-hidden="true" />{i18nT('pages.chat.crewWindow.close')}</Btn>
       </div>

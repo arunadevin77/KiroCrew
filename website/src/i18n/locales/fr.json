@@ -9912,6 +9912,10 @@
       "turn_4_assistant": "Ajoutée sous **Unreleased** :\n\n```md\n- correctif : une nouvelle tentative de rafraîchissement du jeton avant la déconnexion\n```\n\nJe la mets aussi dans la PR ?",
       "turn_4_user": "Oui. Puis résume ce qui a changé.",
       "turn_5_assistant": "Poussé. En bref : une nouvelle tentative autour du rafraîchissement du jeton, un test de régression pour la déconnexion et la ligne du CHANGELOG. La PR #12 contient les trois et est liée à #7."
+    },
+    "remoteBehindBadge": {
+      "label": "En retard : distant {{remote}}, local {{local}}",
+      "hint": "Cet équipage exécute {{remote}}, une version plus ancienne que la {{local}} de cette machine."
     }
   },
   "hooks": {

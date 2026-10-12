@@ -1772,6 +1772,23 @@ def _cap_str(value: object, limit: int = _CAP_MAX_STR) -> str:
     return redact_peer_text(sanitize_string(value))[:limit]
 
 
+def _remote_is_behind(local: str, remote: str) -> bool:
+    """Whether a peer runs a strictly OLDER build than this gateway.
+
+    Exact-version, so a patch or pre-release skew counts even though
+    :func:`versions_compatible` still lets the two crews exchange frames. Uses
+    the update checker's own ordering (``0.5.0rc3`` < ``0.5.0``), so "behind"
+    here means what "an update is available" means everywhere else. An empty or
+    unparseable version is never behind: the badge states a fact or says
+    nothing.
+    """
+    if not remote or not local or remote == local:
+        return False
+    from kiro_crew.dashboard.handlers.updates import _is_newer
+
+    return _is_newer(local, remote) is True
+
+
 def _cap_list(payload: object, key: str) -> object:
     """The row list out of a peer reply that is either bare or wrapped in *key*.
 
@@ -1900,6 +1917,7 @@ async def api_instances_capabilities(request: web.Request) -> web.Response:
         else []
     )
     version_match = versions_compatible(kiro_crew.__version__, peer_version)
+    behind = _remote_is_behind(kiro_crew.__version__, peer_version)
     # The remote pre-session picker can offer these levels before a live slot
     # reports its config. Keep the hub's POST allowlist in sync with that offer.
     if version_match and effort_levels:
@@ -1915,6 +1933,9 @@ async def api_instances_capabilities(request: web.Request) -> web.Response:
             # can explain a refusal BEFORE the user types a message rather than
             # after their first send fails.
             "version_match": version_match,
+            # Exact-version skew, independent of the compatibility gate above:
+            # a patch-behind peer still chats, but the header says it is behind.
+            "behind": behind,
             "agents": _cap_rows(
                 _cap_list(agents_payload, "agents"),
                 {"name": 128, "description": _CAP_MAX_STR, "scope": 32, "model": 128},
@@ -1992,6 +2013,68 @@ async def api_instances_approval_state(request: web.Request) -> web.Response:
         peer_yolo = yolo if isinstance(yolo, bool) else None
     _audit("approval_state", "success", request_id=instance_id)
     return web.json_response({"yolo": peer_yolo})
+
+
+async def api_instances_versions(request: web.Request) -> web.Response:
+    """GET /api/instances/versions — every CONNECTED crew's version beside ours.
+
+    One read for the whole crew list, so the Remote Crew rows and the
+    post-update offer can show which remotes run an older build without opening
+    a capabilities read per row. Each version comes from the peer's own
+    ``/api/version`` through :meth:`SshTunnelManager.peer_capability`, the same
+    closed-path carrier capabilities uses. A peer that does not answer reports
+    ``version: ""`` and is never ``behind``. ``behind`` is the exact-version
+    compare of :func:`_remote_is_behind`.
+
+    Owner-only on top of ``_guard``: the reads run on each peer with the owner's
+    manager-held credential.
+    """
+    denied = _guard(request, "versions")
+    if denied is not None:
+        return denied
+    if not is_owner_dashboard_request(request):
+        _audit("versions", "denied", error="non-owner identity rejected")
+        return _owner_denial_response(request, "remote-crew versions are owner-only")
+    state: DashboardState = request.app["state"]
+    local = kiro_crew.__version__
+    mgr = getattr(state, "instances_manager", None)
+    if mgr is None:
+        _audit("versions", "success", request_id="no-manager")
+        return web.json_response({"local_version": local, "instances": []})
+    connected = [
+        iid
+        for iid, st in mgr.status_all().items()
+        if getattr(st, "state", None) is TunnelState.CONNECTED
+    ]
+    results = await asyncio.gather(
+        *(mgr.peer_capability(iid, "/api/version") for iid in connected),
+        return_exceptions=True,
+    )
+    names: dict[str, str] = {}
+    if connected:
+        try:
+            names = {i.id: i.name for i in await asyncio.to_thread(_registry(state).list)}
+        except Exception:
+            names = {}
+    rows: list[dict[str, object]] = []
+    for iid, outcome in zip(connected, results):
+        version = ""
+        if isinstance(outcome, BaseException):
+            logger.info("Peer version read on %s raised (%s)", iid, type(outcome).__name__)
+        else:
+            ok, payload = outcome
+            if ok and isinstance(payload, dict):
+                version = _cap_str(payload.get("version"), _CAP_MAX_VERSION_STR)
+        rows.append(
+            {
+                "id": iid,
+                "name": _cap_str(names.get(iid) or iid, 128),
+                "version": version,
+                "behind": _remote_is_behind(local, version),
+            }
+        )
+    _audit("versions", "success")
+    return web.json_response({"local_version": local, "instances": rows})
 
 
 #: Every field ``useInstanceSessions.ts`` reads off a peer slot, with the clamp

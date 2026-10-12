@@ -9781,6 +9781,10 @@
       "turn_4_assistant": "Unter **Unreleased** eingetragen:\n\n```md\n- fix: retry the token refresh once before signing out\n```\n\nSoll er auch in den PR?",
       "turn_4_user": "Ja. Dann fasse zusammen, was sich geändert hat.",
       "turn_5_assistant": "Gepusht. Kurz: ein Wiederholungsversuch um die Token-Aktualisierung, ein Regressionstest für den Abmeldepfad und die CHANGELOG-Zeile. PR #12 enthält alle drei und ist mit #7 verknüpft."
+    },
+    "remoteBehindBadge": {
+      "label": "Veraltet: Remote {{remote}}, lokal {{local}}",
+      "hint": "Diese Crew nutzt {{remote}}, einen älteren Build als {{local}} auf diesem Rechner."
     }
   },
   "hooks": {

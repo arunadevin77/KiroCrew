@@ -4,7 +4,7 @@
  * connected peer's federated session search, capabilities and live slots.
  */
 
-import type { RemoteCrewApprovalState, RemoteCrewCapabilities } from '../../types'
+import type { InstanceVersions, RemoteCrewApprovalState, RemoteCrewCapabilities } from '../../types'
 import { toApiError } from '../apiError'
 import type { ClientTransport } from './transport'
 
@@ -272,6 +272,12 @@ export function createInstancesEndpoints({ get, post, del, patch, j, jfetch: fet
      *  picker. `yolo` is null when unread. */
     instancesApprovalState: (instanceId: string) =>
       fetch('/api/instances/' + encodeURIComponent(instanceId) + '/approval-state').then(j) as Promise<RemoteCrewApprovalState>,
+    /** Every CONNECTED crew's version beside this machine's, in one read, with
+     *  `behind` set where the crew runs an older build. Same deny-by-default
+     *  parser as `listInstances`: the 403 is the routine answer on an install
+     *  that has not turned remote crews on, so it is not journaled. */
+    instancesVersions: () =>
+      get('/api/instances/versions').then(jInstancesDisabled) as Promise<InstanceVersions>,
 
     // A CONNECTED remote instance's LIVE sessions, read through an owner-only,
     // GET-only hub route. NOT the generic instance proxy, which this first used: the
