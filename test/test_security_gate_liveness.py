@@ -249,7 +249,11 @@ def _url_payload_command(n: int) -> str:
 #: write redirect exactly as the read-only tier does, and for ``_DEVNULL_REDIR_RE``
 #: ending each discard idiom where bash ends the word, with its classes spelled out
 #: so a Unicode space or digit cannot pose as one. No verb or allowlist moved.
-_PACKAGE_LINE_BUDGET = 28_857
+#: Raised again, from 28,857, for ``exfil._exfil_blob_hit``: the base64-blob
+#: heuristic judged through one helper that skips a maximal match which is exactly
+#: a git object name (40 or 64 lowercase hex digits), so a commit permalink with
+#: the hash in its query renders. No pattern moved and no other alternative changed.
+_PACKAGE_LINE_BUDGET = 28_880
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
