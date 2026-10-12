@@ -454,7 +454,7 @@ async def test_cancel_recovery_preserves_captured_timeout_after_config_cut(monke
         info = mgr.spawn("resumable six-hour job")
         assert info is not None
         assert info.timeout_secs == 0
-        await asyncio.wait_for(first_started.wait(), timeout=_START_TIMEOUT)
+        await await_until(first_started, what="the first run streaming")
         assert info.timeout_secs == 21600
         assert info.streaming_text and info.tool_count == 0
 
@@ -466,7 +466,7 @@ async def test_cancel_recovery_preserves_captured_timeout_after_config_cut(monke
         task1 = mgr._tasks[info.id]
         task1.cancel()
         await asyncio.gather(task1, return_exceptions=True)
-        await asyncio.wait_for(recovery_started.wait(), timeout=_RESPAWN_TIMEOUT)
+        await await_until(recovery_started, what="the recovery run streaming")
         task2 = mgr._tasks[info.id]
 
         expected = 21600.0 + _PROMPT_TIMEOUT_MARGIN_SECS
@@ -689,9 +689,10 @@ async def test_reload_during_the_recovery_capacity_wait_keeps_the_captured_deadl
         # the replacement waits in ``_RECOVERY_SLOT_WAIT_SECS``'s poll.
         mgr._max_concurrent = 1
         mgr._running_count = 1
-        deadline = time.monotonic() + _RESPAWN_TIMEOUT
-        while info._exec_started is not None and time.monotonic() < deadline:
-            await asyncio.sleep(0.01)
+        await async_wait_until(
+            lambda: info._exec_started is None,
+            describe=lambda: f"tasks={sorted(mgr._tasks)}; error={info.error!r}",
+        )
         assert info._exec_started is None
         assert info._recovering is True
         assert mgr._tasks.get(info.id) is None
@@ -707,7 +708,7 @@ async def test_reload_during_the_recovery_capacity_wait_keeps_the_captured_deadl
         assert info.done is False
 
         mgr._running_count = 0
-        await asyncio.wait_for(replacement_started.wait(), timeout=_RESPAWN_TIMEOUT)
+        await await_until(replacement_started, what="the replacement run streaming")
         replacement = mgr._tasks.get(info.id)
         assert replacement is not None and replacement is not first
         assert info.timeout_secs == 21600
