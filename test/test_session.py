@@ -26,6 +26,7 @@ from kiro_crew.session import (
     SessionManager,
 )
 from kiro_crew.start_priority import StartPriority
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 
 @pytest.fixture
@@ -425,7 +426,7 @@ class TestSessionManager:
         # With self._lock pinned by a2 (buggy) this hangs; with the fix a2
         # released the lock before blocking, so B cold-starts freely.
         b = asyncio.create_task(mgr.get_or_create("B"))
-        provider_b, is_new_b, _ = await asyncio.wait_for(b, timeout=3.0)
+        provider_b, is_new_b, _ = await await_until(b, what="B cold-starting")
         assert provider_b is not None
         assert is_new_b is True
 
@@ -477,7 +478,7 @@ class TestSessionManager:
         # While the loser is wedged, a DIFFERENT key must still cold-start. On
         # the buggy cold-start path the loser holds self._lock — this hangs.
         b = asyncio.create_task(mgr.get_or_create("B"))
-        provider_b, is_new_b, _ = await asyncio.wait_for(b, timeout=3.0)
+        provider_b, is_new_b, _ = await await_until(b, what="B cold-starting")
         assert provider_b is not None
         assert is_new_b is True
 
@@ -495,7 +496,7 @@ class TestSessionManager:
         await asyncio.sleep(0.2)
         assert not second.done()  # blocked on A's semaphore, as intended
         mgr.release("A")  # let the first holder's turn "finish"
-        provider, _, _ = await asyncio.wait_for(second, timeout=3.0)
+        provider, _, _ = await await_until(second, what="the serialized claim landing")
         assert provider is not None
         mgr.release("A")
 
@@ -523,7 +524,7 @@ class TestSessionManager:
         p1.is_alive = lambda: False
 
         mgr.release("A")  # caller 1's turn ends; caller 2 acquires + re-validates
-        p2, is_new2, _ = await asyncio.wait_for(second, timeout=3.0)
+        p2, is_new2, _ = await await_until(second, what="the re-validated claim landing")
 
         assert p2 is not p1  # cold-started a fresh provider
         assert is_new2 is True  # reported as new
@@ -1822,7 +1823,7 @@ class TestCompactCallback:
 
         # Turn finishes -> semaphore released -> recycle proceeds.
         mgr.release("dashboard:chat-1")
-        await asyncio.wait_for(task, timeout=2)
+        await await_until(task, what="the compact-session task finishing")
         # A fresh successor holds the key.
         assert mgr._sessions["dashboard:chat-1"].first_turn.is_new
         # This fixture's provider serves no native compaction, so the in-place
@@ -1847,7 +1848,10 @@ class TestCompactCallback:
         mgr.set_compact_callback(cb)
 
         with caplog.at_level(logging.WARNING, logger="kiro_crew.session"):
-            await asyncio.wait_for(mgr._compact_session("dashboard:chat-1", 92.0), timeout=2)
+            await await_until(
+                asyncio.ensure_future(mgr._compact_session("dashboard:chat-1", 92.0)),
+                what="the deferred compaction returning",
+            )
 
         # Session survives, the live turn was not killed, and nothing was
         # reported to the user (a deferral is not a failure).
@@ -2258,11 +2262,10 @@ class TestResetRetainsTheTornDownSession:
         design (the pop is the point of no return, so the teardown runs on) -- and a
         teardown that runs on into a hung shutdown keeps its entry, correctly.
         """
-        for _ in range(400):
-            if not mgr.has_session(key) and provider.shutdown.await_count:
-                return
-            await asyncio.sleep(0.005)
-        raise AssertionError(f"the teardown of {key} never reached the provider shutdown")
+        await async_wait_until(
+            lambda: not mgr.has_session(key) and provider.shutdown.await_count,
+            describe=lambda: f"the teardown of {key} never reached the provider shutdown",
+        )
 
     @pytest.mark.asyncio
     async def test_the_popped_session_is_readable_while_its_teardown_runs_and_gone_after(self, cfg):
@@ -2483,15 +2486,11 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
         # The reservation is taken before ``provider.start()`` is reached (a
         # thread hop sits between them), so ``_has_allocation_reservation`` is not the
         # signal: the start itself says when it is in flight.
-        await asyncio.wait_for(started.wait(), timeout=5)
+        await await_until(started, what="provider.start() in flight")
 
     @staticmethod
     async def _until(condition, what: str) -> None:
-        for _ in range(1000):
-            if condition():
-                return
-            await asyncio.sleep(0.005)
-        raise AssertionError(what)
+        await async_wait_until(condition, describe=lambda: what)
 
     @staticmethod
     async def _settle() -> None:
@@ -2525,7 +2524,7 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
 
         assert not self._fenced(mgr, "k1")
         # The fence lifted: the held call lands, a new life under the recorded key.
-        provider, is_new, _ = await asyncio.wait_for(held, timeout=5)
+        provider, is_new, _ = await await_until(held, what="the held cold start landing")
         assert is_new and mgr.has_session("k1")
         mgr.release("k1")
         await mgr.reset("k1")
@@ -2543,7 +2542,7 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
             await self._settle()
             assert not held.done(), "a claim racing the fence was answered while the fence was up"
 
-        again, is_new, _ = await asyncio.wait_for(held, timeout=5)
+        again, is_new, _ = await await_until(held, what="the held claim landing")
         assert again is provider and not is_new
         mgr.release("k1")
         await mgr.reset("k1")
@@ -2586,7 +2585,7 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
                 assert not mgr._has_allocation_reservation(
                     "k1"
                 ), "the refused allocation kept its reservation while held"
-            provider, is_new, _ = await asyncio.wait_for(cold_start, timeout=5)
+            provider, is_new, _ = await await_until(cold_start, what="the cold start landing")
 
         hard_kill.assert_called_once()
         (killed,) = hard_kill.call_args.args
@@ -2614,7 +2613,7 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
             # refused all the same: the reservation was in flight when the fence
             # went up. The call allocates again without waiting.
             gate.set()
-            provider, is_new, _ = await asyncio.wait_for(cold_start, timeout=5)
+            provider, is_new, _ = await await_until(cold_start, what="the cold start landing")
 
         hard_kill.assert_called_once()
         (killed,) = hard_kill.call_args.args
@@ -2668,7 +2667,7 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
                     "while the fence was up"
                 )
                 assert not mgr.has_session("k1")
-            provider, is_new, _ = await asyncio.wait_for(cold_start, timeout=5)
+            provider, is_new, _ = await await_until(cold_start, what="the cold start landing")
 
         hard_kill.assert_not_called()  # nothing had been started when the fence caught it
         assert is_new and mgr.has_session("k1")
@@ -2694,7 +2693,7 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
         assert not mgr.has_session("k1"), "nothing is published while start() runs"
 
         gate.set()
-        provider, is_new, _ = await asyncio.wait_for(cold_start, timeout=5)
+        provider, is_new, _ = await await_until(cold_start, what="the cold start landing")
 
         assert is_new and mgr.has_session("k1")
         assert not mgr._spawn_in_flight(
@@ -2738,7 +2737,7 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
                 ), "the refused start left no receipt for the ending caller's read"
             # The fence lifted: the receipt went with it, and the held call lands.
             assert mgr._spawn_in_flight("k1") is None
-            provider, is_new, _ = await asyncio.wait_for(cold_start, timeout=5)
+            provider, is_new, _ = await await_until(cold_start, what="the cold start landing")
 
         hard_kill.assert_called_once()
         assert is_new and mgr.has_session("k1")
@@ -2757,7 +2756,7 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
             with mgr.ending_key("k1"):
                 pass
             gate.set()
-            provider, is_new, _ = await asyncio.wait_for(cold_start, timeout=5)
+            provider, is_new, _ = await await_until(cold_start, what="the cold start landing")
 
         hard_kill.assert_called_once()
         assert is_new and mgr.has_session("k1")
@@ -2794,7 +2793,7 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
             patch.object(mgr, "_dispatch_hard_kill") as hard_kill,
         ):
             call = asyncio.create_task(mgr.get_or_create("k1"))
-            await asyncio.wait_for(claimed.wait(), timeout=5)
+            await await_until(claimed, what="the gated claim entering")
             with mgr.ending_key("k1"):
                 # The fence goes up while the claim is in flight; the claim then
                 # returns a live pooled process that registration refuses.
@@ -2811,7 +2810,7 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
                     "1 refused at registration during the ending, the provider hard-killed there "
                     "by the allocation path -- an outcome this record does not confirm"
                 ), "the refused warm-pool claim left no receipt for the ending caller's read"
-            provider, is_new, _ = await asyncio.wait_for(call, timeout=5)
+            provider, is_new, _ = await await_until(call, what="the gated claim landing")
 
         hard_kill.assert_called_once_with(pooled)
         assert is_new and provider is not pooled and mgr.has_session("k1")
@@ -2844,7 +2843,7 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
             assert not mgr._spawn_in_flight("k1")
 
         mgr.release("k1")
-        claimed, is_new, _ = await asyncio.wait_for(waiter, timeout=5)
+        claimed, is_new, _ = await await_until(waiter, what="the held waiter landing")
         assert claimed is provider and not is_new
         assert not mgr._has_allocation_reservation("k1")
         mgr.release("k1")
@@ -2877,23 +2876,19 @@ class TestTheEndingFenceAdmitsNothingUnderTheKey:
             # The fence is up; the ending caller has not popped the session yet.
             # The busy turn ends normally and hands the permit to the waiter.
             mgr.release("k1")
-            for _ in range(200):
-                await asyncio.sleep(0.01)
-                assert not waiter.done(), (
-                    "the waiter the busy turn released to was handed the session while its key "
-                    "was being ended: the fence was bypassed after the semaphore wait"
-                )
-                if not mgr._has_allocation_reservation("k1"):
-                    break  # refused at the reacquire door, back at the front door: held
-            else:
-                pytest.fail(
-                    "the waiter never reached the front door: it still holds its reservation"
-                )
+            await async_wait_until(
+                lambda: not mgr._has_allocation_reservation("k1"),
+                describe=lambda: "the held waiter never reached the front door (still reserved)",
+            )
+            assert not waiter.done(), (
+                "the waiter the busy turn released to was handed the session while its key "
+                "was being ended: the fence was bypassed after the semaphore wait"
+            )
             assert not mgr._sessions[
                 "k1"
             ].semaphore.locked(), "the refused waiter kept the permit it must release"
 
-        claimed, is_new, _ = await asyncio.wait_for(waiter, timeout=5)
+        claimed, is_new, _ = await await_until(waiter, what="the held waiter landing")
         assert claimed is provider and not is_new, "the held waiter did not land after the lift"
         mgr.release("k1")
         await mgr.reset("k1")
@@ -3347,7 +3342,7 @@ class TestDestroy:
         finally:
             mgr._lock.release()
 
-        destroyed = await asyncio.wait_for(destroy_task, timeout=1.0)
+        destroyed = await await_until(destroy_task, what="the conditional destroy returning")
 
         assert destroyed is False
         provider.shutdown.assert_not_awaited()
@@ -3484,7 +3479,7 @@ class TestDestroy:
         assert expected_absence == 0
 
         allocation = asyncio.create_task(mgr.get_or_create(thread_ts))
-        await asyncio.wait_for(start_entered.wait(), timeout=1.0)
+        await await_until(start_entered, what="provider.start() entered")
 
         assert mgr.session_generation(canonical) > expected_absence
         assert thread_ts in mgr.session_keys()
@@ -3494,7 +3489,7 @@ class TestDestroy:
         assert destroyed is False
         mock_delete.assert_not_called()
         release_start.set()
-        allocated_provider, _, _ = await asyncio.wait_for(allocation, timeout=1.0)
+        allocated_provider, _, _ = await await_until(allocation, what="the allocation landing")
         assert allocated_provider is provider
         mgr.release(thread_ts)
         await mgr.destroy(thread_ts)
@@ -3526,7 +3521,7 @@ class TestDestroy:
         mgr = SessionManager(cfg, provider_factory=lambda *_args, **_kwargs: provider)
         before = mgr.session_generation("cancelled-key")
         allocation = asyncio.create_task(mgr.get_or_create("cancelled-key"))
-        await asyncio.wait_for(start_entered.wait(), timeout=1.0)
+        await await_until(start_entered, what="provider.start() entered")
         assert "cancelled-key" in mgr.session_keys()
 
         allocation.cancel()
@@ -3554,7 +3549,7 @@ class TestDestroy:
 
         with patch.object(mgr._allocation_boundary(), "_get_or_create_impl", completed_impl):
             claim = asyncio.create_task(mgr.get_or_create("k1"))
-            await asyncio.wait_for(impl_entered.wait(), timeout=1.0)
+            await await_until(impl_entered, what="the impl entered")
             release_impl.set()
             await asyncio.sleep(0)
 
@@ -3624,10 +3619,10 @@ class TestDestroy:
             patch.object(mgr._session_map, "delete") as mock_delete,
         ):
             destroy = asyncio.create_task(mgr.destroy("k1"))
-            await asyncio.wait_for(metric_entered.wait(), timeout=1.0)
+            await await_until(metric_entered, what="the end metric entered")
             mock_delete.assert_called_once_with("k1", reason="session_destroyed")
             release_metric.set()
-            await asyncio.wait_for(destroy, timeout=1.0)
+            await await_until(destroy, what="the destroy finishing")
 
     @pytest.mark.asyncio
     async def test_destroy_unlinks_temp_files_from_the_session_queue(self, cfg, tmp_path):
@@ -5050,7 +5045,7 @@ class TestKiroInPlaceCompaction:
         assert sess.semaphore.locked()  # queued turn would wait here
 
         gate.set()
-        await asyncio.wait_for(task, timeout=2)
+        await await_until(task, what="the compact-session task finishing")
         assert "dashboard:chat-1" in mgr._sessions
         assert not sess.semaphore.locked()
         await mgr.close_all()
@@ -5118,8 +5113,8 @@ class TestKiroInPlaceCompaction:
         assert not turn.done()
 
         gate.set()  # compact reports timeout -> recycle, semaphore still held
-        await asyncio.wait_for(compact, timeout=2)
-        await asyncio.wait_for(turn, timeout=2)
+        await await_until(compact, what="the compaction recycle finishing")
+        await await_until(turn, what="the queued turn running")
 
         # Kill first, queued turn second: the semaphore was never handed back
         # while the backend could still have been compacting.
@@ -5176,7 +5171,7 @@ class TestKiroInPlaceCompaction:
         )
 
         gate.set()  # compact fails -> recycle pops by identity
-        await asyncio.wait_for(task, timeout=2)
+        await await_until(task, what="the compact-session task finishing")
 
         # Replacement untouched; old provider reaped.
         assert mgr._sessions["k1"].provider is new_provider
@@ -5800,8 +5795,9 @@ class TestCleanupLoopResilience:
         # process), the top-of-loop is_set() check could miss it and the test
         # would hang until its own outer deadline. Letting the real wait() run
         # makes the stop deterministic regardless of prior event-loop binding.
-        # The ``timeout >= 60`` discriminator keeps this from clamping the outer
-        # ``wait_for(_cleanup_loop(), timeout=5)`` guard below.
+        # The ``timeout >= 60`` discriminator clamps ONLY the loop's own inter-sweep
+        # wait; the outer guard below is an ``await_until`` on the loop task, which
+        # never routes through this patched ``asyncio.wait_for``.
         real_wait_for = asyncio.wait_for
 
         async def _fast_wait_for(coro, *, timeout):
@@ -5827,7 +5823,10 @@ class TestCleanupLoopResilience:
             patch.object(mgr, "_expire_idle", side_effect=_expire_then_stop),
             patch("kiro_crew.session.find_orphan_mcp_candidates", return_value=[]),
         ):
-            await asyncio.wait_for(mgr._cleanup_loop(), timeout=5)
+            await await_until(
+                asyncio.ensure_future(mgr._cleanup_loop()),
+                what="the cleanup loop exiting after shutdown_event is set",
+            )
 
         assert call_count >= 2
         kiro_crew.shutdown_event.clear()
@@ -5865,7 +5864,10 @@ class TestCleanupLoopResilience:
             patch("kiro_crew.session.find_orphan_mcp_candidates", return_value=[]),
         ):
             with caplog.at_level(logging.ERROR):
-                await asyncio.wait_for(mgr._cleanup_loop(), timeout=5)
+                await await_until(
+                    asyncio.ensure_future(mgr._cleanup_loop()),
+                    what="the cleanup loop exiting after shutdown_event is set",
+                )
 
         assert "_expire_idle crashed" in caplog.text
         kiro_crew.shutdown_event.clear()
@@ -6686,7 +6688,7 @@ class TestLoadRecoveryHistoryReplay:
         # close_all flushes SessionMap before provider shutdown. Hold it at that
         # boundary and create a new manager, exactly as an update restart can.
         close_task = asyncio.create_task(mgr.close_all())
-        await asyncio.wait_for(shutdown_started.wait(), timeout=1.0)
+        await await_until(shutdown_started, what="close_all at the flush boundary")
         resumed_mgr = SessionManager(cfg, provider_factory=factory)
         assert resumed_mgr._session_map.get("thread1") == "old-full-history-sid"
         release_shutdown.set()
@@ -7891,7 +7893,7 @@ class TestParentEndCancelsItsChildren:
         ):
             task = asyncio.ensure_future(mgr.retire_kiro_identity_sessions(spare_children=True))
             # A has committed; the loop is now blocked inside B's store probe.
-            await asyncio.wait_for(entered_b.wait(), timeout=2.0)
+            await await_until(entered_b, what="the sweep blocked in B's store probe")
             task.cancel()
             proceed.set()
             with pytest.raises(asyncio.CancelledError):
@@ -7951,7 +7953,7 @@ class TestParentEndCancelsItsChildren:
             task = asyncio.ensure_future(
                 mgr.retire_kiro_identity_sessions(fingerprint=live_dropped, spare_children=True)
             )
-            await asyncio.wait_for(entered_b.wait(), timeout=2.0)
+            await await_until(entered_b, what="the sweep blocked in B's store probe")
             task.cancel()
             proceed.set()
             with pytest.raises(asyncio.CancelledError):
@@ -8173,7 +8175,7 @@ class TestParentEndCancelsItsChildren:
         with patch("kiro_crew.session_lifecycle._CHILD_CANCEL_TIMEOUT_SECS", 0.01):
             await mgr.remove("dashboard:chat-9")
 
-        await _asyncio.wait_for(finished.wait(), timeout=5)
+        await await_until(finished, what="the slow child reap settling")
         assert observed == ["completed"], (
             "the parent's wait expiring cancelled the reap itself, so a child could "
             f"outlive the teardown mid-kill: {observed}"

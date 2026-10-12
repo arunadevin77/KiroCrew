@@ -220,7 +220,6 @@
  3 test_inbound_unbind_notice.py
  1 test_installer_binary_only.py
  4 test_installer_distro.py
-24 test_instances.py
  1 test_issue_radar_crew_runtime.py
  4 test_issue_radar_http_routes_contracts.py
  1 test_issue_radar_http_routes_seams.py
@@ -246,7 +245,6 @@
  1 test_knowledge_reclaim_deferred.py
  1 test_knowledge_sync_local_file.py
  3 test_lessons_context_embedding_deadline.py
-22 test_lifecycle_hooks.py
  1 test_listener_guard.py
  4 test_llm_helpers_deny_notice.py
  1 test_llm_helpers_tool_input_offload.py
@@ -352,7 +350,6 @@
  4 test_security_path_resolve_bounded.py
  2 test_sel.py
  2 test_sel_prune_streaming.py
-39 test_session.py
  1 test_session_autocompact_override.py
  2 test_session_broadcast.py
 16 test_session_capabilities.py
