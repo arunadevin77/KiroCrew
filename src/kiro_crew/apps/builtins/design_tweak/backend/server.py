@@ -8,7 +8,6 @@ mutable runtime state, compatibility names, and process lifecycle.
 from __future__ import annotations
 
 import atexit
-import glob
 import html as _html
 import http.client
 import json
@@ -38,6 +37,7 @@ from kiro_crew.apps.builtins.design_tweak.backend import (
     request_state,
 )
 from kiro_crew.apps.proxy_auth import verify_proxy_request
+from kiro_crew.env import nvm_version_bin_dirs
 from kiro_crew.hooks import FileTooLargeError, safe_read_file_bytes_nolink
 from kiro_crew.platform.context import redact_via_context
 from kiro_crew.platform_compat import (
@@ -77,7 +77,6 @@ _RUNTIME_COMPAT_IMPORTS = (
     cast,
     get_credential_patterns,
     get_ppid,
-    glob,
     http.client,
     is_link_or_junction,
     is_sensitive_path,
@@ -266,7 +265,7 @@ _PEM_BODY_RE = preview_files.PEM_BODY_RE
 _STATIC_SRV: dict[str, dict[str, Any]] = {}
 
 _NODE_BIN_DIRS = dev_preview.NODE_BIN_DIRS
-_NVM_GLOB = dev_preview.NVM_GLOB
+_nvm_version_bin_dirs = nvm_version_bin_dirs
 _CHILD_ENV_STRIP = dev_preview.CHILD_ENV_STRIP
 _CHILD_ENV_STRIP_PREFIXES = dev_preview.CHILD_ENV_STRIP_PREFIXES
 _LOCKFILES = dev_preview.LOCKFILES

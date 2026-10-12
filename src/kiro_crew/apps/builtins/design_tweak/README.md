@@ -114,7 +114,7 @@ rewriting except the one injected script tag.
 | Agent delivery target | One chat slot per app folder, keyed by a hash of its path — created idempotently, so a request can never open a second session |
 | Source mapping | `projectRoot` per request + `sourceFile` per comment, stamped from the serving path; where an element carries `data-kiro-source="file:line:col"` the agent gets a high-confidence target, otherwise it falls back to React Fiber `_debugSource` (medium) or HTML-snippet matching (low) and verifies before editing |
 | Delivery into agent | The batch is queued as JSON in the app's data dir and handed to that app's chat session; the bundled `visual-edit` skill teaches the agent to work a batch and report per comment via the `design_tweak_update_thread` MCP tool (the credentialed path to `POST /thread`; an agent session cannot post to it directly) |
-| Node toolchain | The gateway spawns the backend with a minimal PATH, so `npm` is resolved by absolute path from known install dirs — common ones such as homebrew, MacPorts, volta, bun, asdf, fnm and nvm (`backend/dev_preview.py`, `NODE_BIN_DIRS` and `NVM_GLOB`, is the authoritative list) — and that dir is put on the child's PATH |
+| Node toolchain | The gateway spawns the backend with a minimal PATH, so `npm` is resolved by absolute path from known install dirs — common ones such as homebrew, MacPorts, volta, bun, asdf and fnm (`backend/dev_preview.py` `NODE_BIN_DIRS` is the authoritative list), plus every nvm version under `~/.nvm` and the XDG root `$XDG_CONFIG_HOME/nvm` (default `~/.config/nvm`), which come from the core `kiro_crew.env.nvm_version_bin_dirs` — and that dir is put on the child's PATH |
 
 ## Structure
 

@@ -262,7 +262,15 @@ def extend_process_path(value: str) -> None:
 
 
 # --- node build toolchain -----------------------------------------------------
-#
+
+# nvm's roots, both layouts: ``~/.nvm``, then the XDG root its installer picks
+# when ``XDG_CONFIG_HOME`` is set (:func:`_xdg_config_dir`). ``~/.nvm`` comes
+# first, so a host holding both roots searches it first. The one list every nvm
+# lookup derives from: the version globs below, :func:`nvm_dirs` (the root that
+# holds ``nvm.sh``) and :func:`nvm_version_bin_dirs`.
+_NVM_ROOTS = ("{home}/.nvm", "{xdg_config}/nvm")
+_NVM_VERSION_GLOBS = tuple(f"{root}/versions/node/*/bin" for root in _NVM_ROOTS)
+
 # Directories a Node VERSION MANAGER installs a real ``node``/``npm`` into.
 # Deliberately NARROW and separate from ``_EXTRA_PATH_DIRS``: that list is a
 # broad "where might an MCP binary live" search path (it includes
@@ -278,11 +286,8 @@ _NODE_MANAGER_GLOBS = (
     "{mise_data}/installs/node/*/bin",
     # asdf's nodejs plugin.
     "{home}/.asdf/installs/nodejs/*/bin",
-    # nvm, both layouts: ``~/.nvm``, then the XDG root its installer picks when
-    # ``XDG_CONFIG_HOME`` is set (:func:`_xdg_config_dir`). ``~/.nvm`` comes
-    # first, so a host holding both roots searches it first.
-    "{home}/.nvm/versions/node/*/bin",
-    "{xdg_config}/nvm/versions/node/*/bin",
+    # nvm, both roots, in :data:`_NVM_ROOTS` order.
+    *_NVM_VERSION_GLOBS,
     # fnm, both layouts: XDG default and legacy ``~/.fnm``.
     "{home}/.local/share/fnm/node-versions/*/installation/bin",
     "{home}/.fnm/node-versions/*/installation/bin",
@@ -360,6 +365,39 @@ def _xdg_config_dir(home: str) -> str:
     return xdg if os.path.isabs(xdg) else os.path.join(home, ".config")
 
 
+def nvm_dirs() -> tuple[str, ...]:
+    """nvm's candidate root dirs (:data:`_NVM_ROOTS`), ``~/.nvm`` first.
+
+    For a caller that needs nvm's ROOT rather than a version's ``bin`` -- the
+    app backend sources ``<root>/nvm.sh`` when ``NVM_DIR`` is unset. Neither dir
+    is checked for existence: the caller probes for the file it needs.
+    """
+    home = os.path.expanduser("~")
+    xdg_config = _xdg_config_dir(home)
+    return tuple(
+        os.path.normpath(root.format(home=home, xdg_config=xdg_config)) for root in _NVM_ROOTS
+    )
+
+
+def nvm_version_bin_dirs() -> tuple[str, ...]:
+    """Every existing nvm version ``bin`` dir, across both roots.
+
+    The same scan :func:`node_all_bin_dirs` runs for nvm: root order
+    (:data:`_NVM_ROOTS`), then newest version first within each root. For a
+    builtin app that keeps its own Node search list and needs nvm's share of it.
+    """
+    home = os.path.expanduser("~")
+    return tuple(
+        _manager_version_bin_dirs(
+            home,
+            "",  # nvm's globs never reference {mise_data}
+            _xdg_config_dir(home),
+            all_versions=True,
+            patterns=_NVM_VERSION_GLOBS,
+        )
+    )
+
+
 def _has_node(d: Path) -> bool:
     """True when *d* holds an executable ``node``.
 
@@ -388,9 +426,17 @@ def _node_version_key(name: str) -> tuple[int, tuple[int, ...], str]:
 
 
 def _manager_version_bin_dirs(
-    home: str, mise_data: str, xdg_config: str, *, all_versions: bool
+    home: str,
+    mise_data: str,
+    xdg_config: str,
+    *,
+    all_versions: bool,
+    patterns: tuple[str, ...] = _NODE_MANAGER_GLOBS,
 ) -> list[str]:
     """Scan the per-version manager roots (:data:`_NODE_MANAGER_GLOBS`).
+
+    *patterns* narrows the scan to a subset of those globs
+    (:func:`nvm_version_bin_dirs` passes nvm's), with the same ordering.
 
     The two callers need DIFFERENT policies, chosen deliberately:
 
@@ -409,7 +455,7 @@ def _manager_version_bin_dirs(
     (:func:`_node_version_key`: numeric versions outrank alias names).
     """
     out: list[str] = []
-    for pattern in _NODE_MANAGER_GLOBS:
+    for pattern in patterns:
         root, _, leaf = pattern.format(
             home=home, mise_data=mise_data, xdg_config=xdg_config
         ).partition("/*")
