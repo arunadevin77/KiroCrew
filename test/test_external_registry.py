@@ -4019,6 +4019,72 @@ class TestInstallScriptFailurePreservesStaleCheckout:
         assert result["notice"] == "session_approval_reconsent"
 
     @pytest.mark.asyncio
+    async def test_self_managed_install_fails_when_registration_is_refused(self, tmp_path):
+        """A refused pre-registration fails the install with its error and puts
+        the previous checkout back, instead of reporting success."""
+        from kiro_crew.apps.manifest import CRON_PERMISSION_REQUIRED_ERROR
+        from kiro_crew.apps.registry import install_from_registry
+
+        pkg_dir = tmp_path / "testapp"
+        pkg_dir.mkdir()
+        (pkg_dir / "app.json").write_text(
+            json.dumps({"name": "testapp", "version": "1.1.0", "resources": "app"}),
+            encoding="utf-8",
+        )
+        (pkg_dir / "replacement.txt").write_text("freshly fetched", encoding="utf-8")
+        stale_dir = tmp_path / "testapp.stale-deadbeef"
+        stale_dir.mkdir()
+        (stale_dir / "my-work.txt").write_text("important", encoding="utf-8")
+
+        async def _fake_clone_build(git_url, app_name, log_lines, branch="main", **kwargs):
+            return {
+                "ok": True,
+                "pkg_dir": pkg_dir,
+                "_pending_stale_cleanup": [stale_dir],
+                "_restorable_stale": [stale_dir],
+            }
+
+        refusal = SimpleNamespace(
+            ok=False, error=f"invalid manifest: {CRON_PERMISSION_REQUIRED_ERROR}", notice=""
+        )
+        provenance = MagicMock()
+        with (
+            patch(
+                "kiro_crew.apps.registry.get_registry_app",
+                return_value={
+                    "repo": "https://example.com/app.git",
+                    "branch": "main",
+                    "resources": "app",
+                },
+            ),
+            patch(
+                "kiro_crew.apps.registry._entry_git_url",
+                return_value="https://example.com/app.git",
+            ),
+            patch("kiro_crew.apps.registry._clone_build_app", new=_fake_clone_build),
+            patch("kiro_crew.apps.registry.app_admission_denied", return_value=None),
+            patch("kiro_crew.apps.registry.app_execution_denied", return_value=None),
+            patch(
+                "kiro_crew.apps.registry._fetch_app_manifest",
+                new=AsyncMock(return_value=None),
+            ),
+            patch("kiro_crew.apps.manager.register_external_app", return_value=refusal),
+            patch("kiro_crew.apps.registry.set_app_provenance", new=provenance),
+            patch("kiro_crew.apps.registry.is_clone_host_trusted", return_value=True),
+            patch("kiro_crew.apps.registry._sweep_stale_checkouts", new=AsyncMock()),
+            patch("kiro_crew.apps.registry.app_source_dir", return_value=pkg_dir),
+            patch("kiro_crew.apps.registry.sel"),
+        ):
+            result = await install_from_registry("testapp")
+
+        assert result["ok"] is False
+        assert CRON_PERMISSION_REQUIRED_ERROR in result["error"]
+        provenance.assert_not_called()
+        assert (pkg_dir / "my-work.txt").read_text(encoding="utf-8") == "important"
+        assert not (pkg_dir / "replacement.txt").exists()
+        assert not stale_dir.exists()
+
+    @pytest.mark.asyncio
     async def test_stale_not_cleaned_when_install_from_registry_fails(self, tmp_path):
         """Full install_from_registry flow: clone+build succeed but install
         script fails → stale checkout NOT deleted."""

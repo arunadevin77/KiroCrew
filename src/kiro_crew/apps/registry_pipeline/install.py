@@ -2491,12 +2491,6 @@ async def install_from_registry(
 
             display = manifest_data.get("displayName", name)
             version = manifest_data.get("version", "0.0.0")
-            # Set BEFORE any of the fallible bookkeeping below, because this branch
-            # returns ok=True regardless of how the registration and provenance writes
-            # go: the clone is in place and the app will register itself on next
-            # launch. Leaving it False would report success to the caller while the
-            # `finally` rolled the source checkout back underneath it.
-            durable_success = True
             reg_result = register_external_app(
                 name=name,
                 version=version,
@@ -2506,15 +2500,33 @@ async def install_from_registry(
                 origin="registry",
                 source_repository=persisted_git_url,
             )
-            if reg_result.ok:
-                set_app_provenance(
-                    name,
-                    source=f"{SOURCE_REGISTRY_PREFIX}{name}",
-                    url=persisted_git_url,
-                    registry=source_registry,
-                    commit=source_commit,
-                    signer=source_signer,
-                )
+            if not reg_result.ok:
+                # A refused registration leaves the prior record as it was, so the
+                # install fails with the refusal and `durable_success` stays False:
+                # the `finally` puts the previous checkout back beside that record,
+                # and the caller sees the error that names the fix.
+                log_lines.append(reg_result.error or "registration failed")
+                outcome = {
+                    "ok": False,
+                    "name": name,
+                    "message": "",
+                    "error": reg_result.error or "registration failed",
+                }
+                return outcome
+            # Set BEFORE the provenance bookkeeping below, because the registration
+            # has landed: the clone is in place and the app updates its own
+            # registration on next launch. Leaving it False would report success to
+            # the caller while the `finally` rolled the source checkout back
+            # underneath it.
+            durable_success = True
+            set_app_provenance(
+                name,
+                source=f"{SOURCE_REGISTRY_PREFIX}{name}",
+                url=persisted_git_url,
+                registry=source_registry,
+                commit=source_commit,
+                signer=source_signer,
+            )
 
             log_lines.append("Pre-registered from cloned manifest (self-managed)")
             log_lines.append("App will update its own registration on next launch")
