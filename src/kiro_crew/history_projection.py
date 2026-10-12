@@ -37,6 +37,7 @@ from kiro_crew.jsonl_util import (
     strict_raw_records_with_offsets,
 )
 from kiro_crew.preview_text import speech_preview
+from kiro_crew.transcript_count import count_messages, message_row
 
 if TYPE_CHECKING:
     from kiro_crew.history import ConversationLog
@@ -1075,6 +1076,47 @@ class TranscriptReadProjection:
                 self._log._msg_cache.pop(key, None)
             return messages
 
+    def _count_messages(self, key: str) -> int:
+        """``len(self._read_messages(key))`` without parsing into or filling the cache.
+
+        A warm cache entry answers for free. Otherwise the file is streamed
+        one line at a time (:func:`kiro_crew.transcript_count.count_messages`),
+        under the same best-effort writer lock and transient-retry contract as
+        the full read, and nothing is published: a caller that only counts
+        (the startup idle-seed scan over every recent transcript) must not
+        leave each parsed transcript resident in the message cache.
+        """
+        path = self._log._path(key)
+        try:
+            identity = self._log._cache_identity(path.stat())
+        except OSError:
+            identity = None
+        if identity is not None:
+            cached = self._log._msg_cache.get(key)
+            if cached and cached[0] == identity and cached[1] == self._log._cache_gen(key):
+                return len(cached[2])
+        with self._log._cache_fill_lock(key):
+            if not path.exists():
+                return 0
+            attempts = _history_facade()._METADATA_READ_ATTEMPTS
+            for attempt in range(attempts):
+                try:
+                    return count_messages(path)
+                except FileNotFoundError:
+                    return 0
+                except OSError:
+                    if attempt + 1 < attempts:
+                        self._log._pause_for_transient_retry()
+                        continue
+                    _HISTORY_LOGGER.warning(
+                        "history: could not count messages for %s after %d attempts",
+                        key,
+                        attempts,
+                        exc_info=True,
+                    )
+                    raise
+        return 0
+
     @contextlib.contextmanager
     def _cache_fill_lock(self, key: str) -> Iterator[bool]:
         """Best-effort bounded hold of the owner's per-file writer lock."""
@@ -1142,16 +1184,8 @@ class TranscriptReadProjection:
 
             messages: list[dict] = []
             for line in raw.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(data, dict):
-                    continue
-                if data.get("_type") != "metadata":
+                data = message_row(line)
+                if data is not None:
                     messages.append(data)
 
             entry_generation = self._log._cache_gen(key) if gen is None else gen
