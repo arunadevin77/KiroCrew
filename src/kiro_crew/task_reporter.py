@@ -6,6 +6,7 @@ import inspect
 import logging
 import re
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol, Union, cast
 
@@ -17,6 +18,7 @@ from kiro_crew.task_models import (
     Project,
     Task,
     TaskStatus,
+    VerificationStatus,
 )
 from kiro_crew.task_planner import group_parallel_tasks
 
@@ -245,6 +247,7 @@ def build_status(
                         "title": t.title,
                         "description": t.description if t.description != t.title else "",
                         "status": t.status.value,
+                        "verification": t.verification,
                         "error": t.error or "",
                         "result": (t.result or "")[:2000],
                         "attempts": t.attempts,
@@ -302,6 +305,11 @@ def format_completion_summary(run: Project) -> str:
         f"**{passed}/{len(run.tasks)}** tasks passed" + (f" · {failed} failed" if failed else ""),
         f"⏱ {time_str}",
     ]
+    # Execution passing is not verification: only an exit-0 test run counts.
+    verdicts = Counter((t.verification or "not run").replace("_", " ") for t in run.tasks)
+    verified = verdicts.pop(VerificationStatus.PASSED, 0)
+    others = "".join(f" · {n} {v}" for v, n in sorted(verdicts.items()))
+    lines.append(f"🧪 {verified}/{len(run.tasks)} verified{others}")
     if run.tokens_used:
         lines.append(f"🪙 ~{run.tokens_used // 1000}K tokens")
     if run.replan_count:

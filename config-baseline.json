@@ -1765,7 +1765,9 @@
       "enumValues": null,
       "defaultValue": {
         "max_parallel_steps": 0,
-        "workspace_dir": ""
+        "workspace_dir": "",
+        "test_command": [],
+        "require_verification": false
       }
     },
     {
@@ -1795,6 +1797,50 @@
       "hasChildren": false,
       "enumValues": null,
       "defaultValue": ""
+    },
+    {
+      "path": "taskrunner.test_command",
+      "kind": "core",
+      "type": "array",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Test Command",
+      "help": "Argument list run after each step, no shell (e.g. [\"python\", \"-m\", \"pytest\", \"-q\"]). Exit 0 verifies the step. Empty = not configured.",
+      "hasChildren": true,
+      "enumValues": null,
+      "defaultValue": [],
+      "requiresRestart": true
+    },
+    {
+      "path": "taskrunner.test_command.*",
+      "kind": "core",
+      "type": "string",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "*",
+      "help": "",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": null
+    },
+    {
+      "path": "taskrunner.require_verification",
+      "kind": "core",
+      "type": "boolean",
+      "required": false,
+      "deprecated": false,
+      "sensitive": false,
+      "tags": [],
+      "label": "Require Verification",
+      "help": "Fail a step unless its test command exited 0; refuse a run with none to run.",
+      "hasChildren": false,
+      "enumValues": null,
+      "defaultValue": false,
+      "requiresRestart": true
     },
     {
       "path": "messaging",

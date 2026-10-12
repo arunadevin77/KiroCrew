@@ -129,9 +129,17 @@ from kiro_crew.stt.limits import MIN_TIMEOUT_SECS as _STT_MIN_TIMEOUT_SECS
 
 def _build_taskrunner_config(taskrunner_data: dict) -> TaskRunnerConfig:
     section = SectionReader(TaskRunnerConfig, taskrunner_data)
+    argv = section.get("test_command")
     return TaskRunnerConfig(
         max_parallel_steps=section.get("max_parallel_steps"),
         workspace_dir=str(section.get("workspace_dir")),
+        # All or nothing: dropping one bad element would run a different command.
+        test_command=(
+            list(argv)
+            if isinstance(argv, list) and all(isinstance(a, str) and a for a in argv)
+            else []
+        ),
+        require_verification=section.get("require_verification") is True,
     )
 
 

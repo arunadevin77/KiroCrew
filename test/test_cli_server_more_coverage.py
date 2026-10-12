@@ -1283,6 +1283,24 @@ class TestRunTask:
         out = capsys.readouterr().out
         assert "Task completed" in out and "(3 steps)" in out
 
+    def test_configured_test_command_reaches_the_runner(
+        self, taskrunner_env, tmp_path, monkeypatch
+    ) -> None:
+        from kiro_crew.config import KiroCrewConfig
+
+        cfg = KiroCrewConfig()
+        cfg.taskrunner.test_command = ["python", "-m", "pytest", "-q"]
+        cfg.taskrunner.require_verification = True
+        monkeypatch.setattr(KiroCrewConfig, "load", classmethod(lambda cls: cfg))
+        taskrunner_env["install_runner"](_Result("completed"))
+        args = argparse.Namespace(
+            spec=str(_spec(tmp_path)), no_test=False, fresh=False, timeout=0, name=""
+        )
+        asyncio.run(cli_server._run_task(args))
+        kw = taskrunner_env["runner_kwargs"]
+        assert kw["test_cmd"] == ["python", "-m", "pytest", "-q"]
+        assert kw["require_verification"] is True
+
     def test_builtin_sync_runs_through_the_explicit_seam(
         self, taskrunner_env, tmp_path, monkeypatch
     ) -> None:

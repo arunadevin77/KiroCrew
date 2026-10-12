@@ -2759,6 +2759,8 @@ class SessionConfig:
 class TaskRunnerConfig:
     max_parallel_steps: int = 0    # 0 = auto; a positive value only lowers the host-safe cap
     workspace_dir: str = ""       # empty = per-run workspace; otherwise the validated absolute target directory
+    test_command: list[str] = []  # argv run after each step, no shell; malformed = []; restart=True (taskrunner.md "Test verification")
+    require_verification: bool = False  # only an exit-0 test run lets a step pass; strict `is True`; restart=True
 
 @dataclass
 class MemoryConfig:

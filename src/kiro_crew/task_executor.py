@@ -79,6 +79,7 @@ from kiro_crew.task_models import (
     Project,
     Task,
     TaskStatus,
+    VerificationStatus,
 )
 from kiro_crew.task_planner import group_parallel_tasks
 
@@ -329,6 +330,7 @@ async def execute_single_task(
     extract_lesson_fn: Callable,
     session_key: str = "",
     taskq: "Admitted | None" = None,
+    require_verification: bool = False,
 ) -> bool:
     """Execute one task with approval gate, self-review, and memory update.
 
@@ -339,7 +341,9 @@ async def execute_single_task(
     """
     if not session_key:
         session_key = f"{SESSION_PREFIX}:{run.task_id}:task{task.index}"
-    _exec_kw = {"taskq": taskq} if taskq is not None else {}
+    _exec_kw: dict[str, Any] = {"taskq": taskq} if taskq is not None else {}
+    if require_verification:
+        _exec_kw["require_verification"] = True
 
     task.status = TaskStatus.IN_PROGRESS
     now = _time.time()
@@ -694,6 +698,7 @@ async def execute_task(
     on_notify: Callable,
     session_key: str = "",
     taskq: "Admitted | None" = None,
+    require_verification: bool = False,
 ) -> bool:
     """Execute a single task with retries and process recovery.
 
@@ -1360,10 +1365,27 @@ async def execute_task(
             if _acquired:
                 sessions.release(session_key)
 
-        # Run tests if configured
-        if auto_test and test_cmd:
+        # Only an exit-0 run of the configured command is PASSED (verified).
+        if not auto_test:
+            verdict, test_output = VerificationStatus.SKIPPED, "tests turned off"
+        elif not test_cmd:
+            verdict, test_output = VerificationStatus.NOT_CONFIGURED, "no test command"
+        else:
             test_ok, test_output = await run_tests(test_cmd, work_dir)
-            if not test_ok:
+            verdict = (
+                VerificationStatus.SKIPPED
+                if test_ok is None
+                else VerificationStatus.PASSED if test_ok else VerificationStatus.FAILED
+            )
+        task.verification = verdict
+        if verdict != VerificationStatus.PASSED:
+            if require_verification and verdict != VerificationStatus.FAILED:
+                # The verifier did not run; retrying the agent's work cannot change that.
+                verdict_text = verdict.replace("_", " ")
+                task.error = f"Verification is required but was {verdict_text}: {test_output}"
+                task.status = TaskStatus.FAILED
+                return False
+            if verdict == VerificationStatus.FAILED:
                 task.error = f"Tests failed:\n{test_output}"
                 logger.warning("Task %d tests failed (attempt %d)", task.index, attempt)
                 # Same retry logic as main task failure above
@@ -1690,8 +1712,11 @@ def _close_proc_pipes(proc: asyncio.subprocess.Process) -> None:
             logger.debug("run_tests: closing proc transport failed", exc_info=True)
 
 
-async def run_tests(test_cmd: list[str], work_dir: Path) -> tuple[bool, str]:
-    """Run the configured test command. Returns (success, output)."""
+async def run_tests(test_cmd: list[str], work_dir: Path) -> tuple[bool | None, str]:
+    """Run the configured test command. Returns (success, output).
+
+    ``success`` is None when the command could not start: nothing was verified.
+    """
     # The test command and its working directory are both agent-influenced, so
     # route the spawn through the sandbox chokepoint: OS-level isolation plus a
     # credential-scrubbed environment.
@@ -1727,8 +1752,8 @@ async def run_tests(test_cmd: list[str], work_dir: Path) -> tuple[bool, str]:
         logger.warning("TaskRunner: tests timed out after %ds", TEST_TIMEOUT)
         return False, f"Test timed out after {TEST_TIMEOUT}s"
     except FileNotFoundError:
-        logger.debug("Test command not found, skipping tests")
-        return True, "test command not found (skipped)"
+        logger.warning("TaskRunner: test command could not start; step not verified")
+        return None, "test command could not start (not verified)"
     finally:
         # Reap the process group on EVERY exit path (timeout, crash, or normal
         # return where communicate() left the child alive) so orphaned test

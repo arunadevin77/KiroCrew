@@ -100,6 +100,32 @@ To let `kirocrew run` use tools, allowlist them in `~/.kiro/crew/config.json`:
 
 Patterns match the tool title with or without the `Running: `/`Reading ` prefix and support `*` globs. Scope it to the tools the task needs — a blanket `*` re-opens the gap. Or run from the dashboard to approve interactively instead.
 
+## Test Verification
+
+A step that completes is not thereby verified. To verify each step, set the
+command in `~/.kiro/crew/config.json` and restart the gateway:
+
+```json
+{
+  "taskrunner": {
+    "test_command": ["python", "-m", "pytest", "-q"],
+    "require_verification": false
+  }
+}
+```
+
+The command is an argument list, run without a shell in the run's work
+directory after every step; exit 0 verifies the step. Each step reports one
+verdict: `passed`, `failed`, `skipped` (tests turned off with `--no-test`, or
+the command could not start) or `not_configured`, and the completion summary
+counts only `passed` as verified. A failing run is retried like any other step
+failure. Choose a command that exits non-zero when it finds no tests (pytest
+does).
+
+With `require_verification` set to `true`, a step passes only when its command
+exited 0, and a run with no command to run (none configured, or `--no-test`)
+fails before its first step.
+
 ## Progress Tracking
 
 The Task Runner page lists each run with its state — running, completed,

@@ -3031,6 +3031,22 @@ class TestInitTaskRunner:
             orch._init_task_runner()
         assert orch.task_runner is not None
 
+    def test_init_task_runner_passes_the_configured_test_command(self):
+        orch = _make_orchestrator()
+        orch.sessions = _mock_sessions()
+        orch.ctx_builder = _mock_context_builder()
+        orch.ctx_builder.hooks = MagicMock()
+        orch.conv_log = MagicMock()
+        orch.consolidator = MagicMock()
+        orch.dashboard_state = _mock_dashboard_state()
+        orch._cfg.taskrunner.test_command = ["python", "-m", "pytest", "-q"]
+        orch._cfg.taskrunner.require_verification = True
+        with patch("kiro_crew.slack.gateway.TaskRunner") as mock_tr:
+            orch._init_task_runner()
+        kw = mock_tr.call_args.kwargs
+        assert kw["test_cmd"] == ["python", "-m", "pytest", "-q"]
+        assert kw["require_verification"] is True
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Tests: _notif_meta

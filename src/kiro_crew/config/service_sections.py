@@ -38,6 +38,23 @@ class TaskRunnerConfig:
             "Empty = use the default per-run workspace directory.",
         ),
     )
+    test_command: list[str] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Test Command",
+            'Argument list run after each step, no shell (e.g. ["python", "-m", '
+            '"pytest", "-q"]). Exit 0 verifies the step. Empty = not configured.',
+            restart=True,
+        ),
+    )
+    require_verification: bool = field(
+        default=False,
+        metadata=_meta(
+            "Require Verification",
+            "Fail a step unless its test command exited 0; refuse a run with none to run.",
+            restart=True,
+        ),
+    )
 
 
 @dataclass

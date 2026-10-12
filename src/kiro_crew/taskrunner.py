@@ -433,6 +433,8 @@ class TaskRunner:
         max_parallel_steps: int | None = None,
         workspace_dir: str = "",
         workflow_service: WorkflowRunPublisher | None = None,
+        test_cmd: list[str] | None = None,
+        require_verification: bool = False,
     ) -> None:
         self._sessions = sessions
         self._ctx = context_builder
@@ -455,7 +457,9 @@ class TaskRunner:
         # ``taskrunner.workspace_dir`` restores exactly this (see _refresh_from_config).
         self._ctor_workspace_dir = self._workspace_dir
         self._ctor_work_dir = self._work_dir
-        self._test_cmd: list[str] | None = None
+        # The operator's taskrunner.test_command argv; never inferred from the project.
+        self._test_cmd: list[str] | None = list(test_cmd) if test_cmd else None
+        self._require_verification = require_verification
         self._conversation_log = conversation_log
         self._consolidator = consolidator
         self._lesson_store = lesson_store
@@ -1712,6 +1716,12 @@ class TaskRunner:
         return run
 
     async def _execute_tasks(self, run: Project, history_key: str) -> None:
+        if self._require_verification and not (self._auto_test and self._test_cmd):
+            # No step could ever verify: stop before any agent turn edits the tree.
+            run.status = "failed"
+            run.error = "taskrunner.require_verification is on but no test command will run"
+            await self._notify("\U0001f9ea Verification required", run.error, run=run)
+            return
         # Bound once per execution: a config reload adopted at a LATER run's
         # entry (``_refresh_from_config``) must not resize this run's groups.
         max_parallel_steps = self._max_parallel_steps
@@ -1919,6 +1929,7 @@ class TaskRunner:
                 log_task_fn=self._log_task,
                 extract_lesson_fn=self._extract_lesson,
                 session_key=session_key,
+                require_verification=self._require_verification,
                 **({"taskq": handle} if handle is not None else {}),
             )
         except asyncio.CancelledError:
@@ -2466,7 +2477,7 @@ class TaskRunner:
                 run.last_task_time,
             )
             previous_tasks = [
-                (task, task.status, task.error, task.result, task.attempts)
+                (task, task.status, task.error, task.result, task.verification, task.attempts)
                 for task in run.tasks
                 if task.index >= from_task
             ]
@@ -2488,13 +2499,9 @@ class TaskRunner:
                 run.status, run.error, run.finished_at, run.started_at, run.last_task_time = (
                     previous_run
                 )
-                for task, status, error, result, attempts in previous_tasks:
-                    task.status, task.error, task.result, task.attempts = (
-                        status,
-                        error,
-                        result,
-                        attempts,
-                    )
+                for task, status, error, result, verification, attempts in previous_tasks:
+                    task.status, task.error, task.result = status, error, result
+                    task.verification, task.attempts = verification, attempts
                 raise
             self._agent = agent
         except BaseException:
@@ -2950,6 +2957,7 @@ class TaskRunner:
                                 # would restore the task to a verbatim replay of a
                                 # possibly-executed step.
                                 "resume_hint": t.resume_hint or "",
+                                "verification": t.verification,
                             }
                             for t in run.tasks
                         ],
@@ -3135,6 +3143,7 @@ class TaskRunner:
                         error=t.get("error", ""),
                         result=t.get("result", ""),
                         resume_hint=t.get("resume_hint", ""),
+                        verification=str(t.get("verification", "")),
                         attempts=t.get("attempts", 1),
                         depends_on=t.get("depends_on", []),
                         requires_approval=t.get("requires_approval", False),

@@ -3130,6 +3130,8 @@ async def _run_task(args: argparse.Namespace) -> None:
         global_timeout=timeout,
         workspace_dir=cfg.taskrunner.workspace_dir,
         max_parallel_steps=cfg.taskrunner.max_parallel_steps,
+        test_cmd=cfg.taskrunner.test_command,
+        require_verification=cfg.taskrunner.require_verification,
     )
 
     # Pre-warm session pool (background session for lesson extraction)
