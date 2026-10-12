@@ -37,11 +37,6 @@ from kiro_crew.mcp_caller import (
 )
 from kiro_crew.mcp_shared import DeferredTool, ToolCancelled, drive_deferred
 
-pytestmark = pytest.mark.skipif(
-    not mcp_shared.platform_compat.IS_POSIX,
-    reason="the deferred timer is the POSIX select path; Windows drives deferreds inline",
-)
-
 
 class _Parked(DeferredTool):
     """A deferred call that settles when ``release`` is set, stepping on each tick."""
@@ -1017,8 +1012,11 @@ class TestPrunedExitDeliversRunningSteps:
             def _reader_breaks(stdin):
                 raise RuntimeError("stdin exploded")
 
-            # The next tick's read raises OUTSIDE every per-message guard.
-            monkeypatch.setattr(mcp_shared, "_stdin_holds_a_line", _reader_breaks)
+            # The next frame read raises OUTSIDE every per-message guard, on
+            # the select path and the pump path alike. A read already waiting
+            # on the pump thread returns this frame first.
+            monkeypatch.setattr(mcp_shared, "_read_message", _reader_breaks)
+            harness.send(_ping(11))
             harness._thread.join(timeout=5.0)
             assert not harness._thread.is_alive(), "the loop survived a reader failure?"
             hold_stuck.set()
@@ -1454,10 +1452,10 @@ class TestDeferredAudit:
         clock.sleep.assert_called_once_with(2.5)
 
 
-class TestWindowsPathDrivesDeferredInline:
-    def test_synchronous_dispatch_collapses_a_deferred(self, monkeypatch):
-        """On the non-POSIX path there is no loop timer: a deferred tool is
-        driven to completion inline, so the client still gets its text."""
+class TestPumpPathParksDeferred:
+    def test_a_deferred_settles_through_the_loop_timer(self, monkeypatch):
+        """On the non-POSIX path stdin is read by the pump thread, and a
+        deferred tool is parked and stepped by the loop as on POSIX."""
         monkeypatch.setattr(mcp_shared.platform_compat, "IS_POSIX", False)
         release = threading.Event()
         release.set()

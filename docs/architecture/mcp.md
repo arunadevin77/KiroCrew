@@ -4621,9 +4621,12 @@ Servicing one parked call and sending the report are each guarded like one
 message on the read loop: a failure answers that call (or costs one report) and
 the loop keeps serving. `_call_tool` (what a
 test, the CLI or a non-loop caller invokes) drives a deferred to completion
-inline with `drive_deferred`, and so does the synchronous Windows dispatch path,
-where no loop timer exists: from outside the POSIX loop a deferred tool is a
-blocking one.
+inline with `drive_deferred`: from outside the loop a deferred tool is a
+blocking one. The loop itself is the same on every platform. Windows
+`select.select` cannot poll stdin, so there `_start_stdin_pump` reads frames on
+a daemon thread into a queue the loop waits on with the same short timeout; the
+worker, the parked-call timer, cancels and ping answers do not depend on how a
+frame was read.
 
 **The in-flight report.** A backend whose long calls are all deferred can prove
 they are healthy. When the client's `initialize` declared
@@ -4641,9 +4644,7 @@ while a server whose every tool is synchronous gains nothing from the report and
 would only have its recycle ceiling lowered under its running call. A server that
 did not opt in neither advertises the key nor sends the frame, even to a client
 that declared it. An opted-in loop advertises the key in its
-`initialize` result on POSIX only -- the Windows path cannot send a frame
-mid-call, and advertising there would have the gateway shorten a ceiling the
-backend cannot vouch for. The gateway asks for the report on every `initialize`
+`initialize` result on every platform. The gateway asks for the report on every `initialize`
 it forwards (`_inject_inflight_capability`, beside the MCP Apps extension
 injection) and in its own prewarm `send_initialize`; `Backend._apply_inflight_report`
 consumes the frame off the backend's stdout (it names gateway forward ids, so it

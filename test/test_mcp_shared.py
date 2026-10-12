@@ -51,9 +51,11 @@ class _ShortReadBuffer:
         self._pos = 0
         self._chunk = chunk
 
-    def readline(self) -> bytes:
+    def readline(self, size: int = -1) -> bytes:
         nl = self._data.find(b"\n", self._pos)
         end = len(self._data) if nl == -1 else nl + 1
+        if size >= 0:
+            end = min(end, self._pos + size)
         line = self._data[self._pos : end]
         self._pos = end
         return line
@@ -211,6 +213,57 @@ class TestReadMessageContentLength:
         [(args, kwargs)] = answered
         assert args[0] == 1
         assert kwargs["error"]["code"] == mcp_shared.JSONRPC_INVALID_REQUEST
+
+    @pytest.mark.parametrize(
+        "big",
+        [
+            {"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {"pad": "x" * 64}},
+            {
+                "method": "ping",
+                "params": {"pad": "x" * 64, "id": "nested"},
+                "jsonrpc": "2.0",
+                "id": 1,
+            },
+        ],
+        ids=["id-first", "id-last"],
+    )
+    def test_a_bare_line_over_the_cap_is_drained_and_answered(self, monkeypatch, big):
+        """A bare-JSON line is held to the same ceiling as a Content-Length
+        body: drained in bounded reads, never parsed or returned, and answered
+        with its top-level id. The next line still reads whole."""
+        answered: list = []
+        monkeypatch.setattr(mcp_shared, "respond", lambda *a, **k: answered.append((a, k)))
+        monkeypatch.setattr(mcp_shared, "MAX_CONTENT_LENGTH_BYTES", 60)
+        monkeypatch.setattr(mcp_shared, "_DRAIN_CHUNK_BYTES", 5)
+        monkeypatch.setattr(mcp_shared, "ID_PROBE_BYTES", 48)
+        good = {"jsonrpc": "2.0", "id": 2, "method": "ping"}
+        stdin = _make_stdin((json.dumps(big) + "\n" + json.dumps(good) + "\n").encode("utf-8"))
+        assert _read_message(stdin) is SKIP
+        assert _read_message(stdin) == good
+        [(args, kwargs)] = answered
+        assert args[0] == 1
+        assert kwargs["error"]["code"] == mcp_shared.JSONRPC_INVALID_REQUEST
+
+    @pytest.mark.parametrize("end", [b"\n", b"\r\n", b""], ids=["lf", "crlf", "eof"])
+    def test_a_bare_line_at_the_cap_is_read_whole(self, monkeypatch, end):
+        """The ceiling counts the body, not its terminator."""
+        monkeypatch.setattr(mcp_shared, "respond", lambda *a, **k: None)
+        msg = {"jsonrpc": "2.0", "id": 3, "method": "ping"}
+        body = json.dumps(msg).encode("utf-8")
+        monkeypatch.setattr(mcp_shared, "MAX_CONTENT_LENGTH_BYTES", len(body))
+        assert _read_message(_make_stdin(body + end)) == msg
+
+    @pytest.mark.parametrize("end", [b"\n", b"\r\n"], ids=["lf", "crlf"])
+    def test_a_bare_line_one_past_the_cap_is_refused(self, monkeypatch, end):
+        answered: list = []
+        monkeypatch.setattr(mcp_shared, "respond", lambda *a, **k: answered.append((a, k)))
+        body = json.dumps({"jsonrpc": "2.0", "id": 4, "method": "ping"}).encode("utf-8")
+        monkeypatch.setattr(mcp_shared, "MAX_CONTENT_LENGTH_BYTES", len(body) - 1)
+        good = {"id": 5, "method": "x"}  # shorter than the cap
+        stdin = _make_stdin(body + end + json.dumps(good).encode("utf-8") + b"\n")
+        assert _read_message(stdin) is SKIP
+        assert _read_message(stdin) == good
+        assert [a[0] for a, _ in answered] == [4]
 
     def test_the_body_cap_is_the_gateways_read_limit(self):
         """The constant's comment says so; a copy could drift without a test."""
@@ -842,12 +895,9 @@ class TestCallToolWithLoggingKind:
 #
 # A tools/call arriving while a worker is busy must not be silently dropped:
 # with no response ever written, the client waits forever. These tests
-# drive the real loop over a pipe-backed stdin (select() needs a real fd)
-# and assert queued calls are answered FIFO once the worker frees. The
-# worker-thread + select() interleave is POSIX-only (the Windows loop
-# dispatches synchronously), so gate the class accordingly.
-
-from kiro_crew import platform_compat  # noqa: E402
+# drive the real loop over a pipe-backed stdin (select() needs a real fd;
+# on Windows the loop's stdin pump thread reads the same pipe) and assert
+# queued calls are answered FIFO once the worker frees.
 
 
 class _LoopHarness:
@@ -951,10 +1001,6 @@ def _slow_then_echo():
     return call_tool, started, release
 
 
-@pytest.mark.skipif(
-    not platform_compat.IS_POSIX,
-    reason="worker-thread + select() interleave is POSIX-only",
-)
 class TestStdioLoopBusyQueue:
     def test_tools_call_while_busy_is_queued_and_answered_fifo(self, monkeypatch):
         import time
@@ -1195,10 +1241,6 @@ class TestStdioLoopStrayFrames:
         finally:
             harness.close()
 
-    @pytest.mark.skipif(
-        not platform_compat.IS_POSIX,
-        reason="worker-thread + select() interleave is POSIX-only",
-    )
     def test_a_worker_that_cannot_start_costs_that_call(self, monkeypatch):
         """``Thread.start`` raises at the scope's task ceiling. Nothing holds the
         unstarted thread afterwards: joining it raises, and would end the server
@@ -1248,10 +1290,6 @@ class TestStdioLoopStrayFrames:
         finally:
             harness.close()
 
-    @pytest.mark.skipif(
-        not platform_compat.IS_POSIX,
-        reason="worker-thread + select() interleave is POSIX-only",
-    )
     @pytest.mark.parametrize("stray", ["undecodable", "null", "list"])
     def test_a_finished_tool_is_answered_after_a_stray_frame_with_nothing_after_it(
         self, monkeypatch, stray
@@ -1275,10 +1313,6 @@ class TestStdioLoopStrayFrames:
             release.set()
             harness.close()
 
-    @pytest.mark.skipif(
-        not platform_compat.IS_POSIX,
-        reason="worker-thread + select() interleave is POSIX-only",
-    )
     @pytest.mark.parametrize(
         "before", ["stray", "request"], ids=["after-a-stray-line", "after-a-request"]
     )
@@ -1300,10 +1334,6 @@ class TestStdioLoopStrayFrames:
             release.set()
             harness.close()
 
-    @pytest.mark.skipif(
-        not platform_compat.IS_POSIX,
-        reason="worker-thread + select() interleave is POSIX-only",
-    )
     def test_a_busy_tools_call_without_a_usable_name_is_refused_not_queued(self, monkeypatch):
         """The busy path refuses it exactly as the idle one, so it is never
         queued, busy-rejected, or audited as a call to a tool named by whatever
@@ -1329,10 +1359,6 @@ class TestStdioLoopStrayFrames:
             release.set()
             harness.close()
 
-    @pytest.mark.skipif(
-        not platform_compat.IS_POSIX,
-        reason="worker-thread + select() interleave is POSIX-only",
-    )
     def test_a_busy_cancel_with_non_object_params_cancels_nothing(self, monkeypatch):
         spy = _ReadSpy(monkeypatch)
         call_tool, started, release = _slow_then_echo()
@@ -1361,11 +1387,8 @@ class TestStdioLoopStrayFrames:
 
 #: What the loop advertises under ``capabilities.experimental`` when it is
 #: started with ``reports_inflight=True`` (only ``kirocrew-core``), independent
-#: of the caller-identity opt-in: the in-flight report, on the POSIX path only
-#: (the Windows loop cannot send a frame mid-call).
-_LOOP_OWN_CAPABILITIES: dict = (
-    {mcp_shared.INFLIGHT_CAPABILITY_KEY: {}} if platform_compat.IS_POSIX else {}
-)
+#: of the caller-identity opt-in: the in-flight report.
+_LOOP_OWN_CAPABILITIES: dict = {mcp_shared.INFLIGHT_CAPABILITY_KEY: {}}
 
 
 def _initialize(req_id) -> dict:
@@ -1672,7 +1695,6 @@ class TestStdioLoopCallerIdentity:
         finally:
             harness.close()
 
-    @pytest.mark.skipif(platform_compat.IS_WINDOWS, reason="select interleave uses a POSIX pipe")
     def test_listing_while_busy_does_not_borrow_the_running_members_identity(self, monkeypatch):
         from kiro_crew.mcp_caller import CallerContext, build_caller_meta
 
@@ -2297,10 +2319,6 @@ class TestPerSessionToolPolicy:
         assert len(calls) == n
 
 
-@pytest.mark.skipif(
-    not platform_compat.IS_POSIX,
-    reason="worker-thread + select() interleave is POSIX-only",
-)
 class TestStdioLoopExitsWhenItsInstallIsPruned:
     """A backend whose install an update removed must be replaced, not limp on.
 

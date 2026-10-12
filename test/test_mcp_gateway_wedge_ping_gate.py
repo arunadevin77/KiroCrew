@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import threading
 import time
@@ -266,8 +267,16 @@ def test_tool_cancelled_exception_suppresses_response(cancelled_by_raise: bool) 
     from kiro_crew.mcp_shared import ToolCancelled, run_mcp_stdio_loop
 
     tool_started = threading.Event()
-    # Set by the read AFTER the cancel: the loop has processed the cancel.
+    # Set by the loop's own "cancel received" log line, which it writes right
+    # after it flags the running call: a read that follows the cancel cannot
+    # say that, since stdin may be read ahead of the loop (the Windows pump).
     cancel_processed = threading.Event()
+
+    class _CancelSeen(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if record.getMessage().startswith("cancel received for in-flight request"):
+                cancel_processed.set()
+
     # A follow-up call queued behind the cancelled one is answered only after
     # the loop has delivered (or suppressed) the cancelled call's result, so
     # waiting for it makes the "no response for id 2" check non-vacuous.
@@ -299,7 +308,6 @@ def test_tool_cancelled_exception_suppresses_response(cancelled_by_raise: bool) 
                 "params": {"requestId": "2", "reason": "test"},
             }
         if idx == 4:
-            cancel_processed.set()
             return {
                 "jsonrpc": "2.0",
                 "id": 3,
@@ -338,19 +346,27 @@ def test_tool_cancelled_exception_suppresses_response(cancelled_by_raise: bool) 
     def fake_select(rlist, wlist, xlist, timeout=None):
         return (rlist, [], [])
 
-    with (
-        patch.object(mod, "_read_message", fake_read_message),
-        patch.object(mod, "respond", capturing_respond),
-        patch("select.select", fake_select),
-    ):
-        loop_thread = threading.Thread(
-            target=run_mcp_stdio_loop,
-            args=("test-server", "0.1.0", list_tools, call_tool),
-            daemon=True,
-        )
-        loop_thread.start()
-        loop_thread.join(timeout=10)
-        assert not loop_thread.is_alive(), "Loop did not exit"
+    seen = _CancelSeen(level=logging.INFO)
+    saved_level = mod.logger.level
+    mod.logger.addHandler(seen)
+    mod.logger.setLevel(logging.INFO)
+    try:
+        with (
+            patch.object(mod, "_read_message", fake_read_message),
+            patch.object(mod, "respond", capturing_respond),
+            patch("select.select", fake_select),
+        ):
+            loop_thread = threading.Thread(
+                target=run_mcp_stdio_loop,
+                args=("test-server", "0.1.0", list_tools, call_tool),
+                daemon=True,
+            )
+            loop_thread.start()
+            loop_thread.join(timeout=10)
+            assert not loop_thread.is_alive(), "Loop did not exit"
+    finally:
+        mod.logger.removeHandler(seen)
+        mod.logger.setLevel(saved_level)
 
     assert follow_up_answered.is_set(), "the call queued behind the cancelled one never ran"
     # No response may be emitted for the cancelled request id (any type)
