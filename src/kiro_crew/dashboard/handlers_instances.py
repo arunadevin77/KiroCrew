@@ -961,6 +961,19 @@ async def api_instances_connect(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    if not only_if_connected and getattr(state, "_gateway_restart_in_progress", False) is True:
+        # The restart's pre-exec seam has stopped (or is stopping) every
+        # forwarder, and the exec keeps this pid: a forwarder started now
+        # outlives it as an orphan nothing reclaims. `only_if_connected` starts
+        # nothing, so it is exempt.
+        _audit("connect", "denied", request_id=instance_id, error="gateway restarting")
+        return web.json_response(
+            {
+                "error": "the gateway is restarting; connect again once it is back",
+                "code": "restarting",
+            },
+            status=409,
+        )
     try:
         # Keyword only when asked: the default call keeps the manager's existing
         # positional contract (and every fake that implements it).

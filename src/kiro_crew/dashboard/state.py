@@ -6583,6 +6583,8 @@ class DashboardState:
         # start_dashboard type-check under mypy.
         self._sleep_inhibitor: "SleepInhibitor | None" = None
         self._prevent_sleep_task: asyncio.Task | None = None  # type: ignore[type-arg]
+        # Drops the inhibitor's pre-exec stop; run by the cleanup hook.
+        self._prevent_sleep_unregister: Callable[[], None] | None = None
 
         # Knowledge Library
         self._knowledge_store: "KnowledgeStore | None" = None  # Lazy-initialized on first access

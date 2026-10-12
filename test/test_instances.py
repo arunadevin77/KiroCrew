@@ -6755,12 +6755,15 @@ class TestStartupRevive:
                 armed.append("armed")
                 return set()
 
+            async def shutdown(self):  # registered with the pre-exec seam
+                pass
+
         monkeypatch.setattr(server, "SshTunnelManager", lambda *a, **k: _ManagerDouble())
 
         started = asyncio.Event()
         release = asyncio.Event()
 
-        async def _blocking_revive(registry, manager):
+        async def _blocking_revive(registry, manager, state=None):
             started.set()
             await release.wait()  # simulate a hung SSH connect that never returns
 
@@ -7474,6 +7477,11 @@ class TestSsmTunnelArgv:
         # xdist worker). Keep the signal out of the OS; the fake's terminate()
         # is the fallback path and settles returncode.
         monkeypatch.setattr(stm._SshTunnel, "_signal_group", staticmethod(lambda pid, sig: False))
+
+        async def _undelivered(_pid, _sig):
+            return False
+
+        monkeypatch.setattr(stm._SshTunnel, "_signal_group_async", staticmethod(_undelivered))
 
         async def main():
             t = _SshTunnel(

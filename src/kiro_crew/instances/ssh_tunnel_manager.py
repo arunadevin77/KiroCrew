@@ -303,6 +303,11 @@ _RECLAIM_KILL_GRACE_SECS = 1.0
 # Liveness poll cadence while waiting out the grace windows above.
 _RECLAIM_POLL_INTERVAL_SECS = 0.05
 
+#: Every way the tree-kill shim can fail to deliver: an already-reaped tree, a
+#: refused broadcast pgid, a protected Windows descendant, a permission error.
+#: Each means "not delivered", so the caller falls back to the single-process kill.
+_TREE_KILL_UNDELIVERED = (ProcessLookupError, PermissionError, OSError, ValueError, AttributeError)
+
 # Domain tag for the forwarder-identity MAC subkey. Mirrors the
 # ``session_pid_sig`` precedent: the signing key is a one-way derivation of
 # the SEL trust root and this domain, so this protocol, the SEL audit chain,
@@ -1556,22 +1561,22 @@ class _SshTunnel:
         wrapper and leave the plugin alive still bound to the port (the exact
         leak :func:`kiro_crew.cloud.ssm.kill_port_forward` documents). Since
         :meth:`start` spawns SSM children with process-group isolation, we reap
-        the whole tree via :func:`platform_compat.kill_process_tree` — ``killpg``
-        on POSIX, ``taskkill /T`` on Windows, so the plugin is reaped on **every**
-        supported platform. A tree-kill failure falls back to the single-process
-        kill.
+        the whole tree via :func:`platform_compat.kill_process_tree_async` —
+        ``killpg`` on POSIX, ``taskkill /T`` off the loop on Windows, so the plugin
+        is reaped on **every** supported platform without stalling the loop. A
+        tree-kill failure falls back to the single-process kill.
         """
         proc = self._proc
         if proc and proc.returncode is None:
             group_signalled = False
             if self._transport == "ssm":
-                group_signalled = self._signal_group(proc.pid, platform_compat.SIGTERM)
+                group_signalled = await self._signal_group_async(proc.pid, platform_compat.SIGTERM)
             try:
                 if not group_signalled:
                     proc.terminate()
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except (asyncio.TimeoutError, ProcessLookupError):
-                if self._transport == "ssm" and self._signal_group(
+                if self._transport == "ssm" and await self._signal_group_async(
                     proc.pid, platform_compat.SIGKILL
                 ):
                     with contextlib.suppress(Exception):
@@ -1597,7 +1602,24 @@ class _SshTunnel:
         """
         try:
             return platform_compat.kill_process_tree(pid, sig)
-        except (ProcessLookupError, PermissionError, OSError, ValueError, AttributeError):
+        except _TREE_KILL_UNDELIVERED:
+            return False
+
+    @staticmethod
+    async def _signal_group_async(pid: int, sig: int) -> bool:
+        """:meth:`_signal_group` for a caller on the event loop.
+
+        On Windows the tree kill is a ``taskkill /T`` subprocess with its own
+        5 s timeout, so :meth:`_terminate` (reached from ``stop()`` under the
+        manager lock, and from the pre-exec restart teardown) awaits
+        :func:`platform_compat.kill_process_tree_async`, which runs it off the
+        loop. Same outcome contract: never raises, ``False`` means not delivered.
+        The synchronous :meth:`_signal_group` stays for the reclaim worker, which
+        already runs in a thread.
+        """
+        try:
+            return await platform_compat.kill_process_tree_async(pid, sig)
+        except _TREE_KILL_UNDELIVERED:
             return False
 
     @property

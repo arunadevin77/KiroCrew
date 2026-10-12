@@ -87,6 +87,7 @@ from kiro_crew.platform_compat import (
     reexec_launcher,
     reexec_python_module,
 )
+from kiro_crew.pre_exec_stops import run_pre_exec_stops
 from kiro_crew.safety_override import flush_breadcrumb_writes
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 
@@ -1791,6 +1792,10 @@ async def _restart_gateway(
                 # Past the point of no return: a broker that will not stop must
                 # not strand a gateway whose sessions are already closed.
                 logger.debug("MCP broker stop before restart failed", exc_info=True)
+        # The exec skips the cleanup hooks that stop supervised children too, and
+        # a child whose parent pid survives the exec is never reclaimed. Each
+        # such owner registers its stop with the pre-exec seam.
+        await run_pre_exec_stops()
         sys.stdout.flush()
         sys.stderr.flush()
         # The safety-override record publishes on a worker thread (its callers sit

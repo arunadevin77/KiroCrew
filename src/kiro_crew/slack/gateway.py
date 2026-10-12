@@ -364,6 +364,7 @@ from kiro_crew.platform.update_governance import (
     tracks_upstream,
     update_blocked_reason,
 )
+from kiro_crew.pre_exec_stops import run_pre_exec_stops
 from kiro_crew.providers.base import LLMEvent
 from kiro_crew.safety_override import flush_breadcrumb_writes, safety_override
 from kiro_crew.sandbox import (
@@ -12156,6 +12157,11 @@ class GatewayOrchestrator:
         # raises and is bounded: the daemon's own drain budget on SIGTERM, then a
         # SIGKILL and a reap of its pooled backends if the drain does not finish.
         await self._stop_mcp_broker()
+        # Supervised children go the same way, for the same reason: the exec
+        # skips the cleanup hooks that stop them, and a child whose parent pid
+        # survives the exec is never reclaimed by the new image. Each owner
+        # registers its stop with the pre-exec seam. Bounded and never raises.
+        await run_pre_exec_stops()
 
         # Any callback that ran while close_all awaited used the synchronous
         # fenced refusal path. Drain pre-fence workers and registered handlers

@@ -282,6 +282,7 @@ from kiro_crew.dashboard.server_runtime.owner_notices import (  # noqa: F401
 from kiro_crew.dashboard.server_runtime.prevent_sleep import (  # noqa: F401
     _arm_prevent_sleep_poll,
     _register_prevent_sleep_shutdown,
+    _release_sleep_block,
     _should_prevent_sleep,
 )
 from kiro_crew.dashboard.server_runtime.safety_grants import (  # noqa: F401
@@ -385,6 +386,7 @@ from kiro_crew.platform import (
     safe_context_call,
 )
 from kiro_crew.power import SleepInhibitor  # noqa: F401
+from kiro_crew.pre_exec_stops import register_pre_exec_stop
 from kiro_crew.safety_override import (  # noqa: F401
     POLICY_REVOKED_SOURCE,
     apply_config_duration,
@@ -1153,7 +1155,11 @@ SECONDARY_LOOPBACK_FOR = {"127.0.0.1": "::1", "::1": "127.0.0.1"}
 AMBIGUOUS_LOOPBACK_HOSTS = frozenset({"localhost", "kirocrew.localhost"})
 
 
-async def _retake_hops_then_revive(registry: InstancesRegistry, manager: SshTunnelManager) -> None:
+async def _retake_hops_then_revive(
+    registry: InstancesRegistry,
+    manager: SshTunnelManager,
+    state: DashboardState | None = None,
+) -> None:
     """Re-take the lent hop ports, then revive. Both off the boot path, in this order.
 
     A hop lease is PERSISTED and the listening socket that enforces it is not, so a
@@ -1186,11 +1192,13 @@ async def _retake_hops_then_revive(registry: InstancesRegistry, manager: SshTunn
                 len(unheld),
                 sorted(unheld),
             )
-    await _revive_intended_instances(registry, manager)
+    await _revive_intended_instances(registry, manager, state)
 
 
 async def _revive_intended_instances(
-    registry: InstancesRegistry, manager: SshTunnelManager
+    registry: InstancesRegistry,
+    manager: SshTunnelManager,
+    state: DashboardState | None = None,
 ) -> None:
     """Auto-reconnect every instance the operator left connected.
 
@@ -1213,6 +1221,11 @@ async def _revive_intended_instances(
     Extracted to module level (rather than an inline closure) so the revive
     policy — which instances are picked and the per-instance failure isolation —
     is unit-testable without standing up the whole app.
+
+    Stops at the first instance it reaches once a gateway restart has claimed
+    ``state``: the restart's pre-exec seam has already stopped every tunnel, and
+    one connected now would outlive the exec as an orphaned forwarder. The
+    intent flag is untouched, so the next gateway revives the rest.
     """
     # A disabled crew keeps its intent so enabling it brings it back, but it is
     # not revived while it stays disabled.
@@ -1221,6 +1234,9 @@ async def _revive_intended_instances(
         return
     logger.info("Auto-reconnecting %d instance(s) on startup", len(intended))
     for inst in intended:
+        if getattr(state, "_gateway_restart_in_progress", False) is True:
+            logger.info("Gateway restart in progress; startup auto-reconnect stops")
+            return
         try:
             st = await manager.connect(inst.id)
             if st.state == TunnelState.CONNECTED:
@@ -1469,7 +1485,11 @@ def _register_instances_hooks(app: web.Application, state: DashboardState, port:
     instance page.
     """
 
+    # The startup hook's pre-exec registration, undone by the cleanup hook.
+    unregister_pre_exec_stop: Callable[[], None] | None = None
+
     async def _instances_startup(app_: web.Application) -> None:
+        nonlocal unregister_pre_exec_stop
         _cfg = KiroCrewConfig.load()
         if not _cfg.instances.enabled:
             return
@@ -1491,6 +1511,11 @@ def _register_instances_hooks(app: web.Application, state: DashboardState, port:
         )
         state.instances_registry = registry
         state.instances_manager = manager
+        # An in-place restart's exec skips _instances_shutdown below but keeps
+        # the pid, so every ssh/SSM forwarder child would outlive it still
+        # parented to the new image, which then refuses to reclaim it. The
+        # restart runs this same teardown first through the pre-exec seam.
+        unregister_pre_exec_stop = register_pre_exec_stop("Instance tunnels", manager.shutdown)
         # First-party cookies: embedded instances load from
         # http://127.0.0.1:<port>, so the hub itself should be reached at
         # http://127.0.0.1:<port> (NOT localhost / kirocrew.localhost) — mixing
@@ -1512,11 +1537,13 @@ def _register_instances_hooks(app: web.Application, state: DashboardState, port:
         # the port bind immediately; tunnels reconnect (or surface their error
         # on the instance tab, which persists on failure) without gating
         # startup.
-        revive_task = asyncio.create_task(_retake_hops_then_revive(registry, manager))
+        revive_task = asyncio.create_task(_retake_hops_then_revive(registry, manager, state))
         state._background_tasks.add(revive_task)
         revive_task.add_done_callback(state._background_tasks.discard)
 
     async def _instances_shutdown(app_: web.Application) -> None:
+        if unregister_pre_exec_stop is not None:
+            unregister_pre_exec_stop()
         manager = getattr(state, "instances_manager", None)
         if manager is not None:
             await manager.shutdown()

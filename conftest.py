@@ -4925,6 +4925,20 @@ def _reset_platform_context(_floor_monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_pre_exec_stops(_floor_monkeypatch):
+    """Give every test its own registry of pre-exec stops.
+
+    ``kiro_crew.pre_exec_stops`` keeps one process-wide registry, filled by a
+    startup hook (the instance tunnels) and emptied by its cleanup hook. A test
+    that runs the startup hook without the cleanup would leave its stop behind,
+    and a later test's restart in the same worker would call it.
+    """
+    from kiro_crew import pre_exec_stops
+
+    _floor_monkeypatch.setattr(pre_exec_stops, "_stops", {})
+
+
+@pytest.fixture(autouse=True)
 def _isolate_agent_state_sidecar(_isolation_dirs, _floor_monkeypatch):
     """Pin the agent_state sidecar to a tmp dir for the whole suite.
 

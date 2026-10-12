@@ -1444,13 +1444,14 @@ _DASHBOARD_BOOT = tuple("""
     _kick_connections_warm_scavenge _kick_session_search_index _kick_config_watch
     _kick_local_decision_model _kick_knowledge_orphan_reclaim _kick_owner_only_sweep
     load_loop_stall_exit_after
-    _arm_prevent_sleep_poll safety_override safety_override safety_override
+    _arm_prevent_sleep_poll register_pre_exec_stop safety_override safety_override
+    safety_override
     await_crewmate_prune_settled current_context record_boot_to_ready
     _dispatch_healthy_boot_marker
     """.split())
 _DASHBOARD_TEARDOWN = tuple("""
     current_context unregister_status_delta_sink stop_hook_reconciler
-    on_gateway_shutdown async_safe_context_call current_context
+    on_gateway_shutdown async_safe_context_call current_context _release_sleep_block
     """.split())
 _DASHBOARD_ELSEWHERE = tuple("""
     S:_initialize_workflow_service S:_prune_browser_snapshots_loop S:_stt_idle_sweep
@@ -1496,9 +1497,9 @@ _API_BOOT = tuple("""
     _resolved_bound_host _reconcile_listener_publication _kick_workflow_initialization
     _kick_connections_warm_scavenge _kick_session_search_index _kick_config_watch
     _kick_local_decision_model _kick_owner_only_sweep _arm_prevent_sleep_poll
-    record_boot_to_ready _dispatch_healthy_boot_marker
+    register_pre_exec_stop record_boot_to_ready _dispatch_healthy_boot_marker
     """.split())
-_API_TEARDOWN: tuple[str, ...] = ()
+_API_TEARDOWN: tuple[str, ...] = ("_release_sleep_block",)
 _API_ELSEWHERE = tuple("""
     S:_initialize_workflow_service S:_stt_idle_sweep S:_stt_startup_prewarm
     T:_live_sibling_port T:_write_instance_credentials T:_write_secret_file

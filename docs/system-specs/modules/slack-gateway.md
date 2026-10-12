@@ -506,6 +506,13 @@ but only while `SIGALRM` is at its default disposition (the same ownership rule
 `exit_mechanism()` applies: a Python handler on `SIGALRM` means another owner's
 `ITIMER_REAL`, which is left alone).
 
+Before either exec, after the sessions close and the MCP broker stops, both
+restarts call `pre_exec_stops.run_pre_exec_stops()`. The exec skips every
+cleanup hook but keeps the pid, so an owner that supervises a child process
+registers its stop there instead of being named by the restart; see
+[instances](instances.md) for its owners, the instance tunnels and the sleep
+inhibitor.
+
 ### Stopping an in-flight update installer
 
 An apply that replaces the install in place cannot be killed outright. `cli.sh`

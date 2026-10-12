@@ -483,6 +483,67 @@ Two persisted hints drive lazy reconnect:
   not just one, and the active pane is frontend state. `get_last_active()` is the
   only reader and has no production caller.
 
+An in-place restart tears the tunnels down before it execs. The dashboard
+restart (`dashboard/handlers/updates.py::_restart_gateway`) and the update
+restart (`slack/gateway.py::_restart_after_update_claimed`) replace the image
+with `os.execv`, which skips the cleanup hook that runs `shutdown()`. The exec
+keeps the pid, so a forwarder left running would still name the gateway as its
+live parent: the orphan reclaim below refuses it and the allocator routes around
+its port for the life of the process. So the instances startup hook in
+`dashboard/server.py` registers `shutdown()` with the pre-exec seam
+(`pre_exec_stops.register_pre_exec_stop`) when it creates the manager, and its
+cleanup hook unregisters it. Both restarts call `run_pre_exec_stops()` once,
+after the sessions close and the MCP broker stops. The seam runs every
+registered stop concurrently under one 10 s bound and never raises, because the
+sessions are already closed and a wedged child must not strand the restart. The
+teardown must not block the event loop while it runs, or the bound could not
+fire: an SSM forwarder's tree kill is awaited through
+`platform_compat.kill_process_tree_async`, which runs Windows' `taskkill /T` off
+the loop, and the synchronous form is kept only for the orphan reclaim, which
+already runs in a worker thread. `shutdown()` keeps the hints above and the hop
+leases, so the new image's startup revive re-takes the lent hop ports and
+reconnects each intended instance on its recorded port. A refused or deferred
+restart returns before the seam runs and leaves the tunnels up.
+
+The HTTP server keeps serving between the seam and the exec, and a forwarder
+started in that window would outlive the exec like the ones the seam just
+stopped. Both restarts hold `state._gateway_restart_in_progress` from before any
+teardown work until the exec returns or is refused. The two routes that start a
+tunnel read it. `POST /api/instances/{id}/connect` answers `409` with
+`code: restarting` before the manager is called, and the startup revive stops
+at the next instance (the `was_connected` intent stays, so the new image
+revives the rest). `?only_if_connected=1` starts nothing and is answered as
+usual. The seam stops the tunnels one after another inside `shutdown()`, so its
+10 s bound covers about two forwarders that ignore SIGTERM (each costs its 5 s
+wait), not an arbitrary number.
+
+The seam is for owners that supervise a child process. A cleanup hook whose
+resources end with the exec (in-memory state, files, sockets the exec closes)
+does not register. The dashboard tunnel does not register: its provider stop
+spawns and supervises no process. The sleep inhibitor registers too
+(`dashboard/server_runtime/prevent_sleep.py`): its `caffeinate -i -w <pid>` /
+`systemd-inhibit` helper (`power.py`) watches the gateway pid, which the exec
+keeps, so the helper would hold the block for the new image as well. Its stop
+cancels the prevent-sleep poll, so the poll cannot engage the block again, and
+releases the block. The poll arms it after setup and the prevent-sleep cleanup
+hook unregisters it. The browser view child (#19140) is the next owner that
+should register.
+
+A restart that lands while a `connect()` holds the manager lock across a slow
+`tunnel.start()` can cut `shutdown()` off at the bound while it still waits for
+that lock, so it stops nothing. The connect gate above stops new connects from
+starting, but a connect already in flight keeps its lock. Making `shutdown()`
+independent of that lock is separate work.
+
+A forwarder the seam does not stop in time (the lock wait above, or more
+forwarders ignoring SIGTERM than the bound covers) outlives the exec as before
+this seam existed, and that leak is accepted. The new image does not reclaim it
+at startup. On POSIX the exec keeps both the pid and the process start time, so kernel facts cannot tell
+a child of the old image from one of the new image. Telling them apart would
+need an in-process boot mark compared against each platform's start token, on
+a path that signals processes. Getting that wrong kills a forwarder this image
+still owns, which is worse than the leak.
+
 A third hint pair, `forwarder_pid` + `forwarder_start`, exists for crash
 recovery rather than reconnect intent: `connect()` records the spawned
 forwarder child's pid and its opaque `platform_compat.process_start_time`
@@ -577,7 +638,7 @@ with `403 owner_only`, and rejects a disabled feature with `403`. Every call, su
 | `POST /api/instances` | Add an instance. A rejection carries a machine-readable `code` beside its human message, so a client can branch without parsing prose: `invalid_json` / `invalid_body` (unreadable request), `invalid_field` (a named field failed validation), `instance_duplicate` (the name is taken), `instance_invalid` (the record as a whole is not addressable) and `instances_manager_unavailable`, plus the chain refusals for a chained crew (`chain_parent_unknown`, `chain_duplicate`, `chain_too_deep`, `chain_parent_full`, `chain_parent_not_ssh`; see §17.4). The dashboard forwards the code into its error → agent hand-off, which is why it has to be on the wire rather than derived from the message. |
 | `PATCH /api/instances/{id}` | Edit `name`/`ssh_host`/`remote_port`/`ttl`/`remote_bin`/`connection_method`/`ssm_target`/`ssm_run_as`/`aws_profile`/`aws_region`/`via_remote_port` (`id`, `via_instance_id` and internal hints are not editable). Editing a built field of a crew that others chain through tears its chained crews down first, and aborts the edit when one will not stop (§17.4). Editing a field the tunnel is BUILT from (everything except `name` and `ttl`) disconnects a live tunnel first, because it would otherwise keep forwarding the old port to the old host under the new label; the teardown passes `keep_intent=True` so it does not touch `was_connected` — that flag records a USER disconnect, so a reconfiguration leaves it alone and a real disconnect arriving mid-edit still wins. The crew therefore keeps its switcher entry and reconnects in one click. The teardown and the coordinate rewrite happen as ONE operation, `SshTunnelManager.reconfigure()`, which holds the manager lock across both. Done as two steps a `connect` can read the OLD record in between, and whether its tunnel is already CONNECTED or still CONNECTING when the write lands decides whether any after-the-fact sweep would notice it — so the window is removed rather than narrowed: a racing `connect` either completes before (and is torn down inside the section) or starts after (and reads the new coordinates). It also cancels and AWAITS that instance's in-flight self-heal first: recovery reads the record before it takes the lock, so a recovery already running carries the pre-edit coordinates and would reinstall a tunnel to the old machine. Because that cancellation itself awaits, a reconfiguration additionally raises a per-instance BARRIER before its first await; while the barrier is up the scheduling seams refuse to start work — `_on_tunnel_exit` will not begin a self-heal, a backed-off one returns without acting, and `_schedule_token_refresh` will not restart a mint loop — so nothing can slip into the window. Self-heal is cancelled AND awaited before the coordinates move, because it rebuilds from the record it read. The token-refresh loop is unwound by the teardown instead — after the stop succeeds — so a REJECTED edit leaves the live tunnel holding both its credential and its refresh; in both cases the cancellation is awaited, since a mint already in flight would otherwise store a token for a tunnel that is being replaced. A teardown that raises ABORTS the edit with `503` / `code: tunnel_teardown_failed` and persists nothing: a stop that failed leaves the old forward live, so advancing the record would describe one machine while the still-open tunnel serves another — and that tunnel is the one the user reaches. Nothing is discarded unless the stop succeeded — the tunnel keeps its place in `_tunnels` along with its token and refresh task — so a failed stop can neither leave an untracked process holding the port nor a live forward without a credential. The registry write is also shielded from cancellation: a client hanging up mid-write must not unwind the `async with` and free the lock while the write is still in flight. An edit sends only the fields that DIFFER from an IMMUTABLE snapshot of the record taken when its form opened (not the live polled record, which a concurrent CLI edit would move under the user), so the later of two concurrent saves cannot revert the earlier one's corrections; optional fields travel as explicit empty values, so emptying one clears it instead of being read as "leave as-is". The dashboard does NOT reconnect afterwards: any automatic reconnect races an explicit Disconnect arriving mid-save, so the row offers **Connect** instead. A crew CORRELATED to a cloud stack has its `connection_method`/`ssm_target`/`aws_profile`/`aws_region` frozen in the edit form and omitted from the request — Stop/Start/Delete resolve the machine through those, so editing them would strand a billing instance. That freeze is enforced **server-side too**: this endpoint rejects the four addressing fields for a correlated cloud instance with `400` / `code: cloud_instance_addressing_locked`, so a non-dashboard caller (CLI, script, the agent driving this owner-only API) can no longer rewrite the coordinates and strand a billing instance. Correlation is resolved against the cloud launch store via `_is_correlated_cloud_instance()`, checked against the record already fetched for the edit. An SSM crew that cannot be correlated is offered no lifecycle action, so its fields stay editable — that identity is how the dashboard finds the machine to stop or delete, and editing it away would strand a billing instance. |
 | `DELETE /api/instances/{id}` | Disconnect then remove, cascading over the crews chained behind this one. Every captured crew comes down first, deepest first, and a stop that raises answers `409 remove_teardown_failed` with NOTHING deleted: rows removed over a live forwarder strand it with its minted token and take the `forwarder_pid` reclaim hint with them. `404` when no row has that id, decided before any deletion so a missing parent cannot take its orphaned descendants with it. On success the body carries `removed` and nothing else. A second pass follows the deletion and cannot refuse, because the removal has already happened, so a forward a racing connect re-established after the rows went is written to the gateway's warning log rather than into the response -- see §17.4. |
-| `POST /api/instances/{id}/connect` | Open tunnel + mint token. Returns the token. Idempotent by default; `?rebuild=1` (Retry after a load-watchdog verdict: tear down and re-spawn on a different local port) and `?only_if_connected=1` (auto-warm: answer an up tunnel, never bring one up — a down tunnel is a `200` with `code: instance_not_connected`) are the two opt-in exceptions, mutually exclusive (`400`), described in §4 step 1. A failure carries a machine-readable `code`, and that code is the failure-diagnosis ladder's OWN verdict (`ssh_unreachable`, `remote_down`, `tunnel_down`, …) promoted to the top level, so a client reads which link broke without walking into `diagnosis`. Only a verdict that is present AND **negative** is promoted: the stored diagnosis is the last ladder RUN, so a stale `ok` from before the failure would otherwise be published as this call's reason. With no usable verdict the stage that failed names itself — `instance_connect_failed`, or `instance_token_unconfirmed` when the tunnel came up but its credential did not confirm, which also covers the forward MOVING while the credential was being confirmed: the probe and any re-mint both await for seconds while the response's port is already frozen, so the live status is re-read before the token is attached and a port or state that has changed is refused rather than answered with half a pair. The frontend applies the same present-AND-negative rule before quoting a verdict or its probe chain into the agent hand-off, for the same staleness reason. |
+| `POST /api/instances/{id}/connect` | Open tunnel + mint token. Returns the token. Idempotent by default; `409` with `code: restarting` while a gateway restart is under way (nothing is started); `?rebuild=1` (Retry after a load-watchdog verdict: tear down and re-spawn on a different local port) and `?only_if_connected=1` (auto-warm: answer an up tunnel, never bring one up — a down tunnel is a `200` with `code: instance_not_connected`) are the two opt-in exceptions, mutually exclusive (`400`), described in §4 step 1. A failure carries a machine-readable `code`, and that code is the failure-diagnosis ladder's OWN verdict (`ssh_unreachable`, `remote_down`, `tunnel_down`, …) promoted to the top level, so a client reads which link broke without walking into `diagnosis`. Only a verdict that is present AND **negative** is promoted: the stored diagnosis is the last ladder RUN, so a stale `ok` from before the failure would otherwise be published as this call's reason. With no usable verdict the stage that failed names itself — `instance_connect_failed`, or `instance_token_unconfirmed` when the tunnel came up but its credential did not confirm, which also covers the forward MOVING while the credential was being confirmed: the probe and any re-mint both await for seconds while the response's port is already frozen, so the live status is re-read before the token is attached and a port or state that has changed is refused rather than answered with half a pair. The frontend applies the same present-AND-negative rule before quoting a verdict or its probe chain into the agent hand-off, for the same staleness reason. |
 | `POST /api/instances/{id}/refresh-token` | Force a fresh mint and return the new token. See below. |
 | `POST /api/instances/{id}/embed-token` | Mint that crew's token for ANOTHER gateway's pane, carrying the caller's own dashboard port as the embed-parent claim. Called by a hub that reaches the crew by riding one of OUR forwards and so holds no key for it. Stores nothing -- our own credential for the crew is untouched. Refuses a crew we reach through a further hop (`chain_too_deep`), which is the depth cap seen from this end, and a crew whose forward moved while its token was in flight (`instance_hop_changed`): the token and the port it is paired with are one claim, and the mint is taken without the manager lock. See §17.3. |
 | `POST /api/instances/{id}/disconnect` | Tear down one tunnel. |
