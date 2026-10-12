@@ -238,7 +238,7 @@ turn-lifecycle hooks.
 
 The schemas in `validation.MONITOR_START_SCHEMA` and
 `validation.MONITOR_UPDATE_SCHEMA` bound the message, interval, cycle cap, and
-wall-clock budget. `mcp_tools.control.monitor_start` supplies bounded positive
+runtime budget. `mcp_tools.control.monitor_start` supplies bounded positive
 defaults from `mcp_tools._limits`; zero and negative cycle or runtime limits are
 rejected. The operator ceiling is `monitoring.max_runtime_secs`; setting 2592000
 permits a 30-day request without extending existing loops. The cap is a runaway backstop, not evidence that the watched work

@@ -1,6 +1,6 @@
 """Say why an auto-nudge loop stopped, in the gateway log.
 
-A loop can stop on many paths: its cycle cap, its wall-clock budget, an
+A loop can stop on many paths: its cycle cap, its runtime budget, an
 unanswered tool approval, a restart mid-cycle, an agent calling
 ``autonudge_stop``, a user delete, a closed session. Before this module several
 of those were logged at INFO (hidden at the gateway's default level) and a

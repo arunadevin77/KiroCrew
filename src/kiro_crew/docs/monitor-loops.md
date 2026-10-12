@@ -39,11 +39,16 @@ a loop that reaches its cap ran out of rope rather than completing. A cap of `0`
 is unlimited, which is worth asking for only when you genuinely want an
 unbounded loop.
 
-A separate wall-clock budget can bound elapsed time instead of cycles, which
-suits a loop whose turns are slow or whose interval is long. When the budget is
-spent the loop deactivates and tells you. No budget can exceed the operator
-ceiling `monitoring.max_runtime_secs` (default 7 days, maximum 30 days); raising
-it never extends a deadline already set.
+A separate runtime budget (awake time while the gateway runs; a restart counts
+the time since `created_ts` on the wall clock) can bound running time instead of
+cycles, which suits a loop whose turns are slow or whose interval is long. While
+the gateway keeps running, the time a host spends asleep counts toward the budget
+on Windows and not on Linux or macOS. A restart reads the time since the loop was
+armed (`created_ts`) from the wall clock instead, so a sleep that came before the
+restart counts in full on every platform. When the budget is spent the loop
+deactivates and tells you. No budget can exceed the operator ceiling
+`monitoring.max_runtime_secs` (default 7 days, maximum 30 days); raising it never
+extends a deadline already set.
 
 ## The wake judge
 

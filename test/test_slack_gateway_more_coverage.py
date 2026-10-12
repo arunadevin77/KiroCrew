@@ -904,7 +904,11 @@ class TestNotifyNudgeExpired:
         title = ds.notify.call_args.args[1]
         body = ds.notify.call_args.args[2]
         assert title == "Monitoring loop spent its time budget"
-        assert "60s wall-clock budget" in body
+        assert (
+            "60s runtime budget (awake time while the gateway runs; a restart counts "
+            "the time since created_ts on the wall clock)"
+        ) in body
+        assert "wall-clock budget" not in body
 
     @pytest.mark.parametrize(
         ("outcome", "title"),

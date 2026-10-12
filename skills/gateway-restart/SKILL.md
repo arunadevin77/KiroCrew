@@ -62,7 +62,7 @@ monitor_start(
 
 - The monitor is bounded by both delivered turns and wall clock.
 - Keep the budget well past the 5-minute decision point. The interval counts from
-  the END of each cycle's turn and the wall-clock budget only gates turn starts, so
+  the END of each cycle's turn and the runtime budget only gates turn starts, so
   slow turns push cycles later: with 420 s, a spacing of 180-240 s between cycle
   starts (turns of 2-3 minutes) or over 360 s skips the [5 min, budget) window, and
   the loop ends with no verdict. 600 s with 8 cycles leaves a cycle in the window

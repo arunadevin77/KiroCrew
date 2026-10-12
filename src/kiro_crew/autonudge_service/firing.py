@@ -37,11 +37,15 @@ from kiro_crew.autonudge_service.model import (
     _START_FAILURE_STANDDOWN_AFTER,
     CONSECUTIVE_FAILURE_REASON,
     MONITOR_TERMINAL_REASON,
+    PERSON_WAIT_HOLD,
     SESSION_START_FAILURE_REASON,
     STOP_SENTINEL_REASON,
     NudgeLoop,
+    credit_held_runtime,
+    hold_span,
     is_channel_key,
     is_structured_monitor_loop,
+    note_hold_start,
     runtime_budget_exceeded,
     runtime_elapsed,
 )
@@ -161,7 +165,7 @@ async def _timer(self: AutoNudgeService, loop: NudgeLoop, delay: float | None = 
         # benign updates (message edits, manual pause) must not notify.
         self._emit("expired", loop)
         return
-    # Wall-clock budget spent? Checked AFTER the cycle cap (both exhausted
+    # Runtime budget spent? Checked AFTER the cycle cap (both exhausted
     # → the cap wins, keeping historical wording) and BEFORE the fire, so
     # a spent budget never buys one more unattended turn. Same terminal
     # treatment as the cap: deactivate (inspectable/restartable, not
@@ -171,7 +175,7 @@ async def _timer(self: AutoNudgeService, loop: NudgeLoop, delay: float | None = 
     #
     # The approval HOLD sits between the two bounds. After the cycle cap, because
     # a held loop spends no cycles, so a cap it reached was reached before it held
-    # and still ends it. Before the runtime budget, because the wall clock keeps
+    # and still ends it. Before the runtime budget, because the budget's clock keeps
     # running while nobody answers: checked after it, a hold would quietly spend
     # the budget and stop the loop it exists to keep. The held time is handed back
     # to the budget on release (``release_approval_hold``).
@@ -869,11 +873,16 @@ async def _commit_person_wait(svc: AutoNudgeService, loop: NudgeLoop, *, held: b
         # inspect reading and the state frame read without the lock -- takes the new
         # fields only once the store has them, as ``release_approval_hold`` does.
         now = time.time()
+        previous = loop.created_ts
+        span = 0.0
         if held:
             new = (True, now, loop.created_ts)
         else:
             since = loop.waiting_on_person_at
             created = loop.created_ts
+            # The budget's anchor is handed back the hold's span on the monotonic
+            # clock; ``created_ts`` keeps the wall span, which is what a restart reads.
+            _, span = hold_span(loop, PERSON_WAIT_HOLD, since, now)
             if (
                 isinstance(since, (int, float))
                 and not isinstance(since, bool)
@@ -884,6 +893,14 @@ async def _commit_person_wait(svc: AutoNudgeService, loop: NudgeLoop, *, held: b
             ):
                 created = created + (now - since)
             new = (False, 0.0, created)
+
+        def _apply() -> None:
+            loop.waiting_on_person, loop.waiting_on_person_at, loop.created_ts = new
+            if held:
+                note_hold_start(loop, PERSON_WAIT_HOLD, now)
+            else:
+                credit_held_runtime(loop, previous, span)
+
         staged = deepcopy(loop)
         staged.waiting_on_person, staged.waiting_on_person_at, staged.created_ts = new
         try:
@@ -892,7 +909,7 @@ async def _commit_person_wait(svc: AutoNudgeService, loop: NudgeLoop, *, held: b
             )
         except asyncio.CancelledError:
             # Settled before the re-raise: the write is durable, so keep it.
-            loop.waiting_on_person, loop.waiting_on_person_at, loop.created_ts = new
+            _apply()
             raise
         except Exception:
             logger.warning(
@@ -903,7 +920,7 @@ async def _commit_person_wait(svc: AutoNudgeService, loop: NudgeLoop, *, held: b
                 exc_info=True,
             )
             return False
-        loop.waiting_on_person, loop.waiting_on_person_at, loop.created_ts = new
+        _apply()
     return True
 
 
@@ -1038,7 +1055,7 @@ async def fire_now(
     WHAT THIS DELIBERATELY DOES NOT DO: it does not deliver the nudge
     itself. It re-arms through :meth:`_arm_timer`, so the cycle runs inside
     the ordinary :meth:`_timer` body — the stop sentinel, the cycle cap, the
-    wall-clock budget, the approval hold and the probe gate all apply
+    runtime budget, the approval hold and the probe gate all apply
     exactly as they do on a scheduled tick, and the delivery goes through the
     one ``_on_fire`` path. Calling :meth:`_run_fire_cycle` directly would have
     needed that whole ladder restated here, and a second copy of a
@@ -1067,7 +1084,7 @@ async def fire_now(
       SENTINEL lands: it goes through ``remove``, so the loop is gone rather
       than merely inactive.
     * **Not active** -> 409. The non-removing terminal bounds — the cycle
-      cap, the wall-clock budget and the failure stand-downs — all leave the loop
+      cap, the runtime budget and the failure stand-downs — all leave the loop
       registered but inactive, so this ONE condition covers them without
       restating the list. A manual press must not buy a turn past a bound the
       user armed.

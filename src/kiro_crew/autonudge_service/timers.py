@@ -28,8 +28,13 @@ from kiro_crew.autonudge_service.model import (
     _CONSECUTIVE_FAILURE_STANDDOWN_AFTER,
     _START_FAILURE_BACKOFF_AFTER,
     _START_FAILURE_STANDDOWN_AFTER,
+    APPROVAL_HOLD,
+    PERSON_WAIT_HOLD,
     NudgeLoop,
+    credit_held_runtime,
+    hold_span,
     is_structured_monitor_loop,
+    note_hold_start,
 )
 from kiro_crew.monitoring.models import MONITOR_STATE_VERSION, MonitorDispatchResult
 
@@ -178,10 +183,12 @@ async def _record_approval_hold(svc: AutoNudgeService, slot_key: str) -> None:
             # The writer re-raises only after the write settled: the hold is on
             # disk, so memory takes it too, and only the announcement is skipped.
             loop.approval_stalled, loop.approval_stalled_at = True, stalled_at
+            note_hold_start(loop, APPROVAL_HOLD, stalled_at)
             raise
         # Only the two hold fields are applied: a lock-free writer (the
         # turn-completion path) may have moved another field during the await.
         loop.approval_stalled, loop.approval_stalled_at = True, stalled_at
+        note_hold_start(loop, APPROVAL_HOLD, stalled_at)
     if structured:
         return
     logger.warning(
@@ -249,6 +256,10 @@ async def release_approval_hold(
             and created > 0
         ):
             created = created + held
+        previous = loop.created_ts
+        # The budget's anchor is handed back the hold's span on the monotonic clock;
+        # ``created_ts`` keeps the wall span, which is what a restart reads.
+        approval_start, span = hold_span(loop, APPROVAL_HOLD, since, now)
         staged = deepcopy(loop)
         staged.approval_stalled = False
         staged.approval_stalled_at = 0.0
@@ -256,7 +267,13 @@ async def release_approval_hold(
         # A person-wait hold that overlaps this one credits its own span on release.
         # Push its start forward by the overlap just credited here, so those seconds
         # are handed back once, not twice; its time before the overlap still counts.
+        # Its monotonic start moves by the overlap on the monotonic clock, for the
+        # same reason.
         pw_since = loop.waiting_on_person_at
+        person_start: float | None = None
+        if loop.waiting_on_person:
+            start, _ = hold_span(loop, PERSON_WAIT_HOLD, pw_since, now)
+            person_start = start + max(0.0, approval_start + span - max(start, approval_start))
         if (
             held
             and loop.waiting_on_person
@@ -266,17 +283,24 @@ async def release_approval_hold(
         ):
             pw_since += now - max(pw_since, since)
         staged.waiting_on_person_at = pw_since
+
+        def _apply(target: NudgeLoop) -> None:
+            target.approval_stalled, target.approval_stalled_at = False, 0.0
+            target.created_ts = created
+            target.waiting_on_person_at = pw_since
+            credit_held_runtime(target, previous, span)
+            if person_start is not None:
+                note_hold_start(target, PERSON_WAIT_HOLD, pw_since, mono=person_start)
+
         try:
             await self._write_monitor_snapshot_locked(
                 self._monitor_snapshot_with_replacement(loop, staged)
             )
         except asyncio.CancelledError:
             # Settled before the re-raise: the release is durable, so keep it.
-            loop.approval_stalled, loop.approval_stalled_at, loop.created_ts = False, 0.0, created
-            loop.waiting_on_person_at = pw_since
+            _apply(loop)
             raise
-        loop.approval_stalled, loop.approval_stalled_at, loop.created_ts = False, 0.0, created
-        loop.waiting_on_person_at = pw_since
+        _apply(loop)
     logger.warning(
         "AutoNudge: loop %s resumed after %.0fs paused for approval (%s)",
         loop.id,

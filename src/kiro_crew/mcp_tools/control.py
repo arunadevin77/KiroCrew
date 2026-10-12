@@ -635,12 +635,14 @@ def schemas(*, names_only: bool = False) -> list[dict[str, Any]]:
                         "minimum": 1,
                         "maximum": runtime_ceiling,
                         "description": (
-                            "Wall-clock budget in seconds, measured from when "
+                            "Runtime budget in seconds (awake time while the "
+                            "gateway runs; a restart counts the time since "
+                            "created_ts on the wall clock), measured from when "
                             "the loop is armed (default "
                             f"{min(_MONITOR_DEFAULT_MAX_RUNTIME_SECS, runtime_ceiling)}; "
                             f"configured max {runtime_ceiling}). "
                             "Unlike max_cycles this "
-                            "bounds elapsed TIME, so a loop with slow turns or "
+                            "bounds running TIME, so a loop with slow turns or "
                             "a long interval still stops on schedule. The "
                             "budget gates when turns START and re-checks the "
                             "moment a turn ends — an already-running turn is "
@@ -795,7 +797,9 @@ def schemas(*, names_only: bool = False) -> list[dict[str, Any]]:
                         "minimum": 1,
                         "maximum": runtime_ceiling,
                         "description": (
-                            "New wall-clock budget in seconds, measured from "
+                            "New runtime budget in seconds (awake time while the "
+                            "gateway runs; a restart counts the time since "
+                            "created_ts on the wall clock), measured from "
                             f"when the loop was first armed (configured max {runtime_ceiling}). "
                             "Omit to leave unchanged"
                         ),
@@ -1964,7 +1968,12 @@ def monitor_start(name: str, args: dict[str, Any]) -> str:
             + " (user messages defer a due "
             "fire to their turn's end without restarting the countdown)"
             + (f", stopping after {max_cycles} cycles" if max_cycles else ", with NO cycle cap")
-            + (f", wall-clock budget {max_runtime_secs}s" if max_runtime_secs else "")
+            + (
+                f", runtime budget {max_runtime_secs}s (awake time while the gateway "
+                "runs; a restart counts the time since created_ts on the wall clock)"
+                if max_runtime_secs
+                else ""
+            )
             + ". End your turn now. Arming happens when this turn's result is "
             "processed, so this ack cannot confirm it; the outcome is reported "
             'as a transcript notice on this session — "Automation loop armed: '

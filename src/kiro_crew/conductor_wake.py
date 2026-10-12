@@ -23,7 +23,7 @@ and still active, and firing it is the part no trigger should own a copy of.
 
 WHAT THE PUSH IS. :meth:`AutoNudgeService.fire_now`, and nothing else. It re-arms the
 loop's own timer, so the cycle runs inside the ordinary ``_timer`` body -- the stop
-sentinel, the cycle cap, the wall-clock budget, the approval stall and the probe gate all
+sentinel, the cycle cap, the runtime budget, the approval stall and the probe gate all
 apply exactly as on a scheduled tick. So this module moves a DEADLINE and decides
 nothing: whether a turn is spent is still the gate's answer, read under the conductor's
 own identity. The worker gains no handle on its conductor and sends it no payload.

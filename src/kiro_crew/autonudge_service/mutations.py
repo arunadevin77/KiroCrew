@@ -52,6 +52,9 @@ from kiro_crew.autonudge_service.model import (
     is_structured_monitor_loop,
     new_goal_token,
     reason_in,
+    restart_runtime_clock,
+    restore_runtime_anchor,
+    snapshot_runtime_anchor,
     unreadable_bound_field,
 )
 from kiro_crew.autonudge_service.subject import (
@@ -440,6 +443,9 @@ async def _add_unserialized(
             self_armed=self_armed,
             default_patrol=bool(default_patrol),
         )
+        # The budget counts from here on the monotonic clock, not from the first
+        # read a whole interval later, when the wall clock may have stepped.
+        restart_runtime_clock(loop)
         self._loops[loop.id] = loop
         # Persist WITHOUT blocking the event loop (no-blocking-call rule:
         # _write_state fsyncs, and a wedged disk must not freeze the
@@ -683,6 +689,10 @@ async def _update_unserialized(
             if loop.monitor is not None
             else None
         )
+        # The budget's anchor is keyed to ``created_ts`` and kept outside the fields
+        # ``previous`` holds, so the Resume that re-anchors it below needs its own
+        # entry in the rollback.
+        previous_anchor = snapshot_runtime_anchor(loop)
         # Set only if a retarget takes this loop's pending wake claim, so the
         # rollback below restores exactly what it removed and nothing else.
         claim_discarded_for_retarget = False
@@ -1099,7 +1109,7 @@ async def _update_unserialized(
                         # read from the snapshot because this revival has
                         # already cleared the field, OR the bound as it stands
                         # after this update would refuse the first tick anyway:
-                        # the wall clock keeps running through a pause, so a
+                        # the budget's clock keeps running through a pause, so a
                         # loop paused by hand with an hour of budget left and
                         # resumed the next day is as dead a press as one the
                         # timer stopped, and a cap raised in this same save is
@@ -1127,6 +1137,7 @@ async def _update_unserialized(
                             stopped_with == RUNTIME_BUDGET_REASON or budget_elapsed(loop)
                         ):
                             loop.created_ts = time.time()
+                            restart_runtime_clock(loop)
                 else:
                     loop.stopped_reason = stopped_reason or MANUAL_STOP_REASON
         if (
@@ -1180,6 +1191,7 @@ async def _update_unserialized(
         except BaseException:
             for field_name, value in previous.items():
                 setattr(loop, field_name, value)
+            restore_runtime_anchor(loop, previous_anchor)
             if previous_hold is not None:
                 held_on, held_digest, held_count = previous_hold
                 held_on.short_reading_digest = held_digest

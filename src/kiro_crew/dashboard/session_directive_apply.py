@@ -928,7 +928,7 @@ async def _monitor_start(
         raise _DirectiveDenied(f"Failed to start monitor loop: {error} [status {status}]")
     cap = f", stopping after {max_cycles} cycles" if max_cycles else ", with NO cycle cap"
     if max_runtime_secs:
-        cap += f", wall-clock budget {max_runtime_secs}s"
+        cap += f", runtime budget {max_runtime_secs}s"
     # Read the cadence off the ARMED loop, not off the request. This surface knows
     # something the MCP tool's own ack has to infer: whether a monitor was actually
     # attached. Reporting "re-injects every {idle_secs}s" for a gated loop is untrue --
@@ -1137,7 +1137,7 @@ async def _monitor_update(
             f"delivered cycle count ({cycle_count}), so it would deactivate "
             "without firing again. Pass a larger cap, or 0 for unlimited."
         )
-    # Spent-budget guard, same shape as the cycle-cap one: a wall-clock budget
+    # Spent-budget guard, same shape as the cycle-cap one: a runtime budget
     # at/below the loop's elapsed age deactivates it on the next timer without
     # another fire — refuse rather than promise a wake that never comes. The age
     # is the timer's own reading (``runtime_elapsed``), so the two cannot disagree.
@@ -1222,8 +1222,10 @@ async def _monitor_update(
                     )
             elif stopped_at_budget:
                 bound = (
-                    f"its {int(getattr(loop, 'max_runtime_secs', 0) or 0)}s wall-clock "
-                    "budget ran out; raise max_runtime_secs above the loop's age "
+                    f"its {int(getattr(loop, 'max_runtime_secs', 0) or 0)}s runtime "
+                    "budget (awake time while the gateway runs; a restart counts "
+                    "the time since created_ts on the wall clock) ran out; "
+                    "raise max_runtime_secs above the loop's age "
                     "(or pass 0)"
                 )
             elif stopped_at_cap:

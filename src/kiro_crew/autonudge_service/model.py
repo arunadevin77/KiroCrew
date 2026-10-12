@@ -381,7 +381,7 @@ class NudgeLoop:
     # RANDOM: a digest served beside its own redaction is an oracle for the masked span.
     # NOT PERSISTED -- re-minted on every load, so a pre-restart value cannot authorise.
     goal_token: str = ""
-    # Wall-clock budget in seconds, measured from ``created_ts`` (0 = unlimited).
+    # Runtime budget in seconds, measured from ``created_ts`` (0 = unlimited).
     # A cycle cap alone cannot bound COST: a loop whose turns are slow or whose
     # idle gap is long can run for days within its cycle budget. Anchoring on
     # the persisted ``created_ts`` (not arm time) makes the budget restart-proof
@@ -490,7 +490,7 @@ class NudgeLoop:
     # "monitor_terminal" (the watched subject merged or closed). "approval_stalled"
     # is from before approval stalls became a hold; it is still read on old rows.
     # Persisted so revival logic can distinguish a manual pause from a bound
-    # expiry — elapsed wall-clock keeps growing after a manual pause, so
+    # expiry — the elapsed runtime keeps growing after a manual pause, so
     # WITHOUT this record a paused loop whose budget has since elapsed is
     # indistinguishable from a budget-stopped one, and a budget raise would
     # resume unattended execution against the user's explicit pause.
@@ -660,7 +660,7 @@ class MonitorUpdateConflict(ValueError):
 
 
 def runtime_budget_exceeded(loop: "NudgeLoop", now: float | None = None) -> bool:
-    """True when *loop* has a wall-clock budget and it is spent.
+    """True when *loop* has a runtime budget and it is spent.
 
     Single source of truth shared by ``_timer`` (enforcement) and the expiry
     notifier (wording), so the two can never disagree on WHY a loop stopped.
@@ -682,17 +682,103 @@ def runtime_elapsed(loop: "NudgeLoop", created_ts: float) -> float:
 
     ``created_ts`` is wall-clock and persisted, which is what lets the budget
     survive a restart. The time spent is read from it once per process -- on
-    the first read after a load, or after ``created_ts`` is re-anchored -- and
-    advanced on the monotonic clock from there, so a wall-clock step while the
-    gateway runs neither spends the budget nor gives it back. The anchor lives
-    in the instance's ``__dict__``, outside the dataclass fields, so it is
-    never serialized and every load takes a fresh one.
+    the first read after a load -- and advanced on the monotonic clock from
+    there, so a wall-clock step while the gateway runs neither spends the budget
+    nor gives it back. A writer that moves ``created_ts`` in this process moves
+    the anchor with it (:func:`restart_runtime_clock`,
+    :func:`credit_held_runtime`); a ``created_ts`` the anchor was not taken for
+    is read again as after a load. The anchor lives in the instance's
+    ``__dict__``, outside the dataclass fields, so it is never serialized and
+    every load takes a fresh one.
     """
-    anchor = loop.__dict__.get("_runtime_anchor")
+    anchor = loop.__dict__.get(_RUNTIME_ANCHOR)
     if anchor is None or anchor[0] != created_ts:
         anchor = (created_ts, max(0.0, time.time() - created_ts), time.monotonic())
-        loop.__dict__["_runtime_anchor"] = anchor
-    return float(anchor[1] + (time.monotonic() - anchor[2]))
+        loop.__dict__[_RUNTIME_ANCHOR] = anchor
+    return max(0.0, float(anchor[1] + (time.monotonic() - anchor[2])))
+
+
+#: Where :func:`runtime_elapsed` keeps the budget's anchor on a loop, and where
+#: :func:`note_hold_start` keeps each hold's monotonic start. Both live in the
+#: instance's ``__dict__``, outside the dataclass fields, so neither is stored.
+_RUNTIME_ANCHOR = "_runtime_anchor"
+_HOLD_STARTS = "_hold_monotonic_starts"
+#: The two holds that hand their time back to the budget when they end.
+APPROVAL_HOLD = "approval"
+PERSON_WAIT_HOLD = "person_wait"
+
+
+def restart_runtime_clock(loop: "NudgeLoop") -> None:
+    """Anchor the budget at the ``created_ts`` just written as now: nothing spent yet.
+
+    For the writers that set ``created_ts`` to the current time (a new loop, and a
+    resume that re-anchors a spent budget), so the first read does not take the
+    spent time from the wall clock, which may have stepped since the write.
+    """
+    loop.__dict__[_RUNTIME_ANCHOR] = (loop.created_ts, 0.0, time.monotonic())
+
+
+def snapshot_runtime_anchor(loop: "NudgeLoop") -> tuple[float, float, float] | None:
+    """The budget's anchor on *loop* as it stands, or None before its first read."""
+    anchor: tuple[float, float, float] | None = loop.__dict__.get(_RUNTIME_ANCHOR)
+    return anchor
+
+
+def restore_runtime_anchor(loop: "NudgeLoop", anchor: tuple[float, float, float] | None) -> None:
+    """Put back an anchor :func:`snapshot_runtime_anchor` returned.
+
+    For a rollback that restores ``created_ts``. The anchor is keyed to the
+    ``created_ts`` it was taken for and lives outside the dataclass fields such a
+    rollback restores, so a writer that re-anchored (:func:`restart_runtime_clock`)
+    and then failed would leave an anchor keyed to a ``created_ts`` the loop does not
+    hold. :func:`runtime_elapsed` would read the spent time from the wall clock again,
+    with any step the wall clock took since the anchor it replaced was taken. None is
+    put back as found: :func:`runtime_elapsed` reads it as it reads no anchor.
+    """
+    loop.__dict__[_RUNTIME_ANCHOR] = anchor
+
+
+def note_hold_start(
+    loop: "NudgeLoop", kind: str, since: float, *, mono: float | None = None
+) -> None:
+    """Pair the start of *loop*'s *kind* hold, wall stamp *since*, with a monotonic reading."""
+    loop.__dict__.setdefault(_HOLD_STARTS, {})[kind] = (
+        since,
+        time.monotonic() if mono is None else mono,
+    )
+
+
+def hold_span(loop: "NudgeLoop", kind: str, since: float, now: float) -> tuple[float, float]:
+    """The monotonic start of *loop*'s *kind* hold, and how many seconds it has lasted.
+
+    Measured from :func:`note_hold_start`'s reading when the hold began in this
+    process. A hold that began before a restart has none, and the wall clock's
+    span from *since* to *now* is all there is; a stamp that is not a positive
+    number at or before *now* spans nothing.
+    """
+    mono = time.monotonic()
+    start = loop.__dict__.get(_HOLD_STARTS, {}).get(kind)
+    if start is not None and start[0] == since:
+        return start[1], max(0.0, mono - start[1])
+    if isinstance(since, bool) or not isinstance(since, (int, float)) or not 0 < since <= now:
+        return mono, 0.0
+    return mono - (now - since), now - since
+
+
+def credit_held_runtime(loop: "NudgeLoop", previous_created: float, held: float) -> None:
+    """Hand *held* seconds of a hold that just ended back to the budget's anchor.
+
+    The caller has moved ``created_ts`` forward by the hold's wall-clock span,
+    which is what a restart reads. The anchor, which the budget reads while the
+    gateway runs, moves by *held*, the span :func:`hold_span` measured, and is
+    keyed to the new ``created_ts``, so :func:`runtime_elapsed` does not re-read
+    the spent time from the wall clock: a wall-clock step before or during the
+    hold neither spends the budget nor gives it back. An anchor this process has
+    not taken for *previous_created* is left to the first read.
+    """
+    anchor = loop.__dict__.get(_RUNTIME_ANCHOR)
+    if anchor is not None and anchor[0] == previous_created:
+        loop.__dict__[_RUNTIME_ANCHOR] = (loop.created_ts, anchor[1] - held, anchor[2])
 
 
 def cap_reached(loop: "NudgeLoop") -> bool:
@@ -711,7 +797,7 @@ def cap_reached(loop: "NudgeLoop") -> bool:
 
 
 def budget_elapsed(loop: "NudgeLoop", now: float | None = None) -> bool:
-    """True when *loop* has a wall-clock budget and the clock has run it out.
+    """True when *loop* has a runtime budget and the clock has run it out.
 
     ``runtime_budget_exceeded`` asked at resume time, with the same defensive
     reads as :func:`cap_reached` and for the same reason. The clock keeps running

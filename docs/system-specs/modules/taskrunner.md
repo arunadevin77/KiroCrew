@@ -785,6 +785,8 @@ A partial example; each run also carries `name`, `auto_approve`,
 
 `task_models.py` owns retry, recovery, replan, total-task, timeout, token-budget, progress-file, and session-prefix constants; `TaskRunner` owns the concurrent-run fallback and persistence filename. `task_executor.execute_task()`, `TaskRunner._try_replan()`, `TaskRunner._watchdog_loop()`, and `task_executor.run_tests()` consume those bounds. `test_scenarios_v2_logic.py` pins retry exhaustion and `test_taskrunner.py::test_replan_blocked_by_step_limit` pins the total-task boundary, so documentation names the enforcement seams instead of copying tunables.
 
+The global timeout and the watchdog's stall bounds compare a run's AGE, not two wall-clock readings. `started_at` and `last_task_time` stay wall-clock for display and `runs.json`; `_MonotonicAge` keeps a monotonic reading of each. The one for `started_at` is taken where the run is stamped (a new run, a restart, a retry) and shared by `_execute_tasks` and `_watchdog_loop`, so the executor and the watchdog cannot disagree, and a wall-clock step neither times out or stall-cancels a healthy run nor spares one past its bound. The age is awake time, like the steps' own `asyncio` deadlines: `time.monotonic()` stops while the host is suspended on Linux and macOS, so a suspend there is neither timeout nor stall time, and it keeps counting on Windows. `test_taskrunner.py::TestGlobalTimeoutClock` and `TestWatchdog::test_watchdog_measures_stalls_on_the_monotonic_clock` pin the step cases; a suspend on Linux or macOS reads as their forward step, the wall clock moving while the monotonic clock does not.
+
 ## Test verification
 
 Execution and verification are separate outcomes. `TaskStatus.PASSED` says a

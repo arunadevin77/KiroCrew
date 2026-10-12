@@ -8960,7 +8960,7 @@ class GatewayOrchestrator:
             # SHORT of its goal. A terminal subject is not short of anything, so it
             # outranks all of them -- expressed ONCE here rather than as a guard added to
             # each branch after a reviewer finds it, which is how the cap and then the
-            # wall-clock budget each came to preempt it in turn.
+            # runtime budget each came to preempt it in turn.
             #
             # An OWED terminal turn is terminal news too, and it is the third way this
             # same precedence has been lost. A CHANNEL-bound loop deliberately does not
@@ -8986,7 +8986,9 @@ class GatewayOrchestrator:
                 title = "Monitoring loop spent its time budget"
                 body = (
                     f"The loop stopped after {loop.cycle_count} cycles because "
-                    f"its {loop.max_runtime_secs}s wall-clock budget ran out "
+                    f"its {loop.max_runtime_secs}s runtime budget (awake time "
+                    "while the gateway runs; a restart counts the time since "
+                    "created_ts on the wall clock) ran out "
                     "without it reporting done, so its goal may still be "
                     "unmet. Restart it from the goal popover, or ask the agent "
                     "to raise the budget (monitor_update)."

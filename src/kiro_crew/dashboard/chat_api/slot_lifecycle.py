@@ -154,7 +154,7 @@ async def _restore_slot_nudge_loop(
     The replacement carries the REMAINING budget, never a fresh one. ``add()``
     mints a new id and a new ``created_ts``, so the spent allowance is subtracted
     here instead: a failed close must not buy unattended cycles the user never
-    granted. A loop whose cycle cap or wall-clock budget is already spent is not
+    granted. A loop whose cycle cap or runtime budget is already spent is not
     restored at all (it was one tick from terminal), and neither is a paused one
     — reviving that would override an explicit stop.
     """
