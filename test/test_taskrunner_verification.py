@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import sys
 import unittest.mock
 from pathlib import Path
@@ -122,6 +123,11 @@ _NEEDS_GOOD_IMPL = (
     "if pathlib.Path('impl.txt').read_text(encoding='utf-8') != 'good':\n"
     "    print('AssertionError: impl.txt is not good')\n"
     "    sys.exit(1)\n"
+)
+
+# A sandbox wrapper (here env) runs ahead of the program only on POSIX.
+_MISSING_PROGRAMS = ["absolute path", "relative path"] + (
+    ["name behind env"] if os.name == "posix" else []
 )
 
 
@@ -245,27 +251,85 @@ class TestRealVerdicts:
         assert "1 passed" in seen[0][1] and "1 failed" not in seen[0][1]
 
     @pytest.mark.asyncio
-    async def test_a_missing_executable_reports_no_success(self, tmp_path, monkeypatch) -> None:
-        # With no spawn shim (Windows), the missing program raises in the parent.
-        # Where the shim runs, its own exec fails and the command exits non-zero.
-        from kiro_crew import sandbox
-
-        monkeypatch.setattr(sandbox, "spawn_shim_argv", lambda *a, **k: ())
+    async def test_a_missing_executable_reports_no_success(self, tmp_path) -> None:
+        # The same verdict on every platform, with the spawn shim in place on POSIX.
         ok, output = await task_executor.run_tests([str(tmp_path / "no-such-test-tool")], tmp_path)
         assert ok is None
         assert "not verified" in output
 
     @pytest.mark.asyncio
-    async def test_a_missing_working_directory_is_never_a_pass(self, tmp_path: Path) -> None:
-        # POSIX reports a missing cwd as FileNotFoundError, which run_tests maps to None.
-        # Windows raises NotADirectoryError out of CreateProcess, which fails the step.
-        try:
-            ok, output = await task_executor.run_tests([sys.executable, "-V"], tmp_path / "gone")
-        except NotADirectoryError:
-            assert os.name == "nt"
-            return
+    async def test_a_spawn_that_raises_not_found_reports_no_success(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        # Windows has no spawn shim: its CreateProcess raises for a missing program.
+        spawn = AsyncMock(side_effect=FileNotFoundError(2, "No such file or directory", "t"))
+        monkeypatch.setattr(task_executor, "create_subprocess_limited", spawn)
+        ok, output = await task_executor.run_tests([sys.executable, "-V"], tmp_path)
         assert ok is None
         assert "not verified" in output
+        spawn.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["missing", "a file"])
+    async def test_a_work_dir_that_is_missing_or_a_file_is_never_a_pass(
+        self, tmp_path: Path, kind
+    ) -> None:
+        work_dir = tmp_path / "gone"
+        if kind == "a file":
+            work_dir.write_text("", encoding="utf-8")
+        ok, output = await task_executor.run_tests([sys.executable, "-V"], work_dir)
+        assert ok is None
+        assert "not verified" in output
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("required", [False, True], ids=["optional", "required"])
+    @pytest.mark.parametrize("program", _MISSING_PROGRAMS)
+    async def test_a_missing_program_is_skipped_after_one_agent_turn(
+        self, tmp_path, monkeypatch, program, required
+    ) -> None:
+        # On POSIX the shim, or a sandbox wrapper such as env, execs the program
+        # in the child, where a missing one is only an exit status (the shim's 127).
+        argv0 = {
+            "absolute path": str(tmp_path / "no-such-test-tool"),
+            "relative path": "bin/no-such-test-tool",
+            "name behind env": "no-such-test-tool",
+        }[program]
+        if program == "name behind env":
+            env_bin = shutil.which("env")
+            assert env_bin is not None
+
+            async def _wrapped(argv, **_kw):
+                env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")}
+                return [env_bin, *argv], env, None
+
+            monkeypatch.setattr(task_executor, "sandboxed_spawn_argv_async", _wrapped)
+        # Count the step's own turns; a step that passes also gets a review turn.
+        monkeypatch.setattr(task_executor, "self_review", AsyncMock(return_value=True))
+        turns: list[str] = []
+        runner = TaskRunner(
+            sessions=_sessions(lambda: turns.append("turn")),
+            auto_test=True,
+            work_dir=tmp_path,
+            test_cmd=[argv0, "-q"],
+            require_verification=required,
+        )
+        step = Step(index=1, title="Impl", description="d")
+        ok = await runner._execute_single_task(_run(tmp_path, step), step)
+        assert (turns, step.attempts) == (["turn"], 1)
+        assert step.verification == "skipped"
+        assert ok == (not required)
+        assert step.status == (StepStatus.FAILED if required else StepStatus.PASSED)
+
+    @pytest.mark.parametrize("program", ["check-tool", "bin/check-tool"], ids=["name", "path"])
+    def test_a_program_the_child_would_find_passes_the_check(self, tmp_path, program) -> None:
+        # Resolved as the spawn resolves it: a relative PATH entry and a relative
+        # path both from the work directory, not the gateway's cwd.
+        tool = tmp_path / "bin" / "check-tool"
+        tool.parent.mkdir()
+        tool.write_text("", encoding="utf-8")
+        tool.chmod(0o755)
+        env = {"PATH": "bin"}
+        assert task_executor._test_command_start_problem([program], tmp_path, env) == ""
 
 
 def _stub_runner(tmp_path: Path, result, *, auto_test=True, cmd=("t",), required=False):

@@ -10,7 +10,9 @@ import asyncio
 import functools
 import hashlib
 import logging
+import os
 import re
+import shutil
 import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
@@ -64,6 +66,7 @@ from kiro_crew.providers.base import (
 from kiro_crew.recovery.ladder import L3_ACP_RUNTIME, default_ladder
 from kiro_crew.safety_override import safety_override
 from kiro_crew.sandbox import (
+    _resolve_spawn_target,
     create_subprocess_limited,
     sandboxed_spawn_argv,
     sandboxed_spawn_argv_async,
@@ -1712,6 +1715,30 @@ def _close_proc_pipes(proc: asyncio.subprocess.Process) -> None:
             logger.debug("run_tests: closing proc transport failed", exc_info=True)
 
 
+def _test_command_start_problem(test_cmd: list[str], work_dir: Path, env: dict[str, str]) -> str:
+    """Why *test_cmd* cannot start in *work_dir*, or "" when nothing says so.
+
+    On POSIX the program is exec'd in the child, by the spawn shim or by a
+    sandbox wrapper, where a missing one is only an exit status (the shim's 127).
+    So it is resolved here first, the way the child resolves it: a bare name on
+    the child's PATH with the spawn's own resolver, a path from the work
+    directory. On Windows CreateProcess resolves the program in the parent and
+    raises FileNotFoundError itself.
+    """
+    if not os.path.isdir(work_dir):
+        return f"working directory {work_dir} is not a directory"
+    if not platform_compat.IS_POSIX:
+        return ""
+    program = test_cmd[0]
+    try:
+        _resolve_spawn_target(test_cmd, env, work_dir)  # a bare name; a path comes back as is
+    except FileNotFoundError:
+        return f"{program!r} is not on PATH"
+    if os.sep in program and shutil.which(os.path.join(work_dir, program)) is None:
+        return f"{program!r} is not an executable file"
+    return ""
+
+
 async def run_tests(test_cmd: list[str], work_dir: Path) -> tuple[bool | None, str]:
     """Run the configured test command. Returns (success, output).
 
@@ -1725,6 +1752,13 @@ async def run_tests(test_cmd: list[str], work_dir: Path) -> tuple[bool | None, s
     )
     proc: asyncio.subprocess.Process | None = None
     try:
+        # Stats the working directory and PATH entries, so it runs off the loop.
+        problem = await asyncio.to_thread(_test_command_start_problem, test_cmd, work_dir, env)
+        if problem:
+            logger.warning(
+                "TaskRunner: test command could not start (%s); step not verified", problem
+            )
+            return None, f"test command could not start: {problem} (not verified)"
         proc = await create_subprocess_limited(
             *argv,
             cwd=str(work_dir),

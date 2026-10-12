@@ -813,11 +813,20 @@ loads as empty without a warning.
 The exit status alone is the verdict. `run_tests` keeps only the tail of a
 failing log, so output text never decides it. A runner that exits 0 without
 running a test (pytest with every test skipped, for example) therefore reads
-`passed`; choose a command that fails on zero tests. Where the spawn shim runs, a
-missing program is the shim's failed exec and exits non-zero (`failed`);
-`run_tests` returns `None` instead of a success boolean only when the parent's
-exec itself raises `FileNotFoundError`. A `failed` verdict takes the existing
-bounded retry path (`MAX_RETRIES`, loop detection).
+`passed`; choose a command that fails on zero tests. A `failed` verdict takes the
+existing bounded retry path (`MAX_RETRIES`, loop detection).
+
+`run_tests` returns `None` instead of a success boolean when the command could
+not start, the same on every platform. Before the spawn it checks that the work
+directory is a directory and, on POSIX, that `argv[0]` resolves the way the child
+resolves it: a bare name on the child's `PATH` with the spawn's own resolver
+(`sandbox._resolve_spawn_target`), a path from the work directory. On POSIX the
+program is exec'd in the child, by the spawn shim or by a sandbox wrapper, so a
+missing one would otherwise be only an exit status (the shim's 127) and read
+`failed`. On Windows the parent's `CreateProcess` resolves the program and raises
+`FileNotFoundError`, which maps to `None` too. An exec that fails in the child
+after the check (a script whose `#!` interpreter is missing, for example) still
+exits non-zero and reads `failed`.
 
 With `taskrunner.require_verification` off (the default), a `skipped` or
 `not_configured` step still passes as before and reports its verdict. With it
