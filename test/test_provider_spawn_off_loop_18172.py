@@ -301,11 +301,26 @@ class TestBoundsAndCleanupArePreserved:
     async def test_cancellation_during_the_spawn_still_reaps(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A cancel landing WHILE CreateProcess is in flight must not orphan the child."""
+        """A cancel landing WHILE CreateProcess is in flight must not orphan the child.
+
+        The spawn stand-in returns only once the worker's cancel flag is set, so
+        the cancel has landed mid-spawn by construction. ``task.cancel()`` only
+        schedules the cancel: the flag is set when the awaiting coroutine runs its
+        ``except CancelledError`` on a later loop turn, and a worker thread released
+        on a clock can run ahead of that turn and drive the empty-piped child to a
+        normal exit with nothing left to reap.
+        """
         self._patch_windows(monkeypatch)
         reaped: list[int] = []
         in_spawn = threading.Event()
-        proceed = threading.Event()
+        handle_box: dict[str, Any] = {}
+        real_drain = runner._oneshot_drain_limited
+
+        def _capture_handle(argv, env, max_output_bytes, handle):
+            # Runs on the worker thread before the spawn: expose the cancel flag
+            # the spawn stand-in below waits on.
+            handle_box["handle"] = handle
+            return real_drain(argv, env, max_output_bytes, handle)
 
         class _SlowSpawnPopen:
             pid = _PID_BLOCK
@@ -317,12 +332,14 @@ class TestBoundsAndCleanupArePreserved:
                 return 0
 
         def _slow_popen(*_a, **_k):
-            # Stand in for a multi-second CreateProcess: block here so the cancel
-            # lands before the proc is published to the handle.
+            # Stand in for a multi-second CreateProcess: return only once the
+            # cancel flag is set, so the cancel lands before the proc is published
+            # to the handle. The ceiling turns a lost cancel into a named failure.
             in_spawn.set()
-            proceed.wait(timeout=10)
+            handle_box["handle"]["cancel"].wait(timeout=10)
             return _SlowSpawnPopen()
 
+        monkeypatch.setattr(runner, "_oneshot_drain_limited", _capture_handle)
         monkeypatch.setattr(runner, "popen_limited", _slow_popen)
         monkeypatch.setattr(
             platform_compat, "terminate_and_reap_sync", lambda proc, **k: reaped.append(proc.pid)
@@ -331,7 +348,6 @@ class TestBoundsAndCleanupArePreserved:
         task = asyncio.create_task(runner._run_provider("gh", parse=_parse_ok))
         await asyncio.to_thread(in_spawn.wait, 10)
         task.cancel()  # cancel while the spawn is still in flight
-        proceed.set()  # let the spawn return; the worker must then see the cancel
         with pytest.raises(asyncio.CancelledError):
             await task
         assert reaped == [_PID_BLOCK], "a cancel during the spawn orphaned the child"
