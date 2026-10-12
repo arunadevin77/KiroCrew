@@ -28,8 +28,6 @@ import {
 } from './websocket/contextTraceRefresh'
 import {
   fetchingAnyFoldQuery,
-  invalidateBelowFloor,
-  recordSlotProjectionFloor,
   resetSlotProjectionRevisions,
   seedFoldedProjection,
   takeFoldedSlotProjection,
@@ -99,13 +97,9 @@ export {
   resetContextTraceRefresh,
 } from './websocket/contextTraceRefresh'
 export {
-  baselineOrHeld,
   fetchingAnyFoldQuery,
-  invalidateBelowFloor,
-  recordSlotProjectionFloor,
   resetSlotProjectionRevisions,
   seedFoldedProjection,
-  slotProjectionFloor,
   takeFoldedSlotProjection,
 } from './websocket/slotProjection'
 
@@ -679,12 +673,12 @@ export function useWebSocket() {
             break
           }
           case 'slot_projection/subscribed':
-            // The revision floor, sent before this tab issues any baseline read.
-            // It carries no values, but a read that completed before it arrived
-            // may hold a board below the new floor, and nothing else would move
-            // that board: so every such board is re-read.
-            recordSlotProjectionFloor(data)
-            invalidateBelowFloor(queryClient)
+            // The revisions this process has published per cell, carrying no
+            // values. Nothing acts on it: a revision this tab has not received
+            // the value for is not a floor it may judge a read or a frame by,
+            // and the catch-up it used to trigger is already covered -- a
+            // reconnect invalidates the whole `command-center` prefix, and the
+            // work board pulls on its own timer besides.
             break
           case 'slot_projection': {
             // A slot's crew log grew. A work board folds its conductor's units

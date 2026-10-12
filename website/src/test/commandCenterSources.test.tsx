@@ -4,7 +4,9 @@ import { act, waitFor } from '@testing-library/react'
 import { focusManager, useQueryClient } from '@tanstack/react-query'
 import { createTestStore, renderHookWithProviders } from './helpers'
 import { api } from '../api/client'
-import { missingSourcesNotice, useCommandCenter } from '../pages/chat/command-center/useCommandCenter'
+import { CREW_BOARD_POLL_MS } from '../api/crewBoard'
+import { resetSlotProjectionRevisions, seedFoldedProjection, takeFoldedSlotProjection } from '../hooks/useWebSocket'
+import { missingSourcesNotice, useCommandCenter, WORK_BOARD_PULL_MS } from '../pages/chat/command-center/useCommandCenter'
 import { fmtList } from '../i18n/format'
 import { i18nT } from '../i18n/t'
 import { markQuestionSettled, setQuestionRequestInFlight } from '../store/chatSlice'
@@ -53,18 +55,66 @@ describe('task dashboard sources and containment', () => {
     expect(result.current.updatedAt).toBe(0)
   })
 
-  it('polls no source in any scope, leaving refresh to the frames that announce changes', async () => {
+  it('pulls the work board on a clock and polls no other source', async () => {
+    // The decision sources are refreshed by the frame that announces each of
+    // them, which is enough when the only failure is a missed frame. The work
+    // board also PULLS, so it catches up with the ledger whether or not a push
+    // arrives -- the one thing a client cannot be left waiting for.
     const intervals = (client: ReturnType<typeof useQueryClient>) => client.getQueryCache().findAll({ queryKey: ['command-center'] })
-      .flatMap(q => q.observers.map(o => o.options.refetchInterval))
+      .flatMap(q => q.observers.map(o => [q.queryKey, o.options.refetchInterval, o.options.enabled] as const))
     for (const [root, scope] of [['root', 'task'], [null, 'fleet']] as const) {
       const view = renderHookWithProviders(() => ({ ...useCommandCenter(root, true, scope), queryClient: useQueryClient() }), { store: store() })
       await waitFor(() => expect(view.result.current.loading).toBe(false))
       const seen = intervals(view.result.current.queryClient)
       expect(seen.length).toBeGreaterThanOrEqual(2)
-      expect(seen.every(i => !i)).toBe(true)
+      const isWork = (key: readonly unknown[]) => key[2] === 'work'
+      for (const [key, interval] of seen) {
+        expect(interval, String(key)).toBe(isWork(key) ? WORK_BOARD_PULL_MS : undefined)
+      }
+      // The fleet page reads no per-session board, so its work query is disabled
+      // and the interval on it never fires.
+      expect(seen.filter(([key]) => isWork(key)).map(([, , enabled]) => enabled)).toEqual([scope === 'task'])
       view.unmount()
     }
     expect(api.pendingQuestions).toHaveBeenCalledTimes(2)
+  })
+
+  it('pulls at the cadence the Crew Board page already re-reads the same board', async () => {
+    // Not a figure chosen here: one dataset, one cadence, kept in step with the
+    // other surface that reads it.
+    expect(WORK_BOARD_PULL_MS).toBe(CREW_BOARD_POLL_MS)
+  })
+
+  it('applies the newest read even when a frame already applied a HIGHER revision', async () => {
+    // THE FIX. A pushed frame at revision 9 is applied; the server then answers a
+    // read at revision 2, because a revision belongs to the process that folded
+    // and orders frames, not reads. The read is the server's own current answer,
+    // so it becomes the board. Gating it instead left the panel on the pushed
+    // value with nothing able to correct it: the board read 4 items while the
+    // ledger held 5, and stayed there.
+    resetSlotProjectionRevisions()
+    const initial = store().getState()
+    const solo = createTestStore({ ...initial, dashboard: { ...initial.dashboard, slots: [{ key: 'root', messages: 0, running: true }] } })
+    const pushed = [{ item_id: 'a', title: 'pushed', state: 'open' }]
+    const read = [{ item_id: 'a', title: 'pushed', state: 'open' }, { item_id: 'b', title: 'fifth item', state: 'open' }]
+    vi.mocked(api.sessionWorkProjection).mockResolvedValue({ value: { items: [] }, revision: 1 })
+    const view = renderHookWithProviders(() => ({ ...useCommandCenter('root'), queryClient: useQueryClient() }), { store: solo })
+    await waitFor(() => expect(view.result.current.loading).toBe(false))
+
+    const frame = takeFoldedSlotProjection({ slot: 'root', fold: 'work', revision: 9, value: { items: pushed } })
+    expect(frame.kind).toBe('folded')
+    if (frame.kind !== 'folded') throw new Error('expected a folded frame')
+    act(() => { seedFoldedProjection(view.result.current.queryClient, 'root', frame.frame) })
+    await waitFor(() => expect(view.result.current.workItems.map(w => w.item_id)).toEqual(['a']))
+
+    vi.mocked(api.sessionWorkProjection).mockResolvedValue({ value: { items: read }, revision: 2 })
+    await act(async () => {
+      await view.result.current.queryClient.refetchQueries({ queryKey: ['command-center', 'root', 'work'], exact: true })
+    })
+    await waitFor(() => expect(view.result.current.workItems.map(w => w.item_id)).toEqual(['a', 'b']))
+    // And the query holds the response itself, not a value kept in its place.
+    expect(view.result.current.queryClient.getQueryData(['command-center', 'root', 'work']))
+      .toEqual({ value: { items: read }, revision: 2 })
   })
 
   it('finds a slot\'s team roots by walking its creators, stopping on a cycle', () => {

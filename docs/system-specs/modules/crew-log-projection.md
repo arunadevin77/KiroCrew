@@ -1154,21 +1154,22 @@ Three properties:
   socket.
 
 **A revision orders frames within ONE gateway process**, and is not comparable across
-processes: a restarted gateway numbers from 1 again, below every floor a tab kept. So
+processes: a restarted gateway numbers from 1 again, below every number a tab kept. So
 every (re)connect re-bases the tab. It clears its own ledger when the socket opens
-(`resetSlotProjectionRevisions`), REPLACES its floors with the `slot_projection/subscribed`
-frame the new process sends -- never merging them with the old ones -- and re-reads the
-crew-log panel once, so the session folds' cached revisions come from the process now
-serving. The counter is not persisted, because nothing outside one process orders by it.
+(`resetSlotProjectionRevisions`) and re-reads the crew-log panel once, so the session
+folds' cached revisions come from the process now serving. The counter is not
+persisted, because nothing outside one process orders by it.
 
 **The slot frame.** One kind, `slot_projection`, in two shapes. `{slot}` alone is the original
 growth signal and still means "re-read this slot". `{slot, fold, revision, value}` is what
 an eager advance sends. The client keeps the highest revision per (slot, fold), discards
 anything lower OR equal, and seeds its own cache from the value -- so the read is removed
-rather than made cheaper. The seed never moves a cached value backwards: a REST baseline
-raises no floor, so a delayed frame can pass the floor and still be older than what the
-cache holds, and then the held value stays. A fold the client caches under no key of its own falls through to
-the invalidate path, so its reader still learns the board moved.
+rather than made cheaper. The seed never moves a cached value backwards: a REST read
+records no revision in the client's frame ledger, so a delayed frame can pass that
+ledger and still be older than what the cache holds, and then the held value stays --
+the check is against the CACHED value, which is the only thing that knows. A fold the
+client caches under no key of its own falls through to the invalidate path, so its
+reader still learns the board moved.
 
 **A dropped push is safe**, which is the property the dropped WAKE already had and the one
 this must not spend. A listener that raises, a closed loop, a client that reconnects: each
@@ -1178,16 +1179,22 @@ because it DROPS a cell -- a frame carrying the pre-drop value would say the boa
 to what the client already holds, and one carrying an empty value would claim the record is
 empty. For a SESSION fold it publishes the closing value first, because those folds read it.
 
-**The subscribe floor.** A socket that opens is sent `slot_projection/subscribed`,
-`{revisions: {slot: {fold: revision}}}`, BEFORE it issues any baseline read: the newest
-revision this process has published per cell. A baseline read already on the wire
-resolves into the same cache entry a pushed frame writes, and it resolves LATER, so
-without a floor established first an older response wins by arriving last. The client
-discards any frame at or below its floor and refuses to let a baseline response older
-than it stand: with a value held, the held value stays; with nothing held, the response
-is not kept either and the query reads once more (`StaleBaselineError`, answered by the
-query client's retry). It carries revisions, never values: the tab still reads its own
-baseline.
+**THE REVISION ORDERS FRAMES AND NEVER READS.** The client keeps the highest revision
+per (slot, fold) that a FRAME actually delivered to it, and drops a frame at or below
+it. A REST response is applied whatever revision it carries: the newest read always
+wins. The reason is what the two failures cost. A read gated against a revision the
+socket announced can refuse the server's own current answer, and then nothing is left
+to correct the board -- a panel showing 4 items against a ledger of 5 stays there, and
+a client that can be stuck indefinitely is not acceptable. A board that is briefly
+behind is: the reader notices, and the panel's own pull re-reads. So the dashboard's
+work board also PULLS on a clock (`WORK_BOARD_PULL_MS`, the same cadence the Crew Board
+page re-reads the same board at), and the push is the fast path rather than the only
+channel. A socket that opens is still sent `slot_projection/subscribed`,
+`{revisions: {slot: {fold: revision}}}`: the newest revision this process has published
+per cell, carrying no values. The client acts on none of it -- a revision it has not
+received the value for is not something it may judge a read or a frame by -- and its
+catch-up comes from the reconnect's own invalidate of the whole `command-center` prefix
+plus the pull.
 
 Nothing is added to the append path: the event is built on the worker thread, and
 `on_fold_advanced` hands it to the loop that owns the sockets exactly as `notify` does.

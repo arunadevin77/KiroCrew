@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../api/client'
+import { CREW_BOARD_POLL_MS } from '../../../api/crewBoard'
 import { fmtList } from '../../../i18n/format'
 import { i18nT } from '../../../i18n/t'
 import { useAppDispatch, useAppSelector } from '../../../store'
@@ -8,11 +9,29 @@ import { isAnsweredQuestionEnding, markQuestionSettled } from '../../../store/ch
 import { answersAsText, questionName } from '../../../utils/questionAnswers'
 import { restoreToComposer } from '../../../utils/composerRestore'
 import type { SubagentActivity } from '../../../types'
-import { baselineOrHeld } from '../../../hooks/useWebSocket'
 import { buildCommandCenter, effectiveApprovalMode, scopedSlots, slotKey, type PendingQuestion, type WorkItem } from './model'
 
 /** The work board as its route serves it: the folded value plus its revision. */
 type WorkProjection = { value?: { items: WorkItem[]; omitted?: number }; revision?: number }
+
+/** How often the panel re-reads the work board on its own.
+ *
+ *  A PULL, not a push. Every other source here is refreshed by the frame that
+ *  announces its change, which is enough for a source whose only failure is a
+ *  missed frame. The work board is different: it is a FOLD of a growing log, the
+ *  reader is often an agent watching its own items, and a board that sits behind
+ *  the ledger is worse than one re-read for nothing. So this board asks, on a
+ *  clock, whatever the socket has or has not said.
+ *
+ *  The number is the Crew Board page's own, because this is the same board read
+ *  by a second surface and two cadences for one dataset is a number to keep in
+ *  step rather than a choice to make twice. Its figure: slow enough to cost
+ *  nothing, fast enough that a decision request is noticed while the person is
+ *  still at the desk. The socket remains the fast path; this is the backstop.
+ *
+ *  Background ticks are left off (react-query's default), so a hidden tab costs
+ *  nothing and re-reads when it is looked at again. */
+export const WORK_BOARD_PULL_MS = CREW_BOARD_POLL_MS
 
 /** Names of the optional sources that can fail. Literal keys, so the catalog
  * tooling sees every one. */
@@ -34,10 +53,11 @@ const questionId = (q: PendingQuestion) => q.ask_id ? JSON.stringify(['ask', q.a
   : JSON.stringify([slotKey(q.slot), q.card_id || (q.followUp ? 'follow-up' : '')])
 
 /** Shared query keys let the panel and the fleet page observe one read, not one per
- * worker. Nothing here polls: every source is refreshed by the frame that announces
- * its change (`approval*`, `question_card*`, the crew log's `slot_projection` for the
- * work board, workflow events into the store) and all of them again on reconnect, so
- * an open chat tab costs no periodic requests. */
+ * worker. The decision sources do not poll: `approval*`, `question_card*` and the
+ * workflow events each refresh the source they announce, and a reconnect refreshes
+ * all of them. The WORK BOARD is the exception and pulls on a clock as well as
+ * taking its `slot_projection` frames (see WORK_BOARD_PULL_MS), so it catches up
+ * whether or not a push lands. */
 export function useCommandCenter(root: string | null, enabled = true, scope: 'task' | 'fleet' = 'task') {
   const dispatch = useAppDispatch()
   const slots = useAppSelector(s => s.dashboard.slots)
@@ -48,9 +68,6 @@ export function useCommandCenter(root: string | null, enabled = true, scope: 'ta
   const liveWorkflows = useAppSelector(s => s.chat.workflowRuns)
   const connected = useAppSelector(s => s.dashboard.connected)
   const fleet = scope === 'fleet'
-  // Read inside the work query's own `queryFn`, to compare a baseline response
-  // against the value a push may already have put in this key.
-  const queryClient = useQueryClient()
   const scoped = useMemo(() => fleet ? slots : root ? scopedSlots(slots, root) : [], [slots, root, fleet])
   const canRead = enabled && (fleet || !!root && scoped.length > 0)
   // The app-wide policy is never-stale; a finite staleTime here made every
@@ -150,15 +167,15 @@ export function useCommandCenter(root: string | null, enabled = true, scope: 'ta
   const workflows = useQuery({ queryKey: ['command-center', 'workflows'], queryFn: api.workflowRuns, ...sourceOptions })
   const work = useQuery({
     queryKey: ['command-center', root, 'work'],
-    // Gated on the revision floor the socket handed this tab before any read went
-    // out: a response at or below it describes an older fold than one already
-    // applied here, and letting it land would undo a push by arriving later.
-    queryFn: async () => {
-      const key = ['command-center', root, 'work']
-      const response = (await api.sessionWorkProjection(root!)) as WorkProjection
-      return baselineOrHeld(root!, 'work', response, queryClient.getQueryData<WorkProjection>(key))
-    },
-    ...sourceOptions, enabled: canRead && !fleet,
+    // THE NEWEST READ WINS, with no condition on it. The response is the value,
+    // whatever revision it carries and whatever the socket has announced: a
+    // client that can refuse the server's own current answer can be stuck
+    // forever, and a board that is briefly behind cannot -- the pull below
+    // corrects it, and whoever is reading the board sees it correct itself.
+    queryFn: () => api.sessionWorkProjection(root!) as Promise<WorkProjection>,
+    // The one polled source here (see WORK_BOARD_PULL_MS): this board must catch
+    // up without a frame having to arrive.
+    ...sourceOptions, enabled: canRead && !fleet, refetchInterval: WORK_BOARD_PULL_MS,
   })
   const model = useMemo(() => {
     const subagents = Object.fromEntries(scoped.map(s => [s.key,
