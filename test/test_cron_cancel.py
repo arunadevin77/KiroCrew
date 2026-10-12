@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import errno
+import json
 import re
 import threading
 import time
@@ -561,6 +562,179 @@ class TestCronServiceCancel:
         mock_merge.assert_not_called()
         _, total = await svc._history.get_job_history("run3")
         assert total == 0
+
+    @pytest.mark.asyncio
+    async def test_a_run_stop_cancels_mid_callback_records_its_own_interruption(
+        self, tmp_path: object
+    ) -> None:
+        """stop() cancels the run task and sets no cancel flag, so the run still
+        files a history row. The row must not quote the previous run's error or
+        call the run a failure, and the job keeps the last completed run's
+        outcome rather than the blank status ``_execute`` reset it to.
+        """
+        prior_error = "Reaped after 3808s (exceeded 1800s deadline)"
+        svc = CronService(base_dir=None, on_job=AsyncMock(side_effect=asyncio.CancelledError))
+        svc._history = CronHistoryStore(base_dir=tmp_path)
+        job = _make_job("stopped", last_status="error", last_error=prior_error)
+        svc._jobs = [job]
+        claim = svc._claim_run("stopped", "scheduled")
+
+        with (
+            patch.object(svc, "_merge_job_result") as mock_merge,
+            patch.object(svc, "_compute_jitter", return_value=0),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await svc._run_job_isolated(job, claim)
+
+        runs, total = await svc._history.get_job_history("stopped")
+        assert total == 1
+        row = runs[0]
+        assert row["status"] == "cancelled"
+        assert row["error"] == "Interrupted: the cron service stopped before this run finished"
+        assert row["summary"] == row["error"]
+        assert prior_error not in json.dumps(row)
+        merged = mock_merge.call_args.args[0]
+        assert (merged.last_status, merged.last_error) == ("error", prior_error)
+        assert (job.last_status, job.last_error) == ("error", prior_error)
+
+    @pytest.mark.asyncio
+    async def test_a_run_stop_cancels_in_its_jitter_wait_is_not_the_previous_success(
+        self, tmp_path: object
+    ) -> None:
+        """A run stopped during its jitter wait never entered ``_execute``, so the
+        job still holds the previous run's "ok" when the row is written. The
+        row must say the run was stopped before it started, not "success".
+        """
+        on_job = AsyncMock()
+        svc = CronService(base_dir=None, on_job=on_job)
+        svc._history = CronHistoryStore(base_dir=tmp_path)
+        job = _make_job("jittered", last_status="ok", last_error=None)
+        svc._jobs = [job]
+        claim = svc._claim_run("jittered", "scheduled")
+
+        async def _stopped_in_jitter(_seconds: float) -> None:
+            raise asyncio.CancelledError
+
+        with (
+            patch.object(svc, "_merge_job_result") as mock_merge,
+            patch.object(svc, "_compute_jitter", return_value=42.0),
+            patch.object(cron_module, "_sleep_out_jitter", _stopped_in_jitter),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await svc._run_job_isolated(job, claim)
+
+        on_job.assert_not_awaited()
+        runs, total = await svc._history.get_job_history("jittered")
+        assert total == 1
+        assert runs[0]["status"] == "cancelled"
+        assert runs[0]["error"] == "Interrupted: the cron service stopped before this run started"
+        assert mock_merge.call_args.args[0].last_status == "ok"
+
+    @pytest.mark.asyncio
+    async def test_a_run_stopped_after_its_marker_before_execute_keeps_the_previous_outcome(
+        self, tmp_path: object
+    ) -> None:
+        """Past the jitter wait but before ``_execute`` resets the outcome, the
+        job still holds the previous run's fields. A stop there (here, inside
+        the timeout wrapper) has no outcome of its own either."""
+        on_job = AsyncMock()
+        svc = CronService(base_dir=None, on_job=on_job)
+        svc._history = CronHistoryStore(base_dir=tmp_path)
+        job = _make_job("premarker", last_status="ok", last_error=None)
+        svc._jobs = [job]
+        claim = svc._claim_run("premarker", "scheduled")
+
+        with (
+            patch.object(svc, "_merge_job_result") as mock_merge,
+            patch.object(svc, "_compute_jitter", return_value=0),
+            patch.object(
+                svc, "_execute_with_timeout", AsyncMock(side_effect=asyncio.CancelledError)
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await svc._run_job_isolated(job, claim)
+
+        on_job.assert_not_awaited()
+        runs, _ = await svc._history.get_job_history("premarker")
+        assert runs[0]["status"] == "cancelled"
+        assert runs[0]["error"] == "Interrupted: the cron service stopped before this run started"
+        assert mock_merge.call_args.args[0].last_status == "ok"
+
+    @pytest.mark.asyncio
+    async def test_a_stopped_run_that_already_failed_keeps_its_own_failure(
+        self, tmp_path: object
+    ) -> None:
+        """A command that marked its run failed and is then stopped while its
+        failure alert goes out has an outcome of its own: the row and the job
+        keep that failure, not the previous run's success."""
+
+        async def _fail_then_stopped(j: CronJob) -> None:
+            j.last_status = "error"
+            j.last_error = "exit 1"
+            raise asyncio.CancelledError
+
+        svc = CronService(base_dir=None, on_job=_fail_then_stopped)
+        svc._history = CronHistoryStore(base_dir=tmp_path)
+        job = _make_job("failed", last_status="ok", last_error=None)
+        svc._jobs = [job]
+        claim = svc._claim_run("failed", "scheduled")
+
+        with (
+            patch.object(svc, "_merge_job_result") as mock_merge,
+            patch.object(svc, "_compute_jitter", return_value=0),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await svc._run_job_isolated(job, claim)
+
+        runs, _ = await svc._history.get_job_history("failed")
+        assert (runs[0]["status"], runs[0]["error"]) == ("failure", "exit 1")
+        merged = mock_merge.call_args.args[0]
+        assert (merged.last_status, merged.last_error) == ("error", "exit 1")
+
+    @pytest.mark.asyncio
+    async def test_a_started_one_shot_stopped_mid_callback_is_not_handed_an_old_error(
+        self, tmp_path: object
+    ) -> None:
+        """A ``delete_after_run`` one-shot whose earlier run failed (then was
+        resumed) is consumed or parked from THIS run's ``last_status``. A
+        restored "error" would leave a started one-shot neither consumed nor
+        parked, so the merge must see this run's blank status, as on main."""
+        svc = CronService(base_dir=None, on_job=AsyncMock(side_effect=asyncio.CancelledError))
+        svc._history = CronHistoryStore(base_dir=tmp_path)
+        job = _make_job(
+            "oneshot",
+            last_status="error",
+            last_error="exit 1",
+            delete_after_run=True,
+        )
+        job.schedule = CronSchedule(kind="at", at_ts=time.time() - 60)
+        svc._jobs = [job]
+        claim = svc._claim_run("oneshot", "scheduled")
+
+        with (
+            patch.object(svc, "_merge_job_result") as mock_merge,
+            patch.object(svc, "_compute_jitter", return_value=0),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await svc._run_job_isolated(job, claim)
+
+        runs, _ = await svc._history.get_job_history("oneshot")
+        assert runs[0]["status"] == "cancelled"
+        assert mock_merge.call_args.args[0].last_status is None
+
+    @pytest.mark.asyncio
+    async def test_execute_does_not_carry_the_previous_error_into_a_new_run(self) -> None:
+        """``_execute`` resets ``last_error`` with ``last_status``: a callback that
+        reports an error status without text must not inherit the old text."""
+
+        async def _fails_without_text(j: CronJob) -> None:
+            j.last_status = "error"
+
+        svc = CronService(base_dir=None, on_job=_fails_without_text)
+        job = _make_job("silent", last_status="error", last_error="last week's failure")
+        await svc._execute(job)
+        assert job.last_status == "error"
+        assert job.last_error is None
 
     @pytest.mark.asyncio
     async def test_cancel_ends_every_key_of_the_run_not_only_the_newest(

@@ -103,6 +103,10 @@ class _RunClaim:
     #: the reaper killed this run and writes its terminal row, so the run's
     #: finalizer writes none. Same lifetime as ``cancelled``.
     reaped: bool = False
+    #: Set by ``_execute`` when it resets this run's outcome fields. Until then
+    #: the job still holds the previous run's ``last_status`` / ``last_error``,
+    #: so a run stopped before this point has no outcome of its own.
+    outcome_reset: bool = False
 
 
 class RunClaims:

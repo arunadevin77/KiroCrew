@@ -90,6 +90,7 @@ from kiro_crew.cron_service.execution import (  # noqa: F401 -- re-exported
     apply_run_record,
     close_run,
     effective_wake_budget,
+    interruption_note,
     run_parks_one_shot,
 )
 from kiro_crew.cron_service.fields import (  # noqa: F401 -- re-exported
@@ -4124,9 +4125,13 @@ class CronService:
         claim.generation = self._runs.next_generation(job)
         started_at = claim.claimed_at
         trigger = claim.trigger
-        # Provisional; refined once the jitter sleep completes. Only read on
-        # the history path, which a cancelled-during-jitter run never reaches.
+        # Provisional; refined once the jitter sleep completes. A run stop()
+        # cancels during jitter still reaches the history path, and its
+        # duration is then measured from this stamp.
         exec_started_at = started_at
+        # The last completed run's outcome, which a run stop() cancels hands
+        # back to the job (close_run) instead of a reset or half-written one.
+        prior_status, prior_error = job.last_status, job.last_error
         being_cancelled = False
         marker_write: "asyncio.Future[None] | None" = None
         # Everything the finally below releases is claimed INSIDE the try. The
@@ -4275,6 +4280,9 @@ class CronService:
                     started_at=started_at,
                     generation=claim.generation,
                     being_cancelled=being_cancelled,
+                    prior_status=prior_status,
+                    prior_error=prior_error,
+                    dispatched=claim.outcome_reset,
                 )
             # Release the claim only while it is still THIS run's (identity,
             # see RunClaims.holds). cancel() and the reaper take the run they
@@ -4337,6 +4345,12 @@ class CronService:
                     logger.exception("Failed to merge result for job '%s'", job.name)
                 # Record history
                 try:
+                    # The row's cause is this run's own. A stopped run with no
+                    # outcome carries the previous run's last_error (close_run),
+                    # so it gets the interruption note instead.
+                    row_error = terminal.last_error or ""
+                    if being_cancelled and status == "cancelled":
+                        row_error = interruption_note(dispatched=claim.outcome_reset)
                     record = CronRunRecord(
                         job_id=job.id,
                         trigger=trigger,
@@ -4348,9 +4362,9 @@ class CronService:
                         # truncation site, applying the configured cap through
                         # truncate_summary, which keeps URLs and the outcome
                         # line. A slice here would cut ahead of both.
-                        summary=run_result or terminal.last_error or "",
+                        summary=run_result or row_error,
                         trace=run_result or "",
-                        error=terminal.last_error or "",
+                        error=row_error,
                     )
                     await self._history.append(record)
                     if self._push_refresh:
@@ -4474,8 +4488,12 @@ class CronService:
         """
         logger.info("Cron: executing '%s' (%s)", job.name, job.id)
         # Reset status for this run so a prior run's "error" can't leak into an
-        # "ok" decision below. Same for the fire-time denial marker.
+        # "ok" decision below, and its error text can't be read as this run's.
+        # Same for the fire-time denial marker.
         job.last_status = None
+        job.last_error = None
+        if claim is not None:
+            claim.outcome_reset = True
         job.fire_time_denied = False
         job.run_never_started = False
         job.refusal_cannot_clear = False

@@ -170,8 +170,27 @@ def run_parks_one_shot(job: CronJob) -> bool:
     return not job.run_never_started or job.refusal_cannot_clear
 
 
+def interruption_note(*, dispatched: bool) -> str:
+    """The history row's error text for a run the cron service stopped.
+
+    ``dispatched`` is whether ``_execute`` had started this run (reset its
+    outcome fields). A run stopped before that -- in its jitter wait, or in
+    the in-flight marker write -- ran nothing, and the row says so.
+    """
+    if dispatched:
+        return "Interrupted: the cron service stopped before this run finished"
+    return "Interrupted: the cron service stopped before this run started"
+
+
 def close_run(
-    job: CronJob, *, started_at: float, generation: int, being_cancelled: bool
+    job: CronJob,
+    *,
+    started_at: float,
+    generation: int,
+    being_cancelled: bool,
+    prior_status: str | None = None,
+    prior_error: str | None = None,
+    dispatched: bool = True,
 ) -> tuple[CronJob, str, str | None]:
     """Write a finished run's own terminal fields on ``job``; return its frozen record.
 
@@ -179,6 +198,15 @@ def close_run(
     applies, the history row's status, and the result this run produced (None
     when it produced none). The caller takes it while the run still holds its
     claim -- see :meth:`CronService._run_job_isolated`.
+
+    ``being_cancelled`` is a run ``stop()`` cancelled: it set no cancel or reap
+    flag, so it reaches this path. When it has no outcome of its own -- stopped
+    before ``_execute`` (``dispatched`` false: the job still holds the previous
+    run's fields) or before its callback set a status -- its row is
+    ``cancelled``, and ``last_status`` / ``last_error`` go back to
+    ``prior_status`` / ``prior_error``, what the job held when the run began,
+    so the registry is not handed a blank status or a stale error as this
+    run's. A stopped run that had already recorded its outcome keeps it.
     """
     # For 'every' jobs, use started_at to prevent cumulative drift.
     # `_execute` bound this run's retry count to the `last_run_ts` it
@@ -195,7 +223,21 @@ def close_run(
     # what let the fire-time deny and script Skip paths keep a result.
     if (job.command or job.script) and not being_cancelled:
         job.clear_carried_result()
-    status = "success" if job.last_status == "ok" else "failure"
+    if being_cancelled and (not dispatched or job.last_status is None):
+        # Same rule as the retry telemetry (see apply_run_record): a run that
+        # never ended on its own leaves the last completed run's values intact.
+        # A run whose callback had already recorded its outcome (a failed
+        # command cancelled while its failure alert goes out) keeps that one.
+        # Not for a one-shot that had started: the merge decides its consume
+        # or park from this run's last_status, and a restored "error" from an
+        # earlier run would leave a started one-shot neither consumed nor
+        # parked, so its payload would run again.
+        if not (dispatched and job.schedule.kind == "at"):
+            job.last_status = prior_status
+            job.last_error = prior_error
+        status = "cancelled"
+    else:
+        status = "success" if job.last_status == "ok" else "failure"
     # Attribute last_result to this run only if the run actually
     # produced it (set_run_result sets the marker). Reading it
     # unconditionally recorded the PREVIOUS run's result as this
