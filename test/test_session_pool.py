@@ -16,6 +16,7 @@ import pytest
 from kiro_crew import platform_compat
 from kiro_crew.acp.session_handle import WatchdogSettings
 from kiro_crew.start_priority import PrioritySemaphore, StartPriority
+from kiro_crew.testing.wait import async_wait_until
 
 
 @pytest.fixture(autouse=True)
@@ -191,16 +192,28 @@ class TestFillWarmPool:
         provider.shutdown = AsyncMock(side_effect=asyncio.CancelledError)
         factory.side_effect = lambda *a, **kw: provider
 
-        with patch("kiro_crew.session._sync_kill_provider") as mock_kill:
+        # The cancellation handler can neither await nor block the loop, so it
+        # dispatches the hard kill fire-and-forget. Production sends it to
+        # `subprocess_executor()`, a process-wide 8-worker singleton shared by
+        # every test in this xdist worker, and a started run_in_executor future
+        # cannot be cancelled -- so sibling tests holding those threads (a real
+        # `taskkill` or descendant scan on Windows, a wedged PTY close) make
+        # this kill queue behind them for as long as they run. A private
+        # executor owns the capacity this assertion depends on, so the only
+        # wait left is for the dispatched call to reach its worker thread: a
+        # signal under a lost-run bound, not a bet on the shared pool's spare
+        # capacity.
+        with (
+            ThreadPoolExecutor(max_workers=1) as private_executor,
+            patch("kiro_crew.session._sync_kill_provider") as mock_kill,
+            patch("kiro_crew.session.subprocess_executor", return_value=private_executor),
+        ):
             with pytest.raises(asyncio.CancelledError):
                 await mgr._fill_warm_pool()
-            # The hard kill is dispatched fire-and-forget to the subprocess
-            # executor (a cancellation handler can neither await nor block the
-            # loop) — give the worker thread a beat to run it.
-            for _ in range(100):
-                if mock_kill.call_count:
-                    break
-                await asyncio.sleep(0.01)
+            await async_wait_until(
+                lambda: mock_kill.call_count,
+                describe=lambda: f"hard kill not dispatched; calls={mock_kill.mock_calls!r}",
+            )
             mock_kill.assert_called_once_with(provider)
         assert mgr._warm_pool.qsize() == 0
 
