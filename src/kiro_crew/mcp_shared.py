@@ -15,7 +15,9 @@ import signal
 import sys
 import threading
 import time
+import types
 import urllib.request
+from collections.abc import Mapping
 from typing import Any, Callable, Literal, NamedTuple, Optional, overload
 
 from kiro_crew import platform_compat
@@ -601,6 +603,10 @@ def _write_all(fd: int, payload: bytes) -> int:
 # limit. Eviction only costs a re-fetch on that session's next call.
 _EXCLUDED_TOOLS_CACHE_MAX = 256
 _excluded_tools_by_session: dict[str, set[str]] = {}
+# The include lists cached beside each session's exclusions, written and evicted
+# with them, and read only on a hit in ``_excluded_tools_by_session``. A session
+# whose policy narrows no server has no entry.
+_included_tools_by_session: dict[str, dict[str, frozenset[str]]] = {}
 # Two separate negative caches with different TTLs because the two conditions get
 # OPPOSITE answers at ``tools/call``: the long HTTP-error window refuses, the short
 # startup-race window stays permissive, so a brief race must never be answered out
@@ -651,6 +657,10 @@ _MAX_WARNING_FAILURES: int = 2
 _POLICY_DETAIL_MAX_CHARS: int = 600
 
 
+#: The ``ToolPolicy.included`` of a policy that narrows no server.
+_NO_INCLUDE: Mapping[str, frozenset[str]] = types.MappingProxyType({})
+
+
 class ToolPolicy(NamedTuple):
     """The exclusion set for one session, plus whether it was actually read.
 
@@ -677,11 +687,22 @@ class ToolPolicy(NamedTuple):
     ``resolution_failed`` it is the class name of the exception that stopped the
     read (``ConnectionRefusedError``), so the agent sees which failure it hit;
     the scrubbed message goes only to the audit event. Empty on every other path.
+
+    ``included`` maps a server name to the only tools that server may list and
+    run for this session. A server with no entry is not narrowed. The gateway
+    derives it from an agent spec that opts in with
+    ``managedToolPolicy.honourToolRefs`` and grants the server only through
+    ``@<server>/<tool>`` refs; every other spec answers no entry at all.
     """
 
     excluded: frozenset[str]
     unresolved: str
     detail: str = ""
+    included: Mapping[str, frozenset[str]] = _NO_INCLUDE
+
+    def include_for(self, server: str) -> frozenset[str] | None:
+        """The include list *server* applies, or ``None`` when it is not narrowed."""
+        return self.included.get(server)
 
 
 def _ambient_audit_session() -> str:
@@ -924,6 +945,11 @@ def _resolve_tool_policy(
     if session_key:
         _cached = _excluded_tools_by_session.get(session_key)
         if _cached is not None:
+            _cached_include = _included_tools_by_session.get(session_key)
+            if _cached_include:
+                return ToolPolicy(
+                    frozenset(_cached), "", included=types.MappingProxyType(_cached_include)
+                )
             return ToolPolicy(frozenset(_cached), "")
 
     now = time.monotonic()
@@ -1247,11 +1273,39 @@ def _resolve_tool_policy(
                 f"{_shape}; fix the exclude list in this agent's spec, no restart needed",
             )
         resolved = set(exclude)
+        include = _parse_policy_include(policy.get("include"))
+        if include is None:
+            logger.warning(
+                "Tool policy for session %s has a malformed include; refusing calls "
+                "rather than enforcing the part that parses",
+                session_key,
+            )
+            sel().log_api_access(
+                caller=session_key,
+                operation="tool_policy.unreadable",
+                outcome="unresolved",
+                source="mcp_shared",
+                resources=f"session_key={session_key},include=malformed",
+            )
+            return ToolPolicy(
+                frozenset(),
+                "policy_unreadable",
+                "the policy the gateway answered has an include that is not a map of "
+                "server names to lists of tool names",
+            )
         # FIFO bound: dicts preserve insertion order; drop the oldest
         # session's entry when full (pooled backends serve churning sessions).
         while len(_excluded_tools_by_session) >= _EXCLUDED_TOOLS_CACHE_MAX:
-            _excluded_tools_by_session.pop(next(iter(_excluded_tools_by_session)))
+            _evicted = next(iter(_excluded_tools_by_session))
+            _excluded_tools_by_session.pop(_evicted)
+            _included_tools_by_session.pop(_evicted, None)
         _excluded_tools_by_session[session_key] = resolved
+        if include:
+            _included_tools_by_session[session_key] = include
+            return ToolPolicy(
+                frozenset(resolved), "", included=types.MappingProxyType(dict(include))
+            )
+        _included_tools_by_session.pop(session_key, None)
         return ToolPolicy(frozenset(resolved), "")
     except Exception as exc:
         # PATH 3/3. The gateway did not give a usable answer: no answer at all
@@ -1296,6 +1350,28 @@ def _resolve_tool_policy(
             error=_failure_cause(exc),
         )
         return ToolPolicy(frozenset(), "resolution_failed", _last_failure_class)
+
+
+def _parse_policy_include(raw: Any) -> dict[str, frozenset[str]] | None:
+    """The ``include`` of a policy the gateway answered, or ``None`` when it is malformed.
+
+    Absent is an empty map: no server is narrowed. Present, it must map server
+    names to lists of tool names. Any other shape is a narrowing whose extent is
+    unknown, and the caller refuses calls on it rather than enforcing the part
+    that parses, the same line it takes for a malformed ``exclude``.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        return None
+    out: dict[str, frozenset[str]] = {}
+    for server, tools in raw.items():
+        if not isinstance(server, str) or not server:
+            return None
+        if not isinstance(tools, list) or any(not isinstance(t, str) for t in tools):
+            return None
+        out[server] = frozenset(tools)
+    return out
 
 
 def _failure_cause(exc: BaseException) -> str:
@@ -2058,6 +2134,9 @@ def _run_stdio_dispatch_loop(
             return tools
         if policy.excluded:
             tools = [t for t in tools if t.get("name") not in policy.excluded]
+        included = policy.include_for(server_name)
+        if included is not None:
+            tools = [t for t in tools if t.get("name") in included]
         return tools
 
     def _tool_response(text: str) -> dict[str, Any]:
@@ -2598,6 +2677,28 @@ def _run_stdio_dispatch_loop(
                 respond(
                     req_id,
                     _tool_response(f"Error: tool '{tool_name}' is not available for this agent"),
+                )
+            elif (_included := _policy.include_for(server_name)) is not None and (
+                tool_name not in _included
+            ):
+                # The agent's spec grants this server tool by tool and opted in
+                # to having those refs honoured; a tool it did not name is not
+                # this agent's, listed or not.
+                sel().log_tool_invocation(
+                    session_key=_policy_session,
+                    source="mcp",
+                    tool_name=tool_name,
+                    tool_kind=server_name,
+                    outcome="rejected_not_included",
+                    error="managedToolPolicy.honourToolRefs",
+                )
+                respond(
+                    req_id,
+                    _tool_response(
+                        f"Error: tool '{tool_name}' is not available for this agent: its "
+                        f"spec grants {server_name} only through @{server_name}/<tool> refs "
+                        f"and does not name this one"
+                    ),
                 )
             elif not platform_compat.IS_POSIX:
                 # Windows: select.select() cannot poll sys.stdin (WinError

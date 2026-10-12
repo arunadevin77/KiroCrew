@@ -39,6 +39,7 @@ from kiro_crew.agent_discovery import (
     read_agent_spec_strict,
     spec_by_declared_name,
 )
+from kiro_crew.agent_sdk.mcp_refs import per_tool_grants
 from kiro_crew.agent_spec_format import (
     agent_spec_candidates,
     is_markdown_spec,
@@ -4853,6 +4854,63 @@ def _refuse_if_any_spec_is_unreadable(agents_dir: Path, agent_name: str) -> None
 # the KAS projection's: the two reads carry different SEL ``operation`` labels.
 _TOOL_POLICY_MEMO: AgentsDirMemo[dict[str, Any] | None] = AgentsDirMemo()
 
+#: The spec key that opts an agent into reading its ``@<server>/<tool>`` refs as
+#: an include list, inside ``managedToolPolicy``. Absent or ``false`` keeps the
+#: answer the policy alone gives.
+HONOUR_TOOL_REFS_KEY = "honourToolRefs"
+
+#: The answer key carrying the per-server include lists. Computed here from the
+#: spec's ``tools`` and never copied from the spec itself.
+POLICY_INCLUDE_KEY = "include"
+
+#: The managed servers an opted-in spec's per-tool refs narrow.
+INCLUDE_LIST_SERVERS: tuple[str, ...] = ("kirocrew-core",)
+
+
+def _policy_answer(
+    policy: dict[str, Any], config: dict[str, Any], agent_name: str, spec_path: Path | None
+) -> dict[str, Any]:
+    """The policy body the endpoint answers, given the spec's own ``managedToolPolicy``.
+
+    For a spec without ``honourToolRefs: true`` that is the policy as written,
+    less any ``include`` key: an include list is derived from the spec's
+    ``tools`` here, and an ``include`` written by hand is not a field the
+    managed servers read from a spec.
+
+    With the opt-in set, each server in :data:`INCLUDE_LIST_SERVERS` that the
+    spec grants ONLY through ``@<server>/<tool>`` refs gets its set of tool
+    names under ``include``; the server lists those and refuses any other call.
+    A whole-server grant -- ``*``, a bare ``@<server>``, a glob tool part --
+    yields no entry, so the server answers exactly as it does without the opt-in.
+
+    Raises :class:`ManagedToolPolicyUnreadable` for an opt-in that is present
+    but not a bool: the operator wrote something there and whether it narrows
+    the agent is unknown.
+    """
+    answer = {k: v for k, v in policy.items() if k != POLICY_INCLUDE_KEY}
+    opt_in = policy.get(HONOUR_TOOL_REFS_KEY, False)
+    if not isinstance(opt_in, bool):
+        where = f"in {spec_path.name!r}" if spec_path is not None else "in its spec"
+        remedy = (
+            _unreadable_spec_remedy(spec_path)
+            if spec_path is not None
+            else "Fix the spec in the agents directory; no restart needed."
+        )
+        raise ManagedToolPolicyUnreadable(
+            f"managedToolPolicy.{HONOUR_TOOL_REFS_KEY} for {agent_name!r} {where} is "
+            f"{type(opt_in).__name__}, not a bool. {remedy}"
+        )
+    if not opt_in:
+        return answer
+    include: dict[str, list[str]] = {}
+    for server in INCLUDE_LIST_SERVERS:
+        granted = per_tool_grants(config.get("tools"), server)
+        if granted is not None:
+            include[server] = sorted(granted)
+    if include:
+        answer[POLICY_INCLUDE_KEY] = include
+    return answer
+
 
 def _read_managed_tool_policy_sync(agents_dir: Path, agent_name: str) -> dict[str, Any] | None:
     """:func:`_read_managed_tool_policy_uncached`, answered from the memo while
@@ -4995,7 +5053,7 @@ def _read_managed_tool_policy_uncached(agents_dir: Path, agent_name: str) -> dic
         )
     policy = config.get("managedToolPolicy", {})
     if isinstance(policy, dict):
-        return policy
+        return _policy_answer(policy, config, agent_name, spec_path)
     # A policy of the wrong shape is a policy this cannot read, not an absent
     # one: the operator wrote something here and its meaning is unknown.
     if spec_path is None:
