@@ -3515,8 +3515,8 @@ async def create_session(
             "agent": slot.agent or "",
             "folder_id": slot.folder_id or "",
             "model": model_name,
-            # The override the child was born with; "" is the record that it
-            # follows the global threshold.
+            # The override the child was born with; "" means it has no override of
+            # its own, so it follows its agent's default, else the global threshold.
             "autocompact_pct": "" if pct_override is None else f"{pct_override:g}",
             # What the child was BORN with, so an auto-approved tool call in it is
             # traceable to the creator's grant rather than appearing unexplained.
