@@ -66,9 +66,9 @@ import { issueViewCommand, providerTerms, recordIdentityJson } from './links'
  *
  * The findings write goes through the `issue_radar_record_investigation` MCP
  * tool, NOT a raw PUT. An agent session has no dashboard credential (httpOnly
- * cookie, internal secret stripped from its env, `.local_secret` on the
- * sensitive-path denylist), so a raw PUT is refused with 403 and no
- * investigation could store its findings. */
+ * cookie, an internal secret the gateway mints in-process and never puts in an
+ * agent's env, `.local_secret` on the sensitive-path denylist), so a raw PUT is
+ * refused with 403 and no investigation could store its findings. */
 export function buildInvestigationPrompt(
   repoRef: RepoRef,
   owner: string,

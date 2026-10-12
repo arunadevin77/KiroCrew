@@ -595,9 +595,9 @@ _STRICT_INTERNAL_API_PATHS = frozenset(
         # runs behind a sandbox with its own user namespace, so its shells cannot
         # connect the systemd user bus every pod verb needs; the gateway holds the
         # host bus and does the systemd part on the agent's behalf. Without these
-        # entries the tools 403: an agent has no dashboard cookie,
-        # ``KIROCREW_INTERNAL_SECRET`` is stripped from its env, and
-        # ``.local_secret`` is on the sensitive-path denylist.
+        # entries the tools 403: an agent has no dashboard cookie, the gateway
+        # mints its internal secret in-process and never puts it in an agent's
+        # env, and ``.local_secret`` is on the sensitive-path denylist.
         #
         # STRICT, not mixed: no browser calls these. The dashboard's own pod
         # buttons go to the app backend through the ``/apps/dev-fleet/api/*``
@@ -813,8 +813,8 @@ _MIXED_INTERNAL_API_PATHS = frozenset(
         # Issue Radar investigation record — the ONE app route reachable with the
         # internal secret, for the ``issue_radar_record_investigation`` MCP tool.
         # An investigating chat agent has no dashboard token (cookies are
-        # httpOnly, ``KIROCREW_INTERNAL_SECRET`` is stripped from agent env by
-        # ``sandbox._AGENT_DENIED_ENV_KEYS``, and ``.local_secret`` is on the
+        # httpOnly, the gateway mints its internal secret in-process and never
+        # puts it in an agent's env, and ``.local_secret`` is on the
         # ``security.py`` sensitive-path denylist), so the PUT the Investigate
         # seed prompt asks for would 403 unconditionally and no investigation
         # could record its findings. Deliberately the FULL path, not the
@@ -879,8 +879,9 @@ _MIXED_INTERNAL_API_PATHS = frozenset(
         # app hands the agent batched click-anchored comments and the agent
         # applies them, but it cannot update the preview's comment-thread
         # bubbles: posting to ``/thread`` needs a dashboard credential, and an
-        # agent session holds none (cookies are httpOnly, the IPC secret is
-        # stripped from agent env, and the CLI credential mint is denied by the
+        # agent session holds none (cookies are httpOnly, the gateway mints its
+        # internal secret in-process and never puts it in an agent's env, and
+        # the CLI credential mint is denied by the
         # builtin ``credential-exfil`` rules — the same trust model as the
         # ``/api/apps/issue-radar/investigation`` and Ops Mission Control
         # entries above). So the documented raw POST 403s unconditionally and

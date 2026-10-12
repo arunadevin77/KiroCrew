@@ -21,8 +21,9 @@ WHY THESE ROUTES AND NOT THE APP BACKEND'S EXISTING ONES
 Dev Fleet already serves ``/api/pod/up`` and friends from its backend subprocess,
 reached through the gateway's ``/apps/dev-fleet/api/*`` reverse proxy. That proxy
 is browser-shaped: it requires a dashboard session cookie or token, and the agent
-holds neither (cookies are httpOnly, ``KIROCREW_INTERNAL_SECRET`` is stripped from
-agent env, and ``.local_secret`` is on the sensitive-path denylist). Admitting an
+holds neither (cookies are httpOnly, the gateway mints its internal secret
+in-process and never puts it in an agent's env, and ``.local_secret`` is on the
+sensitive-path denylist). Admitting an
 internal-secret caller to that proxy would have opened the app's WHOLE backend
 surface to anything holding the secret, so instead these four routes are named
 one by one in ``server._STRICT_INTERNAL_API_PATHS`` -- the same shape

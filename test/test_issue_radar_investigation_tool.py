@@ -7,8 +7,8 @@ bypass sets NOR the internal-path sets, and an agent session has no dashboard
 credential to satisfy the cookie path with:
 
   * the access cookie is httpOnly (the frontend cannot hand it over),
-  * ``KIROCREW_INTERNAL_SECRET`` is stripped from agent env by
-    ``sandbox._AGENT_DENIED_ENV_KEYS``,
+  * the gateway mints its internal secret in-process and never puts it in an
+    agent's env,
   * ``.local_secret`` — needed for the documented ``GET /api/token/local``
     bootstrap — is on the ``security.py`` sensitive-path denylist.
 

@@ -6,8 +6,9 @@ these two MCP tools are the crew's memory, and every property asserted here is
 load-bearing for a cold resume:
 
   * the ledger must be REACHABLE from an agent session, which has no dashboard
-    credential (httpOnly cookie, ``KIROCREW_INTERNAL_SECRET`` stripped from agent
-    env, ``.local_secret`` on the sensitive-path denylist) — hence the
+    credential (httpOnly cookie, an internal secret the gateway mints in-process
+    and never puts in an agent's env, ``.local_secret`` on the sensitive-path
+    denylist) — hence the
     internal-secret allowlist entries, and hence a raw HTTP call earning 403;
   * a partial write must never erase what an earlier write stored, or a resume
     reads back a ledger emptier than the work it describes;

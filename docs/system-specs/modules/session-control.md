@@ -1373,8 +1373,8 @@ The routes are **strict-internal** (`_STRICT_INTERNAL_API_PATHS`): loopback plus
 are the entry point to opening, stopping, and reading another live conversation —
 a cookie path there would be a new authorization surface rather than a
 convenience. The MCP process holds the secret; an agent's own sandbox does not
-(`KIROCREW_INTERNAL_SECRET` is stripped from agent env), which is why these are
-tools rather than something an agent can curl.
+(the gateway mints the secret in-process and never puts it in an agent's env),
+which is why these are tools rather than something an agent can curl.
 
 Each handler **re-asserts** `request["internal_auth"] is True` rather than
 trusting the path classification. Strict is not self-enforcing at the handler:
