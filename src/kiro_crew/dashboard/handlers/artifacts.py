@@ -66,7 +66,12 @@ from kiro_crew.artifacts import (
     webapp_metadata_from_dict,
 )
 from kiro_crew.constants import md_link_destination
-from kiro_crew.dashboard.chat_folders import generate_emoji_for_name
+from kiro_crew.dashboard.chat_folders import (
+    archived_session_names_in_folders,
+    chat_folder_subtree_ids,
+    generate_emoji_for_name,
+    live_slot_names_in_folders,
+)
 from kiro_crew.dashboard.handlers._shared import (
     _is_restricted_session,
     require_owner_dashboard_request,
@@ -1110,6 +1115,25 @@ def _scan_artifacts(
     return out
 
 
+async def _chat_folder_session_names(state: Any, folder_id: str) -> set[str]:
+    """Slot names of every session filed in chat folder *folder_id* or under it.
+
+    Empty for no dashboard state, an unknown id, or a folder subtree with no
+    sessions. The open slots are read on the loop that owns the slot table;
+    the transcript scan for archived sessions runs on the slow-work pool.
+    """
+    if state is None:
+        return set()
+    folder_ids = chat_folder_subtree_ids(state, folder_id)
+    if not folder_ids:
+        return set()
+    names = live_slot_names_in_folders(state, folder_ids)
+    names |= await asyncio.get_running_loop().run_in_executor(
+        subprocess_executor(), archived_session_names_in_folders, state, folder_ids
+    )
+    return names
+
+
 async def api_artifacts_list(request: web.Request) -> web.Response:
     tag = request.query.get("tag") or None
     kind = request.query.get("kind") or None
@@ -1159,6 +1183,18 @@ async def api_artifacts_list(request: web.Request) -> web.Response:
         if _raw_touched
         else None
     )
+    # ``chat_folder`` scopes to what the chats filed in one sidebar folder, or in
+    # the folders nested under it, touched: the union of ``touched_by`` over
+    # those sessions, open and archived. The sessions are resolved here from the
+    # folder id, so the client never names them, and the scope only narrows the
+    # same listing an unscoped call returns. Present-but-empty, an unknown
+    # folder, and a folder subtree holding no sessions all resolve to an empty
+    # set, which matches nothing.
+    touched_by_any: set[str] | None = None
+    if "chat_folder" in request.query:
+        touched_by_any = await _chat_folder_session_names(
+            request.app.get("state"), request.query.get("chat_folder") or ""
+        )
     try:
         store = get_default_store()
         # The listing reads one meta.json per artifact through the store's
@@ -1180,6 +1216,7 @@ async def api_artifacts_list(request: web.Request) -> web.Response:
                 folder=folder,
                 session_key=session,
                 touched_by_session=touched_by,
+                touched_by_any=touched_by_any,
                 pinned=pinned,
             ),
         )

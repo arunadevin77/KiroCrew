@@ -73,7 +73,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType, ModuleType  # noqa: F401 - facade surface
 from typing import Mapping  # noqa: F401 - facade surface
-from typing import TYPE_CHECKING, Any, Callable, Iterator
+from typing import TYPE_CHECKING, Any, Callable
+from typing import Iterable as _Iterable
+from typing import Iterator
 from typing import List as _List
 
 from kiro_crew import hooks, pinned_fs, platform_compat
@@ -105,9 +107,11 @@ from kiro_crew.artifact_store.model import (  # noqa: F401 - facade surface
 )
 from kiro_crew.artifact_store.rules import (  # noqa: F401 — re-export for API compatibility
     USER_SELECTABLE_KINDS,
+    _fold_session_keys,
     _infer_kind,
     _markdown_misclassification_reason,
     _session_touched,
+    _session_touched_any,
     _validate_description,
     _validate_kind,
     _validate_name,
@@ -1973,6 +1977,7 @@ class ArtifactStore:
         folder: str | None = None,
         session_key: str | None = None,
         touched_by_session: str | None = None,
+        touched_by_any: _Iterable[str] | None = None,
         pinned: bool | None = None,
     ) -> _List[Artifact]:
         """List all artifacts matching the given filters (sorted newest first).
@@ -2001,7 +2006,15 @@ class ArtifactStore:
         pure match filter with no empty-bucket semantics: ``None`` and ``""``
         both mean "don't scope", because "artifacts no session ever touched"
         is not a view any caller wants and would otherwise be one typo away.
+
+        ``touched_by_any`` is the same involvement scope over a SET of sessions
+        (every chat filed in one sidebar folder): an artifact matches when any
+        of them touched it. Unlike ``touched_by_session`` it distinguishes
+        absent from empty: ``None`` doesn't scope, while an empty collection
+        matches nothing, because a scope that resolved to zero sessions is an
+        empty view and must never widen to the whole library.
         """
+        touched_any = None if touched_by_any is None else _fold_session_keys(touched_by_any)
         with self._lock:
             meta_paths = list(self._iter_meta_paths())
         if tag:
@@ -2052,6 +2065,8 @@ class ArtifactStore:
             # Involvement scope: origin OR any event this session left behind.
             # Empty/None is a no-op (see docstring) rather than an empty bucket.
             if touched_by_session and not _session_touched(art, touched_by_session):
+                continue
+            if touched_any is not None and not _session_touched_any(art, touched_any):
                 continue
             if pinned is not None and bool(art.pinned) is not pinned:
                 continue

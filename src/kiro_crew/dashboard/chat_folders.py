@@ -363,6 +363,64 @@ def _folders_with_history_counts(state: DashboardState) -> list[dict]:
     return [{**f, "history_count": counts.get(f["id"], 0)} for f in state._folders]
 
 
+def chat_folder_subtree_ids(state: DashboardState, folder_id: str) -> frozenset[str]:
+    """*folder_id* and every chat folder nested under it, or empty when it is unknown.
+
+    The sidebar is a tree, so a folder holds the chats filed in its sub-folders
+    too. An id that names no folder in the tree yields an empty set, never the
+    whole tree.
+    """
+    folders = getattr(state, "_folders", None)
+    if not folder_id or not isinstance(folders, list):
+        return frozenset()
+    rows = [f for f in folders if isinstance(f, dict) and isinstance(f.get("id"), str)]
+    if not any(f["id"] == folder_id for f in rows):
+        return frozenset()
+    return frozenset(
+        f["id"] for f in rows if _is_descendant(rows, ancestor_id=folder_id, folder_id=f["id"])
+    )
+
+
+def live_slot_names_in_folders(state: DashboardState, folder_ids: frozenset[str]) -> set[str]:
+    """Names of the open chat slots filed in any of *folder_ids*.
+
+    Reads the live slot table, so it runs on the event loop that mutates it.
+    """
+    slots = getattr(state, "_slots", None)
+    if not folder_ids or not isinstance(slots, dict):
+        return set()
+    return {
+        str(name) for name, slot in list(slots.items()) if _slot_home_folder_id(slot) in folder_ids
+    }
+
+
+def archived_session_names_in_folders(
+    state: DashboardState, folder_ids: frozenset[str]
+) -> set[str]:
+    """Slot names of the on-disk sessions filed in any of *folder_ids*.
+
+    A dashboard transcript is stored as ``dashboard_<slot>`` (stacked prefixes
+    from resume round-trips fold to one), so ``ledger_key`` drops the prefix to
+    get the slot name an artifact's provenance records. A channel transcript's
+    stem is already the folded channel key that provenance compares against, so
+    it passes through unchanged. Scans the transcript directory: call it off the
+    event loop.
+    """
+    from kiro_crew.session_ledger import ledger_key
+
+    log = getattr(state, "conversation_log", None)
+    if not folder_ids or not log:
+        return set()
+    names: set[str] = set()
+    for session in log.list_sessions():
+        if session.get("folder_id") not in folder_ids:
+            continue
+        key = ledger_key(str(session.get("key") or ""))
+        if key:
+            names.add(key)
+    return names
+
+
 def note_folder_filed(state: DashboardState, folder_id: str) -> None:
     """Record that a session was durably filed into *folder_id* by hand.
 

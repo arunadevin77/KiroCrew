@@ -15,6 +15,7 @@ import json
 import os
 import re
 import unicodedata
+from typing import Iterable
 from typing import List as _List
 
 from kiro_crew.artifact_store.model import Artifact, ArtifactValidationError
@@ -615,6 +616,35 @@ def _session_touched(art: "Artifact", session_key: str) -> bool:
         return True
     return any(
         _strip_session_scope(str(e.get("session_id") or "")) == want
+        for e in art.events
+        if e.get("session_id")
+    )
+
+
+def _fold_session_keys(session_keys: Iterable[str]) -> frozenset[str]:
+    """Fold each session key to the spelling :func:`_session_touched` compares.
+
+    Done once for a whole scope, so :func:`_session_touched_any` costs one set
+    lookup per provenance record however many sessions the scope spans.
+    """
+    return frozenset(_strip_session_scope(k) for k in session_keys if k)
+
+
+def _session_touched_any(art: Artifact, wants: frozenset[str]) -> bool:
+    """True when ANY session in ``wants`` originated or left an event on ``art``.
+
+    The set form of :func:`_session_touched`, for a scope that spans several
+    sessions (every chat filed in one sidebar folder). ``wants`` holds keys
+    already folded by :func:`_fold_session_keys`. An empty set matches
+    nothing: a scope over zero sessions is an empty view, never the whole
+    library.
+    """
+    if not wants:
+        return False
+    if art.session_key and _strip_session_scope(art.session_key) in wants:
+        return True
+    return any(
+        _strip_session_scope(str(e.get("session_id") or "")) in wants
         for e in art.events
         if e.get("session_id")
     )
