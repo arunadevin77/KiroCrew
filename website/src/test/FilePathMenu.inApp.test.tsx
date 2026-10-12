@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { renderWithProviders } from './helpers'
+import { stubPathKinds } from './pathKindStub'
 import FilePathMenu from '../components/FilePathMenu'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { __resetPathKindCache } from '../hooks/usePathKind'
@@ -232,15 +233,11 @@ describe('FilePathMenu in-app rows', () => {
 
 // ── Path chips (InlineCode host) ─────────────────────────────────────────────
 
+/** Answer the batched kind probe (`POST /api/file-kinds`) with `kind` for every
+ *  path. A `path:12` citation probes the literal spelling too; only the split
+ *  path exists, so the chip resolves to the file plus its line. */
 function stubKind(kind: 'file' | 'dir') {
-  const headers = new Headers({ 'X-Path-Kind': kind })
-  globalThis.fetch = vi.fn((url: unknown) => {
-    // A `path:12` citation probes the literal spelling too; only the split
-    // path exists, so the chip resolves to the file plus its line.
-    const asked = new URL(String(url), 'http://x').searchParams.get('path') || ''
-    if (/:\d+$/.test(asked)) return Promise.resolve({ ok: false, status: 404, headers: new Headers() } as Response)
-    return Promise.resolve({ ok: kind === 'file', status: kind === 'file' ? 200 : 404, headers } as Response)
-  }) as unknown as typeof fetch
+  stubPathKinds(asked => (/:\d+$/.test(asked) ? null : kind))
 }
 
 async function rightClickChip(container: HTMLElement, kind: 'file' | 'dir') {
