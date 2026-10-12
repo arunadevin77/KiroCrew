@@ -76,6 +76,7 @@ from kiro_crew.dashboard.slot_queue_repository import (
 from kiro_crew.dashboard.state import _MAX_DISMISSED_SOURCE_LINKS
 from kiro_crew.memory_stores import named_store_or_empty
 from kiro_crew.messaging.link import is_channel_session_key
+from kiro_crew.session_agent_selection import member_choice_from_record, member_choice_record
 from kiro_crew.validation import ARTIFACT_SLUG_RE, normalize_theme_consent_sha
 
 if TYPE_CHECKING:
@@ -684,6 +685,10 @@ def _read_agent_kind(r: _Read) -> None:
         r.slot.agent_kind = r.meta["agent_kind"]
 
 
+def _read_member_choice(r: _Read) -> None:
+    r.slot.member_choice = member_choice_from_record(r.meta.get("member_choice"))
+
+
 def _read_project(r: _Read) -> None:
     if r.meta.get("project"):
         r.slot.project = r.meta["project"]
@@ -1045,6 +1050,14 @@ FIELDS: tuple[Field, ...] = (
         line=_truthy(lambda s: s.agent_kind),
         merge=_always(lambda s: s.agent_kind),
         read=_read_agent_kind,
+    ),
+    Field(
+        "member_choice",
+        _ALL,
+        attr="member_choice",
+        line=_truthy(lambda s: member_choice_record(s.member_choice)),
+        merge=_always(lambda s: member_choice_record(s.member_choice)),
+        read=_read_member_choice,
     ),
     Field(
         "project",
@@ -1426,6 +1439,7 @@ LINE_ORDER: tuple[str, ...] = (
     "workspace",
     "memory_store",
     "agent_kind",
+    "member_choice",
     "project",
     "executor",
     "instance_id",
@@ -1483,6 +1497,7 @@ MERGE_ORDER: tuple[str, ...] = (
     "workspace",
     "memory_store",
     "agent_kind",
+    "member_choice",
     "project",
     "app",
     "origin",

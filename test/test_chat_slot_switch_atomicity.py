@@ -1838,6 +1838,7 @@ class TestLinkedSlotSessionKey:
             assert log.update_metadata.call_args.args[1] == {
                 "agent": "old-agent",
                 "agent_kind": "member",
+                "member_choice": {},
             }
 
     @pytest.mark.asyncio

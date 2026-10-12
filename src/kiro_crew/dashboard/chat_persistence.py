@@ -133,13 +133,22 @@ from kiro_crew.history import (  # noqa: F401
     transcript_sort_key,
     update_metadata_off_loop,
 )
-from kiro_crew.memory_stores import UnknownMemoryStore, named_store_or_empty  # noqa: F401
+from kiro_crew.memory_stores import (  # noqa: F401
+    UnknownMemoryStore,
+    memory_store_namespace_lock,
+    named_store_or_empty,
+    require_member_memory_store,
+)
 from kiro_crew.messaging.link import is_channel_session_key
 from kiro_crew.platform.context import redact_log_via_context
 from kiro_crew.platform_compat import file_lock
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls  # noqa: F401
 from kiro_crew.sel import sel  # noqa: F401
-from kiro_crew.session_agent_selection import session_agent_selection_name  # noqa: F401
+from kiro_crew.session_agent_selection import (  # noqa: F401
+    MemberChoice,
+    SelectionChange,
+    session_agent_selection_name,
+)
 from kiro_crew.validation import ARTIFACT_SLUG_RE  # noqa: F401
 
 logger = logging.getLogger(__name__)
@@ -1157,6 +1166,7 @@ def _pin_private_agent_assignment(
     authorized_store: str | None = None,
     memory_mode: str = "persistent",
     validate_only: bool = False,
+    selection_changes: list[SelectionChange] | None = None,
 ) -> str:
     """Pin an authorized member selection, never a name recovered from history.
 
@@ -1231,6 +1241,13 @@ def _pin_private_agent_assignment(
         expected=previous,
         vouch=True,
     )
+    if selection_changes is not None:
+        selection_changes.append(
+            SelectionChange(
+                previous.to_record() if previous is not None else None,
+                execution.to_record(),
+            )
+        )
     return store
 
 
@@ -1256,6 +1273,50 @@ def _member_private_selection(
     if record is None or record.memory_version != 2:
         return "", ""
     return selected, store
+
+
+def member_replaced_message(agent: str) -> str:
+    return (
+        f"Crew Member {agent!r} is not the member this conversation chose; "
+        "choose the member again"
+    )
+
+
+def slot_defers_member_binding(slot: Any, agent_kind: str | None = None) -> bool:
+    """Whether *slot* is an empty plain dashboard chat whose member binding waits for its first send.
+
+    *agent_kind* is the namespace of the agent the slot is about to run, the
+    slot's committed kind when omitted.
+    """
+    kind = slot.agent_kind if agent_kind is None else agent_kind
+    return not (
+        slot.messages or slot.linked_session_key or slot.channel_origin or kind == "template"
+    )
+
+
+def member_choice_refusal(
+    choice: MemberChoice | None, agent: str, config: KiroCrewConfig, *, fresh: bool
+) -> str | None:
+    """Why an unbound empty chat holding *choice* cannot run *agent* at send time, or ``None``.
+
+    A recorded choice must still be the member *agent* names. Without one, a
+    private member may run only when this request itself chose it (*fresh*).
+    """
+    current = _member_choice(agent, config)
+    if choice is not None:
+        return None if current == choice else member_replaced_message(agent)
+    if current is not None and not fresh:
+        return member_replaced_message(agent)
+    return None
+
+
+def _member_choice(agent: str, config: KiroCrewConfig) -> MemberChoice | None:
+    """The immutable identity of the private member *agent* names in *config*."""
+    selected, store = _member_private_selection(agent, config)
+    member_id = getattr(config.agents.get(selected), "member_id", "") if store else ""
+    if not isinstance(member_id, str) or not member_id:
+        return None
+    return member_id, store
 
 
 async def release_prewarmed_session(
@@ -1333,11 +1394,6 @@ def member_store_ownership_holds(config: KiroCrewConfig, member: str, entry_stor
     Blocking: the identity check reads the store's database, so call it in a
     thread.
     """
-    from kiro_crew.memory_stores import (  # noqa: F811
-        UnknownMemoryStore,
-        require_member_memory_store,
-    )
-
     try:
         if require_member_memory_store(config, member) != entry_store:
             return False
@@ -1355,6 +1411,8 @@ async def pin_private_agent_store(
     *,
     memory_mode: str = "persistent",
     validate_only: bool = False,
+    selection_changes: list[SelectionChange] | None = None,
+    expected_member: MemberChoice | None = None,
 ) -> str:
     """Pin one dashboard selection from current private ownership off the loop.
 
@@ -1373,16 +1431,15 @@ async def pin_private_agent_store(
     asked for. This wrapper deliberately does not take the async config lock:
     callers may already hold a slot lock, while config writers serialize private
     ownership changes through the namespace lock.
+
+    *expected_member* is the member identity recorded when an empty chat chose
+    the member. A member whose identity differs from it, such as a same-name
+    replacement, is refused.
     """
     selected = agent or config.default_agent
     _entry_selected, entry_store = _member_private_selection(selected, config)
     native_context = state.sessions.get_provider(session_key) is not None or bool(
         state.sessions.resumable_sid(session_key)
-    )
-
-    from kiro_crew.memory_stores import (  # noqa: F811
-        UnknownMemoryStore,
-        memory_store_namespace_lock,
     )
 
     changed = (
@@ -1401,6 +1458,8 @@ async def pin_private_agent_store(
             raise UnknownMemoryStore(changed)
         if current_store and not member_store_ownership_holds(current, selected, current_store):
             raise UnknownMemoryStore(changed)
+        if expected_member is not None and _member_choice(selected, current) != expected_member:
+            raise UnknownMemoryStore(member_replaced_message(selected))
         return _pin_private_agent_assignment(
             session_key,
             selected,
@@ -1409,6 +1468,7 @@ async def pin_private_agent_store(
             native_context=native_context,
             memory_mode=memory_mode,
             validate_only=validate_only,
+            selection_changes=selection_changes,
         )
 
     return await asyncio.to_thread(pin_current_assignment)

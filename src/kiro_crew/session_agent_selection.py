@@ -9,20 +9,25 @@ from dataclasses import replace as dataclass_replace
 from typing import Any, NamedTuple
 
 from kiro_crew.agent_spec_format import NATIVE_SKILL_ALIAS_PREFIX
+from kiro_crew.atomic_write import atomic_write
 from kiro_crew.config.loader import (
     ResolvedBindings,
     dispatch_kiro_agent,
     resolve_agent_bindings,
 )
 from kiro_crew.execution_context import (
+    EXECUTION_CONTEXT_KEY,
     ExecutionContext,
     MemoryStoreRef,
     adopt_removed_synced_crewmate,
     bind_session_execution,
+    execution_from_record,
     member_config_for_id,
     read_session_execution,
     resolve_member_execution,
+    restore_live_session_execution,
 )
+from kiro_crew.history import ConversationLog
 from kiro_crew.memory_stores import UnknownMemoryStore
 
 _LEGACY_BINDING_FIELDS = ("memory_store", "memory_mode")
@@ -31,8 +36,9 @@ _LEGACY_BINDING_FIELDS = ("memory_store", "memory_mode")
 class SelectionChange(NamedTuple):
     """What one selection write replaced, so a rollback can put it back.
 
-    ``prior`` is the execution record the session carried before the write and
-    ``published`` the one the write committed. A session with no execution
+    ``prior`` is the execution record the session carried before the change and
+    ``published`` is the record it committed, or ``None`` when the change withdrew
+    a template selection. A session with no execution
     record can still carry a binding of its own in the metadata line's
     ``memory_store`` / ``memory_mode`` fields (a transcript written before the
     execution record existed). The write overwrites both, so ``legacy`` keeps
@@ -40,7 +46,7 @@ class SelectionChange(NamedTuple):
     """
 
     prior: dict[str, Any] | None
-    published: dict[str, Any]
+    published: dict[str, Any] | None
     legacy: dict[str, Any] | None = None
 
 
@@ -48,12 +54,30 @@ def _legacy_binding(session_key: str) -> dict[str, Any] | None:
     """The metadata line's own binding fields, read before a write replaces them."""
     if not session_key or session_key.startswith("subagent:"):
         return None
-    from kiro_crew.history import ConversationLog
-
     metadata, readable = ConversationLog().get_metadata_status(session_key)
     if not readable:
         return None
     return {field: metadata[field] for field in _LEGACY_BINDING_FIELDS if field in metadata}
+
+
+MemberChoice = tuple[str, str]
+
+
+def member_choice_record(choice: MemberChoice | None) -> dict[str, str]:
+    """The metadata spelling of an unbound member choice; empty when there is none."""
+    if choice is None:
+        return {}
+    return {"member_id": choice[0], "store": choice[1]}
+
+
+def member_choice_from_record(value: object) -> MemberChoice | None:
+    """Read a persisted member choice, ``None`` unless both fields are present."""
+    if not isinstance(value, dict):
+        return None
+    member_id, store = value.get("member_id"), value.get("store")
+    if isinstance(member_id, str) and member_id and isinstance(store, str) and store:
+        return member_id, store
+    return None
 
 
 def _revision(execution: ExecutionContext | None) -> str:
@@ -104,7 +128,12 @@ def _source_of_view(name: str) -> str:
 
 
 def resolve_session_agent_bindings(
-    resolver, config, session_key: str, agent_name: str | None, *project_dir
+    resolver,
+    config,
+    session_key: str,
+    agent_name: str | None,
+    *project_dir,
+    selection_kind: str = "",
 ) -> ResolvedBindings:
     execution = read_session_execution(session_key)
     selected = agent_name or config.default_agent
@@ -130,9 +159,12 @@ def resolve_session_agent_bindings(
             *project_dir,
             validate_memory_files=False,
             **(
-                {"selection_kind": execution.selection_kind, "execution_context": execution}
+                {
+                    "selection_kind": execution.selection_kind,
+                    "execution_context": execution,
+                }
                 if execution
-                else {}
+                else {"selection_kind": selection_kind} if selection_kind else {}
             ),
         )
     except StopIteration as exc:
@@ -256,12 +288,18 @@ def record_agent_selection(
 def restore_agent_selection(session_key: str, change: SelectionChange | None) -> None:
     if change is None:
         return
-    from kiro_crew.atomic_write import atomic_write
-    from kiro_crew.history import ConversationLog
-
     prior, published, legacy = change
-    from kiro_crew.execution_context import restore_live_session_execution
-
+    if published is None:
+        if prior is not None:
+            try:
+                bind_session_execution(
+                    session_key,
+                    execution_from_record({EXECUTION_CONTEXT_KEY: prior}),
+                    expected=None,
+                )
+            except UnknownMemoryStore:
+                return
+        return
     if restore_live_session_execution(session_key, prior, published):
         return
     log = ConversationLog()
@@ -286,8 +324,6 @@ def restore_agent_selection(session_key: str, change: SelectionChange | None) ->
         path = log._path(session_key)
         rows = path.read_text(encoding="utf-8").splitlines(keepends=True)
         metadata.pop("execution_context", None)
-        # The line's own pre-write binding comes back exactly as it was read: a
-        # field it carried is restored, a field it did not carry is removed.
         for field in _LEGACY_BINDING_FIELDS:
             if legacy and field in legacy:
                 metadata[field] = legacy[field]
@@ -295,3 +331,37 @@ def restore_agent_selection(session_key: str, change: SelectionChange | None) ->
                 metadata.pop(field, None)
         rows[0] = json.dumps(metadata, ensure_ascii=False) + "\n"
         atomic_write(path, "".join(rows))
+
+
+def withdraw_agent_selection(session_key: str, expected: ExecutionContext) -> None:
+    if expected.member_id is not None:
+        raise UnknownMemoryStore("This conversation belongs to its original member")
+    _withdraw_selection(session_key, expected)
+
+
+def withdraw_new_agent_selection(session_key: str, expected: ExecutionContext) -> None:
+    """Withdraw a newly published selection by exact identity."""
+    _withdraw_selection(session_key, expected)
+
+
+def _withdraw_selection(session_key: str, expected: ExecutionContext) -> None:
+    published = expected.to_record()
+    if not restore_live_session_execution(session_key, None, published):
+        log = ConversationLog()
+        with log._locked(session_key):
+            metadata, readable = log._read_metadata_status(session_key)
+            if readable and metadata.get("execution_context") == published:
+                _drop_metadata_fields(
+                    log, session_key, metadata, ("execution_context", "memory_store")
+                )
+    if read_session_execution(session_key) is not None:
+        raise UnknownMemoryStore("Conversation selection changed during preparation")
+
+
+def _drop_metadata_fields(log, session_key: str, metadata: dict, fields: tuple[str, ...]) -> None:
+    path = log._path(session_key)
+    rows = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    for field in fields:
+        metadata.pop(field, None)
+    rows[0] = json.dumps(metadata, ensure_ascii=False) + "\n"
+    atomic_write(path, "".join(rows))
