@@ -48,9 +48,24 @@ tier, because the tier is the record of how big the work was judged to be and a
 reached full green and was then parked by a one-line product hold — every round of
 that work was discarded.
 
-The file-overlap gate's `--limit 500` is load-bearing because `gh pr list` returns
+The file-overlap gate's `--limit` is load-bearing because `gh pr list` returns
 30 rows by default. With 175+ open PRs the default silently checks about a sixth of
 them and the gate reads as passing.
+
+Raising the cap is not enough on its own, because the cap is a number someone has
+to keep ahead of the repo. The repo passed 500 open PRs (723 on 2026-10-12), so
+`--limit 500` began truncating silently in exactly the way the default does — a
+truncated scan is indistinguishable from a clean one. So the gate asserts rather
+than trusting the cap: compare the row count returned against the `--limit`
+passed, and read equality as truncation rather than as a pass.
+
+Truncation has two axes, and the second one survives any cap. The PR list caps how
+many PRs you see; each PR's `files` connection separately caps how many of *its*
+files you see (`files(first: 100)`), and 12 open PRs exceed 100 files. A gate that
+only widened the outer cap would still miss an overlap hidden past file 100 of a
+large PR, so each PR's `files.pageInfo.hasNextPage` is checked too and a truncated
+one is re-read in full. At this repo's size the single-request form also 504s, which
+is why the gate pages with cursors instead of asking for one large page.
 
 ## Why a red main gets its own PR, and the original PR waits
 
