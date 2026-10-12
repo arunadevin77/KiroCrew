@@ -25,7 +25,6 @@ import logging
 import ntpath
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -1625,7 +1624,7 @@ async def api_vault_clone(request: web.Request) -> web.Response:
     try:
         await vault_path(vault)
     except ApiError:
-        await asyncio.to_thread(shutil.rmtree, str(clone_dir), True)
+        await asyncio.to_thread(platform_compat.rmtree_force, str(clone_dir))
         raise
     # The clone succeeded with this token — now it is safe to persist it.
     if submitted_pat:

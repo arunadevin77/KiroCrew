@@ -34,6 +34,7 @@ import subprocess
 from pathlib import Path
 
 from kiro_crew.platform.context import redact_via_context
+from kiro_crew.platform_compat import rmtree_force
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
 from .bug_gate import BugGate
@@ -297,7 +298,7 @@ class Gate:
             # worktree's own src (base_src == cand_src) — never delete that.
             if base_src != cand_src:
 
-                shutil.rmtree(base_src.parent, ignore_errors=True)
+                rmtree_force(base_src.parent)
 
     def _stage_test_only_base(self, proposal: Proposal, base_sha: str) -> Path:
         """Build the RED base tree: the base source (bug still present) + ONLY the
@@ -348,7 +349,7 @@ class Gate:
             # fix files to base inside that snapshot so only the test is "new".
             base_tree = wt.parent / f"{wt.name}__redbase"
             if base_tree.exists():
-                shutil.rmtree(base_tree, ignore_errors=True)
+                rmtree_force(base_tree)
             # symlinks=True: copy each symlink AS A LINK, never dereferenced. The worktree is
             # agent-editable and a candidate may (within the edit allowlist) plant a test
             # symlink pointing OUT of the tree — e.g. at `$HOME/.aws/credentials`. The default
@@ -363,7 +364,7 @@ class Gate:
             # for pytest; it needs no git at all.
             gitlink = base_tree / ".git"
             if gitlink.is_dir():
-                shutil.rmtree(gitlink, ignore_errors=True)
+                rmtree_force(gitlink)
             else:
                 gitlink.unlink(missing_ok=True)
             for p in non_test:

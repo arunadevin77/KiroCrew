@@ -62,6 +62,7 @@ from kiro_crew.apps.registry_pipeline.checkout import (
     _git_clone_or_pull,
     _kill_process_group,
     _resolved_clone_commit,
+    _rmtree_force_settled,
 )
 from kiro_crew.apps.registry_pipeline.git_targets import (
     _entry_git_url,
@@ -447,18 +448,12 @@ async def _unpoison_rejected_checkout(
     the manifest path.
     """
     if not checkout_preexisted:
-        await asyncio.to_thread(shutil.rmtree, pkg_dir, ignore_errors=True)
-        if restore_from is not None:
-            try:
-                await asyncio.to_thread(restore_from.rename, pkg_dir)
-                log_lines.append(
-                    "Restored the previous checkout after rejecting the replacement clone"
-                )
-            except OSError as exc:
-                log_lines.append(
-                    f"WARNING: could not restore the previous checkout from "
-                    f"{restore_from.name}: {exc}; it is retained there for manual recovery"
-                )
+        # The rejected tree is a git checkout, so `rmtree_force`: `ignore_errors` leaves
+        # its read-only packs on Windows. `_restore_moved_aside` then sets aside whatever
+        # still survives (a file another process holds open) before it renames, so the
+        # previous checkout lands instead of colliding with it (WinError 183).
+        await _rmtree_force_settled(pkg_dir)
+        _restore_moved_aside(restore_from, pkg_dir, log_lines, "rejecting the replacement clone")
         return
 
     async def _run_git(argv: list[str]) -> int:
@@ -798,7 +793,7 @@ async def _clone_build_app_locked(
                 )
                 continue
             if stale_path.exists():
-                await asyncio.to_thread(shutil.rmtree, pkg_dir, True)
+                await _rmtree_force_settled(pkg_dir)
                 try:
                     await asyncio.to_thread(stale_path.rename, pkg_dir)
                     log_lines.append(

@@ -12,11 +12,11 @@ import asyncio
 import logging
 import os
 import re
-import shutil
 import time
 import uuid
 from pathlib import Path
 
+from kiro_crew import platform_compat
 from kiro_crew.apps.registry_pipeline import _FACADE
 from kiro_crew.config.loader import config_dir
 
@@ -351,10 +351,10 @@ def _sweep_stale_checkouts_sync(sources_dir: Path, now_ts: float) -> list[str]:
             continue
         if mtime >= cutoff:
             continue
-        # Safe to remove — best-effort.
+        # Safe to remove — best-effort. `rmtree_force`, not `ignore_errors`: an aged
+        # checkout is a git tree, and Windows will not unlink its read-only packs.
         try:
-            shutil.rmtree(child, ignore_errors=True)
-            if not child.exists():
+            if platform_compat.rmtree_force(child):
                 removed.append(child.name)
         except Exception:  # noqa: BLE001 — best-effort
             pass

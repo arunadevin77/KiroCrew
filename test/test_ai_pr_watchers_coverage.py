@@ -1811,10 +1811,10 @@ class TestDeleteCloneIfUnowned:
         orphan = tmp_path / "orphan"
         orphan.mkdir()
 
-        def _boom(path: Any, *args: Any, **kwargs: Any) -> None:
-            raise OSError("directory is busy")
+        def _survives(path: Any) -> bool:
+            return False
 
-        monkeypatch.setattr(W.shutil, "rmtree", _boom)
+        monkeypatch.setattr(W, "rmtree_force", _survives)
         assert W._delete_clone_if_unowned(reg, orphan) is False
         assert orphan.is_dir()
 

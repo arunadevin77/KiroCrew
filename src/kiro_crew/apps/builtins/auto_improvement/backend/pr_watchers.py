@@ -51,7 +51,6 @@ import hashlib
 import logging
 import os
 import re
-import shutil
 import subprocess
 import threading
 import time
@@ -61,6 +60,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from kiro_crew.platform.context import redact_via_context
+from kiro_crew.platform_compat import rmtree_force
 from kiro_crew.subprocess_utf8 import UTF8_TEXT
 
 from ..spine.git_safety import GIT_SAFE_CONFIG, GitSafetyError, hook_off_args, require_pinned
@@ -237,7 +237,7 @@ def setup_isolated_clone(
         return "", f"destination is a symlink (refused): {dest}"
     try:
         if os.path.exists(dest):
-            shutil.rmtree(dest, ignore_errors=True)
+            rmtree_force(dest)
         os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
         # --local hardlinks the object store: no network, near-instant, cheap on disk.
         # Absolute operands and the destination's parent as cwd: ``clone`` has no ``-C``
@@ -270,7 +270,7 @@ def setup_isolated_clone(
                 # revision. Reachable, not hypothetical: the loop's own reset paths can drop
                 # a generated bug-PR branch from the shared clone before a watcher clones it.
                 # Raised by the GPT review.
-                shutil.rmtree(dest, ignore_errors=True)
+                rmtree_force(dest)
                 return "", (
                     f"could not check out the pull request head {branch!r}: "
                     f"{redact_via_context((checkout.stderr or '').strip())[:160]}"
@@ -282,7 +282,7 @@ def setup_isolated_clone(
     ok, offenders = assert_origin_neutralized(dest)
     if not ok:
         # Fail closed: never hand the agent a tree we could not prove is dead.
-        shutil.rmtree(dest, ignore_errors=True)
+        rmtree_force(dest)
         return "", f"could not neutralize origin (still live: {offenders[:2]})"
     return dest, ""
 
@@ -1352,7 +1352,7 @@ class PRWatcherRegistry:
         try:
             expected = os.path.realpath(self._clone_dir(st.fp))
             if os.path.realpath(clone) == expected and os.path.isdir(clone):
-                shutil.rmtree(clone, ignore_errors=True)
+                rmtree_force(clone)
         except (OSError, ValueError):
             logger.debug("watcher %s: clone cleanup failed", st.fp, exc_info=True)
 
@@ -1514,8 +1514,8 @@ def _delete_clone_if_unowned(reg: PRWatcherRegistry, child: Path) -> bool:
                     if os.path.realpath(reg._clone_dir(fp)) == target:
                         return False  # owned right now — do not touch
             # Still unowned, and the lock is held so it cannot become owned before we delete.
-            shutil.rmtree(child)
-            return True
+            # `rmtree_force` answers False for a tree that survived, so True still means deleted.
+            return rmtree_force(child)
     except Exception:  # noqa: BLE001 — cannot prove unowned / delete failed → leave it
         return False
 

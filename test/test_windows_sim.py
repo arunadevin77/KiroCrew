@@ -7,6 +7,8 @@ isolation and against the real code path it is meant to guard.
 from __future__ import annotations
 
 import os
+import shutil
+import stat
 
 import pytest
 from windows_sim import (
@@ -16,6 +18,7 @@ from windows_sim import (
     nonatomic_write,
     open_sharing_violation,
     read_sharing_violation,
+    readonly_unlink_refused,
     replace_sharing_violation,
     same_tick_file_stat,
     unlink_sharing_violation,
@@ -231,6 +234,55 @@ class TestUnlinkSharingViolation:
         with unlink_sharing_violation(match="cred", times=0):
             f.unlink()
         assert not f.exists()
+
+
+class TestReadonlyUnlinkRefused:
+    @staticmethod
+    def _read_only_tree(tmp_path):
+        tree = tmp_path / "checkout"
+        pack = tree / ".git" / "objects" / "pack"
+        pack.mkdir(parents=True)
+        blob = pack / "pack-0123456789abcdef0123456789abcdef01234567.pack"
+        blob.write_bytes(b"PACK")
+        os.chmod(blob, stat.S_IREAD)
+        return tree, blob
+
+    def test_a_read_only_file_cannot_be_unlinked(self, tmp_path):
+        _tree, blob = self._read_only_tree(tmp_path)
+        with readonly_unlink_refused() as state:
+            with pytest.raises(PermissionError):
+                os.unlink(blob)
+            assert blob.exists()
+        assert state["refused"] == [str(blob)]
+
+    def test_clearing_the_bit_lets_the_delete_through(self, tmp_path):
+        _tree, blob = self._read_only_tree(tmp_path)
+        with readonly_unlink_refused():
+            os.chmod(blob, stat.S_IREAD | stat.S_IWRITE)
+            os.unlink(blob)
+        assert not blob.exists()
+
+    def test_a_writable_file_is_unaffected(self, tmp_path):
+        plain = tmp_path / "plain"
+        plain.write_bytes(b"x")
+        with readonly_unlink_refused() as state:
+            plain.unlink()
+        assert not plain.exists()
+        assert state["refused"] == []
+
+    def test_ignore_errors_leaves_the_tree_behind(self, tmp_path):
+        tree, blob = self._read_only_tree(tmp_path)
+        with readonly_unlink_refused():
+            shutil.rmtree(tree, ignore_errors=True)
+        assert blob.exists()
+
+    def test_is_posix_is_restored_on_exit(self):
+        from kiro_crew import platform_compat
+
+        before = platform_compat.IS_POSIX
+        with readonly_unlink_refused():
+            assert platform_compat.IS_POSIX is False
+        assert platform_compat.IS_POSIX is before
 
 
 class TestNonatomicWrite:

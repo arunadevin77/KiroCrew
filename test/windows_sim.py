@@ -42,6 +42,7 @@ import datetime as _dt
 import errno
 import os
 import pathlib
+import stat
 from contextlib import contextmanager
 from typing import Iterator, Optional
 from unittest import mock
@@ -54,6 +55,7 @@ __all__ = [
     "replace_sharing_violation",
     "open_sharing_violation",
     "unlink_sharing_violation",
+    "readonly_unlink_refused",
     "nonatomic_write",
     "windows_text_mode_write",
     "same_tick_file_stat",
@@ -418,6 +420,44 @@ def unlink_sharing_violation(
 
     with mock.patch("os.unlink", _patched_os_unlink), mock.patch.object(
         pathlib.Path, "unlink", _patched_path_unlink
+    ):
+        yield state
+
+
+@contextmanager
+def readonly_unlink_refused() -> Iterator[dict]:
+    """Make deleting a read-only file fail the way Windows does.
+
+    Windows refuses to unlink a file whose read-only attribute is set, whatever its
+    directory allows, and git writes the objects, packs and index under ``.git`` that
+    way. POSIX asks the parent directory's write bit instead, so ``shutil.rmtree`` over
+    the same checkout succeeds locally and a caller that passes ``ignore_errors=True``
+    never shows the residue it leaves on Windows.
+
+    ``os.unlink`` and ``os.remove`` raise ``PermissionError`` for a regular file without
+    an owner-write bit and delegate for everything else, so the ``chmod`` that
+    ``platform_compat.rmtree_force`` does before its retry lets the delete through. The
+    ``dir_fd`` form is covered because ``shutil.rmtree`` walks by descriptor on POSIX.
+
+    ``platform_compat.IS_POSIX`` reads False while the block runs, which is what makes
+    the retry hook take its Windows branch (the ``chmod``); anything else the code under
+    test asks of it sees False too, so wrap only the call being judged. Yields
+    ``{"refused": [path, ...]}``, the deletes this simulator refused.
+    """
+    real_unlink = os.unlink
+    state: dict = {"refused": []}
+
+    def _refusing(path, *args, dir_fd=None, **kwargs):  # type: ignore[no-untyped-def]
+        info = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+        if stat.S_ISREG(info.st_mode) and not info.st_mode & stat.S_IWRITE:
+            state["refused"].append(os.fspath(path))
+            raise PermissionError(
+                errno.EACCES, "[WinError 5] simulated read-only file", os.fspath(path)
+            )
+        return real_unlink(path, *args, dir_fd=dir_fd, **kwargs)
+
+    with mock.patch("os.unlink", _refusing), mock.patch("os.remove", _refusing), mock.patch(
+        "kiro_crew.platform_compat.IS_POSIX", False
     ):
         yield state
 

@@ -16,7 +16,6 @@ import logging
 import mimetypes
 import os
 import re
-import shutil
 import stat
 import sys
 import time
@@ -1858,7 +1857,7 @@ async def _run_uninstall(
 
                     ws_dir = app_source_dir(app_reg_name)
                     if ws_dir.is_dir():
-                        await asyncio.to_thread(shutil.rmtree, ws_dir, ignore_errors=True)
+                        await asyncio.to_thread(platform_compat.rmtree_force, ws_dir)
                         uninstall_log.append(f"Removed workspace for {app_reg_name}")
     if not result.ok:
         sel().log_api_access(
