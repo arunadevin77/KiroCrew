@@ -269,6 +269,23 @@ into a deterministic local failure. Keep the forced delay in place while you ver
 the fix, then remove it: a fix that only passes once the delay is gone has not been
 shown to fix anything.
 
+**A fresh test store is offline.** `createTestStore()` starts where the real
+dashboard boots: `dashboard.connected` is `false` until the SSE stream opens. A
+component gated on `useConnected()` therefore renders its offline branch unless the
+test connects it, and a regression in its connected path stays green. Name the
+branch you test: use `createConnectedTestStore()` for the connected path (it lays
+any `dashboard` fields you pass over the reducer's initial state), and plain
+`createTestStore()` for the offline one. A gated component worth testing needs
+both.
+
+```tsx
+// WRONG: the menu is gated on `connected`, so this asserts the dimmed row.
+renderWithProviders(<FolderMenu />)
+
+// RIGHT: say which branch the test is about.
+renderWithProviders(<FolderMenu />, { store: createConnectedTestStore() })
+```
+
 ### Rules every test keeps
 
 The cases below are where these rules came from. Each one is a rule for every new or

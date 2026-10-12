@@ -24,6 +24,24 @@ export function createTestStore(preloadedState?: Partial<RootState>) {
   })
 }
 
+/**
+ * Create a store whose dashboard is connected to the gateway.
+ *
+ * `createTestStore()` starts where the real dashboard boots: `connected: false`,
+ * until the SSE stream opens. A component gated on `connected` therefore renders
+ * its offline branch by default, and a test of its connected path must say so.
+ * This is that opt-in. Any `dashboard` fields you pass are laid over the reducer's
+ * real initial state, so you only name what the test is about; `connected` is
+ * always true. Other slices pass through unchanged.
+ */
+export function createConnectedTestStore(preloadedState?: Partial<RootState>) {
+  const initialDashboard = dashboardReducer(undefined, { type: '@@test/init' })
+  return createTestStore({
+    ...preloadedState,
+    dashboard: { ...initialDashboard, ...preloadedState?.dashboard, connected: true },
+  })
+}
+
 type TestStore = ReturnType<typeof createTestStore>
 
 interface WrapperOptions extends Omit<RenderOptions, 'wrapper'> {
