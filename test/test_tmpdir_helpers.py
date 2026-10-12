@@ -151,6 +151,18 @@ class TestEveryShortRootedFixtureIsNamed:
                     break
         return out
 
+    @staticmethod
+    def _may_contain_short_rooted_call(text: str) -> bool:
+        """Whether a file's text could hold a call `_short_rooted_calls` would match.
+
+        The ratchets below read and parse every file in `test/`, so their cost grows
+        with the suite; on a loaded shard it runs up against the global 120 s timeout.
+        A call can only match if its text names the helper (`short_tmp_base`) or spells
+        the hardcoded root (`"/tmp"`), so a file carrying none of those tokens cannot
+        hide an offender and is skipped unparsed.
+        """
+        return any(token in text for token in ("short_tmp_base", '"/tmp"', "'/tmp'"))
+
     # --- the predicate's own pins: a ratchet loosened here passes over a real offender ---
 
     @pytest.mark.parametrize(
@@ -186,6 +198,22 @@ class TestEveryShortRootedFixtureIsNamed:
         other spelling through unchecked."""
         assert len(self._short_rooted_calls(ast.parse(src))) == found
 
+    @pytest.mark.parametrize(
+        "src, kept",
+        [
+            ("mkdtemp(dir=short_tmp_base())", True),
+            ('mkdtemp(dir="/tmp")', True),
+            ("mkdtemp(dir='/tmp')", True),
+            ("mkdtemp(dir=tmp_path)", False),  # the pinned per-test root, not the shared one
+            ("mkdtemp()", False),  # a bare temp call cannot root at the shared base
+        ],
+    )
+    def test_the_text_gate_keeps_every_file_that_could_match(self, src, kept):
+        """The gate the ratchets read through must never grow teeth: widening the skip
+        set until it dropped a file that could still hold a short-rooted call would
+        silence both ratchets at once -- green, and blind."""
+        assert self._may_contain_short_rooted_call(src) is kept
+
     # --- the ratchets ------------------------------------------------------------------
 
     def test_every_short_rooted_fixture_passes_the_shared_prefix(self):
@@ -193,7 +221,10 @@ class TestEveryShortRootedFixtureIsNamed:
         rather than surfacing later as an unexplained `host_write` cluster."""
         offenders = []
         for path in sorted(Path(__file__).parent.glob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            text = path.read_text(encoding="utf-8")
+            if not self._may_contain_short_rooted_call(text):
+                continue
+            tree = ast.parse(text, filename=str(path))
             for call in self._short_rooted_calls(tree):
                 if not self._carries_shared_prefix(call):
                     offenders.append(f"{path.name}:{call.lineno}")
@@ -207,6 +238,7 @@ class TestEveryShortRootedFixtureIsNamed:
         scanned = [
             path
             for path in sorted(Path(__file__).parent.glob("*.py"))
-            if self._short_rooted_calls(ast.parse(path.read_text(encoding="utf-8")))
+            if self._may_contain_short_rooted_call(text := path.read_text(encoding="utf-8"))
+            and self._short_rooted_calls(ast.parse(text))
         ]
         assert len(scanned) >= 8, f"only scanned {[p.name for p in scanned]}"
