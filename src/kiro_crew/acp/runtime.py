@@ -149,6 +149,7 @@ from kiro_crew.acp.types import (
     ACP_BACKENDS_MARKDOWN_AGENT_SPECS,
     ACP_BACKENDS_SERIAL_SESSION_STARTS,
     MCP_ROSTER_COMPLETE_NOTE,
+    METHOD_AGENT_SWITCHED,
     METHOD_KAS_MCP_RESET_SERVER,
     METHOD_KAS_OPEN_EXTERNAL_URL,
     METHOD_MCP_OAUTH_REQUEST,
@@ -1275,6 +1276,11 @@ class AcpRuntime:
         # (e.g. session/prompt response signals turn completion and must reach the session)
         self._routed_requests: dict[int, str] = {}
         self._session_queues: dict[str, asyncio.Queue[JsonRpcMessage | None]] = {}
+        # sessionId -> the ``model`` kiro-cli's last ``_kiro.dev/agent/switched``
+        # named for it. ``session/set_mode`` answers ``{}``; this notification,
+        # sent before that answer, is the only report of the model the activated
+        # agent's spec put the session on. Read by ``_served_default_after_mode``.
+        self._switched_models: dict[str, str] = {}
         # OAuth notifications can precede the session/new or session/load
         # response that reveals which queue to register. Stage only those
         # frames while an init is active, then transfer the matching session's
@@ -4194,6 +4200,8 @@ class AcpRuntime:
                     # every other session would be cross-talk.
                     queue = self._session_queues.get(session_id)
                     if queue is not None:
+                        if msg.is_method(METHOD_AGENT_SWITCHED):
+                            self._note_switched_model(session_id, msg.params)
                         await queue.put(msg)
                     elif (
                         session_id in self._subagent_sessions
@@ -5661,6 +5669,7 @@ class AcpRuntime:
     def unregister_session(self, session_id: str) -> None:
         """Unregister a session queue (called by AcpSessionHandle.destroy)."""
         self._session_queues.pop(session_id, None)
+        self._switched_model_record().pop(session_id, None)
         # Clean up any pending routed requests for this session
         stale = [k for k, v in self._routed_requests.items() if v == session_id]
         for k in stale:
@@ -6156,6 +6165,50 @@ class AcpRuntime:
             "kiro-cli would run still matches the agent's spec. The session was not "
             "started. Start it again; if it keeps failing, restart the gateway."
         )
+
+    def _switched_model_record(self) -> dict[str, str]:
+        """The per-session ``agent/switched`` model record, created on first use.
+
+        Read through this rather than the attribute because a runtime built with
+        ``object.__new__`` (the shape several start-path tests use) never ran
+        ``__init__``, and a start must not fail for want of an empty record.
+        """
+        record: dict[str, str] | None = getattr(self, "_switched_models", None)
+        if record is None:
+            record = {}
+            self._switched_models = record
+        return record
+
+    def _note_switched_model(self, session_id: str, params: dict[str, Any] | None) -> None:
+        """Record the model a ``_kiro.dev/agent/switched`` frame names for *session_id*.
+
+        Called from the reader loop before the frame is queued, so the record is
+        in place by the time the ``session/set_mode`` answer that follows it
+        resolves. A frame naming no model leaves the previous record alone.
+        """
+        model = (params or {}).get("model")
+        if isinstance(model, str) and model.strip():
+            self._switched_model_record()[session_id] = model.strip()
+
+    async def _served_default_after_mode(self, handle: AcpSessionHandle, session_id: str) -> None:
+        """Re-run the served-default check for the model ``set_mode`` just applied.
+
+        Both session-start paths check the served default right after storing the
+        ``session/new`` / ``session/load`` response, which is BEFORE the mode is
+        activated. kiro-cli's ``set_mode`` puts the session on the model the
+        activated agent's spec pins, undoing that earlier switch, and
+        ``agent.model`` is copied into ``kirocrew.json``. An unentitled default
+        then fails the first prompt with "no access to model".
+
+        The model judged is the one kiro-cli itself reported in the
+        ``_kiro.dev/agent/switched`` frame for this activation, not a second read
+        of the spec file: the file can change after kiro-cli read it, and only
+        the host knows which copy of the agent it loaded. No frame, or a frame
+        without a model (older kiro-cli), is no evidence and changes nothing.
+        """
+        activated = self._switched_model_record().pop(session_id, "")
+        if activated:
+            await handle.ensure_served_default(activated_model=activated)
 
     def _refuse_if_view_superseded(
         self, mode_agent: str, sent_alias: str, used_generation: int
@@ -7786,6 +7839,8 @@ class AcpRuntime:
             # then consumed without being recorded, leaving the panel at a false
             # "no report" for the rest of the session.
             staged_before_switch = handle.queued_frame_count()
+            # Only the frame THIS activation sends may be judged afterwards.
+            self._switched_model_record().pop(session_id, None)
             activated_alias = await self._activate_mode_bracketed(
                 session_id,
                 mode_agent,
@@ -7796,6 +7851,7 @@ class AcpRuntime:
             )
             set_mode_ran = True
             handle.active_agent = mode_agent
+            await self._served_default_after_mode(handle, session_id)
             # Whether set_mode actually SWITCHED modes: the servers that
             # initialized during session/new belong to the mode kiro-cli
             # started the session on. If the requested agent differs, those
@@ -8359,6 +8415,7 @@ class AcpRuntime:
             # then consumed without being recorded, leaving the panel at a false
             # "no report" for the rest of the session.
             staged_before_switch = handle.queued_frame_count()
+            self._switched_model_record().pop(resume_sid, None)
             activated_alias = await self._activate_mode_bracketed(
                 resume_sid,
                 mode_agent,
@@ -8369,6 +8426,7 @@ class AcpRuntime:
             )
             set_mode_ran = True
             handle.active_agent = mode_agent
+            await self._served_default_after_mode(handle, resume_sid)
             # See create_session: after a real mode switch, registration frames
             # staged during session/load describe the pre-switch roster.
             _ids, _current, _adv = parse_session_modes(resp)

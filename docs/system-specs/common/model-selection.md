@@ -71,6 +71,23 @@ alone so the warm-pool re-apply and the slot backfill still read "inherit". The
 dashboard carries the corrected id as the slot's `served_model` so the composer
 chip names the model a turn will run on instead of `auto`.
 
+A pooled session is checked a second time when `session/set_mode` activates an
+agent. kiro-cli puts the session on the model the activated agent's spec pins,
+which undoes the first check, and `agent.model` is copied into `kirocrew.json`, so
+an unentitled global default reaches the wire this way. `set_mode` answers `{}`;
+kiro-cli reports the applied model only in the `_kiro.dev/agent/switched` frame it
+sends before that answer (`{"agentName", "previousAgentName", "model", ...}`, seen
+on kiro-cli 2.29.1). The reader loop records that `model` per session
+(`AcpRuntime._note_switched_model`), and `AcpRuntime._served_default_after_mode`
+passes it to `ensure_served_default(activated_model=...)`, which judges it instead
+of the stale `session/new` id. The record is cleared before each start-path
+`set_mode`, so only that activation's frame counts. The spec file is not read
+again: it can change after kiro-cli read it, and only the host knows which copy of
+the agent it loaded. No frame, or a frame without a model, is no evidence and
+changes nothing. Both `create_session` and `load_session` run it. The non-pooled
+`AcpClient._initialize_session` kiro branch sends `set_mode` without waiting for its
+answer and does not run this second check yet.
+
 KAS sends no `models` object; its list is only the `configOptions` `model`
 select, and it defaults a new session to `auto`. The pooled check asks that select
 one question: is the session on an `auto` the select does not list? If so it moves

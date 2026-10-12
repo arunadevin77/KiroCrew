@@ -9802,6 +9802,153 @@ def test_drop_counter_placeholder_appears_in_flushed_summary(caplog):
     assert "Dropped 1 unroutable frame(s) for session '?' (method='?')" in records[0]
 
 
+class TestServedDefaultAfterSetMode:
+    """The served-default check must also judge the model ``set_mode`` applies.
+
+    Both session-start paths run ``ensure_served_default`` right after storing the
+    session/new or session/load response, which is before the mode is activated.
+    kiro-cli's ``set_mode`` puts the session on the model the activated agent's
+    spec pins, undoing that earlier switch, and reports that model only in the
+    ``_kiro.dev/agent/switched`` frame it sends before answering ``{}``. With
+    ``agent.model`` set to a model the account cannot run (it is copied into
+    ``kirocrew.json``), the first prompt failed with "no access to model".
+    """
+
+    UNSERVED = "probe-unserved-model"
+    ADVERTISED = [{"modelId": "auto"}, {"modelId": "gpt-5.6-sol"}, {"modelId": "glm-5"}]
+
+    def _rig(self, monkeypatch, *, current, switched):
+        """*switched* is the ``params`` of the frame set_mode sends, or None for none."""
+        from kiro_crew.acp.types import ACP_BACKEND_KIRO
+
+        rt, _, _ = _make_runtime()
+        rt._can_load_session = True
+        rt._acp_backend = ACP_BACKEND_KIRO
+
+        async def _fake_send(method, params, timeout=None):
+            if method in (METHOD_SESSION_NEW, METHOD_SESSION_LOAD):
+                return {
+                    "sessionId": "sid-new",
+                    "modes": {"currentModeId": "kirocrew"},
+                    "models": {"currentModelId": current, "availableModels": self.ADVERTISED},
+                }
+            if method == METHOD_SET_MODE and switched is not None:
+                # What the reader loop does with the frame kiro-cli sends first.
+                rt._note_switched_model(params["sessionId"], switched)
+            return {}
+
+        monkeypatch.setattr(rt, "_send_and_await", _fake_send)
+        routed = _replying_send(lambda params: rt._session_queues[params["sessionId"]])
+        monkeypatch.setattr(rt, "send_request", routed)
+        return rt, routed
+
+    @staticmethod
+    def _set_models(routed) -> list[str]:
+        from kiro_crew.acp.types import METHOD_SET_MODEL
+
+        return [
+            c.args[1]["modelId"] for c in routed.await_args_list if c.args[0] == METHOD_SET_MODEL
+        ]
+
+    async def _start(self, rt, path):
+        if path == "create":
+            return await rt.create_session(cwd="/work", agent="kirocrew")
+        return await rt.load_session("/f.json", "sid-new", cwd="/work", agent="kirocrew")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["create", "load"])
+    async def test_an_unserved_activated_model_is_switched_off(self, monkeypatch, path):
+        rt, routed = self._rig(
+            monkeypatch,
+            current="gpt-5.6-sol",
+            switched={"agentName": "kirocrew", "model": self.UNSERVED},
+        )
+
+        handle = await self._start(rt, path)
+
+        assert self._set_models(routed) == ["auto"]
+        assert handle.served_model == "auto"
+        # The intent is untouched: the session still INHERITS.
+        assert handle.model == ""
+        assert "sid-new" not in rt._switched_models
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["create", "load"])
+    async def test_an_unserved_default_is_switched_off_twice(self, monkeypatch, path):
+        # session/new hands out the unserved id, and set_mode puts it back.
+        rt, routed = self._rig(
+            monkeypatch, current=self.UNSERVED, switched={"model": self.UNSERVED}
+        )
+
+        handle = await self._start(rt, path)
+
+        assert self._set_models(routed) == ["auto", "auto"]
+        assert handle.served_model == "auto"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["create", "load"])
+    async def test_a_served_activated_model_is_adopted_without_a_switch(self, monkeypatch, path):
+        rt, routed = self._rig(monkeypatch, current="gpt-5.6-sol", switched={"model": "glm-5"})
+
+        handle = await self._start(rt, path)
+
+        assert self._set_models(routed) == []
+        assert handle.served_model == "glm-5"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "switched",
+        [None, {"agentName": "kirocrew"}, {"model": "  "}, {"model": None}],
+        ids=["no-frame", "no-model", "blank", "null"],
+    )
+    async def test_no_reported_model_is_no_evidence(self, monkeypatch, switched):
+        rt, routed = self._rig(monkeypatch, current="gpt-5.6-sol", switched=switched)
+
+        handle = await self._start(rt, "create")
+
+        assert self._set_models(routed) == []
+        assert handle.served_model == "gpt-5.6-sol"
+
+    @pytest.mark.asyncio
+    async def test_an_earlier_frame_is_not_judged_as_this_activation(self, monkeypatch):
+        # A record left by an earlier switch on the same session id names a model
+        # this activation never applied.
+        rt, routed = self._rig(monkeypatch, current="gpt-5.6-sol", switched=None)
+        rt._switched_models["sid-new"] = self.UNSERVED
+
+        handle = await self._start(rt, "load")
+
+        assert self._set_models(routed) == []
+        assert handle.served_model == "gpt-5.6-sol"
+
+    @pytest.mark.asyncio
+    async def test_the_reader_records_the_switched_frames_model(self):
+        rt, reader, _ = _make_runtime()
+        queues = _register(rt, "sA")
+        task = await _start_reader(rt)
+        try:
+            frame = {
+                "jsonrpc": "2.0",
+                "method": "_kiro.dev/agent/switched",
+                "params": {
+                    "sessionId": "sA",
+                    "agentName": "kirocrew",
+                    "previousAgentName": "kiro_default",
+                    "welcomeMessage": None,
+                    "model": self.UNSERVED,
+                },
+            }
+            _feed(reader, frame)
+            msg = await asyncio.wait_for(queues["sA"].get(), timeout=default_timeout())
+            # Recorded no later than queued, and the frame still reaches the session.
+            assert rt._switched_models == {"sA": self.UNSERVED}
+            assert msg.method == "_kiro.dev/agent/switched"
+        finally:
+            await _stop_reader(task)
+        rt.unregister_session("sA")
+        assert rt._switched_models == {}
+
+
 class TestToolPurposeExtraction:
     """The reserved purpose arg is what the dashboard's concise tool pill shows
     instead of the literal invocation. kiro-cli echoes it back under EITHER

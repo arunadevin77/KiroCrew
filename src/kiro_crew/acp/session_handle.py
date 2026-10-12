@@ -4292,7 +4292,7 @@ class AcpSessionHandle:
             self._available_models = parse_advertised_models({"availableModels": models})
             self._mark_available_models_captured()
 
-    async def ensure_served_default(self) -> None:
+    async def ensure_served_default(self, *, activated_model: str = "") -> None:
         """Move an inheriting pooled session off a backend default it cannot run.
 
         The pooled twin of ``AcpClient._ensure_served_default``.
@@ -4320,8 +4320,17 @@ class AcpSessionHandle:
         pooled session would be pinned to whichever model happened to be first
         on the list, and an unpinned slot would stop following the default.
         Only ``_resolved_model_id`` — what the session actually runs — changes.
+
+        ``activated_model`` is the model a ``session/set_mode`` just applied.
+        kiro-cli switches the session to the model the activated agent's spec
+        pins, replacing whatever it ran before — including the served model an
+        earlier call here moved it to. The id recorded from ``session/new`` is
+        stale then, so the caller passes the model kiro-cli reported for the
+        activation and it is judged instead.
         """
         if self._runtime.acp_backend == ACP_BACKEND_KIRO:
+            if activated_model.strip():
+                self._resolved_model_id = activated_model.strip()
             unserved = self._resolved_model_id or ""
             fallback = pick_served_default(unserved, self._advertised_model_ids())
             if not fallback:
