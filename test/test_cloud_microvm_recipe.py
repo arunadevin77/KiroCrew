@@ -12,6 +12,7 @@ answer is the one that ships the wrong content.
 
 from __future__ import annotations
 
+import os
 import random
 import re
 import zipfile
@@ -241,6 +242,28 @@ class TestTheCrewNameIsReadableFromTheBundle:
 
         assert bundle_crew_name(tmp_path / "nope") == ""
 
+    def test_a_manifest_linked_out_of_the_bundle_is_not_read(self, bundle, tmp_path):
+        """The launch reads the name before the snapshot validates the bundle, so
+        this read goes through the same guard: a manifest symlinked to a file
+        outside the bundle is not opened, even when that file parses."""
+        from kiro_crew.cloud.microvm.recipe import bundle_crew_name
+
+        outside = tmp_path / "outside.json"
+        outside.write_text('{"crew_name": "leaked"}')
+        (bundle / "manifest.json").unlink()
+        (bundle / "manifest.json").symlink_to(outside)
+        assert bundle_crew_name(bundle) == ""
+
+    @pytest.mark.skipif(not hasattr(os, "link"), reason="needs hardlinks")
+    def test_a_hardlinked_manifest_is_not_read(self, bundle, tmp_path):
+        from kiro_crew.cloud.microvm.recipe import bundle_crew_name
+
+        outside = tmp_path / "outside.json"
+        outside.write_text('{"crew_name": "leaked"}')
+        (bundle / "manifest.json").unlink()
+        os.link(outside, bundle / "manifest.json")
+        assert bundle_crew_name(bundle) == ""
+
 
 class TestAssemble:
     def test_the_recipe_names_both_digests(self, bundle, wheel, tmp_path):
@@ -388,6 +411,65 @@ class TestAssemble:
                 out_zip=tmp_path / "recipe.zip",
             )
 
+    @pytest.mark.parametrize(
+        "rel",
+        [
+            "container/microvm/hooks/__init__.py",
+            "vendor/evil.whl",
+            "microvm-ssm-agent.json",
+        ],
+    )
+    def test_a_bundle_file_at_a_runtime_name_is_refused(self, bundle, wheel, tmp_path, rel):
+        """The runtime writes ``container/`` (run as root by the hook listener),
+        ``vendor/``, the Dockerfile and the SSM agent config into the same build
+        context. A bundle file at one of those names would land in the runtime's
+        own ``COPY``, so it is refused and no zip is written."""
+        target = bundle / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x", encoding="utf-8")
+        out_zip = tmp_path / "recipe.zip"
+        with pytest.raises(RecipeRefused, match="name the runtime writes"):
+            assemble(bundle_dir=bundle, wheel=wheel, base_image_arn=BASE, out_zip=out_zip)
+        assert not out_zip.exists()
+
+    @pytest.mark.skipif(not hasattr(os, "link"), reason="needs hardlinks")
+    def test_a_bundle_file_hardlinked_elsewhere_is_refused(self, bundle, wheel, tmp_path):
+        """A member hardlinked to a file outside the bundle (a credential file, say)
+        passes every name check, so it is refused when its bytes are read."""
+        outside = tmp_path / "outside-secret"
+        outside.write_text("aws_secret_access_key = x", encoding="utf-8")
+        target = bundle / "skills" / "linked.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.link(outside, target)
+        out_zip = tmp_path / "recipe.zip"
+        with pytest.raises(RecipeRefused, match="could not be read safely"):
+            assemble(bundle_dir=bundle, wheel=wheel, base_image_arn=BASE, out_zip=out_zip)
+
+    def test_a_bundle_swapped_mid_build_cannot_split_digest_from_zip(
+        self, bundle, wheel, tmp_path, monkeypatch
+    ):
+        """The digest names the image in the cache, so it must describe the bytes
+        in THIS zip. A rebuild that rewrites the bundle after it was read must
+        change neither."""
+        skill = bundle / "skills" / "demo" / "SKILL.md"
+        original = skill.read_bytes()
+        expected = recipe_module.bundle_digest_of(bundle)
+        real_snapshot = recipe_module._snapshot_bundle
+
+        def snapshot_then_swap(bundle_dir, parent):
+            snap = real_snapshot(bundle_dir, parent)
+            skill.write_text("# swapped in after the read\n")
+            return snap
+
+        monkeypatch.setattr(recipe_module, "_snapshot_bundle", snapshot_then_swap)
+        out = assemble(
+            bundle_dir=bundle, wheel=wheel, base_image_arn=BASE, out_zip=tmp_path / "r.zip"
+        )
+        with zipfile.ZipFile(out.path) as archive:
+            assert archive.read("skills/demo/SKILL.md") == original
+        assert out.recipe.bundle_digest == expected
+        assert not any(p.name.startswith(".bundle-snapshot-") for p in tmp_path.iterdir())
+
     def test_a_bad_layout_is_refused_before_anything_is_written(self, bundle, wheel, tmp_path):
         (bundle / "mcp.json").unlink()
         out_zip = tmp_path / "recipe.zip"
@@ -461,7 +543,7 @@ class TestUploader:
 
     def test_uploading_an_unassembled_recipe_is_refused(self):
         """A resolver that asked for an upload before assemble() ran is a caller bug."""
-        from kiro_crew.cloud.microvm.image import Recipe
+        from kiro_crew.cloud.microvm.image import Recipe, default_build_digest
 
         upload = recipe_module.uploader(bucket="kc-recipes", put_object=lambda b, k, p: None)
         with pytest.raises(RecipeRefused, match="no assembled recipe"):
@@ -470,6 +552,7 @@ class TestUploader:
                     base_image_arn=BASE,
                     base_digest="sha256:" + "e" * 64,
                     bundle_digest="sha256:" + "f" * 64,
+                    build_digest=default_build_digest(),
                 )
             )
 
@@ -942,3 +1025,213 @@ class TestTheStagedWheelCarriesNoDashboard:
             out_zip=tmp_path / "under.zip",
         )
         assert out.size_bytes < recipe_module.MAX_RECIPE_BYTES
+
+
+class TestTheBaseDigestLocatesEachFileAndNotJustItsName:
+    """``container/`` is a package tree, so a bare file name does not locate a file.
+
+    It holds ``microvm/hooks.py``, ``front/app.py`` and an ``__init__.py`` per
+    package. Hashed under its bare name, a file moved between packages left the
+    digest unchanged while changing the image -- so the cache hit on an image
+    built from the old tree. The digest is half the image's name, and nothing
+    compares further once the name matches.
+
+    ``CONTAINER_DIR`` is pointed at a fixture tree here rather than at the real
+    one, because the property is about the walk and the real tree cannot be
+    rearranged inside a test.
+    """
+
+    @pytest.fixture()
+    def container(self, tmp_path, monkeypatch):
+        """Two packages, each with the empty ``__init__.py`` every package has.
+
+        Deliberately the shape the ambiguity needs and the real tree has: several
+        files sharing one basename AND one content. Hashed under bare names the
+        two are indistinguishable, so the stream says nothing about where either
+        of them is.
+        """
+        root = tmp_path / "container"
+        (root / "front").mkdir(parents=True)
+        (root / "microvm").mkdir(parents=True)
+        (root / "front" / "__init__.py").write_text("")
+        (root / "microvm" / "__init__.py").write_text("")
+        (root / "microvm" / "hooks.py").write_text("def run(): ...\n")
+        monkeypatch.setattr(recipe_module, "CONTAINER_DIR", root)
+        return root
+
+    def test_moving_a_package_file_changes_the_digest(self, container, wheel):
+        """``microvm/__init__.py`` moves to ``microvm/deep/__init__.py``.
+
+        Chosen so the sequence of (bare name, bytes) pairs is byte-for-byte
+        unchanged -- same names, same contents, same order -- while the tree is
+        not. A hash over bare names alone answers "nothing changed" for that
+        rearrangement, and the reuse it produces is silent: the image name
+        matches, so nothing compares further.
+        """
+        before = recipe_module.base_recipe_digest(wheel)
+        (container / "microvm" / "deep").mkdir()
+        (container / "microvm" / "__init__.py").rename(
+            container / "microvm" / "deep" / "__init__.py"
+        )
+        assert recipe_module.base_recipe_digest(wheel) != before
+
+    def test_editing_the_hooks_source_changes_the_digest(self, container, wheel):
+        """The guest's hook listener is PID 1 in the image, so a change to it is a
+        different image whatever else stayed the same.
+
+        Already true before the path fix -- the bytes were always hashed -- and
+        kept because it is the property the review asked after, and a path fix
+        that dropped the content from the stream would pass every other test here.
+        """
+        before = recipe_module.base_recipe_digest(wheel)
+        (container / "microvm" / "hooks.py").write_text("def run(): return 'changed'\n")
+        assert recipe_module.base_recipe_digest(wheel) != before
+
+    def test_an_untouched_tree_gives_the_same_digest(self, container, wheel):
+        """Non-vacuity, and the property the cache rests on: nothing changed means
+        no rebuild."""
+        assert recipe_module.base_recipe_digest(wheel) == recipe_module.base_recipe_digest(wheel)
+
+    def test_the_real_hooks_source_is_inside_the_walked_tree(self):
+        """The fixture above proves the mechanism; this proves it applies to the
+        file that matters, which the fixture cannot."""
+        hooks = recipe_module.CONTAINER_DIR / "microvm" / "hooks.py"
+        assert hooks.is_file(), hooks
+
+
+class TestTheStagedWheelIsBuiltReproducibly:
+    """``python -m build`` dates each wheel member from the clock by default.
+
+    :func:`base_recipe_digest` hashes the wheel's bytes and that digest is half
+    the image cache's key, so a wheel that varies run to run makes every restage
+    of unchanged code a cache miss and a full multi-minute image build charged to
+    the owner. ``SOURCE_DATE_EPOCH`` is the convention ``wheel`` and setuptools
+    already honour, which is why it is the fix rather than a pass that rewrites
+    timestamps afterwards.
+
+    The CLI is loaded from its path because ``scripts/`` is not an importable
+    package, and the build subprocess is replaced: what is under test is the
+    environment handed to it.
+    """
+
+    @pytest.fixture()
+    def script(self):
+        import importlib.util
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / "build_microvm_image_zip.py"
+        spec = importlib.util.spec_from_file_location("_build_microvm_image_zip", path)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    @staticmethod
+    def _capturing_build(vendor: Path, seen: list[dict]):
+        def run(argv, **kwargs):
+            seen.append(kwargs.get("env") or {})
+            _write_wheel(
+                vendor / "kiro_crew-0.0.0-py3-none-any.whl",
+                {"kiro_crew/__init__.py": b"# serving code\n"},
+            )
+            return None
+
+        return run
+
+    def test_the_build_is_given_a_fixed_source_date_epoch(self, script, tmp_path, monkeypatch):
+        vendor = tmp_path / "vendor"
+        seen: list[dict] = []
+        monkeypatch.delenv("SOURCE_DATE_EPOCH", raising=False)
+        monkeypatch.setattr(script.subprocess, "run", self._capturing_build(vendor, seen))
+        script.build_wheel(vendor)
+        assert seen and seen[0].get("SOURCE_DATE_EPOCH") == script.SOURCE_DATE_EPOCH
+
+    def test_the_value_is_one_a_zip_member_can_carry(self, script):
+        """ZIP's own epoch is 1980-01-01; an earlier stamp has to be clamped by
+        whatever writes the archive, which is how a "fixed" timestamp stops being
+        fixed."""
+        import datetime
+
+        moment = datetime.datetime.fromtimestamp(
+            int(script.SOURCE_DATE_EPOCH), tz=datetime.timezone.utc
+        )
+        assert moment.year >= 1980
+
+    def test_an_operators_own_value_is_kept(self, script, tmp_path, monkeypatch):
+        """Any constant gives a reproducible wheel, and theirs may be pinned to
+        something they can explain."""
+        vendor = tmp_path / "vendor"
+        seen: list[dict] = []
+        monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
+        monkeypatch.setattr(script.subprocess, "run", self._capturing_build(vendor, seen))
+        script.build_wheel(vendor)
+        assert seen[0]["SOURCE_DATE_EPOCH"] == "1700000000"
+
+    def test_the_rest_of_the_environment_is_not_dropped(self, script, tmp_path, monkeypatch):
+        """``env=`` REPLACES the child's environment, so a dict holding only this
+        variable would take PATH and the virtualenv with it."""
+        vendor = tmp_path / "vendor"
+        seen: list[dict] = []
+        monkeypatch.setenv("KC_MARKER_FOR_THIS_TEST", "1")
+        monkeypatch.setattr(script.subprocess, "run", self._capturing_build(vendor, seen))
+        script.build_wheel(vendor)
+        assert seen[0].get("KC_MARKER_FOR_THIS_TEST") == "1"
+        assert "PATH" in seen[0]
+
+
+class TestTheRecipeStampsTheGuestsPins:
+    """The account and region the guest refuses a payload outside are in the
+    IMAGE's environment, not in this zip -- and they are in the recipe's digest.
+
+    Taken by :func:`assemble` for that reason alone. The resolver refuses a recipe
+    whose stamp is not the pair it is about to bake, so the stamp is what keeps the
+    zip under a name and the image built under that name the same statement.
+    """
+
+    def _assemble(self, bundle, wheel, tmp_path, **pins):
+        return assemble(
+            bundle_dir=bundle,
+            wheel=wheel,
+            base_image_arn=BASE,
+            out_zip=tmp_path / f"recipe-{len(pins)}-{sorted(pins.items())}.zip",
+            **pins,
+        )
+
+    def test_the_pins_are_in_the_digest(self, bundle, wheel, tmp_path):
+        from kiro_crew.cloud.microvm.image import default_build_digest
+
+        out = self._assemble(bundle, wheel, tmp_path, account_id="123456789012", region="us-east-1")
+        assert out.recipe.build_digest == default_build_digest(
+            account_id="123456789012", region="us-east-1"
+        )
+
+    def test_a_different_account_gives_a_different_image_name(self, bundle, wheel, tmp_path):
+        first = self._assemble(
+            bundle, wheel, tmp_path, account_id="111111111111", region="us-east-1"
+        )
+        second = self._assemble(
+            bundle, wheel, tmp_path, account_id="222222222222", region="us-east-1"
+        )
+        assert first.recipe.image_name() != second.recipe.image_name()
+
+    def test_an_unpinned_recipe_is_still_assemblable(self, bundle, wheel, tmp_path):
+        """An operator may build an unpinned image deliberately, so the pins
+        default to empty rather than being required."""
+        from kiro_crew.cloud.microvm.image import default_build_digest
+
+        out = self._assemble(bundle, wheel, tmp_path)
+        assert out.recipe.build_digest == default_build_digest()
+
+    def test_the_pins_go_into_nothing_the_zip_carries(self, bundle, wheel, tmp_path):
+        """They are baked by ``CreateMicrovmImage``, not copied into the build
+        context, so a reader of the zip must not find the VALUES in it. The
+        variable's NAME is in the zip, because the guest's hooks read it; what
+        must not be there is a Dockerfile ``ENV`` for it, which would put a second,
+        empty default beside the one the image's environment sets."""
+        pinned = self._assemble(
+            bundle, wheel, tmp_path, account_id="123456789012", region="us-east-1"
+        )
+        with zipfile.ZipFile(pinned.path) as archive:
+            blob = b"".join(archive.read(name) for name in archive.namelist())
+        assert b"123456789012" not in blob
+        assert b"ENV SMC_MICROVM_ACCOUNT" not in blob
+        assert b"SMC_MICROVM_REGION=" not in blob

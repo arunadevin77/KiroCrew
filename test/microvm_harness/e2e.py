@@ -303,7 +303,7 @@ def _run_cycle(result: Result, work: Path) -> Result:
                     seen.append(state)
                 if state == "RUNNING":
                     break
-                time.sleep(0.5)
+                time.sleep(0.5)  # flake-ok: polls another process; no event to await
             assert seen[-1] == "RUNNING", f"the VM never reached RUNNING: {seen}"
             result.facts["state_sequence"] = seen
             crew = engine.crew(tag)

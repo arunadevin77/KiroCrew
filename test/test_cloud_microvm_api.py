@@ -14,6 +14,9 @@ the lane says, and the only local way to check what it says is to read it.
 
 from __future__ import annotations
 
+import os
+import pathlib
+
 import pytest
 
 from kiro_crew.cloud.microvm import api
@@ -24,7 +27,7 @@ def captured(monkeypatch):
     """Capture the argv each call builds, and answer with a usable shape."""
     calls: list[list[str]] = []
 
-    def fake(args, profile="", region="", *, action="", timeout=0):
+    def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
         calls.append(list(args))
         if "run-microvm" in args or "get-microvm" in args:
             return {
@@ -93,7 +96,7 @@ class TestNetworkConnectorArn:
         secret_payload = '{"ssm":{"id":"act-1","code":"single-use-activation-code"}}'
         seen: dict[str, object] = {}
 
-        def capture(argv, profile="", region="", *, action="", timeout=0):
+        def capture(argv, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             seen["argv"] = list(argv)
             reference = _value_after(list(argv), "--run-hook-payload")
             path = reference[len("file://") :]
@@ -436,7 +439,7 @@ class TestListMicrovmsPagination:
         ]
         seen_tokens: list[str] = []
 
-        def fake(args, profile="", region="", *, action="", timeout=0):
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             seen_tokens.append(
                 args[args.index("--next-token") + 1] if "--next-token" in args else ""
             )
@@ -497,7 +500,7 @@ class TestMicrovmStatus:
     def test_a_gone_vm_reports_none(self, monkeypatch):
         from kiro_crew.cloud.aws import AWSError
 
-        def fake(args, profile="", region="", *, action="", timeout=0):
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             raise AWSError("ResourceNotFoundException: no such microvm", action=action)
 
         monkeypatch.setattr(api, "checked_json", fake)
@@ -506,7 +509,7 @@ class TestMicrovmStatus:
     def test_any_other_error_propagates(self, monkeypatch):
         from kiro_crew.cloud.aws import AWSError
 
-        def fake(args, profile="", region="", *, action="", timeout=0):
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             raise AWSError("AccessDeniedException", action=action)
 
         monkeypatch.setattr(api, "checked_json", fake)
@@ -516,8 +519,8 @@ class TestMicrovmStatus:
     def test_a_not_found_is_matched_on_the_error_name(self):
         from kiro_crew.cloud.aws import AWSError
 
-        assert api._is_not_found(AWSError("ResourceNotFoundException")) is True
-        assert api._is_not_found(AWSError("ValidationException")) is False
+        assert api.is_not_found(AWSError("ResourceNotFoundException")) is True
+        assert api.is_not_found(AWSError("ValidationException")) is False
 
 
 class TestDescribeActivationRegistrations:
@@ -567,7 +570,7 @@ class TestCreateMicrovmImage:
     def image_calls(self, monkeypatch):
         calls: list[list[str]] = []
 
-        def fake(args, profile="", region="", *, action="", timeout=0):
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             calls.append(list(args))
             return {"imageArn": "arn:img", "state": "CREATING"}
 
@@ -648,7 +651,7 @@ class TestGetMicrovmImage:
     def test_a_missing_image_reports_none(self, monkeypatch):
         from kiro_crew.cloud.aws import AWSError
 
-        def fake(args, profile="", region="", *, action="", timeout=0):
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             raise AWSError("ResourceNotFoundException", action=action)
 
         monkeypatch.setattr(api, "checked_json", fake)
@@ -657,7 +660,7 @@ class TestGetMicrovmImage:
     def test_any_other_error_propagates(self, monkeypatch):
         from kiro_crew.cloud.aws import AWSError
 
-        def fake(args, profile="", region="", *, action="", timeout=0):
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             raise AWSError("AccessDeniedException", action=action)
 
         monkeypatch.setattr(api, "checked_json", fake)
@@ -678,7 +681,7 @@ class TestListMicrovmImages:
     def test_a_name_filter_is_passed_through(self, monkeypatch):
         calls: list[list[str]] = []
 
-        def fake(args, profile="", region="", *, action="", timeout=0):
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             calls.append(list(args))
             return {"items": []}
 
@@ -711,7 +714,7 @@ class TestImageVersionStatus:
     def test_a_missing_version_reports_none(self, monkeypatch):
         from kiro_crew.cloud.aws import AWSError
 
-        def fake(args, profile="", region="", *, action="", timeout=0):
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             raise AWSError("ResourceNotFoundException", action=action)
 
         monkeypatch.setattr(api, "checked_json", fake)
@@ -755,7 +758,7 @@ class TestPutSecret:
 
         seen: dict[str, object] = {}
 
-        def fake(args, profile="", region="", *, action="", timeout=0):
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             assert all("super-secret-value" not in str(a) for a in args)
             secret_string = args[args.index("--secret-string") + 1]
             assert secret_string.startswith("file://")
@@ -790,7 +793,7 @@ class TestPutSecret:
 
         actions: list[str] = []
 
-        def fake(args, profile="", region="", *, action="", timeout=0):
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             actions.append(action)
             if action == "secretsmanager:CreateSecret":
                 raise AWSError("ResourceExistsException: already there", action=action)
@@ -808,7 +811,7 @@ class TestPutSecret:
 
         seen: dict[str, str] = {}
 
-        def fake(args, profile="", region="", *, action="", timeout=0):
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             seen["path"] = args[args.index("--secret-string") + 1][len("file://") :]
             raise AWSError("AccessDeniedException", action=action)
 
@@ -840,8 +843,71 @@ class TestDeleteSecret:
         assert "--force-delete-without-recovery" not in argv
 
     def test_a_failure_is_swallowed_so_the_teardown_continues(self, monkeypatch):
-        def fake(args, profile="", region="", *, action="", timeout=0):
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
             raise RuntimeError("boom")
 
         monkeypatch.setattr(api, "checked_json", fake)
         api.delete_secret("kc/abc", region="us-east-1")
+
+
+class TestCredentialsAreStagedUnderTheMaskedRoot:
+    """A same-UID sandboxed agent can read a 0600 file in the shared temp dir.
+
+    So the control secret and the run-hook payload are written under the
+    ``aws-control-staging`` root, which every agent sandbox masks, and only the
+    one AWS CLI child is granted that directory.
+    """
+
+    @staticmethod
+    def _capture(monkeypatch, answer):
+        seen = []
+
+        def fake(args, profile="", region="", *, action="", timeout=0, visible_dirs=()):
+            path = next(a[len("file://") :] for a in args if a.startswith("file://"))
+            seen.append(
+                {
+                    "path": path,
+                    "visible": visible_dirs,
+                    "exists": os.path.exists(path),
+                    "mode": os.stat(path).st_mode & 0o777,
+                }
+            )
+            return answer
+
+        monkeypatch.setattr(api, "checked_json", fake)
+        return seen
+
+    def _root(self):
+        from kiro_crew.apps.builtins.aws_control.backend.storage import staging_root
+
+        return staging_root().resolve()
+
+    def test_the_secret_is_staged_under_the_masked_root(self, monkeypatch):
+        seen = self._capture(monkeypatch, {"ARN": "arn:secret"})
+        api.put_secret("kirocrew/crew/c/CONTROL_SECRET", "v4lue", region="us-east-1")
+        (call,) = seen
+        staged = pathlib.Path(call["path"]).resolve()
+        assert self._root() in staged.parents, staged
+        assert call["visible"] == (str(pathlib.Path(call["path"]).parent),)
+        if os.name == "posix":
+            assert call["mode"] == 0o600
+        assert not staged.exists(), "the value file outlived the call"
+        assert not staged.parent.exists(), "the staging directory outlived the call"
+
+    def test_the_run_hook_payload_is_staged_under_the_masked_root(self, monkeypatch):
+        seen = self._capture(
+            monkeypatch, {"microvmId": "mvm-1", "state": "PENDING", "endpoint": "https://mvm-1/"}
+        )
+        api.run_microvm(
+            image_identifier="arn:img",
+            image_version="1",
+            run_hook_payload='{"v": 1}',
+            maximum_duration_in_seconds=60,
+            client_token="kc-c-1",
+            region="us-east-1",
+        )
+        (call,) = seen
+        staged = pathlib.Path(call["path"]).resolve()
+        assert self._root() in staged.parents, staged
+        assert call["visible"] == (str(pathlib.Path(call["path"]).parent),)
+        assert not staged.exists()

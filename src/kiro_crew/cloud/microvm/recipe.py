@@ -42,13 +42,16 @@ import hashlib
 import io
 import json
 import logging
+import os
 import re
+import shutil
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from kiro_crew.cloud.microvm.image import Recipe
+from kiro_crew.cloud.microvm.image import Recipe, default_build_digest
 
 logger = logging.getLogger(__name__)
 
@@ -201,8 +204,14 @@ def base_recipe_digest(wheel: Path) -> str:
     What it does NOT give up is the pinning the base recipe does itself: every
     ``FROM``, kiro-cli, the AWS CLI and gh stay pinned by digest inside that file.
 
-    Names are hashed with the bytes so moving a file is a different digest, and
-    the walk is sorted so two machines agree.
+    Each file is hashed under its path RELATIVE TO ITS ROOT, not under its bare
+    name, and the difference is load-bearing twice over. ``container/`` is a
+    package tree: it holds ``microvm/hooks.py``, ``front/app.py`` and several
+    ``__init__.py``, so a bare name neither locates a file nor distinguishes two
+    that share it -- and moving one between packages left the digest unchanged
+    while changing the image. The relative path is what makes the claim in this
+    sentence true. The walk is sorted so two machines agree, and the separators
+    are the posix ones so Windows and Linux agree too.
     """
     digest = hashlib.sha256()
     roots = [
@@ -220,7 +229,12 @@ def base_recipe_digest(wheel: Path) -> str:
             else sorted(p for p in root.rglob("*") if p.is_file() and "__pycache__" not in p.parts)
         )
         for path in files:
-            digest.update(path.name.encode("utf-8"))
+            # Relative to the root's PARENT, so a single-file root hashes as its
+            # own name and a directory root hashes as ``<dir>/<path inside it>``.
+            # The wheel's name carries its version, which is why that one stays
+            # part of the digest rather than being reduced to a fixed label.
+            label = path.relative_to(root.parent).as_posix()
+            digest.update(label.encode("utf-8"))
             digest.update(b"\0")
             digest.update(path.read_bytes())
             digest.update(b"\0")
@@ -303,6 +317,28 @@ class RecipeRefused(RuntimeError):
     """The recipe was not assembled, and the reason is one a caller must read."""
 
 
+#: Top-level names the runtime writes into the build context. A bundle file at
+#: one of them would land in the same ``COPY`` as the runtime's own code, and the
+#: guest's hook listener runs as root from ``container/``: a bundle carrying
+#: ``container/microvm/hooks/__init__.py`` would be imported in place of
+#: ``hooks.py``. So a bundle may not write under these names at all.
+RUNTIME_OWNED_PREFIXES = ("container/", "vendor/")
+
+
+def _refuse_runtime_names(bundle_dir: Path, members: list[Path]) -> None:
+    """Raise :class:`RecipeRefused` if a bundle file would take a runtime name."""
+    # The Dockerfile has its own, earlier refusal with a more specific message.
+    reserved = {DOCKERFILE_NAME, SSM_AGENT_CONFIG.name}
+    for member in members:
+        rel = member.relative_to(bundle_dir).as_posix()
+        if rel in reserved or rel.startswith(RUNTIME_OWNED_PREFIXES):
+            raise RecipeRefused(
+                f"bundle file {rel!r} uses a name the runtime writes into the image "
+                f"({', '.join(sorted(reserved))} or {', '.join(RUNTIME_OWNED_PREFIXES)}); "
+                "rename it inside the bundle"
+            )
+
+
 @dataclass(frozen=True)
 class AssembledRecipe:
     """A zip on disk, and the digests that identify what is in it."""
@@ -366,11 +402,16 @@ def bundle_crew_name(bundle_dir: Path) -> str:
     empty is to say the crew's name is not recorded. The alternative is sending
     the tag, which the guest's own addressing check answers with a 404 naming the
     crew it does serve: a crew the dashboard can see, connect and never talk to.
+
+    The manifest is read through :func:`_read_bundle_member`, the guard every
+    other bundle file goes through, because this read happens at launch, before
+    the snapshot that validates the bundle: a ``manifest.json`` linked to a
+    credential file must not be opened here either.
     """
     try:
-        raw = (bundle_dir / "manifest.json").read_text(encoding="utf-8")
-        document = json.loads(raw)
-    except (OSError, ValueError):
+        raw = _read_bundle_member(bundle_dir, bundle_dir / "manifest.json")
+        document = json.loads(raw.decode("utf-8"))
+    except (RecipeRefused, OSError, ValueError):
         return ""
     if not isinstance(document, dict):
         return ""
@@ -409,6 +450,8 @@ def assemble(
     wheel: Path,
     base_image_arn: str,
     out_zip: Path,
+    account_id: str = "",
+    region: str = "",
 ) -> AssembledRecipe:
     """Build the recipe zip for *bundle_dir*, and the :class:`Recipe` naming it.
 
@@ -427,6 +470,12 @@ def assemble(
     The digests are computed before anything is written, so a caller can ask what
     the image WOULD be identified as without paying for an upload -- which is what
     lets the cache be consulted before a zip is assembled at all.
+
+    *account_id* and *region* are the account and region the guest's ``/run`` will
+    accept a payload for. They go in NOTHING this function writes -- they are baked
+    into the image's environment by ``CreateMicrovmImage``, not carried in the zip --
+    and they are taken here only so the recipe's own digest covers them. Both
+    default to empty, which is an unpinned image; a launch always supplies them.
     """
     check_layout(bundle_dir)
     if not wheel.is_file():
@@ -458,13 +507,51 @@ def assemble(
                 "substitute for"
             )
     base_digest = base_recipe_digest(wheel)
+    out_zip.parent.mkdir(parents=True, exist_ok=True)
+    # ONE read of the bundle, and both the digest and the zip come from it. Hashing
+    # the live directory and then archiving it again would let a rebuild swap the
+    # bundle in between, and the image built from the new bytes would be cached
+    # under the old bundle's digest.
+    snapshot = _snapshot_bundle(bundle_dir, out_zip.parent)
+    try:
+        return _assemble_from_snapshot(
+            snapshot,
+            wheel=wheel,
+            base_image_arn=base_image_arn,
+            base_digest=base_digest,
+            out_zip=out_zip,
+            account_id=account_id,
+            region=region,
+        )
+    finally:
+        shutil.rmtree(snapshot, ignore_errors=True)
+
+
+def _assemble_from_snapshot(
+    bundle_dir: Path,
+    *,
+    wheel: Path,
+    base_image_arn: str,
+    base_digest: str,
+    out_zip: Path,
+    account_id: str,
+    region: str,
+) -> AssembledRecipe:
+    """:func:`assemble`'s digest and zip, both from the snapshot at *bundle_dir*."""
     recipe = Recipe(
         base_image_arn=base_image_arn,
         base_digest=base_digest,
         bundle_digest=bundle_digest_of(bundle_dir),
+        # The build settings are not in this zip and are sent beside it, so they
+        # are stamped on here: a recipe that did not carry them would be an image
+        # identity that ignores the guest environment, the memory floor, the
+        # architecture, the hook switches and the account and region the guest
+        # refuses a payload outside. ``ImageResolver`` refuses a recipe whose stamp
+        # is not the one it is about to send.
+        build_digest=default_build_digest(account_id=account_id, region=region),
     )
+    bundle_members = sorted(_bundle_files(bundle_dir))
     dockerfile = assemble_dockerfile(base_digest)
-    out_zip.parent.mkdir(parents=True, exist_ok=True)
     # Deterministic by construction: every member is added in sorted order with a
     # fixed timestamp and mode, so the same inputs produce the same bytes. Not
     # cosmetic -- a zip that differs run to run makes the upload non-reproducible
@@ -480,9 +567,8 @@ def assemble(
         ):
             rel = member.relative_to(CONTAINER_DIR).as_posix()
             _write(archive, f"container/{rel}", member)
-        bundle_members = sorted(_bundle_files(bundle_dir))
         for member in bundle_members:
-            _write(archive, member.relative_to(bundle_dir).as_posix(), member)
+            _write_bundle_member(archive, bundle_dir, member)
         # A bundle with NO skills still has to produce a context that
         # ``Dockerfile.crew`` can copy. ``_bundle_files`` yields files only, and a
         # zip carries no empty directories, so ``skills/`` simply vanished from
@@ -593,9 +679,75 @@ def _bundle_files(bundle_dir: Path) -> list[Path]:
     return out
 
 
+def _snapshot_bundle(bundle_dir: Path, parent: Path) -> Path:
+    """Copy every bundle file into a fresh private directory under *parent*.
+
+    Each file is read once through :func:`_read_bundle_member`, and the copy is
+    what the digest and the zip are then taken from. *parent* is the directory
+    the zip is written in, which a launch cuts under the masked staging root.
+    """
+    # The signer's own refusals (a link or junction, a special file) first, with
+    # their own messages; the digest itself is taken from the snapshot below.
+    bundle_digest_of(bundle_dir)
+    members = sorted(_bundle_files(bundle_dir))
+    _refuse_runtime_names(bundle_dir, members)
+    snapshot = Path(tempfile.mkdtemp(prefix=".bundle-snapshot-", dir=str(parent)))
+    try:
+        for member in members:
+            rel = member.relative_to(bundle_dir)
+            data = _read_bundle_member(bundle_dir, member)
+            target = snapshot / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+    except BaseException:
+        shutil.rmtree(snapshot, ignore_errors=True)
+        raise
+    return snapshot
+
+
 def _write(archive: zipfile.ZipFile, arcname: str, source: Path) -> None:
     """Add one file with fixed metadata, so the zip is byte-reproducible."""
     archive.writestr(_info(arcname), source.read_bytes())
+
+
+def _read_bundle_member(bundle_dir: Path, source: Path) -> bytes:
+    """Read one BUNDLE file through the credential-file guard.
+
+    The bundle is operator-supplied, so a member is read with
+    :func:`kiro_crew.hooks.safe_read_file_bytes_nolink`: the
+    descriptor that is checked is the one that is read, a hardlinked inode is
+    refused, the opened file must resolve inside the bundle, and a sensitive path
+    is refused. A plain ``read_bytes`` would follow a member hardlinked to, say,
+    ``~/.aws/credentials`` and upload those bytes in the recipe.
+    """
+    from kiro_crew.hooks import FileTooLargeError, safe_read_file_bytes_nolink
+
+    rel = source.relative_to(bundle_dir).as_posix()
+    try:
+        # The reader's own per-file cap; the whole zip is bounded separately by
+        # MAX_RECIPE_BYTES once it is written.
+        data = safe_read_file_bytes_nolink(str(source), str(bundle_dir))
+    except FileTooLargeError as exc:
+        raise RecipeRefused(f"the crew bundle entry {rel} is too large to read: {exc}") from exc
+    if data is None:
+        raise RecipeRefused(
+            f"the crew bundle entry {rel} could not be read safely (a hardlink, a "
+            "link out of the bundle, a sensitive file or an unreadable file), so it "
+            "is not put in the recipe"
+        )
+    return data
+
+
+def _write_bundle_member(archive: zipfile.ZipFile, bundle_dir: Path, source: Path) -> None:
+    """Add one file from the bundle snapshot.
+
+    *bundle_dir* is the private snapshot :func:`_snapshot_bundle` wrote, whose
+    files were already read through the guard; it sits under the masked staging
+    root, which the guard itself treats as sensitive, so it is read directly.
+    """
+    archive.writestr(_info(source.relative_to(bundle_dir).as_posix()), source.read_bytes())
 
 
 def _info(arcname: str) -> zipfile.ZipInfo:

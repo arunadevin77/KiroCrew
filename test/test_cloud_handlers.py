@@ -723,6 +723,63 @@ class TestInstanceMutations:
         assert body["provisioner_id"] == "microvm"
         assert torn == [], "a refusal must not tear the crew down"
 
+    async def test_a_delete_whose_lane_engine_cannot_resolve_is_an_audited_4xx(
+        self, tmp_path, monkeypatch
+    ):
+        """Deleting a non-EC2 crew resolves the lane engine first. When the lane's
+        ``cloud.json`` block is missing/incomplete/unreadable the engine resolution
+        raises (``KeyError`` for an unknown provider), and without an arm for it the
+        request is an unaudited 500 and the running VM cannot be deleted from the
+        panel. It must be a named 4xx."""
+        audited: list[tuple] = []
+        monkeypatch.setattr(hc, "_audit", lambda *a, **k: audited.append((a, k)))
+
+        state = _state(tmp_path)
+        state.cloud_launch_engine = None
+        monkeypatch.setattr(
+            hc, "_engine", lambda *a, **k: (_ for _ in ()).throw(KeyError("microvm"))
+        )
+        job = state.cloud_launch_store.create(
+            profile="dev", region="us-east-1", size_key="", provider_id="microvm"
+        )
+        job.tag = "kc-nolane"
+        state.cloud_launch_store.save(job)
+
+        resp = await hc.api_cloud_destroy(
+            _req("DELETE", "/api/cloud/kc-nolane", state=state, match_info={"tag": "kc-nolane"})
+        )
+        assert resp.status == 400, resp.text
+        body = json.loads(resp.text or "{}")
+        assert body["code"] == "unknown_provisioner"
+        assert any("denied" in a for a, _ in audited), "the refusal must be audited"
+
+    async def test_a_delete_whose_lane_config_is_an_alias_is_an_audited_4xx(
+        self, tmp_path, monkeypatch
+    ):
+        """The ``LaunchUnavailable`` sibling: a config-alias refusal on the delete
+        path is the operator's host setup, named with its code, not a 500."""
+        state = _state(tmp_path)
+        state.cloud_launch_engine = None
+        monkeypatch.setattr(
+            hc,
+            "_engine",
+            lambda *a, **k: (_ for _ in ()).throw(
+                hc.LaunchUnavailable("config_alias_refused", "cloud.json is a hardlink alias")
+            ),
+        )
+        job = state.cloud_launch_store.create(
+            profile="dev", region="us-east-1", size_key="", provider_id="microvm"
+        )
+        job.tag = "kc-alias"
+        state.cloud_launch_store.save(job)
+
+        resp = await hc.api_cloud_destroy(
+            _req("DELETE", "/api/cloud/kc-alias", state=state, match_info={"tag": "kc-alias"})
+        )
+        assert resp.status == 400, resp.text
+        body = json.loads(resp.text or "{}")
+        assert body["code"] == "config_alias_refused"
+
     async def test_a_crew_from_the_builtin_lane_still_takes_the_builtin_path(
         self, tmp_path, monkeypatch
     ):
@@ -1348,6 +1405,46 @@ class TestProvisionerSeam:
         # The operator has to be able to act on it, so the file and the remedy travel with it.
         assert "cloud.json" in body["error"] and "regular file" in body["error"]
 
+    async def test_a_recipient_that_moved_is_a_400_with_the_remedy(self, tmp_path, monkeypatch):
+        """The lane's config changed after the operator confirmed its recipient. The engine
+        build refuses, nothing launches, and the answer is the operator's to act on -- not
+        a 500 that reads as a gateway fault."""
+        from kiro_crew.platform.defaults import RecipientMoved
+
+        row = _Provisioner("moved_lane")
+
+        class MovedProvider:
+            def provisioners(self):
+                return [row]
+
+            def engine_for(self, provisioner_id, *, confirmed_recipient=""):
+                raise RecipientMoved(
+                    "its configuration changed after the recipient was approved; "
+                    "re-read the lane's recipient and confirm it again"
+                )
+
+        state = _state(tmp_path)
+        state.cloud_launch_engine = None
+        _compose(monkeypatch, MovedProvider())
+        resp = await hc.api_cloud_launch_create(
+            _req(
+                "POST",
+                "/api/cloud/launch",
+                state=state,
+                body={
+                    "provider_id": row.id,
+                    "profile": "p",
+                    "region": "us-east-1",
+                    "size_key": "1024/2048",
+                },
+            )
+        )
+
+        assert resp.status == 400, _body(resp)
+        body = _body(resp)
+        assert body["code"] == "recipient_moved"
+        assert "confirm it again" in body["error"]
+
     async def test_the_alias_refusal_is_not_confused_with_an_unknown_lane(
         self, tmp_path, monkeypatch
     ):
@@ -1647,117 +1744,3 @@ class TestProvisionerSeam:
         )
         assert resp.status == 202
         assert provider.asked == []
-
-
-class TestTheConfirmedRecipientIsRevalidated:
-    """A confirmation the configuration can outrun is not a confirmation.
-
-    The operator reads the recipient from the provisioner row and confirms it; the
-    seam then reads the configuration AGAIN to build the engine. An edit in between
-    -- or one racing a launch whose store checks are still running -- means the
-    owner approved one image, key or bundle and a different one is used. That is the
-    substitution the confirmation exists to prevent.
-
-    Checked at the seam rather than inside a lane: a lane that forgets the check is
-    the lane that needs it, and a lane added later inherits this one. ``engine_for``
-    only constructs an engine, so the refusal still lands before anything is
-    provisioned.
-    """
-
-    class _Provider:
-        """A seam whose published recipient can move between the two reads."""
-
-        def __init__(self, published: str):
-            self.published = published
-            self.built = 0
-
-        def provisioners(self):
-            return [SimpleNamespace(id="microvm", confirm_before_launch=self.published)]
-
-        def engine_for(self, provisioner_id, *, confirmed_recipient=""):
-            self.built += 1
-            return SimpleNamespace(name=provisioner_id)
-
-    def test_a_recipient_that_moved_after_confirmation_is_refused(self):
-        provider = self._Provider("image=v1 key=alpha")
-        provider.published = "image=v2 key=beta"  # the operator confirmed v1
-
-        with pytest.raises(hc.LaunchUnavailable) as refusal:
-            hc._call_engine_for(provider, "microvm", "image=v1 key=alpha")
-
-        assert refusal.value.code == "recipient_changed"
-        assert "Nothing was launched" in str(refusal.value)
-
-    def test_the_same_recipient_is_accepted(self):
-        """Non-vacuity: the check must pass the case it exists to let through, or it
-        would refuse every confirmed launch on every lane."""
-        provider = self._Provider("image=v1 key=alpha")
-        engine = hc._call_engine_for(provider, "microvm", "image=v1 key=alpha")
-        assert engine.name == "microvm"
-        assert provider.built == 1
-
-    def test_a_lane_publishing_no_recipient_is_left_alone(self):
-        """Nothing to move, so nothing to compare: a lane that asks for no
-        confirmation must not be refused for not having one."""
-        provider = self._Provider("")
-        engine = hc._call_engine_for(provider, "microvm", "")
-        assert engine.name == "microvm"
-
-    def test_an_unreadable_row_list_does_not_convict_a_launch(self):
-        """Fail OPEN here, deliberately. The engine was already built from a
-        configuration read that succeeded; refusing because a second, cosmetic read
-        failed would turn a transient disk error into a refused launch."""
-
-        class _Broken(TestTheConfirmedRecipientIsRevalidated._Provider):
-            def provisioners(self):
-                raise OSError("cannot read cloud.json")
-
-        engine = hc._call_engine_for(_Broken("image=v1"), "microvm", "image=v1")
-        assert engine.name == "microvm"
-
-
-class TestTheConfirmationIsBoundToWhatTheEngineUses:
-    """S3's second half: the seam must fail CLOSED, not quietly.
-
-    Its first half lives with the lane -- ``_microvm_engine`` compares the
-    confirmation against the same config object the spec is built from. This half
-    is the seam's own backstop, and the hole in it was giving up: a lane whose
-    block went incomplete publishes NO row and an empty recipient, and reading
-    either as agreement lets a launch through on a confirmation nothing backs.
-    """
-
-    class _Provider:
-        def __init__(self, rows):
-            self.rows = rows
-
-        def provisioners(self):
-            return self.rows
-
-        def engine_for(self, provisioner_id, *, confirmed_recipient=""):
-            return SimpleNamespace(name=provisioner_id)
-
-    def test_a_row_that_vanished_refuses(self):
-        """The lane's block went incomplete between publish and launch, so it
-        publishes no row at all."""
-        with pytest.raises(hc.LaunchUnavailable) as refusal:
-            hc._call_engine_for(self._Provider([]), "microvm", "image=v1 key=alpha")
-        assert refusal.value.code == "recipient_changed"
-
-    def test_a_row_that_now_publishes_nothing_refuses(self):
-        """Still listed, but its recipient is empty -- which is what an incomplete
-        block answers. An empty string is not the string that was confirmed."""
-        rows = [SimpleNamespace(id="microvm", confirm_before_launch="")]
-        with pytest.raises(hc.LaunchUnavailable):
-            hc._call_engine_for(self._Provider(rows), "microvm", "image=v1 key=alpha")
-
-    def test_a_matching_row_is_accepted(self):
-        """Non-vacuity: the check must pass the case it exists to let through."""
-        rows = [SimpleNamespace(id="microvm", confirm_before_launch="image=v1 key=alpha")]
-        engine = hc._call_engine_for(self._Provider(rows), "microvm", "image=v1 key=alpha")
-        assert engine.name == "microvm"
-
-    def test_a_launch_that_confirmed_nothing_is_left_alone(self):
-        """A lane asking for no confirmation must not be refused for not having
-        one, or every built-in launch would stop."""
-        engine = hc._call_engine_for(self._Provider([]), "aws_ec2", "")
-        assert engine.name == "aws_ec2"

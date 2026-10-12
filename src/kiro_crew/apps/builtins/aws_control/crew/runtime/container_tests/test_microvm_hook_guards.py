@@ -15,16 +15,23 @@ up holds two Secrets Manager reads, the shared-credential wait and the bundle
 install. A terminate in that gap deregistered the node of a crew that was about
 to serve, and nothing reaches a crew whose node is gone.
 
-**Two ``/run`` calls at once.** The single-shot marker is written at the END of
-the bootstrap and checked at the start, so two calls arriving before it exists
-both passed. Re-reading the marker does not help -- both read a true value. Only
-one of them may ACT on it, which is a lock.
+**Two ``/run`` calls at once.** The single-shot marker is written inside the
+bootstrap and checked at the start, so two calls arriving before it exists both
+passed. Re-reading the marker does not help -- both read a true value. Only one
+of them may ACT on it, which is a lock.
+
+**A client that promises bytes and sends none.** The handler set no socket
+timeout, so a request carrying ``Content-Length: 65536`` and no body held one
+thread of the listener for as long as the caller kept the socket open -- on a
+port reachable from the internet.
 """
 
 from __future__ import annotations
 
 import json
+import socket
 import threading
+import time
 
 import pytest
 from container.microvm import hooks
@@ -39,7 +46,7 @@ def guest_state(tmp_path, monkeypatch):
     that is the one nobody notices is missing.
     """
     monkeypatch.setattr(hooks, "STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(hooks, "RUN_MARKER", str(tmp_path / "run.done"))
+    monkeypatch.setattr(hooks, "RUN_MARKER", str(tmp_path / "run.attempted"))
     monkeypatch.setattr(hooks, "BOOT_STATE", str(tmp_path / "boot.json"))
     return tmp_path
 
@@ -108,7 +115,7 @@ class TestTwoRunCallsAtOnceBootstrapOnce:
             # rather than merely later.
             entered.append(1)
             release.wait(timeout=5)
-            (guest_state / "run.done").write_text("", encoding="ascii")
+            (guest_state / "run.attempted").write_text("", encoding="ascii")
             return {"ok": True, "repeat": False}
 
         monkeypatch.setattr(hooks, "_handle_run_once", _once)
@@ -132,10 +139,106 @@ class TestTwoRunCallsAtOnceBootstrapOnce:
 
     def test_a_call_after_the_marker_exists_is_a_repeat(self, guest_state, monkeypatch):
         """Non-vacuity: the lock must not have replaced the marker check."""
-        (guest_state / "run.done").write_text("", encoding="ascii")
+        (guest_state / "run.attempted").write_text("", encoding="ascii")
         monkeypatch.setattr(
             hooks,
             "_handle_run_once",
             lambda body: pytest.fail("a repeat call re-ran the bootstrap"),
         )
         assert hooks.handle_run(b"{}") == {"ok": True, "repeat": True}
+
+
+class TestAClientThatPromisesBytesAndSendsNoneIsCutOff:
+    """``Handler.timeout`` is what ends the read ``_read_body`` would otherwise
+    block in forever.
+
+    One second here rather than the module's twenty, because what is under test
+    is that a bound exists and that the handler answers when it is reached -- not
+    the number.
+    """
+
+    @staticmethod
+    def _serve(monkeypatch, timeout):
+        monkeypatch.setattr(hooks.Handler, "timeout", timeout)
+        server = hooks.HookServer(("127.0.0.1", 0), hooks.Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, thread
+
+    @staticmethod
+    def _promise_and_send_nothing(port: int, wait: float):
+        """``(seconds, reply)`` for one request that promises 64 KiB and sends none.
+
+        ``seconds`` is ``None`` when the server never ended the exchange, which is
+        the shape of the finding: the handler left waiting on a client that has
+        stopped talking. ``reply`` is every byte it did send, so "ended the
+        exchange" and "answered" are two readings rather than one.
+        """
+        request = (
+            b"POST "
+            + hooks.HOOK_PREFIX.encode("ascii")
+            + b"/run HTTP/1.1\r\nHost: g\r\nContent-Length: 65536\r\n"
+            b"Connection: close\r\n\r\n"
+        )
+        chunks: list[bytes] = []
+        started = time.monotonic()
+        with socket.create_connection(("127.0.0.1", port), timeout=wait) as sock:
+            sock.sendall(request)
+            sock.settimeout(wait)
+            try:
+                while True:
+                    piece = sock.recv(4096)
+                    if not piece:
+                        break
+                    chunks.append(piece)
+            except OSError:
+                return None, b"".join(chunks)
+        return time.monotonic() - started, b"".join(chunks)
+
+    def test_the_handler_stops_waiting_and_answers(self, monkeypatch):
+        """Both halves: ``timeout`` ends the read, and ``_read_body`` turns the end
+        of it into an empty body rather than a traceback with no reply at all."""
+        bodies: list[bytes] = []
+
+        def _handle_run(body: bytes) -> dict:
+            bodies.append(body)
+            return {"ok": True}
+
+        monkeypatch.setattr(hooks, "handle_run", _handle_run)
+        server, thread = self._serve(monkeypatch, 1)
+        try:
+            elapsed, reply = self._promise_and_send_nothing(server.server_address[1], 10)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert elapsed is not None, "the handler never let the connection go"
+        assert reply.startswith(b"HTTP/1.1 200"), reply
+        assert reply.endswith(b'{"ok": true}'), reply
+        # The hook ran, with the empty body a cut-off read produces -- which does
+        # not decode, so nothing acts on it and ``/run`` is not consumed.
+        assert bodies == [b""], bodies
+
+    def test_without_the_timeout_the_thread_is_held(self, monkeypatch):
+        """The pin on which half does the ending. With ``timeout`` back at the
+        stdlib's ``None`` the same request gets nothing and the thread stays in
+        ``rfile.read``."""
+        monkeypatch.setattr(hooks, "handle_run", lambda body: {"ok": True})
+        server, thread = self._serve(monkeypatch, None)
+        try:
+            elapsed, reply = self._promise_and_send_nothing(server.server_address[1], 2)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        assert elapsed is None, f"the handler answered in {elapsed}s with no timeout set"
+        assert reply == b"", reply
+
+    def test_the_module_sets_a_bound_the_platforms_own_caller_clears(self):
+        """Read off the class rather than restated. The run hook's own budget is
+        60 seconds and the payload budget is 4 KiB, so this bounds a stalled
+        reader without bounding a real launch."""
+        assert isinstance(hooks.Handler.timeout, int)
+        assert 0 < hooks.Handler.timeout < 60

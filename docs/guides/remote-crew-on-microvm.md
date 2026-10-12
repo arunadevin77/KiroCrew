@@ -146,6 +146,11 @@ That writes the zip too, which is useful for inspecting what a build will
 receive, but the part a launch needs is the wheel it leaves in
 `runtime/vendor/`. A launch that finds none refuses and says so.
 
+Pass `--account <id> --region <region>` to build a zip pinned the way a launch
+pins its image: the guest refuses a run payload from any other account or region.
+A zip built without them is unpinned and does not name the image a launch resolves;
+the script's printed JSON says which pins went in.
+
 The script also **removes the dashboard assets** from the wheel it stages. A crew
 here serves one turn route and a liveness answer and starts no page server, so
 nothing in the guest can reach them -- and they are large enough to matter: a

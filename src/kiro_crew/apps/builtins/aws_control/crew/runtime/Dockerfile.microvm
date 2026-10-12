@@ -42,20 +42,34 @@ USER root
 # so a guest without sudo answers every in-guest command with
 # `sudo: command not found` and exit 127. One live MicroVM was spent learning
 # that on 2026-10-06.
+# PINNED, AND THE DIGEST IS CHECKED. `latest/` is a moving object in a bucket
+# this build trusts completely: whatever it holds at build time becomes a root
+# process in the image that holds the lane's managed-node role, and the image is
+# content-addressed by a recipe digest that does not change when the bucket's
+# content does. So two images with the same name could carry different agents.
+#
+# The digest below is of the arm64 package for the version named beside it,
+# fetched and hashed from the us-east-1 and eu-west-1 copies, which are
+# byte-identical -- so the pin holds whatever `SSM_REGION` is. Moving the version
+# means fetching the new package and re-hashing it; a mismatch fails the build
+# here rather than shipping an agent nobody chose.
 ARG SSM_REGION=us-east-1
+ARG SSM_AGENT_VERSION=3.3.5390.0
+ARG SSM_AGENT_SHA256=97a398841760c56e95f66692a21abb7040688fc38ddd92950414158f61071551
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends sudo; \
     rm -rf /var/lib/apt/lists/*; \
     curl -fsSL -o /tmp/ssm.deb \
-      "https://s3.${SSM_REGION}.amazonaws.com/amazon-ssm-${SSM_REGION}/latest/debian_arm64/amazon-ssm-agent.deb"; \
+      "https://s3.${SSM_REGION}.amazonaws.com/amazon-ssm-${SSM_REGION}/${SSM_AGENT_VERSION}/debian_arm64/amazon-ssm-agent.deb"; \
+    echo "${SSM_AGENT_SHA256}  /tmp/ssm.deb" | sha256sum -c -; \
     dpkg -x /tmp/ssm.deb /tmp/ssmx; \
     cp -a /tmp/ssmx/usr/bin/. /usr/bin/; \
     mkdir -p /etc/amazon/ssm /var/lib/amazon/ssm /var/log/amazon/ssm; \
     cp -a /tmp/ssmx/etc/amazon/ssm/. /etc/amazon/ssm/; \
     cp /etc/amazon/ssm/seelog.xml.template /etc/amazon/ssm/seelog.xml; \
     rm -rf /tmp/ssm.deb /tmp/ssmx; \
-    /usr/bin/amazon-ssm-agent -version; \
+    /usr/bin/amazon-ssm-agent -version | grep -F "${SSM_AGENT_VERSION}"; \
     test ! -e /var/lib/amazon/ssm/registration
 
 # Two settings in this file are load-bearing, which is why it is a file:
@@ -74,6 +88,35 @@ COPY microvm-ssm-agent.json /etc/amazon/ssm/amazon-ssm-agent.json
 # like a code fault.
 RUN mkdir -p /var/lib/microvm-guest /var/tmp/microvm-restore
 
+# HOME for the SSM agent, and for nothing else in this image.
+#
+# `Profile.ShareCreds` makes the agent publish the managed node's role
+# credentials under the HOME of the process that runs it, and the base image's
+# process-wide `HOME` is `/var/lib/crew` -- a directory the crew uid OWNS. The
+# role those credentials carry reads `secret:${SecretPathPrefix}/*`, which is
+# every crew's control and identity secret in this account, so a credential file
+# the crew uid can read or whose `.aws` directory it can replace puts the lane's
+# strongest grant inside the sandbox the lane is trying to contain.
+#
+# 0700 root:root, with `.aws` pre-created the same way so the agent writes into a
+# directory whose mode this image chose rather than one it creates itself.
+#
+# Deliberately NOT under /var/lib/amazon/ssm: Run Command stages a script in the
+# agent's orchestration root there and runs it through `sudo -u crew`, so that
+# tree must stay traversable by the crew uid. `container/microvm/hooks.py`
+# (`AGENT_HOME`, `agent_env`) is what hands the agent this directory.
+#
+# `/root` is narrowed in the same step, because it is the other place the agent
+# can land a credential: a program that takes its home from the passwd entry
+# rather than from `$HOME` writes `/root/.aws/credentials`, and the guest looks
+# there too (`SHARED_CREDS_CANDIDATES`). Both roots are gated below.
+RUN set -eux; \
+    mkdir -p /var/lib/microvm-agent-home/.aws; \
+    chown -R root:root /var/lib/microvm-agent-home; \
+    chmod 0700 /var/lib/microvm-agent-home /var/lib/microvm-agent-home/.aws; \
+    chown root:root /root; \
+    chmod 0700 /root
+
 # The crew user gets a real login shell on THIS lane, because SSM is how the
 # owner reaches a MicroVM crew and `ssm:SendCommand` is wrapped in
 # `sudo -u <user> -i bash`. The `-i` runs the account's login shell, and the base
@@ -85,6 +128,42 @@ RUN mkdir -p /var/lib/microvm-guest /var/tmp/microvm-restore
 # Scoped to this layer rather than changed in the base, because the Fargate lane
 # reaches its crew through ECS exec and has no reason to widen the account.
 RUN usermod -s /bin/bash crew
+
+# THE IMAGE-LEVEL GATE on the agent's credential home. A mode is a claim until
+# something tries it as the uid that must fail, so this asks the crew user
+# itself -- the same way the bundle gate below asks whether `crew` can read the
+# bundle, and after the login shell above so the two ask in the same way.
+#
+# Four questions, because reading and replacing fail separately: traverse, read,
+# write a file into it, and replace the `.aws` directory itself, which needs
+# write on the PARENT rather than on `.aws`. Each one must be refused. The build
+# fails if any succeeds, so an image whose credential path is reachable by the
+# crew uid cannot be produced -- which is the half a file mode alone cannot
+# promise, since the mode that matters is the parent's.
+#
+# `! sudo -u crew ...` and not `sudo -u crew ! ...`: the negation belongs to this
+# shell, so a sudo that cannot run at all fails the gate rather than passing it.
+RUN set -eux; \
+    ls -ld /var/lib/microvm-agent-home /var/lib/microvm-agent-home/.aws /root; \
+    test "$(stat -c '%U:%G:%a' /var/lib/microvm-agent-home)" = "root:root:700"; \
+    test "$(stat -c '%U:%G:%a' /var/lib/microvm-agent-home/.aws)" = "root:root:700"; \
+    test "$(stat -c '%U:%G:%a' /root)" = "root:root:700"; \
+    if sudo -u crew test -x /var/lib/microvm-agent-home; \
+      then echo "crew can traverse the agent credential home" >&2; exit 1; fi; \
+    if sudo -u crew test -r /var/lib/microvm-agent-home; \
+      then echo "crew can read the agent credential home" >&2; exit 1; fi; \
+    if sudo -u crew test -x /root; \
+      then echo "crew can traverse root's home" >&2; exit 1; fi; \
+    if sudo -u crew test -r /root; \
+      then echo "crew can read root's home" >&2; exit 1; fi; \
+    if sudo -u crew sh -c 'echo x > /var/lib/microvm-agent-home/.aws/credentials' 2>/dev/null; \
+      then echo "crew can write the agent credential file" >&2; exit 1; fi; \
+    if sudo -u crew sh -c \
+        'mv /var/lib/microvm-agent-home/.aws /var/lib/microvm-agent-home/.aws-crew' 2>/dev/null; \
+      then echo "crew can replace the agent .aws directory" >&2; exit 1; fi; \
+    test -d /var/lib/microvm-agent-home/.aws; \
+    test ! -e /var/lib/microvm-agent-home/.aws/credentials; \
+    echo "agent credential home is root-only"
 
 # A GATE on the crew layer's own file modes, not a fix for them: the fix is
 # `COPY --chmod=0755` in Dockerfile.crew. This fails the build if the user the
@@ -156,6 +235,22 @@ ENV SMC_HOOK_PORT=8080 \
     SMC_FRONT_PORT=8081 \
     SMC_FRONT_BIND=127.0.0.1 \
     SMC_REQUIRE_AUTH_ALL_ROUTES=1
+
+# WHICH ACCOUNT AND REGION A LAUNCH OF THIS IMAGE MAY NAME.
+#
+# The hook listener cannot authenticate its caller, and `/run` is single-shot: a
+# caller who reaches the port before the platform does hands the VM an activation
+# they minted in their OWN account, the VM registers there, and the owner's real
+# launch is answered as a repeat. These two values are what the guest checks that
+# against: `run_payload_verdict` in `container/microvm/hooks.py` compares the
+# payload's region and secret ARNs to them, and after registering, the guest reads
+# the account the node actually joined and refuses to start the crew on a
+# mismatch. With no account pin set, that joined-account check does not run.
+#
+# The lane sets both in the image's environment when it creates the image, not
+# here, so they are part of the digest that names it and a zip carries neither.
+# Unset, the checks that need no pin still run: a payload naming two accounts or
+# two regions is refused whatever these say.
 
 EXPOSE 8080
 

@@ -282,13 +282,18 @@ class TestAWriteRefusesAPartiallyUnreadableLedger:
 class TestTwoWritersCannotLoseACrew:
     """The lane has two writers by design and they are in different processes.
 
-    The gateway writes this file as it serves the owner's clicks; the ``tick``
-    cron writes it on its own schedule in its own interpreter. ``publish``
-    replaces the WHOLE document, so an atomic rename makes each write indivisible
-    without making the pair of them ordered: both read the same document, each
-    adds its own change, and the second rename discards the first. What it
-    discards is a crew's row, and with it the archive ETag that is the only thing
-    that can condition the next write on that archive.
+    The gateway writes this file as it serves the owner's clicks; a ``kirocrew
+    cloud`` launch or teardown writes it from a terminal in its own interpreter,
+    and sweeps every other crew's wall as it goes. ``publish`` replaces the WHOLE
+    document, so an atomic rename makes each write indivisible without making the
+    pair of them ordered: both read the same document, each adds its own change,
+    and the second rename discards the first. What it discards is a crew's row,
+    and with it the control-secret reference and crew name a turn to that crew
+    needs -- the VM keeps running and billing and nothing can address it.
+
+    So the READ and the publish have to be inside one hold of the lock. A hold
+    taken only around the publish makes each write atomic and still loses the
+    row, which is why the read is asserted here as well.
     """
 
     @staticmethod
@@ -321,6 +326,49 @@ class TestTwoWritersCannotLoseACrew:
         store.publish = publish  # type: ignore[method-assign]
         store.put(CrewRecord(tag="kc-a"))
         assert held == [True], "the publish ran without the writer lock held"
+
+    def test_a_put_holds_the_lock_while_it_READS(self, tmp_path):
+        """The half the publish assertion above cannot see.
+
+        ``publish`` writes whatever the read produced, so a read taken outside
+        the lock is already stale when the publish lands inside it -- and the
+        publish then writes a document missing the row the other writer added
+        between the two. Locking around the publish alone buys atomicity and
+        loses the crew anyway, and that version of ``put`` passes every other
+        test in this class.
+        """
+        path = tmp_path / "crews.json"
+        store = CrewStore(path)
+        store.put(CrewRecord(tag="kc-first"))
+        held: list[bool] = []
+        original = store.load_for_write
+
+        def load_for_write():
+            held.append(self._cannot_be_locked(path))
+            return original()
+
+        store.load_for_write = load_for_write  # type: ignore[method-assign]
+        store.put(CrewRecord(tag="kc-a"))
+        assert held == [True], "the read ran without the writer lock held"
+        assert set(store.load()) == {"kc-first", "kc-a"}
+
+    def test_an_apply_event_holds_the_lock_while_it_READS(self, tmp_path):
+        """Same half, and here the read also decides the transition: an event
+        checked against a state read outside the lock is checked against a state
+        another writer may already have moved on from."""
+        path = tmp_path / "crews.json"
+        store = CrewStore(path)
+        store.put(CrewRecord(tag="kc-a", state=states.RUNNING))
+        held: list[bool] = []
+        original = store.load_for_write
+
+        def load_for_write():
+            held.append(self._cannot_be_locked(path))
+            return original()
+
+        store.load_for_write = load_for_write  # type: ignore[method-assign]
+        store.apply_event("kc-a", states.EVENT_TERMINATED)
+        assert held == [True], "the read ran without the writer lock held"
 
     def test_an_apply_event_holds_the_lock_while_it_publishes(self, tmp_path):
         """The transition is decided inside the lock too: the event's legality
@@ -434,3 +482,140 @@ class TestPatchLiveFencesAStaleWriter:
         assert got is not None
         assert got.mi_id == "mi-1", "the caller's own change was dropped"
         assert got.endpoint == "https://later", "the fence wrote a stale field back"
+
+
+class TestTheStoreIsNotAgentWritable:
+    """The file holds ids that a destructive AWS call consumes without asking.
+
+    ``teardown`` reads a row's ``microvm_id`` and hands it to
+    ``launcher.terminate`` -- no ``--tag`` to disagree with it and no
+    describe-and-confirm step in front of it. So an agent that could rewrite one
+    crew's row could point it at another crew's VM and have the owner's next
+    delete destroy that one instead, along with its home. The repository already
+    treats ``cloud_launch_state.json`` this way for a weaker version of the same
+    harm, and this file gets the same three layers.
+    """
+
+    LEAF = "microvm_crews.json"
+
+    def test_the_file_name_is_the_one_the_protection_lists_name(self):
+        """Non-vacuity for every assertion below: they all key off the leaf name,
+        so a rename that left the lists alone would pass them all silently."""
+        from kiro_crew.cloud.microvm import record
+
+        assert record._FILENAME == self.LEAF
+
+    def test_a_write_is_refused_by_the_file_edit_gate(self):
+        import os
+
+        from kiro_crew.security import paths
+
+        target = os.path.join(os.path.expanduser("~/.kirocrew"), self.LEAF)
+        assert paths.is_sensitive_write_path(target), (
+            "the store is writable through the agent's file-edit tool, so an agent "
+            "can choose which VM the next teardown terminates"
+        )
+
+    def test_the_read_stays_open(self):
+        """Write-protected, not read-masked -- the same asymmetry
+        ``cloud_launch_state.json`` has. Classifying it sensitive for READS would
+        mask a path the gateway itself resolves, and the harm here is the write."""
+        import os
+
+        from kiro_crew.security import paths
+
+        target = os.path.join(os.path.expanduser("~/.kirocrew"), self.LEAF)
+        assert not paths.is_sensitive_path(target)
+
+    def test_a_sandboxed_shell_meets_a_kernel_seal_too(self):
+        """The file-edit gate covers the agent's tool; only a kernel denial covers
+        ``open(..., "w")`` from a sandboxed shell, however the write is spelled."""
+        from kiro_crew import sandbox
+
+        assert self.LEAF in sandbox._CREW_READONLY_LEAVES
+
+    def test_the_name_is_pre_created_so_it_cannot_be_squatted(self):
+        """``mount(2)`` cannot seal a name nothing occupies, and this file does not
+        exist until the lane's first launch -- which is never, on most installs."""
+        from kiro_crew import sandbox
+
+        assert self.LEAF in sandbox._CREW_PRECREATE_READONLY_FILE_LEAVES
+
+    def test_a_foreign_harnesss_child_is_not_handed_the_cloud_inventory(self):
+        """Withheld rather than readable, because no in-sandbox reader needs it: the
+        engine and the crew-turn route are the only callers and both run in the
+        gateway. What a read would hand over is every crew's VM id, node id and
+        endpoint, which is reconnaissance for the write the seal exists to stop."""
+        from kiro_crew import sandbox
+
+        assert self.LEAF in sandbox._CREW_CHILD_WITHHELD_LEAVES
+        assert self.LEAF not in sandbox._CREW_CHILD_READABLE_LEAVES
+
+
+class TestThePrecreatedEmptyStoreIsWritable:
+    """The sandbox pre-creates this file as ``{}``, and a launch must survive it.
+
+    The leaf is on ``_CREW_PRECREATE_READONLY_FILE_LEAVES`` because ``mount(2)``
+    cannot seal a name nothing occupies. The pre-create writes ``{}``, so ``{}``
+    is the shape the FIRST launch on a sealed install finds -- and the write path
+    has to accept it, not only the tolerant read. ``load`` already did; a
+    ``crews``-list check in ``load_for_write`` did not, which made the one state
+    the seal itself creates the one state a launch could not start from.
+    """
+
+    def test_an_empty_object_reads_as_no_crews_on_the_write_path(self, store):
+        store.path.write_text("{}", encoding="utf-8")
+        assert store.load_for_write() == {}
+
+    def test_a_launch_can_write_into_the_precreated_store(self, store):
+        """The chain that matters: pre-created ``{}`` -> ``provision`` -> ``put``."""
+        store.path.write_text("{}", encoding="utf-8")
+        got = store.put(CrewRecord(tag="c", state=states.PENDING, generation=1))
+        assert got.tag == "c"
+        assert store.get("c") is not None, "the first launch could not record its crew"
+
+    def test_the_tolerant_read_agrees_with_it(self, tmp_path):
+        """Criterion 1 for the pre-create list, which both readers must meet:
+        an EMPTY document means what an ABSENT one means."""
+        d = tmp_path
+        absent = CrewStore(d / "gone.json")
+        empty = CrewStore(d / "empty.json")
+        empty.path.write_text("{}", encoding="utf-8")
+        assert absent.load() == empty.load() == {}
+        assert absent.load_for_write() == empty.load_for_write() == {}
+
+    @pytest.mark.parametrize(
+        "document",
+        ['{"other": 1}', '{"crews": "nope"}', "[]", '{"crews": {}}', "3"],
+        ids=["wrong-key", "crews-not-a-list", "array", "crews-a-dict", "scalar"],
+    )
+    def test_any_other_shape_is_still_refused(self, store, document):
+        """Non-vacuity: only the exact pre-created ``{}`` is accepted. A document
+        of some other shape may be another writer's file, and publishing over it
+        would discard whatever it holds."""
+        from kiro_crew.cloud.microvm.record import CrewStoreUnreadable
+
+        store.path.write_text(document, encoding="utf-8")
+        with pytest.raises(CrewStoreUnreadable):
+            store.load_for_write()
+
+
+class TestAnUnreadableRecordIsNeverPublished:
+    """A record ``from_json`` would refuse must not reach the file.
+
+    A field over ``_MAX_STRING_LEN`` -- a ``control_secret_ref`` built from a long
+    ``secret_path_prefix``, say -- would otherwise be written, and every later
+    ``load_for_write`` would raise ``CrewStoreUnreadable`` and stop every launch.
+    """
+
+    def test_an_over_long_field_is_refused_and_the_store_is_unchanged(self, tmp_path):
+        from kiro_crew.cloud.microvm import record as rec
+
+        store = rec.CrewStore(tmp_path / "crews.json")
+        store.put(rec.CrewRecord(tag="ok", mi_id="mi-0123456789abcdef0"))
+        before = (tmp_path / "crews.json").read_bytes()
+        long_ref = "kirocrew/" + "x" * (rec._MAX_STRING_LEN + 1)
+        with pytest.raises(ValueError, match="would not read back"):
+            store.put(rec.CrewRecord(tag="bad", control_secret_ref=long_ref))
+        assert (tmp_path / "crews.json").read_bytes() == before
+        assert set(store.load_for_write()) == {"ok"}

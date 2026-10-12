@@ -24,9 +24,17 @@ enough to repeat what it last said. A laptop that slept for an hour holds a reco
 saying ``RUNNING`` that is a guess, not an observation, and a product that reports
 the guess as fact offers an "Open crew" button for a VM the wall already took.
 
-:func:`transition` is the only writer. Every edge is in :data:`EDGES` and nothing
-else may move a crew between states, so adding a path means adding a row that a
-reviewer can read rather than finding the assignment that made it.
+:func:`transition` is the only place a MOVE between two states is computed, and
+every move it allows is a row in :data:`EDGES` -- so adding a path means adding a
+row a reviewer can read rather than finding the assignment that made it.
+
+It is NOT the only way a state reaches the store, and reading it as one would
+miss two writes. ``record.CrewStore.put`` writes a record whole, which creates a
+crew at :data:`PENDING` without consulting any edge; and
+``record.CrewStore.patch_live`` applies the fields its caller passes, ``state``
+among them, against whatever state is on disk. What :data:`EDGES` tells you is
+which transitions this module will compute, not that every stored state came
+through one.
 """
 
 from __future__ import annotations
@@ -132,9 +140,9 @@ class IllegalTransition(ValueError):
 def transition(current: Optional[str], event: str) -> str:
     """The state *current* moves to on *event*, or raise :class:`IllegalTransition`.
 
-    The only writer of a crew's state. Pure: it reads the table and returns a
-    string, so every caller stores the result itself and no hidden path can move a
-    crew while this function is not looking.
+    Pure, and no writer at all: it reads the table and returns a string, so every
+    caller stores the result itself. ``record.CrewStore.apply_event`` is the
+    caller that pairs it with a write, inside the store's writer lock.
 
     *current* is ``None`` for a crew with no record yet, which is a key in
     :data:`EDGES` rather than a branch here.

@@ -149,8 +149,9 @@ class MicroVmConfig:
     #: that may not exist, and an incomplete block leaves the lane unregistered
     #: rather than registering one whose every launch fails at the same stage.
     identity_secret_ref: str = ""
-    #: The VM lifetime to ask for, in seconds, or ``None`` to take the platform
-    #: maximum. ``None`` rather than a number, so the default lives in the engine
+    #: The VM lifetime to ask for, in seconds, or ``None`` to take the engine's
+    #: default (:data:`~kiro_crew.cloud.microvm.engine.DEFAULT_WALL_SECONDS`, one
+    #: hour). ``None`` rather than a number, so the default lives in the engine
     #: and this is not a second copy of it.
     wall_seconds: Optional[int] = None
     #: The role the VM runs as, when the operator created one. Optional on a
@@ -238,9 +239,10 @@ class MicroVmConfig:
     def launch_spec(self) -> MicroVmLaunchSpec:
         """This block as the engine's own spec.
 
-        The default lifetime is read from the API module's own platform maximum
-        rather than copied here, so the two cannot disagree about what the
-        platform allows.
+        An omitted ``wall_seconds`` takes the engine's
+        :data:`~kiro_crew.cloud.microvm.engine.DEFAULT_WALL_SECONDS` (one hour),
+        read from there rather than copied here so the two cannot disagree. The
+        platform maximum is only the upper bound :meth:`_wall_is_usable` checks.
         """
         return MicroVmLaunchSpec(
             base_image_arn=self.base_image_arn,

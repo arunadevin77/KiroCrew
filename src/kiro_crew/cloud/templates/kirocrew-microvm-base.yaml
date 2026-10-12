@@ -187,6 +187,19 @@ Resources:
             Principal:
               Service: ssm.amazonaws.com
             Action: "sts:AssumeRole"
+            # Confused-deputy conditions, which this trust needs more than most:
+            # the principal is a service, and the thing that asks it to assume
+            # this role is an ACTIVATION -- a resource anyone with ssm:
+            # CreateActivation can make. Without these, SSM in another account
+            # that was somehow pointed at this role name would be assuming a role
+            # that reads every crew's secret in this one. With them, the request
+            # has to originate from SSM in this account and this region, which is
+            # where the only activations this lane mints are made.
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:*"
       ManagedPolicyArns:
         - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
       Policies:
@@ -197,9 +210,25 @@ Resources:
               # Decrypt only. The guest READS its secrets; the control plane is
               # what writes them, so a guest that could encrypt under this key
               # could write a secret its owner never minted.
+              #
+              # And only as part of reading a secret. The key arn alone is not a
+              # bound: a guest holding bare kms:Decrypt on it can decrypt ANY
+              # ciphertext made under that key, including one handed to it rather
+              # than one it fetched, which turns a credential-read grant into a
+              # decryption oracle for everything else the owner encrypts with the
+              # lane's key.
+              #
+              # ``kms:ViaService`` is what closes that: the grant works only when
+              # Secrets Manager makes the call on the guest's behalf. WHICH secret
+              # is then bounded by the GetSecretValue grant below, which names the
+              # lane's prefix -- so the two conditions together are "this guest may
+              # decrypt the secrets it is allowed to read, and nothing else".
               - Effect: Allow
                 Action: "kms:Decrypt"
                 Resource: !GetAtt LaneKey.Arn
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub "secretsmanager.${AWS::Region}.amazonaws.com"
         - PolicyName: crew-identity
           PolicyDocument:
             Version: "2012-10-17"
@@ -225,12 +254,20 @@ Resources:
               # sweeper can only report, and the account accumulates one per
               # launch.
               #
-              # Unscoped because SSM does not support a resource condition on this
-              # action; the guest can only name an id, and the only id it holds is
-              # the one it registered as.
+              # Scoped to this lane's own nodes, two ways. The resource is the
+              # managed-instance type in this account and region, so the grant
+              # cannot reach an EC2 instance or anything else SSM manages. The
+              # condition is the tag the lane puts on every activation it mints
+              # (``engine.create_activation``: ``Key=kirocrew:managed,Value=true``),
+              # and SSM applies an activation's tags to the node registered
+              # through it -- so a guest can hand back a node this lane launched
+              # and no other.
               - Effect: Allow
                 Action: "ssm:DeregisterManagedInstance"
-                Resource: "*"
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:managed-instance/*"
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/kirocrew:managed: "true"
       Tags:
         - Key: kirocrew:microvm
           Value: !Ref StackTag
@@ -277,12 +314,18 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # Decrypt only. The guest READS its secrets; the control plane is
-              # what writes them, so a guest that could encrypt under this key
-              # could write a secret its owner never minted.
+              # Decrypt only, and only as part of a Secrets Manager read -- the
+              # same two bounds the activation role's grant carries, for the same
+              # reason it carries them. This role has no GetSecretValue grant at
+              # all, so with ``kms:ViaService`` there is no secret it can reach:
+              # the only call that could use this key is one Secrets Manager
+              # makes, and Secrets Manager refuses it first.
               - Effect: Allow
                 Action: "kms:Decrypt"
                 Resource: !GetAtt LaneKey.Arn
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub "secretsmanager.${AWS::Region}.amazonaws.com"
 Outputs:
 
   LaneKmsKeyArn:

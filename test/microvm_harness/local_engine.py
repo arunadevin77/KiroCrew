@@ -300,7 +300,7 @@ class LocalLaunchEngine:
         while time.time() < deadline:
             if self.probe(crew) == 200:
                 return
-            time.sleep(0.25)
+            time.sleep(0.25)  # flake-ok: polls a container; no event to await
         raise TimeoutError(f"crew container {crew.name} did not answer /api/health in {timeout}s")
 
     def reap(self) -> list[str]:

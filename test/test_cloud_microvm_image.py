@@ -24,9 +24,13 @@ import pytest
 from kiro_crew.cloud.microvm import api
 from kiro_crew.cloud.microvm.image import (
     HOOK_ENABLED,
+    HOOK_SWITCHES,
+    ImageBuildFailed,
     ImageResolver,
     Recipe,
     ResolvedImage,
+    build_settings_digest,
+    default_build_digest,
 )
 
 BASE = "arn:aws:lambda:us-east-1:123456789012:microvm-image/al2023-base"
@@ -38,6 +42,7 @@ def _recipe(**overrides) -> Recipe:
         "base_image_arn": BASE,
         "base_digest": "sha256:" + "a" * 64,
         "bundle_digest": "sha256:" + "b" * 64,
+        "build_digest": default_build_digest(),
     }
     fields.update(overrides)
     return Recipe(**fields)  # type: ignore[arg-type]
@@ -72,7 +77,7 @@ class TestRecipeIdentity:
     def test_a_recipe_missing_any_input_is_refused(self):
         """An image identified by less than its whole input is one a cache can
         serve for the wrong content."""
-        for field in ("base_image_arn", "base_digest", "bundle_digest"):
+        for field in ("base_image_arn", "base_digest", "bundle_digest", "build_digest"):
             with pytest.raises(ValueError, match="needs a"):
                 _recipe(**{field: ""})
 
@@ -663,7 +668,11 @@ class TestTheDigestCoversTheBaseArn:
     def test_a_changed_base_arn_changes_the_digest(self):
         from kiro_crew.cloud.microvm.image import Recipe
 
-        common = {"base_digest": "sha256:aaa", "bundle_digest": "sha256:bbb"}
+        common = {
+            "base_digest": "sha256:aaa",
+            "bundle_digest": "sha256:bbb",
+            "build_digest": default_build_digest(),
+        }
         first = Recipe(base_image_arn="arn:aws:lambda:us-east-1:1:microvm-image/a", **common)
         second = Recipe(base_image_arn="arn:aws:lambda:us-east-1:1:microvm-image/b", **common)
         assert first.digest() != second.digest()
@@ -671,7 +680,11 @@ class TestTheDigestCoversTheBaseArn:
     def test_a_changed_base_arn_changes_the_image_name(self):
         from kiro_crew.cloud.microvm.image import Recipe
 
-        common = {"base_digest": "sha256:aaa", "bundle_digest": "sha256:bbb"}
+        common = {
+            "base_digest": "sha256:aaa",
+            "bundle_digest": "sha256:bbb",
+            "build_digest": default_build_digest(),
+        }
         first = Recipe(base_image_arn="arn:aws:lambda:us-east-1:1:microvm-image/a", **common)
         second = Recipe(base_image_arn="arn:aws:lambda:us-east-1:1:microvm-image/b", **common)
         assert first.image_name() != second.image_name()
@@ -684,6 +697,7 @@ class TestTheDigestCoversTheBaseArn:
             "base_image_arn": "arn:aws:lambda:us-east-1:1:microvm-image/a",
             "base_digest": "sha256:aaa",
             "bundle_digest": "sha256:bbb",
+            "build_digest": default_build_digest(),
         }
         assert Recipe(**fields).digest() == Recipe(**fields).digest()
 
@@ -692,6 +706,385 @@ class TestTheDigestCoversTheBaseArn:
         together across the boundary."""
         from kiro_crew.cloud.microvm.image import Recipe
 
-        a = Recipe(base_image_arn="x", base_digest="y", bundle_digest="z")
-        b = Recipe(base_image_arn="x\nbase=y", base_digest="z", bundle_digest="w")
+        a = Recipe(base_image_arn="x", base_digest="y", bundle_digest="z", build_digest="v")
+        b = Recipe(base_image_arn="x\nbase=y", base_digest="z", bundle_digest="w", build_digest="v")
         assert a.digest() != b.digest()
+
+
+class TestTheDigestCoversTheBuildSettings:
+    """The zip is not the whole image, so the zip's digest is not the whole key.
+
+    ``CreateMicrovmImage`` is sent five things BESIDE the recipe: the guest
+    environment, the memory floor, the CPU architecture, the hook port and which
+    hooks are on. Each changes what the image IS -- a different
+    ``SMC_REQUIRE_AUTH_ALL_ROUTES`` is a guest with a different auth posture, a
+    hook turned off is a channel the platform never opens -- and none of them is
+    in the zip. Left out of the key the name matches, nothing compares further,
+    and the launch silently runs the image built with the old settings.
+    """
+
+    @staticmethod
+    def _digest(**overrides) -> str:
+        from kiro_crew.cloud.microvm.image import (
+            DEFAULT_CPU_ARCHITECTURE,
+            DEFAULT_MINIMUM_MEMORY_MIB,
+            GUEST_ENVIRONMENT,
+            HOOK_PORT,
+        )
+
+        fields = {
+            "cpu_architecture": DEFAULT_CPU_ARCHITECTURE,
+            "minimum_memory_mib": DEFAULT_MINIMUM_MEMORY_MIB,
+            "environment": GUEST_ENVIRONMENT,
+            "hook_port": HOOK_PORT,
+            "hooks": HOOK_SWITCHES,
+        }
+        fields.update(overrides)
+        return build_settings_digest(**fields)  # type: ignore[arg-type]
+
+    def test_the_same_settings_give_the_same_digest(self):
+        """The cache has to hit when nothing changed, or every launch rebuilds."""
+        assert self._digest() == self._digest()
+
+    def test_a_changed_guest_environment_changes_it(self):
+        from kiro_crew.cloud.microvm.image import GUEST_ENVIRONMENT
+
+        relaxed = {**GUEST_ENVIRONMENT, "SMC_REQUIRE_AUTH_ALL_ROUTES": "0"}
+        assert self._digest(environment=relaxed) != self._digest()
+
+    def test_an_added_guest_variable_changes_it(self):
+        from kiro_crew.cloud.microvm.image import GUEST_ENVIRONMENT
+
+        assert self._digest(environment={**GUEST_ENVIRONMENT, "KC_EXTRA": "1"}) != self._digest()
+
+    def test_a_changed_memory_floor_changes_it(self):
+        assert self._digest(minimum_memory_mib=4096) != self._digest()
+
+    def test_a_changed_architecture_changes_it(self):
+        assert self._digest(cpu_architecture="X86_64") != self._digest()
+
+    def test_a_changed_hook_port_changes_it(self):
+        assert self._digest(hook_port=9090) != self._digest()
+
+    def test_a_hook_turned_off_changes_it(self):
+        from kiro_crew.cloud.microvm.image import HOOK_DISABLED
+
+        assert self._digest(hooks={**HOOK_SWITCHES, "ready": HOOK_DISABLED}) != self._digest()
+
+    def test_the_dicts_order_is_not_part_of_what_they_mean(self):
+        """A dict literal reordered is the same settings, so it must be the same
+        image -- otherwise reordering the lines of this module rebuilds every
+        crew's image for nothing."""
+        from kiro_crew.cloud.microvm.image import GUEST_ENVIRONMENT
+
+        shuffled = dict(reversed(list(GUEST_ENVIRONMENT.items())))
+        assert list(shuffled) != list(GUEST_ENVIRONMENT), "the fixture proves nothing"
+        assert self._digest(environment=shuffled) == self._digest()
+
+    def test_no_pair_of_settings_can_impersonate_another(self):
+        """Labelled, newline-separated lines, so values cannot run together."""
+        first = self._digest(cpu_architecture="ARM_64\nmemory=9")
+        second = self._digest(cpu_architecture="ARM_64", minimum_memory_mib=9)
+        assert first != second
+
+    def test_a_changed_setting_changes_the_image_name(self):
+        """The end-to-end property: the name is what the cache matches on."""
+        from kiro_crew.cloud.microvm.image import GUEST_ENVIRONMENT
+
+        relaxed = {**GUEST_ENVIRONMENT, "SMC_REQUIRE_AUTH_ALL_ROUTES": "0"}
+        before = _recipe().image_name()
+        after = _recipe(build_digest=self._digest(environment=relaxed)).image_name()
+        assert before != after
+
+    def test_an_assembled_recipe_carries_the_settings_this_module_ships(self, tmp_path):
+        """The stamp is put on where the recipe is built, so nothing downstream
+        has to remember to apply it."""
+        from kiro_crew.cloud.microvm import recipe as recipe_mod
+
+        bundle = tmp_path / "bundle"
+        (bundle / "skills").mkdir(parents=True)
+        for name in ("manifest.json", "agent.json", "mcp.json"):
+            (bundle / name).write_text("{}\n")
+        wheel = tmp_path / "kiro_crew-0.0.0-py3-none-any.whl"
+        import zipfile
+
+        with zipfile.ZipFile(wheel, "w") as archive:
+            archive.writestr("kiro_crew/__init__.py", b"# serving code\n")
+        assembled = recipe_mod.assemble(
+            bundle_dir=bundle, wheel=wheel, base_image_arn=BASE, out_zip=tmp_path / "r.zip"
+        )
+        assert assembled.recipe.build_digest == default_build_digest()
+
+    def test_a_resolver_refuses_a_recipe_stamped_for_other_settings(self, monkeypatch):
+        """A refusal, not a silent re-stamp: the recipe's digest is also the key
+        the uploaded zip is stored under, and accepting the mismatch would reuse an
+        image whose settings are not the ones about to be sent."""
+        fake = _Fake()
+        fake.install(monkeypatch)
+        stale = _recipe(build_digest=self._digest(minimum_memory_mib=4096))
+        with pytest.raises(ValueError, match="different image build settings"):
+            _resolver(fake).resolve(stale)
+        assert fake.created == [] and fake.uploads == []
+
+    def test_the_hook_switches_the_digest_hashes_are_the_ones_sent(self, monkeypatch):
+        """Two places for one fact would be an image built with a channel the
+        cache key says is still there, so the create call reads the same mapping."""
+        fake = _Fake()
+        recipe = _recipe()
+        name = recipe.image_name()
+        arn = f"arn:x/{name}"
+        fake.get_sequence = [
+            api.MicroVmImage(image_arn=arn, name=name, state="CREATED", latest_active_version="1")
+        ]
+        fake.version_status[(arn, "1")] = "ACTIVE"
+        fake.install(monkeypatch)
+        _resolver(fake).resolve(recipe)
+        created = fake.created[0]
+        for hook, switch in HOOK_SWITCHES.items():
+            assert created[f"{hook}_hook"] == switch, hook
+
+    def test_the_settings_digest_is_on_the_image_as_a_tag(self, monkeypatch):
+        """Recoverable from the image itself, rather than only from whoever built
+        it: the recipe digest covers the settings as a hash and cannot be read."""
+        fake = _Fake()
+        recipe = _recipe()
+        name = recipe.image_name()
+        arn = f"arn:x/{name}"
+        fake.get_sequence = [
+            api.MicroVmImage(image_arn=arn, name=name, state="CREATED", latest_active_version="1")
+        ]
+        fake.version_status[(arn, "1")] = "ACTIVE"
+        fake.install(monkeypatch)
+        _resolver(fake).resolve(recipe)
+        assert fake.created[0]["tags"]["kirocrew:build-settings"] == default_build_digest()
+
+
+class TestACreatingImageIsWaitedOnAndAFailedOneIsNamed:
+    """ "Nothing to reuse", "a build is already running" and "this name is burned"
+    are three different answers, and only one of them means submit a build.
+
+    The name a build is submitted under IS the recipe digest, so it can only be
+    used once per content. An image in ``CREATING`` is a build already running
+    under it, and one in ``CREATE_FAILED`` has burned it: the failed version is
+    the image's last, so it cannot be deleted and the image is not in a deletable
+    state. Reading either as "nothing here" sends the caller back to
+    ``CreateMicrovmImage`` with a name that dispatches no build -- and the caller
+    then waits out a timeout for a build that was never started.
+    """
+
+    def test_a_creating_image_is_waited_on_rather_than_resubmitted(self, monkeypatch):
+        fake = _Fake()
+        recipe = _recipe()
+        name = recipe.image_name()
+        arn = f"arn:aws:lambda:us-east-1:1:microvm-image/{name}"
+        fake.images.append(api.MicroVmImage(image_arn=arn, name=name, state="CREATING"))
+        fake.get_sequence = [
+            api.MicroVmImage(image_arn=arn, name=name, state="CREATING"),
+            api.MicroVmImage(image_arn=arn, name=name, state="CREATED", latest_active_version="2"),
+        ]
+        fake.version_status[(arn, "2")] = "ACTIVE"
+        fake.install(monkeypatch)
+        resolved = _resolver(fake).resolve(recipe)
+        assert resolved.image_version == "2"
+        assert fake.created == [], "the name already in use was submitted again"
+        assert fake.uploads == [], "a zip was paid for while a build was already running"
+
+    def test_waiting_on_someone_elses_build_is_not_reported_as_building(self, monkeypatch):
+        """``reused`` answers "did we build?", which an operator reading a slow
+        launch asks. This launch did not."""
+        fake = _Fake()
+        recipe = _recipe()
+        name = recipe.image_name()
+        arn = f"arn:x/{name}"
+        fake.images.append(api.MicroVmImage(image_arn=arn, name=name, state="CREATING"))
+        fake.get_sequence = [
+            api.MicroVmImage(image_arn=arn, name=name, state="CREATED", latest_active_version="2")
+        ]
+        fake.version_status[(arn, "2")] = "ACTIVE"
+        fake.install(monkeypatch)
+        assert _resolver(fake).resolve(recipe).reused is True
+
+    def test_a_created_image_whose_version_is_not_active_yet_is_also_waited_on(self, monkeypatch):
+        """The build finished and the version has not been activated. Same name,
+        same argument: there is nothing to resubmit it for."""
+        fake = _Fake()
+        recipe = _recipe()
+        name = recipe.image_name()
+        arn = f"arn:x/{name}"
+        fake.images.append(
+            api.MicroVmImage(image_arn=arn, name=name, state="CREATED", latest_active_version="")
+        )
+        fake.get_sequence = [
+            api.MicroVmImage(image_arn=arn, name=name, state="CREATED", latest_active_version="5")
+        ]
+        fake.version_status[(arn, "5")] = "ACTIVE"
+        fake.install(monkeypatch)
+        assert _resolver(fake).resolve(recipe).image_version == "5"
+        assert fake.created == []
+
+    def test_a_failed_image_is_refused_by_the_lookup_and_names_its_arn(self, monkeypatch):
+        """Deleting it or changing the content is the only way forward, and both
+        need the handle."""
+        fake = _Fake()
+        recipe = _recipe()
+        name = recipe.image_name()
+        arn = f"arn:aws:lambda:us-east-1:1:microvm-image/{name}"
+        fake.images.append(
+            api.MicroVmImage(
+                image_arn=arn, name=name, state="CREATE_FAILED", latest_failed_version="1"
+            )
+        )
+        fake.install(monkeypatch)
+        with pytest.raises(ImageBuildFailed) as caught:
+            _resolver(fake).lookup(recipe)
+        assert arn in str(caught.value)
+        assert "CREATE_FAILED" in str(caught.value)
+
+    def test_a_failed_image_is_not_resubmitted_by_resolve(self, monkeypatch):
+        """The resubmission dispatches no build, so the caller waits out a
+        half-hour timeout for one that never started."""
+        fake = _Fake()
+        recipe = _recipe()
+        name = recipe.image_name()
+        arn = f"arn:x/{name}"
+        fake.images.append(api.MicroVmImage(image_arn=arn, name=name, state="CREATE_FAILED"))
+        fake.install(monkeypatch)
+        with pytest.raises(ImageBuildFailed):
+            _resolver(fake).resolve(recipe)
+        assert fake.created == [] and fake.uploads == []
+
+    @pytest.mark.parametrize("state", sorted(api.FAILED_IMAGE_STATES))
+    def test_every_state_no_build_leaves_is_refused(self, monkeypatch, state):
+        fake = _Fake()
+        recipe = _recipe()
+        name = recipe.image_name()
+        fake.images.append(api.MicroVmImage(image_arn=f"arn:x/{name}", name=name, state=state))
+        fake.install(monkeypatch)
+        with pytest.raises(ImageBuildFailed, match=state):
+            _resolver(fake).lookup(recipe)
+
+    def test_an_active_image_is_still_an_ordinary_cache_hit(self, monkeypatch):
+        """Non-vacuity: none of the above touches the path that matters most."""
+        fake = _Fake()
+        recipe = _recipe()
+        name = recipe.image_name()
+        arn = f"arn:x/{name}"
+        fake.images.append(
+            api.MicroVmImage(image_arn=arn, name=name, state="CREATED", latest_active_version="4")
+        )
+        fake.version_status[(arn, "4")] = "ACTIVE"
+        fake.install(monkeypatch)
+        found = _resolver(fake).lookup(recipe)
+        assert found is not None and found.reused is True
+
+
+class TestTheImageCarriesTheIdentityTheGuestRefusesPayloadsOutside:
+    """``/run`` is unauthenticated, so what it checks against must be in the IMAGE.
+
+    The hook port is the one thing a MicroVM exposes. Anyone can mint a valid
+    activation in their own account, and a caller who reaches that port first
+    registers the VM there -- the platform's real ``/run`` is then answered
+    ``repeat_ignored``. A value carried in the payload would be a check the caller
+    sets, so the account and region are baked in at build time and the guest reads
+    them from its own environment.
+    """
+
+    def test_both_names_are_the_ones_the_guest_reads(self):
+        """Spelled in two programs, so a rename in one is a check that silently
+        stops checking: the guest reads an absent value as "not pinned"."""
+        from kiro_crew.cloud.microvm.image import EXPECTED_ACCOUNT_ENV, EXPECTED_REGION_ENV
+
+        assert EXPECTED_ACCOUNT_ENV == "SMC_MICROVM_ACCOUNT"
+        assert EXPECTED_REGION_ENV == "SMC_MICROVM_REGION"
+
+    def test_the_pins_reach_the_guest_environment(self):
+        from kiro_crew.cloud.microvm.image import (
+            EXPECTED_ACCOUNT_ENV,
+            EXPECTED_REGION_ENV,
+            guest_environment,
+        )
+
+        env = guest_environment(account_id="123456789012", region="us-east-1")
+        assert env[EXPECTED_ACCOUNT_ENV] == "123456789012"
+        assert env[EXPECTED_REGION_ENV] == "us-east-1"
+
+    def test_an_unpinned_build_leaves_the_names_out_rather_than_empty(self):
+        """The guest reads absent and blank the same way, and the shorter spelling
+        does not describe an image as carrying a pin it does not have."""
+        from kiro_crew.cloud.microvm.image import (
+            EXPECTED_ACCOUNT_ENV,
+            EXPECTED_REGION_ENV,
+            guest_environment,
+        )
+
+        env = guest_environment()
+        assert EXPECTED_ACCOUNT_ENV not in env
+        assert EXPECTED_REGION_ENV not in env
+
+    def test_the_constant_every_image_shares_is_not_mutated(self):
+        from kiro_crew.cloud.microvm.image import GUEST_ENVIRONMENT, guest_environment
+
+        before = dict(GUEST_ENVIRONMENT)
+        guest_environment(account_id="123456789012", region="us-east-1")["SMC_X"] = "1"
+        assert GUEST_ENVIRONMENT == before
+
+    def test_the_posture_flags_survive_the_pinning(self):
+        """Non-vacuity: the composed environment is the constant PLUS the pins, and
+        ``SMC_REQUIRE_AUTH_ALL_ROUTES`` is the load-bearing one."""
+        from kiro_crew.cloud.microvm.image import GUEST_ENVIRONMENT, guest_environment
+
+        env = guest_environment(account_id="123456789012", region="us-east-1")
+        for key, value in GUEST_ENVIRONMENT.items():
+            assert env[key] == value
+
+    def test_a_different_account_is_a_different_image(self):
+        """An image built for one account must not be reused for a launch in
+        another: its guest would accept that launch's payload while the control
+        plane believed it refused one."""
+        first = default_build_digest(account_id="111111111111", region="us-east-1")
+        second = default_build_digest(account_id="222222222222", region="us-east-1")
+        assert first != second
+        assert _recipe(build_digest=first).image_name() != _recipe(build_digest=second).image_name()
+
+    def test_a_different_region_is_a_different_image(self):
+        assert default_build_digest(
+            account_id="111111111111", region="us-east-1"
+        ) != default_build_digest(account_id="111111111111", region="eu-west-1")
+
+    def test_an_unpinned_image_is_not_the_same_as_a_pinned_one(self):
+        """The case that matters most: a cache hit across these two would hand a
+        pinned launch a guest that checks nothing."""
+        assert default_build_digest() != default_build_digest(
+            account_id="111111111111", region="us-east-1"
+        )
+
+    def test_the_pins_reach_the_build_call(self, monkeypatch):
+        fake = _Fake()
+        recipe = _recipe(
+            build_digest=default_build_digest(account_id="123456789012", region="us-east-1")
+        )
+        resolver = _resolver(fake, pinned_account="123456789012", pinned_region="us-east-1")
+        name = recipe.image_name()
+        arn = f"arn:x/{name}"
+        fake.get_sequence = [
+            api.MicroVmImage(image_arn=arn, name=name, state="CREATED", latest_active_version="1")
+        ]
+        fake.version_status[(arn, "1")] = "ACTIVE"
+        fake.install(monkeypatch)
+        resolver.resolve(recipe)
+        sent = fake.created[0]["environment_variables"]
+        assert sent["SMC_MICROVM_ACCOUNT"] == "123456789012"
+        assert sent["SMC_MICROVM_REGION"] == "us-east-1"
+
+    def test_a_resolver_pinned_differently_than_the_recipe_refuses(self, monkeypatch):
+        """The refusal is what keeps the pin honest: the recipe's stamp and the
+        environment about to be baked have to be the same statement."""
+        fake = _Fake()
+        fake.install(monkeypatch)
+        recipe = _recipe(
+            build_digest=default_build_digest(account_id="111111111111", region="us-east-1")
+        )
+        resolver = _resolver(fake, pinned_account="222222222222", pinned_region="us-east-1")
+        with pytest.raises(ValueError, match="different image build settings"):
+            resolver.resolve(recipe)
+        assert fake.created == [] and fake.uploads == []

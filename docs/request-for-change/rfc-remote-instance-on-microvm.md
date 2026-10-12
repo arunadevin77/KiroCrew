@@ -15,8 +15,8 @@ superseded-by: []
 
 > **Nothing built.** Measured claims about Kiro Crew are read at `fcee47347`.
 > AWS behaviour is cited to public documentation. The design restates decisions
-> established by an internal prototype built by the DevExAI team, which ran Kiro
-> Crew's published container image on Lambda MicroVMs; no code is carried over.
+> established by an earlier prototype that ran Kiro Crew's published container
+> image on Lambda MicroVMs; no code is carried over.
 
 ## Summary
 

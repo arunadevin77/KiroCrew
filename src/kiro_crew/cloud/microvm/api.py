@@ -23,10 +23,12 @@ CLI's own service name grants nothing.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, Iterator, Optional
 
 from kiro_crew.cloud.aws import AWSError, checked_json
 
@@ -166,8 +168,11 @@ class MicroVm:
         from a list response -- and a reader that required an endpoint would refuse
         every page.
 
-        That is not a loss, because the one caller of the list is the sweeper and
-        it reads the id, the state and the start time. Separate from
+        That is not a loss, because what wants the list is an account-wide orphan
+        sweep -- a VM running that no record names -- and it reads the id, the
+        state and the start time. This lane does not run one yet: the wall sweep
+        it does run works from the records, so it needs no list at all. Separate
+        from
         :meth:`from_response` rather than merged into a lenient single reader: a
         single reader that accepted a missing endpoint everywhere would also accept
         a ``GetMicrovm`` answer without one, and the lane's whole reachability
@@ -265,13 +270,45 @@ def run_microvm(
             f"got {maximum_duration_in_seconds}. The platform maximum is not adjustable and "
             "the value may only be set downward from it"
         )
-    import os
-    import tempfile
+    with staging_dir("kirocrew-runhook-") as stage:
+        return _run_microvm_staged(
+            stage,
+            image_identifier=image_identifier,
+            image_version=image_version,
+            run_hook_payload=run_hook_payload,
+            maximum_duration_in_seconds=maximum_duration_in_seconds,
+            client_token=client_token,
+            execution_role_arn=execution_role_arn,
+            log_group=log_group,
+            region=region,
+            profile=profile,
+            endpoint_url=endpoint_url,
+            timeout=timeout,
+        )
 
-    handle, payload_path = tempfile.mkstemp(prefix="kirocrew-runhook-")
-    with os.fdopen(handle, "w", encoding="utf-8") as fh:
+
+def _run_microvm_staged(
+    stage: Path,
+    *,
+    image_identifier: str,
+    image_version: str,
+    run_hook_payload: str,
+    maximum_duration_in_seconds: int,
+    client_token: str,
+    execution_role_arn: str,
+    log_group: str,
+    region: str,
+    profile: str,
+    endpoint_url: str,
+    timeout: int,
+) -> "MicroVm":
+    """:func:`run_microvm`'s call, with the payload file inside *stage*."""
+    import os
+
+    payload_path = str(stage / "run-hook-payload.json")
+    fd = os.open(payload_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(run_hook_payload)
-    os.chmod(payload_path, 0o600)
     args = [
         "--image-identifier",
         image_identifier,
@@ -338,11 +375,11 @@ def run_microvm(
             region,
             action="lambda:RunMicrovm",
             timeout=timeout,
+            visible_dirs=(str(stage),),
         )
     finally:
         # In a finally, so a refused call does not leave an activation code on
-        # disk. The window is the call's own duration either way, which is what
-        # the 0600 mode is for.
+        # disk; the staging directory is removed on exit as well.
         try:
             os.remove(payload_path)
         except OSError:
@@ -377,9 +414,11 @@ def list_microvms(
 ) -> list[MicroVm]:
     """Every MicroVM the caller can see, following ``nextToken`` to the end.
 
-    The sweeper reads this, and a sweep that stopped at the first page would
-    report the VMs it did not look at as absent -- which on the orphan side means
-    reporting a leaking VM as reaped.
+    For an account-wide orphan sweep -- a VM running that no record names -- which
+    this lane does not run yet; its wall sweep works from the records instead. The
+    pagination is here rather than left for then because a sweep that stopped at
+    the first page would report the VMs it did not look at as absent, which on the
+    orphan side means reporting a leaking VM as reaped.
     """
     out: list[MicroVm] = []
     next_token = ""
@@ -388,9 +427,9 @@ def list_microvms(
         # says ``{'min': 1, 'max': 50}``. 100 is refused outright:
         #   ValidationException: Value '100' at 'maxResults' failed to satisfy
         #   constraint: Member must have value less than or equal to 50
-        # so the call never returned a page. This is the SWEEPER's only input, and
-        # a sweeper that cannot list is a sweeper that reports every leaking VM as
-        # absent -- which is why it was failing closed on an unreadable list
+        # so the call never returned a page. This list is an ORPHAN sweep's only
+        # input, and a sweep that cannot list is one that reports every leaking VM
+        # as absent -- which is why it was failing closed on an unreadable list
         # rather than reporting zero orphans. Measured against the real service.
         args = ["--max-results", str(MAX_LIST_RESULTS)]
         if next_token:
@@ -507,18 +546,23 @@ def microvm_status(
             microvm_id, profile=profile, region=region, endpoint_url=endpoint_url
         ).state
     except AWSError as exc:
-        if _is_not_found(exc):
+        if is_not_found(exc):
             return None
         raise
 
 
-def _is_not_found(exc: Exception) -> bool:
+def is_not_found(exc: Exception) -> bool:
     """Whether *exc* is the service saying the resource is gone.
 
     Matched on the error NAME in the message rather than on an HTTP status,
     because the CLI seam hands back stderr text and not a response object. The
     name is the service's own ``ResourceNotFoundException``, which the model
     declares for every operation this module calls.
+
+    Public rather than private to this module: ``engine.teardown`` reads it to
+    tell a terminate the platform refused from one answering about a VM it has
+    already taken, and those two outcomes need opposite handling -- the first
+    stops the teardown, the second is what the teardown was for.
     """
     return "ResourceNotFoundException" in str(exc)
 
@@ -534,8 +578,9 @@ def describe_activation_registrations(
     """One SSM hybrid activation, or ``None`` when it is gone.
 
     Lives here rather than in a second SSM module because the only reason this
-    lane touches activations is to launch and reap MicroVMs, and the sweeper reads
-    ``RegistrationsCount`` from it to tell a leaked activation from a used one.
+    lane touches activations is to launch and reap MicroVMs. ``RegistrationsCount``
+    is what tells a leaked activation from a used one, which is the question an
+    account-wide orphan sweep asks; this lane does not run one yet.
     """
     data = checked_json(
         [
@@ -776,7 +821,7 @@ def get_microvm_image(
             timeout=timeout,
         )
     except AWSError as exc:
-        if _is_not_found(exc):
+        if is_not_found(exc):
             return None
         raise
     return MicroVmImage.from_response(data)
@@ -856,10 +901,26 @@ def image_version_status(
             timeout=timeout,
         )
     except AWSError as exc:
-        if _is_not_found(exc):
+        if is_not_found(exc):
             return None
         raise
     return str(data.get("status", "")) if isinstance(data, dict) else None
+
+
+@contextlib.contextmanager
+def staging_dir(prefix: str) -> Iterator[Path]:
+    """A private directory for a file the AWS CLI must read by name.
+
+    Cut under the ``aws-control-staging`` root, which every agent sandbox masks,
+    so a same-UID sandboxed agent cannot read a control secret or an activation
+    code while the call runs. A ``0600`` file in the shared temp directory does
+    not stop that, because the agent runs as the same user. The CLI child is
+    granted this one directory through ``visible_dirs``. Removed on exit.
+    """
+    from kiro_crew.apps.builtins.aws_control.backend.storage import pinned_staging
+
+    with pinned_staging(prefix) as (path, _fd):
+        yield Path(path)
 
 
 def put_recipe_object(
@@ -903,7 +964,14 @@ def put_recipe_object(
         args += ["--server-side-encryption", "AES256"]
     if endpoint_url:
         args += ["--endpoint-url", endpoint_url]
-    checked_json(args, profile, region, action="s3:PutObject", timeout=timeout)
+    checked_json(
+        args,
+        profile,
+        region,
+        action="s3:PutObject",
+        timeout=timeout,
+        visible_dirs=(str(Path(body_path).parent),),
+    )
     logger.info("uploaded MicroVM recipe to s3://%s/%s", bucket, key)
 
 
@@ -927,19 +995,44 @@ def put_secret(
     The VALUE goes in on stdin's place -- as a CLI argument it would be in this
     process's argv, which is readable by anything on the machine that can list
     processes. ``--secret-string`` takes a ``file://`` form for exactly this, so
-    the value is written to a file only this user can read and removed
-    immediately.
+    the value is written to a ``0600`` file inside :func:`staging_dir`, which
+    sandboxed agents cannot see, and removed when the call returns.
     """
-    import os
-    import tempfile
-
     if not name or not value:
         raise ValueError("put_secret needs a name and a value")
-    handle, path = tempfile.mkstemp(prefix="kirocrew-secret-")
+    with staging_dir("kirocrew-secret-") as stage:
+        return _put_secret_staged(
+            stage,
+            name,
+            value,
+            kms_key_id=kms_key_id,
+            profile=profile,
+            region=region,
+            endpoint_url=endpoint_url,
+            timeout=timeout,
+        )
+
+
+def _put_secret_staged(
+    stage: Path,
+    name: str,
+    value: str,
+    *,
+    kms_key_id: str,
+    profile: str,
+    region: str,
+    endpoint_url: str,
+    timeout: int,
+) -> str:
+    """:func:`put_secret`'s two calls, with the value file inside *stage*."""
+    import os
+
+    path = str(stage / "secret-string")
+    visible = (str(stage),)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        with os.fdopen(handle, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(value)
-        os.chmod(path, 0o600)
         create = [
             "secretsmanager",
             "create-secret",
@@ -952,7 +1045,12 @@ def put_secret(
         ]
         try:
             data = checked_json(
-                create, profile, region, action="secretsmanager:CreateSecret", timeout=timeout
+                create,
+                profile,
+                region,
+                action="secretsmanager:CreateSecret",
+                timeout=timeout,
+                visible_dirs=visible,
             )
         except AWSError as exc:
             if "ResourceExistsException" not in str(exc):
@@ -971,6 +1069,7 @@ def put_secret(
                 region,
                 action="secretsmanager:PutSecretValue",
                 timeout=timeout,
+                visible_dirs=visible,
             )
     finally:
         try:
@@ -1007,8 +1106,9 @@ def delete_secret(
     wrong tag unrecoverable.
 
     Never raises. This runs on a teardown path, and a secret that outlives its
-    crew is a tidy-up item the sweeper can report, while an exception here would
-    abandon the rest of the teardown.
+    crew sits in its own recovery window and is logged, while an exception here
+    would abandon the rest of the teardown -- which is the VM, the node and the
+    activation.
     """
     try:
         checked_json(

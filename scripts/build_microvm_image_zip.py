@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -28,9 +29,41 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from kiro_crew.cloud.microvm import recipe as recipe_mod  # noqa: E402
 
+#: The timestamp every member of the built wheel is dated with.
+#:
+#: 315532800 is 1980-01-01T00:00:00Z, which is the ZIP format's own epoch -- the
+#: earliest moment a member can carry, so nothing in the toolchain has to clamp
+#: it. The VALUE does not matter; that it is a constant does.
+#:
+#: Without it ``python -m build`` dates each member from the clock, so two builds
+#: of identical source produce different bytes.
+#: :func:`recipe.base_recipe_digest` hashes the wheel, and that digest is half the
+#: image cache's key -- so every restage of unchanged code missed the cache and
+#: paid for a full multi-minute image build. Honoured by ``wheel`` and by
+#: setuptools through it, and by the wider reproducible-builds convention of the
+#: same name, which is why this is the variable rather than a post-pass that
+#: rewrites timestamps.
+SOURCE_DATE_EPOCH = "315532800"
+
+
+def _build_env() -> dict[str, str]:
+    """This process's environment with a fixed :data:`SOURCE_DATE_EPOCH` in it.
+
+    An operator who already set one keeps their own value: any constant makes the
+    wheel reproducible, and theirs may be pinned to something they can explain.
+    """
+    env = dict(os.environ)
+    env.setdefault("SOURCE_DATE_EPOCH", SOURCE_DATE_EPOCH)
+    return env
+
 
 def build_wheel(vendor: Path) -> Path:
     """Build the Kiro Crew wheel the base recipe installs, into ``runtime/vendor``.
+
+    Built REPRODUCIBLY, through :data:`SOURCE_DATE_EPOCH`: the wheel's bytes are
+    hashed into the base recipe digest, which is half the image cache's key, so a
+    wheel that varies run to run makes every restage of unchanged code a cache
+    miss and a full image build.
 
     The same staging ``scripts/build_crew_base_image.sh`` does, and emptied first
     for the same reason: the base's install step refuses a context holding more
@@ -58,6 +91,7 @@ def build_wheel(vendor: Path) -> Path:
         cwd=REPO_ROOT,
         check=True,
         encoding="utf-8",
+        env=_build_env(),
     )
     wheels = sorted(vendor.glob("*.whl"))
     if len(wheels) != 1:
@@ -82,6 +116,22 @@ def main() -> None:
         default="",
         help="the AWS-managed base image the build runs on; recorded in the recipe",
     )
+    # The guest's run hook refuses a payload whose account or region is not the one
+    # baked into the image, so these two are part of what the image IS and part of
+    # the digest that names it. Optional, because an operator may want an unpinned
+    # image and because the recipe is readable without them -- but a zip built
+    # without them does not identify the image a pinned launch resolves, which is
+    # why the printed JSON says which pins went in.
+    parser.add_argument(
+        "--account",
+        default="",
+        help="the AWS account id whose payloads the guest will accept; empty means unpinned",
+    )
+    parser.add_argument(
+        "--region",
+        default="",
+        help="the region whose payloads the guest will accept; empty means unpinned",
+    )
     parser.add_argument("--skip-wheel", action="store_true", help="reuse the wheel already staged")
     args = parser.parse_args()
 
@@ -100,6 +150,8 @@ def main() -> None:
             wheel=wheel,
             base_image_arn=args.base_image_arn or "arn:aws:lambda:::microvm-image/unset",
             out_zip=args.out,
+            account_id=args.account,
+            region=args.region,
         )
     except recipe_mod.RecipeRefused as exc:
         raise SystemExit(str(exc)) from exc
@@ -115,6 +167,11 @@ def main() -> None:
                 "recipe_digest": assembled.recipe.digest(),
                 "image_name": assembled.recipe.image_name(),
                 "wheel": wheel.name,
+                # Reported because they are in the digest above and in nothing a
+                # reader of the zip can see: an operator comparing this name with
+                # the one a launch resolves needs to know which pins produced it.
+                "guest_account_pin": args.account,
+                "guest_region_pin": args.region,
             },
             indent=2,
         )

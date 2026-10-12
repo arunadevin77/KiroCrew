@@ -20,6 +20,8 @@ run gets to see only one row of.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from kiro_crew.dashboard import handlers_crew_turn as mod
@@ -60,12 +62,6 @@ def test_the_far_ends_own_turn_url_wins_over_a_composed_one():
         "turn_url": "http://127.0.0.1:19999/v1/chat/completions",
     }
     assert mod._turn_target(status, "microvm") == "http://127.0.0.1:19999/v1/chat/completions"
-
-
-def test_headless_is_true_before_the_crew_is_connected():
-    """Or the pane never appears, and the user has no way to reach what connects it."""
-    assert mod.is_headless_crew({"state": "disconnected"}, "microvm") is True
-    assert mod.is_headless_crew({"state": "disconnected"}, "") is False
 
 
 def test_the_secret_path_is_the_one_the_deploy_wrote():
@@ -216,6 +212,143 @@ class TestAHeadlessCrewIsNotMintedFor:
         assert recipe_mod.GUEST_FRONT_PORT != DEFAULT_REMOTE_PORT
 
 
+#: Node ids of the shape the registry really validates: ``mi-`` and 8 to 17 hex
+#: digits. A readable stand-in like ``mi-realcrew0000000`` is not one, so a row
+#: carrying it cannot be written through ``reg.add`` at all.
+_REAL_NODE = "mi-0a1b2c3d4e5f67890"
+_OTHER_NODE = "mi-0dead0beef000111a"
+
+
+def _lane_row(tmp_path, monkeypatch, *, tag, node_id, profile="", region=""):
+    """The instance row the LANE really registers, written by the real registry.
+
+    Driven through ``connect.register_instance`` with the launch path's own
+    keyword arguments rather than hand-built, because the gap between the two is
+    exactly where this route's binding broke. ``register_instance`` passes the
+    launch TAG as ``name`` and the ``mi-`` node id as ``ssm_target``, and
+    ``reg.add`` derives the row's ``id`` from the name -- so the id of every row
+    this lane writes is a slug of the tag, which no crew record carries.
+
+    A hand-built ``SimpleNamespace(id="mi-...")`` is a row shape production never
+    writes. Every assertion made against one stays green while the route 503s on
+    every real crew, which is how the binding shipped broken.
+    """
+    from kiro_crew.cloud import connect
+    from kiro_crew.cloud.microvm import recipe as recipe_mod
+    from kiro_crew.instances import registry as registry_mod
+    from kiro_crew.platform.defaults import MICROVM_PROVISIONER_ID
+
+    reg = registry_mod.InstancesRegistry(tmp_path / "instances.json")
+    monkeypatch.setattr(registry_mod, "InstancesRegistry", lambda *a, **k: reg)
+    row_id = connect.register_instance(
+        node_id,
+        name=tag,
+        profile=profile,
+        region=region,
+        connection_method="ssm",
+        provisioner_id=MICROVM_PROVISIONER_ID,
+        ssm_run_as=recipe_mod.GUEST_RUN_AS,
+        remote_port=recipe_mod.GUEST_FRONT_PORT,
+    )
+    assert row_id is not None, "the lane's own registration wrote no row"
+    row = reg.get(row_id)
+    assert row is not None
+    return row
+
+
+class TestTheRowTheLaneWritesResolvesItsOwnRecord:
+    """The route has to work against the row ``connect.register_instance`` writes.
+
+    ``reg.add(name=tag, ssm_target=<mi-id>)`` derives the row's ``id`` from the
+    NAME, so the id is a slug of the launch tag and the node id lives in
+    ``ssm_target``. A record match on ``inst.id`` therefore misses every record
+    this lane ever wrote, and every turn against a real crew ends in
+    ``503 crew_secret_unavailable``.
+
+    These run against the real registry rather than a stand-in row, because the
+    stand-in is what hid it.
+    """
+
+    @staticmethod
+    def _record(tmp_path, monkeypatch, **kw):
+        from kiro_crew.cloud.microvm.record import CrewRecord, CrewStore
+
+        store = CrewStore(tmp_path / "crews.json")
+        store.put(CrewRecord(**kw))
+        monkeypatch.setattr("kiro_crew.cloud.microvm.record.CrewStore", lambda *a, **k: store)
+        return store
+
+    def test_the_registered_rows_id_is_the_tag_and_not_the_node(self, tmp_path, monkeypatch):
+        """The premise, asserted rather than described: the two fields differ, so
+        a route that reads one of them cannot be matching the other."""
+        row = _lane_row(tmp_path, monkeypatch, tag="kc-22d27f", node_id=_REAL_NODE)
+        assert row.ssm_target == _REAL_NODE
+        assert row.id != _REAL_NODE, "the row's id is the node id, so this lane changed shape"
+        assert row.id == "kc-22d27f"
+
+    def test_the_secret_reference_resolves_for_a_really_registered_row(self, tmp_path, monkeypatch):
+        """The turn this route exists for. Red while the match was on ``inst.id``."""
+        self._record(
+            tmp_path,
+            monkeypatch,
+            tag="kc-22d27f",
+            mi_id=_REAL_NODE,
+            control_secret_ref="kirocrew/crew/l2crew/CONTROL_SECRET",
+            crew_name="l2crew",
+        )
+        row = _lane_row(tmp_path, monkeypatch, tag="kc-22d27f", node_id=_REAL_NODE)
+        assert mod.control_secret_id(row) == "kirocrew/crew/l2crew/CONTROL_SECRET"
+
+    def test_the_crew_name_resolves_for_a_really_registered_row(self, tmp_path, monkeypatch):
+        self._record(tmp_path, monkeypatch, tag="kc-22d27f", mi_id=_REAL_NODE, crew_name="l2crew")
+        row = _lane_row(tmp_path, monkeypatch, tag="kc-22d27f", node_id=_REAL_NODE)
+        assert mod.served_crew_name(row) == "l2crew"
+
+    @pytest.mark.asyncio
+    async def test_a_turn_against_a_really_registered_row_is_not_refused_for_its_secret(
+        self, tmp_path, monkeypatch
+    ):
+        """End to end through the handler, with only the AWS read faked.
+
+        The refusal the broken binding produced was ``503
+        crew_secret_unavailable``, and it came from the resolution step rather
+        than from anything about the secret -- so the handler is the level this
+        has to be pinned at, not just the resolver.
+        """
+        self._record(
+            tmp_path,
+            monkeypatch,
+            tag="kc-22d27f",
+            mi_id=_REAL_NODE,
+            control_secret_ref="kirocrew/crew/l2crew/CONTROL_SECRET",
+            crew_name="l2crew",
+        )
+        row = _lane_row(tmp_path, monkeypatch, tag="kc-22d27f", node_id=_REAL_NODE)
+        # The real resolvers run: only the owner gate, the registry lookup, the
+        # live status and the Secrets Manager read are stood in for. The live
+        # tunnel's dial identity matches the row's node and (empty) account, so
+        # the binding guard sees the open tunnel and the matched record agree.
+        _wire_handler(
+            monkeypatch,
+            inst=row,
+            status=_connected(ssm_target=_REAL_NODE, aws_profile="", aws_region=""),
+            secret_id=_REAL,
+            crew_name=_REAL,
+            record=_REAL,
+            secret="S3C",
+        )
+        calls: list[dict] = []
+        _install_session(monkeypatch, calls, resp=_FakeResp(status=200, text='{"ok": true}'))
+
+        resp = await mod.api_crew_turn(
+            _turn_request({"message": "hi", "thread": "t", "stream": False})
+        )
+        assert resp.status == 200, _code(resp)
+        assert len(calls) == 1, "the turn was refused before it reached the crew"
+        assert calls[0]["json"]["model"] == "l2crew"
+        assert calls[0]["headers"][mod.CONTROL_SECRET_HEADER] == "S3C"
+
+
 class TestTheSecretIsNamedByTheLaneNotTheDisplayName:
     """A crew's display name is a label, and labels are not secret names.
 
@@ -232,12 +365,25 @@ class TestTheSecretIsNamedByTheLaneNotTheDisplayName:
 
         store = CrewStore(tmp_path / "crews.json")
         store.put(
-            CrewRecord(tag="l2crew", control_secret_ref="kirocrew/crew/l2crew/CONTROL_SECRET")
+            CrewRecord(
+                tag="l2crew",
+                mi_id=_REAL_NODE,
+                control_secret_ref="kirocrew/crew/l2crew/CONTROL_SECRET",
+            )
         )
         monkeypatch.setattr("kiro_crew.cloud.microvm.record.CrewStore", lambda *a, **k: store)
 
+        # The record is matched on the node the row's tunnel dials, which the
+        # registry keeps in ``ssm_target``; see
+        # ``TestTheCredentialIsBoundToTheNodeTheTunnelDials`` for why neither a
+        # label nor the row's id can stand in for it.
         class Inst:
             name = "Kiro Crew Cloud (l2crew)"
+            id = "l2crew"
+            ssm_target = _REAL_NODE
+            connection_method = "ssm"
+            aws_profile = ""
+            aws_region = ""
 
         assert control_secret_id(Inst()) == "kirocrew/crew/l2crew/CONTROL_SECRET"
 
@@ -314,13 +460,13 @@ class TestTheCrewIsAddressedByItsOwnNameNotTheLaunchTag:
         from kiro_crew.cloud.microvm.record import CrewRecord
         from kiro_crew.dashboard.handlers_crew_turn import served_crew_name
 
-        self._store(tmp_path, monkeypatch, CrewRecord(tag="kc-22d27f", crew_name="l2crew"))
-
-        class Inst:
-            name = "kc-22d27f"
-            provisioner_id = "microvm"
-
-        assert served_crew_name(Inst()) == "l2crew"
+        self._store(
+            tmp_path,
+            monkeypatch,
+            CrewRecord(tag="kc-22d27f", mi_id=_REAL_NODE, crew_name="l2crew"),
+        )
+        row = _lane_row(tmp_path, monkeypatch, tag="kc-22d27f", node_id=_REAL_NODE)
+        assert served_crew_name(row) == "l2crew"
 
     def test_the_resolved_name_is_never_the_tag_even_when_both_are_present(
         self, tmp_path, monkeypatch
@@ -330,13 +476,13 @@ class TestTheCrewIsAddressedByItsOwnNameNotTheLaunchTag:
         from kiro_crew.cloud.microvm.record import CrewRecord
         from kiro_crew.dashboard.handlers_crew_turn import served_crew_name
 
-        self._store(tmp_path, monkeypatch, CrewRecord(tag="kc-22d27f", crew_name="l2crew"))
-
-        class Inst:
-            name = "kc-22d27f"
-            provisioner_id = "microvm"
-
-        resolved = served_crew_name(Inst())
+        self._store(
+            tmp_path,
+            monkeypatch,
+            CrewRecord(tag="kc-22d27f", mi_id=_REAL_NODE, crew_name="l2crew"),
+        )
+        row = _lane_row(tmp_path, monkeypatch, tag="kc-22d27f", node_id=_REAL_NODE)
+        resolved = served_crew_name(row)
         assert resolved == "l2crew"
         assert resolved != "kc-22d27f", "the display label reaches the guest as a 404"
 
@@ -350,13 +496,9 @@ class TestTheCrewIsAddressedByItsOwnNameNotTheLaunchTag:
         from kiro_crew.cloud.microvm.record import CrewRecord
         from kiro_crew.dashboard.handlers_crew_turn import served_crew_name
 
-        self._store(tmp_path, monkeypatch, CrewRecord(tag="kc-22d27f"))
-
-        class Inst:
-            name = "kc-22d27f"
-            provisioner_id = "microvm"
-
-        assert served_crew_name(Inst()) == ""
+        self._store(tmp_path, monkeypatch, CrewRecord(tag="kc-22d27f", mi_id=_REAL_NODE))
+        row = _lane_row(tmp_path, monkeypatch, tag="kc-22d27f", node_id=_REAL_NODE)
+        assert served_crew_name(row) == ""
 
     def test_a_lane_with_no_headless_crew_resolves_nothing(self, tmp_path, monkeypatch):
         from kiro_crew.dashboard.handlers_crew_turn import served_crew_name
@@ -401,15 +543,26 @@ class _FakeContent:
 
 
 class _FakeResp:
-    """The upstream crew's response: a status, a body, and streamable content."""
+    """The upstream crew's response: a status, headers, and streamable content.
 
-    def __init__(self, *, status=200, text="", chunks=(), raise_at_end=None):
+    ``text=`` is delivered through ``content`` and NOT through a ``text()``
+    method, deliberately: the handler reads the body through ``content`` so it
+    can stop at the cap, and a fake that still answered ``text()`` would stay
+    green against a handler that read the body whole.
+
+    ``content_type`` defaults to what the crew's front really answers on the path
+    the fake is built for -- JSON when a body was given, SSE when chunks were --
+    so a test that does not care about the content-type gate does not have to
+    name one, and one that does names it explicitly.
+    """
+
+    def __init__(self, *, status=200, text="", chunks=(), raise_at_end=None, content_type=None):
         self.status = status
-        self._text = text
-        self.content = _FakeContent(chunks, raise_at_end)
-
-    async def text(self):
-        return self._text
+        if content_type is None:
+            content_type = "text/event-stream" if chunks else "application/json"
+        self.headers = {"Content-Type": content_type} if content_type else {}
+        body = tuple(chunks) if chunks else ((text.encode(),) if text else ())
+        self.content = _FakeContent(body, raise_at_end)
 
     async def __aenter__(self):
         return self
@@ -454,8 +607,10 @@ class _FakeSession:
     async def __aexit__(self, *exc):
         return False
 
-    def post(self, url, *, json=None, headers=None):
-        self._calls.append({"url": url, "json": json, "headers": headers})
+    def post(self, url, *, json=None, headers=None, allow_redirects=True):
+        self._calls.append(
+            {"url": url, "json": json, "headers": headers, "allow_redirects": allow_redirects}
+        )
         if self._raise_on_post is not None:
             raise self._raise_on_post
         return _FakePost(self._resp, self._raise_on_enter)
@@ -479,6 +634,12 @@ class _CapturingStream:
 
     async def write(self, data):
         self.frames.append(bytes(data))
+
+
+#: Passed to ``_wire_handler`` for a resolver that must NOT be stubbed, so a test
+#: can drive the handler with the real record lookup in place. Distinct from
+#: ``""``, which is the stub answering "nothing recorded".
+_REAL = object()
 
 
 def _install_session(monkeypatch, calls, **kwargs):
@@ -506,6 +667,7 @@ def _wire_handler(
     secret_id="kirocrew/crew/l2crew/CONTROL_SECRET",
     secret="s3cret-value",
     crew_name="l2crew",
+    record="__match__",
 ):
     """Stub the handler's lazily-imported collaborators and secret reads.
 
@@ -537,23 +699,56 @@ def _wire_handler(
         inst = SimpleNamespace(
             name="Kiro Crew Cloud (l2crew)",
             provisioner_id="microvm",
+            # The row shape the lane really registers: the id is a slug of the
+            # launch tag, the node id is in ``ssm_target``. See ``_lane_row``.
+            id="kc-22d27f",
+            ssm_target=_REAL_NODE,
             aws_profile="prof",
             aws_region="us-east-1",
         )
     reg = None if reg_none else SimpleNamespace(get=lambda instance_id: inst)
     monkeypatch.setattr(hi, "_registry", lambda state: reg)
     monkeypatch.setattr(hi, "_status_for", lambda state, instance_id: status or {})
-    monkeypatch.setattr(mod, "control_secret_id", lambda i: secret_id)
-    monkeypatch.setattr(mod, "served_crew_name", lambda i: crew_name)
+    # ``_REAL`` leaves the module's own resolver in place, so a test can drive
+    # the handler against a really-registered row and a real crew record.
+    if secret_id is not _REAL:
+        monkeypatch.setattr(mod, "control_secret_id", lambda i: secret_id)
+    if crew_name is not _REAL:
+        monkeypatch.setattr(mod, "served_crew_name", lambda i: crew_name)
+    # The record ``api_crew_turn`` binds the live tunnel to. Stubbed to the crew
+    # the instance really IS unless ``record`` is ``_REAL`` (then the module's own
+    # resolver runs against a real ``CrewStore``). The default record matches the
+    # row's node/profile/region, so the connected-path tests reach the branch they
+    # are each pinning; a test driving the mismatch guard overrides ``status`` or
+    # ``record`` so the two disagree.
+    if record == "__match__":
+        record = SimpleNamespace(
+            mi_id=str(getattr(inst, "ssm_target", "") or ""),
+            profile=str(getattr(inst, "aws_profile", "") or ""),
+            region=str(getattr(inst, "aws_region", "") or ""),
+            crew_name=crew_name if crew_name is not _REAL else "l2crew",
+        )
+    if record is not _REAL:
+        monkeypatch.setattr(mod, "_record_for", lambda i: record)
     monkeypatch.setattr(mod, "_read_control_secret", AsyncMock(return_value=secret))
     return inst
 
 
 def _connected(**extra):
-    """A tunnel status that yields a loopback turn target for a headless crew."""
+    """A tunnel status that yields a loopback turn target for a headless crew.
+
+    Carries the dial identity the live tunnel was built with -- transport ``ssm``
+    on the real crew's node, profile and region -- so ``api_crew_turn``'s binding
+    guard sees the open tunnel and the matched record agree. A test driving the
+    mismatch itself overrides these keys (or the record) so they disagree.
+    """
     base = {
         "state": "connected",
         "turn_url": "http://127.0.0.1:18081/v1/chat/completions",
+        "transport": "ssm",
+        "ssm_target": _REAL_NODE,
+        "aws_profile": "prof",
+        "aws_region": "us-east-1",
     }
     base.update(extra)
     return base
@@ -689,6 +884,55 @@ class TestTheTurnHandlerRefusesBeforeItForwards:
         assert mod._read_control_secret.await_count == 0
 
     @pytest.mark.asyncio
+    async def test_a_tunnel_that_does_not_match_the_record_is_refused_before_any_secret(
+        self, monkeypatch
+    ):
+        """The row was relabelled onto a tunnel that reaches a different node.
+
+        ``_record_for`` matches the (now-rewritten) row to a real crew's record,
+        but the OPEN tunnel was dialled on another node before the edit and does
+        not rebuild on it. Binding the credential to the live tunnel's own dial
+        identity -- not to the row -- is what stops the real crew's control secret
+        from being read and sent down that tunnel. Asserting the secret read was
+        never awaited is the property the module's docstring names.
+        """
+        # The matched record names the REAL crew's node; the live tunnel reaches
+        # a DIFFERENT node (an SSH peer, or an SSM peer dialled elsewhere).
+        record = SimpleNamespace(
+            mi_id=_REAL_NODE, profile="prof", region="us-east-1", crew_name="l2crew"
+        )
+        _wire_handler(
+            monkeypatch,
+            status=_connected(ssm_target="mi-ffffffffffffffff0"),
+            record=record,
+        )
+        resp = await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+        assert resp.status == 409
+        assert _code(resp) == "crew_tunnel_mismatch"
+        assert mod._read_control_secret.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_an_ssh_tunnel_never_binds_a_microvm_record(self, monkeypatch):
+        """An SSM record cannot be served over an SSH forward.
+
+        A row relabelled onto an already-connected SSH peer keeps the peer's
+        tunnel, whose transport is ``ssh`` and which carries no SSM coordinates.
+        The guard refuses it even though ``_record_for`` matched the record.
+        """
+        record = SimpleNamespace(
+            mi_id=_REAL_NODE, profile="prof", region="us-east-1", crew_name="l2crew"
+        )
+        _wire_handler(
+            monkeypatch,
+            status=_connected(transport="ssh", ssm_target="", aws_profile="", aws_region=""),
+            record=record,
+        )
+        resp = await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+        assert resp.status == 409
+        assert _code(resp) == "crew_tunnel_mismatch"
+        assert mod._read_control_secret.await_count == 0
+
+    @pytest.mark.asyncio
     async def test_an_unrecorded_secret_reference_is_a_service_error(self, monkeypatch):
         """No recorded reference, so the gateway has nothing to authenticate with."""
         _wire_handler(monkeypatch, status=_connected(), secret_id="")
@@ -754,14 +998,23 @@ class TestTheTurnHandlerForwardsToTheCrew:
 
     @pytest.mark.asyncio
     async def test_a_non_streamed_turn_passes_the_crews_own_status_through(self, monkeypatch):
-        """A crew that answers 4xx/5xx is relayed with its own status, not masked."""
+        """A crew that answers 4xx/5xx keeps its own status, not a masked one.
+
+        The crew's words reach the caller as the refusal's bounded ``detail``
+        rather than as the body, which is what ``crew_refused`` is.
+        """
+        import json as _json
+
         _wire_handler(monkeypatch, status=_connected())
         calls = []
         _install_session(monkeypatch, calls, resp=_FakeResp(status=503, text="busy"))
         body = {"message": "hi", "thread": "t", "stream": False}
         resp = await mod.api_crew_turn(_turn_request(body))
         assert resp.status == 503
-        assert resp.body == b"busy"
+        payload = _json.loads(resp.body)
+        assert payload["code"] == "crew_refused"
+        assert payload["status"] == 503
+        assert payload["detail"] == "busy"
 
     @pytest.mark.asyncio
     async def test_a_non_streamed_turn_to_an_unreachable_crew_is_a_gateway_error(self, monkeypatch):
@@ -930,8 +1183,8 @@ class TestOnlyTheMicrovmLaneIsServed:
     def test_the_served_lanes_are_exactly_the_microvm_lane(self):
         from kiro_crew.platform.defaults import FARGATE_PROVISIONER_ID, MICROVM_PROVISIONER_ID
 
-        assert mod.TURN_LANES == {MICROVM_PROVISIONER_ID}
-        assert FARGATE_PROVISIONER_ID not in mod.TURN_LANES
+        assert mod.TURN_LANE == MICROVM_PROVISIONER_ID
+        assert FARGATE_PROVISIONER_ID != mod.TURN_LANE
 
     def test_a_fargate_crew_is_not_named_by_this_route(self):
         """``served_crew_name`` answers for a lane this route serves, and Fargate
@@ -965,11 +1218,24 @@ class TestOnlyTheMicrovmLaneIsServed:
 
 
 class TestControlSecretIdLanePrecedence:
-    """``control_secret_id`` prefers this crew's recorded reference, then a derive."""
+    """``control_secret_id`` prefers this crew's recorded reference, then a derive
+    FROM THAT RECORD'S OWN TAG -- never from a label the row supplied.
 
-    def test_a_non_matching_record_tag_does_not_satisfy_the_lookup(self, tmp_path, monkeypatch):
-        """A record for a DIFFERENT tag is not this crew's reference, so the lookup
-        falls through to the configured-prefix derivation rather than borrowing it."""
+    A row that owns no record resolves to nothing. Deriving a secret path from the
+    tag in its display name instead would be the hole rather than a fallback:
+    ``instances.json`` is not write-protected, so the label is agent-supplied, and
+    a relabelled row would name whichever crew's secret its label claims. The
+    derive is available only where the record is already matched by identity, so
+    the tag it uses is the record's own.
+
+    Nothing legitimate needs the wider form. Every record this lane's launch
+    writes carries ``control_secret_ref`` from the start, and this function is
+    called only from the turn route, which serves only this lane.
+    """
+
+    def test_a_record_for_another_instance_is_not_borrowed(self, tmp_path, monkeypatch):
+        """A record that is not THIS row's must yield nothing -- neither its
+        reference nor a path derived from the row's own label."""
         from types import SimpleNamespace
 
         from kiro_crew.cloud.microvm.record import CrewRecord, CrewStore
@@ -977,23 +1243,50 @@ class TestControlSecretIdLanePrecedence:
         store = CrewStore(tmp_path / "crews.json")
         store.put(
             CrewRecord(
-                tag="someone-else", control_secret_ref="kirocrew/crew/someone-else/CONTROL_SECRET"
+                tag="someone-else",
+                mi_id=_OTHER_NODE,
+                control_secret_ref="kirocrew/crew/someone-else/CONTROL_SECRET",
             )
         )
         monkeypatch.setattr("kiro_crew.cloud.microvm.record.CrewStore", lambda *a, **k: store)
 
-        inst = SimpleNamespace(name="Kiro Crew Cloud (l2crew)", provisioner_id="microvm")
+        inst = SimpleNamespace(
+            name="Kiro Crew Cloud (l2crew)",
+            provisioner_id="microvm",
+            id="l2crew",
+            ssm_target=_REAL_NODE,
+            aws_profile="",
+            aws_region="",
+        )
         got = mod.control_secret_id(inst)
-        assert "someone-else" not in got
-        assert got.endswith("/l2crew/CONTROL_SECRET")
+        assert "someone-else" not in got, "another instance's reference was borrowed"
+        assert got == "", "a secret path was derived from the row's own label"
 
+    def test_the_derive_still_runs_for_a_matched_record_without_a_reference(
+        self, tmp_path, monkeypatch
+    ):
+        """The surviving half of the precedence: identity matched, no reference
+        stored, so the path is derived -- from the RECORD's tag."""
+        from types import SimpleNamespace
 
-def test_a_connected_crew_with_a_turn_url_is_headless_even_without_a_headless_lane():
-    """``is_headless_crew`` also answers yes when the status itself carries a
-    ``turn_url`` -- the far end's own statement that it serves a turn route."""
-    assert mod.is_headless_crew({"state": "connected", "turn_url": "http://x/v1"}, "ec2") is True
-    assert mod.is_headless_crew({"state": "connected"}, "ec2") is False
-    assert mod.is_headless_crew("not-a-dict", "ec2") is False
+        from kiro_crew.cloud.microvm.record import CrewRecord, CrewStore
+
+        store = CrewStore(tmp_path / "crews.json")
+        store.put(CrewRecord(tag="l2crew", mi_id=_REAL_NODE))
+        monkeypatch.setattr("kiro_crew.cloud.microvm.record.CrewStore", lambda *a, **k: store)
+
+        inst = SimpleNamespace(
+            name="Kiro Crew Cloud (anything-else)",
+            provisioner_id="microvm",
+            id="anything-else",
+            connection_method="ssm",
+            ssm_target=_REAL_NODE,
+            aws_profile="",
+            aws_region="",
+        )
+        got = mod.control_secret_id(inst)
+        assert got.endswith("/l2crew/CONTROL_SECRET"), "the record's own tag was not used"
+        assert "anything-else" not in got, "the row's label reached the secret name"
 
 
 class _ExplodingStream(_CapturingStream):
@@ -1152,3 +1445,751 @@ class TestTheCrewsReplyIsRedactedBeforeItReachesTheCaller:
         written = b"".join(resp.frames)
         assert self._KEY.encode() not in written
         assert b"crew_refused" in written
+
+    @pytest.mark.asyncio
+    async def test_a_leading_bom_does_not_hide_an_escaped_credential(self, monkeypatch):
+        """A BOM at the head of the stream must not cost the JSON-aware pass.
+
+        ``_redact_sse_event`` sends a ``data:`` line through the JSON decoder, which
+        is what sees a credential written as a JSON escape; every other line goes
+        through the plain-text chain, which cannot. So a stream whose first line is
+        ``\\ufeffdata: ...`` does not match ``data:``, takes the text chain, and the
+        escaped credential passes through -- while the browser, which skips the BOM
+        per the SSE spec, parses the field and decodes the credential back.
+        """
+        import json
+
+        _wire_handler(monkeypatch, status=_connected())
+        _capture_stream(monkeypatch)
+        # The literal bytes never spell the key id: only a JSON decode produces it.
+        escaped = b"\\u0041" + self._KEY[1:].encode()
+        event = b"\xef\xbb\xbf" + b'data: {"delta": "key ' + escaped + b'"}\n\n'
+        _install_session(monkeypatch, [], resp=_FakeResp(status=200, chunks=(event,)))
+        resp = await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+
+        written = b"".join(resp.frames).decode()
+        # Read it the way a BOM-stripping EventSource client does.
+        payload = "\n".join(
+            line[len("data: ") :]
+            for line in written.removeprefix("\ufeff").split("\n")
+            if line.startswith("data: ")
+        )
+        assert self._KEY not in json.dumps(json.loads(payload)), (
+            "the BOM sent the data line through the plain-text chain, so the "
+            "escaped credential reached the caller"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_bom_split_across_chunks_is_still_stripped(self, monkeypatch):
+        """The BOM is three bytes and the socket may split it.
+
+        Stripping only when the whole prefix has arrived is why the strip waits for
+        the third byte instead of testing the first chunk and giving up.
+        """
+        import json
+
+        _wire_handler(monkeypatch, status=_connected())
+        _capture_stream(monkeypatch)
+        escaped = b"\\u0041" + self._KEY[1:].encode()
+        stream = b"\xef\xbb\xbf" + b'data: {"delta": "key ' + escaped + b'"}\n\n'
+        _install_session(
+            monkeypatch,
+            [],
+            resp=_FakeResp(status=200, chunks=(stream[:1], stream[1:2], stream[2:])),
+        )
+        resp = await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+
+        written = b"".join(resp.frames).decode()
+        payload = "\n".join(
+            line[len("data: ") :]
+            for line in written.removeprefix("\ufeff").split("\n")
+            if line.startswith("data: ")
+        )
+        assert self._KEY not in json.dumps(json.loads(payload))
+
+
+class TestTheCredentialIsBoundToTheNodeTheTunnelDials:
+    """`instances.json` is NOT write-protected, so a row is agent-writable.
+
+    Resolving the crew record by the row's TAG, its display name, or its registry
+    id binds the credential to a label while the tunnel stays bound to a NODE. An
+    agent that controls a connected hostile peer's row can relabel it with a real
+    crew's tag, lane and AWS coordinates, and the owner's next turn then reads the
+    REAL crew's control secret and sends it down the HOSTILE peer's already-open
+    tunnel.
+
+    So the record is found by `ssm_target`, which is the field the tunnel is
+    actually built from -- the forward dials `validate_ssm_target(inst.
+    ssm_target)`. Any other field leaves the same gap one step over: a row whose
+    `ssm_target` names a node of the attacker's choosing passes a check on the id,
+    and the secret goes down the tunnel that `ssm_target` opened. Its account and
+    region have to agree with the record too, because they are what the secret is
+    READ with.
+    """
+
+    REAL_REF = "kirocrew/crew/realcrew/CONTROL_SECRET"
+
+    def _store(self, tmp_path, monkeypatch):
+        from kiro_crew.cloud.microvm.record import CrewRecord, CrewStore
+
+        store = CrewStore(tmp_path / "crews.json")
+        store.put(
+            CrewRecord(
+                tag="realcrew",
+                mi_id=_REAL_NODE,
+                profile="owner",
+                region="us-east-1",
+                control_secret_ref=self.REAL_REF,
+                crew_name="real",
+            )
+        )
+        monkeypatch.setattr("kiro_crew.cloud.microvm.record.CrewStore", lambda *a, **k: store)
+        return store
+
+    class _Inst:
+        def __init__(self, **kw):
+            from kiro_crew.platform.defaults import MICROVM_PROVISIONER_ID
+
+            self.name = ""
+            # The slug of the launch tag, which is what `reg.add` writes here.
+            self.id = "realcrew"
+            self.connection_method = "ssm"
+            self.ssm_target = ""
+            self.provisioner_tag = ""
+            # The real lane id, so the lane gate passes and these tests exercise
+            # the record match rather than being refused one step earlier.
+            self.provisioner_id = MICROVM_PROVISIONER_ID
+            self.aws_profile = "owner"
+            self.aws_region = "us-east-1"
+            for k, v in kw.items():
+                setattr(self, k, v)
+
+    def test_the_real_crews_own_row_still_resolves(self, tmp_path, monkeypatch):
+        """Non-vacuity: the binding must not refuse the legitimate crew."""
+        from kiro_crew.dashboard.handlers_crew_turn import control_secret_id, served_crew_name
+
+        self._store(tmp_path, monkeypatch)
+        inst = self._Inst(ssm_target=_REAL_NODE, provisioner_tag="realcrew")
+        assert control_secret_id(inst) == self.REAL_REF
+        assert served_crew_name(inst) == "real"
+
+    def test_a_relabelled_hostile_row_gets_no_credential(self, tmp_path, monkeypatch):
+        """The attack: the hostile peer's own tunnel, wearing the real crew's tag."""
+        from kiro_crew.dashboard.handlers_crew_turn import control_secret_id
+
+        self._store(tmp_path, monkeypatch)
+        hostile = self._Inst(ssm_target=_OTHER_NODE, provisioner_tag="realcrew")
+        got = control_secret_id(hostile)
+        assert got != self.REAL_REF, "the real crew's secret was handed to another instance"
+        assert got == "", "a secret name was still guessed for a row that owns no record"
+
+    def test_an_ssh_row_carrying_the_real_node_gets_no_credential(self, tmp_path, monkeypatch):
+        """An ``ssh`` row dials its own host whatever ``ssm_target`` it holds, so
+        copying a real crew's node, profile and region onto an SSH peer must not
+        resolve that crew's secret."""
+        from kiro_crew.dashboard.handlers_crew_turn import control_secret_id
+
+        self._store(tmp_path, monkeypatch)
+        hostile = self._Inst(connection_method="ssh", ssm_target=_REAL_NODE)
+        assert control_secret_id(hostile) == ""
+
+    def test_a_relabelled_display_name_gets_no_credential(self, tmp_path, monkeypatch):
+        """Same attack through the display name, which the old tag parser read."""
+        from kiro_crew.dashboard.handlers_crew_turn import control_secret_id
+
+        self._store(tmp_path, monkeypatch)
+        hostile = self._Inst(ssm_target=_OTHER_NODE, name="Kiro Crew Cloud (realcrew)")
+        assert control_secret_id(hostile) == ""
+
+    def test_a_relabelled_hostile_row_is_not_told_the_crew_name(self, tmp_path, monkeypatch):
+        """`model` is also resolved from the record, and naming the real crew to a
+        hostile front is what lets it answer as that crew instead of 404ing."""
+        from kiro_crew.dashboard.handlers_crew_turn import served_crew_name
+
+        self._store(tmp_path, monkeypatch)
+        hostile = self._Inst(ssm_target=_OTHER_NODE, provisioner_tag="realcrew")
+        assert served_crew_name(hostile) == ""
+
+    def test_a_row_carrying_the_real_crews_id_but_another_node_gets_no_credential(
+        self, tmp_path, monkeypatch
+    ):
+        """The binding must be on the field the tunnel goes down, not beside it.
+
+        A check on the row's registry `id` is satisfied by a row that keeps the
+        real crew's id -- its label -- and points `ssm_target` at a node of the
+        attacker's choosing. Profile, region and lane all still agree, the record
+        is matched, and the owner's next turn sends the real crew's control secret
+        down the OTHER node's tunnel: the same relabelling attack, one field over.
+        """
+        from kiro_crew.dashboard.handlers_crew_turn import control_secret_id, served_crew_name
+
+        self._store(tmp_path, monkeypatch)
+        # The row the reviewer described: `id` is the real crew's NODE id, which
+        # is the field a check on `inst.id` compares, and `ssm_target` -- the
+        # field the forward dials -- is another node entirely. Profile, region
+        # and lane all agree, so nothing else refuses it.
+        moved = self._Inst(id=_REAL_NODE, ssm_target=_OTHER_NODE, provisioner_tag="realcrew")
+        assert control_secret_id(moved) == "", "the secret followed the row's id, not its node"
+        assert served_crew_name(moved) == ""
+
+    def test_a_row_with_no_node_at_all_gets_no_credential(self, tmp_path, monkeypatch):
+        """There is nothing to match and nothing to dial, so there is no crew."""
+        from kiro_crew.dashboard.handlers_crew_turn import control_secret_id
+
+        self._store(tmp_path, monkeypatch)
+        assert control_secret_id(self._Inst(ssm_target="", provisioner_tag="realcrew")) == ""
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [("aws_profile", "attacker"), ("aws_region", "eu-west-1")],
+        ids=["profile-moved", "region-moved"],
+    )
+    def test_moved_aws_coordinates_get_no_credential(self, tmp_path, monkeypatch, field, value):
+        """The secret is READ with the row's profile and region, so a row that
+        keeps the node but moves the account points the read at an account the
+        attacker controls, where that secret name can be made to exist."""
+        from kiro_crew.dashboard.handlers_crew_turn import control_secret_id
+
+        self._store(tmp_path, monkeypatch)
+        inst = self._Inst(ssm_target=_REAL_NODE, provisioner_tag="realcrew", **{field: value})
+        assert control_secret_id(inst) == ""
+
+
+class TestTheCrewsReplyIsBoundedAndTyped:
+    """What the far end sends is not what this gateway agrees to hold or forward.
+
+    The crew is a separate machine running a model with tools. Its reply can be
+    arbitrarily large, of any content type, and -- once it is on the loop -- the
+    redaction of it is CPU work on the sole event loop that also serves chat,
+    websockets, timers and the heartbeat. So the reply is capped before it is
+    read, typed before it is trusted, and scrubbed in a worker thread.
+
+    The peer proxy already does all three; these pin that this route does too.
+    """
+
+    @staticmethod
+    def _small_cap(monkeypatch, limit=64):
+        """Shrink the cap this module reads, rather than build a real 8 MB reply."""
+        monkeypatch.setattr(mod, "PROXY_REDACT_BUFFER_MAX_BYTES", limit)
+
+    def test_the_cap_is_the_shared_one_and_not_a_local_number(self):
+        """The shrink above is only legitimate if the module reads the shared cap."""
+        from kiro_crew.instances import constants
+
+        assert mod.PROXY_REDACT_BUFFER_MAX_BYTES == constants.PROXY_REDACT_BUFFER_MAX_BYTES
+
+    @pytest.mark.asyncio
+    async def test_an_oversized_non_streamed_reply_is_refused_not_buffered(self, monkeypatch):
+        """``resp.text()`` would read all of it; the cap stops at the limit.
+
+        What makes this a refusal rather than a truncation: a partial JSON
+        document cannot be redacted as a document, so forwarding a prefix of it
+        would forward bytes that were never checked.
+        """
+        _wire_handler(monkeypatch, status=_connected())
+        self._small_cap(monkeypatch, 64)
+        _install_session(
+            monkeypatch,
+            [],
+            resp=_FakeResp(
+                status=200, chunks=[b"x" * 40, b"y" * 40], content_type="application/json"
+            ),
+        )
+        resp = await mod.api_crew_turn(
+            _turn_request({"message": "hi", "thread": "t", "stream": False})
+        )
+        assert resp.status == 502
+        assert _code(resp) == "crew_reply_too_large"
+        assert b"yyyy" not in resp.body
+
+    @pytest.mark.asyncio
+    async def test_a_reply_at_the_cap_is_still_forwarded(self, monkeypatch):
+        """Non-vacuity: the cap refuses what is OVER it, not everything."""
+        import json
+
+        _wire_handler(monkeypatch, status=_connected())
+        body = json.dumps({"answer": "a" * 40})
+        self._small_cap(monkeypatch, len(body))
+        _install_session(monkeypatch, [], resp=_FakeResp(status=200, text=body))
+        resp = await mod.api_crew_turn(
+            _turn_request({"message": "hi", "thread": "t", "stream": False})
+        )
+        assert resp.status == 200
+        assert json.loads(resp.body)["answer"] == "a" * 40
+
+    @pytest.mark.asyncio
+    async def test_the_redaction_does_not_run_on_the_event_loop(self, monkeypatch):
+        """Walking and re-serializing a JSON document is CPU work, and on the loop
+        it stalls every other connection this gateway is serving.
+
+        Asserted by the THREAD the redactor observes itself on, not by reading the
+        source for ``to_thread``: a call that was moved back onto the loop by any
+        other route still fails this.
+        """
+        import threading
+
+        _wire_handler(monkeypatch, status=_connected())
+        seen: list[int] = []
+
+        def _record(text):
+            seen.append(threading.get_ident())
+            return text
+
+        monkeypatch.setattr(mod, "_redact_peer_payload", _record)
+        _install_session(monkeypatch, [], resp=_FakeResp(status=200, text='{"answer": "ok"}'))
+        await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t", "stream": False}))
+
+        assert seen, "the reply was forwarded without being redacted at all"
+        assert seen[0] != threading.get_ident(), "the redaction ran on the event loop"
+
+    @pytest.mark.asyncio
+    async def test_a_non_json_reply_is_refused_before_its_body_is_read(self, monkeypatch):
+        """A crew made to serve HTML must not have it land on the hub's own origin,
+        where it would run as the authenticated owner."""
+        _wire_handler(monkeypatch, status=_connected())
+        _install_session(
+            monkeypatch,
+            [],
+            resp=_FakeResp(status=200, text="<script>alert(1)</script>", content_type="text/html"),
+        )
+        resp = await mod.api_crew_turn(
+            _turn_request({"message": "hi", "thread": "t", "stream": False})
+        )
+        assert resp.status == 502
+        assert _code(resp) == "crew_content_type_refused"
+        assert b"script" not in resp.body
+
+    @pytest.mark.asyncio
+    async def test_a_reply_with_no_content_type_is_refused(self, monkeypatch):
+        _wire_handler(monkeypatch, status=_connected())
+        _install_session(
+            monkeypatch, [], resp=_FakeResp(status=200, text='{"ok": 1}', content_type="")
+        )
+        resp = await mod.api_crew_turn(
+            _turn_request({"message": "hi", "thread": "t", "stream": False})
+        )
+        assert _code(resp) == "crew_content_type_refused"
+
+    @pytest.mark.asyncio
+    async def test_a_charset_parameter_does_not_refuse_a_json_reply(self, monkeypatch):
+        """``application/json; charset=utf-8`` is JSON. The gate reads the media
+        type, so a crew that names its charset is not refused for it."""
+        _wire_handler(monkeypatch, status=_connected())
+        _install_session(
+            monkeypatch,
+            [],
+            resp=_FakeResp(
+                status=200, text='{"ok": 1}', content_type="Application/JSON; charset=utf-8"
+            ),
+        )
+        resp = await mod.api_crew_turn(
+            _turn_request({"message": "hi", "thread": "t", "stream": False})
+        )
+        assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_a_streamed_200_that_is_not_sse_is_refused_as_a_frame(self, monkeypatch):
+        """Without the gate a JSON body with no ``data:`` framing is ONE event to
+        the reassembly, which sends it down ``_redact_sse_event``'s plain-text
+        chain -- the chain that cannot see a credential written as a JSON escape.
+
+        The head went out as 200 before the crew answered, so the refusal is a
+        frame; what matters is that none of the body is relayed.
+        """
+        import json
+
+        _wire_handler(monkeypatch, status=_connected())
+        _capture_stream(monkeypatch)
+        _install_session(
+            monkeypatch,
+            [],
+            resp=_FakeResp(
+                status=200,
+                chunks=[b'{"choices": [{"delta": {"content": "hi"}}]}'],
+                content_type="application/json",
+            ),
+        )
+        out = await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+
+        written = b"".join(out.frames)
+        assert b"choices" not in written, "an unframed body was relayed to the pane"
+        assert out.frames[-1] == b"data: [DONE]\n\n"
+        first = json.loads(out.frames[0][len(b"data: ") :].decode())
+        assert first["error"]["code"] == "crew_content_type_refused"
+
+    @pytest.mark.asyncio
+    async def test_a_real_sse_stream_is_still_relayed(self, monkeypatch):
+        """Non-vacuity for the gate above."""
+        _wire_handler(monkeypatch, status=_connected())
+        _capture_stream(monkeypatch)
+        _install_session(
+            monkeypatch,
+            [],
+            resp=_FakeResp(
+                status=200,
+                chunks=[b"data: {}\n\n"],
+                content_type="text/event-stream; charset=utf-8",
+            ),
+        )
+        out = await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+        assert out.frames == [b"data: {}\n\n"]
+
+
+class TestTheCrewsRefusalIsRedactedBeforeItIsCut:
+    """The streamed error frame carries a slice of the crew's refusal body.
+
+    Cut first and the slice is raw text, so a credential that straddles the cut
+    is two fragments the redactor does not recognise and the leading one is
+    forwarded -- and a raw-text pass has no JSON decode, which is the pass that
+    sees a credential written as a ``\\uXXXX`` escape. So the body is capped,
+    redacted whole, and only then cut.
+    """
+
+    _KEY = "AKIAIOSFODNN7EXAMPLE"
+
+    @staticmethod
+    def _detail(out):
+        import json
+
+        return json.loads(out.frames[0][len(b"data: ") :].decode())["error"]["detail"]
+
+    @pytest.mark.asyncio
+    async def test_a_credential_straddling_the_cut_does_not_survive_in_part(self, monkeypatch):
+        """Ten characters of an access key id is what cutting first forwarded."""
+        _wire_handler(monkeypatch, status=_connected())
+        _capture_stream(monkeypatch)
+        # The key starts at 390 and the frame keeps 400 characters, so a cut
+        # taken BEFORE the redaction leaves its first ten characters behind.
+        body = "refused: " + "x" * 381 + self._KEY + " trailing"
+        assert (
+            body.index(self._KEY)
+            < mod._REFUSAL_DETAIL_CHARS
+            < body.index(self._KEY) + len(self._KEY)
+        ), "the fixture no longer straddles the cut"
+        _install_session(monkeypatch, [], resp=_FakeResp(status=403, text=body))
+        out = await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+
+        detail = self._detail(out)
+        assert self._KEY not in detail
+        assert self._KEY[:10] not in detail, "the cut split the key and forwarded its head"
+        assert len(detail) <= mod._REFUSAL_DETAIL_CHARS
+
+    @pytest.mark.asyncio
+    async def test_a_credential_written_as_a_json_escape_is_redacted(self, monkeypatch):
+        """``redact_peer_text`` runs on the bytes as they arrived, so an escaped
+        credential reads as prose to it and as a credential to the browser.
+        ``_redact_peer_payload`` decodes the document first."""
+        import json
+
+        _wire_handler(monkeypatch, status=_connected())
+        _capture_stream(monkeypatch)
+        # The literal bytes never spell the key id: only a JSON decode produces it.
+        escaped = '{"detail": "refused for \\u0041' + self._KEY[1:] + '"}'
+        assert self._KEY not in escaped
+        _install_session(monkeypatch, [], resp=_FakeResp(status=403, text=escaped))
+        out = await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+
+        detail = self._detail(out)
+        # Read it the way the pane does: the frame's detail is itself a JSON
+        # document here, so decode it before looking for the key.
+        decoded = json.dumps(json.loads(detail)) if detail.startswith("{") else detail
+        assert self._KEY not in decoded, "the escaped credential reached the pane"
+
+    @pytest.mark.asyncio
+    async def test_an_oversized_refusal_body_is_not_buffered_whole(self, monkeypatch):
+        """And the frame says the detail was withheld rather than carrying nothing."""
+        _wire_handler(monkeypatch, status=_connected())
+        _capture_stream(monkeypatch)
+        monkeypatch.setattr(mod, "PROXY_REDACT_BUFFER_MAX_BYTES", 32)
+        _install_session(monkeypatch, [], resp=_FakeResp(status=500, chunks=[b"z" * 20, b"w" * 20]))
+        out = await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+
+        detail = self._detail(out)
+        assert "wwww" not in detail
+        assert "too large" in detail
+
+    @pytest.mark.asyncio
+    async def test_the_crews_own_status_still_reaches_the_frame(self, monkeypatch):
+        """Non-vacuity: the refusal frame is still a refusal frame."""
+        _wire_handler(monkeypatch, status=_connected())
+        _capture_stream(monkeypatch)
+        _install_session(monkeypatch, [], resp=_FakeResp(status=404, text="no such crew"))
+        out = await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+
+        import json
+
+        error = json.loads(out.frames[0][len(b"data: ") :].decode())["error"]
+        assert error["status"] == 404
+        assert error["detail"] == "no such crew"
+
+
+class TestANonStreamedCrewErrorIsARefusalNotAContentTypeComplaint:
+    """A crew's 4xx/5xx on the non-streamed path is reported as what it is.
+
+    The content-type gate is for a reply this route would FORWARD. A refusal body
+    is never forwarded, so gating it by type reported the crew's error as
+    ``crew_content_type_refused`` -- which names the gateway's own check and
+    hides the status and the words the crew actually sent. Both types of refusal
+    body now become ``crew_refused``, carrying the crew's status and the same
+    capped, redacted slice the streamed frame carries.
+    """
+
+    _KEY = "AKIAIOSFODNN7EXAMPLE"
+
+    @staticmethod
+    def _payload(resp):
+        import json as _json
+
+        return _json.loads(resp.body)
+
+    async def _turn(self, monkeypatch, resp):
+        _wire_handler(monkeypatch, status=_connected())
+        _install_session(monkeypatch, [], resp=resp)
+        return await mod.api_crew_turn(
+            _turn_request({"message": "hi", "thread": "t", "stream": False})
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_json_error_is_the_crews_refusal(self, monkeypatch):
+        resp = await self._turn(
+            monkeypatch,
+            _FakeResp(status=400, text='{"detail": "no such slot"}'),
+        )
+        payload = self._payload(resp)
+        assert resp.status == 400
+        assert payload["code"] == "crew_refused"
+        assert payload["status"] == 400
+        assert "no such slot" in payload["detail"]
+
+    @pytest.mark.asyncio
+    async def test_a_text_plain_error_is_the_crews_refusal_too(self, monkeypatch):
+        """A refusal body's content type does not decide which refusal is reported."""
+        resp = await self._turn(
+            monkeypatch,
+            _FakeResp(status=429, text="slow down", content_type="text/plain"),
+        )
+        payload = self._payload(resp)
+        assert payload["code"] == "crew_refused"
+        assert payload["code"] != "crew_content_type_refused"
+        assert payload["status"] == 429
+        assert payload["detail"] == "slow down"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_a_forward_that_changed_mid_turn_gets_no_secret(self, monkeypatch, stream):
+        """The tunnel drops while the secret is read and another forward takes the
+        port. The second status read sees a new connection, so nothing is posted."""
+        import kiro_crew.dashboard.handlers_instances as hi
+
+        calls: list = []
+        _wire_handler(monkeypatch, status=_connected(connected_at=1.0, local_port=18081))
+        reads = iter(
+            [
+                _connected(connected_at=1.0, local_port=18081),
+                _connected(connected_at=2.0, local_port=18081),
+            ]
+        )
+        monkeypatch.setattr(hi, "_status_for", lambda state, instance_id: next(reads))
+        if stream:
+            _capture_stream(monkeypatch)
+        _install_session(monkeypatch, calls, resp=_FakeResp(status=200, text="{}"))
+        resp = await mod.api_crew_turn(
+            _turn_request({"message": "hi", "thread": "t", "stream": stream})
+        )
+        assert calls == [], "the control secret was posted to a forward that changed"
+        if stream:
+            assert any(b"crew_tunnel_changed" in f for f in resp.frames), resp.frames
+        else:
+            assert resp.status == 409
+            assert _code(resp) == "crew_tunnel_changed"
+
+    @pytest.mark.asyncio
+    async def test_a_redirect_is_refused_and_not_forwarded(self, monkeypatch):
+        """A 3xx is never followed, so it is answered as a refusal, never relayed."""
+        resp = await self._turn(
+            monkeypatch,
+            _FakeResp(status=307, text='{"choices": []}'),
+        )
+        payload = self._payload(resp)
+        assert resp.status == 502
+        assert payload["code"] == "crew_refused"
+        assert payload["status"] == 307
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_neither_path_follows_a_redirect(self, monkeypatch, stream):
+        """Following a redirect would carry the control secret out of the tunnel."""
+        calls: list = []
+        _wire_handler(monkeypatch, status=_connected())
+        if stream:
+            _capture_stream(monkeypatch)
+            resp = _FakeResp(status=307, chunks=(b"",), content_type="text/event-stream")
+        else:
+            resp = _FakeResp(status=307, text="{}")
+        _install_session(monkeypatch, calls, resp=resp)
+        await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t", "stream": stream}))
+        assert calls, "the crew was never called"
+        assert all(c["allow_redirects"] is False for c in calls), calls
+
+    @pytest.mark.asyncio
+    async def test_a_text_plain_200_is_still_refused_for_its_type(self, monkeypatch):
+        """Non-vacuity: the gate still holds for a reply this route would forward."""
+        resp = await self._turn(
+            monkeypatch,
+            _FakeResp(status=200, text="not json at all", content_type="text/plain"),
+        )
+        assert resp.status == 502
+        assert _code(resp) == "crew_content_type_refused"
+        assert b"not json at all" not in resp.body
+
+    @pytest.mark.asyncio
+    async def test_the_detail_is_redacted_before_it_is_cut(self, monkeypatch):
+        """Same order as the streamed frame: capped, redacted whole, then cut.
+
+        Cut first and a credential straddling the cut is two fragments the
+        redactor does not recognise, and the leading one is forwarded.
+        """
+        body = "refused: " + "x" * 381 + self._KEY + " trailing"
+        assert (
+            body.index(self._KEY)
+            < mod._REFUSAL_DETAIL_CHARS
+            < body.index(self._KEY) + len(self._KEY)
+        ), "the fixture no longer straddles the cut"
+        resp = await self._turn(monkeypatch, _FakeResp(status=403, text=body))
+        payload = self._payload(resp)
+        assert payload["code"] == "crew_refused"
+        detail = payload["detail"]
+        assert self._KEY not in detail
+        assert self._KEY[:10] not in detail, "the cut split the key and forwarded its head"
+        assert len(detail) <= mod._REFUSAL_DETAIL_CHARS
+
+    @pytest.mark.asyncio
+    async def test_an_oversized_error_body_is_not_buffered_whole(self, monkeypatch):
+        """And the detail says it was withheld rather than carrying nothing."""
+        _wire_handler(monkeypatch, status=_connected())
+        monkeypatch.setattr(mod, "PROXY_REDACT_BUFFER_MAX_BYTES", 32)
+        _install_session(
+            monkeypatch,
+            [],
+            resp=_FakeResp(status=500, chunks=[b"z" * 20, b"w" * 20], content_type="text/plain"),
+        )
+        resp = await mod.api_crew_turn(
+            _turn_request({"message": "hi", "thread": "t", "stream": False})
+        )
+        detail = self._payload(resp)["detail"]
+        assert "wwww" not in detail
+        assert "too large" in detail
+
+
+class TestEveryTurnIsAudited:
+    """A turn sends this crew's control secret down a tunnel, so the SEL trail has
+    to hold the turns that WORKED and not only the ones that were refused.
+
+    Nothing else records it: the route logs a line for each failure arm and
+    nothing at all for a success, so a reader asking which crew this gateway
+    authenticated to, and when, had no record to read.
+    """
+
+    @staticmethod
+    def _record(monkeypatch):
+        events: list[tuple] = []
+
+        def _audit(operation, outcome, *, request_id="", error=""):
+            events.append((operation, outcome, request_id, error))
+
+        monkeypatch.setattr(mod, "_audit", _audit)
+        return events
+
+    def test_the_route_audits_under_one_operation_name(self):
+        """The shared gate audits its own denials with this name, so a reader sees
+        one operation per turn rather than two that have to be joined."""
+        import inspect
+
+        assert mod._AUDIT_OP == "crew_turn"
+        assert '_guard(request, "crew_turn")' in inspect.getsource(mod.api_crew_turn)
+
+    @pytest.mark.asyncio
+    async def test_a_successful_non_streamed_turn_is_audited(self, monkeypatch):
+        _wire_handler(monkeypatch, status=_connected())
+        events = self._record(monkeypatch)
+        _install_session(monkeypatch, [], resp=_FakeResp(status=200, text='{"ok": 1}'))
+        resp = await mod.api_crew_turn(
+            _turn_request({"message": "hi", "thread": "t", "stream": False})
+        )
+        assert resp.status == 200
+        assert ("crew_turn", "success", "i1", "") in events
+
+    @pytest.mark.asyncio
+    async def test_a_non_streamed_crew_error_is_not_audited_as_a_success(self, monkeypatch):
+        """The crew answered, so the turn did not fail -- but it did not succeed
+        either, and a trail that calls a 500 a success cannot be read for which
+        turns the crew actually took. Audited as ``declined``, the same outcome
+        the streamed path records for the same refusal."""
+        _wire_handler(monkeypatch, status=_connected())
+        events = self._record(monkeypatch)
+        _install_session(monkeypatch, [], resp=_FakeResp(status=500, text='{"detail": "boom"}'))
+        await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t", "stream": False}))
+
+        outcomes = [outcome for _, outcome, _, _ in events]
+        assert "success" not in outcomes
+        assert ("crew_turn", "declined", "i1", "crew refused with 500") in events
+
+    @pytest.mark.asyncio
+    async def test_a_successful_streamed_turn_is_audited(self, monkeypatch):
+        _wire_handler(monkeypatch, status=_connected())
+        _capture_stream(monkeypatch)
+        events = self._record(monkeypatch)
+        _install_session(monkeypatch, [], resp=_FakeResp(status=200, chunks=[b"data: {}\n\n"]))
+        await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+        assert ("crew_turn", "success", "i1", "") in events
+
+    @pytest.mark.asyncio
+    async def test_a_stream_that_ends_unredactable_is_audited_as_partial_not_success(
+        self, monkeypatch
+    ):
+        """Some frames went out and the rest were dropped, which is neither of the
+        two outcomes a reader would otherwise infer."""
+        from kiro_crew.dashboard.handlers_instances import ProxyReplyUnredactable
+
+        _wire_handler(monkeypatch, status=_connected())
+        _capture_stream(monkeypatch)
+        events = self._record(monkeypatch)
+
+        async def _refuse_event(event):
+            raise ProxyReplyUnredactable()
+
+        monkeypatch.setattr(mod, "_redact_sse_event_async", _refuse_event)
+        _install_session(monkeypatch, [], resp=_FakeResp(status=200, chunks=[b"data: {}\n\n"]))
+        await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t"}))
+
+        outcomes = [outcome for _, outcome, _, _ in events]
+        assert "partial" in outcomes
+        assert "success" not in outcomes
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_crew_is_audited_as_a_failure(self, monkeypatch):
+        _wire_handler(monkeypatch, status=_connected())
+        events = self._record(monkeypatch)
+        _install_session(monkeypatch, [], raise_on_post=RuntimeError("connection refused"))
+        await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t", "stream": False}))
+
+        failures = [e for e in events if e[1] == "failure"]
+        assert failures, "an unreachable crew left no audit record"
+        # The exception TYPE, never its message: the message can quote the target.
+        assert failures[-1][3] == "RuntimeError"
+        assert not any("connection refused" in e[3] for e in events)
+
+    @pytest.mark.asyncio
+    async def test_a_declined_lane_is_audited(self, monkeypatch):
+        inst = _wire_handler(monkeypatch, status=_connected())
+        inst.provisioner_id = "aws_fargate"
+        events = self._record(monkeypatch)
+        await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t", "stream": False}))
+        assert any(outcome == "declined" for _, outcome, _, _ in events)
+
+    @pytest.mark.asyncio
+    async def test_an_unavailable_secret_is_audited(self, monkeypatch):
+        _wire_handler(monkeypatch, status=_connected(), secret_id="")
+        events = self._record(monkeypatch)
+        await mod.api_crew_turn(_turn_request({"message": "hi", "thread": "t", "stream": False}))
+        assert any(outcome == "failure" for _, outcome, _, _ in events)

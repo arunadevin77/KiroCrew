@@ -46,6 +46,7 @@ from kiro_crew.dashboard.handlers.source_providers import (
     is_owner_dashboard_request,
 )
 from kiro_crew.loop_lock import LoopBoundLock
+from kiro_crew.platform.defaults import RecipientMoved
 from kiro_crew.platform.interfaces import BUILTIN_PROVISIONER_ID
 from kiro_crew.sandbox import SandboxCeilingUnsealable
 from kiro_crew.sel import sel
@@ -248,51 +249,7 @@ def _call_engine_for(provider, provisioner_id: str, confirmed_recipient: str):
         )
     else:
         engine = provider.engine_for(provisioner_id)
-    _refuse_a_moved_recipient(provider, provisioner_id, confirmed_recipient)
     return engine
-
-
-def _refuse_a_moved_recipient(provider, provisioner_id: str, confirmed_recipient: str) -> None:
-    """Refuse when the lane's recipient changed after the operator confirmed it.
-
-    Accepting a confirmation and then reading the configuration AGAIN to build the
-    engine is a gap: the operator confirms what the row published, and the second
-    read decides what actually runs. An edit between them -- or an edit racing a
-    launch whose store checks are still going -- means the owner approved one image,
-    key or bundle and a different one is used, which is the substitution the
-    confirmation exists to prevent.
-
-    Checked HERE rather than inside a lane, because the contract belongs to the seam:
-    a lane that forgets the check is the lane that needs it, and a lane added later
-    inherits this one. ``engine_for`` only CONSTRUCTS an engine, so this still runs
-    before anything is provisioned.
-
-    A lane publishing no recipient has nothing to move and is left alone.
-    """
-    if not confirmed_recipient:
-        return
-    try:
-        rows = provider.provisioners() or ()
-    except Exception:  # noqa: BLE001 - an unreadable row list cannot convict a launch
-        return
-    published = {
-        str(getattr(row, "id", "")): str(getattr(row, "confirm_before_launch", "") or "")
-        for row in rows
-    }
-    if provisioner_id not in published or published[provisioner_id] != confirmed_recipient:
-        # Fails CLOSED on all three: a different recipient, an EMPTY one, and a row
-        # that is gone entirely. The last two are the ones worth saying out loud --
-        # a lane whose block went incomplete publishes no row and an empty string,
-        # and treating either as agreement would let a launch through on a
-        # confirmation nothing currently backs. A caller that confirmed something
-        # is owed the check it asked for, so not finding it is a refusal.
-        raise LaunchUnavailable(
-            "recipient_changed",
-            f"provisioner {provisioner_id!r} no longer publishes the credential recipient "
-            "that was confirmed for this launch, so its configuration changed after the "
-            "approval. Nothing was launched; re-read the lane's recipient and confirm it "
-            "again",
-        )
 
 
 def _engine(
@@ -338,6 +295,12 @@ def _engine(
         # belongs to them to fix, with the file and the remedy named. Uncaught it became a 500,
         # which reads as "the gateway is broken" for a condition one command clears.
         raise LaunchUnavailable("config_alias_refused", str(exc)) from exc
+    except RecipientMoved as exc:
+        # The lane's configuration changed between the descriptor read that published the
+        # recipient and this engine build, so the operator confirmed a different image and key.
+        # Nothing was launched, and the remedy (re-read the recipient, confirm again) is the
+        # operator's, so it answers like the alias refusal rather than as a gateway fault.
+        raise LaunchUnavailable("recipient_moved", str(exc)) from exc
 
 
 def _launch_lock(state: "DashboardState") -> LoopBoundLock:
@@ -1435,6 +1398,23 @@ async def _mutate_instance(request: web.Request, op: str) -> web.Response:
     except CloudActionDenied as e:
         _audit(op, "denied", request_id=tag, error=str(e))
         return web.json_response({"error": str(e), "code": "cloud_action_denied"}, status=403)
+    except KeyError:
+        # A delete on a lane whose engine cannot be resolved: ``_engine`` raises
+        # ``KeyError`` for a provider id with no launch engine. The row exists and
+        # the request is well formed, so this is a 400, not an unaudited 500 that
+        # would also leave the running crew undeletable from the panel. Same arm
+        # ``api_launch_task`` carries for the same resolution.
+        _audit(op, "denied", request_id=tag, error=f"no engine for lane {lane!r}")
+        return web.json_response(
+            {"error": f"lane {lane!r} has no teardown engine", "code": "unknown_provisioner"},
+            status=400,
+        )
+    except LaunchUnavailable as exc:
+        # The lane exists but its config block is missing/incomplete/unreadable, or
+        # ``cloud.json`` is a hardlink alias. 400 with the reason, not a 500: the
+        # operator can fix the config, and the message says what to change.
+        _audit(op, "denied", request_id=tag, error=f"{exc.code}: {exc}")
+        return web.json_response({"error": str(exc), "code": exc.code}, status=400)
     except AWSError as e:
         _audit(op, "failure", request_id=tag, error=str(e))
         return web.json_response({"error": str(e), "code": "aws_call_failed"}, status=502)
