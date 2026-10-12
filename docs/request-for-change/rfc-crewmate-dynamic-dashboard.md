@@ -4,7 +4,7 @@ status: partial
 author: chenmingwei23, with kirocrew-lead
 created: 2026-10-03
 last-audited: 2026-10-12
-audited-at: 8f6baa05c9
+audited-at: 10350b7294
 doc-pr: 19204
 implementation-prs: [17507, 17998, 18014, 18994]
 tracking-issues: [18642]
@@ -16,7 +16,10 @@ superseded-by: []
 
 - Status: partial. P1's template contract, its instance store, the agentic write
   path and the crewmate Dashboard tab are on main, under the pull requests named
-  in `implementation-prs`. P2 onward are open, and the agent-written page line is
+  in `implementation-prs`. On main the dynamic dashboard is still offered only
+  behind the "Dynamic Dashboard" Feature Preview, whose removal the second
+  amendment of 2026-10-12 records; with it off, a crewmate's Dashboard tab draws
+  the published panel. P2 onward are open, and the agent-written page line is
   in flight under
   [issue #18642](https://github.com/kirodotdev/KiroCrew/issues/18642). This
   document is itself on main now, as the pull request named in `doc-pr`, so the
@@ -26,12 +29,17 @@ superseded-by: []
   this document could only ship inside its implementation, no longer holds: the
   amendment of 2026-10-11 below landed on its own.
 - Where this document and its amendments disagree, **the amendment holds**. The
-  one of 2026-10-11 at the end supersedes §Migration plan's P2 row and the three
-  passages that withheld an agent-written page until this gateway minted a
-  wrapper document around it. The one of 2026-10-12 after it records three
-  further decisions -- a save stages a page rather than landing it, the catalog
-  flow is retired in favour of a reference gallery, and the approval gate is its
-  own module -- and names the passage each one supersedes.
+  one of 2026-10-11 supersedes §Migration plan's P2 row and the three passages
+  that withheld an agent-written page until this gateway minted a wrapper
+  document around it. The first of 2026-10-12 after it records three further
+  decisions -- a save stages a page rather than landing it, the catalog flow is
+  retired in favour of a reference gallery, and the approval gate is its own
+  module -- and names the passage each one supersedes. The second of 2026-10-12,
+  last, records that the dynamic dashboard is the Dashboard tab for every reader,
+  with the "Dynamic Dashboard" Feature Preview removed: it closes §Open
+  questions 3, supersedes §Backward compatibility's account of the published
+  page, and sets two rules for the catalog that hold only until the first one's
+  retirement of it lands.
 - Author: written up by the crew that implements it.
 - Created: 2026-10-03
 - Related:
@@ -850,3 +858,110 @@ The ordering this permits is one-way, and both directions are part of the
 decision. A renderer may land before the gate, because until a version is applied
 it has nothing to serve. The gate may not be dropped afterwards, because decision
 1 is the premise the no-wrapper exemption of 2026-10-11 was granted on.
+
+## Amendment 2026-10-12 (second) -- the dynamic dashboard is the Dashboard tab for every reader
+
+**This section records four accepted decisions, not proposals.** All four were
+decided on 2026-10-12 by a maintainer for the dashboard line tracked in
+[issue #18642](https://github.com/kirodotdev/KiroCrew/issues/18642), and they
+land on main on their own, so the pull requests that remove the preview and
+carry the crew panel over can read them off the base branch. This is the second
+amendment of that day. The first one -- a save stages, the catalog flow is
+retired, and the gate is its own module -- stands, and so does the amendment of
+2026-10-11.
+
+It CLOSES §Open questions 3. It SUPERSEDES §Backward compatibility where that
+section speaks of the published page: the tab change it asks maintainers to
+record, the alternative that keeps the published page in the tab, and the
+`panel_publish` follow-up. That section's other two points stand: both paths
+resolve the same default, and no wire contract is removed. Where this section
+and the body above disagree, this section holds.
+
+It does not reopen the first amendment of 2026-10-12. That amendment's
+decision 2 retires the catalog flow, and the retirement stands. Until the change
+that carries it lands, the catalog still serves the dynamic dashboard's pages,
+and after decision 1 below every reader sees them. Decisions 3 and 4 are rules
+for that window only. Each ends when the catalog does, and neither is a reason
+to keep it.
+
+### Decision 1 -- the dynamic dashboard takes the tab outright, for every reader
+
+The "Dynamic Dashboard" Feature Preview is removed. Every reader gets the
+dynamic dashboard in a crewmate's Dashboard tab and in a root session's
+Dashboard view in the side panel, and every reader is offered the All Dashboards
+page and the lock switch on the Profile card. A crewmate that has adopted
+nothing shows its default page (decision 4).
+
+No surface renders the `panel_publish` document any more, and the tab never
+falls back to it. On main a reader with the preview off still sees that
+published view in the tab, which §Backward compatibility describes as gone;
+after this decision no reader does. Open question 3 closes this way because a
+fallback is a rule a reader cannot see: one crewmate would show one page or
+another depending on whether anybody ever adopted one. The preview is a rule of
+the same kind, a switch kept on each device, so it goes too.
+
+The preview decided where the dashboard is offered, never what a page may do.
+The frame, its policy and the rule for where a page's bytes come from are the
+same with it on or off. Removing it changes who sees a page, and nothing about
+how a page runs.
+
+Kept: the person's layout lock, a root session's own page, preview and apply, a
+way back to an earlier page, and the version history. Kept means the
+capability, not today's module. Where the first amendment of 2026-10-12 moves
+one -- preview and apply into the save module's gate, the way back into
+`artifact_revert` -- that move stands.
+
+The switch for automatic session cards, which the preview's card also holds,
+stays in Settings > Developer as a setting of its own, off by default.
+
+No status row above the chat composer comes back. It is retired, and its guard
+test stays.
+
+### Decision 2 -- the published panel is data a page may read
+
+`panel_publish` keeps accepting on the same route, record and crew-log entry, so
+no wire contract changes. What it publishes lands in the `panel` slot fold. A
+page reads it like any other fold, `{"fold": "panel", "path": "data"}`, resolved
+against the record of the crewmate whose page it is and never another crew's. A
+page that shows it says the crewmate wrote it.
+
+The tool is retired in a later change, after the catalog flow retires. That
+change first gives the pipeline board's card a producer of its own, because
+that card is built from a published panel today.
+
+### Decision 3 -- an operator's own page renders, from one folder
+
+A template directory the operator places in the data home's `panel-templates`
+folder is served with source `user`. That folder already refuses every agent
+write path, for the panel's own overrides, so a page there is one the person put
+there, not one an agent wrote. A page there never shadows a shipped id, and a
+linked entry is refused.
+
+This narrows the rule that the registry scans no writable directory -- "the
+registry reads one place" in §The agent surface for the page itself, and the
+same clause in §Security considerations -- rather than reversing it. The rule
+keeps an agent from choosing what a dashboard runs, and no agent can write this
+folder. It leaves the amendment of 2026-10-11 as it is: an agent still cannot
+place a page here.
+
+When the catalog flow retires, this folder becomes gallery material: an agent
+reads it, and nothing loads from it by id.
+
+### Decision 4 -- a crewmate's default page may carry its name
+
+A crewmate that has adopted nothing gets the page whose id is its own slug, when
+the catalog serves one, and the default page otherwise. This carries over the
+panel's rule that a template named after a crew is that crew's view, side effect
+included: a crewmate named like a shipped page gets that page. It goes when the
+catalog goes.
+
+### What the catalog's retirement must carry
+
+Piece 10 of #18642 removes the instance records. Before it does, the package
+path needs a home for two things decision 1 keeps: the person's layout lock, and
+a root session's own page.
+
+Piece 7 of #18642 leaves a crewmate with no saved page on an empty state. It
+waits until a composed page renders end to end. Until then, such a crewmate
+keeps a default page rather than an empty tab, because after decision 1 every
+reader sees that tab.
