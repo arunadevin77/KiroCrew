@@ -69,6 +69,11 @@ interface SttConfig {
   transcribe_languages?: string[]
   transcribe_languages_min: number
   transcribe_languages_max: number
+  /** Owner only: the custom model's file name in `custom_model_dir`. */
+  custom_model_path?: string
+  custom_model_sha256?: string
+  /** Owner only: the folder a custom model file has to be in. */
+  custom_model_dir?: string
   language_code?: string
   /** Whether a fast model tidies the finished transcript. Off unless turned on. */
   polish?: boolean
@@ -89,6 +94,8 @@ interface SttModel {
   size_bytes: number
   /** Whether the file is already on the gateway's disk. */
   present: boolean
+  /** Custom model only: why its file cannot be used, '' when it can. */
+  error?: string
 }
 
 /** Progress of the one model transfer a gateway runs at a time. */
@@ -208,6 +215,34 @@ const FFMPEG_AUTO_FETCH_BUNDLED = 'bundled'
 const GATEWAY_OS_MACOS = 'darwin'
 /** Where the Homebrew installer lives, linked from the no-decoder hint. */
 const HOMEBREW_URL = 'https://brew.sh'
+
+/** *value* as one literal POSIX shell word: single-quoted, each `'` closed and escaped. */
+function posixQuote(value: string): string {
+  return `'${value.split("'").join(`'\\''`)}'`
+}
+
+/** *value* as one literal PowerShell string: single-quoted, each `'` doubled. */
+function powershellQuote(value: string): string {
+  return `'${value.split("'").join("''")}'`
+}
+
+/** DOM id of the custom-model refusal, which the refused row points at. */
+const CUSTOM_MODEL_ERROR_ID = 'stt-custom-model-error'
+
+/** Where whisper.cpp's own ggml model files are published, linked from step 1. */
+const WHISPER_MODELS_URL = 'https://huggingface.co/ggerganov/whisper.cpp'
+
+/**
+ * The `stt.model` value that selects the user's own weights instead of a catalog
+ * row, mirroring `stt.models.CUSTOM_MODEL`.
+ *
+ * A literal here rather than a served field, unlike the catalog itself: the
+ * catalog's CONTENTS are the backend's to change, but this sentinel is a wire
+ * constant on the same footing as `DOWNLOAD_STEP_RUNNING` above. The option it
+ * adds is safe to hardcode for the same reason — it names no artifact, so it
+ * cannot go stale against what the gateway can fetch.
+ */
+const CUSTOM_MODEL = 'custom'
 
 /**
  * How often the status endpoint is re-read while a model transfer runs.
@@ -743,6 +778,29 @@ export default function SttSettings({ cardIndex }: {
   const [err, setErr] = useState('')
   const [localProfile, setLocalProfile] = useState('')
   const [localRegion, setLocalRegion] = useState('')
+  const [localCustomPath, setLocalCustomPath] = useState('')
+  const [localCustomSha, setLocalCustomSha] = useState('')
+  // Whether the custom URL/digest rows are open. Local state and not derived from
+  // `stt.model`, because the two cannot be set in one step: the gateway degrades a
+  // `custom` selection with no usable pair back to the default model, so the select
+  // snaps back to `base` and the rows the user needs would close under them.
+  const [customOpen, setCustomOpen] = useState(false)
+  // Whether a custom model is what the user currently WANTS, which is a different
+  // question from `stt.model` and cannot be read off it: a `custom` selection with
+  // an unusable pair is served back as the default model, so the one field that
+  // would say "custom" says "base" in exactly the state that needs explaining.
+  // Distinct from `customOpen` too — the rows stay open after a switch back to a
+  // catalog model so configured weights can be corrected or cleared, but the
+  // intent behind them does not survive that switch.
+  const [customIntended, setCustomIntended] = useState(false)
+  // A refused custom file name or digest, shown under those rows rather than in
+  // the page-level notice: the hand-off there is withheld while a draft is unsaved,
+  // and a file that is not in the models folder is exactly the case worth handing
+  // to an agent.
+  const [customErr, setCustomErr] = useState('')
+  // Which row the refusal is about, so that row is marked invalid: its box keeps
+  // the refused text for correction, and must not read as saved.
+  const [customErrField, setCustomErrField] = useState<'path' | 'sha' | ''>('')
 
   // Microphone input-device picker (browser-local; persisted in localStorage,
   // applied via getUserMedia constraints). Device labels are blank until the
@@ -805,6 +863,20 @@ export default function SttSettings({ cardIndex }: {
       initRef.current = true
       setLocalProfile(sttQ.data.transcribe_profile || '')
       setLocalRegion(sttQ.data.transcribe_region || '')
+      setLocalCustomPath(sttQ.data.custom_model_path || '')
+      setLocalCustomSha(sttQ.data.custom_model_sha256 || '')
+      // Already-configured weights keep their rows open, so what is in force is
+      // visible without hunting for the option that reveals it.
+      if (sttQ.data.custom_model_path || sttQ.data.model === CUSTOM_MODEL) setCustomOpen(true)
+      // Intent survives a reload in exactly two shapes the served config can prove:
+      // custom is in force, or HALF a pair is stored. A half pair is a custom model
+      // someone started and did not finish, which is the state whose selection
+      // silently degraded. A COMPLETE pair with a catalog model in force is NOT
+      // intent — that is a deliberate switch back, and telling that user "both are
+      // needed" would be false.
+      const halfPair =
+        Boolean(sttQ.data.custom_model_path) !== Boolean(sttQ.data.custom_model_sha256)
+      if (sttQ.data.model === CUSTOM_MODEL || halfPair) setCustomIntended(true)
     }
   }, [sttQ.data])
 
@@ -829,6 +901,16 @@ export default function SttSettings({ cardIndex }: {
     mutationFn: (patch: Partial<SttConfig>) => api.saveSttConfig(patch),
     onSuccess: (data, patch) => {
       qc.setQueryData(['sttConfig'], data)
+      // The rows are re-read from the answer, which holds the normalised value
+      // in force (a `sha256:` paste comes back as bare hex). Only the rows this
+      // patch carried are resynced: a sibling row the user is still typing into
+      // must not be cleared by another row's save.
+      if ('custom_model_path' in patch) setLocalCustomPath(data.custom_model_path || '')
+      if ('custom_model_sha256' in patch) setLocalCustomSha(data.custom_model_sha256 || '')
+      if ('custom_model_path' in patch || 'custom_model_sha256' in patch) {
+        setCustomErr('')
+        setCustomErrField('')
+      }
       // Provider, model and enablement all change what the availability probe
       // answers, so the status card would otherwise keep describing the previous
       // selection until something else happened to refetch it.
@@ -841,7 +923,18 @@ export default function SttSettings({ cardIndex }: {
         qc.invalidateQueries({ queryKey: ['sttVocabularies'] })
       }
     },
-    onError: (e: Error) => setErr(e.message || i18nT('pages.settings.sttSettings.failed_to_save_stt_config')),
+    onError: (e: Error, patch) => {
+      const message = e.message || i18nT('pages.settings.sttSettings.failed_to_save_stt_config')
+      // Says the refused value did not land, so the green Status above is not read
+      // as contradicting it: what is in force is still the previous setting.
+      if ('custom_model_path' in patch || 'custom_model_sha256' in patch) {
+        const inUse = stt?.model === CUSTOM_MODEL ? (stt.custom_model_path || CUSTOM_MODEL) : (stt?.model || '')
+        setCustomErr(i18nT('pages.settings.sttSettings.custom_model_refused', { reason: message, model: inUse }))
+        setCustomErrField('custom_model_path' in patch ? 'path' : 'sha')
+      } else {
+        setErr(message)
+      }
+    },
   })
   const set = (patch: Partial<SttConfig>) => mut.mutate(patch)
   const saving = mut.isPending
@@ -875,6 +968,16 @@ export default function SttSettings({ cardIndex }: {
   })
 
   const stt = sttQ.data
+  // Whether this caller was SERVED the custom pair, which is not the same question
+  // as whether one is configured. The gateway OMITS both keys for a non-owner
+  // dashboard session rather than emptying them, so key presence is the signal and
+  // an empty string still means "served, and empty".
+  //
+  // It gates the incomplete-pair line below. Without it that line fired for the one
+  // caller who cannot see the pair: a non-owner session with custom in force reads
+  // both rows empty, so the line asserted the default model was still in force while
+  // the gateway was running the custom one.
+  const customPairServed = !!stt && 'custom_model_path' in stt
   if (!stt) return (
     // Same ordinal as the loaded card below: the success render replaces this
     // skeleton at the same position, and a differing delay would hold the
@@ -920,6 +1023,8 @@ export default function SttSettings({ cardIndex }: {
   const status = statusQ.data
   const models = status?.models ?? []
   const selectedModel = models.find(m => m.name === stt.model)
+  const customUnusable = selectedModel?.name === CUSTOM_MODEL && !selectedModel.present && !!selectedModel.error
+  const customIdle = stt.model !== CUSTOM_MODEL && !customIntended
   // Progress is only shown for the model on screen. The gateway runs one transfer
   // at a time, so switching models mid-download leaves the store reporting the
   // PREVIOUS model, and attributing that byte count to the new selection would
@@ -1027,13 +1132,15 @@ export default function SttSettings({ cardIndex }: {
     return set({ provider: v })
   }
 
-  // The AWS profile / region inputs commit `onBlur`, so a failed save leaves the
-  // typed-but-rejected text in them — kept on purpose, so it can be corrected
-  // rather than retyped. An agent hand-off navigates away, so it is offered only
-  // while neither draft differs from the stored value.
+  // The AWS profile / region and custom model URL / digest inputs commit `onBlur`,
+  // so a failed save leaves the typed-but-rejected text in them — kept on purpose,
+  // so it can be corrected rather than retyped. An agent hand-off navigates away,
+  // so it is offered only while no draft differs from the stored value.
   const awsDraftsSaved =
     localProfile.trim() === (stt.transcribe_profile || '')
     && localRegion.trim() === (stt.transcribe_region || '')
+    && localCustomPath.trim() === (stt.custom_model_path || '')
+    && localCustomSha.trim() === (stt.custom_model_sha256 || '')
 
   return (
     <>
@@ -1044,7 +1151,11 @@ export default function SttSettings({ cardIndex }: {
           profile / region inputs commit `onBlur`, so a failed save leaves the
           typed-but-rejected text in them — kept on purpose, so it can be
           corrected rather than retyped. No hand-off while either differs from
-          the stored value: `localProfile` / `localRegion`. */}
+          the stored value: `localProfile` / `localRegion`.
+          The custom-model file and digest commit `onBlur` through the same
+          `set()` path and are kept on rejection for the same reason, so they
+          belong in the same condition. Their own refusals render under their
+          rows instead (`customErr`), with the hand-off on. */}
       <ErrorNotice
         message={err}
         onDismiss={() => setErr('')}
@@ -1056,7 +1167,12 @@ export default function SttSettings({ cardIndex }: {
 
         <InfoRow label={i18nT('pages.settings.sttSettings.status')}>
           <div className="flex items-center gap-1.5">
-            {available
+            {/* A configured custom file the gateway cannot use is not "ready",
+                even though the recogniser itself is: the notice under the model
+                rows says why, and a green badge beside it would contradict it. */}
+            {customUnusable
+              ? <Badge variant="warn">{i18nT('pages.settings.sttSettings.status_custom_model_unusable')}</Badge>
+              : available
               ? <Badge variant="ok">{i18nT('pages.settings.sttSettings.ready')}</Badge>
               : status?.code === 'stt_provider_off'
                 // Nothing is missing when the provider is Off: "not installed" would
@@ -1133,14 +1249,28 @@ export default function SttSettings({ cardIndex }: {
                 the sizes and the set of models are the backend's to change, and a
                 hardcoded copy here would offer a model the gateway cannot load.
                 The size rides in the option label so the download cost is visible
-                BEFORE the click that commits to it. */}
+                BEFORE the click that commits to it. `custom` is appended because
+                it is not a catalog artifact — it selects the file and digest in the
+                two rows below. */}
             <SettingsSelect
               label={i18nT('pages.settings.sttSettings.model')}
               hint={i18nT('pages.settings.sttSettings.larger_models_are_more_accurate_but_slower_to_ru')}
               value={stt.model}
-              options={models.map(m => m.name)}
-              optionLabels={models.map(m => i18nT('pages.settings.sttSettings.model_option', { name: m.name, size: fmtBytes(m.size_bytes) }))}
-              onChange={v => set({ model: v })}
+              options={[...models.filter(m => m.name !== CUSTOM_MODEL).map(m => m.name), CUSTOM_MODEL]}
+              optionLabels={[
+                ...models
+                  .filter(m => m.name !== CUSTOM_MODEL)
+                  .map(m => i18nT('pages.settings.sttSettings.model_option', { name: m.name, size: fmtBytes(m.size_bytes) })),
+                i18nT('pages.settings.sttSettings.model_option_custom'),
+              ]}
+              onChange={v => {
+                // Opening the rows is not undone by picking a catalog model again:
+                // configured weights stay visible so they can be corrected or
+                // cleared rather than silently remaining in config.
+                if (v === CUSTOM_MODEL) setCustomOpen(true)
+                setCustomIntended(v === CUSTOM_MODEL)
+                set({ model: v })
+              }}
               disabled={saving}
               configKey="stt.model"
             />
@@ -1157,6 +1287,126 @@ export default function SttSettings({ cardIndex }: {
                 {i18nT('pages.settings.sttSettings.model_slow_on_cpu')}
               </p>
             )}
+            {customOpen && (
+              <>
+                {/* The rows stay open after a switch back to a catalog model so the
+                    stored file can be corrected or cleared. Said BEFORE them, and
+                    the rows are muted, so they do not read as the setting in use. */}
+                {customIdle && (
+                  <p className="text-[12px] text-muted mb-1">
+                    {i18nT('pages.settings.sttSettings.custom_model_not_used', { model: stt.model })}
+                  </p>
+                )}
+                <div className={customIdle ? 'opacity-60' : undefined}>
+                {/* Committed on blur, like the AWS rows, because both halves have to
+                    land before `custom` resolves to anything: saving per keystroke
+                    would check a half-typed name against the disk on every key. The
+                    setup is a real list under the box, with the folder copyable at
+                    step 2; the gateway refuses any name that resolves outside it. */}
+                <SettingsInput
+                  label={i18nT('pages.settings.sttSettings.custom_model_path')}
+                  description={stt.custom_model_dir
+                    ? i18nT('pages.settings.sttSettings.custom_model_path_desc')
+                    : i18nT('pages.settings.sttSettings.custom_model_path_desc_no_dir')}
+                  after={<>
+                    {stt.custom_model_dir ? (
+                    <ol className="mt-1 list-decimal pl-5 text-[12px] text-muted space-y-1">
+                      <li>
+                        <a href={WHISPER_MODELS_URL} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
+                          {i18nT('pages.settings.sttSettings.custom_model_path_step_get')}
+                        </a>
+                        {' '}{i18nT('pages.settings.sttSettings.custom_model_path_step_get_sha')}
+                      </li>
+                      <li>
+                        {i18nT('pages.settings.sttSettings.custom_model_path_step_place')}
+                        <CopyCommand><code>{stt.custom_model_dir}</code></CopyCommand>
+                      </li>
+                      <li>{i18nT('pages.settings.sttSettings.custom_model_path_step_name')}</li>
+                    </ol>
+                    ) : null}
+                    {/* Why the configured file cannot be used, under the row it is
+                        about. Hand-off on: placing a file is something an agent can
+                        help with. */}
+                    {customUnusable && (
+                      <ErrorNotice
+                        variant="inline"
+                        className="mt-1"
+                        message={selectedModel?.error ?? ''}
+                        askAgent
+                        testId="stt-custom-model-missing"
+                      />
+                    )}
+                  </>}
+                  hint={i18nT('pages.settings.sttSettings.custom_model_path_hint')}
+                  value={localCustomPath}
+                  onChange={setLocalCustomPath}
+                  onBlur={() => set({ custom_model_path: localCustomPath.trim() })}
+                  placeholder="ggml-my-model.bin"
+                  disabled={saving}
+                  invalidMessageId={customErr && customErrField === 'path' ? CUSTOM_MODEL_ERROR_ID : undefined}
+                  configKey="stt.custom_model_path"
+                />
+                {/* Where the code comes from first (the file's download page, which
+                    step 1 links to and says lists it), then what it is for, with the
+                    terminal route folded away below. No link of its own: a second
+                    link to the same site reads as a second, different destination.
+                    The file name is quoted for each shell, so a name with shell
+                    syntax in it is copied as a literal argument and never runs. */}
+                <SettingsInput
+                  label={i18nT('pages.settings.sttSettings.custom_model_sha256')}
+                  description={i18nT('pages.settings.sttSettings.custom_model_sha256_desc')}
+                  hint={i18nT('pages.settings.sttSettings.custom_model_sha256_hint')}
+                  after={
+                    <div className="mt-1 text-[12px] text-muted">
+                      <details>
+                        <summary className="cursor-pointer">{i18nT('pages.settings.sttSettings.custom_model_sha256_yourself')}</summary>
+                        <div className="mt-1">{i18nT('pages.settings.sttSettings.custom_model_sha256_how')}</div>
+                        <div className="mt-1.5">{i18nT('pages.settings.sttSettings.custom_model_sha256_cmd_unix')}</div>
+                        <CopyCommand><code>shasum -a 256 {posixQuote(localCustomPath.trim() || 'ggml-my-model.bin')}</code></CopyCommand>
+                        <div className="mt-1.5">{i18nT('pages.settings.sttSettings.custom_model_sha256_cmd_windows')}</div>
+                        <CopyCommand><code>Get-FileHash -LiteralPath {powershellQuote(localCustomPath.trim() || 'ggml-my-model.bin')} -Algorithm SHA256</code></CopyCommand>
+                      </details>
+                    </div>
+                  }
+                  value={localCustomSha}
+                  onChange={setLocalCustomSha}
+                  onBlur={() => set({ custom_model_sha256: localCustomSha.trim() })}
+                  disabled={saving}
+                  invalidMessageId={customErr && customErrField === 'sha' ? CUSTOM_MODEL_ERROR_ID : undefined}
+                  configKey="stt.custom_model_sha256"
+                />
+                {/* Fires exactly when a custom model is what the user wants and the
+                    pair cannot deliver one. The earlier condition — a non-custom
+                    `stt.model` plus EITHER field filled — was backwards twice: it
+                    stayed silent on the empty first-run selection, which is the one
+                    case it exists to explain, and it asserted "both are needed"
+                    over a COMPLETE pair whenever a catalog model was reselected,
+                    where it was simply untrue and persisted across reloads.
+                    Trimmed, because trimmed is what `set` sends on blur, so
+                    whitespace is not a filled field. */}
+                {customPairServed && customIntended
+                  && (!localCustomPath.trim() || !localCustomSha.trim()) && (
+                  <p className="text-[12px] text-muted -mt-1 mb-1">
+                    {i18nT('pages.settings.sttSettings.custom_model_incomplete', { model: stt.model })}
+                  </p>
+                )}
+                {/* The gateway's own sentence: it names the rule that failed (not in
+                    the models folder, no such file, a folder) without quoting the
+                    path. Hand-off on, because placing a file in the right folder is
+                    something an agent can help with. */}
+                {customErr && (
+                  <ErrorNotice
+                    variant="inline"
+                    className="-mt-1 mb-1"
+                    id={CUSTOM_MODEL_ERROR_ID}
+                    message={customErr}
+                    askAgent
+                    testId="stt-custom-model-error"
+                  />
+                )}
+                </div>
+              </>
+            )}
             {downloading && download ? (
               <ModelDownloadProgress download={download} />
             ) : selectedModel?.present ? (
@@ -1164,6 +1414,10 @@ export default function SttSettings({ cardIndex }: {
               // absence of a download prompt IS the message, and a row that says
               // "this is fine" for the ordinary case is the kind of reassurance
               // that crowds out the warnings worth reading.
+              null
+            ) : selectedModel?.name === CUSTOM_MODEL ? (
+              // Nothing to download for a custom model; an unusable file is
+              // explained under the file row instead.
               null
             ) : selectedModel ? (
               // Offered BEFORE the first dictation on purpose. The alternative is
@@ -1184,7 +1438,9 @@ export default function SttSettings({ cardIndex }: {
               <ErrorNotice
                 variant="inline"
                 className="-mt-1 mb-1"
-                message={i18nT('pages.settings.sttSettings.download_failed_reason', { error: download.error })}
+                message={download.model === CUSTOM_MODEL
+                  ? download.error
+                  : i18nT('pages.settings.sttSettings.download_failed_reason', { error: download.error })}
                 askAgent
               />
             )}

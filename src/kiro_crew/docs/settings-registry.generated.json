@@ -1522,6 +1522,14 @@
       "description": "AWS region for Transcribe"
     },
     {
+      "id": "voice.custom-model-file",
+      "label": "Custom model file",
+      "tab": "voice",
+      "route": "/settings/voice?highlight=key%3Astt.custom_model_path",
+      "description": "A wrong name is refused and nothing else changes. Only whisper.cpp .bin model files work.",
+      "configKey": "stt.custom_model_path"
+    },
+    {
       "id": "voice.custom-vocabulary",
       "label": "Custom vocabulary",
       "tab": "voice",
@@ -1549,6 +1557,14 @@
       "tab": "voice",
       "route": "/settings/voice?highlight=voice.engine",
       "description": "Amazon Polly engine type"
+    },
+    {
+      "id": "voice.file-fingerprint-sha-256",
+      "label": "File fingerprint (SHA-256)",
+      "tab": "voice",
+      "route": "/settings/voice?highlight=key%3Astt.custom_model_sha256",
+      "description": "A wrong value is refused and nothing else changes. Paste the SHA-256 shown on the file's download page. It checks the file is the one you downloaded.",
+      "configKey": "stt.custom_model_sha256"
     },
     {
       "id": "voice.how-the-key-works",

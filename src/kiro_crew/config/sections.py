@@ -123,8 +123,11 @@ from kiro_crew.stt.limits import DEFAULT_IDLE_EVICT_SECS as _STT_DEFAULT_IDLE_EV
 from kiro_crew.stt.limits import DEFAULT_PARTIAL_INTERVAL_MS as _STT_DEFAULT_PARTIAL_INTERVAL_MS
 from kiro_crew.stt.limits import DEFAULT_SILENCE_MS as _STT_DEFAULT_SILENCE_MS
 from kiro_crew.stt.models import CATALOG as _STT_CATALOG
+from kiro_crew.stt.models import CUSTOM_MODEL as _STT_CUSTOM_MODEL
 from kiro_crew.stt.models import DEFAULT_MODEL as _STT_DEFAULT_MODEL
 from kiro_crew.stt.models import resolve as _resolve_stt_model
+from kiro_crew.stt.models import valid_custom_path as _valid_stt_custom_path
+from kiro_crew.stt.models import valid_custom_sha256 as _valid_stt_custom_sha256
 
 # Stdlib-only leaf: the one table of code points that render as nothing, shared
 # with the terminal and scanner paths so the bot-name filter does not keep a copy.
@@ -4412,8 +4415,10 @@ _RETIRED_STT_PROVIDERS = ("whisper", "mlx", "parakeet", "faster")
 
 #: Model names accepted for ``stt.model``, derived from the catalog that owns the
 #: download and its sha256 pin rather than restated here. Restating it is how the
-#: advertised menu comes to offer a model that cannot be fetched.
-_VALID_STT_MODELS = tuple(m.name for m in _STT_CATALOG)
+#: advertised menu comes to offer a model that cannot be fetched. ``custom`` is
+#: appended because it names no catalog row: it selects the file and digest in
+#: ``custom_model_path`` / ``custom_model_sha256`` instead.
+_VALID_STT_MODELS = tuple(m.name for m in _STT_CATALOG) + (_STT_CUSTOM_MODEL,)
 
 
 _VALID_CHANNEL_PREFIXES = ("C", "D", "G")
@@ -4505,20 +4510,43 @@ def _validated_stt_provider(value: object) -> str:
     return resolved
 
 
-def _validated_stt_model(value: object) -> str:
-    """Return the catalog name *value* selects, falling back to the default.
+def _validated_stt_model(
+    value: object,
+    *,
+    custom_path: object = "",
+    custom_sha256: object = "",
+) -> str:
+    """Return the model name *value* selects, falling back to the default.
 
     Canonicalized here rather than passed through, so every consumer sees a name
-    that names a real catalog entry: the model becomes a filename under the
-    models directory, and an arbitrary string must not reach a path. ``resolve``
-    also maps the names older configuration used onto their current entries, so a
-    stored ``turbo`` keeps the model it asked for instead of silently moving to
-    the default.
+    that names a real model: the name becomes a filename under the models
+    directory, and an arbitrary string must not reach a path. ``resolve`` also maps
+    the names older configuration used onto their current entries, so a stored
+    ``turbo`` keeps the model it asked for instead of silently moving to the
+    default.
+
+    ``custom`` is the one name ``resolve`` is NOT asked about, and that is
+    load-bearing rather than an optimisation: resolving it reads configuration for
+    the path and digest, and this function runs *during* a configuration load. It is
+    validated from the sibling values the caller passes instead, which is also the
+    only place they are available before the dataclass exists. A half-configured
+    custom model degrades to the default with a warning, exactly like an unknown
+    name — a voice session must never be failed by the setting that selected it.
     """
     if not isinstance(value, str) or not value:
         model = field_default(SttConfig, "model")
         logger.warning("Non-string STT model %r; using %r", value, model)
         return model
+    if value == _STT_CUSTOM_MODEL:
+        if _valid_stt_custom_path(custom_path) and _valid_stt_custom_sha256(custom_sha256):
+            return _STT_CUSTOM_MODEL
+        logger.warning(
+            "stt.model is %r but stt.custom_model_path (a file name) and "
+            "stt.custom_model_sha256 (64 hex characters) are not both set; using %r",
+            _STT_CUSTOM_MODEL,
+            field_default(SttConfig, "model"),
+        )
+        return field_default(SttConfig, "model")
     return _resolve_stt_model(value).name
 
 
@@ -4650,6 +4678,46 @@ def _validated_transcribe_languages(value: object) -> list[str]:
             TRANSCRIBE_LANGUAGES_MAX,
         )
     return []
+
+
+def _validated_stt_custom_path(value: object) -> str:
+    """Return a usable-shaped ``stt.custom_model_path``, else ``""``.
+
+    Shape only, because this runs during a configuration load and must not touch
+    the disk. Whether the file may be opened -- inside the models directory, present,
+    a regular file -- is decided by :func:`kiro_crew.stt.models.custom_model_file`
+    when the dashboard saves the field and again on every load. The rejected value is
+    described, never quoted.
+    """
+    path = _valid_stt_custom_path(value)
+    if not path and value:
+        shape = f"str of length {len(value)}" if isinstance(value, str) else type(value).__name__
+        logger.warning("Ignoring stt.custom_model_path (%s): it must be a file name", shape)
+    return path
+
+
+def _validated_stt_custom_sha256(value: object) -> str:
+    """Return a usable ``stt.custom_model_sha256``, else ``""``.
+
+    The digest is the entire trust anchor for a custom model, so a malformed one is
+    dropped rather than stored: keeping it would make ``stt.model = "custom"`` look
+    configured while every load it started was guaranteed to fail verification.
+
+    The rejected value is described, never quoted. A `%r` here published whatever was
+    in the field into the log ring, and `/api/logs` carries no owner gate, so a
+    credential mis-pasted into this field — an ordinary operator error on a
+    hand-edited ``config.json``, which is the one path that reaches this branch —
+    was readable by a non-owner. Type and length are what a reader needs to fix
+    the setting, and neither can carry a secret.
+    """
+    digest = _valid_stt_custom_sha256(value)
+    if not digest and value:
+        shape = f"str of length {len(value)}" if isinstance(value, str) else type(value).__name__
+        logger.warning(
+            "Ignoring stt.custom_model_sha256 (%s): it must be 64 hexadecimal characters",
+            shape,
+        )
+    return digest
 
 
 _VALID_COMPLETION_KEEP = ("head", "tail", "both")
@@ -4975,8 +5043,40 @@ class SttConfig:
             "-- though on a CPU-only build it can recognise slower than you speak: "
             "an 11-second clip took 13.6 s on a 16-thread aarch64 CPU, 1.24x the "
             "audio. The Voice panel says so beside the choice when the build it "
-            "measured has no acceleration.",
+            "measured has no acceleration. `custom` runs your own whisper.cpp model "
+            "file named by `custom_model_path` instead, checked against "
+            "`custom_model_sha256`.",
             enum=list(_VALID_STT_MODELS),
+        ),
+    )
+    custom_model_path: str = field(
+        default="",
+        metadata=_meta(
+            "Custom Model File",
+            "The file name of a whisper.cpp ggml model (`.bin`) to run INSTEAD of a "
+            "catalog model, used when `model` is `custom`. Put the file in the "
+            "speech models folder (`models/whisper` under the Kiro Crew home) "
+            "first: the path must resolve to a regular file inside that folder, so "
+            "`..`, an absolute path elsewhere, and a symlink pointing out of it are "
+            "refused. Nothing is downloaded. Both this and the digest must be set; "
+            "otherwise `custom` degrades to the default model with a warning.",
+            # Owner-only: `GET /api/config/stt` serves this to the owner alone, and
+            # the un-owner-gated `GET /api/config/kirocrew` must not undo that.
+            sensitive=True,
+        ),
+    )
+    custom_model_sha256: str = field(
+        default="",
+        metadata=_meta(
+            "Custom Model SHA-256",
+            "The 64-character hex sha256 of the file at `custom_model_path`. The "
+            "file is hashed on every load and not used unless it matches, so a "
+            "file swapped in the models folder is refused. A `sha256:` value or a "
+            "`sha256sum` line is accepted too. Get it with `shasum -a 256 <file>` "
+            "(or `Get-FileHash <file> -Algorithm SHA256` on Windows).",
+            # Owner-only, like the file path: `GET /api/config/stt` serves the pair
+            # to the owner alone, so the general config read must mask it too.
+            sensitive=True,
         ),
     )
     language_code: str = field(

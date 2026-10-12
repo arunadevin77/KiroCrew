@@ -772,7 +772,15 @@ def _build_stt_config(stt_data: dict) -> SttConfig:
     return SttConfig(
         enabled=section.read("enabled", _safe_bool),
         provider=_validated_stt_provider(section.get("provider")),
-        model=_validated_stt_model(section.get("model")),
+        model=_validated_stt_model(
+            section.get("model"),
+            custom_path=section.get("custom_model_path"),
+            custom_sha256=section.get("custom_model_sha256"),
+        ),
+        custom_model_path=_sections._validated_stt_custom_path(section.get("custom_model_path")),
+        custom_model_sha256=_sections._validated_stt_custom_sha256(
+            section.get("custom_model_sha256")
+        ),
         language_code=section.get("language_code"),
         # Reached through the module rather than re-exported: the loader facade's
         # import list from `sections` is a frozen pre-split snapshot

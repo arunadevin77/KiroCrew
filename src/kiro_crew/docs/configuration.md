@@ -345,7 +345,9 @@ transcribed the same way.
 |-----|-------------|---------|
 | `stt.enabled` | Turn spoken input into text you can send | `true` |
 | `stt.provider` | `"local"` (this machine, no account), `"apple"` (the on-device recognizer built into macOS 26 and later), `"transcribe"` (AWS Transcribe, which bills your AWS account), or `"off"` (no recognizer runs, the same as turning speech input off). `kirocrew config set` refuses any other value. A stored unknown value runs as `off` with a log warning, and `kirocrew config defaults --adopt stt.provider` rewrites it to `off` rather than switching to `local`; a retired name reads as `local` (see below) | `"local"` |
-| `stt.model` | Which speech model the local provider downloads and runs: `tiny`, `base`, `small`, or `large-v3-turbo`. Bigger is more accurate and a longer first-time download — and on a CPU-only build the largest can recognise slower than you speak (an 11-second clip took 13.6 s on a 16-thread aarch64 CPU, 1.24x the audio), which Settings → Voice says beside the choice | `"base"` |
+| `stt.model` | Which speech model the local provider downloads and runs: `tiny`, `base`, `small`, `large-v3-turbo`, or `custom` to run your own (see below). Bigger is more accurate and a longer first-time download — and on a CPU-only build the largest can recognise slower than you speak (an 11-second clip took 13.6 s on a 16-thread aarch64 CPU, 1.24x the audio), which Settings → Voice says beside the choice | `"base"` |
+| `stt.custom_model_path` | File name of a whisper.cpp ggml model in the speech models folder (`models/whisper` under the Kiro Crew home), run instead of a catalog one when `model` is `custom`. Must resolve to a regular file inside that folder; nothing is downloaded | `""` |
+| `stt.custom_model_sha256` | The 64-character hex sha256 of the file at `custom_model_path`, checked on every load. Required for `model: "custom"`; with either half missing or malformed, `custom` degrades to the default model with a warning | `""` |
 | `stt.language_code` | Language for speech recognition, e.g. `en-US`, `fr-FR`. `"auto"` auto-detects on the local provider | `"auto"` |
 | `stt.streaming` | Show words in the message box while you are still speaking rather than only once you stop. Every provider supports it; turning it off spends less CPU on `local` and fewer API calls on `transcribe` | `true` |
 | `stt.silence_ms` | How long a pause must last before what you said is treated as a finished phrase. Raise it if you are being cut off mid-sentence, lower it if the text lags behind you. A value outside 200-5000 ms is clamped into that range. Set here only: Settings -> Voice offers no picker, because nobody can tell 700 ms from 750 ms by feel, and the setting most people actually want when dictation cuts them off is `stt.endpointing` | `700` |
@@ -646,6 +648,28 @@ member-memory sandbox is required.
 | `auto_update` | Where the install can apply updates, `true` installs them and restarts the gateway; `false` only notifies. When work is running, a checkout waits before applying, while the `cli.sh` managed venv builds the new version alongside and waits only to restart. Elsewhere it has no effect. On those same installs a policy minimum version applies regardless. A hand-edited recognized boolean spelling (such as `"false"`) is honoured; any other non-boolean value reads as off; an absent key stays on. See [Updates](#updates) | `true` |
 | `timezone` | IANA timezone name, e.g. `"America/Los_Angeles"` | `""` (falls back to UTC) |
 | `snapshot_dir` | Where `kirocrew snapshot` writes tarballs | `""` (`~/.kiro/crew/snapshots`) |
+
+## Running a custom speech-to-text model
+
+Put a whisper.cpp ggml model file in the speech models folder, `models/whisper` under the Kiro Crew home (`~/.kiro/crew/models/whisper` by default). Then set `stt.model` to `custom`, `stt.custom_model_path` to the file's name, and `stt.custom_model_sha256` to its 64-character hex sha256:
+
+```json
+{
+  "stt": {
+    "model": "custom",
+    "custom_model_path": "ggml-my-model.bin",
+    "custom_model_sha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
+  }
+}
+```
+
+Settings → Voice does the same: pick **Custom**, then enter the file name and the SHA-256. Get the digest with `shasum -a 256 <file>` (`Get-FileHash <file> -Algorithm SHA256` on Windows).
+
+The path must resolve to a regular file inside the models folder. A name with `..`, an absolute path elsewhere, a symlink that points out of the folder, and a built-in model's file name (`ggml-base.bin` and the like, which the built-in download replaces) are all refused, and Settings → Voice says why. Nothing is downloaded for a custom model.
+
+The file is hashed on every load and is not used unless it matches the digest, so a file replaced in the models folder is refused rather than run. If either setting is missing or malformed, `custom` falls back to the default model with a warning.
+
+Only whisper.cpp ggml weights work. This picks a different model for the bundled recognizer, not a different recognizer.
 
 ## Environment Variables
 

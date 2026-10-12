@@ -20,6 +20,7 @@ import json
 import os
 import platform
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -72,6 +73,8 @@ def _req(
     req.app = app if app is not None else {}
     req.match_info = match_info or {}
     claims: dict = {"user": user, "app": app_token}
+    # The auth predicates read a claim three ways -- ``.get``, ``in`` and ``[]`` --
+    # so all three answer from one dict instead of returning default MagicMocks.
     req.get = lambda key, default=None: claims.get(key, default)
     req.__contains__.side_effect = lambda key: key in claims and claims[key] is not None
     req.__getitem__.side_effect = lambda key: claims[key]
@@ -658,6 +661,10 @@ class TestPipInstallChannel:
 
 def _stt_app() -> web.Application:
     app = web.Application()
+    # The GET resolves whether the caller is the owner, which reads
+    # ``app["state"].owner_id``. A TestServer request carries no auth claim, so it
+    # is never the owner -- the state only has to exist.
+    app["state"] = SimpleNamespace(owner_id="owner-1")
     app.router.add_route("*", "/api/config/stt", core_mod.api_stt_config)
     return app
 
@@ -1002,6 +1009,545 @@ class TestSttConfigEndpoint:
         assert body["silence_ms"] >= MIN_SILENCE_MS
         assert isinstance(body["partial_interval_ms"], int)
         assert isinstance(body["idle_evict_secs"], int)
+
+
+class TestSttConfigCustomModelBoundary:
+    """``PUT /api/config/stt``: only the OWNER may configure a custom model.
+
+    ``stt.status`` / ``stt.prepare`` / ``stt.prewarm`` are denied to an app token
+    outright because they fetch weights and load them into the gateway. The
+    custom-model pair arrives at the same outcome by a longer road: it names a file
+    the gateway will verify against a digest THE SAME CALLER supplied, and load —
+    and the transcription surfaces that trigger the load are deliberately
+    app-reachable. So a caller able to write these three fields chooses the
+    weights every later utterance runs through.
+
+    "Not an app token" is the wrong bar, and pinning that is the point of the
+    non-owner cases below: an allow-listed messaging user who runs ``!dashboard``
+    is minted a dashboard session whose app claim is ``""`` exactly like the
+    operator's. The gate is ``is_owner_dashboard_request``.
+
+    The refusal is per-FIELD, not the whole endpoint: any caller may legitimately
+    hold ``config.stt`` for the language and the toggles. Both halves of that are
+    pinned here, because a gate that also blocked the ordinary fields would
+    silently break shipped apps and a second dashboard session alike.
+    """
+
+    _PATH = "ggml-my-model.bin"
+    _DIGEST = "a" * 64
+    _OWNER = "owner-1"
+    _OTHER_DASHBOARD = "messaging-user"
+
+    @pytest.fixture(autouse=True)
+    def _model_file(self):
+        """A real file in the models directory, so the owner's save passes the
+        path check and every refusal below is about the CALLER, not the file."""
+        stt_models.models_dir().mkdir(parents=True, exist_ok=True)
+        (stt_models.models_dir() / self._PATH).write_bytes(b"weights")
+
+    @pytest.fixture(autouse=True)
+    def _quiet_probes(self, _floor_monkeypatch):
+        _floor_monkeypatch.setattr(core_mod, "_stt_prereq_commands", lambda _p: [])
+        _floor_monkeypatch.setattr(
+            core_mod, "availability_detail", lambda _cfg: core_mod.stt.Availability(False)
+        )
+
+    @classmethod
+    def _identity(cls, *, app_token: str | None = "", user: str | None = None) -> dict:
+        """The request kwargs for ONE caller identity, defaulting to the owner.
+
+        ``is_owner_dashboard_request`` compares the caller subject against
+        ``request.app["state"].owner_id``, so the state carries a configured owner
+        and every case says who is calling: the owner, another dashboard session
+        (same empty app claim, different subject), or an app token.
+        """
+        return {
+            "app": {"state": SimpleNamespace(owner_id=cls._OWNER)},
+            "user": cls._OWNER if user is None else user,
+            "app_token": app_token,
+        }
+
+    @classmethod
+    def _put(cls, body: object, **identity) -> web.Request:
+        """A ``PUT`` carrying *body* and one explicit caller identity.
+
+        The handler is called directly rather than through ``TestClient``: the app
+        claim and the caller subject are published by auth middleware that a bare
+        test server does not run, and they are the whole input under test here.
+        """
+        req = _json_req(body, **cls._identity(**identity))
+        req.method = "PUT"
+        return req
+
+    @classmethod
+    def _get(cls, **identity) -> web.Request:
+        req = _req(**cls._identity(**identity))
+        req.method = "GET"
+        return req
+
+    @staticmethod
+    def _stored(path: Path) -> dict:
+        return json.loads(path.read_text(encoding="utf-8")).get("stt", {})
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"model": stt_models.CUSTOM_MODEL},
+            {"custom_model_path": _PATH},
+            {"custom_model_sha256": _DIGEST},
+            {
+                "model": stt_models.CUSTOM_MODEL,
+                "custom_model_path": _PATH,
+                "custom_model_sha256": _DIGEST,
+            },
+        ],
+    )
+    async def test_an_app_token_cannot_configure_a_custom_model(
+        self, seeded_config, fake_sel, body: dict
+    ) -> None:
+        resp = await core_mod.api_stt_config(self._put(body, app_token="meetings"))
+
+        assert resp.status == 403
+        assert json.loads(resp.body)["code"] == "owner_only"
+        assert fake_sel.log_api_access.call_args.kwargs["outcome"] == "denied"
+        # Refused BEFORE the write, so nothing from the body reached the file.
+        assert self._stored(seeded_config) == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"model": stt_models.CUSTOM_MODEL},
+            {"custom_model_path": _PATH},
+            {"custom_model_sha256": _DIGEST},
+            {
+                "model": stt_models.CUSTOM_MODEL,
+                "custom_model_path": _PATH,
+                "custom_model_sha256": _DIGEST,
+            },
+        ],
+    )
+    async def test_a_non_owner_dashboard_token_cannot_configure_a_custom_model(
+        self, seeded_config, fake_sel, body: dict
+    ) -> None:
+        """The case an "is it an app token?" check lets through.
+
+        An allow-listed messaging user who runs ``!dashboard`` receives a dashboard
+        token: app claim ``""``, subject their own, not the owner's. They may not
+        choose the gateway's weights, so the empty app claim alone must not clear
+        this gate.
+        """
+        resp = await core_mod.api_stt_config(self._put(body, user=self._OTHER_DASHBOARD))
+
+        assert resp.status == 403
+        assert json.loads(resp.body)["code"] == "owner_only"
+        assert fake_sel.log_api_access.call_args.kwargs["outcome"] == "denied"
+        assert self._stored(seeded_config) == {}
+
+    @pytest.mark.asyncio
+    async def test_a_request_with_no_app_claim_at_all_is_refused(
+        self, seeded_config, fake_sel
+    ) -> None:
+        """Fail closed: an absent claim means no auth middleware published one, so
+        it is refused alongside a non-empty one rather than read as the owner."""
+        resp = await core_mod.api_stt_config(
+            self._put({"custom_model_path": self._PATH}, app_token=None)
+        )
+        assert resp.status == 403
+        assert self._stored(seeded_config) == {}
+
+    @pytest.mark.asyncio
+    async def test_an_app_token_still_writes_the_ordinary_stt_fields(
+        self, seeded_config, fake_sel
+    ) -> None:
+        """The other half of the contract. This endpoint is app-reachable, and only
+        the custom-model fields are withheld."""
+        resp = await core_mod.api_stt_config(
+            self._put({"language_code": "fr-FR", "endpointing": False}, app_token="meetings")
+        )
+
+        assert resp.status == 200
+        stored = self._stored(seeded_config)
+        assert stored["language_code"] == "fr-FR"
+        assert stored["endpointing"] is False
+
+    @pytest.mark.asyncio
+    async def test_a_non_owner_dashboard_token_still_writes_the_ordinary_stt_fields(
+        self, seeded_config, fake_sel
+    ) -> None:
+        """Narrowing the custom-model pair to the owner must not narrow the rest:
+        a second dashboard session keeps its language and toggles."""
+        resp = await core_mod.api_stt_config(
+            self._put({"language_code": "de-DE", "streaming": False}, user=self._OTHER_DASHBOARD)
+        )
+
+        assert resp.status == 200
+        stored = self._stored(seeded_config)
+        assert stored["language_code"] == "de-DE"
+        assert stored["streaming"] is False
+
+    @pytest.mark.asyncio
+    async def test_an_app_token_cannot_write_back_a_custom_selection_already_in_force(
+        self, seeded_config, fake_sel
+    ) -> None:
+        """Refused on PRESENCE, not on whether it changes anything.
+
+        An earlier version allowed this as a harmless no-op. It is not one: the
+        handler reads its config BEFORE taking the write lock, so "custom is
+        already active" can be stale by the time the write lands — the owner
+        switches to a catalog model in between and the app's write puts custom
+        back. Refusing every `model: custom` from a non-owner closes that race.
+        """
+        _seed_stt(
+            seeded_config,
+            model=stt_models.CUSTOM_MODEL,
+            custom_model_path=self._PATH,
+            custom_model_sha256=self._DIGEST,
+        )
+
+        resp = await core_mod.api_stt_config(
+            self._put({"model": stt_models.CUSTOM_MODEL}, app_token="meetings")
+        )
+
+        assert resp.status == 403
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body",
+        [
+            ["custom_model_path"],
+            "custom_model_path",
+            7,
+            None,
+        ],
+        ids=["array", "string", "number", "null"],
+    )
+    async def test_a_non_object_body_is_refused_before_any_field_is_read(
+        self, body, seeded_config, fake_sel
+    ) -> None:
+        """400, not 500, on every JSON body that is not an object.
+
+        The array is the one that bites: it satisfies every `"field" in body`
+        membership test and then raises TypeError on the subscript, so the
+        endpoint answered a malformed request with a 500 — from inside the
+        security gate that runs first. The scalars reach the same subscript by a
+        shorter road. Refused once, before any field is read.
+        """
+        resp = await core_mod.api_stt_config(self._put(body))
+
+        assert resp.status == 400
+        assert self._stored(seeded_config) == {}
+
+    @pytest.mark.asyncio
+    async def test_the_owner_configures_a_custom_model_normally(self, seeded_config) -> None:
+        """The capability itself is unchanged for the operator; only its caller is
+        narrowed. Without this the gates above would pass over a dead feature."""
+        resp = await core_mod.api_stt_config(
+            self._put(
+                {
+                    "model": stt_models.CUSTOM_MODEL,
+                    "custom_model_path": self._PATH,
+                    "custom_model_sha256": self._DIGEST,
+                }
+            )
+        )
+
+        assert resp.status == 200
+        stored = self._stored(seeded_config)
+        assert stored["model"] == stt_models.CUSTOM_MODEL
+        assert stored["custom_model_path"] == self._PATH
+        assert stored["custom_model_sha256"] == self._DIGEST
+
+    @pytest.mark.asyncio
+    async def test_the_get_serves_the_pair_to_the_owner_alone(self, seeded_config) -> None:
+        """Serving the pair to a caller that may not write it would hand it the
+        exact values to echo back."""
+        _seed_stt(
+            seeded_config,
+            model=stt_models.CUSTOM_MODEL,
+            custom_model_path=self._PATH,
+            custom_model_sha256=self._DIGEST,
+        )
+
+        owner = json.loads((await core_mod.api_stt_config(self._get())).body)
+        assert owner["custom_model_path"] == self._PATH
+        assert owner["custom_model_sha256"] == self._DIGEST
+
+        for withheld in (
+            self._get(user=self._OTHER_DASHBOARD),
+            self._get(app_token="meetings"),
+            self._get(app_token=None),
+        ):
+            body = json.loads((await core_mod.api_stt_config(withheld)).body)
+            assert "custom_model_path" not in body
+            assert "custom_model_sha256" not in body
+            # Still a usable settings payload for everything the caller IS entitled to.
+            assert body["language_code"] == owner["language_code"]
+
+    @pytest.mark.asyncio
+    async def test_the_read_side_of_the_owner_gate_is_audited_on_both_branches(
+        self, seeded_config, fake_sel
+    ) -> None:
+        """A served pair and a withheld one both leave a SEL row.
+
+        The write path audited only its refusal, so the READ half of the same
+        authorization decision was invisible: whether the pair was ever served, and to
+        whom, could not be reconstructed from the log. Both outcomes are recorded
+        because the useful question is the negative one -- "nobody but the owner was
+        served this" is only answerable if the allowed branch logs too.
+        """
+        _seed_stt(
+            seeded_config,
+            model=stt_models.CUSTOM_MODEL,
+            custom_model_path=self._PATH,
+            custom_model_sha256=self._DIGEST,
+        )
+
+        await core_mod.api_stt_config(self._get())
+        await core_mod.api_stt_config(self._get(user=self._OTHER_DASHBOARD))
+
+        reads = [
+            call.kwargs
+            for call in fake_sel.log_api_access.call_args_list
+            if call.kwargs.get("operation") == "stt.custom_model.read"
+        ]
+        assert [r["outcome"] for r in reads] == ["allowed", "denied"]
+
+    @pytest.mark.asyncio
+    async def test_a_get_with_no_custom_model_in_play_writes_no_audit_row(
+        self, seeded_config, fake_sel
+    ) -> None:
+        """No pair, no decision. This endpoint is fetched by the chat composer's voice
+        hook on mount, not only by the settings page, so auditing a branch that
+        discloses two empty strings would bury the rows that carry a value."""
+        await core_mod.api_stt_config(self._get())
+
+        assert [
+            call.kwargs
+            for call in fake_sel.log_api_access.call_args_list
+            if call.kwargs.get("operation") == "stt.custom_model.read"
+        ] == []
+
+    @pytest.mark.asyncio
+    async def test_the_owner_gate_audits_the_write_it_admits_not_only_the_one_it_refuses(
+        self, seeded_config, fake_sel
+    ) -> None:
+        """An ADMITTED custom-model write leaves a SEL row of its own.
+
+        The gate logged only its refusals, so the log answered "who was turned away"
+        and never "who chose the weights" -- and only the second names the file and
+        digest the gateway then verifies and loads. A denial-only record also
+        cannot tell an endpoint nobody exercised from one exercised successfully.
+
+        Same operation as the refusal, so both outcomes of one authorization decision
+        read as one operation: an ordinary write that names no custom field stays
+        silent, which the third assertion pins.
+        """
+        resp = await core_mod.api_stt_config(
+            self._put(
+                {
+                    "model": stt_models.CUSTOM_MODEL,
+                    "custom_model_path": self._PATH,
+                    "custom_model_sha256": self._DIGEST,
+                }
+            )
+        )
+        assert resp.status == 200
+
+        writes = [
+            call.kwargs
+            for call in fake_sel.log_api_access.call_args_list
+            if call.kwargs.get("operation") == "stt.custom_model"
+        ]
+        assert [w["outcome"] for w in writes] == ["allowed"]
+
+        fake_sel.log_api_access.reset_mock()
+        await core_mod.api_stt_config(self._put({"language_code": "en"}))
+        assert [
+            call.kwargs
+            for call in fake_sel.log_api_access.call_args_list
+            if call.kwargs.get("operation") == "stt.custom_model"
+        ] == []
+
+
+class TestCustomModelPairIsMaskedOnTheGeneralConfigRead:
+    """The general config read must not serve what the owner-only STT read withholds."""
+
+    _PATH = "ggml-my-model.bin"
+    _DIGEST = "c" * 64
+
+    @pytest.fixture(autouse=True)
+    def _quiet_probes(self, _floor_monkeypatch):
+        _floor_monkeypatch.setattr(core_mod, "_stt_prereq_commands", lambda _p: [])
+        _floor_monkeypatch.setattr(
+            core_mod, "availability_detail", lambda _cfg: core_mod.stt.Availability(False)
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_non_owner_general_read_masks_both_fields(self, seeded_config) -> None:
+        _seed_stt(
+            seeded_config,
+            model=stt_models.CUSTOM_MODEL,
+            custom_model_path=self._PATH,
+            custom_model_sha256=self._DIGEST,
+        )
+        req = _req(
+            app={"state": SimpleNamespace(owner_id="owner-1")},
+            user="messaging-user",
+            app_token="",
+        )
+        req.method = "GET"
+
+        stt_section = json.loads((await core_mod.api_kirocrew_config(req)).body)["stt"]
+
+        assert stt_section["custom_model_path"] == core_mod._SENSITIVE_MASK
+        assert stt_section["custom_model_sha256"] == core_mod._SENSITIVE_MASK
+
+    @pytest.mark.asyncio
+    async def test_the_owner_stt_read_still_returns_both_fields(self, seeded_config) -> None:
+        _seed_stt(
+            seeded_config,
+            model=stt_models.CUSTOM_MODEL,
+            custom_model_path=self._PATH,
+            custom_model_sha256=self._DIGEST,
+        )
+        req = _req(
+            app={"state": SimpleNamespace(owner_id="owner-1")},
+            user="owner-1",
+            app_token="",
+        )
+        req.method = "GET"
+
+        body = json.loads((await core_mod.api_stt_config(req)).body)
+
+        assert body["custom_model_path"] == self._PATH
+        assert body["custom_model_sha256"] == self._DIGEST
+
+
+class TestSttConfigCustomModelPath:
+    """``PUT /api/config/stt`` stores a custom model path only if a load could use it.
+
+    The file must resolve -- symlinks followed -- to a regular file strictly inside
+    the models directory. Anything else is a 400 naming the rule, nothing is
+    stored, and the message never quotes the path.
+    """
+
+    _DIGEST = "b" * 64
+
+    @pytest.fixture(autouse=True)
+    def _quiet_probes(self, _floor_monkeypatch):
+        _floor_monkeypatch.setattr(core_mod, "_stt_prereq_commands", lambda _p: [])
+        _floor_monkeypatch.setattr(
+            core_mod, "availability_detail", lambda _cfg: core_mod.stt.Availability(False)
+        )
+
+    @staticmethod
+    def _owner_put(body: object) -> web.Request:
+        req = _json_req(
+            body,
+            app={"state": SimpleNamespace(owner_id="owner-1")},
+            user="owner-1",
+            app_token="",
+        )
+        req.method = "PUT"
+        return req
+
+    @staticmethod
+    def _stored(path: Path) -> dict:
+        return json.loads(path.read_text(encoding="utf-8")).get("stt", {})
+
+    @pytest.mark.asyncio
+    async def test_a_file_in_the_models_dir_is_stored(self, seeded_config, fake_sel) -> None:
+        stt_models.models_dir().mkdir(parents=True, exist_ok=True)
+        (stt_models.models_dir() / "ggml-mine.bin").write_bytes(b"weights")
+
+        resp = await core_mod.api_stt_config(
+            self._owner_put(
+                {"custom_model_path": " ggml-mine.bin ", "custom_model_sha256": self._DIGEST}
+            )
+        )
+
+        assert resp.status == 200
+        assert self._stored(seeded_config)["custom_model_path"] == "ggml-mine.bin"
+        assert json.loads(resp.body)["custom_model_dir"] == str(stt_models.models_dir())
+
+    @pytest.mark.asyncio
+    async def test_a_path_outside_the_models_dir_is_refused(
+        self, seeded_config, fake_sel, tmp_path
+    ) -> None:
+        """The containment rule, through every door: ``..``, an absolute path
+        elsewhere, and a symlink inside the folder that points out of it. The file
+        each one names EXISTS, so the refusal is about where it is, not whether."""
+        stt_models.models_dir().mkdir(parents=True, exist_ok=True)
+        outside = tmp_path / "elsewhere" / "ggml-evil.bin"
+        outside.parent.mkdir()
+        outside.write_bytes(b"weights")
+        link = stt_models.models_dir() / "ggml-link.bin"
+        link.symlink_to(outside)
+        sibling = stt_models.models_dir().parent / "ggml-sibling.bin"
+        sibling.write_bytes(b"weights")
+
+        for value in (
+            "../ggml-sibling.bin",
+            str(outside),
+            "ggml-link.bin",
+            str(stt_models.models_dir()),
+        ):
+            resp = await core_mod.api_stt_config(self._owner_put({"custom_model_path": value}))
+            body = json.loads(resp.body)
+            assert resp.status == 400, value
+            assert body["code"] == "custom_model_path_outside", value
+            assert value not in body["error"]
+            assert "custom_model_path" not in self._stored(seeded_config)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("setup", "value", "code"),
+        [
+            (None, "ggml-absent.bin", "custom_model_path_missing"),
+            (None, "~nonexistent-user-14918/w.bin", "custom_model_path_missing"),
+            ("dir", "ggml-a-folder.bin", "custom_model_path_not_file"),
+            (None, "   ", "custom_model_path_empty"),
+            (None, 7, "custom_model_path_empty"),
+        ],
+        ids=["missing", "unknown-tilde-user", "folder", "blank", "not-a-string"],
+    )
+    async def test_an_unusable_file_is_refused_with_its_reason(
+        self, seeded_config, fake_sel, setup, value, code
+    ) -> None:
+        stt_models.models_dir().mkdir(parents=True, exist_ok=True)
+        if setup == "dir":
+            (stt_models.models_dir() / value).mkdir()
+
+        resp = await core_mod.api_stt_config(self._owner_put({"custom_model_path": value}))
+
+        assert resp.status == 400
+        assert json.loads(resp.body)["code"] == code
+        assert "custom_model_path" not in self._stored(seeded_config)
+
+    @pytest.mark.asyncio
+    async def test_a_malformed_digest_is_refused_not_silently_dropped(
+        self, seeded_config, fake_sel
+    ) -> None:
+        resp = await core_mod.api_stt_config(self._owner_put({"custom_model_sha256": "abc"}))
+
+        assert resp.status == 400
+        assert json.loads(resp.body)["code"] == "custom_model_sha256_invalid"
+        assert "custom_model_sha256" not in self._stored(seeded_config)
+
+    @pytest.mark.asyncio
+    async def test_an_empty_string_clears_both_fields(self, seeded_config, fake_sel) -> None:
+        _seed_stt(seeded_config, custom_model_path="ggml-old.bin", custom_model_sha256=self._DIGEST)
+
+        resp = await core_mod.api_stt_config(
+            self._owner_put({"custom_model_path": "", "custom_model_sha256": ""})
+        )
+
+        assert resp.status == 200
+        stored = self._stored(seeded_config)
+        assert stored["custom_model_path"] == ""
+        assert stored["custom_model_sha256"] == ""
 
 
 # ── STT status / prepare / prewarm ──────────────────────────────────────
@@ -1374,6 +1920,71 @@ class TestSttPrepare:
         assert json.loads(resp.body)["code"] == "dashboard_user_required"
         assert await _drain_stt_background() == []
         assert self.requested == []
+
+
+class TestSttResolveStaysOffTheLoop:
+    """Neither STT handler may resolve a model name on the gateway's event loop.
+
+    ``resolve`` has two behaviours. For a catalog name it is a pure in-memory
+    lookup, so calling it inline from an ``async def`` costs nothing. For
+    :data:`~kiro_crew.stt.models.CUSTOM_MODEL` it reads and
+    validates ``config.json`` to find the pinned URL and digest. Called inline
+    that stat-and-parse runs on the single loop these two polled endpoints share
+    with every other session and with the heartbeat, which the repository's
+    ``no-blocking-call-on-event-loop`` rule forbids.
+
+    Asserted on the THREAD, not on a duration: a resolve that lands on the loop's
+    own thread is the defect whatever it cost on this host, and a timing bound for
+    something this fast is a flake.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _quiet_probes(self, _floor_monkeypatch):
+        _floor_monkeypatch.setattr(
+            core_mod, "availability_detail", lambda _cfg: _availability(True)
+        )
+        _floor_monkeypatch.setattr("kiro_crew.stt.models.is_present", lambda _m: False)
+        _floor_monkeypatch.setattr(
+            "kiro_crew.stt.engine.shared_engine", lambda *a, **k: SimpleNamespace(loaded=False)
+        )
+        _floor_monkeypatch.setattr(core_mod, "ensure_ffmpeg_in_path", lambda: None)
+        _floor_monkeypatch.setattr(core_mod, "ffmpeg_source", lambda: None)
+
+    @pytest.fixture
+    def resolved_on(self, monkeypatch):
+        """The threads ``resolve`` ran on, recorded in call order."""
+        seen: list[threading.Thread] = []
+        real = stt_models.resolve
+
+        def _resolve(name: str):
+            seen.append(threading.current_thread())
+            return real(name)
+
+        monkeypatch.setattr(core_mod.stt_models, "resolve", _resolve)
+        return seen
+
+    @pytest.mark.asyncio
+    async def test_status_resolves_off_the_loop(
+        self, seeded_config, model_store, resolved_on
+    ) -> None:
+        loop_thread = threading.current_thread()
+        assert (await core_mod.api_stt_status(_req())).status == 200
+        assert resolved_on, "resolve was never called"
+        assert all(t is not loop_thread for t in resolved_on), resolved_on
+
+    @pytest.mark.asyncio
+    async def test_prepare_resolves_off_the_loop(
+        self, seeded_config, model_store, stt_background, resolved_on, monkeypatch
+    ) -> None:
+        async def _fake_ensure(_name: str) -> bool:
+            return True
+
+        monkeypatch.setattr("kiro_crew.stt.session.ensure_model", _fake_ensure)
+        loop_thread = threading.current_thread()
+        assert (await core_mod.api_stt_prepare(_json_req(raises=True))).status == 202
+        await _drain_stt_background()
+        assert resolved_on, "resolve was never called"
+        assert all(t is not loop_thread for t in resolved_on), resolved_on
 
 
 class TestSttFfmpegDownload:

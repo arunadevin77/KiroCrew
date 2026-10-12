@@ -558,7 +558,14 @@ class WhisperEngine:
         if not probed.ok:
             return probed
 
-        model = models.resolve(model_name)
+        # Off the loop for the same reason as `probe` above: resolving the CUSTOM
+        # selection reads and validates `config.json` (see `models.resolve`), which is
+        # a synchronous stat + read on the gateway's single event loop, and this runs
+        # on the websocket handler's task. Offloaded unconditionally rather than only
+        # for the custom name -- the executor hop is microseconds beside the model
+        # load this precedes, and duplicating `resolve`'s own dispatch at every async
+        # call site is how one of them ends up keeping the blocking read.
+        model = await asyncio.to_thread(models.resolve, model_name)
         # The key is built from the path the model WOULD have, so residency can be
         # decided before the store is asked for it. That ordering is what makes the
         # store's digest check affordable: `ensure` verifies the file against its pin
@@ -566,7 +573,9 @@ class WhisperEngine:
         # largest) on the path this feature exists to make fast. Asked only when a
         # load is actually about to happen, the cost lands once per load -- which is
         # also exactly when an unverified file would take effect.
-        key = LoadedKey(str(models.model_path(model)), language, thread_count())
+        # Off the loop: for a custom model `model_path` resolves the path on disk.
+        key_path = await asyncio.to_thread(models.model_path, model)
+        key = LoadedKey(str(key_path), language, thread_count())
         load_lock, decode_lock = self._locks()
         # The LOAD lock spans the whole episode; the DECODE lock is taken only around
         # the context swap, and that narrower scope is load-bearing. `ensure` below
@@ -626,6 +635,11 @@ class WhisperEngine:
                     CODE_MODEL_MISSING,
                     f"speech model {model.name} is not downloaded",
                 )
+            # Load the file `ensure` vetted, not the one the key was built from
+            # before it ran: for a custom model the two can differ if the folder
+            # changed in between, and only the vetted one passed the hash.
+            if model.name == models.CUSTOM_MODEL and str(path) != key.model_path:
+                key = LoadedKey(str(path), key.language, key.n_threads)
             if self._load_future is not None and not self._load_future.done():
                 # A previous load timed out, released this lock and is STILL building
                 # its context. Starting a second one is how a host sized for one model

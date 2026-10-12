@@ -1232,6 +1232,16 @@ air-gapped install without weakening the pin, and `SKIP_DOWNLOAD_ENV` is the sam
 switch the embedding downloader honours, so one setting means "this process must
 not pull model weights".
 
+### A model outside the catalog
+
+The catalog is not the whole set. `stt.model` also accepts `custom`, which runs a file the user has already put in the models directory: `stt.custom_model_path` names it and `stt.custom_model_sha256` pins it. Nothing is downloaded for it.
+
+- The path must resolve, symlinks followed, to a regular file strictly inside `models_dir()`. Any `..` component, an absolute path elsewhere, a symlink out of the directory, a catalog file name (the catalog download deletes or overwrites a file there) and a `.part` staging file are refused by `models.custom_model_file`, which returns the real path the engine then loads, and which runs when `PUT /api/config/stt` saves the field and again on every load.
+- The file is hashed on every load and refused on a mismatch, like a catalog file. A refused custom file is left in place, because it is the user's own file.
+- The catalog's seal checks apply too, and refuse the load with a `failed` status flagged `refused`: `models` and the whisper folder must be real directories (`sandbox.require_real_model_path`), so the resolved file sits under the read-only seal, and the hash is the same one-descriptor check (`_sha256_verified_file`), so a second hard link, a symlinked leaf or a change during the read refuses it. A link below the folder is followed and must stay inside it.
+- A half-configured pair degrades to the default model with a warning. A complete pair whose file is missing does NOT degrade: it fails at load with the reason in `ModelStore.status`, so a different model is never run in its place without a word.
+- Both fields are owner-only on `GET`/`PUT /api/config/stt`. `config.json` is mounted read-only in the agent sandbox, so the pin cannot be rewritten to match a file an agent placed in the models directory.
+
 ## Caps and limits
 
 Every limit is a named constant in the module that owns it. The values are not

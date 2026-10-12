@@ -42,6 +42,14 @@ trusting an upstream header: HuggingFace's ``X-Linked-Etag`` for these objects i
 not the content digest. Two of them (``base``, ``small``) independently match the
 digests kiro-cli pins for the same models, which is a second source on the same
 bytes.
+
+A model outside this catalog is reachable through ``stt.model = "custom"`` plus
+``stt.custom_model_path`` and ``stt.custom_model_sha256``. The path names a file
+the user has already placed in :func:`models_dir`; nothing is ever downloaded for
+it. Two checks stand where a catalog pin stands: the path must resolve -- symlinks
+followed -- to a regular file INSIDE that directory, and the file must hash to the
+configured digest on every load. A file that fails either is refused, and left
+where it is: it is the user's file, not one this module fetched.
 """
 
 from __future__ import annotations
@@ -89,6 +97,19 @@ _CHUNK_BYTES = 1 << 20
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _O_BINARY = getattr(os, "O_BINARY", 0)
 
+#: The ``stt.model`` value that selects a user-supplied model instead of a catalog
+#: row. Not a member of :data:`CATALOG`: it names no fixed artifact, so it has no
+#: size to advertise and no digest to state here -- both come from configuration.
+CUSTOM_MODEL = "custom"
+
+#: Length of a hex-encoded sha256, which is the whole shape a digest has to have
+#: before it is worth comparing anything against.
+_SHA256_HEX_LEN = 64
+
+#: Longest ``stt.custom_model_path`` worth resolving. A real file name under the
+#: models directory is far shorter; the bound keeps a pasted blob out of a stat.
+_CUSTOM_PATH_MAX_CHARS = 1024
+
 #: Suffix for the staging file. Staged inside the TARGET directory so the final
 #: step is a same-filesystem ``os.replace`` and therefore atomic; a staging area
 #: under the system temp dir can land on a different device, where the rename
@@ -107,19 +128,27 @@ _NETWORK_STALL_TIMEOUT_SECS = 60.0
 
 @dataclass(frozen=True)
 class WhisperModel:
-    """One entry in the catalog.
+    """One model the recogniser can load -- a catalog row, or the configured custom one.
 
     ``size_bytes`` is carried for two reasons: the UI states the download cost
     before asking for it, and a file whose size does not match cannot be the
-    pinned artifact, which is a free pre-check before any expensive work.
+    pinned artifact, which is a free pre-check before any expensive work. ``0``
+    means the size is unknown, which only a custom model can be.
+
+    ``custom_path`` is the configured ``stt.custom_model_path`` for a custom model
+    and ``""`` for a catalog row. It is the value as configured, not a vetted
+    location: :func:`custom_model_file` is what decides whether it may be opened.
     """
 
     name: str
     size_bytes: int
     sha256: str
+    custom_path: str = ""
 
     @property
     def filename(self) -> str:
+        if self.name == CUSTOM_MODEL:
+            return Path(self.custom_path).name
         return f"ggml-{self.name}.bin"
 
 
@@ -159,6 +188,10 @@ CATALOG: tuple[WhisperModel, ...] = (
 DEFAULT_MODEL = "base"
 
 _BY_NAME: dict[str, WhisperModel] = {m.name: m for m in CATALOG}
+
+#: The on-disk names the catalog downloads into, which a custom model may not use.
+_CATALOG_FILENAMES: frozenset[str] = frozenset(m.filename for m in CATALOG)
+_CATALOG_FILENAMES_FOLDED: frozenset[str] = frozenset(n.casefold() for n in _CATALOG_FILENAMES)
 
 #: Names accepted from superseded configuration, mapped to the entry that best
 #: honours what the user actually asked for. Without this table every one of them
@@ -218,13 +251,206 @@ def canonical_name(name: str) -> str | None:
     return canonical if canonical in _BY_NAME else None
 
 
+def valid_custom_sha256(value: object) -> str:
+    """Return *value* lower-cased if it is a hex sha256, else ``""``.
+
+    Two carrier shapes are unwrapped first, because they are what a user actually
+    has in the clipboard and neither is ambiguous: a ``sha256:`` prefix, as
+    published beside an artifact, and ``sha256sum``'s own ``<hex>  <file>`` line.
+    Unwrapping is not widening -- the result still has to be exactly 64 hex
+    characters.
+    """
+    if not isinstance(value, str):
+        return ""
+    fields = value.strip().lower().split(maxsplit=1)
+    digest = fields[0] if fields else ""
+    for prefix in ("sha256:", "sha-256:", "sha256="):
+        if digest.startswith(prefix):
+            digest = digest[len(prefix) :]
+            break
+    if len(digest) != _SHA256_HEX_LEN:
+        return ""
+    return digest if all(c in "0123456789abcdef" for c in digest) else ""
+
+
+def valid_custom_path(value: object) -> str:
+    """Return *value* stripped if it has the SHAPE of a custom model path, else ``""``.
+
+    Shape only -- a string, not blank, no NUL or other control character, of a sane
+    length -- so it can run during a configuration load without touching the disk.
+    Whether the path may actually be opened is :func:`custom_model_file`'s question,
+    asked when a model is about to be used and when the dashboard saves the field.
+    """
+    if not isinstance(value, str):
+        return ""
+    path = value.strip()
+    if not path or len(path) > _CUSTOM_PATH_MAX_CHARS:
+        return ""
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in path):
+        return ""
+    return path
+
+
+class CustomModelPathError(ValueError):
+    """A custom model path that may not be used. The message is shown to the user.
+
+    ``code`` is stable for the dashboard; the message never quotes the path, so it
+    is safe in a log line and on any surface that renders it.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _is_within(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        # Different drives on Windows, or a mix of absolute and relative paths.
+        return False
+
+
+def custom_model_file(value: object) -> Path:
+    """The real path of the custom model file *value* names. Raises when unusable.
+
+    *value* is a file name relative to :func:`models_dir`, or an absolute path into
+    it. It is usable only when it resolves -- every symlink followed -- to a regular
+    file strictly inside that directory. The check runs twice, before and after
+    resolution: before, so a ``..`` component and an absolute path elsewhere are
+    refused without looking at the disk outside the directory; after, so a symlink
+    inside the directory that points out of it is refused too.
+
+    A ``..`` component is refused outright rather than collapsed. Collapsing it as
+    text answers a different question than the OS does once a symlink precedes it
+    (``alias/../x`` with ``alias -> .``), and the path returned here is the one the
+    loader opens, so it has to be the OS's answer. ``~`` is not expanded, for the
+    same reason: there is no home directory in this check, only the models folder.
+
+    Raises :class:`CustomModelPathError` with a code of ``custom_model_path_empty``,
+    ``custom_model_path_outside``, ``custom_model_path_missing`` or
+    ``custom_model_path_not_file``.
+    """
+    raw = valid_custom_path(value)
+    if not raw:
+        raise CustomModelPathError(
+            "custom_model_path_empty",
+            "Enter the name of a model file in the speech models folder.",
+        )
+    root = models_dir()
+    outside = CustomModelPathError(
+        "custom_model_path_outside",
+        "The model file must be inside the speech models folder.",
+    )
+    candidate = Path(raw)
+    if ".." in candidate.parts:
+        raise outside
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    lexical = os.path.normpath(candidate)
+    real_root = os.path.realpath(root)
+    roots = {os.path.normpath(root), real_root}
+    if lexical in roots or not any(_is_within(lexical, r) for r in roots):
+        raise outside
+    try:
+        real = candidate.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise CustomModelPathError(
+            "custom_model_path_missing",
+            "No file with that name is in the speech models folder.",
+        ) from None
+    if str(real) == real_root or not _is_within(str(real), real_root):
+        raise outside
+    if not real.is_file():
+        raise CustomModelPathError(
+            "custom_model_path_not_file",
+            "That name is a folder, not a model file.",
+        )
+    # The catalog owns these names: preparing a built-in model deletes a file at its
+    # path that fails the catalog pin and overwrites it with a download, so a custom
+    # file there would be destroyed. Checked on the RESOLVED name, so a symlink that
+    # points at a catalog file is refused too; staging files are never a model.
+    # Compared case-folded, and by identity against any catalog file already there:
+    # on a case-insensitive volume (the macOS default) `GGML-BASE.BIN` IS the
+    # catalog's `ggml-base.bin`, so a byte-exact name test would let it through.
+    in_root = os.path.samefile(real.parent, real_root)
+    folded = real.name.casefold()
+    reserved = (in_root and folded in _CATALOG_FILENAMES_FOLDED) or folded.endswith(_STAGING_SUFFIX)
+    if not reserved:
+        for name in _CATALOG_FILENAMES:
+            try:
+                if os.path.samefile(real, os.path.join(real_root, name)):
+                    reserved = True
+                    break
+            except OSError:
+                continue
+    if reserved:
+        raise CustomModelPathError(
+            "custom_model_path_reserved",
+            "That file name belongs to a built-in model. Rename your file, "
+            "for example to ggml-custom.bin.",
+        )
+    return real
+
+
+def custom_model(path: object, sha256: object) -> WhisperModel | None:
+    """A :class:`WhisperModel` for the configured custom file, or ``None`` if unusable.
+
+    ``None`` means the pair is absent or malformed, which callers turn into the same
+    degrade-to-default the catalog uses for an unknown name. Both halves are
+    required: a path with no digest would load bytes nobody pinned.
+
+    A well-formed pair whose file is missing or outside the models directory still
+    builds a model here, deliberately. Degrading it to the default would download
+    and run a different model than the one the user chose, with nothing on screen to
+    say so; kept, it fails at :meth:`ModelStore.ensure` with the reason shown.
+    """
+    configured = valid_custom_path(path)
+    digest = valid_custom_sha256(sha256)
+    if not configured or not digest:
+        return None
+    return WhisperModel(CUSTOM_MODEL, 0, digest, configured)
+
+
+def _configured_custom_model() -> WhisperModel | None:
+    """The custom model current configuration names, or ``None``.
+
+    The import is deferred because ``config.sections`` imports THIS module at module
+    scope to derive the accepted ``stt.model`` values. Reading configuration here
+    cannot recurse: the config loader validates ``custom`` from its sibling fields
+    instead of calling :func:`resolve`.
+    """
+    try:
+        from kiro_crew.config import KiroCrewConfig
+
+        stt = KiroCrewConfig.load().stt
+        return custom_model(stt.custom_model_path, stt.custom_model_sha256)
+    except Exception:
+        logger.warning("Could not read the configured custom whisper model", exc_info=True)
+        return None
+
+
 def resolve(name: str) -> WhisperModel:
-    """Return the catalog entry for *name*, falling back to the default.
+    """Return the model *name* selects, falling back to the default.
 
     Falls back with a warning rather than raising: this value arrives from
     ``config.json``, and an unrecognised model must degrade to a working default
     the way an unusable backend does, not fail the voice session that read it.
+    That covers :data:`CUSTOM_MODEL` with no usable path/digest pair too.
+
+    For ``custom`` this reads configuration, so async callers run it off the loop.
     """
+    if name == CUSTOM_MODEL:
+        custom = _configured_custom_model()
+        if custom is not None:
+            return custom
+        logger.warning(
+            "stt.model is %r but stt.custom_model_path and stt.custom_model_sha256 are "
+            "not both set (a file name, 64 hex characters); using %r.",
+            CUSTOM_MODEL,
+            DEFAULT_MODEL,
+        )
+        return _BY_NAME[DEFAULT_MODEL]
     canonical = _ALIASES.get(name, name)
     model = _BY_NAME.get(canonical)
     if model is not None:
@@ -249,6 +475,19 @@ def models_dir() -> Path:
 
 
 def model_path(model: WhisperModel) -> Path:
+    """Where *model*'s weights are. Touches the disk for a custom model.
+
+    For a custom model this is the REAL path :func:`custom_model_file` resolves, so
+    a residency key built from it names the same file :meth:`ModelStore.ensure`
+    hashes. An unusable custom path answers the configured value joined to the
+    models folder instead: a key for a file nothing will load.
+    """
+    if model.name == CUSTOM_MODEL:
+        try:
+            return custom_model_file(model.custom_path)
+        except CustomModelPathError:
+            configured = Path(model.custom_path)
+            return configured if configured.is_absolute() else models_dir() / configured
     return models_dir() / model.filename
 
 
@@ -258,7 +497,16 @@ def is_present(model: WhisperModel) -> bool:
     The size check is what makes an interrupted download visible. A staging file
     is never at this path, so a wrong size here means a truncated or replaced
     file, and treating it as absent lets the next download overwrite it.
+
+    A custom model has no pinned size, so it is present when its path is usable
+    (see :func:`custom_model_file`) and the file is not empty. Its bytes are checked
+    against the digest by ``ModelStore.ensure`` on every load.
     """
+    if model.name == CUSTOM_MODEL:
+        try:
+            return custom_model_file(model.custom_path).stat().st_size > 0
+        except (CustomModelPathError, OSError):
+            return False
     try:
         return model_path(model).stat().st_size == model.size_bytes
     except OSError:
@@ -313,6 +561,21 @@ def used_within(seconds: float) -> bool:
         return time.time() - usage_marker_path().stat().st_mtime <= seconds
     except OSError:
         return False
+
+
+def prewarm_size_bytes(model: WhisperModel) -> int:
+    """The size, in bytes, to hold *model* against a memory guard before loading it.
+
+    The pinned size for a catalog row. A custom model has none, and a guard fed
+    ``0`` admits any file, so its own size on disk stands in. ``0`` back means the
+    file could not be sized, which the caller reads as "do not speculate".
+    """
+    if model.size_bytes:
+        return model.size_bytes
+    try:
+        return custom_model_file(model.custom_path).stat().st_size
+    except (CustomModelPathError, OSError):
+        return 0
 
 
 def _model_url(model: WhisperModel) -> str:
@@ -662,6 +925,8 @@ class ModelStore:
         "a concurrent caller finished while we waited" branch returning the file
         unverified, which is the same hole through the other door.
         """
+        if model.name == CUSTOM_MODEL:
+            return await self._accept_custom(model)
         accepted, refused = await self._accept_existing_or_refuse(model)
         if accepted is not None or refused:
             return accepted
@@ -716,6 +981,62 @@ class ModelStore:
             logger.error("Refusing to load whisper model %s: %s", model.name, exc)
             self._set(step="failed", model=model.name, error=str(exc), refused=True)
             return None, True
+
+    async def _accept_custom(self, model: WhisperModel) -> Path | None:
+        """The vetted path of the custom model file, or ``None`` with the reason in status.
+
+        Never downloads and never deletes. The path check and the hash both run on
+        every call, for the reason ``_verified_on_disk`` gives for catalog weights: a
+        file that passed once proves nothing about the next load. A refusal leaves the
+        file alone, because it is the user's own file and not one this store fetched.
+
+        The catalog's two seal checks apply here too, and refuse the load as a
+        ``failed`` status flagged ``refused``. ``models`` and the whisper folder must be
+        real directories (``sandbox.require_real_model_path``), so the file
+        :func:`custom_model_file` resolved inside them sits under the read-only seal; a
+        link further down is followed and has to stay inside the folder. The hash is the
+        one-descriptor check (:func:`_sha256_verified_file`), so a second hard link, a
+        leaf that became a symlink, or a change during the read refuses it.
+        """
+        # Imported here, not at module scope: this keeps the sandbox module out of the
+        # stt import graph, mirroring the lazy direction sandbox itself uses for stt.
+        from kiro_crew import sandbox
+
+        try:
+            path = await asyncio.to_thread(custom_model_file, model.custom_path)
+        except CustomModelPathError as exc:
+            logger.warning("Custom whisper model refused: %s", exc)
+            self._set(step="failed", model=model.name, error=str(exc))
+            return None
+        try:
+            folder = models_dir()
+            sandbox.require_real_model_path(str(folder), models_root=str(folder.parent))
+            actual = await asyncio.to_thread(_sha256_verified_file, path)
+        except sandbox.SandboxCeilingUnsealable as exc:
+            logger.error("Refusing to load the custom whisper model: %s", exc)
+            self._set(step="failed", model=model.name, error=str(exc), refused=True)
+            return None
+        except OSError as exc:
+            logger.warning("Custom whisper model could not be read: %s", exc.strerror)
+            self._set(step="failed", model=model.name, error="The model file could not be read.")
+            return None
+        if actual != model.sha256:
+            logger.error(
+                "Custom whisper model %s does not match stt.custom_model_sha256 "
+                "(got %s…, expected %s…); not loading it.",
+                path.name,
+                actual[:16],
+                model.sha256[:16],
+            )
+            self._set(
+                step="failed",
+                model=model.name,
+                error="The model file does not match its SHA-256, so it was not loaded.",
+            )
+            return None
+        size = await asyncio.to_thread(lambda: path.stat().st_size)
+        self._set(step="ready", model=model.name, total=size)
+        return path
 
     async def _accept_existing(self, model: WhisperModel) -> Path | None:
         """The on-disk path if *model* is present AND matches its pin, else ``None``.
