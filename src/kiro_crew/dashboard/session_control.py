@@ -64,6 +64,7 @@ from kiro_crew.config.loader import (
     resolve_agent_bindings,
 )
 from kiro_crew.config.resolution import DEGRADED_WHOLE_CONFIG
+from kiro_crew.config.sections import AUTOCOMPACT_PCT_MAX, AUTOCOMPACT_PCT_MIN
 from kiro_crew.crew_log import emit as crew_log_emit
 from kiro_crew.crew_log.session_tree_projection import projection
 from kiro_crew.dashboard.chat_delivery import sanitize_outbound
@@ -2412,6 +2413,7 @@ async def create_session(
     agent_kind: str = "",
     folder_id: str = "",
     model: str = "",
+    autocompact_pct: float | None = None,
     caller_fenced: bool | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -2458,6 +2460,17 @@ async def create_session(
     restart. Empty leaves the slot on the agent's or the global default, exactly
     as before. It is not a privilege the caller lacks -- ``spawn_run`` already
     takes a per-run ``model`` -- and it moves no memory boundary.
+
+    ``autocompact_pct`` gives the child its own compaction threshold, the same
+    per-session override a person sets with "Auto-compact at" in the context
+    meter (``POST /api/chat/slots/{slot}/autocompact``). ``None`` leaves the slot
+    following the global ``session.autocompact_pct``, exactly as before. A value
+    outside ``AUTOCOMPACT_PCT_MIN`` to ``AUTOCOMPACT_PCT_MAX``, or NaN, refuses
+    the whole create before anything is allocated. The override is set on the
+    slot and rides in the persist-at-birth metadata, so an idle child keeps it
+    across a restart. The live gate is seeded once that write has landed, because
+    restore re-seeds the gate from the same record. The override touches no other
+    session and not the global value.
 
     ``caller_fenced`` is the ownership-fence verdict the HTTP gate already settled
     on the caller's VERIFIED scope, carried in for the same reason
@@ -2754,6 +2767,33 @@ async def create_session(
         model_reason = _model_rejected_reason(model_name, provider=cfg.agent.provider or "")
         if model_reason:
             raise SessionControlError(model_reason, code="model_rejected")
+
+    # The child's own compaction threshold. Checked HERE, before anything is
+    # allocated, for the reason the model is: the HTTP route forwards the body's
+    # value without the MCP schema, so the range and the NaN guard must hold at
+    # this boundary. Refused rather than clamped, with the range and finite checks
+    # and codes of the per-slot endpoint: a caller that asked for 95 learns it now
+    # instead of silently running at 90.
+    pct_override: float | None = None
+    if autocompact_pct is not None:
+        if isinstance(autocompact_pct, bool) or not isinstance(autocompact_pct, (int, float)):
+            raise SessionControlError("autocompact_pct must be a number", code="invalid_field_type")
+        try:
+            pct_override = float(autocompact_pct)
+        except OverflowError:
+            raise SessionControlError(
+                "autocompact_pct must be a finite number", code="pct_not_finite"
+            ) from None
+        if pct_override != pct_override:  # NaN fails every comparison below
+            raise SessionControlError(
+                "autocompact_pct must be a finite number", code="pct_not_finite"
+            )
+        if not (AUTOCOMPACT_PCT_MIN <= pct_override <= AUTOCOMPACT_PCT_MAX):
+            raise SessionControlError(
+                f"autocompact_pct must be between {AUTOCOMPACT_PCT_MIN:g} "
+                f"and {AUTOCOMPACT_PCT_MAX:g}",
+                code="pct_out_of_range",
+            )
 
     # Capture the child route once. Inherited member/store identity survives
     # renamed aliases or changed config; an explicit member selection is resolved
@@ -3291,6 +3331,12 @@ async def create_session(
             # exactly as it treats a human pick rather than as a backfilled value.
             slot.model = model_name
             slot._model_pick_gen += 1
+        if pct_override is not None:
+            # On the slot, so the birth record below and every later save write it.
+            # The live gate is seeded after that record lands, not here: restore
+            # re-seeds the gate from the record, so the record owns the override
+            # and the gate must not run ahead of it.
+            slot.autocompact_pct = pct_override
         if title.strip():
             slot.title = sanitize_outbound(title.strip())[:200]
             slot._titled = True
@@ -3374,6 +3420,12 @@ async def create_session(
                     # dict is the only record, and without it a restart would
                     # bring the session back on the default model.
                     **({"model": slot.model} if model_name else {}),
+                    # The compaction override, only when one was asked for. The
+                    # normal save path writes it too, but for an idle newborn this
+                    # dict is the only record, and without it a restart would bring
+                    # the session back on the global threshold. Restore reads this
+                    # key and re-seeds the live gate.
+                    **({"autocompact_pct": pct_override} if pct_override is not None else {}),
                     # Creator attribution, only when this entry point set it. The
                     # member ownership boundary in `authorize_target` reads it, so
                     # losing it on restart would strand every worker a member
@@ -3421,6 +3473,11 @@ async def create_session(
                 state._slots.pop(slot.key, None)
             state.push_slots_update()
             raise
+        if pct_override is not None and state._slots.get(slot.key) is slot:
+            # The birth record landed, so the gate follows it with the value it
+            # recorded, keyed the way the per-slot endpoint and restore key it. A
+            # slot that left the table during the write takes no gate entry.
+            state.sessions.set_autocompact_pct(effective_session_key(slot), pct_override)
         if slot.folder_id:
             # Model-B un-hide, applied only NOW that the filing has actually
             # landed -- running it any earlier persists `hidden = False` for a
@@ -3458,6 +3515,9 @@ async def create_session(
             "agent": slot.agent or "",
             "folder_id": slot.folder_id or "",
             "model": model_name,
+            # The override the child was born with; "" means it has no override of
+            # its own, so it follows its agent's default, else the global threshold.
+            "autocompact_pct": "" if pct_override is None else f"{pct_override:g}",
             # What the child was BORN with, so an auto-approved tool call in it is
             # traceable to the creator's grant rather than appearing unexplained.
             # Always present: "false" is the record that the grant did not transfer.
@@ -3475,6 +3535,7 @@ async def create_session(
         "target": slot.key,
         "title": slot.title or slot.key,
         **({"model": model_name} if model_name else {}),
+        **({"autocompact_pct": pct_override} if pct_override is not None else {}),
     }
 
 

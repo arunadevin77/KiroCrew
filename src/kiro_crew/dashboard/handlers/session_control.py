@@ -270,6 +270,7 @@ async def api_session_control_create(request: web.Request) -> web.Response:
             agent_kind=agent_kind,
             folder_id=str(body.get("folder_id") or ""),
             model=str(body.get("model") or ""),
+            autocompact_pct=body.get("autocompact_pct"),
             dry_run=dry_run,
             # The fence verdict this request's admission already settled, for the
             # same reason every other route forwards it as

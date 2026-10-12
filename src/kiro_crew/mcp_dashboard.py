@@ -82,7 +82,12 @@ from typing import Any
 from urllib.parse import quote
 
 from kiro_crew.config.loader import KiroCrewConfig
-from kiro_crew.config.sections import FOLDER_SORT_DEFAULT, FOLDER_SORT_MODES
+from kiro_crew.config.sections import (
+    AUTOCOMPACT_PCT_MAX,
+    AUTOCOMPACT_PCT_MIN,
+    FOLDER_SORT_DEFAULT,
+    FOLDER_SORT_MODES,
+)
 from kiro_crew.dashboard.chat_folders import (
     _folder_owner_app,
     _subtree_holds_foreign_folder,
@@ -728,6 +733,19 @@ def _session_tools() -> tuple[Tool, ...]:
                             "the turn succeeds on the account's default model, and the only "
                             "signal is a notice in that session's transcript. The person "
                             "can still change it later."
+                        ),
+                    },
+                    "autocompact_pct": {
+                        "type": "number",
+                        "minimum": AUTOCOMPACT_PCT_MIN,
+                        "maximum": AUTOCOMPACT_PCT_MAX,
+                        "description": (
+                            "Context-usage percent at which the NEW session auto-compacts, "
+                            "set as that session's own override exactly as if the person "
+                            "had set 'Auto-compact at' in its context meter. Only the new "
+                            "session gets it: the global session.autocompact_pct and every "
+                            "other session, including yours, are unchanged. Omit to follow "
+                            "the global value. The person can still change or reset it later."
                         ),
                     },
                 },
@@ -2718,6 +2736,10 @@ def _run_session_create(args: dict[str, Any], ctx: ToolContext) -> str:
         payload["model"] = args["model"]
     if args.get("agent_kind"):
         payload["agent_kind"] = args["agent_kind"]
+    if args.get("autocompact_pct") is not None:
+        # Set before the folder preflight below, so its dry-run probe carries the
+        # value and a refused threshold creates no folder.
+        payload["autocompact_pct"] = args["autocompact_pct"]
 
     def _refused(refused: DashboardError, suffix: str) -> str:
         return redact(
@@ -2759,8 +2781,14 @@ def _run_session_create(args: dict[str, Any], ctx: ToolContext) -> str:
         return f"Error: {_refused(refused, made_note)}"
     filed = f" filed in `{folder_label}`" if folder_label else ""
     on_model = f" on model `{resp['model']}`" if resp.get("model") else ""
+    at_pct = (
+        f", auto-compacting at {resp['autocompact_pct']:g}%"
+        if resp.get("autocompact_pct") is not None
+        else ""
+    )
     return redact(
-        f"\U0001f195 Opened `{resp.get('target')}` ({resp.get('title')}){filed}{on_model}.{made_note} "
+        f"\U0001f195 Opened `{resp.get('target')}` ({resp.get('title')}){filed}{on_model}"
+        f"{at_pct}.{made_note} "
         "It is empty and waiting in the user's sidebar; watch it with "
         "session_read_message."
     )
