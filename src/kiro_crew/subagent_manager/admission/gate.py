@@ -32,6 +32,7 @@ if TYPE_CHECKING:
         SubagentInfo,
         _cost_bucket,
         _dedicated_start_price_gb,
+        _inherited_member_agent,
         _owns_dedicated_runtime,
         _shared_start_price_gb,
         _spawn_memory_floor_and_cost,
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
         asyncio,
         check_memory_available,
         logger,
+        on_event_loop,
         parent_spawn_policy,
         platform_compat,
         pop_memory_check_cause,
@@ -841,13 +843,23 @@ class _GateMixin(ManagerComponent):
         # The off-loop answer, when the caller took one for this exact
         # ``(agent, cwd, app)``: both checks below walk the agents directory, which
         # must not happen on the gateway loop.
+        _effective_cwd = resolved_cwd or str(
+            getattr(self._manager._sessions, "_pool_cwd", "") or ""
+        )
+        _checked_name = agent or (
+            ""
+            if conversation_key
+            else _inherited_member_agent(
+                execution.selection_kind, execution.template_id, _effective_cwd
+            )
+        )
         _checked = (
             _agent_check
             if _agent_check is not None
             and _agent_check[:3]
             == (
-                agent,
-                resolved_cwd or str(getattr(self._manager._sessions, "_pool_cwd", "") or ""),
+                _checked_name,
+                _effective_cwd,
                 app,
             )
             else None
@@ -874,22 +886,23 @@ class _GateMixin(ManagerComponent):
                     batch_total=max(0, int(batch_total)),
                 )
                 return self._manager._announce_rejection(info)
-        if agent and not _agent_prevalidated:
+        if _checked_name and not _agent_prevalidated:
             # Validate against the cwd the subagent will ACTUALLY run in. When no
             # explicit cwd was given the runtime falls back to the session pool's
             # cwd, so validating only the explicit value refused a project agent
             # kiro-cli would have loaded — the same interface asymmetry the project
             # scope exists to remove, just one layer down.
-            effective_cwd = resolved_cwd or str(
-                getattr(self._manager._sessions, "_pool_cwd", "") or ""
-            )
             # An event-loop caller (``spawn_async``, the coroutine pump) took
             # this answer off the loop; it is used for the same inputs only, so a
             # cwd the gate resolved differently is checked here as before.
-            if _checked is not None and effective_cwd == _checked[1]:
-                agent, err, err_code = _checked[4:]
+            if _checked is not None and _effective_cwd == _checked[1]:
+                validated, err, err_code = _checked[4:]
+            elif agent or not on_event_loop():
+                validated, err, err_code = _validate_agent(_checked_name, _effective_cwd)
             else:
-                agent, err, err_code = _validate_agent(agent, effective_cwd)
+                validated, err, err_code = "", "", ""
+            if agent:
+                agent = validated
             if err:
                 # The row was accepted; an agent name that does not resolve at
                 # dispatch is a terminal failure of THAT row, never a silent drop.

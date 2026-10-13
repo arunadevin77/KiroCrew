@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -60,6 +61,7 @@ async def _deferring_manager(monkeypatch) -> tuple[SubagentManager, list[str], d
     monkeypatch.setattr(KiroCrewConfig, "load", lambda: cfg)
     monkeypatch.setattr(subagent_mod, "Stats", MagicMock())
     monkeypatch.setattr(subagent_mod, "sel", MagicMock())
+    monkeypatch.setattr(subagent_mod, "list_agents", lambda: [SimpleNamespace(name="kirocrew")])
     monkeypatch.setattr(SpawnAdmissionCoordinator, "open_store_off_loop", True)
     monkeypatch.setattr(SpawnAdmissionCoordinator, "pump_off_loop", True)
     free = {"gb": 3.0}

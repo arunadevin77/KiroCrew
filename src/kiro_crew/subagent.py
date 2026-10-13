@@ -88,8 +88,9 @@ from kiro_crew.agent_sdk.spec_hooks import (
     turn_spec_hooks,
 )
 from kiro_crew.agent_spec_format import is_markdown_spec, iter_agent_spec_files
+from kiro_crew.atomic_write import on_event_loop  # noqa: F401
 from kiro_crew.config import live
-from kiro_crew.config.loader import DEFAULT_MODEL, KiroCrewConfig
+from kiro_crew.config.loader import DEFAULT_MODEL, KIRO_CLI_BUILTIN_AGENTS, KiroCrewConfig
 from kiro_crew.config.paths import data_home
 from kiro_crew.config.sections import SESSION_START_TIMEOUT_MIN, AgentConfig
 from kiro_crew.constants import (  # noqa: F401 - DENY_CAUSE_* resolved by admission/pump.py via bind_component_globals
@@ -544,6 +545,14 @@ def _validate_agent(requested: str, project_dir: str = "") -> tuple[str, str, st
         f"agent {requested!r} not found{_available_agents_hint(available)}",
         AGENT_NOT_FOUND_CODE,
     )
+
+
+def _inherited_member_agent(selection_kind: str, template_id: str, project_dir: str = "") -> str:
+    if selection_kind != "member" or template_id in KIRO_CLI_BUILTIN_AGENTS:
+        return ""
+    if project_dir and cached_project_agent_names(project_dir) is None:
+        return ""
+    return template_id
 
 
 def _vet_spawn_governance(parent_session_key: str, agent: str, app: str = "") -> str | None:
@@ -5486,9 +5495,15 @@ class SubagentManager:
         on (the captured *execution_context*'s app wins over the caller's, as
         ``resolve_spawn_execution`` does), so the keys match. None when there is
         nothing to check, or when the cwd will be refused anyway."""
-        if not agent or prevalidated:
+        if prevalidated:
             return None
-        app = str((execution_context or {}).get("app") or "") or app
+        named = agent
+        context = execution_context or {}
+        selection_kind = str(context.get("selection_kind") or "")
+        template_id = str(context.get("template_id") or "")
+        if not named and not _inherited_member_agent(selection_kind, template_id):
+            return None
+        app = str(context.get("app") or "") or app
         pool_cwd = str(getattr(self._sessions, "_pool_cwd", "") or "")
 
         def _check() -> "AgentCheck | None":
@@ -5502,13 +5517,16 @@ class SubagentManager:
                 if err:
                     return None
                 effective = resolved
-            owner_err = _validate_app_agent_ownership(agent, app) if app else ""
+            checked = named or _inherited_member_agent(selection_kind, template_id, effective)
+            if not checked:
+                return None
+            owner_err = _validate_app_agent_ownership(checked, app) if app and named else ""
             return (
-                agent,
+                checked,
                 effective,
                 app,
                 owner_err or "",
-                *_validate_agent(agent, effective),
+                *_validate_agent(checked, effective),
             )
 
         return await asyncio.to_thread(_check)
