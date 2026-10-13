@@ -117,6 +117,46 @@ async def test_the_recipient_check_gets_the_resolved_id_and_the_target_principal
 
 
 @pytest.mark.asyncio
+async def test_a_discord_owner_receives_the_dm_on_the_opened_channel(tmp_path, monkeypatch):
+    """Discord judges the PEER: the resolved id is a DM channel unrelated to the
+    user snowflake on the roster, so the check passes on the target's principal."""
+    from kiro_crew.discord.transport import DiscordTransport
+
+    client = MagicMock()
+    client.create_dm_channel = AsyncMock(return_value="999000111222333444")
+    client.send_message = AsyncMock(return_value="1")
+    transport = DiscordTransport(client, allowed_user_ids=["424242424242424242"])
+    state = _state(tmp_path, monkeypatch, transport)
+
+    sent, code, _ = await mod._deliver_channel_dm(
+        state, "discord", "report ready", caller_session=""
+    )
+
+    assert (sent, code) == (True, "")
+    client.create_dm_channel.assert_awaited_once_with("424242424242424242")
+    client.send_message.assert_awaited_once_with("999000111222333444", "report ready")
+
+
+@pytest.mark.asyncio
+async def test_a_webex_owner_receives_the_dm(tmp_path, monkeypatch):
+    """Webex resolves a DM target to the email itself and judges the principal
+    against the same lowercased roster ``authorize`` uses."""
+    from kiro_crew.webex.transport import WebexTransport
+
+    client = MagicMock()
+    client.send_message = AsyncMock(return_value="m-1")
+    transport = WebexTransport(client, allowed_emails=["Owner@example.invalid"])
+    state = _state(tmp_path, monkeypatch, transport)
+
+    sent, code, _ = await mod._deliver_channel_dm(state, "webex", "report ready", caller_session="")
+
+    assert (sent, code) == (True, "")
+    client.send_message.assert_awaited_once_with(
+        "owner@example.invalid", "report ready", parent_id=None
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_raising_recipient_check_fails_closed(tmp_path, monkeypatch):
     transport, client = _telegram([123])
 
