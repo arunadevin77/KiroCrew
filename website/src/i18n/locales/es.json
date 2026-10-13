@@ -12177,7 +12177,18 @@
         "hint": "Aún no está activo. Responde en el chat para conservar esta página o pedir cambios.",
         "no_member": "No se encontró el miembro al que pertenece esta vista previa.",
         "roster_failed": "No se pudo cargar la lista de miembros, así que no se puede mostrar la vista previa.",
-        "gone": "Esta vista previa se cerró. Se aplicó o caducó."
+        "gone": "Esta vista previa se cerró. Se aplicó o caducó.",
+        "hint_actions": "Aún no está activa. Quedarme con esta la convierte en tu panel y reemplaza la página actual; {{name}} puede restaurarla. Descartar la borra. También puedes pedir cambios en el chat.",
+        "keep": "Quedarme con esta",
+        "discard": "Descartar",
+        "discard_note": "Descartar no se puede deshacer.",
+        "changed": "La vista previa cambió mientras la mirabas. La nueva está abajo; ahora guardar se queda con esta.",
+        "keep_failed": "No se pudo guardar esta vista previa. No cambió nada. Inténtalo de nuevo.",
+        "discard_failed": "No se pudo descartar esta vista previa. No cambió nada. Inténtalo de nuevo.",
+        "outcome_kept": "Guardada. Esta es la página activa ahora.",
+        "outcome_discarded": "Descartada. La página activa no cambió.",
+        "outcome_closed": "Vista previa terminada. Esta es la página activa ahora.",
+        "outcome_undo": "Para deshacerlo, pídele a {{name}} que restaure el panel anterior."
       }
     },
     "chatPage": {

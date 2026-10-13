@@ -12177,7 +12177,18 @@
         "hint": "Non ancora attiva. Rispondi in chat per tenere questa pagina o chiedere modifiche.",
         "no_member": "Impossibile trovare il membro a cui appartiene questa anteprima.",
         "roster_failed": "Impossibile caricare l’elenco dei membri, quindi l’anteprima non può essere mostrata.",
-        "gone": "Questa anteprima è chiusa. È stata applicata o è scaduta."
+        "gone": "Questa anteprima è chiusa. È stata applicata o è scaduta.",
+        "hint_actions": "Non è ancora live. Tieni la rende la tua dashboard e sostituisce la pagina attuale; {{name}} può ripristinarla. Scarta la elimina. Puoi anche chiedere modifiche in chat.",
+        "keep": "Tieni",
+        "discard": "Scarta",
+        "discard_note": "Scartare non si può annullare.",
+        "changed": "L’anteprima è cambiata mentre la guardavi. La nuova è qui sotto; ora Tieni tiene questa.",
+        "keep_failed": "Non è stato possibile tenere questa anteprima. Non è cambiato nulla. Riprova.",
+        "discard_failed": "Non è stato possibile scartare questa anteprima. Non è cambiato nulla. Riprova.",
+        "outcome_kept": "Tenuta. Ora questa è la pagina live.",
+        "outcome_discarded": "Scartata. La pagina live non è cambiata.",
+        "outcome_closed": "Anteprima finita. Ora questa è la pagina live.",
+        "outcome_undo": "Per annullare, chiedi a {{name}} di ripristinare la dashboard precedente."
       }
     },
     "chatPage": {

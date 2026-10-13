@@ -199,6 +199,8 @@ interface Loaded {
    *  that moves this tab between them would otherwise reconcile against the held
    *  document and keep it. */
   dashboard: string
+  /** Which staged page this is, on a preview read; 0 on the live page. */
+  stagedMs: number
 }
 
 /**
@@ -239,7 +241,7 @@ export function dashboardQueryKey(target: DashboardTarget): readonly string[] {
     : [SESSION_DASHBOARD_QUERY_PREFIX, target.slot]
 }
 
-export default function CrewDynamicDashboard({ target, displayName, onAct, preview = false, onPreviewGone, onOpenProfileTab, dashboardSlug = '' }: {
+export default function CrewDynamicDashboard({ target, displayName, onAct, preview = false, onPreviewGone, onPreviewLoaded, onOpenProfileTab, dashboardSlug = '' }: {
   target: DashboardTarget
   displayName: string
   /** Put a reply the page offered into the chat box. Absent: the page's options do nothing. */
@@ -248,8 +250,12 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
    *  live tab never shows a page nobody applied; still under the `member-dashboard`
    *  prefix, so the frame that says the page changed refetches it too. */
   preview?: boolean
-  /** Told whether the staged page is gone (applied or expired), so a host can drop its "not applied" label. */
+  /** Told whether the staged page is gone (applied or expired). A host that listens
+   *  hands over to the live page itself, so this frame draws nothing for that state. */
   onPreviewGone?: (gone: boolean) => void
+  /** Told the `staged_ms` of the staged page the frame has drawn (0 until it has),
+   *  so the host's Keep and Discard name exactly that page. */
+  onPreviewLoaded?: (stagedMs: number) => void
   /** Called when the person clicks the Locked badge to jump to the Profile tab. */
   onOpenProfileTab?: () => void
   /** The `kind="dashboard"` package to show instead of the crewmate's template page.
@@ -280,7 +286,7 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   const { resolved: locale } = useLanguage()
 
   const staged = preview
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isError, isFetching, error, refetch } = useQuery({
     queryKey: [...dashboardQueryKey(target), locale, staged ? 'preview' : 'live'],
     queryFn: () => target.kind === 'member'
       ? (staged ? api.memberDashboard(target.slug, target.member, locale, true) : api.memberDashboard(target.slug, target.member, locale))
@@ -439,7 +445,10 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
       frameRef.current?.contentWindow?.postMessage({ type: DATA_MESSAGE_TYPE, read }, '*')
     })
   }, [memberSlug])
-  const previewGone = staged && isError && apiErrorCode(error) === 'no_preview'
+  // Only a SETTLED answer says the page is gone. A frame remounted on a newer
+  // preview link can start from a cached `no_preview` while its own read is in
+  // flight, and handing over on that would skip the page staged since.
+  const previewGone = staged && isError && !isFetching && apiErrorCode(error) === 'no_preview'
   useEffect(() => { onPreviewGone?.(previewGone) }, [onPreviewGone, previewGone])
 
   // The person's layout lock, read off the same body the page comes from. This tab
@@ -566,6 +575,7 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
       // behaviour it shipped with instead of going silently static.
       scripts: (data as { scripts?: boolean }).scripts !== false,
       dashboard: identity,
+      stagedMs: 'staged_ms' in data && typeof data.staged_ms === 'number' ? data.staged_ms : 0,
     }
     // Keyed on the INSTANCE VERSION. Contract v3 says every change bumps it, so it is
     // the server's own statement that this is a different page, and a different page is
@@ -578,7 +588,7 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
     setCandidate(prev => {
       if (!prev) return next
       if (prev.instanceVersion !== next.instanceVersion) return next
-      return prev.html === next.html ? prev : next
+      return prev.html === next.html && prev.stagedMs === next.stagedMs ? prev : next
     })
     // A re-render of the SAME version is new VALUES, not a new page -- which is most
     // of what a refetch brings, and all of what an unadopted crewmate ever gets,
@@ -590,7 +600,7 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
     setGood(prev => {
       if (!prev) return prev
       if (prev.instanceVersion !== next.instanceVersion) return prev
-      return prev.html === next.html ? prev : next
+      return prev.html === next.html && prev.stagedMs === next.stagedMs ? prev : next
     })
     // Recorded on EVERY read, before and regardless of either promotion above. This is
     // the half that makes a revocation independent of the layout: the two setters can
@@ -668,6 +678,57 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   const mint = useSandboxDoc(srcdoc)
   const { url, pending, retry } = mint
   const failed = mint.failed || mint.stalled
+
+  // The staged page the person can Keep is the one MOUNTED, never the newest read:
+  // while a mint is pending, or after one failed, the frame still holds the earlier
+  // document. Each url is tagged with the srcdoc it was minted from when it lands
+  // (the mint keeps only the latest request, so that is the srcdoc at that moment),
+  // and nothing is offered until the url on screen was minted from `shown`'s own.
+  const srcdocRef = useRef<string | null>(null)
+  srcdocRef.current = srcdoc
+  const [urlSource, setUrlSource] = useState<{ url: string | null; srcdoc: string | null }>({ url: null, srcdoc: null })
+  useEffect(() => { setUrlSource({ url, srcdoc: srcdocRef.current }) }, [url])
+  // And it must be DRAWN: a new `src` keeps the earlier document on screen until the
+  // frame loads the new one, so the stamp waits for this url's `load` and, for a page
+  // that runs script, its ready beacon as well. Reset whenever the url moves.
+  const drawnUrlRef = useRef(url)
+  drawnUrlRef.current = url
+  const [drawn, setDrawn] = useState<{ url: string | null; loaded: boolean; ready: boolean }>({ url: null, loaded: false, ready: false })
+  useEffect(() => { setDrawn({ url, loaded: false, ready: false }) }, [url])
+  const onFrameLoad = useCallback(() => {
+    setDrawn(prev => (prev.url === drawnUrlRef.current ? { ...prev, loaded: true } : prev))
+  }, [])
+  // Listened on the element rather than through `onLoad`, which the a11y lint reads
+  // as an interaction handler on a non-interactive element. Re-attached whenever the
+  // frame element can be replaced: a new url, or a new grant (its key).
+  const grantKey = crewDashboardSandbox(Boolean(mayRunScript && shown?.scripts))
+  useEffect(() => {
+    const el = frameRef.current
+    if (!el || !url) return
+    el.addEventListener('load', onFrameLoad)
+    return () => el.removeEventListener('load', onFrameLoad)
+  }, [url, grantKey, onFrameLoad])
+  useEffect(() => {
+    if (!staged) return
+    const onMessage = (event: MessageEvent) => {
+      const win = frameRef.current?.contentWindow
+      if (!win || event.source !== win) return
+      const payload = event.data as { type?: unknown } | null
+      if (!payload || payload.type !== READY_MESSAGE_TYPE) return
+      setDrawn(prev => (prev.url === drawnUrlRef.current ? { ...prev, ready: true } : prev))
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [staged])
+  const runsScript = Boolean(mayRunScript && shown?.scripts)
+  const isDrawn = drawn.url === url && drawn.loaded && (drawn.ready || !runsScript)
+  const mountedStagedMs = staged && shown && url && !pending && !failed && isDrawn
+    && urlSource.url === url && urlSource.srcdoc === srcdoc
+    ? shown.stagedMs
+    : 0
+  useEffect(() => {
+    onPreviewLoaded?.(mountedStagedMs)
+  }, [onPreviewLoaded, mountedStagedMs])
 
   /**
    * THE REFILL: new values for the page already on screen, posted into it.
@@ -862,6 +923,9 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   // 404 `no_preview`: the staged page was applied or expired. Nothing is broken
   // and a retry reads the same answer, so no error styling and no Retry.
   if (previewGone) {
+    // A host that listens moves to the live page on this same answer; drawing the
+    // closed notice first would flash it in between.
+    if (onPreviewGone) return null
     return (
       <div className="p-4 text-sm text-muted" data-testid="crew-dashboard-preview-gone">
         {i18nT('pages.chat.dashboardPreviewPanel.gone')}

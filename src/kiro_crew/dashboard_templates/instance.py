@@ -50,6 +50,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -103,13 +104,16 @@ __all__ = [
     "InstanceError",
     "InstanceLocked",
     "InstanceRefused",
+    "NothingStaged",
     "PackagePreview",
     "Preview",
+    "PreviewChanged",
     "adopt",
     "apply_preview",
     "default_instance",
     "default_template_id",
     "discard_preview",
+    "discard_shown_preview",
     "edit",
     "history",
     "instance_dir",
@@ -215,6 +219,14 @@ class InstanceLocked(InstanceRefused):
     """A structure change was refused because the person locked this dashboard."""
 
 
+class NothingStaged(InstanceRefused):
+    """An apply found no staged page: it was kept, discarded or expired."""
+
+
+class PreviewChanged(InstanceRefused):
+    """An apply named a staged page that has since been replaced by another."""
+
+
 #: The ONE sentence the agent hears about the lock: as a structure change's refusal
 #: and on every turn in its ``[DASHBOARD]`` block. Only the person can clear the lock,
 #: from the crewmate's Profile card, so the one useful next step is to ask them.
@@ -273,6 +285,26 @@ class Instance:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+_STAGED_MS_LOCK = threading.Lock()
+_last_staged_ms = 0
+
+
+def _mint_staged_ms(*, after: int = 0) -> int:
+    """A ``staged_ms`` past *after* and past every stamp this process handed out.
+
+    The stamp is the person's Keep / Discard naming the page it was shown, so two
+    stagings that read the same millisecond would look like one page and let a click
+    act on a replacement nobody saw. Each stamp is therefore at least one past the
+    last one handed out and past the page it replaces (*after*, which also covers a
+    restart). It stays within a millisecond or two of the wall clock, so it still
+    measures :data:`MAX_PREVIEW_AGE_MS`.
+    """
+    global _last_staged_ms
+    with _STAGED_MS_LOCK:
+        _last_staged_ms = max(_now_ms(), _last_staged_ms + 1, after + 1)
+        return _last_staged_ms
 
 
 def session_instance_key(slot_key: str) -> str:
@@ -1477,16 +1509,19 @@ def stage_preview(
     staged_manifest = json.loads(json.dumps(_manifest_json(entry)))
     staged_html = entry.html
     _check(staged_manifest, staged_html)
-    staged_ms = _now_ms()
-    payload = {
-        "schema": SCHEMA_VERSION,
-        "slug": slug,
-        "template": {"id": entry.id, "version": entry.version},
-        "html": staged_html,
-        "manifest": staged_manifest,
-        "staged_ms": staged_ms,
-    }
     with _locked(instance_dir(slug)):
+        # Minted under the slug's lock, beyond the page it replaces, so the stamp the
+        # person's click names can only ever match the page that was shown.
+        shown = staged_preview(slug)
+        staged_ms = _mint_staged_ms(after=shown.staged_ms if shown is not None else 0)
+        payload = {
+            "schema": SCHEMA_VERSION,
+            "slug": slug,
+            "template": {"id": entry.id, "version": entry.version},
+            "html": staged_html,
+            "manifest": staged_manifest,
+            "staged_ms": staged_ms,
+        }
         _write(
             instance_dir(slug),
             _PREVIEW_FILE,
@@ -1703,7 +1738,29 @@ def discard_preview(slug: str) -> None:
         pass
 
 
-def apply_preview(slug: str, *, session_id: str = "") -> Instance:
+def discard_shown_preview(slug: str, *, expected_staged_ms: int) -> None:
+    """Drop the staged page the person was shown, and only that one.
+
+    The person's Discard. Checked inside the lock like :func:`apply_preview`'s Keep,
+    so a page staged after the look is refused :class:`PreviewChanged` instead of
+    being thrown away unseen. Nothing staged any more is not a refusal: the person's
+    "not that one" is already true.
+    """
+    with _locked(instance_dir(slug)):
+        preview = staged_preview(slug)
+        if preview is None:
+            return
+        if preview.staged_ms != expected_staged_ms:
+            raise PreviewChanged(
+                "a different page was staged after this one was shown; look at the new "
+                "preview before discarding it"
+            )
+        discard_preview(slug)
+
+
+def apply_preview(
+    slug: str, *, session_id: str = "", expected_staged_ms: int | None = None
+) -> Instance:
     """Commit the staged page as *slug*'s dashboard, and return the new instance.
 
     The only writer behind "keep this one". The staged template becomes a new instance
@@ -1725,14 +1782,23 @@ def apply_preview(slug: str, *, session_id: str = "") -> Instance:
     racing a preview would throw away the page that was just staged -- and a second
     apply arriving in the same window would consume the first one's preview before
     it was deleted at all.
+
+    *expected_staged_ms* is the person's Keep button naming the page it was drawn
+    beside. Checked INSIDE the lock, so a page staged again between the look and the
+    click is refused with :class:`PreviewChanged` rather than installed unseen.
     """
     with _locked(instance_dir(slug)):
         preview = staged_preview(slug)
         if preview is None:
-            raise InstanceRefused(
+            raise NothingStaged(
                 "there is no page staged to keep; preview one first, and stage it again "
                 "if it has been sitting for more than "
                 f"{MAX_PREVIEW_AGE_MS // 60_000} minutes"
+            )
+        if expected_staged_ms is not None and preview.staged_ms != expected_staged_ms:
+            raise PreviewChanged(
+                "a different page was staged after this one was shown; look at the new "
+                "preview before keeping it"
             )
         checked = _check(preview.manifest, preview.html)
         instance = _commit(

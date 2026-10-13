@@ -12177,7 +12177,18 @@
         "hint": "Pas encore actif. Réponds dans le chat pour garder cette page ou demander des changements.",
         "no_member": "Le membre auquel appartient cet aperçu est introuvable.",
         "roster_failed": "La liste des membres n’a pas pu être chargée, l’aperçu ne peut donc pas s’afficher.",
-        "gone": "Cet aperçu est fermé. Il a été appliqué ou a expiré."
+        "gone": "Cet aperçu est fermé. Il a été appliqué ou a expiré.",
+        "hint_actions": "Pas encore en ligne. Garder en fait ton tableau de bord et remplace la page actuelle, que {{name}} peut remettre. Supprimer l’efface. Tu peux aussi demander des changements dans le chat.",
+        "keep": "Garder",
+        "discard": "Supprimer",
+        "discard_note": "La suppression est définitive.",
+        "changed": "L’aperçu a changé pendant que tu regardais. Le nouveau est en dessous, et Garder garde maintenant celui-ci.",
+        "keep_failed": "Impossible de garder cet aperçu. Rien n'a changé. Réessaie.",
+        "discard_failed": "Impossible de supprimer cet aperçu. Rien n’a changé. Réessaie.",
+        "outcome_kept": "Gardée. C’est maintenant la page en ligne.",
+        "outcome_discarded": "Supprimé. La page en ligne n’a pas changé.",
+        "outcome_closed": "Aperçu terminé. C’est maintenant la page en ligne.",
+        "outcome_undo": "Pour annuler, demande à {{name}} de remettre le tableau de bord précédent."
       }
     },
     "chatPage": {

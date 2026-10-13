@@ -236,6 +236,14 @@ def _register_mcp_routes(app: web.Application) -> None:
         "/api/members/{slug}/dashboard/refetch",
         _deferred("member_dashboard", "api_member_dashboard_refetch"),
     )
+    app.router.add_post(
+        "/api/members/{slug}/dashboard/preview/apply",
+        _deferred("member_dashboard", "api_member_dashboard_preview_apply"),
+    )
+    app.router.add_post(
+        "/api/members/{slug}/dashboard/preview/discard",
+        _deferred("member_dashboard", "api_member_dashboard_preview_discard"),
+    )
     # UI guides (``kirocrew-guide``). The agent half is MCP-only and sits under
     # the strict "/api/guide/agent" prefix; the browser half is cookie-authed and
     # owner-only, deliberately OFF that prefix. Deferred like the panel: the server

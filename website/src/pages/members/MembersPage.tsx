@@ -131,7 +131,7 @@ import CrewComposer from './CrewComposer'
 import { createPortal } from 'react-dom'
 import { useCrewmateThreadsFlag } from '../../hooks/useCrewmateThreadsFlag'
 import CrewDashboardTab from './CrewDashboardTab'
-import { DASHBOARD_PREVIEW_PARAM, DASHBOARD_PREVIEW_VALUE, isDashboardPreview } from './dashboardPreview'
+import { DASHBOARD_PREVIEW_PARAM, DASHBOARD_PREVIEW_VALUE, isDashboardPreview, withoutDashboardPreview } from './dashboardPreview'
 import { dashboardPreviewMemberFromRef, dashboardPreviewSlugFromRef } from '../../utils/dashboardPreview'
 import { mergePaneDraft } from '../../utils/chatPaneDrafts'
 import ErrorBoundary from '../../components/ErrorBoundary'
@@ -2924,6 +2924,12 @@ export default function MembersPage() {
     else setOverlayOpen(true)
     focusPanelTab(CREW_DASHBOARD_TAB_ID)
   }, [dashboardPreviewLink, activeMemberName, activeSlot, beside, setDockedOpen, focusPanelTab])
+  // The staged page is gone (kept, applied by the agent, discarded, expired): drop
+  // the preview request so the tab shows the live page. Functional, so it edits the
+  // URL as it is now; the tab stays open because the link effect only opens it.
+  const leaveDashboardPreview = useCallback(() => {
+    setSearchParams(withoutDashboardPreview, { replace: true, state: location.state })
+  }, [setSearchParams, location.state])
   // What a schedule created from the Schedules tab must carry in its `agent` field --
   // which is the provider template only for a crewmate whose identity the server will
   // KEEP. `wakesCrew` matches a job on `member_id` when there is one, and otherwise
@@ -5171,6 +5177,7 @@ export default function MembersPage() {
                     void schedGuardRef.current().then((ok) => { if (ok) openProfile('profile') })
                   }}
                   preview={dashboardPreviewLink}
+                  onLeavePreview={leaveDashboardPreview}
                 />
               )}
             </div>

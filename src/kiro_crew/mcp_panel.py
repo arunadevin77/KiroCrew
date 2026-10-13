@@ -868,7 +868,9 @@ def _render_preview(preview: dict[str, Any]) -> str:
     lines.append("")
     lines.append(
         "ASK the person whether to keep it. dashboard_apply if they say yes; stage "
-        "another one if they do not. Do not apply a page nobody has looked at."
+        "another one if they do not. Do not apply a page nobody has looked at. The "
+        "person may also press Keep or Discard on the preview themselves, so re-read "
+        "your [DASHBOARD] block before calling dashboard_apply."
     )
     return "\n".join(lines)
 

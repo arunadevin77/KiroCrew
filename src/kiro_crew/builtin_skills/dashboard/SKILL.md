@@ -39,6 +39,8 @@ stage -> preview -> a person approves -> apply
 4. **Apply.** This cuts a version from the STAGED page and takes no page
    argument, so what lands is provably the page they looked at. Then say what
    changed, not what the page shows -- they are looking at the contents.
+   The person may also press Keep or Discard on the preview themselves, so
+   re-read your `[DASHBOARD]` block before calling `dashboard_apply`.
 
 `dashboard_save` is the tool that stages an authored page, and it ships in
 [#18851](https://github.com/kirodotdev/KiroCrew/pull/18851). Until it is in your

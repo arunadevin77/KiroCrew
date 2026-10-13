@@ -629,13 +629,21 @@ describe('a preview link: the STAGED page, labelled as one', () => {
     const read = vi
       .spyOn(api, 'memberDashboard')
       .mockRejectedValue(new ApiError(404, 'nothing is staged to preview', '{"code":"no_preview"}'))
-    const onGone = vi.fn()
-    mountPreview(onGone)
+    mountPreview()
     expect(await screen.findByTestId('crew-dashboard-preview-gone')).toHaveTextContent('This preview has closed.')
     expect(screen.queryByTestId('crew-dashboard-error')).toBeNull()
     expect(screen.queryByTestId('crew-dashboard-error-retry')).toBeNull()
     expect(read).toHaveBeenCalledTimes(1)
+  })
+
+  it('tells a listening host and draws nothing, so the host can hand over with no flash', async () => {
+    vi.spyOn(api, 'memberDashboard')
+      .mockRejectedValue(new ApiError(404, 'nothing is staged to preview', '{"code":"no_preview"}'))
+    const onGone = vi.fn()
+    mountPreview(onGone)
     await waitFor(() => expect(onGone).toHaveBeenLastCalledWith(true))
+    expect(screen.queryByTestId('crew-dashboard-preview-gone')).toBeNull()
+    expect(screen.queryByTestId('crew-dashboard-error')).toBeNull()
   })
 
   it('any other 404 is a load failure, not a preview that ended', async () => {

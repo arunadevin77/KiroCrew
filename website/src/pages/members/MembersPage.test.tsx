@@ -1370,13 +1370,16 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
       invalidate.mockRestore()
     })
 
-    it('a staged page that is applied or expires stays on its closed notice, never an unlabelled live page', async () => {
+    it('a staged page the agent applied (or that expired) hands over to the live page, with a line saying so', async () => {
       await renderPage([row({ bound: true, slot_key: 'member-oncall' })], 'kirocrew', { route: '/members?member=oncall&dashboard=preview' })
       expect(await screen.findByTestId('dashboard-preview-badge', undefined, PANE_READY)).toBeInTheDocument()
       fireEvent.click(await screen.findByTestId('crew-dashboard-stub-gone', undefined, PANE_READY))
       await waitFor(() => expect(screen.queryByTestId('dashboard-preview-badge')).toBeNull())
-      expect(currentUrl()).toBe('/members?member=oncall&dashboard=preview')
-      expect(screen.getByTestId('crew-dashboard-stub')).toHaveAttribute('data-preview', 'true')
+      // The URL stops asking for the preview, so the tab reads the live page.
+      await waitFor(() => expect(currentUrl()).toBe('/members?member=oncall'))
+      expect(screen.getByTestId('crew-dashboard-stub')).toHaveAttribute('data-preview', 'false')
+      expect(screen.getByTestId('dashboard-preview-outcome')).toHaveAttribute('data-outcome', 'closed')
+      expect(screen.getByTestId('crew-dashboard-tab')).toBeInTheDocument()
     })
 
     it('a plain member link is the live page', async () => {

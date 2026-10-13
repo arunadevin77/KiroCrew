@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 /**
  * The side panel's view of a crewmate's STAGED dashboard: it says the page is not
- * applied, it renders the staged read (never the live one), it offers no way to
- * apply from here, and it keeps an "open in browser" fallback on the URL.
+ * applied, it renders the staged read until the person's Keep or Discard (drawn
+ * outside the frame), and once the staged page is gone it shows the live page.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
+import { announceDashboardPreviewOpened, dashboardPreviewRef } from '../utils/dashboardPreview'
 import { api, type DashboardManifest, type MemberRosterRow } from '../api/client'
 import { ApiError } from '../api/apiError'
 import { renderWithProviders } from './helpers'
@@ -36,6 +37,15 @@ function staged() {
     manifest: MANIFEST,
     state: 'live' as const,
   }
+}
+
+/** The frame DRAWS the page: its `load`, then the page's ready beacon. Keep and
+ *  Discard stay disabled until both, so a test that clicks them draws first. */
+async function drawFrame() {
+  await waitFor(() => expect(document.querySelector('[data-testid="crew-dashboard-iframe"]')).not.toBeNull(), { timeout: 5000 })
+  const frame = document.querySelector('[data-testid="crew-dashboard-iframe"]') as HTMLIFrameElement
+  fireEvent.load(frame)
+  window.dispatchEvent(new MessageEvent('message', { data: { type: 'kirocrew-dashboard:ready' }, source: frame.contentWindow }))
 }
 
 function roster(rows: Array<Pick<MemberRosterRow, 'name' | 'slug'>>) {
@@ -88,15 +98,47 @@ describe('DashboardPreviewPanel', () => {
     expect(read).not.toHaveBeenCalled()
   })
 
-  it('applies nothing and offers no Apply control', async () => {
+  it('applies nothing on its own: Keep and Discard sit outside the frame until pressed', async () => {
     roster([{ name: 'Atlas', slug: 'atlas' }])
-    vi.spyOn(api, 'memberDashboard').mockResolvedValue(staged())
-    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    vi.spyOn(api, 'memberDashboard').mockResolvedValue({ ...staged(), preview: true, staged_ms: 42 })
+    const apply = vi.spyOn(api, 'memberDashboardPreviewApply')
+    const discard = vi.spyOn(api, 'memberDashboardPreviewDiscard')
     renderWithProviders(<DashboardPreviewPanel target={{ kind: 'member', slug: 'atlas' }} />)
+    const frame = await screen.findByTestId('crew-dashboard-frame', undefined, LAZY)
+    const keep = screen.getByTestId('dashboard-preview-keep')
+    expect(frame.contains(keep)).toBe(false)
+    expect(frame.contains(screen.getByTestId('dashboard-preview-discard'))).toBe(false)
+    expect(apply).not.toHaveBeenCalled()
+    expect(discard).not.toHaveBeenCalled()
+  })
+
+  it('Keep sends the staged page it was drawn beside, then shows the live page', async () => {
+    roster([{ name: 'Atlas', slug: 'atlas' }])
+    let kept = false
+    const read = vi.spyOn(api, 'memberDashboard').mockImplementation(async (_s, _m, _l, preview) => {
+      if (preview && kept) throw new ApiError(404, 'gone', JSON.stringify({ error: 'gone', code: 'no_preview' }))
+      return preview ? { ...staged(), preview: true, staged_ms: 42 } : staged()
+    })
+    const apply = vi.spyOn(api, 'memberDashboardPreviewApply').mockImplementation(async () => {
+      kept = true
+      return { ok: true, instance_version: 4, template_id: 'project-report' }
+    })
+    renderWithProviders(<DashboardPreviewPanel target={{ kind: 'member', slug: 'atlas' }} />)
+    const keep = await screen.findByTestId('dashboard-preview-keep', undefined, LAZY)
+    await waitFor(async () => { await drawFrame(); expect(keep).not.toBeDisabled() }, LAZY)
+    fireEvent.click(keep)
+    await waitFor(() => expect(apply).toHaveBeenCalledWith('atlas', 'Atlas', 42))
+    expect(await screen.findByTestId('dashboard-preview-outcome', undefined, LAZY)).toHaveAttribute('data-outcome', 'kept')
+    await waitFor(() => expect(read.mock.calls.some(call => !call[3])).toBe(true), LAZY)
+    expect(screen.queryByTestId('crew-dashboard-preview-gone')).toBeNull()
+    expect(screen.queryByTestId('dashboard-preview-badge')).toBeNull()
+  })
+
+  it("a session's staged page has no Keep: that one is answered in chat", async () => {
+    vi.spyOn(api, 'sessionDashboard').mockResolvedValue({ ...staged(), preview: true, staged_ms: 42 })
+    renderWithProviders(<DashboardPreviewPanel target={{ kind: 'session', slot: 'chat-7' }} />)
     expect(await screen.findByTestId('crew-dashboard-frame', undefined, LAZY)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /apply/i })).toBeNull()
-    const posted = fetchSpy.mock.calls.map(([url]) => String(url))
-    expect(posted.some(url => url.includes('/dashboard/apply'))).toBe(false)
+    expect(screen.queryByTestId('dashboard-preview-actions')).toBeNull()
   })
 
   it('reports a failed roster refresh even over a cached crewmate name', async () => {
@@ -128,17 +170,38 @@ describe('DashboardPreviewPanel', () => {
     expect(screen.queryByRole('button', { name: /agent/i })).toBeNull()
   })
 
-  it('says plainly that an applied or expired preview is gone, with no Retry', async () => {
+  it('hands an applied or expired preview over to the live page, with one line and no Retry', async () => {
     roster([{ name: 'Atlas', slug: 'atlas' }])
-    vi.spyOn(api, 'memberDashboard').mockRejectedValue(
-      new ApiError(404, 'nothing is staged to preview', JSON.stringify({ error: 'nothing is staged to preview', code: 'no_preview' })),
-    )
+    const read = vi.spyOn(api, 'memberDashboard').mockImplementation(async (_s, _m, _l, preview) => {
+      if (preview) {
+        throw new ApiError(404, 'nothing is staged to preview', JSON.stringify({ error: 'nothing is staged to preview', code: 'no_preview' }))
+      }
+      return staged()
+    })
     renderWithProviders(<DashboardPreviewPanel target={{ kind: 'member', slug: 'atlas' }} />)
-    expect(await screen.findByTestId('crew-dashboard-preview-gone', undefined, LAZY)).toBeInTheDocument()
-    expect(screen.queryByTestId('crew-dashboard-error')).toBeNull()
+    expect(await screen.findByTestId('dashboard-preview-outcome', undefined, LAZY)).toHaveAttribute('data-outcome', 'closed')
+    await waitFor(() => expect(read.mock.calls.some(call => !call[3])).toBe(true), LAZY)
+    expect(await screen.findByTestId('crew-dashboard-frame', undefined, LAZY)).toBeInTheDocument()
+    expect(screen.queryByTestId('crew-dashboard-preview-gone')).toBeNull()
     expect(screen.queryByTestId('crew-dashboard-error-retry')).toBeNull()
     // "Not applied" over "it was applied" would contradict itself.
-    await waitFor(() => expect(screen.queryByTestId('dashboard-preview-badge')).toBeNull())
+    expect(screen.queryByTestId('dashboard-preview-badge')).toBeNull()
+  })
+
+  it('a later preview link for the same crewmate puts the open panel back on the staged page', async () => {
+    roster([{ name: 'Atlas', slug: 'atlas' }])
+    let staging = false
+    vi.spyOn(api, 'memberDashboard').mockImplementation(async (_s, _m, _l, preview) => {
+      if (preview && !staging) throw new ApiError(404, 'gone', JSON.stringify({ error: 'gone', code: 'no_preview' }))
+      return preview ? { ...staged(), preview: true, staged_ms: 7 } : staged()
+    })
+    renderWithProviders(<DashboardPreviewPanel target={{ kind: 'member', slug: 'atlas' }} />)
+    await screen.findByTestId('dashboard-preview-outcome', undefined, LAZY)
+    staging = true
+    act(() => announceDashboardPreviewOpened(dashboardPreviewRef({ kind: 'member', slug: 'atlas' })))
+    expect(await screen.findByTestId('dashboard-preview-badge', undefined, LAZY)).toBeInTheDocument()
+    expect(screen.queryByTestId('dashboard-preview-outcome')).toBeNull()
+    expect(await screen.findByTestId('dashboard-preview-keep', undefined, LAZY)).toBeInTheDocument()
   })
 
   it('wraps its header so the hint keeps a full line in a narrow panel', async () => {

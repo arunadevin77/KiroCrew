@@ -485,6 +485,9 @@ async def _serve(request: web.Request, slug: str, member: str, slot: str | None)
         # The CURRENT version, not a new one, because staging wrote none. A reader that
         # saw this number move would believe the page had been installed.
         body["preview"] = True
+        # Which staged page this is. The person's Keep sends it back, so the page that
+        # lands is the one drawn here and not one staged again after the look.
+        body["staged_ms"] = staged.updated_ms
         rendered = await _run(lambda: _render(slug, _member, staged, locale, slot=slot))
         if rendered is not None:
             body["rendered_html"] = rendered
@@ -923,6 +926,30 @@ def _render(
         return None
 
 
+def _refuse_agent_caller(request: web.Request, operation: str, message: str) -> web.Response | None:
+    """``human_only`` for an internal-secret caller -- an MCP server acting for an agent.
+
+    The person-only routes ask this first. Audited like every other permission
+    decision: an agent reaching for the person's own controls is exactly the event
+    the security log exists to record.
+    """
+    if not (request.get("internal_auth") or request.headers.get("X-Internal-Secret") is not None):
+        return None
+    try:
+        from kiro_crew.sel import sel as _sel
+
+        _sel().log_api_access(
+            caller=str(request.get("user") or "internal"),
+            operation=operation,
+            outcome="denied",
+            source="dashboard",
+            resources="internal_secret_caller",
+        )
+    except Exception:  # pragma: no cover - audit must never change the outcome
+        logger.debug("SEL audit for the %s refusal failed", operation, exc_info=True)
+    return _bad("human_only", message, status=403)
+
+
 async def api_member_dashboard_lock(request: web.Request) -> web.Response:
     """POST /api/members/{slug}/dashboard/lock?member=<name> -- the person's structure lock.
 
@@ -934,26 +961,13 @@ async def api_member_dashboard_lock(request: web.Request) -> web.Response:
     agent, and the lock exists to stop exactly that caller, so it is refused before
     anything else is read. Then the owner gate, as for the read.
     """
-    if request.get("internal_auth") or request.headers.get("X-Internal-Secret") is not None:
-        # Audited like every other permission decision: an agent trying to lift its
-        # own lock is exactly the event the security log exists to record.
-        try:
-            from kiro_crew.sel import sel as _sel
-
-            _sel().log_api_access(
-                caller=str(request.get("user") or "internal"),
-                operation="members.dashboard_lock",
-                outcome="denied",
-                source="dashboard",
-                resources="internal_secret_caller",
-            )
-        except Exception:  # pragma: no cover - audit must never change the outcome
-            logger.debug("SEL audit for the dashboard lock refusal failed", exc_info=True)
-        return _bad(
-            "human_only",
-            "only the person can lock or unlock a dashboard, from the crewmate's Profile card",
-            status=403,
-        )
+    agent = _refuse_agent_caller(
+        request,
+        "members.dashboard_lock",
+        "only the person can lock or unlock a dashboard, from the crewmate's Profile card",
+    )
+    if agent is not None:
+        return agent
     resolved = await _resolve(request)
     if isinstance(resolved, web.Response):
         return resolved
@@ -978,12 +992,127 @@ async def api_member_dashboard_lock(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "structure_locked": record.structure_locked})
 
 
-def register_member_dashboard_routes(app: web.Application) -> None:
-    """Register the dynamic dashboard's read routes, its layout lock and the gap refetch.
+async def _staged_ms_from_body(request: web.Request) -> int | web.Response:
+    """The ``staged_ms`` a Keep or Discard names, or the 400 to answer instead."""
+    try:
+        body = await request.json()
+    except Exception:
+        return _bad("invalid_json", "invalid JSON body")
+    staged_ms = body.get("staged_ms") if isinstance(body, dict) else None
+    if not isinstance(staged_ms, int) or isinstance(staged_ms, bool) or staged_ms <= 0:
+        return _bad("validation_error", "staged_ms must name the staged page that was shown")
+    return staged_ms
 
-    Four routes: a crewmate's read, a root session's read, the person's layout lock,
-    and the member read's gap refetch. The lock and refetch paths are strict suffixes
-    of the member read path, so aiohttp's own resolver separates them by METHOD; the
+
+async def api_member_dashboard_preview_apply(request: web.Request) -> web.Response:
+    """POST /api/members/{slug}/dashboard/preview/apply?member=<name> -- the person's Keep.
+
+    Body ``{"staged_ms": <int>}``: the staged page the preview read handed out, so what
+    lands is what was drawn. ``dashboard_apply`` gets that guarantee by taking no
+    arguments while the person is asked in chat; a button has no such pause, so it names
+    the page and the store refuses ``preview_changed`` if another was staged since.
+
+    The SAME writer as the agent's apply (:func:`instance.apply_preview`), so the lock,
+    the parity re-check and the one-shot discard are the store's and not this route's.
+    PERSON-ONLY, with the lock route's gates: an internal-secret caller is refused, then
+    the owner gate.
+    """
+    agent = _refuse_agent_caller(
+        request,
+        "members.dashboard_preview_apply",
+        "only the person can keep a previewed page from the Dashboard tab; an agent "
+        "keeps one with dashboard_apply after they say yes",
+    )
+    if agent is not None:
+        return agent
+    resolved = await _resolve(request)
+    if isinstance(resolved, web.Response):
+        return resolved
+    owner_denied = await _owner_only(request, "members.dashboard_preview_apply")
+    if owner_denied is not None:
+        return owner_denied
+    slug, member = resolved
+    staged_ms = await _staged_ms_from_body(request)
+    if isinstance(staged_ms, web.Response):
+        return staged_ms
+    session_id = await _run(lambda: _write_session(slug, member))
+    try:
+        record = await _run(
+            lambda: instance.apply_preview(
+                slug, session_id=session_id, expected_staged_ms=staged_ms
+            )
+        )
+    except instance.NothingStaged as exc:
+        return _bad("no_preview", str(exc), status=404)
+    except instance.PreviewChanged as exc:
+        return _bad("preview_changed", str(exc), status=409)
+    except Exception as exc:
+        return _refusal(exc)
+    state = request.app.get("state")
+    if state is not None:
+        state.broadcast_ws("dashboard_instance_changed", {"slug": slug})
+    return web.json_response(
+        {"ok": True, "instance_version": record.instance_version, "template_id": record.template_id}
+    )
+
+
+async def api_member_dashboard_preview_discard(request: web.Request) -> web.Response:
+    """POST /api/members/{slug}/dashboard/preview/discard?member=<name> -- the person's Discard.
+
+    Body ``{"staged_ms": <int>}``, like Keep: only the page that was shown is dropped,
+    and one staged since answers ``preview_changed`` rather than vanishing unseen.
+    Discarding a page that already went answers ok, because the person's ask -- "not
+    that one" -- is met either way. The live page is untouched. Same gates as Keep.
+    """
+    agent = _refuse_agent_caller(
+        request,
+        "members.dashboard_preview_discard",
+        "only the person can discard a previewed page from the Dashboard tab",
+    )
+    if agent is not None:
+        return agent
+    resolved = await _resolve(request)
+    if isinstance(resolved, web.Response):
+        return resolved
+    owner_denied = await _owner_only(request, "members.dashboard_preview_discard")
+    if owner_denied is not None:
+        return owner_denied
+    slug, _member = resolved
+    staged_ms = await _staged_ms_from_body(request)
+    if isinstance(staged_ms, web.Response):
+        return staged_ms
+
+    def _discard() -> bool:
+        instance.discard_shown_preview(slug, expected_staged_ms=staged_ms)
+        # The store call swallows a failed delete, so ok is earned by reading back:
+        # nothing an apply would install may remain.
+        return instance.staged_preview(slug) is None
+
+    try:
+        gone = await _run(_discard)
+    except instance.PreviewChanged as exc:
+        return _bad("preview_changed", str(exc), status=409)
+    except Exception as exc:
+        return _refusal(exc)
+    if not gone:
+        logger.warning("dashboard: %r's staged page could not be removed", slug)
+        return _bad(
+            "dashboard_failed", "the staged page could not be removed; it is still staged", 500
+        )
+    state = request.app.get("state")
+    if state is not None:
+        state.broadcast_ws("dashboard_instance_changed", {"slug": slug})
+    return web.json_response({"ok": True})
+
+
+def register_member_dashboard_routes(app: web.Application) -> None:
+    """Register the dynamic dashboard's read routes, its layout lock, the gap refetch
+    and the person's Keep / Discard of a staged page.
+
+    Six routes: a crewmate's read, a root session's read, the person's layout lock,
+    the member read's gap refetch, and the preview's apply and discard. The lock,
+    refetch and preview paths are strict suffixes of the member read path, so
+    aiohttp's own resolver separates them by METHOD; the
     session read's path is not a prefix of another route's pattern, so there is no
     ordering question here either.
     ``server.py`` duplicates the paths through its deferred binder rather than calling this function, because calling
@@ -995,6 +1124,12 @@ def register_member_dashboard_routes(app: web.Application) -> None:
     app.router.add_get("/api/chat/slots/{slot}/dashboard", api_session_dashboard)
     app.router.add_post("/api/members/{slug}/dashboard/lock", api_member_dashboard_lock)
     app.router.add_post("/api/members/{slug}/dashboard/refetch", api_member_dashboard_refetch)
+    app.router.add_post(
+        "/api/members/{slug}/dashboard/preview/apply", api_member_dashboard_preview_apply
+    )
+    app.router.add_post(
+        "/api/members/{slug}/dashboard/preview/discard", api_member_dashboard_preview_discard
+    )
 
 
 #: One armed page per (crewmate, package), on the app so a reload replaces rather than

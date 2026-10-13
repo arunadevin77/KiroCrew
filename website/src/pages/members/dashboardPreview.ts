@@ -17,3 +17,13 @@ export const DASHBOARD_PREVIEW_VALUE = 'preview'
 export function isDashboardPreview(params: URLSearchParams): boolean {
   return params.get(DASHBOARD_PREVIEW_PARAM) === DASHBOARD_PREVIEW_VALUE
 }
+
+/** *params* without the staged-page request, once that page is gone (kept, applied
+ *  by the agent, discarded or expired), so the tab reads the live page. The same
+ *  object when it carries no request, so a caller can skip a no-op navigation. */
+export function withoutDashboardPreview(params: URLSearchParams): URLSearchParams {
+  if (!isDashboardPreview(params)) return params
+  const next = new URLSearchParams(params)
+  next.delete(DASHBOARD_PREVIEW_PARAM)
+  return next
+}

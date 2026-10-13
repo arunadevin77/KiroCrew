@@ -12177,7 +12177,18 @@
         "hint": "Ainda não está ativo. Responda no chat para manter esta página ou pedir mudanças.",
         "no_member": "Não foi possível encontrar o membro a quem esta pré-visualização pertence.",
         "roster_failed": "Não foi possível carregar a lista de membros, por isso a pré-visualização não pode ser mostrada.",
-        "gone": "Esta pré-visualização foi encerrada. Foi aplicada ou expirou."
+        "gone": "Esta pré-visualização foi encerrada. Foi aplicada ou expirou.",
+        "hint_actions": "Ainda não está no ar. Ficar com esta a torna seu painel e substitui a página atual; {{name}} pode restaurá-la. Descartar a apaga. Você também pode pedir mudanças no chat.",
+        "keep": "Ficar com esta",
+        "discard": "Descartar",
+        "discard_note": "Descartar não tem volta.",
+        "changed": "A prévia mudou enquanto você olhava. A nova está abaixo; agora ficar com esta fica com ela.",
+        "keep_failed": "Não deu para ficar com esta prévia. Nada mudou. Tente de novo.",
+        "discard_failed": "Não deu para descartar esta prévia. Nada mudou. Tente de novo.",
+        "outcome_kept": "Pronto. Esta é a página no ar agora.",
+        "outcome_discarded": "Descartada. A página no ar não mudou.",
+        "outcome_closed": "Prévia encerrada. Esta é a página no ar agora.",
+        "outcome_undo": "Para desfazer, peça para {{name}} restaurar o painel anterior."
       }
     },
     "chatPage": {

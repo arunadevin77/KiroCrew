@@ -288,6 +288,30 @@ describe a change the existing three already name.
 The preview is discarded once the version lands, so "keep this one" cannot be answered
 twice and quietly write two versions of one page.
 
+**The person can answer from the tab too.** A crewmate's staged page is drawn under
+**Keep** and **Discard** buttons in the host chrome (the Dashboard tab on `/members`
+and the chat side panel's preview tab), outside the sandboxed frame, so a page can
+never press them. Keep posts `POST /api/members/{slug}/dashboard/preview/apply` with
+the `staged_ms` the preview read returned; the route calls `apply_preview(...,
+expected_staged_ms=...)`, which refuses `PreviewChanged` (409 `preview_changed`)
+inside the instance lock when a different page was staged after the one shown. That
+is the button's version of `dashboard_apply`'s guarantee: what lands is what was
+drawn. Nothing staged answers 404 `no_preview` and a locked layout 423
+`dashboard_locked`. Discard posts `.../preview/discard` with the same `staged_ms`;
+`discard_shown_preview` drops only that page, refuses `preview_changed` for one staged
+since, and answers ok when nothing is staged any more. The route reads back and
+answers 500 `dashboard_failed` if a page is still there. The `staged_ms` the host sends
+is the one of the document the frame has MOUNTED, never a newer read still being
+minted, so both buttons stay disabled until the frame shows the page they would act
+on. Both carry the lock route's gates: an internal-secret caller is
+refused `human_only` first, then the owner gate, then the CSRF middleware every
+cookie POST passes. On a successful Keep the host leaves preview mode at once
+(dropping `?dashboard=preview`) and refetches the live page, with one line saying
+the page was kept and that the crewmate can roll it back. When the staged page goes
+any other way (the agent's `dashboard_apply`, a discard, expiry), the preview view
+hands over to the live page the same way, with a line that says so. Template
+previews only: a session's page has no person route.
+
 ## The structure lock is the person's, and only theirs
 
 The person's structure lock freezes WHICH page the tab shows. They set it with the

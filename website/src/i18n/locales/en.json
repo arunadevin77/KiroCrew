@@ -6764,7 +6764,18 @@
         "hint": "Not live yet. Reply in chat to keep this page or ask for changes.",
         "no_member": "The crewmate this preview belongs to could not be found.",
         "roster_failed": "The crewmate list could not be loaded, so the preview cannot be shown.",
-        "gone": "This preview has closed. It was applied or it expired."
+        "gone": "This preview has closed. It was applied or it expired.",
+        "hint_actions": "Not live yet. Keep makes it your dashboard and replaces the current page; {{name}} can restore it. Discard deletes it. You can also ask for changes in chat.",
+        "keep": "Keep",
+        "discard": "Discard",
+        "discard_note": "Discard can't be undone.",
+        "changed": "The preview changed while you were looking. The new one is below; Keep now keeps it.",
+        "keep_failed": "Couldn't keep this preview. Nothing changed. Try again.",
+        "discard_failed": "Couldn't discard this preview. Nothing changed. Try again.",
+        "outcome_kept": "Kept. This is the live page now.",
+        "outcome_discarded": "Discarded. The live page didn’t change.",
+        "outcome_closed": "Preview ended. This is the live page now.",
+        "outcome_undo": "To undo, ask {{name}} to restore the previous dashboard."
       }
     },
     "chatPage": {

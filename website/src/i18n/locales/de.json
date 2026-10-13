@@ -11999,7 +11999,18 @@
         "hint": "Noch nicht aktiv. Antworte im Chat, um diese Seite zu behalten oder Änderungen anzufragen.",
         "no_member": "Das Crew-Mitglied, zu dem diese Vorschau gehört, wurde nicht gefunden.",
         "roster_failed": "Die Liste der Crew-Mitglieder konnte nicht geladen werden, daher kann die Vorschau nicht angezeigt werden.",
-        "gone": "Diese Vorschau ist geschlossen. Sie wurde angewendet oder ist abgelaufen."
+        "gone": "Diese Vorschau ist geschlossen. Sie wurde angewendet oder ist abgelaufen.",
+        "hint_actions": "Noch nicht live. Mit Behalten wird es dein Dashboard und ersetzt die aktuelle Seite; {{name}} kann sie wiederherstellen. Mit Verwerfen wird es gelöscht. Du kannst auch im Chat um Änderungen bitten.",
+        "keep": "Behalten",
+        "discard": "Verwerfen",
+        "discard_note": "Verwerfen lässt sich nicht rückgängig machen.",
+        "changed": "Die Vorschau hat sich geändert, während du sie angesehen hast. Die neue ist unten; Behalten behält jetzt diese.",
+        "keep_failed": "Die Vorschau konnte nicht behalten werden. Nichts wurde geändert. Versuch es noch mal.",
+        "discard_failed": "Die Vorschau konnte nicht verworfen werden. Nichts wurde geändert. Versuch es noch mal.",
+        "outcome_kept": "Behalten. Das ist jetzt die Live-Seite.",
+        "outcome_discarded": "Verworfen. Die Live-Seite hat sich nicht geändert.",
+        "outcome_closed": "Vorschau beendet. Das ist jetzt die Live-Seite.",
+        "outcome_undo": "Zum Rückgängigmachen bitte {{name}}, das vorherige Dashboard wiederherzustellen."
       }
     },
     "chatPage": {

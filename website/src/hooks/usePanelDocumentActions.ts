@@ -8,7 +8,7 @@ import { clearInlineDraft, getInlineDraft, type usePanelTabs } from './usePanelT
 import { i18nT } from '../i18n/t'
 import type { Artifact } from '../types'
 import { fetchFileRead, fileReadQueryKey, FILE_READ_STALE_MS, isPartialRead } from '../utils/fileReadQuery'
-import { dashboardPreviewTargetFromRef } from '../utils/dashboardPreview'
+import { announceDashboardPreviewOpened, dashboardPreviewRef, dashboardPreviewTargetFromRef } from '../utils/dashboardPreview'
 import { errMessage } from '../utils/thunkError'
 import { optsForReplace } from '../pages/chat/replaceGuard'
 
@@ -164,6 +164,9 @@ export function usePanelDocumentActions({ tabsCtl, slotRef, queryClient, showAct
         name = i18nT('commandCenter.title')
       }
       tabsCtl.openArtifact({ slug, kind: 'html', title: i18nT('pages.chat.dashboardPreviewPanel.tab_title', { name }) }, '', slot)
+      // A panel already open on this reference may have handed its last preview
+      // over to the live page; this puts it back on the staged one.
+      announceDashboardPreviewOpened(dashboardPreviewRef(preview))
       onOpened?.()
       return
     }

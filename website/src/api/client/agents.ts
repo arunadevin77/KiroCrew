@@ -145,6 +145,8 @@ export interface DashboardRead {
   structure_locked?: boolean
   /** Set on a `preview` read: this body is the staged page, not the record. */
   preview?: boolean
+  /** Set on a `preview` read: which staged page this is. Keep sends it back. */
+  staged_ms?: number
 }
 
 /** A dashboard template's manifest. Mirrors `TemplateManifest`. */
@@ -282,6 +284,18 @@ export function createAgentsEndpoints({ post, put, del, j, jfetch: fetch, sessio
           + (locale ? '&locale=' + encodeURIComponent(locale) : '')
           + (preview ? '&preview=1' : ''),
       ).then(j) as Promise<DashboardRead | null>,
+    // The person's Keep: install exactly the staged page the preview read named by
+    // `staged_ms`. Owner-only, refused to an agent's internal-secret caller, 409
+    // `preview_changed` when another page was staged since, 423 `dashboard_locked`.
+    memberDashboardPreviewApply: (slug: string, member: string, stagedMs: number) =>
+      post('/api/members/' + encodeURIComponent(slug) + '/dashboard/preview/apply?member=' + encodeURIComponent(member), { staged_ms: stagedMs })
+        .then(j) as Promise<{ ok: boolean; instance_version: number; template_id: string }>,
+    // The person's Discard: drop the staged page the preview read named. Same gates
+    // as Keep; 409 `preview_changed` when another page was staged since, ok when
+    // nothing is staged any more.
+    memberDashboardPreviewDiscard: (slug: string, member: string, stagedMs: number) =>
+      post('/api/members/' + encodeURIComponent(slug) + '/dashboard/preview/discard?member=' + encodeURIComponent(member), { staged_ms: stagedMs })
+        .then(j) as Promise<{ ok: boolean }>,
     // Set or clear that lock. Owner-only on the gateway, and refused to an agent's
     // internal-secret caller: only the person, from the crewmate's Profile card, can move it.
     memberDashboardLock: (slug: string, member: string, locked: boolean) =>

@@ -111,3 +111,22 @@ export function dashboardPreviewMemberFromRef(ref: string | null | undefined): s
   const target = dashboardPreviewTargetFromRef(ref)
   return target?.kind === 'member-name' ? target.member : null
 }
+
+/** The window event a preview link's open fires, carrying the panel reference it opened. */
+const PREVIEW_OPENED_EVENT = 'kirocrew:dashboard-preview-opened'
+
+/** Say a preview link was opened again. A side panel that already handed its last
+ *  preview over to the live page is mounted under the same reference, so it hears
+ *  this and goes back to reading the staged page. */
+export function announceDashboardPreviewOpened(ref: string): void {
+  window.dispatchEvent(new CustomEvent<string>(PREVIEW_OPENED_EVENT, { detail: ref }))
+}
+
+/** Listen for {@link announceDashboardPreviewOpened} on *ref*. Returns the unsubscribe. */
+export function onDashboardPreviewOpened(ref: string, cb: () => void): () => void {
+  const listener = (event: Event) => {
+    if ((event as CustomEvent<string>).detail === ref) cb()
+  }
+  window.addEventListener(PREVIEW_OPENED_EVENT, listener)
+  return () => window.removeEventListener(PREVIEW_OPENED_EVENT, listener)
+}
