@@ -2938,8 +2938,14 @@ class AcpRuntime:
         identity would then be recorded as OURS -- self-consistent, so every
         later ownership check passes and the teardown signals a stranger. A pid
         absent from the second walk is not a descendant of this root and is
-        dropped. The window is not closed, but crossing it now needs a pid to
-        become a stranger and then become our descendant again.
+        dropped, and so is one whose start id now reads back as something other
+        than the one captured. The window is not closed, but crossing it now needs a pid to
+        become a stranger and then become our descendant again under the
+        identity it had before.
+
+        The walk itself is :func:`runtime_process_tree.guarded_tree_pass` in
+        replace mode, the same pass ``AcpClient.refresh_process_tree`` runs
+        add-only.
 
         The file is written BEFORE the in-memory record is replaced, and a failed
         write publishes nothing: the next pass re-reads the tree and tries again.
@@ -2958,65 +2964,42 @@ class AcpRuntime:
         if pid is None:
             return
         try:
-            loop = asyncio.get_running_loop()
             async with self._descendant_scan_lock:
                 # The root's own number can be reused too, and a walk from a
-                # recycled root enumerates a stranger's whole tree -- which would
-                # then be recorded as ours and signalled at teardown. Verified
-                # before the walk and again before the write, because the root can
-                # exit while the walk runs. No recorded identity means it cannot
-                # be verified at all, so nothing is recorded.
-                if not self._root_identity_holds():
-                    return
-                # /proc reads on Linux, `pgrep`/`ps` subprocesses on macOS:
-                # blocking either way, so they ride the same dedicated executor
-                # the client path and the teardown sweep use, not the event loop.
-                descendants = await loop.run_in_executor(
-                    subprocess_executor(), _get_child_pids, pid
-                )
-                if not descendants and retry_when_empty:
-                    await asyncio.sleep(self._DESCENDANT_RESCAN_DELAY)
-                    descendants = await loop.run_in_executor(
-                        subprocess_executor(), _get_child_pids, pid
-                    )
-                if not descendants:
-                    return
-                fresh: dict[int, ChildRecord] = await loop.run_in_executor(
-                    subprocess_executor(), _capture_child_records, descendants
-                )
-                still_ours = set(
-                    await loop.run_in_executor(subprocess_executor(), _get_child_pids, pid)
-                )
-                confirmed = {p: rec for p, rec in fresh.items() if p in still_ours}
-                escaped = {
-                    p: rec
-                    for p, rec in self._child_pids.items()
-                    if p not in confirmed and _escapee_is_still_ours(p, rec)
-                }
-                merged = {**escaped, **confirmed}
-                gone = [p for p in self._child_pids if p not in merged]
-                if merged == self._child_pids:
-                    return
-                if not self._root_identity_holds():
-                    return
-                if not await loop.run_in_executor(
-                    subprocess_executor(),
-                    functools.partial(
-                        _replace_child_pids, merged, parent_pid=pid, drop=tuple(gone)
+                # recycled root enumerates a stranger's whole tree, so the pass
+                # brackets the walk with the root's identity. No recorded
+                # identity means it cannot be verified at all: nothing is
+                # recorded. The blocking reads ride the subprocess executor.
+                result = await runtime_process_tree.guarded_tree_pass(
+                    pid,
+                    self._child_pids,
+                    probes=runtime_process_tree.TreeProbes(
+                        walk=_get_child_pids,
+                        capture=_capture_child_records,
+                        start_id=platform_compat.get_process_start_id,
+                        write=_replace_child_pids,
                     ),
-                ):
+                    executor=subprocess_executor(),
+                    root_holds=self._root_identity_holds,
+                    replace=True,
+                    keep_unwalked=_escapee_is_still_ours,
+                    retry_delay=self._DESCENDANT_RESCAN_DELAY if retry_when_empty else None,
+                )
+                if result.outcome == "write_failed":
                     logger.warning(
                         "AcpRuntime: could not write the descendant PIDs of root %d -- "
                         "retrying on the next scan",
                         pid,
                     )
                     return
-                self._child_pids = merged
+                if result.outcome != "written":
+                    return
+                self._child_pids = result.record
             logger.info(
                 "AcpRuntime: tracking %d descendant PID(s) of root %d (%d outside the tree)",
-                len(merged),
+                len(result.record),
                 pid,
-                len(escaped),
+                len(result.kept),
             )
         except Exception:
             logger.warning(

@@ -507,11 +507,6 @@ class _KiroExecutableTrustError(RuntimeError):
     """Resolved Kiro CLI bytes are not approved for credential-bearing ACP."""
 
 
-def _recorded_start(record: object) -> object:
-    """The start id a child record carries (``(start, basename)`` or a bare start)."""
-    return record[0] if isinstance(record, tuple) and record else record
-
-
 def _is_safe_oauth_url(url: str) -> bool:
     """Reject anything that isn't http(s) — `<a href>` will execute javascript:/data:."""
     if not url:
@@ -6524,6 +6519,12 @@ class AcpClient:
         back is captured again (the leader's tree reused the number), and the
         in-memory record is updated only if the client still holds the same
         process after the write.
+
+        The walk is :func:`runtime_process_tree.guarded_tree_pass` in add-only
+        mode, the same pass ``AcpRuntime._snapshot_descendants`` runs in replace
+        mode. It stays add-only: the teardown checks each recorded child's
+        identity before it signals one (``_kill_escaped_children``), so a pid
+        that left is skipped there rather than dropped here.
         """
         # The client's own process object, not a shared runtime: one client
         # owns exactly one process, and that object is what is compared after
@@ -6535,70 +6536,40 @@ class AcpClient:
         pid = process.pid
         if not pid:
             return
-        if platform_compat.get_process_start_id(pid) != start:
-            return
-        _loop = asyncio.get_running_loop()
-        descendants = await _loop.run_in_executor(
-            subprocess_executor(), runtime_process_tree._get_child_pids, pid
+
+        def _leader_holds() -> bool:
+            return self._process is process and platform_compat.get_process_start_id(pid) == start
+
+        result = await runtime_process_tree.guarded_tree_pass(
+            pid,
+            self._child_pids,
+            probes=runtime_process_tree.TreeProbes(
+                walk=runtime_process_tree._get_child_pids,
+                capture=runtime_process_tree._capture_child_records,
+                start_id=platform_compat.get_process_start_id,
+                write=_replace_child_pids,
+            ),
+            executor=subprocess_executor(),
+            root_holds=_leader_holds,
+            replace=False,
+            # The write awaited: a reset or respawn may have replaced the process
+            # meanwhile, and its record must not gain the previous one's children.
+            still_owner=lambda: self._process is process,
         )
-        # New pids, plus recorded ones whose start id fails to read back: a
-        # number the leader's tree reused belongs to a new child, and a stale
-        # record would make it fail every ownership check.
-        new_pids = [
-            p
-            for p in descendants
-            if p not in self._child_pids
-            or _recorded_start(self._child_pids[p]) != platform_compat.get_process_start_id(p)
-        ]
-        if not new_pids:
-            return
-        records = await _loop.run_in_executor(
-            subprocess_executor(), runtime_process_tree._capture_child_records, new_pids
-        )
-        # A descendant can exit and have its number reused between the walk and
-        # the capture, which would record a stranger's identity. Keep only pids
-        # that a second walk still finds under the leader AND whose start id
-        # still reads back as the one captured: a stranger cannot become our
-        # descendant under the identity it had before.
-        still_ours = set(
-            await _loop.run_in_executor(
-                subprocess_executor(), runtime_process_tree._get_child_pids, pid
-            )
-        )
-        if self._process is not process or platform_compat.get_process_start_id(pid) != start:
-            return
-        confirmed = {
-            cpid: record
-            for cpid, record in records.items()
-            if cpid in still_ours
-            and record[0] is not None
-            and platform_compat.get_process_start_id(cpid) == record[0]
-        }
-        if not confirmed:
-            return
-        # Persist first, publish second: a record kept only in memory would
-        # drop the child from every later refresh while the orphan sweep never
-        # learns of it. Written with the identity captured above, never re-read
-        # at write time. A failed write leaves the child unrecorded, so the next
-        # refresh tries it again.
-        written = await _loop.run_in_executor(
-            subprocess_executor(),
-            functools.partial(_replace_child_pids, confirmed, parent_pid=pid),
-        )
-        if not written:
+        if result.outcome == "write_failed":
             logger.warning(
                 "Process tree refresh for PID %d: tracking write failed; %d child(ren) left "
                 "unrecorded",
                 pid,
-                len(confirmed),
+                len(result.confirmed),
             )
             return
-        # The write awaited: a reset or respawn may have replaced the process
-        # meanwhile, and its record must not gain the previous one's children.
-        if self._process is not process:
+        if result.outcome != "written":
             return
-        self._child_pids.update(confirmed)
-        logger.info("Refreshed process tree for PID %d: %d new descendant(s)", pid, len(confirmed))
+        self._child_pids.update(result.confirmed)
+        logger.info(
+            "Refreshed process tree for PID %d: %d new descendant(s)", pid, len(result.confirmed)
+        )
 
     async def _kill_process(self, *, force: bool = False) -> None:
         """Kill the subprocess and wait for it to exit.
