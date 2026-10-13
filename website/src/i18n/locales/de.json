@@ -6145,6 +6145,11 @@
         "working": "Vertrauen wird gewährt und aktiviert...",
         "failed": "„{{app}}“ zu vertrauen ist das, was sie einschaltet. Ihr wird jetzt vertraut, aber sie konnte nicht eingeschaltet werden. Wähle Vertrauen und erneut versuchen (das bestätigt das Vertrauen, das du schon gegeben hast, noch einmal und versucht es dann erneut), oder öffne Einstellungen → Sicherheit → Drittanbieter-Apps, um das Vertrauen zu entfernen.",
         "failed_generic": "„{{app}}“ zu vertrauen ist das, was sie einschaltet. Sie konnte nicht eingeschaltet werden, und das Vertrauen wurde nicht gespeichert. Wähle Vertrauen und erneut versuchen, oder sieh in den Logs von {{productName}} nach.",
+        "install_outcome": "„{{app}}“ zu vertrauen schaltet sie nicht ein: Sie wird ausgeschaltet installiert, und du schaltest sie auf dieser Seite ein, wenn du bereit bist.",
+        "install_on_cancel": "Abbrechen ändert nichts: Es wird nichts installiert, und „{{app}}“ wird nicht vertraut.",
+        "install_on_cancel_granted": "Abbrechen behält das Vertrauen in „{{app}}“ bei, und die Installation läuft nicht erneut.",
+        "install_failed": "„{{app}}“ wird jetzt vertraut, aber sie konnte nicht installiert werden. Wähle Vertrauen und erneut versuchen (das bestätigt das Vertrauen, das du schon gegeben hast, noch einmal und versucht es dann erneut), oder öffne Einstellungen → Sicherheit → Drittanbieter-Apps, um das Vertrauen zu entfernen.",
+        "install_failed_generic": "„{{app}}“ konnte nicht installiert werden, und das Vertrauen wurde nicht gespeichert. Wähle Vertrauen und erneut versuchen, oder sieh in den Logs von {{productName}} nach.",
         "failed_desktop_unsupported": "„{{app}}“ kann in der Desktop-Version von {{productName}} nicht installiert werden, und es wurde nichts geändert.",
         "failed_desktop_unsupported_help": "Sie braucht Python-Pakete, die der Desktop-Build nicht hinzufügen kann; bitte den Autor der App, sie mit der App auszuliefern, oder öffne {{productName}} statt in der Desktop-Version in einem Webbrowser."
       },

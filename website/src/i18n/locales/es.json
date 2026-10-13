@@ -6248,6 +6248,11 @@
         "working": "Concediendo confianza y activando...",
         "failed": "Confiar en “{{app}}” es lo que la activa. Ahora es de confianza, pero no se pudo activar. Elige Confiar y reintentar (esto vuelve a confirmar la confianza que ya diste y luego reintenta), o abre Ajustes → Seguridad → Aplicaciones de terceros para quitar la confianza.",
         "failed_generic": "Confiar en “{{app}}” es lo que la activa. No se pudo activar y la confianza no se guardó. Elige Confiar y reintentar, o revisa los registros de {{productName}}.",
+        "install_outcome": "Confiar en “{{app}}” no la enciende: se instala apagada, y la enciendes desde esta página cuando quieras.",
+        "install_on_cancel": "Cancelar no cambia nada: no se instala nada y “{{app}}” no pasa a ser de confianza.",
+        "install_on_cancel_granted": "Cancelar deja “{{app}}” como de confianza, y la instalación no vuelve a ejecutarse.",
+        "install_failed": "“{{app}}” ahora es de confianza, pero no se pudo instalar. Elige Confiar y reintentar (esto vuelve a confirmar la confianza que ya diste y luego reintenta), o abre Ajustes → Seguridad → Aplicaciones de terceros para quitar la confianza.",
+        "install_failed_generic": "No se pudo instalar “{{app}}” y la confianza no se guardó. Elige Confiar y reintentar, o revisa los registros de {{productName}}.",
         "failed_desktop_unsupported": "No se puede instalar “{{app}}” en la versión de escritorio de {{productName}}, y no se cambió nada.",
         "failed_desktop_unsupported_help": "Necesita paquetes de Python que la versión de escritorio no puede añadir; pide al autor de la app que los incluya con la app, o abre {{productName}} en un navegador web en lugar de la versión de escritorio."
       },

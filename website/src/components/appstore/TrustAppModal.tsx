@@ -57,9 +57,16 @@ export type TrustAppTarget = Pick<RegistryApp, 'name' | '_registry' | 'origin'> 
   /**
    * True when confirming re-runs the registry INSTALL rather than the enable.
    * An install lands the app switched off (enabling is its own step), so the
-   * confirm button must not promise "and enable" on that path.
+   * confirm button must not promise "and enable" on that path, and the outcome,
+   * Cancel and failure sentences use their `install_*` keys.
    */
   retryInstalls?: boolean
+  /**
+   * True when that install REPLACES an app that is already installed (an
+   * Update). The `install_*` sentences say nothing is installed yet, which is
+   * false there, so an update keeps the dialog's other copy.
+   */
+  replacesInstalled?: boolean
 }
 
 /** Mirror the backend's credential-free Git coordinate projection. */
@@ -438,18 +445,28 @@ function terminalState({ failed, granted, detail, detailCode }: {
  * the sentence says that instead of describing a Cancel button the reader
  * cannot find.
  */
-function terminalCopy(state: TerminalState, app: string): {
+function terminalCopy(state: TerminalState, app: string, installs: boolean): {
   headline: string | null
   help: string | null
   exit: string
 } {
+  // The install path (`installs`) has its own headline and exit sentences: the
+  // enable path's say trusting "turns it on" and that the app "stays in place",
+  // neither of which is true before the app is installed. `permanent` is already
+  // install-only copy, so it needs no second row.
   switch (state) {
     case 'granted':
-      return {
-        headline: i18nT('components.appstore.trustAppModal.failed', { app }),
-        help: null,
-        exit: i18nT('components.appstore.trustAppModal.on_cancel_granted', { app }),
-      }
+      return installs
+        ? {
+          headline: i18nT('components.appstore.trustAppModal.install_failed', { app }),
+          help: null,
+          exit: i18nT('components.appstore.trustAppModal.install_on_cancel_granted', { app }),
+        }
+        : {
+          headline: i18nT('components.appstore.trustAppModal.failed', { app }),
+          help: null,
+          exit: i18nT('components.appstore.trustAppModal.on_cancel_granted', { app }),
+        }
     case 'permanent':
       return {
         headline: i18nT('components.appstore.trustAppModal.failed_desktop_unsupported', { app }),
@@ -458,15 +475,21 @@ function terminalCopy(state: TerminalState, app: string): {
       }
     case 'failed_generic':
       return {
-        headline: i18nT('components.appstore.trustAppModal.failed_generic', { app }),
+        headline: installs
+          ? i18nT('components.appstore.trustAppModal.install_failed_generic', { app })
+          : i18nT('components.appstore.trustAppModal.failed_generic', { app }),
         help: null,
-        exit: i18nT('components.appstore.trustAppModal.on_cancel', { app }),
+        exit: installs
+          ? i18nT('components.appstore.trustAppModal.install_on_cancel', { app })
+          : i18nT('components.appstore.trustAppModal.on_cancel', { app }),
       }
     case 'consent':
       return {
         headline: null,
         help: null,
-        exit: i18nT('components.appstore.trustAppModal.on_cancel', { app }),
+        exit: installs
+          ? i18nT('components.appstore.trustAppModal.install_on_cancel', { app })
+          : i18nT('components.appstore.trustAppModal.on_cancel', { app }),
       }
   }
 }
@@ -498,7 +521,10 @@ export default function TrustAppModal({
 }) {
   const name = app ? (app.displayName || app.name) : ''
   const state = terminalState({ failed, granted, detail, detailCode })
-  const copy = terminalCopy(state, name)
+  // A first install only: an Update re-runs the install over an app that is
+  // already there, where "nothing is installed" would be false.
+  const freshInstall = !!app?.retryInstalls && !app.replacesInstalled
+  const copy = terminalCopy(state, name, freshInstall)
   const permanentRefusal = state === 'permanent'
   // When the refusal turns permanent the footer swaps Cancel + confirm for Close.
   // The user's focus was on the confirm button they just pressed; unmounting it
@@ -633,6 +659,15 @@ export default function TrustAppModal({
               this state's footer actually offers (Cancel, or Close on the
               permanent refusal) and the state that control LEAVES, which differs
               per state -- see the table. */}
+          {/* The install path's confirm button says "Trust this app" and nothing
+              more, so this line says where confirming leaves the app: installed
+              and switched off. Only before an attempt: once a failure headline
+              shows, it states what happened and this promise no longer applies. */}
+          {freshInstall && !failed && (
+            <p className="text-text leading-relaxed">
+              {i18nT('components.appstore.trustAppModal.install_outcome', { app: name })}
+            </p>
+          )}
           <p className="text-muted leading-relaxed">{copy.exit}</p>
           <p className="text-muted leading-relaxed">
             {i18nT('components.appstore.trustAppModal.revocable')}

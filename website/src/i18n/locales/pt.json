@@ -6248,6 +6248,11 @@
         "working": "Concedendo confiança e ativando...",
         "failed": "Confiar no “{{app}}” é o que o liga. Ele agora é confiável, mas não foi possível ligá-lo. Escolha Confiar e tentar de novo (isso confirma de novo a confiança que você já deu e depois tenta outra vez), ou abra Configurações → Segurança → Apps de terceiros para remover a confiança.",
         "failed_generic": "Confiar no “{{app}}” é o que o liga. Não foi possível ligá-lo e a confiança não foi salva. Escolha Confiar e tentar de novo, ou confira os logs do {{productName}}.",
+        "install_outcome": "Confiar no “{{app}}” não o liga: ele é instalado desligado, e você o liga nesta página quando quiser.",
+        "install_on_cancel": "Cancelar não muda nada: nada é instalado e o “{{app}}” não passa a ser confiável.",
+        "install_on_cancel_granted": "Cancelar deixa o “{{app}}” confiável, e a instalação não roda de novo.",
+        "install_failed": "O “{{app}}” agora é confiável, mas não foi possível instalá-lo. Escolha Confiar e tentar de novo (isso confirma de novo a confiança que você já deu e depois tenta outra vez), ou abra Configurações → Segurança → Apps de terceiros para remover a confiança.",
+        "install_failed_generic": "Não foi possível instalar o “{{app}}” e a confiança não foi salva. Escolha Confiar e tentar de novo, ou confira os logs do {{productName}}.",
         "failed_desktop_unsupported": "Não é possível instalar o “{{app}}” na versão para desktop do {{productName}}, e nada foi alterado.",
         "failed_desktop_unsupported_help": "Ele precisa de pacotes Python que a versão de desktop não consegue adicionar; peça ao autor do app para incluí-los com o app, ou abra o {{productName}} em um navegador web em vez da versão de desktop."
       },

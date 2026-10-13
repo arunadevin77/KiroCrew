@@ -6248,6 +6248,11 @@
         "working": "Confiance accordée et activation...",
         "failed": "Faire confiance à « {{app}} » est ce qui l'active. Elle est maintenant de confiance, mais elle n'a pas pu être activée. Choisis Faire confiance et réessayer (cela confirme à nouveau la confiance que tu as déjà donnée, puis réessaie), ou ouvre Paramètres → Sécurité → Applications tierces pour retirer la confiance.",
         "failed_generic": "Faire confiance à « {{app}} » est ce qui l'active. Elle n'a pas pu être activée, et la confiance n'a pas été enregistrée. Choisis Faire confiance et réessayer, ou consulte les journaux de {{productName}}.",
+        "install_outcome": "Faire confiance à «{{app}}» ne l'active pas : elle s'installe désactivée, et tu l'actives depuis cette page quand tu es prêt.",
+        "install_on_cancel": "Annuler ne change rien : rien n'est installé, et «{{app}}» n'est pas de confiance.",
+        "install_on_cancel_granted": "Annuler laisse «{{app}}» de confiance, et l'installation ne se relance pas.",
+        "install_failed": "«{{app}}» est maintenant de confiance, mais elle n'a pas pu être installée. Choisis Faire confiance et réessayer (cela confirme à nouveau la confiance que tu as déjà donnée, puis réessaie), ou ouvre Paramètres → Sécurité → Applications tierces pour retirer la confiance.",
+        "install_failed_generic": "«{{app}}» n'a pas pu être installée, et la confiance n'a pas été enregistrée. Choisis Faire confiance et réessayer, ou consulte les journaux de {{productName}}.",
         "failed_desktop_unsupported": "«{{app}}» ne peut pas être installée dans la version de bureau de {{productName}}, et rien n'a été modifié.",
         "failed_desktop_unsupported_help": "Elle a besoin de paquets Python que la version de bureau ne peut pas ajouter ; demande à l’auteur de l’app de les livrer avec l’app, ou ouvre {{productName}} dans un navigateur web plutôt que dans la version de bureau."
       },

@@ -1155,6 +1155,8 @@ export default function AppDetailPage() {
         origin: app.origin,
         sessionApproval: app.manifest?.permissions?.sessionApproval === true,
         retryInstalls: true,
+        // The Update buttons funnel here too, over an app that is already there.
+        replacesInstalled: app.installed === true,
       },
       async () => {
         // ANY unsuccessful retry must REJECT, not resolve. `useTrustGate` rolls the

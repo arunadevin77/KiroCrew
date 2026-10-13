@@ -313,6 +313,11 @@ describe('LibraryPage trust gate', () => {
     const dialog = within(screen.getByRole('dialog'))
     expect(dialog.getByRole('button', { name: `${K}.confirm` })).toBeTruthy()
     expect(dialog.queryByRole('button', { name: `${K}.confirm_install` })).toBeNull()
+    // ... and keeps the enable path's Cancel line, with no install outcome line.
+    const text = screen.getByRole('dialog').textContent ?? ''
+    expect(text).toContain(`${K}.on_cancel LaunchDarkly`)
+    expect(text).not.toContain(`${K}.install_outcome`)
+    expect(text).not.toContain(`${K}.install_on_cancel`)
   })
 
   it('grants trust for that one app and retries the enable on confirm', async () => {
@@ -485,8 +490,8 @@ describe('registry install trust gate', () => {
     // The consent state's exit sentence is the generic one -- Cancel changes
     // nothing here, nothing has been saved -- and neither failure state's renders.
     const text = screen.getByRole('dialog').textContent ?? ''
-    expect(text).toContain(`${K}.on_cancel LaunchDarkly`)
-    expect(text).not.toContain(`${K}.on_cancel_granted`)
+    expect(text).toContain(`${K}.install_on_cancel LaunchDarkly`)
+    expect(text).not.toContain(`${K}.install_on_cancel_granted`)
     expect(text).not.toContain(`${K}.on_close_desktop_unsupported`)
   })
 
@@ -500,6 +505,82 @@ describe('registry install trust gate', () => {
     const dialog = within(screen.getByRole('dialog'))
     expect(dialog.getByRole('button', { name: `${K}.confirm_install` })).toBeTruthy()
     expect(dialog.queryByRole('button', { name: `${K}.confirm` })).toBeNull()
+  })
+
+  it('describes the install, not the enable, in its outcome and Cancel lines (#19645)', async () => {
+    // The enable path's Cancel line says the app "stays in place, switched off",
+    // which is false before the app is installed, and nothing said what confirming
+    // leaves behind. The install path names both in its own words.
+    installFromRegistryStream.mockResolvedValue(INSTALL_DENIED())
+    renderDetailFromGet()
+    await waitFor(() => expect(modalTitle()).toBeTruthy())
+
+    const text = screen.getByRole('dialog').textContent ?? ''
+    expect(text).toContain(`${K}.install_outcome LaunchDarkly`)
+    expect(text).toContain(`${K}.install_on_cancel LaunchDarkly`)
+    expect(text).not.toContain(`${K}.on_cancel LaunchDarkly`)
+  })
+
+  it('keeps the install sentences off an UPDATE of an app that is already installed (#19645)', async () => {
+    // The Update buttons reach the same consent flow, but the app is there:
+    // "nothing is installed" and "it installs switched off" would be false.
+    getApp.mockResolvedValue({
+      name: THIRD_PARTY.name,
+      version: '1.0.0',
+      displayName: THIRD_PARTY.displayName,
+      enabled: true,
+      origin: 'registry',
+      resources: 'gateway',
+      lifecycle: 'gateway',
+      source: `registry:${THIRD_PARTY.name}`,
+      manifest: { name: THIRD_PARTY.name, version: '1.0.0', displayName: THIRD_PARTY.displayName, description: 'x' },
+    })
+    listRegistry.mockResolvedValue({
+      apps: [{ ...THIRD_PARTY, installed: true, enabled: true, version: '1.1.0', updateAvailable: true }],
+      serverPlatform: { os: 'darwin', arch: 'arm64' },
+    })
+    installFromRegistryStream.mockResolvedValue(INSTALL_DENIED())
+    renderDetailFromGet(THIRD_PARTY.name, 'update')
+    await waitFor(() => expect(modalTitle()).toBeTruthy())
+
+    const text = screen.getByRole('dialog').textContent ?? ''
+    expect(text).not.toContain(`${K}.install_outcome`)
+    expect(text).not.toContain(`${K}.install_on_cancel`)
+    expect(text).toContain(`${K}.on_cancel LaunchDarkly`)
+  })
+
+  it('drops the outcome line once a failure headline shows (#19645)', async () => {
+    // The outcome line is a promise about confirming; after a failed attempt the
+    // headline says what happened, and both together read as a contradiction.
+    installFromRegistryStream.mockResolvedValue(INSTALL_DENIED())
+    getApp.mockRejectedValue(apiError(404, { error: 'app not installed' }))
+    renderDetailFromGet()
+    await waitFor(() => expect(modalTitle()).toBeTruthy())
+
+    fireEvent.click(confirmBtn())
+
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert').textContent)
+      .toContain(`${K}.install_failed_generic LaunchDarkly`))
+    expect(screen.getByRole('dialog').textContent).not.toContain(`${K}.install_outcome`)
+  })
+
+  it('keeps the enable copy out of a landed-grant install failure (#19645)', async () => {
+    // The enable path's failure says trusting "is what turns it on" and that
+    // Cancel leaves the app "switched off"; on the install path the install is
+    // what failed, so both sentences are the install ones.
+    installFromRegistryStream.mockResolvedValue(INSTALL_DENIED())
+    renderDetailFromGet()
+    await waitFor(() => expect(modalTitle()).toBeTruthy())
+    getApp.mockRejectedValue(apiError(500, { error: 'gateway exploded' }, 'gateway exploded'))
+
+    fireEvent.click(confirmBtn())
+
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert').textContent)
+      .toContain(`${K}.install_failed LaunchDarkly`))
+    const text = screen.getByRole('dialog').textContent ?? ''
+    expect(text).toContain(`${K}.install_on_cancel_granted LaunchDarkly`)
+    expect(text).not.toContain(`${K}.failed LaunchDarkly`)
+    expect(text).not.toContain(`${K}.on_cancel_granted`)
   })
 
   it('grants trust then retries the INSTALL — never the enable', async () => {
@@ -536,7 +617,7 @@ describe('registry install trust gate', () => {
     fireEvent.click(confirmBtn())
 
     await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert').textContent)
-      .toContain(`${K}.failed LaunchDarkly`))
+      .toContain(`${K}.install_failed LaunchDarkly`))
     expect(modalTitle()).toBeTruthy()
   })
 
@@ -557,7 +638,7 @@ describe('registry install trust gate', () => {
     // Nothing was left behind, so the copy must say that rather than sending the
     // user to Settings to remove a grant that is already gone.
     await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert').textContent)
-      .toContain(`${K}.failed_generic LaunchDarkly`))
+      .toContain(`${K}.install_failed_generic LaunchDarkly`))
     expect(modalTitle()).toBeTruthy()
   })
 
@@ -577,7 +658,7 @@ describe('registry install trust gate', () => {
     fireEvent.click(confirmBtn())
 
     await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert').textContent)
-      .toContain(`${K}.failed LaunchDarkly`))
+      .toContain(`${K}.install_failed LaunchDarkly`))
     expect(untrustApp).not.toHaveBeenCalled()
   })
 
@@ -623,11 +704,11 @@ describe('registry install trust gate', () => {
     // Nothing was left behind, so the copy says so rather than sending the user to
     // Settings after a grant that is already gone.
     await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert').textContent)
-      .toContain(`${K}.failed_generic LaunchDarkly`))
+      .toContain(`${K}.install_failed_generic LaunchDarkly`))
     // ... and the exit sentence is the generic one: Cancel really does change nothing here.
     const dialog = screen.getByRole('dialog').textContent ?? ''
-    expect(dialog).toContain(`${K}.on_cancel LaunchDarkly`)
-    expect(dialog).not.toContain(`${K}.on_cancel_granted`)
+    expect(dialog).toContain(`${K}.install_on_cancel LaunchDarkly`)
+    expect(dialog).not.toContain(`${K}.install_on_cancel_granted`)
     expect(dialog).not.toContain(`${K}.on_close_desktop_unsupported`)
   })
 
@@ -696,9 +777,9 @@ describe('registry install trust gate', () => {
       const alert = within(screen.getByRole('dialog')).getByRole('alert')
       const text = alert.textContent ?? ''
       expect(text).toContain(refusal)
-      expect(text).toContain(`${K}.failed_generic LaunchDarkly`)
+      expect(text).toContain(`${K}.install_failed_generic LaunchDarkly`)
       // Reading order: the headline, then the server's own words.
-      expect(text.indexOf(`${K}.failed_generic`)).toBeLessThan(text.indexOf(refusal))
+      expect(text.indexOf(`${K}.install_failed_generic`)).toBeLessThan(text.indexOf(refusal))
       // The raw sentence is a block of its own under the headline, not inline
       // text of the same paragraph: the element carrying it holds nothing else.
       const reason = within(alert).getByText(refusal)
@@ -721,7 +802,7 @@ describe('registry install trust gate', () => {
     fireEvent.click(confirmBtn())
 
     await waitFor(() => expect(within(screen.getByRole('dialog')).getByRole('alert').textContent)
-      .toContain(`${K}.failed LaunchDarkly`))
+      .toContain(`${K}.install_failed LaunchDarkly`))
     expect(within(screen.getByRole('dialog')).getByRole('alert').textContent)
       .not.toContain(APP_EXECUTION_DENIED)
   })
@@ -788,7 +869,7 @@ describe('registry install trust gate — permanent desktop refusal', () => {
       expect(alert.textContent).toContain(`${K}.failed_desktop_unsupported ${THIRD_PARTY.displayName}`)
       expect(alert.textContent).toContain(`${K}.failed_desktop_unsupported_help`)
       expect(alert.textContent).toContain(REFUSAL)
-      expect(alert.textContent).not.toContain(`${K}.failed_generic`)
+      expect(alert.textContent).not.toContain(`${K}.install_failed_generic`)
       // Reading order: headline, plain sentence, then the server's own words.
       const text = alert.textContent ?? ''
       expect(text.indexOf(`${K}.failed_desktop_unsupported_help`)).toBeLessThan(text.indexOf(REFUSAL))
@@ -815,13 +896,13 @@ describe('registry install trust gate — permanent desktop refusal', () => {
     await waitFor(() => {
       const alert = within(screen.getByRole('dialog')).getByRole('alert').textContent
       expect(alert).toContain('build failed (exit 1): npm install')
-      expect(alert).toContain(`${K}.failed_generic`)
+      expect(alert).toContain(`${K}.install_failed_generic`)
       expect(alert).not.toContain(`${K}.failed_desktop_unsupported`)
     })
     // Cancel is still offered here, so the sentence describing it stays.
     const dialog = within(screen.getByRole('dialog'))
     expect(dialog.getByRole('button', { name: `${K}.cancel` })).toBeTruthy()
-    expect(screen.getByRole('dialog').textContent).toContain(`${K}.on_cancel`)
+    expect(screen.getByRole('dialog').textContent).toContain(`${K}.install_on_cancel`)
   })
 
   it('keeps the landed-grant copy over the desktop headline when the rollback did not happen', async () => {
@@ -839,7 +920,7 @@ describe('registry install trust gate — permanent desktop refusal', () => {
 
     await waitFor(() => {
       const alert = within(screen.getByRole('dialog')).getByRole('alert').textContent
-      expect(alert).toContain(`${K}.failed LaunchDarkly`)
+      expect(alert).toContain(`${K}.install_failed LaunchDarkly`)
       expect(alert).toContain(REFUSAL)
       expect(alert).not.toContain(`${K}.failed_desktop_unsupported`)
     })
@@ -870,8 +951,8 @@ describe('registry install trust gate — permanent desktop refusal', () => {
     // neither Cancel sentence (generic or granted) may render here.
     const text = screen.getByRole('dialog').textContent ?? ''
     expect(text).toContain(`${K}.on_close_desktop_unsupported LaunchDarkly`)
-    expect(text).not.toContain(`${K}.on_cancel LaunchDarkly`)
-    expect(text).not.toContain(`${K}.on_cancel_granted`)
+    expect(text).not.toContain(`${K}.install_on_cancel LaunchDarkly`)
+    expect(text).not.toContain(`${K}.install_on_cancel_granted`)
     // The confirm button the user pressed was unmounted with the swap; focus
     // moves to the one control left, so a keyboard user is not dropped to the
     // document with no position in the dialog.
