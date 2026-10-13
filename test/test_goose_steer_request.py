@@ -34,6 +34,7 @@ from kiro_crew.acp.types import (
 )
 from kiro_crew.agent_sdk import backend_cards as cards_mod
 from kiro_crew.agent_sdk.backends import ACP_BACKENDS_ACP_CLIENT_SPAWNABLE
+from kiro_crew.testing.wait import await_until
 
 _SID = "goose-session-1"
 _PROMPT_ID = 7
@@ -51,11 +52,15 @@ def _update(update: dict[str, Any]) -> bytes:
 
 
 def _active_run(run_id: str | None) -> bytes:
-    return _update({"sessionUpdate": "session_info_update", "_meta": {"goose": {"activeRunId": run_id}}})
+    return _update(
+        {"sessionUpdate": "session_info_update", "_meta": {"goose": {"activeRunId": run_id}}}
+    )
 
 
 def _text(text: str) -> bytes:
-    return _update({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}})
+    return _update(
+        {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}
+    )
 
 
 def _echo(message_id: str, text: str, *, steer: bool = True) -> bytes:
@@ -80,7 +85,9 @@ def _complete(stop_reason: str = "end_turn") -> bytes:
     return _frame({"id": _PROMPT_ID, "result": {"stopReason": stop_reason}})
 
 
-def _client(tmp_path: Any, backend: str = ACP_BACKEND_GOOSE) -> tuple[AcpClient, asyncio.StreamReader]:
+def _client(
+    tmp_path: Any, backend: str = ACP_BACKEND_GOOSE
+) -> tuple[AcpClient, asyncio.StreamReader]:
     client = AcpClient(work_dir=tmp_path, acp_backend=backend)
     reader = asyncio.StreamReader()
     proc = MagicMock()
@@ -106,7 +113,9 @@ def _fake_writes(client: AcpClient, on_write: Any) -> list[tuple[str, dict[str, 
     return sent
 
 
-async def _run_turn(client: AcpClient, *, steer_after_text: str, message: str) -> tuple[list[Any], bool]:
+async def _run_turn(
+    client: AcpClient, *, steer_after_text: str, message: str
+) -> tuple[list[Any], bool]:
     """Drive one turn; steer once the event carrying ``steer_after_text`` is seen."""
     client._turn_done.clear()
     events: list[Any] = []
@@ -120,7 +129,7 @@ async def _run_turn(client: AcpClient, *, steer_after_text: str, message: str) -
         if event.kind == EVENT_COMPLETE:
             break
     assert steer_task is not None
-    return events, await asyncio.wait_for(steer_task, 10)
+    return events, await await_until(steer_task, what="the steer call")
 
 
 # ── what the client claims for goose ─────────────────────────────────────────
@@ -170,7 +179,11 @@ async def test_a_steer_goose_echoes_is_reported_consumed(tmp_path: Any) -> None:
         # Answer, echo and the rest of the turn in one burst: the echo is read
         # before the steering call resumes, so its mapping must already exist.
         reader.feed_data(
-            _steer_answer() + _echo(_MSG, "use blue") + _text("saw steer") + _active_run(None) + _complete()
+            _steer_answer()
+            + _echo(_MSG, "use blue")
+            + _text("saw steer")
+            + _active_run(None)
+            + _complete()
         )
 
     sent = _fake_writes(client, _goose)
@@ -195,7 +208,9 @@ async def test_a_steer_goose_echoes_is_reported_consumed(tmp_path: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_steer_the_turn_ended_before_reading_is_never_reported_consumed(tmp_path: Any) -> None:
+async def test_a_steer_the_turn_ended_before_reading_is_never_reported_consumed(
+    tmp_path: Any,
+) -> None:
     """goose took the steer, then the run ended (a cancel) and discarded it."""
     client, reader = _client(tmp_path)
     reader.feed_data(_active_run(_RUN) + _text("working"))
@@ -233,7 +248,11 @@ async def test_a_turn_that_ends_before_the_answer_queues_the_steer(tmp_path: Any
     assert client._steer_answers == {}
     # The answer and echo arriving late, in the next turn, are read past.
     reader.feed_data(
-        _active_run("run_2") + _steer_answer() + _echo(_MSG, "use blue") + _text("next") + _complete()
+        _active_run("run_2")
+        + _steer_answer()
+        + _echo(_MSG, "use blue")
+        + _text("next")
+        + _complete()
     )
     client._turn_done.clear()
     later = [e async for e in client._dispatch_events(_PROMPT_ID, timeout=30.0)]
