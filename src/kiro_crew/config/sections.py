@@ -806,7 +806,7 @@ def _safe_avatar(value: object) -> dict:
     (``EYES[k] ?? ''``), and keeping the vocabulary in one place (the style
     module) means a new hat needs no backend release. ``tile`` is the one
     exception — it is interpolated into SVG markup, so it is pinned to a hex
-    color by the same validator session_color uses. A motion or cue name is
+    color (``_safe_color``). A motion or cue name is
     pinned, because unlike a trait it names an animation or a synthesizer
     preset rather than an option a renderer can resolve to nothing.
     """
@@ -3855,15 +3855,6 @@ class KiroCrewAgentConfig:
         default="",
         metadata=_meta("Description", "Human-readable agent description."),
     )
-    triggers: str = field(
-        default="",
-        metadata=_meta(
-            "Triggers",
-            "Routing intent for orchestrator crew selection: free-text 'when to "
-            "use this crew' guidance the main agent reads via select_crew. A crew "
-            "with no triggers is not offered for selection.",
-        ),
-    )
     source: str = field(
         default="kirocrew",
         metadata=_meta("Source", "Agent origin: kirocrew or builtin."),
@@ -3919,18 +3910,6 @@ class KiroCrewAgentConfig:
             "an orchestrator that should stay sharp, high (e.g. 85) for a worker "
             "that should keep its long context. A session's own threshold "
             "override (the context popover slider) still takes precedence.",
-        ),
-    )
-    session_color: str = field(
-        default="",
-        metadata=_meta(
-            "Session Color",
-            "Default session color for sessions created by this agent. Accepts "
-            "a CSS hex color string (#rrggbb, lowercase). Applied at render time "
-            "to any session this agent started that has no color of its own, so "
-            "editing it re-tints those sessions live. A color set on the session "
-            "itself (a manual pick or the dashboard default-color policy) always "
-            "takes precedence. Empty means no agent color.",
         ),
     )
     telegram_account: str = field(

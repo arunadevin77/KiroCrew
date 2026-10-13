@@ -223,7 +223,7 @@ describe('CrewEditorDialog — in-place bot editor (CREW-18688)', () => {
     fireEvent.click(screen.getByTestId('open-editor'))
     const dialog = await screen.findByRole('dialog', { name: /Edit crewmate/ })
     await waitFor(() => expect(mockApi.agentsInstalled).toHaveBeenCalled())
-    for (const key of ['template', 'model', 'place', 'schedules', 'webhook', 'routing', 'danger', 'overview']) {
+    for (const key of ['template', 'model', 'place', 'schedules', 'webhook', 'danger', 'overview']) {
       const tab = within(dialog).queryByTestId(`crew-rail-${key}`)
       if (!tab) continue
       fireEvent.click(tab)
@@ -303,9 +303,8 @@ describe('CrewEditorDialog — in-place bot editor (CREW-18688)', () => {
     const placeCombo = within(dialog).getAllByRole('option').find(o => o.textContent === 'oncall')
     if (placeCombo) fireEvent.click(placeCombo)
 
-    // Routing pane: edit triggers and open the avatar builder.
-    fireEvent.click(within(dialog).getByTestId('crew-rail-routing'))
-    fireEvent.click(within(dialog).getByTestId('open-avatar-builder'))
+    // The header's Edit avatar opens the avatar builder from any pane.
+    fireEvent.click(within(dialog).getByTestId('header-edit-avatar'))
     expect(await screen.findByTestId('stub-avatar-builder')).toBeInTheDocument()
   })
 
@@ -429,10 +428,9 @@ describe('CrewEditorDialog — in-place bot editor (CREW-18688)', () => {
     fireEvent.click(screen.getByTestId('open-editor'))
     const dialog = await screen.findByRole('dialog', { name: /Edit crewmate/ })
     await waitFor(() => expect(mockApi.agentsInstalled).toHaveBeenCalled())
-    // Open the avatar builder from the routing pane and apply an image with
-    // pending data — this dirties the routing pane.
-    fireEvent.click(within(dialog).getByTestId('crew-rail-routing'))
-    fireEvent.click(within(dialog).getByTestId('open-avatar-builder'))
+    // Open the avatar builder from the header and apply an image with
+    // pending data — this dirties the Overview pane, where the face lives.
+    fireEvent.click(within(dialog).getByTestId('header-edit-avatar'))
     fireEvent.click(await screen.findByTestId('stub-apply-image-avatar'))
     // Saving uploads the staged bytes and sends a promote token in the payload.
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }))

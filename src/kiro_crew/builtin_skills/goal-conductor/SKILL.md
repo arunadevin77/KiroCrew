@@ -221,7 +221,7 @@ cycle; an unbound running worker is neither visible nor recoverable.
 |---|---|
 | a leaf — one assertable acceptance condition | `kirocrew-worker` |
 | decomposes into two or more independently acceptable sub-items | `kirocrew-conductor` |
-| `select_crew` names a specialist crew that fits | that crew |
+| a specialist Crew Member's description fits the item | that crew |
 
 `depth` is computed at `create` time and capped at 2, so you may dispatch a
 conductor and its own workers may not conduct. A `depth_exceeded` error
@@ -237,9 +237,8 @@ where the decision belongs.
 YOUR agent, `kirocrew-conductor`, whose spec deliberately has no
 `fs_write` — so the child could not write a file even though writing one is the
 work you dispatched it to do, and the item would look stalled rather than
-misconfigured. `select_crew` and `session_create` are also **not wired**:
-`select_crew` returns a crew's resolved configuration and binds nothing, so you
-pass the agent name to `session_create` yourself.
+misconfigured. Nothing picks the agent for you: you pass the agent name to
+`session_create` yourself.
 
 **A worker needs no memory of its own.** Always dispatch `kirocrew-worker` with
 `agent_kind: "template"`: the worker then runs the `kirocrew-worker` template on
@@ -734,7 +733,7 @@ what the composer renders:
   granted by name too, and only these: `monitor_start`, `monitor_update`,
   `autonudge_stop`, `wait`, `resource_status`, `list_sessions`,
   `session_ledger_read`, `session_ledger_record`, `skill_search`, `skill_fetch`,
-  `select_crew`, `send_message`, `send_notification`, `ask_question`,
+  `send_message`, `send_notification`, `ask_question`,
   `nothing_to_do`, `reset_conversation`. That covers
   every core call this procedure asks you to make; **any other core tool is
   mounted but prompts**, including `task_run`, `workflow_run` and the `spawn_*`

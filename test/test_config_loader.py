@@ -7309,27 +7309,32 @@ class TestUnsatisfiableSubagentCwdRoots(unittest.TestCase):
         )
 
 
-def test_agent_triggers_load() -> None:
-    """`triggers` loads from config verbatim; a crew without triggers has ''."""
+def test_retired_crew_keys_are_tolerated_on_load_and_dropped_on_save() -> None:
+    """A config.json written before `triggers` and `session_color` were retired
+    still loads: the stale keys are ignored (whatever their type) and the record
+    grows no attribute for them, so the next save writes them out."""
     cfg = _load_from_dict(
         {
             "agents": {
-                "oncall": {"kiro_agent": "kirocrew", "triggers": "incident, outage"},
+                "oncall": {
+                    "kiro_agent": "kirocrew",
+                    "triggers": "incident, outage",
+                    "session_color": "#aabbcc",
+                },
                 "research": {"kiro_agent": "kirocrew", "description": "deep research crew"},
-                "weird": {"kiro_agent": "kirocrew", "triggers": 1},
+                "weird": {"kiro_agent": "kirocrew", "triggers": 1, "session_color": ["x"]},
             },
             "default_agent": "oncall",
             "workspaces": {"default": {"dir": "workspace"}},
         }
     )
-    # Explicit triggers load verbatim.
-    assert cfg.agents["oncall"].triggers == "incident, outage"
-    # A crew that defines no triggers keeps an empty string — it is not a routing
-    # candidate (no fallback to the description).
-    assert cfg.agents["research"].triggers == ""
-    # A non-string triggers value is normalized to "" on load (never survives to
-    # select_crew's .strip()).
-    assert cfg.agents["weird"].triggers == ""
+    for name in ("oncall", "research", "weird"):
+        assert not hasattr(cfg.agents[name], "triggers")
+        assert not hasattr(cfg.agents[name], "session_color")
+        written = cfg.to_dict()["agents"][name]
+        assert "triggers" not in written
+        assert "session_color" not in written
+    assert cfg.agents["research"].description == "deep research crew"
 
 
 # ---------------------------------------------------------------------------

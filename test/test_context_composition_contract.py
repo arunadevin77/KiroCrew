@@ -2179,7 +2179,7 @@ class TestPatchReach:
         monkeypatch.setattr(ctx, "member_briefing_supported", lambda: False)
         from types import SimpleNamespace
 
-        crew = SimpleNamespace(description="Writes.", triggers="drafts", member_id="")
+        crew = SimpleNamespace(description="Writes.", member_id="")
         cfg = SimpleNamespace(agents={"writer": crew})
         monkeypatch.setattr(ctx.KiroCrewConfig, "load", lambda *a, **k: cfg)
         monkeypatch.setattr(ctx, "read_member_rules", lambda slug, member: "")

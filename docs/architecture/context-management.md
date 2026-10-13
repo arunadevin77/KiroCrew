@@ -24,7 +24,7 @@ Detail this file deliberately does not restate:
 | Spawning, limits, results | [Subagents & Parallel Work](../../src/kiro_crew/docs/subagents.md) |
 | Memory types, V1/V2, modes | [Memory & Learning](../../src/kiro_crew/docs/memory-and-learning.md) |
 | Section internals and budget rationale | [memory-skills-hooks spec](../system-specs/modules/memory-skills-hooks.md) |
-| Crew records, binding, `select_crew` | [crew-mode spec](../system-specs/modules/crew-mode.md) |
+| Crew records, binding, delegation | [crew-mode spec](../system-specs/modules/crew-mode.md) |
 | Sub-agent lifecycle, host/profile resolution | [subagent spec](../system-specs/modules/subagent.md), [platform-context spec](../system-specs/modules/platform-context.md) |
 
 ## 1. Main chat session start
@@ -537,7 +537,7 @@ order — earlier outranks later, with one stated exception:
 
 | Layer | Owner | Source | Writable by |
 |--:|---|---|---|
-| 1 `[MEMBER IDENTITY]` | product, derived | the crew's `description` + `triggers` in `config.json` | dashboard |
+| 1 `[MEMBER IDENTITY]` | product, derived | the crew's `description` in `config.json` | dashboard |
 | 2 `[HOW YOU WORK]` | product | `_MEMBER_HOW_YOU_WORK`, identical for every member | nobody |
 | 3 `[PERMANENT RULES]` | the user | `<data home>/trust/member-rules/<slug>.json` | dashboard only |
 | 4 `[CURRENT ASSIGNMENT]` | the member | `<data home>/members/<slug>/briefing.md` | the member's own file tools |
@@ -612,15 +612,13 @@ restored, possibly stale copy), `MINIMAL` (cron; none).
 - Isolation is routing for the built-in tools, not secrecy against arbitrary code
   running as the same OS user.
 
-### Routing and dispatch
+### Dispatch
 
-`select_crew` (roster / bind) is answered by `mcp_core.py` → `_do_select_crew`,
-and `route_crew` by its own `_do_route_crew` beside it. Routing scores the crews'
-free-text `triggers` through the same
-`trigger_match.py` primitive the skill matcher uses (`rank_triggered`), so the two
-cannot disagree. A bind records a routing-*intent* pointer via
-`members.record_activity` (`via="select_crew"`), keyed under `decided_in` because
-the decision is made in the parent session while the crew runs elsewhere.
+There is no orchestrator-side crew routing: the former `select_crew` /
+`route_crew` tools and the crew `triggers` field they ranked are retired (see
+[Retired: crew routing](../system-specs/modules/crew-mode.md#retired-crew-routing)).
+Work reaches a crew by an explicit choice — a chat opened on it, a bound
+schedule or webhook, or `spawn_run(crew=...)`.
 
 A member dispatches real work instead of running it inline. Its DM thread mounts
 the dashboard session-control server per session

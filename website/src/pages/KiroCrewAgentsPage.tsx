@@ -8,7 +8,6 @@ import { useAppDispatch } from '../store'
 import { createSlot } from '../store/chatSlice'
 import { api, type WebhookTokenEntry } from '../api/client'
 import { useAvailableModels } from '../hooks/useAvailableModels'
-import { FOLDER_COLOR_PALETTE } from '../components/folderColorCatalog'
 import { Btn, SendBtn, Input, Badge, SearchInput, PageHeader, EmptyState } from '../components/ui'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table'
 import {
@@ -63,8 +62,6 @@ import { i18nT } from '../i18n/t'
 import { uiLocation } from '../uiLocations/uiLocation'
 import { useGuidePredicate, useGuideSelection } from '../guide/guidePredicates'
 
-// An example input value, independent of the display language.
-const HEX_COLOR_EXAMPLE = '#4f8ef7'
 import ErrorNotice from '../components/ErrorNotice'
 import { guidePick } from '../uiLocations/targetRegistry'
 /** Common shape returned by the agent/workspace mutation endpoints. */
@@ -79,8 +76,6 @@ interface AgentUpdatePayload {
   kiro_agent: string
   workspace: string
   memory_store: string
-  /** Free-text routing intent for orchestrator crew selection. */
-  triggers: string
   /** Presentation label shown in place of the name; '' clears it back to the
    *  name. Sent unconditionally so clearing is a real write. */
   display_name: string
@@ -90,8 +85,6 @@ interface AgentUpdatePayload {
    *  backend accepts (low..max); a level is only honoured on a model that
    *  supports effort at all. */
   reasoning_effort: string
-  /** Default session color (#rrggbb hex) for new sessions. '' = no default. */
-  session_color: string
   /** The face this save commits: a record pins a face; `null` is an explicit
    *  RESET to the name-derived face; `{}` is the record for a crew with no
    *  override, which the backend also stores as no override. */
@@ -562,128 +555,6 @@ export function displayNameFallback(agent: KiroCrewAgent | null | undefined, key
   return isAssistantMember(agent) ? i18nT('components.assistantWelcome.default_name') : key
 }
 
-/** The routing-keyword input. Rendered by the create form and by the editor's
- *  routing pane, so it is a component rather than two copies. */
-export function TriggersField({ value, onChange, subject }: { value: string; onChange: (v: string) => void; subject: FormSubject }) {
-  const hint = subject === 'member'
-    ? i18nT('pages.kiroCrewAgentsPage.triggers_hint_member')
-    : i18nT('pages.kiroCrewAgentsPage.triggers_hint')
-  const info = subject === 'member'
-    ? i18nT('pages.kiroCrewAgentsPage.triggers_info_member')
-    : i18nT('pages.kiroCrewAgentsPage.triggers_info')
-  return (
-    <Field label={i18nT('pages.kiroCrewAgentsPage.triggers')} hint={hint} info={info}>
-      <Input
-        placeholder={i18nT('pages.kiroCrewAgentsPage.triggers_placeholder')}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        aria-label={i18nT('pages.kiroCrewAgentsPage.triggers')}
-      />
-    </Field>
-  )
-}
-
-/** Session color picker for agent configuration. Sets the default session
- *  tint color for new sessions created with this agent. */
-export function SessionColorField({ value, onChange, subject }: { value: string; onChange: (v: string) => void; subject: FormSubject }) {
-  const HEX_RE = /^#[0-9a-f]{6}$/i
-  const [draft, setDraft] = useState(value || '')
-  // Re-sync the draft when the committed value changes from outside (e.g. the
-  // swatch, Clear, or opening the editor on a different crew).
-  useEffect(() => { setDraft(value || '') }, [value])
-  const commit = (raw: string) => {
-    const v = raw.trim().toLowerCase()
-    if (v === '') { onChange(''); setDraft('') }
-    else if (HEX_RE.test(v)) { onChange(v); setDraft(v) }
-    else { setDraft(value || '') } // invalid on blur → revert to committed
-  }
-  return (
-    <Field label={i18nT('pages.kiroCrewAgentsPage.session_color')} hint={subject === 'member' ? i18nT('pages.kiroCrewAgentsPage.session_color_hint_member') : i18nT('pages.kiroCrewAgentsPage.session_color_hint')}>
-      {/* Quick picks first, exact entry below — the order the session
-       *  right-click menu uses, so the two surfaces read the same way.
-       *
-       *  These are FOLDER_COLOR_PALETTE, the repo's existing fixed-hex identity
-       *  catalog, NOT the sidebar's generated palette. The sidebar's swatches
-       *  are a `color_index` into a palette derived from the theme accent, so
-       *  they re-derive when the theme changes; a crew's `session_color` is a
-       *  stored hex, so a swatch here has to commit exactly the literal it
-       *  shows and must not drift. That is the same job the folder catalog
-       *  already does, and reusing it keeps one visual language across folders,
-       *  tags and crews — as that file's own comment argues — instead of a
-       *  second preset list that would silently diverge from it. Read-only:
-       *  the catalog's KEEP IN SYNC contract with chat_folders.py governs
-       *  changes to its entries, and consuming it adds no such coupling.
-       *
-       *  The active ring is matched by hex, so a custom colour outside the
-       *  catalog correctly rings nothing.
-       *
-       *  No "no color" cell here: Clear already owns that, and two controls for
-       *  one action is worse than one. */}
-      <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        {FOLDER_COLOR_PALETTE.map(({ value: c, label }) => {
-          const active = HEX_RE.test(value) && value.toLowerCase() === c
-          return (
-            <Btn
-              type="button"
-              key={c}
-              aria-label={label()}
-              aria-pressed={active}
-              title={label()}
-              // Btn, not a raw <button>, so the swatches inherit the standard
-              // press and disabled treatment. `p-0` and the sizing below win
-              // over Btn's own padding/radius/border because Btn twMerges
-              // `className` last; the inline background beats its
-              // `bg-transparent` (and its hover background) on specificity, so
-              // the dot keeps its colour in every state.
-              //
-              // `border-text-strong`, not `border-accent`: the accent is itself a
-              // purple in most themes, so an accent ring on the indigo and violet
-              // entries reads as no ring at all. The near-white ring is what
-              // SessionColorSwatches uses, and it separates from every hue here.
-              className={`h-5 w-5 p-0 cursor-pointer rounded-full border-2 transition-transform hover:brightness-125 swatch-cue ${active ? 'border-text-strong scale-110' : 'border-border'}`}
-              style={{ background: c }}
-              onClick={() => onChange(c)}
-            />
-          )
-        })}
-      </div>
-      <div className="flex items-center gap-2">
-        <Input
-          type="color"
-          value={value || HEX_COLOR_EXAMPLE}
-          onChange={e => onChange(e.target.value.toLowerCase())}
-          className="h-8 w-8 flex-none cursor-pointer p-0.5"
-          aria-label={i18nT('pages.kiroCrewAgentsPage.session_color')}
-        />
-        <Input
-          placeholder={HEX_COLOR_EXAMPLE}
-          value={draft}
-          onChange={e => {
-            const v = e.target.value.trim().toLowerCase()
-            setDraft(v)
-            // Live-commit only when the draft is a complete hex or cleared;
-            // partial values stay local so typing is never swallowed.
-            if (v === '' || HEX_RE.test(v)) onChange(v)
-          }}
-          onBlur={e => commit(e.target.value)}
-          className="flex-1 font-mono text-[13px]"
-          aria-label={i18nT('pages.kiroCrewAgentsPage.session_color_hex')}
-        />
-        {value && (
-          <Btn
-            type="button"
-            onClick={() => onChange('')}
-            className="text-[11px]"
-            aria-label={i18nT('pages.kiroCrewAgentsPage.session_color_clear')}
-          >
-            {i18nT('pages.kiroCrewAgentsPage.session_color_clear')}
-          </Btn>
-        )}
-      </div>
-    </Field>
-  )
-}
-
 /** The roster's `default` badge: a status stamp, and only that. The path to
  *  CHANGE the default is the toolbar's "Change default crewmate ›" link
  *  (`ChangeDefaultLink`), not the badge — a badge that carried the verb ate the
@@ -756,7 +627,6 @@ function CrewCard({ agent, isDefault, shared, onOpen }: {
       className={`group flex flex-col gap-3 rounded-lg border bg-card p-3.5 transition-all
                   hover:border-border-strong hover:shadow-md focus-ring
                   ${isDefault ? 'border-accent-subtle' : 'border-border'}`}
-      style={agent.session_color ? { borderLeftColor: agent.session_color, borderLeftWidth: '3px' } : undefined}
     >
       <div className="flex items-center gap-3">
         <CrewAvatar seed={agent.name} avatar={agent.avatar} size={38} />
@@ -1013,9 +883,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
   const [kiroAgent, setKiroAgent] = useState('')
   const [workspace, setWorkspace] = useState('default')
   const [memoryStore, setMemoryStore] = useState('default')
-  const [triggers, setTriggers] = useState('')
   const [displayName, setDisplayName] = useState('')
-  const [sessionColor, setSessionColor] = useState('')
   const [editModel, setEditModel] = useState(INHERIT_MODEL)
   const [editEffort, setEditEffort] = useState('')
   /** Draft avatar override. null = the name-derived face (no override). */
@@ -1117,9 +985,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
     setError(''); setSheetHint('')
     setConfirmDelete(false)
     setKiroAgent(a.kiro_agent); setWorkspace(a.workspace); setMemoryStore(a.memory_store)
-    setTriggers(a.triggers || '')
     setDisplayName(a.display_name || '')
-    setSessionColor(a.session_color || '')
     setEditModel(a.model || INHERIT_MODEL)
     setEditEffort(a.reasoning_effort || '')
     // Normalized through the same coercion the renderer applies, so the dirty
@@ -1431,7 +1297,6 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
       kiro_agent: kiroAgent,
       workspace,
       memory_store: memoryStore,
-      triggers,
       // Sent unconditionally like `model`/`reasoning_effort`: '' is a real
       // value (clear the label back to the name), so a skipped field would
       // make clearing impossible. The server trims.
@@ -1443,7 +1308,6 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
       // value (clear the pin), so a skipped field would make clearing
       // impossible.
       reasoning_effort: editEffort,
-      session_color: sessionColor,
     }
     // Three spellings: a draft the user built; `null` when they explicitly RESET
     // (see `avatarReset`); `avatarPassthrough` before `{}` so a record this build
@@ -1680,12 +1544,11 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
     }
     if (editModel !== (editingAgent.model || INHERIT_MODEL)) out.add('model')
     if (editEffort !== (editingAgent.reasoning_effort || '')) out.add('model')
-    if (triggers !== (editingAgent.triggers || '')) out.add('routing')
     // Trim-compared on BOTH sides, because the server trims on save: "  Ops  "
     // over a stored "Ops" persists nothing, so it must not read as an unsaved
     // change — and a hand-edited config holding "  Ops  " must not open dirty.
-    if (displayName.trim() !== (editingAgent.display_name || '').trim()) out.add('routing')
-    if (sessionColor !== (editingAgent.session_color || '')) out.add('routing')
+    // The name field lives on the overview pane, so that is the row the unsaved mark goes on.
+    if (displayName.trim() !== (editingAgent.display_name || '').trim()) out.add('overview')
     // Every tier in one comparison: ghost traits normalize through
     // ghostTraitsFrom (flat record, stable key order), an image override through
     // imageAvatarFrom and a pack through packAvatarFrom — so a picture pick, a
@@ -1707,7 +1570,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
             : editAvatar?.kind === 'pack'
               ? { id: editAvatar.id }
               : null
-    if (JSON.stringify(draftNorm) !== JSON.stringify(savedNorm)) out.add('routing')
+    if (JSON.stringify(draftNorm) !== JSON.stringify(savedNorm)) out.add('overview')
     // Compared separately from the face, and BOTH sides go through the same
     // coercion — which is what makes the comparison sound rather than merely
     // convenient. `JSON.stringify` is order-sensitive: the draft's map is in
@@ -1726,14 +1589,14 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
       ? [null, null]
       : [motionsFrom(editingAgent.avatar), soundsFrom(editingAgent.avatar)]
     const draftReactions = [motionsFrom(editAvatar), soundsFrom(editAvatar)]
-    if (JSON.stringify(draftReactions) !== JSON.stringify(savedReactions)) out.add('routing')
+    if (JSON.stringify(draftReactions) !== JSON.stringify(savedReactions)) out.add('overview')
     // An open inline schedule-create form is pending work too: it gets the
     // rail's unsaved dot and the note, so closing the editor cannot silently
     // eat a half-typed schedule the way an untracked surface would.
     if (schedDraft) out.add('schedules')
     if (capabilityDirty) out.add('capabilities')
     return out
-  }, [editingAgent, kiroAgent, workspace, memoryStore, editModel, editEffort, triggers, displayName, sessionColor, schedDraft, editAvatar, capabilityDirty])
+  }, [editingAgent, kiroAgent, workspace, memoryStore, editModel, editEffort, displayName, schedDraft, editAvatar, capabilityDirty])
 
   /** Rail-driven pane changes route through here: leaving the schedules pane
    *  while a schedule draft is open asks before destroying the typed work
@@ -1850,7 +1713,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
    *
    * 'close' and 'chat' both end in closeSheet, so answering "Discard schedule"
    * over a dialog that mentioned only the typed schedule is how an
-   * untouched-looking Model or Triggers edit disappears without ever being
+   * untouched-looking Model or Avatar edit disappears without ever being
    * asked about. A pane switch and a form collapse keep the sheet, so the
    * narrow question is the true one there and neither escalates.
    */
@@ -1915,15 +1778,10 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
   const activeWebhooks = boundWebhookTokens.filter(
     (t: WebhookTokenEntry) => webhookCanCallIn(t, webhooksQuery.data?.switch_on !== false)).length
 
-  /** Keywords the orchestrator can match, counted the way the field is authored:
-   *  comma-separated, blanks ignored, so a trailing comma is not a keyword. */
-  const routingWords = triggers.split(',').map(s => s.trim()).filter(Boolean).length
-
   const sections = useCrewEditorSections({
     templateLabel: i18nT('pages.kiroCrewAgentsPage.built_from'),
     activeSchedules: wakeJobs.filter(j => j.enabled).length,
     totalSchedules: wakeJobs.length,
-    routingWords,
     sharesStorage: collidingCrews.length > 0,
     canDelete: !!editing && editing !== defaultAgent,
     schedulesUnknown: wakeQuery.isError,
@@ -2141,7 +1999,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
           <DialogHeader className="flex-wrap sm:flex-nowrap">
             {/* The avatar is itself the entry point to the builder: the
                 first-run review's top finding was that a face setting filed
-                under "Triggers" has no scent — but everyone tries clicking
+                under the identity pane has no scent — but everyone tries clicking
                 the face. CrewAvatarButton makes that visible (hover scrim +
                 pencil, persistent badge on touch); the "Edit avatar" button
                 beside the title is the text route that needs no guessing at
@@ -2268,7 +2126,6 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
                       // the Crewmates panel, which does have one, passes it.
                       activeSchedules={wakeJobs.filter(j => j.enabled).length}
                       schedulesUnknown={wakeQuery.isError}
-                      routingWords={routingWords}
                       sharingCrews={collidingCrews.length}
                       workspaceShared={sharingWorkspace.length > 0}
                       memoryShared={sharingMemoryStore.length > 0}
@@ -2446,32 +2303,6 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
                   )}
 
                   {pane === 'webhook' && <CrewWebhookSection crew={editing} />}
-
-                  {pane === 'routing' && (
-                    <>
-                      <TriggersField value={triggers} onChange={setTriggers} subject="agent" />
-                      <SessionColorField value={sessionColor} onChange={setSessionColor} subject="agent" />
-                      <Field
-                        label={i18nT('components.avatarBuilder.field_label')}
-                        hint={i18nT('components.avatarBuilder.field_hint')}
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <CrewAvatarButton size={36} onEdit={openAvatarBuilder} data-testid="field-avatar-button">
-                            <CrewAvatar seed={editing || ''} avatar={editAvatar ?? undefined} size={36} />
-                          </CrewAvatarButton>
-                          <Btn onClick={openAvatarBuilder} data-testid="open-avatar-builder">
-                            <UserPen className="lucide-inline" aria-hidden="true" />
-                            {i18nT('components.avatarBuilder.edit_avatar')}
-                          </Btn>
-                          {editAvatar && (
-                            <span className="text-[11px] text-muted">
-                              {i18nT('components.avatarBuilder.customized_note')}
-                            </span>
-                          )}
-                        </div>
-                      </Field>
-                    </>
-                  )}
 
                   {pane === 'danger' && (
                     <div className="flex flex-col gap-3 rounded-md border border-danger-subtle bg-danger-subtle p-3">

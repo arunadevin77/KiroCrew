@@ -76,8 +76,6 @@ from kiro_crew.validation import (
     NOTHING_TO_DO_SCHEMA,
     REGISTER_HOOK_SCHEMA,
     RESET_CONVERSATION_SCHEMA,
-    ROUTE_CREW_SCHEMA,
-    SELECT_CREW_SCHEMA,
     SET_PROJECT_SCHEMA,
     SUGGEST_FOLLOWUP_SCHEMA,
     TASK_RUN_SCHEMA,
@@ -236,60 +234,6 @@ def schemas(*, names_only: bool = False) -> list[dict[str, Any]]:
                     },
                 },
                 "required": ["seconds", "reason"],
-            },
-        },
-        {
-            "name": "route_crew",
-            "description": (
-                "Rank the crews whose triggers match a task, best first, and return each "
-                "one's score, description and memory store. Use this when you want the "
-                "same task to reach the same crew every time; use select_crew when you "
-                "want the roster and intend to judge the fit yourself. Only when both "
-                "`matches` and `unavailable` are empty does no crew claim the task; "
-                "handle that case on the default crew. Report unavailable members and "
-                "their reasons without substituting Global memory. Acting on a match means "
-                "spawn_run(crew=<name>), which is what gives that run the crew's memory "
-                "and template and keeps another crew's memory out of it."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "task": {
-                        "type": "string",
-                        "description": "The task to route. Usually the user's own words.",
-                    },
-                },
-                "required": ["task"],
-            },
-        },
-        {
-            "name": "select_crew",
-            "description": (
-                "Orchestrator crew routing. Call with NO argument to get the roster of "
-                "selectable crews (name + triggers) so you can decide whether a specialist "
-                "crew fits the task better than handling it yourself. Call with `crew` set "
-                "to a roster name to bind it: returns the crew's resolved {workspace, "
-                "memory_store, kiro_agent, model}, which you then run via "
-                "spawn_run(crew=<name>) -- `crew=`, NOT `agent=`: `agent` names a "
-                "kiro-cli template, and passing a crew name there gives the run the "
-                "DEFAULT memory store, silently, which is how one crew's work ends up "
-                "in another's memory. Selection rules: (1) pick a crew ONLY when its "
-                "triggers clearly and specifically match the task with high confidence; "
-                "(2) if no crew is a strong match, do NOT route — fall back to the default "
-                "crew (default_agent); (3) crews without triggers are omitted from the "
-                "roster and are never auto-selected."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "crew": {
-                        "type": "string",
-                        "description": (
-                            "Crew name to bind. Omit or leave empty to list the roster instead."
-                        ),
-                    },
-                },
-                "required": [],
             },
         },
         {
@@ -1351,16 +1295,6 @@ class _WaitStep(DeferredTool):
 #: answers in milliseconds; the bound only matters when the gateway is stalled,
 #: where the step pool must not be held for the helper's 30s default.
 _WAIT_PING_TIMEOUT_SECS = 5.0
-
-
-def route_crew(name: str, args: dict[str, Any]) -> str:
-    args = validate_tool_args(args, ROUTE_CREW_SCHEMA)
-    return mcp_core._do_route_crew(str(args.get("task") or ""))
-
-
-def select_crew(name: str, args: dict[str, Any]) -> str:
-    args = validate_tool_args(args, SELECT_CREW_SCHEMA)
-    return mcp_core._do_select_crew(str(args.get("crew") or ""))
 
 
 def register_hook(name: str, args: dict[str, Any]) -> str:
@@ -2472,8 +2406,6 @@ def suggest_followup(name: str, args: dict[str, Any]) -> str:
 HANDLERS: dict[str, Callable[[str, dict[str, Any]], "str | DeferredTool"]] = {
     "task_run": task_run,
     "wait": wait,
-    "route_crew": route_crew,
-    "select_crew": select_crew,
     "register_hook": register_hook,
     "autonudge_stop": autonudge_stop,
     "ask_question": ask_question,

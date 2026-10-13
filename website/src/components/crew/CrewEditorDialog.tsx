@@ -40,7 +40,6 @@ import { SourceBadge } from '../SourceBadge'
 import { effortLabel } from '../../lib/effort'
 import { i18nT } from '../../i18n/t'
 import {
-  Field,
   WorkspaceModal,
   WorkspaceField,
   MemoryStoreField,
@@ -48,8 +47,6 @@ import {
   ModelField,
   EffortField,
   DisplayNameField,
-  TriggersField,
-  SessionColorField,
 } from '../../pages/KiroCrewAgentsPage'
 import { INHERIT_MODEL, type CrewEditorController } from './useCrewEditor'
 
@@ -79,13 +76,13 @@ export default function CrewEditorDialog({ ctl }: { ctl: CrewEditorController })
   const {
     editing, editingAgent,
     kiroAgent, setKiroAgent, workspace, setWorkspace, memoryStore,
-    triggers, setTriggers, displayName, setDisplayName, sessionColor, setSessionColor,
+    displayName, setDisplayName,
     editModel, setEditModel, editEffort, setEditEffort, editAvatar,
     kiroAgentOptions, workspaceOptions, modelOptions, availableModels, templateProvenance,
     templateFieldLabel, kirocrewCfg, editorOptionsError, modelsDegraded,
     resolved, resolvedError, effortCapable, effortModel,
     collidingCrews, sharingWorkspace, sharingMemoryStore,
-    pane, requestPane, goToPane, panelId, sections, routingWords, templatePaneActive,
+    pane, requestPane, goToPane, panelId, sections, templatePaneActive,
     wakeJobs, wakeUnknown, boundWebhooks, webhooksUnknown,
     capabilityManaged, capabilityReadFailed, capabilityLoading,
     setCapabilityDirty, setCapabilityBusy, onCapabilitiesSaved, setTemplateDirty,
@@ -194,7 +191,6 @@ export default function CrewEditorDialog({ ctl }: { ctl: CrewEditorController })
                     resolvedModel={resolved?.model || ''}
                     activeSchedules={wakeJobs.filter(j => j.enabled).length}
                     schedulesUnknown={wakeUnknown}
-                    routingWords={routingWords}
                     sharingCrews={collidingCrews.length}
                     workspaceShared={sharingWorkspace.length > 0}
                     memoryShared={sharingMemoryStore.length > 0}
@@ -354,32 +350,6 @@ export default function CrewEditorDialog({ ctl }: { ctl: CrewEditorController })
               )}
 
               {pane === 'webhook' && <CrewWebhookSection crew={editing} onNavigateAway={ctl.guardedNavigate} />}
-
-              {pane === 'routing' && (
-                <>
-                  <TriggersField value={triggers} onChange={setTriggers} subject="agent" />
-                  <SessionColorField value={sessionColor} onChange={setSessionColor} subject="agent" />
-                  <Field
-                    label={i18nT('components.avatarBuilder.field_label')}
-                    hint={i18nT('components.avatarBuilder.field_hint')}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <CrewAvatarButton size={36} onEdit={openAvatarBuilder} data-testid="field-avatar-button">
-                        <CrewAvatar seed={editing || ''} avatar={editAvatar ?? undefined} size={36} />
-                      </CrewAvatarButton>
-                      <Btn onClick={openAvatarBuilder} data-testid="open-avatar-builder">
-                        <UserPen className="lucide-inline" aria-hidden="true" />
-                        {i18nT('components.avatarBuilder.edit_avatar')}
-                      </Btn>
-                      {editAvatar && (
-                        <span className="text-[11px] text-muted">
-                          {i18nT('components.avatarBuilder.customized_note')}
-                        </span>
-                      )}
-                    </div>
-                  </Field>
-                </>
-              )}
 
               {pane === 'danger' && (
                 <div className="flex flex-col gap-3 rounded-md border border-danger-subtle bg-danger-subtle p-3">

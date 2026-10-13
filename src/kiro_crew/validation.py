@@ -1547,10 +1547,9 @@ SPAWN_RUN_SCHEMA = ToolSchema(
         # Resolved through ``resolve_agent_bindings``, never by deriving a store
         # from ``agent``, which answers `default` for exactly the crew that
         # configured otherwise.
-        # NOT pattern-validated, for the reason SELECT_CREW_SCHEMA states above:
-        # crew creation only strips the name, so a crew may legitimately contain
-        # spaces or dots, and a regex here would refuse a crew the operator can
-        # see in the roster. The deny-by-default gate is the `crew not in
+        # NOT pattern-validated: crew creation only strips the name, so a crew
+        # may legitimately contain spaces or dots, and a regex here would refuse
+        # a crew the operator can see in the roster. The deny-by-default gate is the `crew not in
         # cfg.agents` membership check at the endpoint, which answers 400 with an
         # `unknown_crew` code rather than degrading to the global store.
         FieldSpec("crew", str, max_len=MAX_SHORT_STRING),
@@ -3886,30 +3885,6 @@ REGISTER_HOOK_SCHEMA = ToolSchema(
     ],
 )
 
-ROUTE_CREW_SCHEMA = ToolSchema(
-    tool_name="route_crew",
-    fields=[
-        FieldSpec("task", str, required=True, max_len=MAX_MEDIUM_STRING),
-    ],
-)
-
-# select_crew: `crew` is optional — omitted/empty returns the roster. When
-# present it is NOT pattern-validated here: crew creation only strips the name
-# (agents.py), so names may contain spaces/dots; the deny-by-default gate is the
-# `crew not in cfg.agents` membership check in _do_select_crew, not a regex.
-SELECT_CREW_SCHEMA = ToolSchema(
-    tool_name="select_crew",
-    fields=[
-        FieldSpec(
-            "crew",
-            str,
-            required=False,
-            max_len=MAX_SHORT_STRING,
-            default="",
-        ),
-    ],
-)
-
 # ── Slack reaction field patterns ──
 
 # Slack emoji names: alphanumeric, underscores, hyphens, and plus signs
@@ -4215,7 +4190,6 @@ SESSION_SUMMARY_SCHEMA = ToolSchema(
 # ── Schema Registry ──
 
 MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
-    "route_crew": ROUTE_CREW_SCHEMA,
     "spawn_run": SPAWN_RUN_SCHEMA,
     "spawn_sub_agents": SPAWN_SUB_AGENTS_SCHEMA,
     "spawn_list": SPAWN_LIST_SCHEMA,

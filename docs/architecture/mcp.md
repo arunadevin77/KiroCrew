@@ -2266,7 +2266,6 @@ answers `tools/list` from):
 - **Monitor read:** `monitor_inspect` (strict authenticated session
   identity only; no ancestor fallback; reports a structured monitor or a legacy
   timer loop's presence reading, whichever the session holds)
-- **Crew routing:** `route_crew`, `select_crew`
 - **Session work ledger:** `session_ledger_read`, `session_ledger_record`
 - **Sessions and history:** `list_sessions`, `get_chat_session`,
   `search_chat_history`

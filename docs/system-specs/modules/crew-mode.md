@@ -1,9 +1,12 @@
 # Crews
 
 A **crew** is a named entry in the config's `agents` map. It binds a kiro-cli
-agent template plus a workspace, a memory store, a model and a reasoning effort,
-and it carries free-text `triggers` that decide whether the orchestrator may
-route work to it. The selection path is the `select_crew` MCP tool.
+agent template plus a workspace, a memory store, a model and a reasoning effort.
+Work reaches a crew by an explicit choice: a chat opened on it, a schedule or
+webhook bound to it, or `spawn_run(crew=...)` — see
+[Delegating to a bound crew](#delegating-to-a-bound-crew). The former
+orchestrator-side routing (`triggers`, `select_crew`, `route_crew`) is retired —
+see [Retired: crew routing](#retired-crew-routing).
 
 This spec used to own a second thing spelled *crew*: **Crew Mode**, the
 `"crew"` chat-slot mode whose control plane (`crew_chat.py`) fanned one
@@ -21,11 +24,8 @@ gateway, which this one reaches through a tunnel (see [instances.md](instances.m
 
 | File | Role |
 |---|---|
-| `src/kiro_crew/config/sections.py` | `KiroCrewAgentConfig` — the crew record: `kiro_agent`, `workspace`, `memory_store`, `model`, `reasoning_effort`, `display_name`, `description`, `triggers`, `source`, `session_color`, `avatar`, per-crew watchdog overrides |
+| `src/kiro_crew/config/sections.py` | `KiroCrewAgentConfig` — the crew record: `kiro_agent`, `workspace`, `memory_store`, `model`, `reasoning_effort`, `display_name`, `description`, `source`, `avatar`, per-crew watchdog overrides |
 | `src/kiro_crew/config/loader.py` | `resolve_agent_bindings` (crew to workspace / memory store / template) and `resolve_effective_model` (the default-model precedence) |
-| `src/kiro_crew/mcp_core.py` | `_do_select_crew` — the roster and bind bodies |
-| `src/kiro_crew/mcp_tools/control.py` | The `select_crew` tool declaration and dispatch |
-| `src/kiro_crew/validation.py` | `SELECT_CREW_SCHEMA` — argument validation for that tool |
 | `src/kiro_crew/members.py` | Per-crew member space: activity log, DM-thread binding, permanent rules, self-maintained briefing, the member turn chokepoint |
 | `src/kiro_crew/subagent.py` | `_validate_agent` — what an `agent=` name is checked against, and `UNADVERTISED_AGENTS` |
 | `src/kiro_crew/dashboard/handlers/agents.py` | The agents handlers' import and patch surface: `GET /api/agents`, the model picker reads and the crew model-pin checks, composed with the `agent_admin` owners below |
@@ -36,8 +36,8 @@ gateway, which this one reaches through a tunnel (see [instances.md](instances.m
 | `src/kiro_crew/dashboard/handlers/members.py` | `/api/members` roster, thread get-or-create, rules, activity |
 | `src/kiro_crew/crew_teams.py` + `src/kiro_crew/dashboard/handlers/teams.py` | Crewmate teams (`teams.json` in the masked gateway-only data-home directory `crew-teams`; `/api/teams`): the Crewmates page's roster grouping and team view — specified under [learn-cron-dashboard](learn-cron-dashboard.md) with the members handlers |
 | `website/src/pages/KiroCrewAgentsPage.tsx` | The crewmate roster, mounted as the **Crewmates** tab of `CapabilitiesPage` (Customize) |
-| `website/src/components/crew/crewEditorSections.ts` | The crew editor's pane registry, including the Routing pane that edits `triggers` |
-| `website/src/components/CrewWakeSection.tsx` | "What wakes this agent" — schedules, deliberately distinct from `triggers` |
+| `website/src/components/crew/crewEditorSections.ts` | The crew editor's pane registry |
+| `website/src/components/CrewWakeSection.tsx` | "What wakes this agent" — the schedules bound to the crew |
 | `website/src/components/chat/crewmateBubbles.ts` | A crewmate's chat: what the transcript draws (`filterCrewmateChat`) and the run / corner rule for its bubbles (`crewmateRunPosition`, `crewmateBubbleClass`) |
 | `website/src/pages/chat/CrewmateMessage.tsx` | One crewmate message in its chat: the bubble alone, placed by its run position (no author line, no avatar gutter) |
 
@@ -1385,9 +1385,13 @@ sends no model, which leaves kiro-cli's own resolution in charge rather than the
 global. That precedence is unchanged for ordinary named templates. No template
 follows the global default through these resolvers.
 
-The loader is defensive about hand-edited config: a non-string `model` or
-`triggers` collapses to `""`, an unknown `reasoning_effort` collapses to inherit,
-and a junk watchdog override collapses to `0`.
+The loader is defensive about hand-edited config: a non-string `model`
+collapses to `""`, an unknown `reasoning_effort` collapses to inherit, and a
+junk watchdog override collapses to `0`. An unknown key inside a record is
+otherwise preserved across a load/save round-trip (`capture_extra_section_keys`),
+so the retired `triggers` and `session_color` are listed under `agents` in
+`config.resolution._SECTION_KEYS_DELIBERATELY_DROPPED`: ignored on load, never
+captured, and so dropped on the next save.
 
 ### Crewmate conversation layout: switcher, Profile, Dashboard, Files
 
@@ -1895,9 +1899,11 @@ UI — removal only; nothing is created or rebound:
   and matches the installed spec's source, treating `package` and the legacy
   alias `aim` as one value; and every field the sync did not copy from the spec
   is at its default — no `member_id`, the `default` store, no model, effort,
-  triggers, colour, star, avatar or workspace, and no key the record does not
-  declare (`_is_fresh_sync_shape`, tested on the raw row as `config.json` holds
-  it; a missing declared key reads as its default). Description is copied from
+  star, avatar or workspace, and no key the record does not declare, except the
+  retired `triggers` and `session_color` at their old empty default, which an
+  earlier build's sync wrote on every row (`_is_fresh_sync_shape`, tested on
+  the raw row as `config.json` holds it; a missing declared key reads as its
+  default). Description is copied from
   the spec and exempt from the default comparison, so editing it does not keep
   a never-chatted generated row. The spec must be installed and must itself
   have a source in `builtin`, `package` or `aim`; a missing spec, a row or spec
@@ -2361,7 +2367,7 @@ nowhere at all when the shell swallows the popup. The split-view pane still pass
 for the reason #3300 records (its dock is `activeSlot`-keyed while pane focus
 is not).
 
-## Selection: the `select_crew` contract
+## Selection provenance and the display label
 
 Discovery importing a provider template as a configured member does not rebind
 an existing dashboard conversation that selected the template. Resolved bindings
@@ -2372,42 +2378,6 @@ may replace selection provenance, but cannot migrate an existing V1 native
 conversation into member memory. The persistence and legacy-session rules are
 owned by [session](session.md#agent-selection-provenance).
 
-`select_crew` has two modes, both answered as JSON by `_do_select_crew`.
-
-`route_crew` takes a non-empty `task` (an empty or blank one answers
-`{"error": "task must be a non-empty string"}`) and ranks the crews whose
-triggers match it, best first. It answers `task` (cut to 200 characters),
-`default_agent`, `matches` (`{crew, score, description, memory_store}` plus
-`display_name` when it differs from the key), `unavailable` (`{crew, reason}`,
-same label rule) and `guidance`.
-
-`route_crew` resolves each trigger-matched member independently. Healthy matches
-retain their rank and owned store. Matching members whose memory cannot be
-resolved appear in `unavailable` with a bounded, path- and credential-redacted
-reason. No healthy match and no trigger match are distinct outcomes; unavailable
-memory never authorizes substitution with Global memory. A named `select_crew`
-refusal returns `crew` and `error` without a bound store or routing activity.
-
-**Roster** (`crew` omitted or empty):
-
-```json
-{"default_agent": "default",
- "crews": [{"name": "oncall", "triggers": "incident, prod outage"}],
- "guidance": "Select a crew ONLY when its triggers clearly and specifically match…"}
-```
-
-Three rules define that list, and each is load-bearing:
-
-- A crew whose `triggers` is empty or whitespace is **omitted entirely**. There
-  is no fallback to `description`: no triggers means not a routing candidate.
-- `default_agent` (the roster's default crewmate) is omitted, triggers or not,
-  and `route_crew` skips it the same way: RFC rule 5 keeps it as the one
-  `select_crew` holds for itself, the standing fallback the guidance names. This
-  is a routing rule, not an identity -- the calling session is a template
-  session (the default custom agent on Global memory), never that crewmate.
-- The response carries `default_agent` and `guidance` so the model has an
-  explicit fallback and a high-confidence bar rather than inferring one.
-
 `agents.<crew>.display_name` is a presentation label only. The crew's name
 stays its immutable identity: it keys the record, addresses
 `/api/agents/{name}`, and is what dispatch, crons and spawn resolve, so
@@ -2417,42 +2387,8 @@ non-string label with `400 invalid_display_name`. Rosters mask it like every
 other externally controlled string (`_roster_mask`), and the member and config
 projections carry it.
 
-An entry carries `display_name` when the crew has a label that differs from
-its key, and so does each `route_crew` match and `unavailable` entry. The user names a crew by that
-label while `spawn_run(crew=...)` takes the key, so without it a renamed crew
-cannot be matched to the user's words.
-
-**Bind** (`crew` names a roster entry):
-
-```json
-{"crew": "oncall",
- "bound": {"kiro_agent": "oncall-agent", "workspace": "/…/oncall",
-           "memory_store": "oncall-mem", "model": ""}}
-```
-
-An unknown name answers `{"error": "unknown crew '…'", "available": "…"}`, where
-`available` lists every key, each followed by `(display_name)` when that label
-differs from it, so a label passed as `crew=` can be mapped to its key. The
-membership test against `cfg.agents` is the deny-by-default gate;
-`SELECT_CREW_SCHEMA` deliberately does not impose a name grammar, because crew
-creation only strips the name, so a stricter schema would list a crew in the
-roster and then refuse to bind it.
-
-A bind also records a routing-decision pointer through
-`members.record_activity` with `via="select_crew"`. Two properties of that write
-matter:
-
-- The entry keys the session under `decided_in`, not `session`, because the
-  decision is made in the parent session while the crew runs somewhere else. A
-  consumer counting sessions a crew took part in therefore cannot miscount a
-  session the crew never ran in.
-- The caller's memory mode is resolved at the call, and only `persistent`
-  sessions are recorded. An unreadable session degrades to the private spelling,
-  so the failure mode is a missing entry, never a durably logged private session
-  key.
-
-These entries are **intent, not execution**: binding a crew does not oblige the
-model to delegate to it, and no `via="spawn"` execution entry exists today.
+The user names a crew by that label while `spawn_run(crew=...)` takes the key,
+so every roster projection that carries the label also carries the key.
 
 ## Delegating to a bound crew
 
@@ -2531,8 +2467,6 @@ Parent-change and impact previews use the server's redacted projection.
 
 ## Boundaries
 
-- A crew's `triggers` is free text read by a model. It is not a matcher, and no
-  regex interprets it.
 - `POST /api/agents` requires an explicit `kiro_agent`; the silent `"kirocrew"`
   default is refused, because it made every template-less crew an alias for the
   default agent. A template absent from the installed listing is accepted with a
@@ -2558,11 +2492,44 @@ Parent-change and impact previews use the server's redacted projection.
 | `website/src/components/RestartButton.cov80.test.tsx` | Apply & Restart (mounted in the Connections header) asks first, naming what stays (chats and history) and what stops (a reply in progress); declined does nothing, and the confirmed paths (success, failure, in-flight, MCP reconcile) run with the ask answered yes |
 | `test/test_chat_agent_kind.py` | `agent_kind` on local slot create and switch, and a relay-archive switch refused with `409 relay_archive_read_only`: template picks skip the member store pin, name and kind persist atomically, an unresolvable stated kind is `409 agent_choice_unavailable` refused before any slot is minted, an unknown kind is `400 invalid_agent_kind`, a member thread refuses the same-name template kind, the slot projection carries the committed kind |
 | `test/test_open_slots_persistence.py` (`test_restore_carries_the_agent_selection_namespace`) | A template-picked slot restores as a template pick; an unknown persisted kind reads as name-only |
-| `test/test_select_crew.py` | Roster excludes the default crew (triggers or not) and every triggerless crew, carries `default_agent` plus guidance; an entry and a `route_crew` match or `unavailable` entry carry `display_name` only when it differs from the key; a named crew returns its bindings; an unknown name returns `error` plus `available`, each key followed by its differing label; the schema accepts spaces and dots in a crew name |
+| `test/test_crew_routing_and_delegation.py` | `spawn_run(crew=...)` carries the member's store and refuses an unknown member; a `config.json` still holding the retired `triggers` / `session_color` keys loads, and neither key is re-exposed; `trigger_match` stays the skills loader's one scorer |
 | `test/test_crew_reasoning_effort.py` | Per-crew effort reaches a crew dispatch |
 | `test/test_members.py`, `test/test_members_dm_thread.py` | Slug validation and containment, activity recording and dedupe, DM-binding canonicality, rules and briefing reads, briefing endpoint |
 | `test/test_chat_send_agent_model_default.py` | The crew model default a new session starts on |
 | `website/src/components/chat/crewmateBubbles.test.ts` | What a crewmate's chat draws (machinery dropped, speech and user-facing rows kept, same array back when nothing is dropped) and the run rule (first/middle/last, single, breaks on a user row and a pending approval but not on a long silence, reads through a resolved approval and an untimestamped streaming row, corners on the left side only) |
+
+## Retired: crew routing
+
+A crew record used to carry a free-text `triggers` field ("when to use this
+crew") and a per-crew `session_color` tint, and the core MCP server exposed two
+tools over them: `select_crew` (a roster of triggered crews, or the bindings of a
+named one) and `route_crew` (rank the crews whose triggers matched a task). All
+four are retired by the owner decision in
+[#19240](https://github.com/kirodotdev/KiroCrew/issues/19240): `route_crew` had
+no caller, `select_crew` ranked by nothing but `triggers` and was documented as
+not wired into any dispatch path, and the per-crew tint was unused.
+
+What remains, and what a reader of an older `config.json` should expect:
+
+- **No tool.** `select_crew` and `route_crew` are not registered on the core
+  server, carry no title in `mcp_tool_titles.json`, and no conductor spec grants
+  them. The grant history in `conductor_agents.py` still lists the goal
+  conductor's former `select_crew` grant, because that table exists to tell a
+  retired grant from a user-added one.
+- **No field.** `KiroCrewAgentConfig` declares neither `triggers` nor
+  `session_color`. A `config.json` written before the retirement still loads: an
+  undeclared key is ignored by the record loader and dropped on the next save, and
+  the one-time sync-row prune tolerates both keys at their old empty default
+  (`_is_fresh_sync_shape`). Neither key is accepted by `POST`/`PUT /api/agents`
+  nor projected on any roster.
+- **No activity kind.** `members.record_activity` records `via="chat"` only; the
+  `via="select_crew"` routing-intent entries are no longer written, and the
+  Crew Members page's activity fold counts every entry as a chat.
+- **The crew editor** has no Routing pane and no colour field. Its identity pane
+  (`avatar`) holds the face; the session's own colour (per-session
+  `color_hex` / `color_index`) is untouched.
+- **`trigger_match`** stays: it is the skills loader's trigger scorer, and skill
+  frontmatter `triggers` are a different, living concept.
 
 ## Retired: Crew Mode
 

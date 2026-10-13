@@ -2752,7 +2752,7 @@ class TestMemberActivityRoute:
 
         assert _record_or_explain(CREW, "dashboard_chat-1", "persistent", via="chat")
         assert _record_or_explain(
-            CREW, "dashboard_chat-2", "persistent", project="/repo", via="select_crew"
+            CREW, "dashboard_chat-2", "persistent", project="/repo", via="auto-improvement"
         )
         with _patched_config([CREW]):
             async with TestClient(TestServer(_make_members_app(state))) as client:
@@ -2766,7 +2766,7 @@ class TestMemberActivityRoute:
         assert data["capped"] is False
         assert len(data["entries"]) == 2
         # Newest first — the drawer renders top-down.
-        assert data["entries"][0]["via"] == "select_crew"
+        assert data["entries"][0]["via"] == "auto-improvement"
         assert data["entries"][0]["project"] == "/repo"
         assert data["entries"][0]["ts"] >= data["entries"][1]["ts"] > 0
         # Session keys stay OUT of the payload: the drawer renders what
