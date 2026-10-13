@@ -386,7 +386,8 @@ interface Props {
   onFolderOpen?: (path: string) => void
 }
 
-import { PierreFilePair, type PierreEditorHandle, type RevealTarget } from '../pierre'
+import { PierreFilePair, PierrePatch, type PierreEditorHandle, type RevealTarget } from '../pierre'
+import { countDiffStats } from '../utils/diffLineCounts'
 import { i18nT } from '../i18n/t'
 import { useDocumentImeLatch, useImeGuard } from '../hooks/useImeGuard'
 import { useScrollMemory } from '../hooks/useScrollMemory'
@@ -1160,8 +1161,11 @@ function ZeroDiffNotice({ onExitDiff, message }: { onExitDiff?: () => void; mess
   )
 }
 
-function DiffViewBlock({ diffMode, fileName, originalContent, content, lineNums, wordWrap, collapseUnchanged, flush, sideBySide = true }: {
+function DiffViewBlock({ diffMode, fileName, originalContent, content, gitPatch, lineNums, wordWrap, collapseUnchanged, flush, sideBySide = true }: {
   diffMode: boolean; fileName: string; originalContent: string; content: string
+  /** Git's own unified diff, drawn INSTEAD of comparing the two bodies. Set
+   *  when the buffer is only part of the file (see `gitPatch` in the panel). */
+  gitPatch?: string | null
   lineNums: boolean; wordWrap: boolean
   /** Fold the unchanged stretches between hunks (panel preference, default off). */
   collapseUnchanged?: boolean
@@ -1190,7 +1194,9 @@ function DiffViewBlock({ diffMode, fileName, originalContent, content, lineNums,
   if (!diffMode) return null
   return (
     <div className={`w-full h-full overflow-auto pierre-surface ${flush ? '' : 'border border-border rounded-md'}`}>
-      <PierreFilePair oldFile={oldFile} newFile={newFile} options={options} />
+      {gitPatch
+        ? <PierrePatch patch={gitPatch} options={options} />
+        : <PierreFilePair oldFile={oldFile} newFile={newFile} options={options} />}
     </div>
   )
 }
@@ -1646,7 +1652,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
    *  is quiet only when no read is in flight (see the callback). */
   const diskReadsInFlightRef = useRef(0)
 
-  const readFromDisk = useCallback(async (): Promise<DiskRead> => {
+  const readFromDisk = useCallback(async (opts?: { news?: boolean }): Promise<DiskRead> => {
     diskReadAbortRef.current?.abort()
     const ac = new AbortController()
     diskReadAbortRef.current = ac
@@ -1658,14 +1664,22 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
     try {
       const r = await fetchFileRead(filePath, ac.signal)
       if (ac.signal.aborted || documentBodyEpochNow() !== epoch) return { kind: 'superseded' }
-      if (r.ok) return { kind: 'ok', text: r.text, binary: r.binary, partial: isPartialRead(r) }
+      if (r.ok) {
+        const partial = isPartialRead(r)
+        // A partial buffer's diff is git's patch of the file, and the file can
+        // change past the cut while the cut body stays equal. So a read that
+        // can carry news (watch frame, Refresh, Cancel) refetches that patch;
+        // the mount and activation reads do not, the diff query just ran.
+        if (partial && opts?.news) qc.invalidateQueries({ queryKey: ['file-diff', filePath] })
+        return { kind: 'ok', text: r.text, binary: r.binary, partial }
+      }
       return r.status === 404 ? { kind: 'missing' } : { kind: 'failed' }
     } catch {
       return ac.signal.aborted ? { kind: 'superseded' } : { kind: 'failed' }
     } finally {
       diskReadsInFlightRef.current--
     }
-  }, [filePath])
+  }, [filePath, qc])
 
   // A path change or unmount withdraws the read in flight, so it cannot apply
   // or report its result to a tab that has moved on.
@@ -1810,8 +1824,8 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
    * (bufferIsLastCopy): a tab seeded with the host's placeholder sentence, or
    * a binary tab, has nothing the banner could truthfully call a last copy. A
    * read that finds the file again clears the banner. */
-  const adoptDisk = useCallback(async (opts?: { quietFailure?: boolean }): Promise<DiskRead['kind']> => {
-    const disk = await readFromDisk()
+  const adoptDisk = useCallback(async (opts?: { quietFailure?: boolean; news?: boolean }): Promise<DiskRead['kind']> => {
+    const disk = await readFromDisk({ news: opts?.news })
     if (disk.kind === 'superseded') return disk.kind
     // Whatever this read answered, the shared cache entry for the path does
     // not outlive it: a body older than the disk (open, then save within the
@@ -1884,7 +1898,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
     // and not editing.
     (frameText: string) => {
       if (diskReadsInFlightRef.current === 0 && !binaryRef.current && frameText === contentRef.current) return
-      void adoptDisk()
+      void adoptDisk({ news: true })
     },
     [adoptDisk],
   )
@@ -1969,6 +1983,15 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
     staleTime: 10_000,
   })
   const originalContent = diffData?.original ?? ''
+  // A partial buffer (capped, redacted or lossily decoded read) is not the file
+  // on disk, so comparing it with the WHOLE HEAD body invents changes: past a
+  // capped read's end every HEAD line reads as deleted, and the real edits
+  // there vanish. Git's own diff of the file is the truth then -- draw it and
+  // count it instead. A whole buffer keeps the body-pair diff, which follows
+  // the buffer live. Edit mode and unsaved edits keep the body-pair diff too:
+  // git's patch cannot show edits that are not on disk yet.
+  const gitDiffView = !!partial && !editing && !dirty
+  const gitPatch = gitDiffView && diffData?.diff ? diffData.diff : null
   // Every failure the panel owns, rendered in ONE place (both layouts mount it
   // under the header). The three background reads used to fail silently: a
   // rejected knowledge / artifact / diff query rendered as "not added" / no
@@ -2016,7 +2039,8 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
   // Diff mode on a file identical to its baseline renders an empty canvas in
   // BOTH view and edit modes — show a notice instead. Editing past the
   // baseline (content diverges) flips this off automatically.
-  const zeroDiff = diffMode && !diffChecking && diffData != null && !diffUnavailable && originalContent === content
+  const zeroDiff = diffMode && !diffChecking && diffData != null && !diffUnavailable
+    && (gitDiffView ? !diffData.diff : originalContent === content)
   // Resolved in render position so a language switch re-renders it; the notice
   // reuses ZeroDiffNotice so the "Show full file" escape hatch is identical
   // across all three empty-diff states.
@@ -2056,7 +2080,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
     try {
       if (onRefresh) { await onRefresh(filePath) }
       else {
-        const disk = await readFromDisk()
+        const disk = await readFromDisk({ news: true })
         // A newer read owns the answer; this one has nothing to add or report.
         if (disk.kind === 'superseded') return
         // A click that produces nothing reads as a broken button. A file that
@@ -2095,7 +2119,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
         // baseline too (onDiskContent), the same as Refresh — otherwise the
         // stale baseline could later read a deliberate edit back to it as
         // clean and let a close discard that work.
-        const disk = await readFromDisk()
+        const disk = await readFromDisk({ news: true })
         if (disk.kind === 'superseded') return
         // Cancel means "match the disk". If the disk could not be read -- or the
         // file is gone -- the buffer still holds the edits, so the dirty flag
@@ -2766,7 +2790,10 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
   </>)
 
   // Diff-mode +N/-N stats over the same original/modified pair the diff view shows.
-  const diffStats = useMemo(() => countLines(originalContent, content), [originalContent, content])
+  const diffStats = useMemo(
+    () => (gitPatch ? countDiffStats(gitPatch) : countLines(originalContent, content)),
+    [gitPatch, originalContent, content],
+  )
   // Snapshot (⋯ menu): capture current content as a new artifact version;
   // unsaved edits are persisted first so the snapshot reflects the screen.
   const handleSnapshot = useCallback(async () => {
@@ -2891,7 +2918,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
             )}
             {!showBinaryCard && diffNoBaselineText && !editing && <ZeroDiffNotice message={diffNoBaselineText} onExitDiff={readOnly ? undefined : toggleDiffMode} />}
             {!showBinaryCard && !zeroDiff && !diffUnavailable && !diffChecking && !isRichType && (
-              <DiffViewBlock flush sideBySide={diffSplit} diffMode={diffMode && !editing} fileName={fileName} originalContent={originalContent} content={content} lineNums={lineNums} wordWrap={wordWrap} collapseUnchanged={collapseUnchanged} />
+              <DiffViewBlock flush sideBySide={diffSplit} diffMode={diffMode && !editing} fileName={fileName} originalContent={originalContent} content={content} gitPatch={gitPatch} lineNums={lineNums} wordWrap={wordWrap} collapseUnchanged={collapseUnchanged} />
             )}
             {!showBinaryCard && !zeroDiff && (!diffUnavailable || editing) && (!diffMode || editing) && <ContentRenderer flush isRichType={isRichType} fileType={fileType} filePath={filePath} content={content} editing={editing} lang={lang} lineNums={lineNums} wordWrap={wordWrap} onChange={handleChange} onSave={handleSave}
               diffBase={diffMode && editing ? (originalContent || null) : undefined} diffSplit={diffSplit} diffExpandUnchanged={!collapseUnchanged}
@@ -2974,7 +3001,7 @@ export default memo(forwardRef<MarkdownPanelHandle, Props>(function MarkdownPane
               <div className="p-3"><ErrorNotice message={diffErrorText} askAgent={!dirty} testId="markdown-panel-diff-compute-error-fullscreen" /></div>
             )}
             {!showBinaryCard && diffNoBaselineText && !editing && <ZeroDiffNotice message={diffNoBaselineText} onExitDiff={readOnly ? undefined : toggleDiffMode} />}
-            {!showBinaryCard && !zeroDiff && !diffUnavailable && !isRichType && <DiffViewBlock sideBySide={diffSplit} diffMode={diffMode && !editing} fileName={fileName} originalContent={originalContent} content={content} lineNums={lineNums} wordWrap={wordWrap} collapseUnchanged={collapseUnchanged} />}
+            {!showBinaryCard && !zeroDiff && !diffUnavailable && !isRichType && <DiffViewBlock sideBySide={diffSplit} diffMode={diffMode && !editing} fileName={fileName} originalContent={originalContent} content={content} gitPatch={gitPatch} lineNums={lineNums} wordWrap={wordWrap} collapseUnchanged={collapseUnchanged} />}
             {!showBinaryCard && !zeroDiff && (!diffUnavailable || editing) && (!diffMode || editing) && <ContentRenderer isRichType={isRichType} fileType={fileType} filePath={filePath} content={content} editing={editing} lang={lang} lineNums={lineNums} wordWrap={wordWrap} onChange={handleChange} onSave={handleSave}
               diffBase={diffMode && editing ? (originalContent || null) : undefined} diffSplit={diffSplit} diffExpandUnchanged={!collapseUnchanged}
               previewRef={fullscreenPreviewRef} displayContent={displayContent} isMarkdown={isMarkdown} previewStyle={mdPreviewStyle} editorRef={setRevealEditor} />}
