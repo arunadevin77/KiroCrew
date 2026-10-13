@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { NavigateFunction, NavigationType } from 'react-router-dom'
 
+import { api } from '../../api/client'
 import type { ChatLaunchOptions } from '../../app-sdk'
 import { i18nT } from '../../i18n/t'
 import { useSessionTabs } from '../../hooks/useSessionTabs'
@@ -23,6 +24,7 @@ import { isSafeReload } from '../../lib/safeReload'
 import { safeSetItem } from '../../utils/safeStorage'
 import { PANE_SLOT_HINT_PARAM, relayActiveSlotToParent } from '../../lib/paneLastSlot'
 import { shouldReplaceSessionUrl, popMaySwitchSession } from '../../utils/sessionUrlHistory'
+import { sessionShortNameFrom, shortNameMatches, type ShortNameMatch } from '../../utils/sessionKeys'
 import { toSlug } from '../../utils/shareUrl'
 import { focusComposer } from './composerFocus'
 
@@ -687,7 +689,9 @@ export function useChatPageSessionController({
   useEffect(() => {
     if (!connected || !slotsLoaded) return
     const urlSlot = initialSidRef.current
-    if (!urlSlot) return
+    // A short name is never in the roster under that spelling; its own lookup
+    // below gives the verdict, so a slow answer is not pre-empted as missing.
+    if (!urlSlot || sessionShortNameFrom(urlSlot)) return
     const timer = setTimeout(() => {
       if (initialSidRef.current) {
         const error = i18nT('pages.chatPage.session_not_found', { name: urlSlot })
@@ -751,6 +755,90 @@ export function useChatPageSessionController({
   const basePath = popout ? '/popout/chat' : embedMode === 'chat' || embedMode === 'sessions' ? '/embed/chat' : '/chat'
   const searchParamsRef = useRef(searchParams)
   searchParamsRef.current = searchParams
+
+  // A deep link that names a session by its SHORT name (`?sid=chat-7`), which is
+  // how the sidebar, agent tools and people name it. The mount effect above
+  // matches `?sid=` exactly, so it holds URL sync and waits; this asks the
+  // gateway for every transcript under that name, adds the open roster, and
+  // opens the oldest. A slot number is reused across gateway generations, so the
+  // rest are listed in a notice. No match says so; nothing opens or is created.
+  // A full key never takes this path.
+  const [sidMatches, setSidMatches] = useState<{ name: string; opened: ShortNameMatch; others: ShortNameMatch[] } | null>(null)
+  const shortSidLookupRef = useRef<string | null>(null)
+  const unmountedRef = useRef(false)
+  // Guard component lifetime, not lookup-effect reruns: the once-per-link lookup must keep its answer.
+  useEffect(() => {
+    unmountedRef.current = false
+    return () => { unmountedRef.current = true }
+  }, [])
+  const queryClient = useQueryClient()
+  const openShortNameMatch = useCallback((match: ShortNameMatch) => {
+    if (!connectedRef.current) return
+    // The roster is read at click time: a listed closed session may have been
+    // resumed since the notice appeared, and an open one is switched to.
+    const open = filteredSlotsRef.current.some(s => s.key === match.key)
+    if (match.stem && !open) void dispatch(resumeFromHistory({ key: match.stem, title: match.title }))
+    else dispatch(switchSlot({ key: match.key, announceOnMissing: true }))
+  }, [dispatch, filteredSlotsRef])
+  useEffect(() => {
+    if (embedded && !embedMode) return
+    if (!connected || !slotsLoaded) return
+    const urlSlot = initialSidRef.current
+    const short = urlSlot ? sessionShortNameFrom(urlSlot) : null
+    if (!urlSlot || !short || shortSidLookupRef.current === urlSlot) return
+    shortSidLookupRef.current = urlSlot
+    // One attempt, never cached: a retry would hold the link open on a dead
+    // gateway, and a cached list would miss a session created since.
+    void queryClient.fetchQuery({
+      queryKey: ['sessions-named', short],
+      queryFn: () => api.sessionsNamed(short),
+      retry: false,
+      staleTime: 0,
+      gcTime: 0,
+    }).then(r => r.sessions ?? [], () => null).then(onDisk => {
+      if (unmountedRef.current) return
+      // The mount effect clears the ref when the user picked a session first.
+      if (initialSidRef.current !== urlSlot) return
+      initialSidRef.current = null
+      const matches = shortNameMatches(short, filteredSlotsRef.current, onDisk ?? [])
+      if (!matches.length) {
+        // Keep the URL held while no session is active; a user switch releases
+        // pendingSidRef in URL sync without letting a slots frame auto-select.
+        popInFlightRef.current = false
+        // A failed lookup cannot say no session has this name.
+        setSidError(onDisk
+          ? i18nT('pages.chatPage.no_session_named', { name: short })
+          : i18nT('pages.chatPage.session_not_found', { name: short }))
+        return
+      }
+      const [target, ...others] = matches
+      const mine = others.length ? { name: short, opened: target, others } : null
+      setSidMatches(mine)
+      // Name the full key before activating it: URL sync stays held until
+      // `activeSlot` equals `?sid=`, and a short name never does.
+      const next = new URLSearchParams(searchParamsRef.current)
+      next.set('sid', target.key)
+      next.delete('slot')
+      navigate({ pathname: locationPathname, search: `?${next}`, hash: locationHash }, { replace: true })
+      if (!target.stem) {
+        dispatch(switchSlot(target.key))
+        return
+      }
+      void dispatch(resumeFromHistory({ key: target.stem, title: target.title })).then(result => {
+        // A refused, renamed or off-surface resume never reaches `?sid=`
+        // (the reducer leaves activeSlot alone off-surface); release URL sync.
+        const resumed = resumeFromHistory.fulfilled.match(result) && result.payload.ok
+          && result.payload.key === target.key && isChatPageSurface(result.payload.surface)
+        if (resumed) return
+        popInFlightRef.current = false
+        // "Opened <title>" would name a session that never opened; the
+        // unresumable notice explains why. Leave a later link's notice alone.
+        setSidMatches(cur => (cur === mine ? null : cur))
+      })
+    })
+    // Read once per link: the refs carry the live roster and URL into the answer.
+  }, [connected, slotsLoaded, embedded, embedMode, dispatch, navigate, locationPathname, locationHash, filteredSlotsRef, queryClient])
+
   useEffect(() => {
     if (embedded && !embedMode) return
     // noUrlSync (artifact companion chat panel): the host page owns the URL
@@ -995,5 +1083,8 @@ export function useChatPageSessionController({
     setNewSlotFailed,
     setSidError,
     sidError,
+    sidMatches,
+    setSidMatches,
+    openShortNameMatch,
   }
 }

@@ -66,7 +66,46 @@ const SESSION_SHORT_RE = /^chat-\d+$/
  * would keep inviting.
  */
 function isSessionShortName(raw: string): boolean {
-  return SESSION_SHORT_RE.test(normalizeRunSessionKey(raw.trim()))
+  return sessionShortNameFrom(raw) !== null
+}
+
+/** The short slot name `raw` spells (`chat-7`), or null. */
+export function sessionShortNameFrom(raw: string): string | null {
+  const short = normalizeRunSessionKey(raw.trim())
+  return SESSION_SHORT_RE.test(short) ? short : null
+}
+
+/**
+ * One session a short name can mean. `stem` is the transcript a resume takes,
+ * set only when no open slot holds the session; `mintedAt` is the epoch seconds
+ * in its key.
+ */
+export type ShortNameMatch = { key: string; title: string; stem: string | null; mintedAt: number }
+
+/**
+ * Every session the short name `short` names, open or closed, oldest first.
+ *
+ * `open` is the live roster; `onDisk` is the transcript list for the name
+ * (`GET /api/sessions?name=`), which also holds the open ones. A session in both
+ * is listed once, as open, so it is switched to rather than resumed.
+ */
+export function shortNameMatches(
+  short: string,
+  open: Iterable<{ key: string; title?: string }>,
+  onDisk: Iterable<{ key: string; title?: string }>,
+): ShortNameMatch[] {
+  const prefix = `${short}-`
+  const byKey = new Map<string, ShortNameMatch>()
+  const add = (rawKey: string, title: string | undefined, stem: string | null) => {
+    // Every prefix, not one: a resume round-trip can leave a transcript stem
+    // stacked as `dashboard_dashboard_chat-…`.
+    const key = rawKey.replace(/^(?:dashboard[:_])+/, '')
+    if (!key.startsWith(prefix) || !SESSION_KEY_RE.test(key) || byKey.has(key)) return
+    byKey.set(key, { key, title: title && title !== rawKey ? title : key, stem, mintedAt: mintEpoch(key) })
+  }
+  for (const slot of open) add(slot.key, slot.title, null)
+  for (const row of onDisk) add(row.key, row.title, row.key)
+  return [...byKey.values()].sort((a, b) => a.mintedAt - b.mintedAt)
 }
 
 /**

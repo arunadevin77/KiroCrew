@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { canonicalChatHref, chatHrefSid, classifyShortName, namesASession, sessionKeyFrom, sessionKeyFromChatHref, sessionKeyFromShort } from './sessionKeys'
+import { canonicalChatHref, chatHrefSid, classifyShortName, namesASession, sessionKeyFrom, sessionShortNameFrom, shortNameMatches, sessionKeyFromChatHref, sessionKeyFromShort } from './sessionKeys'
 import { sessionRefUrl } from './sessionRefs'
 import { buildShareableUrl } from './shareUrl'
 
@@ -412,5 +412,31 @@ describe('canonicalChatHref', () => {
 
   it('adds sid when the href carried none', () => {
     expect(canonicalChatHref('/chat', 'chat-1-1700000001')).toBe('/chat?sid=chat-1-1700000001')
+  })
+})
+
+describe('sessionShortNameFrom', () => {
+  it.each([['chat-7', 'chat-7'], [' dashboard_chat-7 ', 'chat-7'], ['chat-7-100', null], ['chat-', null], ['chat-7x', null]])(
+    '%s -> %s', (raw, want) => expect(sessionShortNameFrom(raw)).toBe(want),
+  )
+})
+
+describe('shortNameMatches', () => {
+  it('lists open and on-disk sessions once each, oldest first, open ones without a stem', () => {
+    const got = shortNameMatches(
+      'chat-7',
+      [{ key: 'chat-7-300', title: 'Open newer' }, { key: 'chat-70-100', title: 'Other number' }],
+      [{ key: 'dashboard_chat-7-300', title: 'Open newer' }, { key: 'dashboard_dashboard_chat-7-100', title: 'Closed older' },
+        { key: 'subagent_chat-7-50' }],
+    )
+    expect(got).toEqual([
+      { key: 'chat-7-100', title: 'Closed older', stem: 'dashboard_dashboard_chat-7-100', mintedAt: 100 },
+      { key: 'chat-7-300', title: 'Open newer', stem: null, mintedAt: 300 },
+    ])
+  })
+
+  it('titles an untitled row by its slot key, not its storage stem', () => {
+    expect(shortNameMatches('chat-7', [], [{ key: 'dashboard_chat-7-100', title: 'dashboard_chat-7-100' }])[0].title)
+      .toBe('chat-7-100')
   })
 })

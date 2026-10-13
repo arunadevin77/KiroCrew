@@ -82,6 +82,11 @@ export function createSessionsEndpoints({ get, post, del, j, jfetch: fetch, jCre
     // Both off by default: every other caller wants the full inventory.
     sessions: (limit = 30, offset = 0, preview = false, excludeOpen = false, userOnly = false) => fetch('/api/sessions?limit=' + limit + '&offset=' + offset + (preview ? '&preview=1' : '') + (excludeOpen ? '&exclude_open=1' : '') + (userOnly ? '&user_only=1' : '')).then(j),
     sessionsSearch: (q: string, limit = 50) => fetch('/api/sessions/search?q=' + encodeURIComponent(q) + '&limit=' + limit).then(j),
+    // Every transcript, open or closed, minted under one short name (`chat-7`),
+    // oldest first. A slot number is reused across gateway generations, so one
+    // name can match several.
+    sessionsNamed: (name: string) => fetch('/api/sessions?limit=200&name=' + encodeURIComponent(name))
+      .then(j) as Promise<{ sessions: Array<{ key: string; title?: string }> }>,
   }
 
   const historyDetail = {

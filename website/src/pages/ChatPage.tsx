@@ -1820,6 +1820,9 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     setNewSlotFailed,
     setSidError,
     sidError,
+    sidMatches,
+    setSidMatches,
+    openShortNameMatch,
   } = session
 
   // Only the routed chat consumes app launch intents; see useAppLaunchIntake.
@@ -5789,6 +5792,9 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
           setUploadError={setUploadError}
           sidError={sidError}
           setSidError={setSidError}
+          sidMatches={sidMatches}
+          setSidMatches={setSidMatches}
+          openShortNameMatch={openShortNameMatch}
           activeSlot={activeSlot}
           provider={provider}
           selectionCapabilitiesQ={selectionCapabilitiesQ}
