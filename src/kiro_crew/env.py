@@ -15,6 +15,7 @@ import sys
 import threading
 from collections.abc import Iterable, Mapping, MutableMapping
 from pathlib import Path
+from typing import Any
 
 from kiro_crew import platform_compat
 from kiro_crew.config.paths import data_home, peek_data_home
@@ -1509,6 +1510,41 @@ def emit_env(env: dict) -> dict:
     out = {k: v for k, v in env.items() if not (isinstance(k, str) and k.upper() == "PATH")}
     out["PATH"] = spec_env_path(path)
     return out
+
+
+#: The variables a stdio MCP ``args`` element may reference. Only home and
+#: login-name spellings: kiro-cli expands ``${VAR}`` in a declared ``env`` map
+#: but never in ``args``, so a launch path written as ``${HOME}/...`` reaches
+#: the child literally. Any wider set would put an arbitrary variable's VALUE on
+#: argv (world-readable through ``/proc/<pid>/cmdline``) and into the emitted
+#: agent spec, which agents can write -- a spec naming
+#: ``${AWS_SECRET_ACCESS_KEY}`` must stay a literal.
+_SPEC_ARG_VARS = frozenset({"HOME", "USER", "LOGNAME", "USERPROFILE", "USERNAME"})
+
+
+def expand_spec_args(args: Any, *, server: str | None = None) -> Any:
+    """Resolve home and login-name references in a stdio MCP spec's ``args``.
+
+    Delegates to the gateway's declared-env expander (one grammar, one miss
+    rule) with a source view holding only :data:`_SPEC_ARG_VARS`, so every
+    other name is a miss and stays literal. A set-but-empty variable is left
+    out of that view too, so ``${HOME}/x`` never collapses to ``/x``. Plain
+    text substitution; nothing is ever handed to a shell. The import is
+    function-local because the rewriter imports this module.
+
+    Returns a NEW list for a list input, leaving the caller's (often a source
+    config's own) untouched. Non-string elements and a non-list ``args`` pass
+    through verbatim, so a malformed spec keeps its own error.
+    """
+    if not isinstance(args, list):
+        return args
+    from kiro_crew.mcp_gateway.rewriter import _expand_env_placeholders
+
+    source = {name: value for name in _SPEC_ARG_VARS if (value := os.environ.get(name))}
+    return [
+        _expand_env_placeholders(a, source=source, server=server) if isinstance(a, str) else a
+        for a in args
+    ]
 
 
 @functools.lru_cache(maxsize=1)

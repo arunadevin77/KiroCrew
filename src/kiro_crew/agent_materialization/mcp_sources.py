@@ -25,7 +25,13 @@ from kiro_crew import agent as agent_mod
 from kiro_crew import user_json
 from kiro_crew.agent_files import AGENT_FILENAME
 from kiro_crew.agent_materialization import auto_approve, mcp_aliases
-from kiro_crew.env import MCP_PATH_HINT, dedup_path, describe_search_path, emit_env
+from kiro_crew.env import (
+    MCP_PATH_HINT,
+    dedup_path,
+    describe_search_path,
+    emit_env,
+    expand_spec_args,
+)
 from kiro_crew.mcp_cleanup import (
     invalid_disabled_flag,
     mcp_entries_muted,
@@ -858,6 +864,11 @@ def resolve_mcp_servers(
                     merged["args"] = chosen["args"]
                 if "env" in chosen:
                     merged["env"] = chosen["env"]
+            # kiro-cli expands ``${VAR}`` in ``env`` but never in ``args``, and
+            # the gateway's pooled spawn reads these same args, so a
+            # ``${HOME}/...`` launch path is resolved here or not at all.
+            if "args" in merged:
+                merged["args"] = expand_spec_args(merged["args"], server=name)
             # A declared env.PATH replaces the child's PATH rather than
             # extending it, so emit the full effective one via the shared
             # normalization point (see emit_env / spec_env_path). emit_env

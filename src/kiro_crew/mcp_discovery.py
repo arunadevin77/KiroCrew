@@ -37,6 +37,7 @@ from kiro_crew.env import (
     denied_spec_env_keys,
     describe_search_path,
     emit_env,
+    expand_spec_args,
     mcp_search_path,
     resolved_command_casing,
     sanitize_spec_env,
@@ -2640,8 +2641,12 @@ async def probe_server(
 
                     await asyncio.to_thread(sweep_backend_tmp, probe_tmp)
                     probe_tmp = None
+        # Expanded the way the emitted agent spec is (see expand_spec_args), so
+        # a ``${HOME}/...`` launch path the session can start is not probed
+        # literally, failed and quarantined.
+        _spawn_args = expand_spec_args(server.args or [], server=server.name)
         wrapped_argv, env, sandbox_cleanup = await sandboxed_spawn_argv_async(
-            [resolved, *(server.args or [])],
+            [resolved, *_spawn_args],
             mode="standard",
             env=env,
             strip_python_env=True,
