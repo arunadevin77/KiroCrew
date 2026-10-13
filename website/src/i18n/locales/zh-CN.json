@@ -6677,8 +6677,7 @@
       "toggle_diff": "显示或隐藏 {{path}} 的差异"
     },
     "openFileChips": {
-      "open_file": "打开文件",
-      "open_in_side_panel": "在侧边面板中打开 {{path}}"
+      "open_file": "打开文件"
     },
     "filePickerMenu": {
       "folder": "文件夹",

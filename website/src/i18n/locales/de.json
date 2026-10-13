@@ -6787,8 +6787,7 @@
       "toggle_diff": "Diff für {{path}} ein- oder ausblenden"
     },
     "openFileChips": {
-      "open_file": "Datei öffnen",
-      "open_in_side_panel": "{{path}} im Seitenpanel öffnen"
+      "open_file": "Datei öffnen"
     },
     "filePickerMenu": {
       "folder": "Ordner",

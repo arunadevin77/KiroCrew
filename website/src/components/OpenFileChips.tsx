@@ -31,7 +31,9 @@ const OpenFileChips = memo(function OpenFileChips({ content, onFileOpen }: {
   const paths = useMemo(() => openFileMarkerPaths(content), [content])
   if (!onFileOpen || paths.length === 0) return null
   return (
-    <div className="ft-block-reveal flex flex-wrap items-center gap-1.5 mt-2 mb-1.5" data-testid="open-file-chips">
+    // One chip per row: these are peer actions, and a row of more than two
+    // buttons is a toolbar (and wrapping one does not make it less of one).
+    <div className="ft-block-reveal flex flex-col items-start gap-1.5 mt-2 mb-1.5" data-testid="open-file-chips">
       {paths.map(path => {
         const Glyph = fileIcon(path)
         const name = pathBasename(path) || path
@@ -42,13 +44,16 @@ const OpenFileChips = memo(function OpenFileChips({ content, onFileOpen }: {
             onClick={() => onFileOpen(path)}
             className="glass-surface file-chip inline-flex max-w-full min-w-0 min-h-[22px] h-auto items-center gap-1 px-2.5 py-1 whitespace-normal text-left rounded-full text-[11px] font-medium cursor-pointer"
             data-path={path}
-            // The visible text is the action and the file name; the name and the
-            // tooltip carry the full path, so the target is never hidden.
-            aria-label={i18nT('components.openFileChips.open_in_side_panel', { path })}
+            // The accessible name is the visible text ("Open file notes.md"), so
+            // a voice command that reads the label reaches the chip; the full
+            // path is the tooltip and, through it, the accessible description.
             title={path}
           >
             <Glyph size={12} aria-hidden="true" className="shrink-0 opacity-70" />
             <span className="shrink-0 text-text">{i18nT('components.openFileChips.open_file')}</span>
+            {/* A space in the accessible name between the label and the file name;
+                whitespace-only text is not a flex item, so the layout is unchanged. */}
+            {' '}
             <span className="min-w-0 font-mono text-muted [overflow-wrap:anywhere]">{name}</span>
           </button>
         )

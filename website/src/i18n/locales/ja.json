@@ -6677,8 +6677,7 @@
       "toggle_diff": "{{path}} の差分を表示または非表示にする"
     },
     "openFileChips": {
-      "open_file": "ファイルを開く",
-      "open_in_side_panel": "{{path}} をサイドパネルで開く"
+      "open_file": "ファイルを開く"
     },
     "filePickerMenu": {
       "folder": "フォルダー",

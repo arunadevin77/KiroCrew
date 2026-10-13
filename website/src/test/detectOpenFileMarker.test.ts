@@ -1,14 +1,18 @@
 import { describe, it, expect } from 'vitest'
 
-import {
-  isOpenableMarkerPath, openFileMarkerPaths, OPEN_FILE_MARKER_MAX_CHIPS, OPEN_FILE_MARKER_MAX_PATH,
-} from '../utils/detectOpenFileMarker'
+import { isOpenableMarkerPath, openFileMarkerPaths, OPEN_FILE_MARKER_MAX_CHIPS } from '../utils/detectOpenFileMarker'
 
 const marker = (path: string) => `<!-- kirocrew:open-file path="${path}" -->`
 
 describe('openFileMarkerPaths', () => {
   it('returns the absolute path a marker in the reply names', () => {
-    expect(openFileMarkerPaths(`Wrote the note.\n${marker('/home/u/notes/today.md')}\n`)).toEqual(['/home/u/notes/today.md'])
+    expect(openFileMarkerPaths(`Wrote the note.\n\n${marker('/home/u/notes/today.md')}\n`)).toEqual(['/home/u/notes/today.md'])
+  })
+
+  it('finds a marker inline in a paragraph, on its own line, and in a blockquote', () => {
+    expect(openFileMarkerPaths(`Wrote it ${marker('/a/inline.md')} just now.`)).toEqual(['/a/inline.md'])
+    expect(openFileMarkerPaths(`Wrote it.\n${marker('/a/next-line.md')}`)).toEqual(['/a/next-line.md'])
+    expect(openFileMarkerPaths(`> Wrote it.\n> ${marker('/a/quoted.md')}`)).toEqual(['/a/quoted.md'])
   })
 
   it('accepts Windows drive-qualified paths', () => {
@@ -26,12 +30,25 @@ describe('openFileMarkerPaths', () => {
     expect(openFileMarkerPaths('')).toEqual([])
   })
 
-  it('ignores a marker the reply shows in code', () => {
-    expect(openFileMarkerPaths(`Emit this:\n\`\`\`\n${marker('/home/u/a.md')}\n\`\`\`\n`)).toEqual([])
-    expect(openFileMarkerPaths(`Emit this:\n~~~html\n${marker('/home/u/a.md')}\n~~~`)).toEqual([])
-    expect(openFileMarkerPaths(`Use \`${marker('/home/u/a.md')}\` to offer a file.`)).toEqual([])
+  it('ignores a marker the reply shows as code, however the code is written', () => {
+    const m = marker('/home/u/a.md')
+    for (const [label, text] of [
+      ['backtick fence', `Emit this:\n\n\`\`\`\n${m}\n\`\`\`\n`],
+      ['tilde fence', `Emit this:\n\n~~~html\n${m}\n~~~`],
+      ['inline code', `Use \`${m}\` to offer a file.`],
+      ['fence in a blockquote', `> \`\`\`\n> ${m}\n> \`\`\``],
+      ['indented code block', `Emit this:\n\n    ${m}\n`],
+      ['fence indented in a list item', `- step one:\n\n      \`\`\`\n      ${m}\n      \`\`\``],
+      // The renderer's fixCodeFences opens a fence glued to the sentence before it.
+      ['fence glued to a sentence', `Emit this:\`\`\`\n${m}\n\`\`\``],
+      ['tagged fence glued to a sentence', `Emit this:\`\`\`html\n${m}\n\`\`\``],
+      // Lifted out of the prose by the block splitter and rendered in its own frame.
+      ['widget body', `Here is the card:\n\n<mcwidget title="Notes">\n<div>${m}</div>\n</mcwidget>\n`],
+    ]) {
+      expect(openFileMarkerPaths(text), label).toEqual([])
+    }
     // A real marker after the fenced example still counts.
-    expect(openFileMarkerPaths(`\`\`\`\n${marker('/x.md')}\n\`\`\`\n${marker('/home/u/real.md')}`)).toEqual(['/home/u/real.md'])
+    expect(openFileMarkerPaths(`\`\`\`\n${marker('/x.md')}\n\`\`\`\n\n${marker('/home/u/real.md')}`)).toEqual(['/home/u/real.md'])
   })
 
   it('returns every marked file once, in reply order', () => {
@@ -44,54 +61,28 @@ describe('openFileMarkerPaths', () => {
   })
 
   it('caps the chips one reply offers', () => {
-    const many = Array.from({ length: OPEN_FILE_MARKER_MAX_CHIPS + 3 }, (_, i) => marker(`/n/${i}.md`)).join('\n')
+    const many = Array.from({ length: OPEN_FILE_MARKER_MAX_CHIPS + 3 }, (_, i) => marker(`/n/${i}.md`)).join('\n\n')
     expect(openFileMarkerPaths(many)).toHaveLength(OPEN_FILE_MARKER_MAX_CHIPS)
-  })
-
-  it('refuses relative, ~, empty and network-share paths', () => {
-    for (const bad of ['notes.md', './notes.md', '../etc/passwd', 'sub/dir/notes.md', '~', '~/notes.md', '~root/x', '',
-      '//host/share/x', '\\\\host\\share\\x', 'C:notes.md', 'C:\\\\host\\x']) {
-      expect(openFileMarkerPaths(marker(bad)), bad).toEqual([])
-    }
   })
 })
 
 describe('isOpenableMarkerPath', () => {
-  it('refuses every root that can reach another host, in any separator mix', () => {
-    for (const bad of ['/\\attacker.example\\share\\note.md', '\\/attacker.example/share/note.md',
-      '\\\\attacker.example\\share\\note.md', '//attacker.example/share/note.md', 'C:\\/host/share/x.md',
-      'C:/\\host\\share\\x.md', 'C://host/share/x.md', '\\\\?\\C:\\notes.md', '\\\\.\\pipe\\x', '/??/UNC/host/share/x.md',
-      '/net/attacker.example/export/note.md', '/NET/host/x.md', '/afs/cell.example/x.md', '/home/u/*.md']) {
+  it('accepts the absolute paths a path chip accepts', () => {
+    for (const good of ['/home/u/notes.md', '/Demo Workspace/Product Guide/notes.md', 'C:\\Users\\u\\notes.md', 'D:/work/notes.md']) {
+      expect(isOpenableMarkerPath(good), good).toBe(true)
+    }
+  })
+
+  it('refuses relative and ~ paths, which resolve against a directory the agent did not name', () => {
+    for (const bad of ['notes.md', './notes.md', '../etc/passwd', 'sub/dir/notes.md', '~', '~/notes.md', '', 'C:notes.md']) {
       expect(isOpenableMarkerPath(bad), bad).toBe(false)
       expect(openFileMarkerPaths(marker(bad)), bad).toEqual([])
     }
   })
 
-  it('refuses a path that is not in normal form, so no segment trick reaches an automount root', () => {
-    for (const bad of ['/./net/attacker.example/export/note.md', '/srv/../net/host/x.md', '/srv/./notes.md',
-      '/srv//notes.md', '/srv/notes/', 'C:\\Users\\.\\u\\notes.md', 'C:\\Users\\\\u\\notes.md', '/.\\net\\host\\x.md']) {
+  it('refuses what a path chip refuses: UNC roots and command lines', () => {
+    for (const bad of ['//host/share/x.md', '\\\\host\\share\\x.md', '/usr/bin/tool --force /tmp/x']) {
       expect(isOpenableMarkerPath(bad), bad).toBe(false)
     }
-  })
-
-  it('refuses a colon anywhere but a drive letter', () => {
-    for (const bad of ['C:\\notes.md:hidden', '/home/u/notes.md:stream', 'C:\\a\\D:\\b.md']) {
-      expect(isOpenableMarkerPath(bad), bad).toBe(false)
-    }
-  })
-
-  it('keeps ordinary absolute paths that only look like the refused shapes', () => {
-    for (const good of ['/home/u/notes.md', '/network/notes.md', '/srv/net/notes.md', '/srv/afs-notes/a.md',
-      'C:\\Users\\u\\net\\notes.md', 'D:/work/notes.md']) {
-      expect(isOpenableMarkerPath(good), good).toBe(true)
-    }
-  })
-
-  it('refuses dot-dot segments, control characters, padding and over-long paths', () => {
-    for (const bad of ['/home/u/../../etc/shadow', 'C:\\a\\..\\b', '/a\u0000b', '/a\nb', ' /a.md', '/a.md ',
-      '/' + 'a'.repeat(OPEN_FILE_MARKER_MAX_PATH)]) {
-      expect(isOpenableMarkerPath(bad), JSON.stringify(bad.slice(0, 40))).toBe(false)
-    }
-    expect(isOpenableMarkerPath('/home/u/..notes/a..md')).toBe(true)
   })
 })

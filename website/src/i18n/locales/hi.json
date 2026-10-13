@@ -6787,8 +6787,7 @@
       "toggle_diff": "{{path}} का डिफ़ दिखाएँ या छिपाएँ"
     },
     "openFileChips": {
-      "open_file": "फ़ाइल खोलो",
-      "open_in_side_panel": "{{path}} को साइड पैनल में खोलो"
+      "open_file": "फ़ाइल खोलो"
     },
     "filePickerMenu": {
       "folder": "फ़ोल्डर",

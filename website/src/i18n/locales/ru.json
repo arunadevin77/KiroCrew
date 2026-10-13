@@ -7007,8 +7007,7 @@
       "toggle_diff": "Показать или скрыть diff для {{path}}"
     },
     "openFileChips": {
-      "open_file": "Открыть файл",
-      "open_in_side_panel": "Открыть {{path}} в боковой панели"
+      "open_file": "Открыть файл"
     },
     "filePickerMenu": {
       "folder": "Папка",

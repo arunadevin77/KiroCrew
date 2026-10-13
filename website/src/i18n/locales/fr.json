@@ -6897,8 +6897,7 @@
       "toggle_diff": "Afficher ou masquer le diff de {{path}}"
     },
     "openFileChips": {
-      "open_file": "Ouvrir le fichier",
-      "open_in_side_panel": "Ouvrir {{path}} dans le panneau latéral"
+      "open_file": "Ouvrir le fichier"
     },
     "filePickerMenu": {
       "folder": "Dossier",

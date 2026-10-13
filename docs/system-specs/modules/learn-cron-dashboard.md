@@ -4319,11 +4319,15 @@ React 18 + TypeScript + Vite 8 + Redux Toolkit + React Router v7 + Tailwind CSS 
 **Open file chips** (`components/OpenFileChips.tsx`, rendered by `pages/chat/AssistantMessage.tsx`
 under a finished reply): a hidden `<!-- kirocrew:open-file path="..." -->` comment in an
 assistant reply shows one "Open file" chip for that file (`openFileMarkerPaths` in
-`utils/detectOpenFileMarker.ts`: each path once, in reply order, at most 8). A marker shown
-inside a code fence or inline code span gets no chip, and neither does a path that is not
-absolute (POSIX or a Windows drive path) and in normal form, or that can reach another host
-(a root of two separators in any mix, `?` and `*`, a `:` beyond a drive letter, the `/net`
-and `/afs` automount roots), nor control characters or a path over 4096 characters. Showing
+`utils/detectOpenFileMarker.ts`: each path once, in reply order, at most 8, one chip per row).
+The reply goes through the transcript's own source preparation (the block splitter
+`parseBlocks`, then `capWhitespaceRuns` and `fixCodeFences` on each prose block) and is parsed
+with `REMARK_BASE_PLUGINS`; only its raw-HTML nodes are searched, so a marker the reader sees
+as code (a fence, including one glued to a sentence or inside a blockquote, an indented code
+block, inline code) or inside a widget body gets no chip. The path must
+be absolute (POSIX or a Windows drive path) and pass the path-chip test (`isPathCandidate`,
+which refuses UNC roots and command lines). The chip's accessible name is its visible text
+(`Open file` and the file name); the full path is its tooltip and description. Showing
 a chip opens nothing, whether on render, while streaming or after a reload. A click calls the
 host's `onFileOpen` with the path alone: the same handler, with the same arguments, a click
 on a file path chip uses (`activatePath`), so the file opens through today's read as a plain

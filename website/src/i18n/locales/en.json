@@ -4583,8 +4583,7 @@
       "toggle_diff": "Show or hide the diff for {{path}}"
     },
     "openFileChips": {
-      "open_file": "Open file",
-      "open_in_side_panel": "Open {{path}} in side panel"
+      "open_file": "Open file"
     },
     "filePickerMenu": {
       "folder": "Folder",

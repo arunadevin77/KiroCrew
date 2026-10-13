@@ -6897,8 +6897,7 @@
       "toggle_diff": "Mostrar ou ocultar o diff de {{path}}"
     },
     "openFileChips": {
-      "open_file": "Abrir arquivo",
-      "open_in_side_panel": "Abrir {{path}} no painel lateral"
+      "open_file": "Abrir arquivo"
     },
     "filePickerMenu": {
       "folder": "Pasta",

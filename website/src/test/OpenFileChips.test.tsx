@@ -14,7 +14,10 @@ import { QueryClient } from '@tanstack/react-query'
 // Records the props AssistantMessage hands its MarkdownRenderer, so a test can
 // compare the chip's handler with the one the reply's path chips receive.
 const md = vi.hoisted(() => ({ props: [] as Array<{ content: string; onFileOpen?: unknown }> }))
-vi.mock('../components/MarkdownRenderer', () => ({
+// Only the component is replaced: the module's helpers (the marker parser uses
+// its `fixCodeFences`) stay real.
+vi.mock('../components/MarkdownRenderer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../components/MarkdownRenderer')>()),
   default: (props: { content: string; onFileOpen?: unknown }) => {
     md.props.push(props)
     return <div data-testid="md">{props.content}</div>
@@ -36,7 +39,8 @@ import { usePanelDocumentActions } from '../hooks/usePanelDocumentActions'
 const NOTE = '/home/u/notes/today.md'
 const marker = (path: string) => `<!-- kirocrew:open-file path="${path}" -->`
 const reply = `Wrote the note.\n${marker(NOTE)}\n`
-const chipName = (path: string) => `Open ${path} in side panel`
+/** The chip's accessible name is its visible text: the label, then the file name. */
+const chipName = (path: string) => `Open file ${path.split('/').pop()}`
 const okRead = (text: string) => ({ text, ok: true, status: 200, binary: false, truncated: false, redacted: false, lossy: false })
 
 /** The page's real file opener, over spy tab controls, as ChatPage wires it. */
@@ -65,13 +69,24 @@ describe('Open file chip', () => {
     const chip = screen.getByRole('button', { name: chipName(NOTE) })
     expect(chip).toHaveTextContent('Open file')
     expect(chip).toHaveTextContent('today.md')
+    // The full path is the tooltip and the accessible description.
     expect(chip).toHaveAttribute('title', NOTE)
+    expect(chip).toHaveAccessibleDescription(NOTE)
+  })
+
+  it('stacks one chip per row, never a row of three or more buttons', () => {
+    const three = `${reply}${marker('/home/u/notes/plan.md')}\n${marker('/home/u/notes/log.md')}`
+    render(<AssistantMessage content={three} isStreaming={false} slotRunning={false} onFileOpen={vi.fn()} />)
+    const group = screen.getByTestId('open-file-chips')
+    expect(group.querySelectorAll('button')).toHaveLength(3)
+    expect(group).toHaveClass('flex-col')
+    expect(group).not.toHaveClass('flex-wrap')
   })
 
   it('renders one chip per named file, and none without a marker or a file handler', () => {
     const two = `${reply}${marker('/home/u/notes/plan.md')}`
     const { unmount } = render(<AssistantMessage content={two} isStreaming={false} slotRunning={false} onFileOpen={vi.fn()} />)
-    expect(screen.getAllByRole('button', { name: /^Open \/home\/u\/notes\/.* in side panel$/ })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /^Open file .*\.md$/ })).toHaveLength(2)
     unmount()
     const plain = render(<AssistantMessage content={`Wrote ${NOTE}.`} isStreaming={false} slotRunning={false} onFileOpen={vi.fn()} />)
     expect(screen.queryByTestId('open-file-chips')).toBeNull()
