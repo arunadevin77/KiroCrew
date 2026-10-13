@@ -99,8 +99,9 @@ with no row here.
    * - ``ACP_BACKENDS_STEER``
      - pre-session registry query (whether ``_session/steer`` exists)
    * - ``ACP_BACKENDS_STEERING_REQUEST``
-     - pre-session registry query (whether a user steer travels on the
-       ``_session/steering`` request of codex-acp and claude-agent-acp instead)
+     - pre-session registry query (whether a user steer travels on an awaited
+       request instead: the ``_session/steering`` request of codex-acp and
+       claude-agent-acp, or goose's ``_goose/unstable/session/steer``)
    * - ``ACP_BACKENDS_COMPACT``
      - pre-session registry query (whether manual ``/compact`` is offered at all)
    * - ``ACP_BACKENDS_INLINE_COMPACTION``
@@ -1168,6 +1169,8 @@ ACP_BACKENDS_MEMBER_PANEL = frozenset(
 # ``sessionCapabilities`` of list and delete, and no steering extension.
 # deepseek is not a member: it advertises close, list and resume only, and permits
 # one in-flight prompt per session, so a mid-turn steer has no verb to travel on.
+# goose is not a member: its steer is its own request, and it is not shown to
+# carry a deny notice (see ``ACP_BACKENDS_STEERING_REQUEST``).
 #
 # This set answers the DENY-NOTICE question as well as the user one: a member's
 # steer can carry a refusal reason into the turn that was refused. A backend that
@@ -1176,10 +1179,29 @@ ACP_BACKENDS_MEMBER_PANEL = frozenset(
 # off separate properties (``supports_steer`` and ``supports_refusal_steer``).
 ACP_BACKENDS_STEER = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS})
 
-# Backends that take a USER's mid-turn message over codex-acp's
-# ``_session/steering`` request rather than kiro-cli's ``_session/steer``.
+# Backends that take a USER's mid-turn message over a REQUEST whose answer is
+# awaited, rather than kiro-cli's fire-and-forget ``_session/steer``, and that can
+# drop an accepted steer with its turn. Two verbs: ``_session/steering``, which
+# ``AcpSessionHandle`` speaks for codex-acp and ``AcpClient`` for
+# claude-agent-acp, and goose's ``_goose/unstable/session/steer``, spoken by
+# ``AcpClient`` (``_CLIENT_STEERING_REQUEST_METHODS``).
 #
-# Measured against a live codex-acp 1.11.0: a steer sent while a prompt is in
+# goose, measured against a live goose 1.54.0 (and its ``acp/server.rs``): the
+# request is ``{sessionId, expectedRunId, prompt: [ContentBlock]}``, where the run
+# id is the one goose announces in ``session_info_update._meta.goose.activeRunId``
+# when a prompt starts (null when it ends). While that run is live the answer is
+# ``{runId, messageId}`` within milliseconds; with no run, or a stale id, it is
+# ``-32602`` ("no active run to steer"). goose drains queued steers between model
+# calls and echoes each as a ``user_message_chunk`` with ``_meta.goose.steer`` and
+# the same ``messageId``, and the model reads it in that turn. A steer accepted
+# and then left queued when the run ends (a cancel, or the loop's last exit) is
+# discarded: no echo, and no later model call sees it. So ``AcpClient`` reports a
+# goose steer consumed on its echo alone, and otherwise the composer's pending
+# entry is queued by the turn's teardown, exactly as for codex below. goose
+# advertises no capability for the method; an older goose without it answers
+# ``-32601`` and the steer is queued.
+#
+# codex, measured against a live codex-acp 1.11.0: a steer sent while a prompt is in
 # flight is answered ``{outcome: "injected"}`` within milliseconds and the running
 # turn reads it; the same request with no turn running is answered
 # ``{outcome: "startedNewTurn"}`` and the adapter runs a turn of its own that no
@@ -1229,7 +1251,9 @@ ACP_BACKENDS_STEER = frozenset({ACP_BACKEND_KIRO, ACP_BACKEND_KAS})
 # with ``end_turn``; a cancelled or failed turn queues it. claude runs one adapter per
 # session, so ``AcpClient`` speaks the request for it, and only when the handshake
 # advertised it.
-ACP_BACKENDS_STEERING_REQUEST = frozenset({ACP_BACKEND_CODEX, ACP_BACKEND_CLAUDE})
+ACP_BACKENDS_STEERING_REQUEST = frozenset(
+    {ACP_BACKEND_CODEX, ACP_BACKEND_CLAUDE, ACP_BACKEND_GOOSE}
+)
 
 # Backends that can serve a MANUAL ``/compact`` (the user-typed slash command).
 # Every member acts on the ``/compact`` prompt that ``AcpProvider.compact()``

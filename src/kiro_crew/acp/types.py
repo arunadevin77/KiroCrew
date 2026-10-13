@@ -134,8 +134,9 @@ METHOD_REQUEST_PERMISSION = "session/request_permission"
 METHOD_SESSION_UPDATE = "session/update"
 METHOD_METADATA = "_kiro.dev/metadata"
 METHOD_COMMANDS_EXECUTE = "_kiro.dev/commands/execute"
-# The ``_session/steering`` request a backend in ``ACP_BACKENDS_STEERING_REQUEST``
-# takes a user's mid-turn message on, and the outcomes that decide delivery.
+# The ``_session/steering`` request codex-acp and claude-agent-acp
+# (``ACP_BACKENDS_STEERING_REQUEST``) take a user's mid-turn message on, and the
+# outcomes that decide delivery.
 METHOD_SESSION_STEERING = "_session/steering"
 STEERING_INJECTED = "injected"
 STEERING_STARTED_NEW_TURN = "startedNewTurn"
