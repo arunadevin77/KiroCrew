@@ -40,6 +40,7 @@ import FollowUpBar from '../components/FollowUpBar'
 import ChatFooter from '../pages/chat/ChatFooter'
 import { deriveFollowUpOptions } from './protocol'
 import { useComposerDraft } from './useComposerDraft'
+import { useEmbedStop, EmbedStopButton, type EmbedStopState } from './useEmbedStop'
 import { useAppApi, useAppInfo } from './index'
 import { appApiSendWire } from './appSendWire'
 import { sendTurn, mintSendId } from '../chat-core/transport/sendTurn'
@@ -170,6 +171,10 @@ function isOwnUserRow(m: ChatMessage, sendId: string): boolean {
 interface ChatSlotData {
   messages?: ChatMessage[]
   running?: boolean
+  /** A stop is in flight (the slot's `_stopping`). */
+  stopping?: boolean
+  /** The stop machine's phase; drives Stop's escalation. */
+  stop_state?: EmbedStopState
   title?: string
   /** Older rows exist beyond the bounded page. */
   has_more?: boolean
@@ -807,6 +812,16 @@ function ChatEmbed({
     ? i18nT('appSdk.chatEmbed.uploading_files')
     : i18nT('components.chatInput.attach_files')
 
+  // Stop sits where Send does while a turn runs and the draft is empty (a
+  // draft mid-turn still sends, which queues it), as in the main composer.
+  const refetchNow = useCallback(() => { void refetch() }, [refetch])
+  const { stopState, onStop, stopError } = useEmbedStop({
+    api, slotKey, running, serverStopState: shown?.stop_state, onSettled: refetchNow,
+  })
+  // Staged files count as a draft, as in the main composer's
+  // `composerHasDraft`: Stop must not take the place of sending them.
+  const showStop = running && !draft.trim() && attachments.files.length === 0
+
   // Resolve a pending tool approval from inside the embed.
   //
   // Without this the group header rendered a dead "Approval needed" label with
@@ -920,12 +935,13 @@ function ChatEmbed({
           ) : undefined,
           // The main chat's working indicator (ChatFooter, shared with ChatPage
           // and ChatPane), after the last row, so a running turn reads as "the
-          // reply is coming" where the reply will land. The poll carries no
-          // stop or compaction state, so only the plain running branch applies.
+          // reply is coming" where the reply will land. The poll carries the
+          // stop phase but no compaction state, so the compaction branch never applies.
           belowRows: (
             <ChatFooter
               running={running}
-              stopping={false}
+              stopping={shown?.stopping ?? false}
+              stopState={stopState}
               state={running ? 'streaming' : ''}
               lastRole={tail?.role ?? ''}
               streamTick={tail?.role === 'streaming' ? (tail.content?.length ?? 0) : 0}
@@ -1019,6 +1035,15 @@ function ChatEmbed({
         </div>
       )}
 
+      {(stopError || stopState === 'soft_pending') && (
+        <div className={`shrink-0 px-3 pt-2 ${frameless ? '' : 'bg-bg-accent'}`}>
+          {stopError ? (
+            <ErrorNotice testId="chat-embed-stop-error" message={stopError} />
+          ) : (
+            <span className="text-xs text-muted" data-testid="chat-embed-stop-hint">{i18nT('components.chatInput.click_again_to_force_stop')}</span>
+          )}
+        </div>
+      )}
       <Composer slotKey={slotKey} value={draft} onChange={setDraft} capabilities={EMBED_CAPABILITIES}>
         <div
           className={`flex items-end gap-2 px-3 py-2 shrink-0 ${frameless ? '' : `${attachments.notice || attachments.files.length || attachments.uploadingNames.length ? '' : 'border-t'} border-border bg-bg-accent`}`}
@@ -1068,16 +1093,20 @@ function ChatEmbed({
             placeholder={running ? i18nT('appSdk.chatEmbed.agent_is_working') : (placeholder || i18nT('appSdk.chatEmbed.message'))}
             disabled={sendMutation.isPending}
           />
-          <ComposerSend
-            className="p-2 min-h-0 rounded-md disabled:opacity-40"
-            onSend={() => send()}
-            running={running}
-            pending={sendMutation.isPending}
-            hasAttachments={attachments.files.length > 0}
-            uploading={attachments.uploading}
-            sendLabel={i18nT('appSdk.chatEmbed.send_message')}
-            sendTitle={i18nT('appSdk.chatEmbed.send')}
-          />
+          {showStop ? (
+            <EmbedStopButton stopState={stopState} onStop={onStop} />
+          ) : (
+            <ComposerSend
+              className="p-2 min-h-0 rounded-md disabled:opacity-40"
+              onSend={() => send()}
+              running={running}
+              pending={sendMutation.isPending}
+              hasAttachments={attachments.files.length > 0}
+              uploading={attachments.uploading}
+              sendLabel={i18nT('appSdk.chatEmbed.send_message')}
+              sendTitle={i18nT('appSdk.chatEmbed.send')}
+            />
+          )}
         </div>
       </Composer>
     </div>
