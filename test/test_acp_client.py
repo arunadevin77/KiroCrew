@@ -9,6 +9,7 @@ import sys
 import time
 import types
 from collections import deque
+from contextlib import aclosing
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -5710,6 +5711,109 @@ class TestPromptLoop:
 
         assert "update" in actions
         assert "complete" in actions
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "scenario,command_expected",
+        [
+            ("matching", True),
+            ("wrong_call", False),
+            ("wrong_session", False),
+            ("missing_frame", False),
+            ("inline_only", False),
+            ("output", False),
+            ("other_backend", False),
+        ],
+    )
+    async def test_opencode_permission_waits_for_matching_command_refinement(
+        self, tmp_path, scenario, command_expected
+    ):
+        from kiro_crew.acp.types import ACP_BACKEND_KIRO, EVENT_PERMISSION_REQUEST, JsonRpcMessage
+
+        client = AcpClient(
+            work_dir=tmp_path,
+            acp_backend=ACP_BACKEND_KIRO if scenario == "other_backend" else ACP_BACKEND_OPENCODE,
+        )
+        client._session_id = "ses1"
+        command = "gh --version"
+        frames = deque(
+            [
+                JsonRpcMessage(
+                    method="session/update",
+                    params={
+                        "sessionId": "ses1",
+                        "update": {
+                            "sessionUpdate": "tool_call",
+                            "toolCallId": "tc1",
+                            "title": "bash",
+                            "kind": "execute",
+                            "status": "pending",
+                            "rawInput": {"cwd": str(tmp_path)},
+                        },
+                    },
+                ),
+                JsonRpcMessage(
+                    id=99,
+                    method="session/request_permission",
+                    params={
+                        "sessionId": "ses1",
+                        "toolCall": {
+                            "toolCallId": "tc1",
+                            "title": command,
+                            "kind": "execute",
+                            "rawInput": {"command": command},
+                        },
+                        "options": [{"optionId": "reject", "kind": "reject_once"}],
+                    },
+                ),
+                JsonRpcMessage(
+                    method="session/update",
+                    params={
+                        "sessionId": "ses2" if scenario == "wrong_session" else "ses1",
+                        "update": {
+                            "sessionUpdate": "tool_call_update",
+                            "toolCallId": "tc2" if scenario == "wrong_call" else "tc1",
+                            "title": command,
+                            "kind": "execute",
+                            "status": "in_progress",
+                            "rawInput": {"command": command, "cwd": str(tmp_path)},
+                        },
+                    },
+                ),
+                JsonRpcMessage(id=1, result={"stopReason": "end_turn"}),
+            ]
+        )
+
+        if scenario == "missing_frame":
+            frames[2] = None
+        elif scenario == "inline_only":
+            frames[2].params["update"]["rawInput"] = {"cwd": str(tmp_path)}
+        elif scenario == "output":
+            frames[2].params["update"]["rawOutput"] = "already ran"
+
+        async def fake_read(timeout=20.0):
+            if client._buffer:
+                return client._buffer.popleft()
+            return frames.popleft() if frames else None
+
+        client._read_message = fake_read
+        client._read_new_tool_results = AsyncMock(return_value=[])
+        events = []
+        async with aclosing(client._dispatch_events(req_id=1, timeout=5.0)) as stream:
+            async for event in stream:
+                events.append(event)
+
+        permission = next(e for e in events if e.kind == EVENT_PERMISSION_REQUEST)
+        assert bool(permission.shell_command) is command_expected
+        if command_expected:
+            assert permission.shell_command == command
+            assert permission.raw_params_trusted
+            assert events.index(
+                next(e for e in events if e.kind == "tool_call_update")
+            ) < events.index(permission)
+        else:
+            # A different call cannot supply command bytes for this request.
+            assert permission.raw_tool_params == {"cwd": str(tmp_path)}
 
     @pytest.mark.asyncio
     async def test_process_death_raises(self, tmp_path):

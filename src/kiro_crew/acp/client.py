@@ -1544,6 +1544,7 @@ async def _effective_prompt_timeout_async(timeout: float | None) -> float:
 
 
 _READ_TIMEOUT = 20.0
+_OPENCODE_PERMISSION_REFINEMENT_TIMEOUT = 2.0
 # After a compaction `completed` status, kiro-cli emits a fresh
 # `_kiro.dev/metadata` with the real post-compaction contextUsagePercentage
 # about ~1s later (live-probe confirmed). Wait up to this long for it so the
@@ -9151,6 +9152,62 @@ class AcpClient:
                 self.last_prompt_stats.event_count += 1
 
                 action = self._process_message(msg, req_id)
+                if action == "permission" and self.backend == ACP_BACKEND_OPENCODE:
+                    params = msg.params if isinstance(msg.params, dict) else {}
+                    tool_call = params.get("toolCall")
+                    tool_call = tool_call if isinstance(tool_call, dict) else {}
+                    tool_call_id = tool_call.get("toolCallId")
+                    cached = (
+                        self._tool_call_params.get(tool_call_id, {})
+                        if isinstance(tool_call_id, str)
+                        else {}
+                    )
+                    if (
+                        isinstance(tool_call_id, str)
+                        and self._tool_call_is_shell.get(tool_call_id) is True
+                        and not (isinstance(cached, dict) and cached.get("command"))
+                    ):
+                        # OpenCode can ask permission before its command-bearing
+                        # tool_call_update. Read only the next frame; an unrelated
+                        # frame keeps the existing deny to preserve event order.
+                        # Never trust the request's own
+                        # rawInput to fill the security cache.
+                        following = await self._read_message(
+                            timeout=min(_OPENCODE_PERMISSION_REFINEMENT_TIMEOUT, remaining)
+                        )
+                        if following is not None:
+                            follow_params = (
+                                following.params if isinstance(following.params, dict) else {}
+                            )
+                            update = follow_params.get("update")
+                            update = update if isinstance(update, dict) else {}
+                            raw_input = update.get("rawInput")
+                            buffer_capacity = self._buffer.maxlen
+                            if (
+                                following.is_method(METHOD_SESSION_UPDATE)
+                                and isinstance(params.get("sessionId"), str)
+                                and follow_params.get("sessionId") == params.get("sessionId")
+                                and update.get("sessionUpdate") == "tool_call_update"
+                                and update.get("toolCallId") == tool_call_id
+                                and update.get("status") == "in_progress"
+                                and isinstance(raw_input, dict)
+                                and isinstance(raw_input.get("command"), str)
+                                and raw_input["command"]
+                                and not update.get("content")
+                                and not update.get("rawOutput")
+                                and (
+                                    buffer_capacity is None
+                                    or len(self._buffer) <= buffer_capacity - 2
+                                )
+                            ):
+                                # Replay the trusted refinement first. The normal
+                                # dispatcher then caches its command before it
+                                # builds the original permission event.
+                                self._buffer.appendleft(msg)
+                                self._buffer.appendleft(following)
+                                self.last_prompt_stats.event_count -= 1
+                                continue
+                            self._buffer.appendleft(following)
                 # Single yield chokepoint: everything downstream (dispatch,
                 # chat runner, a human answering an approval card) runs while
                 # this generator is suspended here, so the whole gap is
