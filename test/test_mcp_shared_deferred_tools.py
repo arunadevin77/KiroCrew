@@ -244,9 +244,14 @@ class TestDeferredAdmission:
             lambda n, a: parked[int(n.split("-")[1])] if n.startswith("wait-") else "ok",
         )
         dispatch_contexts: list = []
+        # Reports and responses come from the one dispatch thread, so the
+        # report count at the refusal's own response is an exact boundary.
+        refused_at: list[int] = []
 
         def respond(req_id, result, error=None):
             dispatch_contexts.append((current_caller(), current_tenant_nonce()))
+            if req_id == 3:
+                refused_at.append(len(reports))
             harness._record(req_id, result, error)
 
         monkeypatch.setattr(mcp_shared, "respond", respond)
@@ -256,6 +261,10 @@ class TestDeferredAdmission:
                 harness.send(_identity_call(i + 1, f"wait-{i}", f"dashboard:call-{i}", f"n-{i}"))
             assert harness.wait_for(lambda: any(r[0] == 3 for r in harness.responses))
             overflow = next(r for r in harness.responses if r[0] == 3)
+            # Before its refusal call 3 may be named while it is still QUEUED
+            # behind the worker (a queued call is reported so it is not aged);
+            # from the refusal on it must never be named again.
+            (boundary,) = refused_at
             assert overflow[1] is None and overflow[2] == {
                 "code": -32000,
                 "message": "Server busy: parked-call table is full; retry",
@@ -266,10 +275,10 @@ class TestDeferredAdmission:
             caller, nonce = parked[2].cancel_identity[0]
             assert caller.session_key == "dashboard:call-2" and nonce == "n-2"
             assert harness.wait_for(lambda: all(p.steps >= 1 for p in parked[:2]))
-            assert harness.wait_for(lambda: {1, 2} in reports)
+            assert harness.wait_for(lambda: {1, 2} in list(reports)[boundary:])
             # Only the two admitted calls were ever parked: the overflow never
             # entered the table, so it cannot be retained past its refusal.
-            assert all(ids <= {1, 2} for ids in list(reports))
+            assert all(ids <= {1, 2} for ids in list(reports)[boundary:])
             assert not any(p.cancelled for p in parked[:2])
             harness.send(_tools_call_named(4, "fast"))
             assert harness.wait_for(lambda: any(r[0] == 4 for r in harness.responses))
@@ -298,12 +307,25 @@ class TestDeferredAdmission:
         retryable = _Abandoning(None)
         calls = {"hold": holder, "spawn": spawned, "retryable": retryable}
         harness = _LoopHarness(monkeypatch, lambda n, a: calls.get(n, "ok"))
+        # The report count at each refusal's own response (same thread as the
+        # reports): the later of the two is an exact boundary.
+        answered_at: dict[Any, int] = {}
+
+        def respond(req_id, result, error=None):
+            if req_id in (2, 3):
+                answered_at[req_id] = len(reports)
+            harness._record(req_id, result, error)
+
+        monkeypatch.setattr(mcp_shared, "respond", respond)
         try:
             harness.send(_initialize_asking_for_inflight(0))
             harness.send(_tools_call_named(1, "hold"))
             harness.send(_identity_call(2, "spawn", "dashboard:spawner", "spawn-nonce"))
             harness.send(_tools_call_named(3, "retryable"))
             assert harness.wait_for(lambda: {2, 3} <= {r[0] for r in harness.responses})
+            # Calls 2 and 3 may be named while still QUEUED behind the worker;
+            # once refused they must never be named again.
+            boundary = max(answered_at.values())
             answered = {r[0]: r for r in harness.responses}
             assert answered[2][2] is None
             assert _text(harness, 2) == "spawned: a1, a2; do not spawn them again"
@@ -317,8 +339,8 @@ class TestDeferredAdmission:
             }
             assert retryable.cancelled and retryable.settled == []
             assert len(_audits(harness, 3, "failed")) == 1
-            assert harness.wait_for(lambda: {1} in reports)
-            assert all(ids <= {1} for ids in list(reports))
+            assert harness.wait_for(lambda: {1} in list(reports)[boundary:])
+            assert all(ids <= {1} for ids in list(reports)[boundary:])
             release.set()
             assert harness.wait_for(lambda: any(r[0] == 1 for r in harness.responses))
             assert _text(harness, 1) == "slept"
