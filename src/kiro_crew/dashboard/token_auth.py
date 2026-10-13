@@ -2105,8 +2105,8 @@ async def _verify_unix_peer(
                 #
                 # This is the MAC mismatch ALONE. A proven recycle verifies, so
                 # it is attested knowledge that the pid moved on rather than
-                # ambiguity about who is calling, and the sweep leaves one for
-                # every live recycled pid -- demanding a token there would deny
+                # ambiguity about who is calling, and one sits beside every live
+                # recycled pid until the next sweep -- demanding a token there would deny
                 # the tokenless callers the arm below exists for. The CLIENT-side
                 # walk in `mcp_caller` keeps the wider set on purpose: it reads
                 # without requiring a signature, so a recycled-looking file

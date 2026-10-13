@@ -1700,6 +1700,355 @@ class TestCleanupOrphanedSessions:
         assert removed == 0
         assert live.exists(), "a live leader absent from a stale snapshot must be retained"
 
+    # A live pid whose mapping records a start token other than its live one names
+    # the pid's PREVIOUS owner. ``os.getpid()`` is a live thread-group leader, so
+    # these reach the live-pid arm; the start token is pinned so the verdict comes
+    # from the recorded/live pair alone.
+
+    @staticmethod
+    def _live_mapping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live: str | None):
+        from kiro_crew import session_pid_sig
+
+        monkeypatch.setattr("kiro_crew.session_pid.config_dir", lambda: tmp_path)
+        monkeypatch.setattr(platform_compat, "get_process_start_id", lambda _pid: live)
+        txt = tmp_path / f"session_pid_{os.getpid()}.txt"
+        txt.write_text("previous-owner-session\nrecorded-token-aaa", encoding="utf-8")
+        sig = txt.with_suffix(".sig")
+        sig.write_text("00", encoding="utf-8")
+        return session_pid_sig, txt, sig
+
+    def test_a_live_recycled_mapping_is_retracted(
+        self, tmp_path: Path, session_pid_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """HEADLINE: a mapping the live pid's start token disproves is removed.
+
+        The lenient client resolver cannot tell such a record from a planted one,
+        so while it sits in a caller's ancestry that caller's walk is refused.
+        """
+        from kiro_crew.session_pid import _prune_stale_session_pid_files
+
+        _, txt, sig = self._live_mapping(tmp_path, monkeypatch, "live-token-bbb")
+
+        removed = _prune_stale_session_pid_files()
+
+        assert removed == 1
+        assert not txt.exists()
+        assert not sig.exists()
+        assert not list(tmp_path.glob(".session_pid_*")), "no private name may be left"
+
+    @pytest.mark.parametrize(
+        "live",
+        ["recorded-token-aaa", None],
+        ids=["token-matches", "live-token-unreadable"],
+    )
+    def test_a_live_mapping_without_proof_of_recycle_is_kept(
+        self,
+        tmp_path: Path,
+        session_pid_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        live: str | None,
+    ) -> None:
+        """Only a readable live token that DIFFERS retracts; unknown is not proof."""
+        from kiro_crew.session_pid import _prune_stale_session_pid_files
+
+        _, txt, sig = self._live_mapping(tmp_path, monkeypatch, live)
+
+        assert _prune_stale_session_pid_files() == 0
+        assert txt.exists()
+        assert sig.exists()
+
+    def test_the_boot_setting_does_not_retract_a_live_recycled_mapping(
+        self, tmp_path: Path, session_pid_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The boot path carries no new work, so the live-pid arm is off there."""
+        from kiro_crew.session_pid import _prune_stale_session_pid_files
+
+        _, txt, _sig = self._live_mapping(tmp_path, monkeypatch, "live-token-bbb")
+
+        assert _prune_stale_session_pid_files(narrow_with_leaders=False) == 0
+        assert txt.exists()
+
+    def test_a_mapping_republished_mid_retraction_is_kept(
+        self, tmp_path: Path, session_pid_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The pid's new owner republishing between the read and the move wins.
+
+        The read saw the stale record, then the publisher replaced it. What the
+        move picked up is the NEW mapping, so it must end up back at its path with
+        its sidecar, not deleted as the stale one.
+        """
+        from kiro_crew import session_pid
+        from kiro_crew.session_pid import _prune_stale_session_pid_files
+
+        _, txt, sig = self._live_mapping(tmp_path, monkeypatch, "live-token-bbb")
+        real_check = session_pid._is_recycled_record
+        calls: list[Path] = []
+
+        def _read_then_republish(pid, path, expected):
+            verdict = real_check(pid, path, expected)
+            if not calls:
+                fresh = txt.with_name("republish.tmp")
+                fresh.write_text("new-owner-session\nlive-token-bbb", encoding="utf-8")
+                os.replace(fresh, txt)
+                sig.write_text("11", encoding="utf-8")
+            calls.append(path)
+            return verdict
+
+        monkeypatch.setattr(session_pid, "_is_recycled_record", _read_then_republish)
+
+        assert _prune_stale_session_pid_files() == 0
+        assert txt.read_text(encoding="utf-8") == "new-owner-session\nlive-token-bbb"
+        assert sig.read_text(encoding="utf-8") == "11"
+        assert not list(tmp_path.glob(".session_pid_*"))
+
+    def test_an_interrupted_retraction_leftover_is_removed(
+        self, tmp_path: Path, session_pid_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unowned leftover is settled: proven-stale deleted, anything else restored.
+
+        A live process's leftover may be in flight and stays untouched.
+        """
+        from kiro_crew.session_pid import _prune_stale_session_pid_files
+
+        _, txt, sig = self._live_mapping(tmp_path, monkeypatch, "live-token-bbb")
+        txt.unlink()
+        sig.unlink()
+        me = os.getpid()
+        dead_owner, live_owner = 4194303, 1
+        stale = tmp_path / f".session_pid_{me}.txt.retract-{dead_owner}-aaaa"
+        stale.write_text("previous-owner-session\nrecorded-token-aaa", encoding="utf-8")
+        current = tmp_path / f".session_pid_{me}.txt.retract-{me}-bbbb"
+        current.write_text("new-owner-session\nlive-token-bbb", encoding="utf-8")
+        lone_sig = tmp_path / f".session_pid_424242.sig.retract-{dead_owner}-cccc"
+        lone_sig.write_text("00", encoding="utf-8")
+        foreign = tmp_path / f".session_pid_{me}.sig.retract-{live_owner}-dddd"
+        foreign.write_text("11", encoding="utf-8")
+        real_exists = platform_compat.pid_exists
+        monkeypatch.setattr(
+            platform_compat,
+            "pid_exists",
+            lambda pid: False if pid == dead_owner else real_exists(pid),
+        )
+
+        _prune_stale_session_pid_files()
+
+        assert not stale.exists(), "a leftover that still proves the recycle is deleted"
+        assert not current.exists()
+        assert txt.read_text(encoding="utf-8") == "new-owner-session\nlive-token-bbb"
+        assert not lone_sig.exists(), "a sidecar with no mapping beside it is never read"
+        assert foreign.exists(), "a live process's leftover may be in flight"
+
+    def test_a_sidecar_stays_while_another_pass_holds_its_mapping(
+        self, tmp_path: Path, session_pid_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two passes interleaved: the current ``.sig`` survives while B holds the ``.txt``.
+
+        Pass A retracted the stale ``.txt``; the publisher then wrote a current
+        pair, and pass B (another process) moved the current ``.txt`` aside. When
+        A reaches the sidecar the public ``.txt`` is empty, yet B will put it back,
+        so the current ``.sig`` must stay.
+        """
+        from kiro_crew import session_pid
+        from kiro_crew.session_pid import _prune_stale_session_pid_files
+
+        _, txt, sig = self._live_mapping(tmp_path, monkeypatch, "live-token-bbb")
+        held_by_b = tmp_path / f".session_pid_{os.getpid()}.txt.retract-1-bbbb"
+        real_sidecar = session_pid._retract_sidecar
+
+        def _publisher_then_pass_b(pid_file: Path) -> None:
+            held_by_b.write_text("new-owner-session\nlive-token-bbb", encoding="utf-8")
+            sig.write_text("44", encoding="utf-8")
+            real_sidecar(pid_file)
+
+        monkeypatch.setattr(session_pid, "_retract_sidecar", _publisher_then_pass_b)
+
+        assert _prune_stale_session_pid_files() == 1
+        assert sig.read_text(encoding="utf-8") == "44"
+        assert not list(tmp_path.glob(f".session_pid_{os.getpid()}.sig.retract-*"))
+
+    @pytest.mark.skipif(
+        not hasattr(os, "symlink") or sys.platform == "win32", reason="POSIX symlinks"
+    )
+    @pytest.mark.parametrize("kind", ["txt", "sig"])
+    def test_a_planted_symlink_leftover_is_removed_never_linked(
+        self,
+        tmp_path: Path,
+        session_pid_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        kind: str,
+    ) -> None:
+        """A symlink at a private name is unlinked; its target never gains a public name."""
+        from kiro_crew.session_pid import _prune_stale_session_pid_files
+
+        monkeypatch.setattr("kiro_crew.session_pid.config_dir", lambda: tmp_path)
+        secret = tmp_path / "outside" / "secret.env"
+        secret.parent.mkdir()
+        secret.write_text("TOKEN=x", encoding="utf-8")
+        me = os.getpid()
+        public = tmp_path / f"session_pid_{me}.{kind}"
+        if kind == "sig":
+            (tmp_path / f"session_pid_{me}.txt").write_text("sess", encoding="utf-8")
+        planted = tmp_path / f".session_pid_{me}.{kind}.retract-{me}-aaaa"
+        planted.symlink_to(secret)
+
+        _prune_stale_session_pid_files()
+
+        assert not os.path.lexists(planted)
+        assert not public.exists()
+        assert os.stat(secret).st_nlink == 1
+        assert secret.read_text(encoding="utf-8") == "TOKEN=x"
+
+    def test_a_mapping_restored_mid_check_still_counts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A restore landing between the public and private checks is still seen."""
+        from kiro_crew.session_pid import _mapping_may_return
+
+        txt = tmp_path / "session_pid_77.txt"
+        private = tmp_path / ".session_pid_77.txt.retract-1-aaaa"
+        private.write_text("x", encoding="utf-8")
+        real_glob = Path.glob
+
+        def _restore_then_glob(self, pattern):
+            if self == tmp_path and private.exists():
+                os.link(private, txt)
+                private.unlink()
+            return real_glob(self, pattern)
+
+        monkeypatch.setattr(Path, "glob", _restore_then_glob)
+
+        assert _mapping_may_return(txt) is True
+
+    def test_a_sidecar_leftover_waits_for_its_mapping_leftover(
+        self, tmp_path: Path, session_pid_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A paired current ``.txt`` and ``.sig`` left private both go back, whatever the order.
+
+        Settling the sidecar first, while its mapping is still private, must keep
+        it; the pass then restores the mapping and the sidecar beside it.
+        """
+        from kiro_crew.session_pid import (
+            _prune_stale_session_pid_files,
+            _settle_retraction_leftover,
+        )
+
+        _, txt, sig = self._live_mapping(tmp_path, monkeypatch, "live-token-bbb")
+        txt.unlink()
+        sig.unlink()
+        me = os.getpid()
+        txt_left = tmp_path / f".session_pid_{me}.txt.retract-{me}-aaaa"
+        txt_left.write_text("new-owner-session\nlive-token-bbb", encoding="utf-8")
+        sig_left = tmp_path / f".session_pid_{me}.sig.retract-{me}-bbbb"
+        sig_left.write_text("33", encoding="utf-8")
+
+        _settle_retraction_leftover(sig_left)
+        assert sig_left.exists(), "the sidecar must wait while its mapping is private"
+
+        _prune_stale_session_pid_files()
+
+        assert txt.read_text(encoding="utf-8") == "new-owner-session\nlive-token-bbb"
+        assert sig.read_text(encoding="utf-8") == "33"
+        assert not list(tmp_path.glob(".session_pid_*"))
+
+    def test_a_mapping_that_cannot_be_put_back_is_kept_not_deleted(
+        self, tmp_path: Path, session_pid_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without hard links the moved mapping stays private, then the next pass restores it.
+
+        Restoring by rename could replace a mapping published in the meantime, so
+        the pass keeps the file under its private name instead.
+        """
+        from kiro_crew import session_pid
+        from kiro_crew.session_pid import _prune_stale_session_pid_files
+
+        _, txt, sig = self._live_mapping(tmp_path, monkeypatch, "live-token-bbb")
+        real_check = session_pid._is_recycled_record
+        calls: list[Path] = []
+
+        def _read_then_republish(pid, path, expected):
+            verdict = real_check(pid, path, expected)
+            if not calls:
+                fresh = txt.with_name("republish.tmp")
+                fresh.write_text("new-owner-session\nlive-token-bbb", encoding="utf-8")
+                os.replace(fresh, txt)
+            calls.append(path)
+            return verdict
+
+        monkeypatch.setattr(session_pid, "_is_recycled_record", _read_then_republish)
+        real_link = os.link
+
+        def _no_links(*_a, **_k):
+            raise PermissionError("hard links unsupported")
+
+        monkeypatch.setattr(os, "link", _no_links)
+
+        assert _prune_stale_session_pid_files() == 0
+        assert not txt.exists()
+        kept = list(tmp_path.glob(f".session_pid_{os.getpid()}.txt.retract-*"))
+        assert len(kept) == 1
+        assert kept[0].read_text(encoding="utf-8") == "new-owner-session\nlive-token-bbb"
+
+        monkeypatch.setattr(os, "link", real_link)
+        monkeypatch.setattr(session_pid, "_is_recycled_record", real_check)
+        _prune_stale_session_pid_files()
+
+        assert txt.read_text(encoding="utf-8") == "new-owner-session\nlive-token-bbb"
+        assert not list(tmp_path.glob(".session_pid_*"))
+
+    def test_a_sidecar_republished_mid_retraction_is_kept(
+        self, tmp_path: Path, session_pid_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``.txt`` and ``.sig`` republished while the stale ``.txt`` is set aside stay.
+
+        The publisher writes both after the stale record was moved, so the sidecar
+        the sweep then finds is the new one and must not be removed.
+        """
+        from kiro_crew import session_pid
+        from kiro_crew.session_pid import _prune_stale_session_pid_files
+
+        _, txt, sig = self._live_mapping(tmp_path, monkeypatch, "live-token-bbb")
+        real_sidecar = session_pid._retract_sidecar
+
+        def _republish_then_retract(pid_file: Path) -> None:
+            txt.write_text("new-owner-session\nlive-token-bbb", encoding="utf-8")
+            sig.write_text("22", encoding="utf-8")
+            real_sidecar(pid_file)
+
+        monkeypatch.setattr(session_pid, "_retract_sidecar", _republish_then_retract)
+
+        assert _prune_stale_session_pid_files() == 1
+        assert txt.read_text(encoding="utf-8") == "new-owner-session\nlive-token-bbb"
+        assert sig.read_text(encoding="utf-8") == "22"
+        assert not list(tmp_path.glob(".session_pid_*"))
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs are POSIX-only")
+    def test_a_fifo_at_the_mapping_path_is_not_opened_blocking(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A FIFO swapped in after the ``lstat`` must not park the sweep on ``open``."""
+        from kiro_crew.session_pid import _is_recycled_record
+
+        monkeypatch.setattr(platform_compat, "get_process_start_id", lambda _pid: "live")
+        regular = tmp_path / "vetted.txt"
+        regular.write_text("previous-owner-session\nrecorded", encoding="utf-8")
+        expected = os.lstat(regular)
+        fifo = tmp_path / f"session_pid_{os.getpid()}.txt"
+        os.mkfifo(fifo)
+
+        box: dict[str, bool] = {}
+        worker = threading.Thread(
+            target=lambda: box.setdefault("v", _is_recycled_record(os.getpid(), fifo, expected)),
+            daemon=True,
+        )
+        worker.start()
+        worker.join(timeout=5)
+        if worker.is_alive():
+            os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+            worker.join(timeout=5)
+            pytest.fail("the read blocked on a FIFO")
+        assert box["v"] is False
+        assert _is_recycled_record(os.getpid(), regular, expected) is True
+
 
 class TestResetStateUntracksParentPid:
     def test_reset_state_untracks_parent_pid(self) -> None:

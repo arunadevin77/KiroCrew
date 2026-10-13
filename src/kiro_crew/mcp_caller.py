@@ -489,8 +489,8 @@ def _mapping_answers(mapping: Any) -> bool:
     the same-uid, agent-writable config dir, so any process could otherwise
     plant a two-line file at a nearer ancestor pid and halt the walk short of
     the kiro-cli ancestor that holds the real mapping. ``REFUSAL_RECYCLED`` is
-    the same shape without the planting: the sweep deliberately leaves a stale
-    file on disk for every live recycled pid.
+    the same shape without the planting: a live recycled pid's stale file sits
+    on disk until the periodic sweep retracts it.
 
     Not stopping is only half of it. The caller records that it passed such a
     record, so a chain that ends with no key at all still refuses rather than

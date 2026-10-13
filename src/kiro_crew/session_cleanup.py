@@ -1250,14 +1250,15 @@ class SessionCleanup:
     async def _sweep_session_pid_mappings(self) -> None:
         """Retract ``session_pid_<pid>`` mappings whose pid is dead or names no process.
 
-        Those two are the whole of what the pass removes: an unsignalable pid, or
-        one absent from the thread-group-leaders snapshot whose per-pid re-read
-        confirms it names no process. A pid that is LIVE keeps its mapping even
-        when the number has been recycled away from the session that published
-        it -- that mapping is already refused at read time by
-        ``session_pid_sig._pid_recycled`` on both the strict and the lenient
-        resolution path, so it carries no identity, and its file goes when the
-        unrelated process exits.
+        The pass removes an unsignalable pid's mapping, one absent from the
+        thread-group-leaders snapshot whose per-pid re-read confirms it names no
+        process, and one whose pid is LIVE but recycled: its recorded start token
+        differs from the live one. Both resolvers refuse that last record at read
+        time (``session_pid_sig._pid_recycled``), but the lenient client one
+        cannot tell it from a planted file, so it counts the record as unusable
+        and refuses a caller that has no other identity source. Only the
+        publisher can tell the two apart, so this pass retires it, and the
+        refusal lasts at most one tick instead of the unrelated process's life.
 
         ``session_pid._prune_stale_session_pid_files`` is otherwise reached only
         from ``cleanup_orphaned_sessions``, which ``session.py``'s module map

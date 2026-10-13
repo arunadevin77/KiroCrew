@@ -4258,14 +4258,49 @@ a trust root on its own; publication therefore also writes a
   per-syscall bounding at all, and the case a teardown hook could not reach (a
   gateway that dies without running one) is covered by the same pass.
   Retraction latency is bounded rather than immediate: a released session's
-  mapping survives at most one tick. The pass keeps its own decision rules
-  unchanged, deliberately — in particular it still retains a mapping whose pid
-  number was recycled to a live process, because that mapping is already refused
-  at READ time (`_pid_recycled` on both the strict and the lenient path) and its
-  file is reclaimed once the unrelated process exits. Adding a prune branch for
-  it would trade a disk saving against the read-then-unlink window in which a
-  new owner's `publish_session_pid` can land, and losing a live mapping costs
-  that session its identity until its next turn republishes.
+  mapping survives at most one tick.
+- **Live but recycled** (`session_pid._retract_recycled_mapping`, on every
+  pass except the boot and force-exit setting): a mapping whose pid is live but
+  whose recorded start token differs from the live one names the pid's previous
+  owner. Both resolvers refuse it at READ time (`_pid_recycled`), but the
+  lenient client resolver reads without a signature check, so it cannot tell it
+  from a planted file: it counts the record as unusable, and a caller with no
+  other identity source (a warm-pool runtime before claim, a cron script, a
+  pooled MCP backend) ends its walk as `resolution_failed`, which `tools/call`
+  refuses. The client must keep refusing, because accepting a recycle verdict
+  would let a same-uid file write drop the walk to the permissive empty key. The
+  publisher is the party that can tell the two apart, so the pass retracts the
+  record and the refusal lasts at most one tick. Only positive evidence
+  retracts: a legacy token-less file, an unreadable live token, a malformed or
+  co-tenant record and a non-regular file all stay. The new owner can republish
+  the same path at any moment, so the file is renamed to a private
+  `.session_pid_<pid>.txt.retract-<sweep pid>-*` name first and the retraction
+  stands only when the renamed file is still the inode that was read and its
+  body still proves the recycle; otherwise it is linked back without replacing
+  a newer one, and a file that cannot be linked back stays under its private
+  name rather than being renamed over a newer one. Every read is non-blocking
+  and refuses links, so a FIFO swapped into the same-uid directory cannot park
+  a maintenance worker. The `.sig` is moved aside the same way and put back if
+  a `.txt` has reappeared by then, or while any pass holds that `.txt`
+  privately. One pass per process runs this arm at a
+  time; with that lock held, a private name no running pass owns (this
+  process's own, or a dead sweep's) is settled at the start of the pass: a
+  `.txt` that still proves the recycle is deleted, anything else is linked
+  back, then a `.sig` goes back beside a `.txt` and is deleted only when no
+  `.txt`, public or private, remains for its pid. Only a regular file is ever
+  linked back, never through a symlink; any other kind of file at a private
+  name is unlinked, so a planted link cannot give its target a public name.
+  Residual window, accepted: if the new owner's `publish_session_pid` lands
+  between the check and the rename, its fresh `.txt` is moved aside and linked
+  back a moment later, and a sidecar moved aside is likewise linked back. A
+  resolve that lands in that gap sees no mapping (strict readers refuse; the
+  lenient walk gets the empty key a session has before its first publish) or a
+  `.txt` without its `.sig` (strict readers refuse). That can cost one resolve,
+  stretched by the negative cache, for a session in its first moments, and it
+  repairs itself on the restore or the next publish. It is accepted because the
+  alternative leaves every tokenless caller under that pid refused for the life
+  of the unrelated process, and closing it fully needs a lock shared with
+  `publish_session_pid`, which runs on the turn path.
 - **Legacy per-pid member-memory bindings**
   (`SessionCleanup._sweep_member_pid_bindings` →
   `member_memory_auth.prune_legacy_member_pid_bindings`):
