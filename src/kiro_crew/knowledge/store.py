@@ -1234,6 +1234,10 @@ class KnowledgeStore:
         # NULL on legacy rows -> they fall back to the fuzzy (embedding) dedup tier.
         if "content_hash" not in cols:
             self.db.execute("ALTER TABLE items ADD COLUMN content_hash TEXT")
+        # When this chunk's entity-extraction call last failed; NULL once it has
+        # an extraction. The folder watcher re-extracts such items in place.
+        if "extraction_failed_at" not in cols:
+            self.db.execute("ALTER TABLE items ADD COLUMN extraction_failed_at TEXT")
         # Index created here (not in the CREATE TABLE DDL) so it runs only after the
         # column is guaranteed to exist: on a pre-existing DB the DDL block's
         # CREATE TABLE IF NOT EXISTS is a no-op and the column is added by the ALTER
@@ -2229,16 +2233,17 @@ class KnowledgeStore:
 
     def add_item(self, title, content, item_type, source_id=None, chunk_index=0,
                  summary=None, tags=None, embedding=None, namespace="default",
-                 content_hash=None) -> str:
+                 content_hash=None, extraction_failed=False) -> str:
         item_id = str(uuid4())
         now = datetime.now().isoformat()
         tags_json = json.dumps(tags or [])
+        failed_at = now if extraction_failed else None
         self.db.execute("BEGIN IMMEDIATE")
         try:
             self.db.execute(
-                "INSERT INTO items (id, title, content, item_type, source_id, chunk_index, namespace, summary, tags, embedding, content_hash, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (item_id, title, content, item_type, source_id, chunk_index, namespace, summary, tags_json, embedding, content_hash, now, now))
+                "INSERT INTO items (id, title, content, item_type, source_id, chunk_index, namespace, summary, tags, embedding, content_hash, extraction_failed_at, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (item_id, title, content, item_type, source_id, chunk_index, namespace, summary, tags_json, embedding, content_hash, failed_at, now, now))
             # Sync FTS: get the rowid of the inserted item
             rowid = self.db.execute("SELECT rowid FROM items WHERE id = ?", (item_id,)).fetchone()[0]
             self._fts_index(rowid, title, content, tags_json)
@@ -2261,6 +2266,67 @@ class KnowledgeStore:
         return d
 
     _ITEM_COLUMNS = {"title", "content", "item_type", "summary", "tags", "embedding", "status", "namespace", "updated_at"}
+
+    def items_with_failed_extraction(self, item_ids: list[str]) -> list[dict]:
+        """Those of *item_ids* whose entity-extraction call failed, oldest chunk first."""
+        if not item_ids:
+            return []
+        marks = ",".join("?" for _ in item_ids)
+        rows = self.db.execute(
+            f"SELECT id, title, content, chunk_index, extraction_failed_at FROM items "
+            f"WHERE id IN ({marks}) AND extraction_failed_at IS NOT NULL "
+            f"ORDER BY chunk_index",
+            tuple(item_ids),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_extraction_failed(self, item_ids: list[str]) -> None:
+        """Stamp *item_ids*' failed-extraction mark with now: another attempt failed."""
+        if not item_ids:
+            return
+        marks = ",".join("?" for _ in item_ids)
+        self.db.execute(
+            f"UPDATE items SET extraction_failed_at = ? WHERE id IN ({marks})",
+            (datetime.now().isoformat(), *item_ids),
+        )
+        self.db.commit()
+
+    def complete_reextraction(self, item_id: str, *, title: str, item_type: str,
+                              summary: str | None) -> None:
+        """Write a re-extracted chunk's fields and clear its failed-extraction mark.
+
+        The caller stores the chunk's entities FIRST: if the process dies between
+        the two, the mark survives and the chunk is extracted again, rather than a
+        cleared mark hiding missing entities. The next attempt starts with
+        :meth:`clear_item_entity_links`, so the repeat stores nothing twice.
+        """
+        self.update_item(item_id, title=title, item_type=item_type, summary=summary)
+        self.db.execute(
+            "UPDATE items SET extraction_failed_at = NULL WHERE id = ?", (item_id,))
+        self.db.commit()
+
+    def clear_item_entity_links(self, item_id: str) -> None:
+        """Drop *item_id*'s mentions and the relations it sourced, in one transaction.
+
+        A chunk still marked as failed got no entities from its failed call, so any
+        link it holds was written by a re-extraction that did not finish (a
+        shutdown, or a store or embed error after the entities landed). Clearing
+        them first makes the next attempt write each relation once: relations,
+        unlike mentions, have no uniqueness to absorb a repeat. The graph is
+        reloaded only when an edge went away.
+        """
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self.db.execute("DELETE FROM mentions WHERE item_id = ?", (item_id,))
+            dropped = self.db.execute(
+                "DELETE FROM entity_relations WHERE source_item_id = ?", (item_id,)
+            ).rowcount
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
+        if dropped:
+            self._load_graph()
 
     def update_item(self, item_id, **fields):
         if not fields:

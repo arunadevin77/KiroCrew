@@ -29,7 +29,7 @@ from kiro_crew.sel import sel
 from .chunker import CHUNK_OVERLAP, CHUNK_TOKEN_SIZE, MAX_CHUNKS_PER_FILE, HeadingAwareChunker
 from .dedup import PERSISTENT_SOURCE_TYPES, dedup_document
 from .embedder import embedder_signature, floats_to_bytes
-from .extractor import EntityExtractor
+from .extractor import EntityExtractor, extraction_failed
 from .readers import FileReader
 from .store import AUTO_ADDED_PROP, KnowledgeStore
 
@@ -452,6 +452,35 @@ def _job_status(processed: int, total: int) -> str:
     return 'completed'
 
 
+# Leads the error recorded when a document committed with chunks whose extraction
+# call failed. Those chunks are stored and searchable, so the ingest is not a
+# failure, but the folder watcher keys its bounded re-extraction on this prefix.
+EXTRACTION_INCOMPLETE_PREFIX = "entity extraction failed for "
+
+
+def extraction_incomplete_message(failed: int, total: int) -> str | None:
+    if not failed:
+        return None
+    return f"{EXTRACTION_INCOMPLETE_PREFIX}{failed} of {total} chunks"
+
+
+def _count_failed_extractions(extractions: list[dict], total: int, label: str) -> int:
+    failed = sum(1 for extraction in extractions if extraction_failed(extraction))
+    if failed:
+        logger.warning(
+            "Entity extraction failed for %d of %d chunks of %s; they are stored "
+            "without entities or summary", failed, total, label)
+    return failed
+
+
+def _redact_extraction(extraction: dict) -> None:
+    """Redact, in place, the LLM-derived text an extraction stores."""
+    extraction['summary'] = _redact(extraction.get('summary'))
+    for ent in extraction.get('entities', []):
+        ent['name'] = _redact(ent.get('name')) or ''
+        ent['description'] = _redact(ent.get('description'))
+
+
 def _first_line_title(content: str) -> str:
     """Extract title from first non-empty line, stripped of markdown markers."""
     for line in content.split("\n"):
@@ -807,6 +836,7 @@ class IngestionPipeline:
         count_toward_import_budget: bool = True,
         import_budget_token: int | None = None,
         on_committed_in_txn: bool = False,
+        on_extraction_failed: Callable[[int, int], None] | None = None,
     ) -> str | None:
         """Full pipeline. Returns job_id, or None if content hash unchanged.
 
@@ -857,6 +887,13 @@ class IngestionPipeline:
         deletion and the location claim durable and the caller's write never
         reached.
 
+        ``on_extraction_failed(failed, total)`` runs in the same finalize hop,
+        immediately BEFORE ``on_committed`` and only when the group committed with
+        some chunks whose extraction call failed. Those chunks are stored and
+        searchable with no entities or summary; the callback lets a caller that
+        keys state by document mark it for another attempt, since the job row
+        alone is never re-read.
+
         ``count_toward_import_budget`` gates and records this call against the
         cross-file explicit-import chunk budget (``knowledge.import_chunk_budget``).
         Explicit callers leave it True; the folder-watcher path passes False
@@ -895,6 +932,7 @@ class IngestionPipeline:
                     on_committed=on_committed, on_duplicate=on_duplicate,
                     embed_priority=embed_priority,
                     on_committed_in_txn=on_committed_in_txn,
+                    on_extraction_failed=on_extraction_failed,
                 )
             finally:
                 # Reclaim the reservation on EVERY exit that did not settle it: an
@@ -919,6 +957,7 @@ class IngestionPipeline:
         on_duplicate: Callable[[str], None] | None = None,
         embed_priority: int = PRIORITY_NORMAL,
         on_committed_in_txn: bool = False,
+        on_extraction_failed: Callable[[int, int], None] | None = None,
     ) -> str | None:
         p = Path(path)
         display_name = original_name or p.name
@@ -1085,6 +1124,7 @@ class IngestionPipeline:
                 embed_priority=embed_priority, on_committed=on_committed,
                 budget_token=budget_token,
                 on_committed_in_txn=on_committed_in_txn,
+                on_extraction_failed=on_extraction_failed,
             )
         except Exception:
             try:
@@ -1112,7 +1152,8 @@ class IngestionPipeline:
                                 old_item_ids, _old_item_ids, path,
                                 on_progress, embed_priority,
                                 on_committed=None, budget_token=None,
-                                on_committed_in_txn=False) -> str | None:
+                                on_committed_in_txn=False,
+                                on_extraction_failed=None) -> str | None:
         """Chunk/extract/store/finalize — split out so ingest_file can mark the
         pre-inserted job row 'failed' on ANY exception in one place."""
         # 4. Chunk (use per-source chunk size if configured)
@@ -1141,6 +1182,7 @@ class IngestionPipeline:
         # 5. Extract all chunks in batch via pool
         chunk_contents = [chunk['content'] for chunk in chunks]
         extractions = await self.extractor.extract_batch(chunk_contents)
+        unextracted = _count_failed_extractions(extractions, total, path)
 
         # What THIS call wrote, collected at the write itself rather than
         # inferred from a before/after comparison of the source. `import_bundle`
@@ -1152,10 +1194,7 @@ class IngestionPipeline:
         processed = 0
         for i, (chunk, extraction) in enumerate(zip(chunks, extractions)):
             try:
-                extraction['summary'] = _redact(extraction.get('summary'))
-                for ent in extraction.get('entities', []):
-                    ent['name'] = _redact(ent.get('name')) or ''
-                    ent['description'] = _redact(ent.get('description'))
+                _redact_extraction(extraction)
                 item_title = (
                     _redact(extraction.get('title'))
                     or _first_line_title(chunk['content'])
@@ -1194,6 +1233,7 @@ class IngestionPipeline:
                         namespace=namespace,
                         tags=item_tags,
                         content_hash=content_hash,
+                        extraction_failed=extraction_failed(extraction),
                     )
                     created_item_ids.append(new_id)
                     self.store.add_source_location(
@@ -1240,6 +1280,8 @@ class IngestionPipeline:
             # (isolation_level=None), so no enclosing transaction spans this,
             # and WAL + busy_timeout=10000 rides out write-lock contention.
             if processed == total:
+                if unextracted and on_extraction_failed is not None:
+                    on_extraction_failed(unextracted, total)
                 if on_committed is not None and on_committed_in_txn:
                     # ONE transaction for the old group's delete and the
                     # caller's ownership write (see ingest_file). Two commits
@@ -1289,8 +1331,10 @@ class IngestionPipeline:
                 self.store.delete_items_batch(list(created_item_ids))
                 self.store.db.execute("UPDATE sources SET sync_status = 'error' WHERE id = ?", (source_id,))
             self.store.db.execute(
-                "UPDATE ingestion_jobs SET status = ?, items_processed = ?, updated_at = ? WHERE id = ?",
-                (_job_status(processed, total), processed, now, job_id))
+                "UPDATE ingestion_jobs SET status = ?, items_processed = ?, error = ?, "
+                "updated_at = ? WHERE id = ?",
+                (_job_status(processed, total), processed,
+                 extraction_incomplete_message(unextracted, total), now, job_id))
             self.store.db.commit()
 
         await run_to_completion(_finalize)
@@ -1427,6 +1471,7 @@ class IngestionPipeline:
 
         chunk_contents = [chunk['content'] for chunk in chunks]
         extractions = await self.extractor.extract_batch(chunk_contents)
+        unextracted = _count_failed_extractions(extractions, total, f"source {source_id}")
 
         # What THIS call wrote, collected at the write itself rather than
         # inferred from a before/after comparison of the source -- a snapshot
@@ -1439,10 +1484,7 @@ class IngestionPipeline:
         processed = 0
         for i, (chunk, extraction) in enumerate(zip(chunks, extractions)):
             try:
-                extraction['summary'] = _redact(extraction.get('summary'))
-                for ent in extraction.get('entities', []):
-                    ent['name'] = _redact(ent.get('name')) or ''
-                    ent['description'] = _redact(ent.get('description'))
+                _redact_extraction(extraction)
 
                 # ONE uncancellable unit, for both reasons spelled out in
                 # _ingest_file_body: a cancellation must not be able to land
@@ -1458,6 +1500,7 @@ class IngestionPipeline:
                         chunk_index=chunk.get('chunk_index', i),
                         summary=extraction.get('summary'),
                         content_hash=content_hash,
+                        extraction_failed=extraction_failed(extraction),
                     )
                     created_item_ids.append(new_id)
                     self.store.add_source_location(
@@ -1511,8 +1554,10 @@ class IngestionPipeline:
                 self.store.delete_items_batch(list(created_item_ids))
                 self.store.db.execute("UPDATE sources SET sync_status = 'error' WHERE id = ?", (source_id,))
             self.store.db.execute(
-                "UPDATE ingestion_jobs SET status = ?, items_total = ?, items_processed = ?, updated_at = ? WHERE id = ?",
-                (_job_status(processed, total), total, processed, now, job_id))
+                "UPDATE ingestion_jobs SET status = ?, items_total = ?, items_processed = ?, "
+                "error = ?, updated_at = ? WHERE id = ?",
+                (_job_status(processed, total), total, processed,
+                 extraction_incomplete_message(unextracted, total), now, job_id))
             self.store.db.commit()
 
         await run_to_completion(_finalize)
@@ -1543,6 +1588,54 @@ class IngestionPipeline:
     def get_job_status(self, job_id: str) -> dict | None:
         row = self.store.db.execute("SELECT * FROM ingestion_jobs WHERE id = ?", (job_id,)).fetchone()
         return dict(row) if row else None
+
+    async def reextract_failed_items(
+        self, rows: list[dict], *, embed_priority: int = PRIORITY_NORMAL,
+    ) -> int:
+        """Re-extract stored chunks whose extraction call failed, in place.
+
+        *rows* come from ``KnowledgeStore.items_with_failed_extraction``. A chunk
+        that now extracts gets its entities, then its title, type and summary
+        with the mark cleared, then a fresh embedding. A chunk that fails again
+        keeps everything it had and its mark is re-stamped, which is what the
+        caller's backoff reads. Nothing else in the document is touched, so a
+        failed retry can never cost a chunk that extracted before. Returns how
+        many chunks are still unextracted.
+        """
+        if not rows:
+            return 0
+        if not self.extractor.can_extract:
+            return len(rows)
+        extractions = await self.extractor.extract_batch([row['content'] for row in rows])
+        still_failed: list[str] = []
+        for row, extraction in zip(rows, extractions):
+            if extraction_failed(extraction):
+                still_failed.append(row['id'])
+                continue
+            try:
+                _redact_extraction(extraction)
+                title = _redact(extraction.get('title')) or row['title']
+                await asyncio.to_thread(self.store.clear_item_entity_links, row['id'])
+                await asyncio.to_thread(self._store_entities, extraction, row['id'])
+
+                def _complete(_id=row['id'], _title=title, _extraction=extraction) -> None:
+                    self.store.complete_reextraction(
+                        _id, title=_title,
+                        item_type=_extraction.get('category', 'document'),
+                        summary=_extraction.get('summary'),
+                    )
+
+                await run_to_completion(_complete)
+                await self._embed_item(
+                    row['id'], title, extraction.get('summary'), row['content'],
+                    embed_priority=embed_priority,
+                )
+            except Exception:
+                logger.exception("Failed to store the re-extraction of item %s", row['id'])
+                still_failed.append(row['id'])
+        if still_failed:
+            await run_to_completion(lambda: self.store.mark_extraction_failed(still_failed))
+        return len(still_failed)
 
     def _store_entities(self, extraction: dict, item_id: str):
         """Deduplicate and store entities, mentions, and relations."""
