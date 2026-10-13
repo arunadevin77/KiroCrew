@@ -376,6 +376,8 @@ from kiro_crew.dashboard.handlers.usage import (
     read_effective_agent,
     read_turn_model,
 )
+from kiro_crew.dashboard.poisoned_escalation import POISONED_SESSION_CYCLES  # noqa: F401
+from kiro_crew.dashboard.poisoned_escalation import PoisonedConversationEscalation
 from kiro_crew.dashboard.recovery_replays import SESSION_NOT_FOUND_CANCELLED_TEXT  # noqa: F401
 from kiro_crew.dashboard.recovery_replays import (
     ReplayFamily,
@@ -2134,16 +2136,6 @@ def _tcid_identity_key(tcid: str | None) -> str:
     canonical = _redact_tool_field(tcid)
     return hashlib.sha256(canonical.encode("utf-8", "replace")).hexdigest()[:16]
 
-
-# Poisoned-conversation escalation threshold: number of CONSECUTIVE turn
-# cycles that must each exhaust the full pre-stream transient-5xx ladder
-# (TRANSIENT_RETRIES + 1 attempts, zero output) before the terminal error
-# branch stops advising "retry in a moment" and instead destroys the native
-# session and re-queues once on a fresh conversation. Two cycles ⇒ at least
-# 2×(TRANSIENT_RETRIES+1) consecutive pre-stream failures spanning a user
-# action (Continue / new message), which a momentary capacity blip does not
-# survive but a backend-rejected persisted conversation always does.
-POISONED_SESSION_CYCLES = 2
 
 # Canary probe for the poisoned-conversation escalation: before any discard,
 # ONE tool-free prompt is run through an ephemeral fresh background session
@@ -10079,9 +10071,11 @@ async def _run_chat(
     # conversation), discard_conversation CLEARS the sid so the next turn
     # cold-starts a fresh conversation — while keeping the session-map entry,
     # whose Slack thread/channel linkage must survive the recovery. Set only
-    # by the consecutive pre-stream-exhaustion branch or the typed
-    # unsupported-history-image recovery in the AcpError handler below.
+    # by the poisoned-conversation canary, the typed unsupported-history-image
+    # recovery or the thinking-binding rebuild in the AcpError handler below;
+    # their cross-cycle streak and one-shot live in ``_escalation``.
     needs_conversation_discard = False
+    _escalation = PoisonedConversationEscalation(slot)
     _auth_required = False
     saw_compaction = False
     # True once a compaction STARTED notice landed this turn, so the terminal
@@ -18394,8 +18388,8 @@ async def _run_chat(
             # increment survives until a real turn lands — which is what keeps a
             # continuation that overflows again from looping.
             slot._compaction_continue_retries = 0
-            # NOTE: the poisoned-conversation streak/one-shot
-            # (_prestream_exhausted_cycles / _poisoned_reset_used) are NOT
+            # NOTE: the poisoned-conversation streak/one-shot (``_escalation``)
+            # are NOT
             # unconditionally reset here: this block also runs for CANCELLED
             # turns, and a user's Stop press by itself proves nothing about
             # the conversation's health. The activity-based streak break
@@ -18459,8 +18453,7 @@ async def _run_chat(
             # fresh) conversation works. Deliberately NOT in the cancel-
             # inclusive budget block above — a Stop press during the recovery
             # turn must not re-arm a second discard without that evidence.
-            slot._prestream_exhausted_cycles = 0
-            slot._poisoned_reset_used = False
+            _escalation.record_landed_turn()
             slot._session_not_found_retry_used = False
             # This turn landed: the prompt (including any re-injected skills
             # index) reached the model, so the `finally` must NOT restore the
@@ -18993,7 +18986,7 @@ async def _run_chat(
                 or _turn_emitted
                 or _turn_thought
                 or _turn_tool_calls
-                or slot._poisoned_reset_used
+                or _escalation.one_shot_spent
                 or not _intent_unchanged()
             ):
                 return False
@@ -19176,11 +19169,10 @@ async def _run_chat(
             # later Stop, steer, queued follow-up or rebind. A refused rebuild
             # falls through to the terminal error below.
             await _persist_partial_reply("error: thinking binding mismatch")
-            slot._poisoned_reset_used = True
+            # Not a transient outage cycle: no retry, fallback or streak
+            # bookkeeping may leak into the rebuilt conversation.
+            _escalation.arm_discard(clear_streak=True)
             needs_conversation_discard = True
-            # Not a transient outage cycle: no retry or fallback bookkeeping may
-            # leak into the rebuilt conversation.
-            slot._prestream_exhausted_cycles = 0
             slot._transient_5xx_retries = 0
             slot._infra_retries = 0
             slot._fallback_candidate_idx = 0
@@ -19225,7 +19217,7 @@ async def _run_chat(
             getattr(exc, "image_format_unsupported", False)
             and not _attachments
             and not _current_turn_carries_image_ref(message)
-            and not slot._poisoned_reset_used
+            and not _escalation.one_shot_spent
             and _prompt_depth == 0
             and (
                 (_image_replay_owed := not _turn_emitted and _replay_owes_delivery())
@@ -19260,8 +19252,7 @@ async def _run_chat(
             # the terminal error whose formatted text already says to remove or
             # re-encode the attachment.
             await _persist_partial_reply("error: terminal")
-            slot._prestream_exhausted_cycles = 0
-            slot._poisoned_reset_used = True
+            _escalation.arm_discard(clear_streak=True)
             needs_conversation_discard = True
             if _turn_emitted:
                 # A tool or assistant output already landed. Continue from the
@@ -20010,7 +20001,7 @@ async def _run_chat(
             # survive — and re-queue the message once. The successor turn
             # cold-starts a fresh conversation with the slot transcript
             # re-injected as context, preserving the dashboard session.
-            # ONE-SHOT per landed turn (_poisoned_reset_used): if even the
+            # ONE-SHOT per landed turn (``_escalation``): if even the
             # fresh conversation fails (genuine prolonged outage), the streak
             # keeps counting but no further discard fires until some turn
             # actually lands — a discard loop is impossible.
@@ -20025,19 +20016,11 @@ async def _run_chat(
             # formatted message wording); disambiguation between "poisoned
             # conversation" and "backend-wide outage/throttle" is done by the
             # CANARY PROBE below, not by classifying the error.
-            _prestream_exhausted = (
-                not _turn_emitted and not _turn_thought and acp_error_is_transient(exc)
+            _escalation.record_terminal_failure(
+                emitted=_turn_emitted, thought=_turn_thought, transient=acp_error_is_transient(exc)
             )
-            if _prestream_exhausted:
-                slot._prestream_exhausted_cycles += 1
-            else:
-                # A different terminal error (or one with streamed output)
-                # breaks the streak — consecutive means consecutive.
-                slot._prestream_exhausted_cycles = 0
             if (
-                _prestream_exhausted
-                and slot._prestream_exhausted_cycles >= POISONED_SESSION_CYCLES
-                and not slot._poisoned_reset_used
+                _escalation.should_probe()
                 and _prompt_depth == 0
                 and not _should_suppress_requeue(slot)
                 # Resolved Stop: the canary snapshot below is taken after the
@@ -20068,8 +20051,10 @@ async def _run_chat(
                 # enough (teardown can drive it back to "idle" concurrently —
                 # the race documented in chat_handlers._make_stop_resolver);
                 # the generation only ever counts up on initiations.
-                _stop_gen_before_canary = slot._stop_generation
-                _session_stop_gen_before_canary = _session_stop_generation()
+                _canary_fence = _escalation.begin_probe(
+                    stop_generation=slot._stop_generation,
+                    session_stop_generation=_session_stop_generation(),
+                )
                 # The canary must run on the SAME served model as the failing
                 # session — a success on any other model (the cheap background
                 # default, or a rejected-model fallback) says nothing about
@@ -20116,9 +20101,9 @@ async def _run_chat(
                     )
             else:
                 _canary_ok = False
-            if _canary_ok and (
-                slot._stop_generation != _stop_gen_before_canary
-                or _session_stop_generation() != _session_stop_gen_before_canary
+            if _canary_ok and _canary_fence.stopped_since(
+                stop_generation=slot._stop_generation,
+                session_stop_generation=_session_stop_generation(),
             ):
                 # A Stop was initiated while the canary ran (even if it already
                 # resolved and _stop_state is back to "idle"): the user
@@ -20139,13 +20124,14 @@ async def _run_chat(
                     "backend is rejecting THIS conversation specifically: "
                     "discarding conversation for %s and re-queueing once on a "
                     "fresh one",
-                    slot._prestream_exhausted_cycles,
+                    _escalation.exhausted_cycles,
                     slot.key,
                     session_key,
                 )
                 # Consume the one-shot HERE, where the recovery is actually
-                # enqueued (mirrors _posttoken_retry_used accounting).
-                slot._poisoned_reset_used = True
+                # enqueued (mirrors _posttoken_retry_used accounting). The
+                # streak stays: this discard came from it.
+                _escalation.arm_discard(clear_streak=False)
                 needs_conversation_discard = True  # checked in finally block
                 slot.append(
                     "error",
@@ -20515,8 +20501,7 @@ async def _run_chat(
         # increment: incrementing requires ZERO activity, so the two are
         # mutually exclusive by construction and this can never clobber a
         # legitimate increment. One-shot re-arm stays landed-turn-only.
-        if _turn_emitted or _turn_thought:
-            slot._prestream_exhausted_cycles = 0
+        _escalation.record_activity(emitted=_turn_emitted, thought=_turn_thought)
         # Completion can be bypassed by cancellation, provider errors, or timeouts.
         # Close cards idempotently and retain only bounded terminal records for
         # reconnect replay until the next turn installs a fresh tracker.
