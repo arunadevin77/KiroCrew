@@ -18601,9 +18601,14 @@ async def _run_chat(
             sub-agents still use the native conversation, so a discard waits for
             them. The probe yields, so every user-intent signal is read again
             after it; the ledger re-checks them at the drain and consume seams.
+            A sub-agent completion still owed to the parent skips the intent
+            vetoes, as in the image-history arm: it is requeued as the
+            completion it is, so no Stop or newer message can drop it.
             """
 
             def _intent_unchanged() -> bool:
+                if _replay_owes_delivery():
+                    return True
                 return (
                     not _should_suppress_requeue(slot)
                     and not _stop_pressed()
@@ -18815,29 +18820,35 @@ async def _run_chat(
                 "msg msg-err",
                 meta={"kind": TRANSIENT_RETRY_KIND},
             )
-            _binding_replay_meta: dict[str, Any] | None = None
-            if _attachment_meta:
-                _binding_replay_meta = {k: list(v) for k, v in _attachment_meta.items()}
-            elif _attachments:
-                _binding_replay_meta = {"files": list(_attachments)}
-            # Snapshot BEFORE the enqueue: the discard in this turn's finally is
-            # awaited, and a Stop landing there must veto the replay.
-            _binding_stop_gen = getattr(slot, "_stop_generation", 0)
-            _binding_session_stop_gen = _session_stop_generation()
-            _binding_qid = _queue_recovery(
-                0,
-                message,
-                kind=SYNTHETIC_RECOVERY_KIND,
-                payload=payload_for_replay(_is_synthetic),
-                extra_meta=_binding_replay_meta,
-            )
-            replays_of(slot).arm(
-                ReplayFamily.THINKING_BINDING,
-                entry_id=_binding_qid or "",
-                session_key=session_key,
-                stop_gen=_binding_stop_gen,
-                session_stop_gen=_binding_session_stop_gen,
-            )
+            if _replay_owes_delivery():
+                # An owed sub-agent completion is queued as the completion it
+                # is: no recovery record, so nothing cancels it before it runs
+                # and the parent still receives the result.
+                _requeue_owed_completion()
+            else:
+                _binding_replay_meta: dict[str, Any] | None = None
+                if _attachment_meta:
+                    _binding_replay_meta = {k: list(v) for k, v in _attachment_meta.items()}
+                elif _attachments:
+                    _binding_replay_meta = {"files": list(_attachments)}
+                # Snapshot BEFORE the enqueue: the discard in this turn's finally
+                # is awaited, and a Stop landing there must veto the replay.
+                _binding_stop_gen = getattr(slot, "_stop_generation", 0)
+                _binding_session_stop_gen = _session_stop_generation()
+                _binding_qid = _queue_recovery(
+                    0,
+                    message,
+                    kind=SYNTHETIC_RECOVERY_KIND,
+                    payload=payload_for_replay(_is_synthetic),
+                    extra_meta=_binding_replay_meta,
+                )
+                replays_of(slot).arm(
+                    ReplayFamily.THINKING_BINDING,
+                    entry_id=_binding_qid or "",
+                    session_key=session_key,
+                    stop_gen=_binding_stop_gen,
+                    session_stop_gen=_binding_session_stop_gen,
+                )
         elif (
             getattr(exc, "image_format_unsupported", False)
             and not _attachments
