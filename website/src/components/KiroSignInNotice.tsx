@@ -45,7 +45,8 @@ export const KIRO_SIGN_IN_NOTICE_POLL_MS = 60_000
  *
  * What it shows, all hidden on Settings > Agent Harness itself (the card shows
  * every one of these states next to its own controls). Every shape is an
- * `ErrorNotice` with the agent hand-off and dismiss, at the same weight:
+ * `ErrorNotice` with dismiss, at the same weight, and with the agent hand-off
+ * except where the agent cannot run (the two expired shapes below):
  * - The config read FAILED before any good read: nothing says which backend
  *   runs the agents, so the sign-in check cannot start. Its own title says
  *   the settings could not be read and makes no sign-in claim (kiro-cli and
@@ -57,9 +58,11 @@ export const KIRO_SIGN_IN_NOTICE_POLL_MS = 60_000
  * - Kiro REFUSED to renew the stored sign-in (`refresh_rejected`, recorded by
  *   the renewal tick when the issuer answers no). Once the access token is
  *   also `expired` (the usual case: the tick only asks inside the refresh
- *   margin) it says the agents cannot run, not that they will stop.
+ *   margin) it says the agents cannot run, not that they will stop, and has
+ *   no agent hand-off: the agent it would open runs as this same sign-in.
  * - The stored sign-in EXPIRED with nothing to renew it with: every agent's
- *   credential request is now refused, the same outcome as a refusal.
+ *   credential request is now refused, the same outcome as a refusal, so it
+ *   has no agent hand-off either.
  * Nothing at all while KAS is not the selected backend (the one backend that
  * runs agents as this identity), with no stored sign-in, or while it works. A
  * gateway on another backend never reads the status.
@@ -67,7 +70,8 @@ export const KIRO_SIGN_IN_NOTICE_POLL_MS = 60_000
  * The lapsed and status-failure shapes carry the "Open sign-in settings"
  * button in their footer: signing in again is the fix the user can make.
  *
- * The hand-offs: the notice holds no input, and both the agent hand-off and
+ * The hand-offs: the notice holds no input, and both the agent hand-off (where
+ * shown) and
  * the sign-in button ask the page's leave guard before navigating, so a draft
  * on the page below is not lost.
  *
@@ -209,17 +213,23 @@ export default function KiroSignInNotice() {
       ? i18nT('components.kiroSignInNotice.refused_expired_detail')
       : i18nT('components.kiroSignInNotice.refused_detail')
   }
+  const lapsed = {
+    className: 'mx-3 md:mx-6 mt-4 mb-2',
+    title,
+    message: detail,
+    messagePlacement: 'below',
+    actionPlacement: 'below',
+    footer: <div className="mt-1.5">{openSignIn}</div>,
+    onDismiss: () => setDismissedCause(cause),
+    testId: cause === 'expired' ? 'kiro-sign-in-notice' : 'kiro-sign-in-refused',
+  } as const
+  // A refusal whose access token still works leaves the agents running until
+  // it expires, so one can still look into it.
+  if (cause === 'refresh_rejected') return <ErrorNotice {...lapsed} askAgent />
   return (
     <ErrorNotice
-      className="mx-3 md:mx-6 mt-4 mb-2"
-      title={title}
-      message={detail}
-      messagePlacement="below"
-      actionPlacement="below"
-      footer={<div className="mt-1.5">{openSignIn}</div>}
-      askAgent
-      onDismiss={() => setDismissedCause(cause)}
-      testId={cause === 'expired' ? 'kiro-sign-in-notice' : 'kiro-sign-in-refused'}
+      {...lapsed}
+      noHandoffReason="on KAS every agent runs as this stored sign-in, which has expired, so the chat the hand-off would open fails on the same credential"
     />
   )
 }

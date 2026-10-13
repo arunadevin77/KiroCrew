@@ -103,7 +103,9 @@ describe('KiroSignInNotice', () => {
     expect(el).toHaveAttribute('role', 'alert')
     expect(el).toHaveTextContent(/^Kiro sign-in expired/)
     expect(el).toHaveTextContent('Agents cannot run until you sign in again')
-    expect(within(el).getByRole('button', { name: /Ask the agent/i })).toBeInTheDocument()
+    // The agent the hand-off would open runs as this same lapsed sign-in.
+    expect(within(el).queryByRole('button', { name: /Ask the agent/i })).not.toBeInTheDocument()
+    expect(within(el).getByRole('button', { name: 'Open sign-in settings' })).toBeInTheDocument()
     expect(refused()).not.toBeInTheDocument()
   })
 
@@ -132,6 +134,7 @@ describe('KiroSignInNotice', () => {
     expect(el).toHaveTextContent(/^Kiro refused to renew your sign-in/)
     expect(el).toHaveTextContent('Agents cannot run until you sign in again. This sign-in has already expired.')
     expect(el).not.toHaveTextContent('Agents will stop')
+    expect(within(el).queryByRole('button', { name: /Ask the agent/i })).not.toBeInTheDocument()
     expect(within(el).getByRole('button', { name: 'Open sign-in settings' })).toBeInTheDocument()
   })
 
@@ -307,17 +310,28 @@ describe('KiroSignInNotice', () => {
     expect(await findFailure()).toBeInTheDocument()
   })
 
+  it('gives the refused notice the same three controls: the hand-off, the sign-in button and dismiss', async () => {
+    backend('kas')
+    kasLoginStatus.mockResolvedValue(REFUSED)
+    renderWithProviders(<KiroSignInNotice />)
+    const el = await findRefused()
+    // The access token still works, so the agent the hand-off opens can run.
+    expect(within(el).getAllByRole('button')).toHaveLength(3)
+    expect(within(el).getByRole('button', { name: /Ask the agent/i })).toBeInTheDocument()
+    expect(within(el).getByRole('button', { name: 'Open sign-in settings' })).toBeInTheDocument()
+    expect(within(el).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
+  })
+
   it.each([
     ['expired', EXPIRED, findNotice],
-    ['refused', REFUSED, findRefused],
     ['refused and expired', REFUSED_EXPIRED, findRefused],
-  ])('gives the %s notice the same three controls: the hand-off, the sign-in button and dismiss', async (_name, status, find) => {
+  ])('gives the %s notice only the sign-in button and dismiss: the agent would run as the lapsed sign-in', async (_name, status, find) => {
     backend('kas')
     kasLoginStatus.mockResolvedValue(status)
     renderWithProviders(<KiroSignInNotice />)
     const el = await find()
-    expect(within(el).getAllByRole('button')).toHaveLength(3)
-    expect(within(el).getByRole('button', { name: /Ask the agent/i })).toBeInTheDocument()
+    expect(within(el).getAllByRole('button')).toHaveLength(2)
+    expect(within(el).queryByRole('button', { name: /Ask the agent/i })).not.toBeInTheDocument()
     expect(within(el).getByRole('button', { name: 'Open sign-in settings' })).toBeInTheDocument()
     expect(within(el).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument()
   })

@@ -10,7 +10,8 @@
  * Each frame ASSERTS the notice's state before it writes the PNG, so a stale
  * bundle fails loudly instead of producing a plausible picture:
  *
- *   01 expired, dark, chat page        -> ErrorNotice, three controls
+ *   01 expired, dark, chat page        -> ErrorNotice, sign-in and dismiss
+ *                                         only: no agent hand-off
  *   02 refused, light, schedule page   -> ErrorNotice under its own title
  *   03 healthy, dark                   -> no notice
  *   04 click "Open sign-in settings"   -> lands on Settings > Agent Harness,
@@ -19,7 +20,8 @@
  *   07 status read fails (HTTP 500)    -> ErrorNotice with the agent hand-off
  *                                         and the sign-in button
  *   08 320px, Spanish                  -> label wraps, dismiss stays in view
- *   09 refused and expired, light      -> says the agents cannot run
+ *   09 refused and expired, light      -> says the agents cannot run, no
+ *                                         agent hand-off
  *
  * `--before` captures the expired state against a build WITHOUT the notice
  * (pass that build with `--dist`) and asserts it is absent there.
@@ -170,16 +172,17 @@ async function main() {
     await context.close()
   }
 
-  // Every shape is an ErrorNotice: the hand-off and dismiss on its first row,
-  // the sign-in button on its own row below.
-  const expired = { title: 'Kiro sign-in expired', buttons: 3, open: true }
+  // Every shape is an ErrorNotice: the hand-off (where shown) and dismiss on
+  // its first row, the sign-in button on its own row below. The two expired
+  // shapes have no hand-off: on KAS the agent runs as the lapsed sign-in.
+  const expired = { title: 'Kiro sign-in expired', buttons: 2, open: true }
   const refused = { testId: 'kiro-sign-in-refused', title: 'Kiro refused to renew your sign-in', buttons: 3, open: true, detail: 'Agents will stop when this sign-in expires' }
-  const refusedExpired = { ...refused, detail: 'Agents cannot run until you sign in again. This sign-in has already expired.' }
+  const refusedExpired = { ...refused, buttons: 2, detail: 'Agents cannot run until you sign in again. This sign-in has already expired.' }
   const failed = { testId: 'kiro-sign-in-status-error', title: 'We could not check sign-in status', buttons: 3, open: true, detail: 'Open sign-in settings to check your Kiro sign-in' }
   // No sign-in button: the backend is unknown, and kiro-cli or Claude has no sign-in.
   const configFailed = { testId: 'kiro-sign-in-config-error', title: 'Could not read the dashboard settings', buttons: 2, open: false, detail: 'Reload the page to try again' }
   const loadFailed = { testId: 'kiro-sign-in-notice-load-error', title: 'Part of the dashboard could not load', buttons: 2, open: false }
-  const expiredEs = { title: 'Inicio de sesión en Kiro caducado', buttons: 3, open: true, dismissName: 'Descartar' }
+  const expiredEs = { title: 'Inicio de sesión en Kiro caducado', buttons: 2, open: true, dismissName: 'Descartar' }
   if (BEFORE) {
     await frame('00-before-expired-dark', { status: EXPIRED, want: null })
   } else {
