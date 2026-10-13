@@ -63,9 +63,17 @@ describe('localizeCrewMainData', () => {
     expect(out).toEqual({
       turns: '12 Runden abgeschlossen',
       agent: 'kirocrew-conductor',
-      items_open: '3 von 5 Elementen noch nicht erledigt',
+      items_open: '3 von 5 Aufgaben noch nicht erledigt',
       lede: 'Working through the queue.',
     })
+  })
+
+  it('keeps a turn the backend refused apart from an approval someone rejected', async () => {
+    // English says "refused" and "rejected"; a translation must not fold the two
+    // events into one word on the same card.
+    await i18next.changeLanguage('de')
+    expect(renderCrewMainPhrase(['turns_refused', { n: 12, refused: 1 }])).toBe('12 Runden abgeschlossen, 1 vom Backend verweigert')
+    expect(renderCrewMainPhrase(['approvals_decided_by', { n: 2, rows: [['rejected', 2]] }])).toBe('2 beantwortet (2 abgelehnt)')
   })
 
   it('picks the plural form from the count and shows it formatted for the locale', async () => {
