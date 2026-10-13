@@ -131,6 +131,13 @@ class CronJob:
     # (e.g. a delivery-path exception) and then overran its deadline during
     # cleanup is counted once, not twice.
     failure_recorded: bool = False
+    # Runtime-only: ``auto_paused`` as it stood when THIS run started, stamped by
+    # _run_job_isolated and carried on the run's record. A store whose
+    # ``auto_paused`` differs from it was changed by someone else while the
+    # run was in flight (a ``cron resume``), so the run's merge and the reaper
+    # leave the store's pause state and failure count as they find them. None
+    # for a record no run stamped: the run's pause state is applied as is.
+    auto_paused_at_start: bool | None = None
     context_enabled: bool = False
     agent_id: str = ""
     # Member identity is distinct from the provider template in agent_id.
@@ -378,9 +385,19 @@ class CronJob:
         distinct from a user pause), so the pause survives a reload. Single-sourced
         here so the many script/command failure branches can't drift on how a pause
         is recorded — mirroring how the effective-enabled derivation reads it back.
+
+        A run that started auto-paused and finds the pause lifted under it (a
+        resume made in this process, on the job object the run executes on)
+        counts nothing: the resume gave the job fresh attempts, and a run from
+        before it does not spend one. A pause the run lifted itself
+        (:meth:`record_success`) clears the stamp, so it is not mistaken for
+        that resume. ``failure_recorded`` is still set, so the
+        timeout arm and the reaper treat this run's failure as handled.
         """
-        self.consecutive_failures += 1
         self.failure_recorded = True
+        if self.auto_paused_at_start and not self.auto_paused:
+            return
+        self.consecutive_failures += 1
         if self.consecutive_failures >= _AUTO_PAUSE_THRESHOLD and not self.auto_paused:
             self.enabled = False
             self.auto_paused = True
@@ -408,7 +425,13 @@ class CronJob:
         backstop) routes through here, so putting the reset at any single call
         site would silence a relapse on the others for up to
         ``_FAILURE_REMINDER_SECS``.
+
+        Also drops ``auto_paused_at_start``: a pause this run lifts itself is
+        not a pause changed from outside the run, so a later failure of the
+        same run counts (:meth:`record_failure`) and the run's merge and the
+        reaper apply its pause state and count as they stand.
         """
+        self.auto_paused_at_start = None
         self.consecutive_failures = 0
         self.last_failure_hash = ""
         self.last_failure_at = 0.0

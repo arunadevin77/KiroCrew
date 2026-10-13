@@ -91,6 +91,7 @@ from kiro_crew.cron_service.execution import (  # noqa: F401 -- re-exported
     close_run,
     effective_wake_budget,
     interruption_note,
+    pause_changed_since_start,
     run_parks_one_shot,
 )
 from kiro_crew.cron_service.fields import (  # noqa: F401 -- re-exported
@@ -1072,6 +1073,12 @@ class CronService:
                         and not job.failure_recorded
                         and not ran.run_never_started,
                         park_one_shot=park_one_shot,
+                        # Off the object the run executed on, never ``job``: a
+                        # reload may have made that a store copy whose stamp,
+                        # if any, is not this run's.
+                        auto_paused_at_start=(
+                            taken.job.auto_paused_at_start if taken.job is not None else None
+                        ),
                     )
                 except Exception:
                     logger.exception("Reaper: failed to persist state for cron %s", job_id)
@@ -4215,6 +4222,10 @@ class CronService:
             # a store reload replaces the registry's job objects, and the marker
             # that says the payload never started stays on this one.
             claim.job = job
+            # The pause this run starts from, carried on its record: the merge
+            # and the reaper compare it with the store's, so a resume issued
+            # while the run is in flight is not written back over.
+            job.auto_paused_at_start = job.auto_paused
             # One increment per execution, before the jitter sleep so a run
             # cancelled during jitter still counts as fired. ``kind`` is the
             # dispatch shape -- ``script`` and ``command`` bypass the model
@@ -4802,6 +4813,7 @@ class CronService:
         result_produced: bool = False,
         count_failure: bool = False,
         park_one_shot: bool = False,
+        auto_paused_at_start: bool | None = None,
     ) -> str | None:
         """Persist a job's terminal runtime state under the store lock.
 
@@ -4897,8 +4909,11 @@ class CronService:
                 target.enabled = False
                 target.user_paused = True
             # Counted on the disk copy under the lock, so the failure count and
-            # any auto-pause it triggers persist with the terminal record.
-            if count_failure:
+            # any auto-pause it triggers persist with the terminal record. Not
+            # when the store's pause changed since the run started
+            # (``auto_paused_at_start``): a resume issued during the run gave
+            # the job fresh attempts, and a run from before it does not spend one.
+            if count_failure and not pause_changed_since_start(target, auto_paused_at_start):
                 target.record_failure()
             # A command/script run that produced nothing must not show the
             # previous run's result beside this error. The caller passes the

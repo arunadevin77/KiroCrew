@@ -258,6 +258,19 @@ def close_run(
     return terminal, status, run_result
 
 
+def pause_changed_since_start(target: CronJob, auto_paused_at_start: bool | None) -> bool:
+    """Whether the store's ``auto_paused`` moved while a run was in flight.
+
+    ``target`` is the store's copy; ``auto_paused_at_start`` is what the run
+    saw when it started (:attr:`CronJob.auto_paused_at_start`). A difference
+    is another writer's (a ``cron resume`` that lifted the pause), or this
+    run's own pause already on the shared in-memory job; either way the store
+    already holds the pause state to keep. None (nothing stamped) is never a
+    change.
+    """
+    return auto_paused_at_start is not None and target.auto_paused != auto_paused_at_start
+
+
 def apply_run_record(target: CronJob, run: CronJob) -> None:
     """Copy the fields a completed run persists from its record ``run`` onto ``target``.
 
@@ -282,10 +295,16 @@ def apply_run_record(target: CronJob, run: CronJob) -> None:
     # its reset on success), so propagate it for every job — unlike
     # `enabled`, which must not be clobbered for recurring jobs. Also
     # reflect it into the disk copy's derived `enabled` so the next
-    # reader sees the pause before a reload re-derives it.
-    target.auto_paused = run.auto_paused
-    if run.auto_paused and not target.user_paused:
-        target.enabled = False
+    # reader sees the pause before a reload re-derives it. Not when the
+    # store's pause changed while the run was in flight: that is a
+    # resume (or another writer's pause), and the run, which started
+    # from the old state, must not write it back. The failure count
+    # goes with it, or the resume's fresh attempts are lost.
+    keep_pause = pause_changed_since_start(target, run.auto_paused_at_start)
+    if not keep_pause:
+        target.auto_paused = run.auto_paused
+        if run.auto_paused and not target.user_paused:
+            target.enabled = False
     target.last_result = run.last_result
     # Both stamp fields travel WITH last_result. The merge's _sync()
     # replaced the job list with the disk copies, so target is a
@@ -301,7 +320,8 @@ def apply_run_record(target: CronJob, run: CronJob) -> None:
     target.last_posted_at = run.last_posted_at
     target.last_failure_hash = run.last_failure_hash
     target.last_failure_at = run.last_failure_at
-    target.consecutive_failures = run.consecutive_failures
+    if not keep_pause:
+        target.consecutive_failures = run.consecutive_failures
     # Same shape as the other runtime->disk copies on this call: a
     # field `_execute` sets on the in-memory `run` is invisible after
     # reload unless copied here explicitly. A cancelled run never

@@ -1164,6 +1164,19 @@ in memory but enabled on disk, so it would stay stopped until the next restart
 silently resumed it. A pause the user set is untouched — `user_paused` is never
 mutated by execution, and lifting it is the user's action.
 
+A resume issued while a run of the job is in flight sticks. Each run records the
+`auto_paused` it started from (`CronJob.auto_paused_at_start`, runtime-only,
+carried on the run's record). When the store's `auto_paused` differs from it at
+the run's terminal write, someone else changed the pause during the run, so the
+result merge (`apply_run_record`) keeps the store's `auto_paused`, `enabled` and
+`consecutive_failures`, and the reaper's timeout record does not count the hung
+run as a failure. The run's status, error and result still land. A resume made in
+the gateway's own process lands on the job object the run executes on, so
+`CronJob.record_failure` itself counts nothing for a run that started auto-paused
+and finds the pause lifted. A pause the run lifts itself (`record_success`, e.g. a
+Run Now whose gate verdict succeeds before its delivery fails) clears the stamp,
+so that run's failure counts and its merge applies its own pause state and count.
+
 `stream_and_collect`'s `on_tool_gate` callback reports each tool permission
 decision as `(tool_title, approved, security_blocked)`. Both cron agent paths
 (single-agent and the sequential `agent_sequence` loop) tally those decisions
