@@ -94,9 +94,9 @@ const CHIP_MAX_WIDTH = 'followup-chip'
  */
 const CHIP_ROW_GAP = 'gap-1.5'
 
-/** The blank at each end of a scrolling chip row. With the row's own gap after
- *  it (6px) it spans the arrow's 2px inset plus its 24px width and a little
- *  air, so at either end of the scroll no chip sits under the arrow's spot. */
+/** The blank at the trailing end of a scrolling chip row. With the row's own
+ *  gap before it (6px) it spans the arrow's 2px inset plus its 24px width and a
+ *  little air, so at the end of the scroll no chip sits under the arrow's spot. */
 const ARROW_GUTTER_CLASS = 'shrink-0 w-6 self-stretch'
 
 /**
@@ -690,13 +690,6 @@ function ScrollLayout({ options, picked, onSelect, onSend, quickSend, multi, ani
           exactly one chip tall clips it. One pixel of padding, cancelled by the
           negative margin, lets the line through without changing row height. */}
       <div ref={setScroller} data-tip-boundary className={`flex ${CHIP_ROW_GAP} overflow-x-auto items-end py-px -my-px`} style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-        {/* While the row scrolls, each end carries a blank as wide as an arrow.
-            An arrow disappears the moment its side has nothing left to show,
-            so the spot it sat on must be empty at that moment: without the
-            blank it is the edge chip, and the user's next click — or the
-            second click of a double click, which sends — lands on that chip.
-            Gated on overflow so a row that fits keeps its first chip flush. */}
-        {overflows && <span aria-hidden="true" data-arrow-gutter="" className={ARROW_GUTTER_CLASS} />}
         {options.map((o, i) => {
           const isPicked = picked.has(o)
           const chipPending = !!pendingOptions?.has(o)
@@ -719,6 +712,14 @@ function ScrollLayout({ options, picked, onSelect, onSend, quickSend, multi, ani
             />
           )
         })}
+        {/* While the row scrolls, the far end carries a blank as wide as an
+            arrow. The right arrow disappears the moment nothing is left to
+            show, so the spot it sat on must be empty then: without the blank
+            it is the last chip, and the next click — or the second click of a
+            double click, which sends — lands on that chip. Only the trailing
+            end: a leading blank is also there at rest, before any scroll, and
+            pushes the first chip off the composer's left edge. Gated on
+            overflow so a row that fits ends on its last chip. */}
         {overflows && <span aria-hidden="true" data-arrow-gutter="" className={ARROW_GUTTER_CLASS} />}
       </div>
       </div>
