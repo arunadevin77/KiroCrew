@@ -6,9 +6,9 @@ closes every one of them, and then asks the kernel and the product's own
 registry what survived. Four populations must be empty:
 
 * live pids inside the instance's own agent slice that any SESSION created --
-  the gateway's own background runtimes (``EXPECTED_BACKGROUND_RUNTIMES``) are
-  the one documented residue, bounded by count and identified by the agent they
-  run, never by argv shape or age,
+  the gateway's own background runtime (``EXPECTED_BACKGROUND_RUNTIMES``) is
+  the one documented residue, bounded by count and identified by the agent it
+  runs, never by argv shape or age,
 * managed MCP stub processes,
 * registry entries naming a process that is gone,
 * crew-log write handles held by the gateway process.
@@ -112,21 +112,24 @@ QUIET_POLL_SECS = 1.0
 EXPECTED_POOL_SIZE = 0
 
 #: How many runtimes the GATEWAY itself may still hold after every slot is
-#: closed. These are not session residue: the persistent ``_bg`` background
-#: session is created at boot by ``start_pool()`` and is never idle-expired, and
-#: the multiplexed ``_bg_runtime`` behind ``get_bg_session()`` (auto-titles,
-#: suggestions) is spawned lazily and retired only by staleness, a backend
-#: switch, or ``close_all()`` -- see ``docs/system-specs/modules/session.md``,
-#: "Background Session" and "Multiplexed _bg runtime". Both run the background
-#: agent (``session.BACKGROUND_AGENT``) and neither belongs to a slot, so a slot
-#: close is not supposed to end them. EXACTLY one of each, pinned as an equality
-#: so the ratchet cannot loosen in either direction: a third background-agent
-#: runtime is a parked drain that never drained, or a leak, and one missing means
-#: the gateway lost a holder it depends on (every slot's first turn generates a
-#: title, so the lazy one is always spawned by the time the slots close).
-#: Anything running another agent is session residue and fails regardless of
-#: count.
-EXPECTED_BACKGROUND_RUNTIMES = 2
+#: closed. This is not session residue: the multiplexed ``_bg_runtime`` behind
+#: ``get_bg_session()`` (auto-titles, tags, folders, suggestions) is spawned on
+#: its first one-liner and retired only by staleness, a backend switch, or
+#: ``close_all()`` -- see ``docs/system-specs/modules/session.md``, "Multiplexed
+#: _bg runtime". It runs the background agent (``session.BACKGROUND_AGENT``) and
+#: belongs to no slot, so a slot close is not supposed to end it. EXACTLY one,
+#: pinned as an equality so the ratchet cannot loosen in either direction: a
+#: second background-agent runtime is a parked drain that never drained, a leak,
+#: or the persistent ``_bg`` session spawned by a path this test does not drive
+#: (on the shared-runtime backend the gateway boots here, ``start_pool()`` leaves
+#: that session to ``get_or_create`` on its first background turn -- messaging
+#: auto-titles, consolidation, lesson extraction -- and a dashboard chat turn
+#: plus its one-liners never take one, see "Background Session"); zero means the
+#: gateway lost the one holder it depends on (every slot's first turn generates
+#: a title, so the multiplexed runtime is always spawned by the time the slots
+#: close). Anything running another agent is session residue and fails
+#: regardless of count.
+EXPECTED_BACKGROUND_RUNTIMES = 1
 
 
 def _authored_agent(home: Path, argv: str) -> str:
@@ -377,9 +380,11 @@ def test_closing_every_session_leaves_nothing(real_user_session: Any) -> None:
         )
         assert len(background) == EXPECTED_BACKGROUND_RUNTIMES, (
             f"{len(background)} background-agent runtime(s) alive after every session "
-            f"closed, expected exactly {EXPECTED_BACKGROUND_RUNTIMES}: the persistent _bg "
-            "session and one multiplexed _bg runtime. More means displaced runtimes "
-            "nothing reaped; fewer means the gateway lost a holder it still depends on."
+            f"closed, expected exactly {EXPECTED_BACKGROUND_RUNTIMES}: the multiplexed "
+            "_bg runtime that served the slots' auto-titles. More means displaced "
+            "runtimes nothing reaped, or the persistent _bg session was spawned by a "
+            "background turn this test does not drive; fewer means the gateway lost "
+            "the holder it still depends on."
             f"\n{final.render()}"
         )
         assert not final.owned_dead, (

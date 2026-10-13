@@ -331,9 +331,13 @@ persistence alone cannot claim application.
 `BACKGROUND_KEY = "_bg"` is a persistent shared session for lightweight
 background work. It is:
 
-- **Created on startup** by `start_pool()` alongside the warm pool. Before the
-  provider factory runs, `_ensure_background` awaits
-  `agent_discovery.warm_agent_specs()` (one `parsed_agent_specs` parse on
+- **Created on first use** on a backend whose background one-liners run on
+  the shared multiplexed runtime (`kiro`, the default): `start_pool()` defers it
+  and `get_or_create(BACKGROUND_KEY)` runs `_ensure_background` on the first
+  background turn, so a gateway that never takes one holds no idle `_bg`
+  process. On every other backend `start_pool()` creates it at startup
+  alongside the warm pool. Before the provider factory runs,
+  `_ensure_background` awaits `agent_discovery.warm_agent_specs()` (one `parsed_agent_specs` parse on
   `mc-discovery`, never raises) so the factory's synchronous, on-loop model lookup
   finds a warm snapshot and `_bg` is created on its agent's own pin rather than on
   `agent.model`; the lookup itself touches no file on the loop (see
