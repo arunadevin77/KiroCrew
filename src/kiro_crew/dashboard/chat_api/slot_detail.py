@@ -55,10 +55,9 @@ async def api_chat_slots(request: web.Request) -> web.Response:
     from kiro_crew.dashboard.handlers.source_providers import (
         ensure_gitlab_hosts_loaded,
         is_owner_dashboard_request,
-        schedule_check_refresh,
         schedule_visibility_refresh,
     )
-    from kiro_crew.dashboard.source_providers.chip_refresh import schedule_idle_check_refresh
+    from kiro_crew.dashboard.source_providers.chip_refresh import schedule_tiered_check_refresh
 
     # Same warm-up as the WebSocket connect path: slot source-link extraction is
     # synchronous and cannot load the self-managed GitLab allowlist itself, so a
@@ -107,13 +106,9 @@ async def api_chat_slots(request: web.Request) -> web.Response:
             schedule_visibility_refresh(urls, state.push_slots_update)
             # Same two tiers as the owner WebSocket driver: a sidebar fetch must
             # not re-read every restored tab's chips at the fast cadence.
-            idle = state.idle_source_link_urls()
-            fast_urls = [url for url in urls if url not in idle]
-            idle_urls = [url for url in urls if url in idle]
-            if fast_urls:
-                schedule_check_refresh(fast_urls, state.push_slots_update)
-            if idle_urls:
-                schedule_idle_check_refresh(idle_urls, state.push_slots_update)
+            schedule_tiered_check_refresh(
+                urls, state.idle_source_link_urls(), state.push_slots_update
+            )
     # Same offender diagnostic as the slots broadcast, on the same
     # projection: ``web.json_response`` would run this exact dump internally and
     # raise a bare TypeError naming neither slot nor field. Dump here so the

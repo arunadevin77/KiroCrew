@@ -872,10 +872,9 @@ async def _serve_ws(
         ensure_gitlab_hosts_loaded,
         gitlab_hosts_generation,
         is_owner_dashboard_request,
-        schedule_check_refresh,
         schedule_visibility_refresh,
     )
-    from kiro_crew.dashboard.source_providers.chip_refresh import schedule_idle_check_refresh
+    from kiro_crew.dashboard.source_providers.chip_refresh import schedule_tiered_check_refresh
     from kiro_crew.platform.governance_profiles import (
         governance_answer_generation,
         poll_profiles_fresh,
@@ -1103,13 +1102,9 @@ async def _serve_ws(
                     # Idle slots' chips (every restored tab, until it is opened
                     # or runs a turn) go to the slow tier, so a reconnect does
                     # not re-read the whole sidebar history.
-                    idle = state.idle_source_link_urls()
-                    fast_urls = [url for url in urls if url not in idle]
-                    idle_urls = [url for url in urls if url in idle]
-                    if fast_urls:
-                        schedule_check_refresh(fast_urls, state.push_slots_update)
-                    if idle_urls:
-                        schedule_idle_check_refresh(idle_urls, state.push_slots_update)
+                    schedule_tiered_check_refresh(
+                        urls, state.idle_source_link_urls(), state.push_slots_update
+                    )
     except Exception:
         pass
 
@@ -1239,13 +1234,9 @@ async def _serve_ws(
                     # go to the idle tier: a slower clock and a small per-TTL
                     # budget shared by every owner socket, so their cost does
                     # not grow with the number of tabs ever left open.
-                    idle = state.idle_source_link_urls()
-                    fast_urls = [url for url in urls if url not in idle]
-                    idle_urls = [url for url in urls if url in idle]
-                    if fast_urls:
-                        schedule_check_refresh(fast_urls, state.push_slots_update)
-                    if idle_urls:
-                        schedule_idle_check_refresh(idle_urls, state.push_slots_update)
+                    schedule_tiered_check_refresh(
+                        urls, state.idle_source_link_urls(), state.push_slots_update
+                    )
                 refresh_round += 1
             except asyncio.CancelledError:
                 raise

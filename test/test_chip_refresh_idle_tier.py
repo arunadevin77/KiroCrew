@@ -43,7 +43,9 @@ def _pr(number: int) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _clean_chip_state(monkeypatch):
+def _clean_chip_state(_floor_monkeypatch):
+    # The floor's own patcher, not the test's: a test that undoes its own
+    # ``monkeypatch`` must not also lift this reset (D11).
     stores = (
         chip_status._check_cache,
         chip_status._check_inflight,
@@ -52,7 +54,9 @@ def _clean_chip_state(monkeypatch):
     )
     for store in stores:
         store.clear()
-    monkeypatch.setattr(chip_refresh, "_idle_check_window", [float("-inf"), 0.0], raising=False)
+    _floor_monkeypatch.setattr(
+        chip_refresh, "_idle_check_window", [float("-inf"), 0.0], raising=False
+    )
     yield
     for store in stores:
         store.clear()
@@ -127,14 +131,31 @@ async def test_never_read_idle_chips_fill_in_up_to_the_free_pending_capacity(mon
     await _drain()
 
 
+@pytest.mark.asyncio
+async def test_a_chip_whose_first_read_failed_is_retried_on_the_chip_ttl(monkeypatch):
+    """A boot hiccup (``gh`` or the network not ready) leaves ``(stamp, None)``.
+    That chip has never shown a status, so it is retried at the normal pace and
+    outside the idle budget, not left blank for the slow clock."""
+    clock = {"now": 200_000.0}
+    monkeypatch.setattr(chip_refresh, "time", SimpleNamespace(monotonic=lambda: clock["now"]))
+    monkeypatch.setattr(chip_refresh, "_refresh_check_status", AsyncMock(return_value=None))
+    failed = [_pr(n) for n in range(1, 6)]
+    just_failed = _pr(77)
+    for url in failed:
+        chip_status._check_cache[url] = (clock["now"] - chip_status._CHECK_TTL_SECS - 1, None)
+    chip_status._check_cache[just_failed] = (clock["now"] - 1, None)
+    assert len(failed) > _IDLE_BUDGET
+
+    assert chip_refresh.schedule_idle_check_refresh([*failed, just_failed]) == failed
+    await _drain()
+
+
 @pytest.mark.parametrize(
     ("status", "age", "due"),
     [
         # Past the chip TTL but inside the idle clock: an idle chip waits.
         ({"state": "open"}, 5 * 60, False),
         ({"state": "open"}, _IDLE_TTL + 1, True),
-        # A read that failed before any status was known waits too.
-        (None, 5 * 60, False),
         # Finished pull requests keep their own, longer clocks.
         ({"state": "merged"}, _IDLE_TTL + 1, False),
         ({"state": "closed"}, _IDLE_TTL + 1, False),
@@ -202,6 +223,20 @@ def test_the_fast_tier_lapses_after_the_activity_window(restored) -> None:
     state._source_active_at[_KEYS[2]] -= dashboard_state._SOURCE_ACTIVE_WINDOW_SECS
     assert _pr(3) in state.idle_source_link_urls()
     assert _KEYS[2] not in state._source_active_at
+
+
+def test_activity_stamps_never_outgrow_the_live_slots(restored) -> None:
+    """Every write prunes too, so stamps for closed sessions cannot pile up when
+    nothing reads the tiers (no owner socket, no slots list)."""
+    state = restored
+    state.note_source_activity(_KEYS[0])
+    state.note_source_activity("chat-never-open")
+    assert set(state._source_active_at) == {_KEYS[0]}
+
+    state._slots.pop(_KEYS[0])  # the session closes
+    state.note_source_activity(_KEYS[1])
+    assert set(state._source_active_at) == {_KEYS[1]}
+    assert len(state._source_active_at) <= len(state._slots)
 
 
 @pytest.mark.asyncio
@@ -324,14 +359,17 @@ async def test_two_owner_sockets_over_many_restored_tabs_stay_on_one_small_budge
     and more than one owner window open. Several refresh rounds later the idle
     chips have cost at most one round's idle budget, while the chip on the slot
     in use is still re-read on the chip TTL."""
-    loop = asyncio.get_running_loop()
-    started = _fake_reads(monkeypatch, loop.time)
+    # The scheduler's own clock is frozen, so no runner pause can open a second
+    # budget window between rounds; the cache stamps and the fake reads use it.
+    frozen = 500_000.0
+    monkeypatch.setattr(chip_refresh, "time", SimpleNamespace(monotonic=lambda: frozen))
+    started = _fake_reads(monkeypatch, lambda: frozen)
     idle_urls = [_pr(n) for n in range(1, 41)]
     active_url = _pr(500)
     for url in idle_urls:
-        chip_status._check_cache[url] = (loop.time() - _IDLE_TTL - 1, {"state": "open"})
+        chip_status._check_cache[url] = (frozen - _IDLE_TTL - 1, {"state": "open"})
     chip_status._check_cache[active_url] = (
-        loop.time() - chip_status._CHECK_TTL_SECS - 1,
+        frozen - chip_status._CHECK_TTL_SECS - 1,
         {"state": "open"},
     )
 

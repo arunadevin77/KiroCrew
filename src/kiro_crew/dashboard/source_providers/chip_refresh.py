@@ -155,7 +155,10 @@ def schedule_idle_check_refresh(
     * a chip never read since boot is read now, but only up to the free pending
       capacity. Submitting more would make the pending cap stamp the overflow as
       "backed off", and a stamped entry is indistinguishable from a read one, so
-      it would wait out the slow clock with no status at all.
+      it would wait out the slow clock with no status at all. A chip that has
+      never yielded a status (its first read failed, or the pending cap backed it
+      off) is retried on that same path once the chip TTL has passed, so a boot
+      hiccup does not leave it blank for the slow clock.
     """
     now = time.monotonic()
     unread: list[str] = []
@@ -166,6 +169,9 @@ def schedule_idle_check_refresh(
         entry = chip_status._check_cache.get(url)
         if entry is None:
             unread.append(url)
+        elif entry[1] is None:
+            if now - entry[0] >= chip_status._CHECK_TTL_SECS:
+                unread.append(url)
         elif _chip_refresh_due(entry, now, force=False, open_ttl=_IDLE_CHECK_TTL_SECS):
             due.append((entry[0], url))
     free = max(_CHECK_PENDING_MAX - len(chip_status._check_inflight), 0)
@@ -182,6 +188,24 @@ def schedule_idle_check_refresh(
         refreshing.extend(reread)
     _idle_check_window[:] = [window_start, started]
     return refreshing
+
+
+def schedule_tiered_check_refresh(
+    urls: list[str], idle: set[str], on_update: _CheckUpdateCallback | None = None
+) -> None:
+    """Split one chip sweep between the two tiers, keeping its order.
+
+    ``idle`` is the set of URLs that only idle slots link
+    (``DashboardState.idle_source_link_urls``): those go to
+    :func:`schedule_idle_check_refresh`, the rest to the chip TTL. Every
+    periodic or list-driven sweep goes through here, so none can skip the tier.
+    """
+    fast_urls = [url for url in urls if url not in idle]
+    idle_urls = [url for url in urls if url in idle]
+    if fast_urls:
+        schedule_check_refresh(fast_urls, on_update)
+    if idle_urls:
+        schedule_idle_check_refresh(idle_urls, on_update)
 
 
 def request_check_refresh_now(

@@ -9278,10 +9278,27 @@ class DashboardState:
         no credentials itself: it only decides which tier the owner's own
         periodic driver puts the slot's chips on.
         """
+        now = time.monotonic()
+        stamps = self._prune_source_activity(now)
+        if key in self._slots:
+            stamps[key] = now
+
+    def _prune_source_activity(self, now: float) -> dict[str, float]:
+        """The activity stamps, minus closed slots and lapsed windows.
+
+        Run on every write as well as every read, so the map never holds more
+        than one entry per live slot however its readers are scheduled.
+        """
         stamps = getattr(self, "_source_active_at", None)
         if stamps is None:
             stamps = self._source_active_at = {}
-        stamps[key] = time.monotonic()
+        for key in [
+            key
+            for key, at in stamps.items()
+            if key not in self._slots or now - at >= _SOURCE_ACTIVE_WINDOW_SECS
+        ]:
+            del stamps[key]
+        return stamps
 
     def idle_source_link_urls(self) -> set[str]:
         """Chip URLs that only slots nobody is using link to.
@@ -9294,16 +9311,7 @@ class DashboardState:
         sidebar history stops costing a provider burst every chip TTL. A URL
         that any in-use slot also links stays on the fast tier.
         """
-        stamps = getattr(self, "_source_active_at", None)
-        if stamps is None:
-            stamps = self._source_active_at = {}
-        now = time.monotonic()
-        for key in [
-            key
-            for key, at in stamps.items()
-            if key not in self._slots or now - at >= _SOURCE_ACTIVE_WINDOW_SECS
-        ]:
-            del stamps[key]
+        stamps = self._prune_source_activity(time.monotonic())
         active: set[str] = set()
         idle: set[str] = set()
         for key, slot in self._slots.items():
