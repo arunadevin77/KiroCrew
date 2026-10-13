@@ -277,7 +277,6 @@
  3 test_mcp_gateway_stub_recaller.py
 14 test_mcp_gateway_stub_session_token.py
  4 test_mcp_gateway_transport.py
-32 test_mcp_gatewayd_coverage.py
  1 test_mcp_launch_approval.py
  1 test_mcp_preflight.py
  1 test_mcp_shared.py
@@ -517,6 +516,5 @@
  4 test_workflows_runner.py
  6 test_workflows_service.py
  7 test_workflows_snapshot_commit.py
-31 test_workflows_startup.py
  2 test_workflows_startup_recovery.py
  1 test_ws_offload.py

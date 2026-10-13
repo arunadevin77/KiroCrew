@@ -627,7 +627,6 @@ test/test_mcp_gateway_stub_paths.py
 test/test_mcp_gateway_stub_poolable_ack.py
 test/test_mcp_gateway_stub_recaller.py
 test/test_mcp_gateway_transport.py
-test/test_mcp_gatewayd_coverage.py
 test/test_mcp_internal_caller.py
 test/test_mcp_knowledge_add_document.py
 test/test_mcp_oauth_banner.py

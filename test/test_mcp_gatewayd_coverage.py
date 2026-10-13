@@ -38,6 +38,7 @@ from kiro_crew.mcp_gateway.rewriter import (
     env_sidecar_name,
     resolve_overlay_dir,
 )
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 pytestmark = pytest.mark.xdist_group("mcp_gateway")
 
@@ -52,9 +53,7 @@ _POSIX_ONLY = pytest.mark.skipif(
 class _FakeWriter:
     """``asyncio.StreamWriter`` double recording writes, optionally failing."""
 
-    def __init__(
-        self, *, fail: Optional[BaseException] = None, hang: bool = False
-    ) -> None:
+    def __init__(self, *, fail: Optional[BaseException] = None, hang: bool = False) -> None:
         self.writes: list[bytes] = []
         self.drains = 0
         self._fail = fail
@@ -177,15 +176,10 @@ class TestIdleSweeper:
         pool = MagicMock()
         pool.evict_idle = AsyncMock(return_value=2)
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            gw._idle_sweeper(cast(Any, pool), 300, 0.01, stop)
-        )
-        for _ in range(200):
-            if pool.evict_idle.await_count:
-                break
-            await asyncio.sleep(0.01)
+        task = asyncio.create_task(gw._idle_sweeper(cast(Any, pool), 300, 0.01, stop))
+        await async_wait_until(lambda: bool(pool.evict_idle.await_count))
         stop.set()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         assert pool.evict_idle.await_count >= 1
         pool.evict_idle.assert_awaited_with(300)
 
@@ -195,9 +189,7 @@ class TestIdleSweeper:
         pool.evict_idle = AsyncMock(return_value=0)
         stop = asyncio.Event()
         stop.set()
-        await asyncio.wait_for(
-            gw._idle_sweeper(cast(Any, pool), 300, 0.01, stop), timeout=5
-        )
+        await await_until(asyncio.create_task(gw._idle_sweeper(cast(Any, pool), 300, 0.01, stop)))
         pool.evict_idle.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -209,7 +201,7 @@ class TestIdleSweeper:
         await asyncio.sleep(0)
         task.cancel()
         # The sweeper absorbs CancelledError rather than propagating it.
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         assert task.done() and not task.cancelled()
 
     @pytest.mark.asyncio
@@ -221,7 +213,7 @@ class TestIdleSweeper:
         task = asyncio.create_task(gw._idle_sweeper(cast(Any, pool), 300, 30.0, stop))
         await asyncio.sleep(0.05)
         stop.set()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         pool.evict_idle.assert_not_awaited()
 
 
@@ -232,15 +224,10 @@ class TestHotKeysFlushSweeper:
         hot.flush = MagicMock(return_value=True)
         hot.path = "hot-keys.json"
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            gw._hot_keys_flush_sweeper(cast(Any, hot), 0.01, stop)
-        )
-        for _ in range(200):
-            if hot.flush.call_count:
-                break
-            await asyncio.sleep(0.01)
+        task = asyncio.create_task(gw._hot_keys_flush_sweeper(cast(Any, hot), 0.01, stop))
+        await async_wait_until(lambda: bool(hot.flush.call_count))
         stop.set()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         assert hot.flush.call_count >= 1
 
     @pytest.mark.asyncio
@@ -249,15 +236,10 @@ class TestHotKeysFlushSweeper:
         hot.flush = MagicMock(return_value=False)
         hot.path = "hot-keys.json"
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            gw._hot_keys_flush_sweeper(cast(Any, hot), 0.01, stop)
-        )
-        for _ in range(200):
-            if hot.flush.call_count:
-                break
-            await asyncio.sleep(0.01)
+        task = asyncio.create_task(gw._hot_keys_flush_sweeper(cast(Any, hot), 0.01, stop))
+        await async_wait_until(lambda: bool(hot.flush.call_count))
         stop.set()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         assert hot.flush.call_count >= 1
 
     @pytest.mark.asyncio
@@ -267,12 +249,10 @@ class TestHotKeysFlushSweeper:
         hot.flush = MagicMock(return_value=True)
         hot.path = "hot-keys.json"
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            gw._hot_keys_flush_sweeper(cast(Any, hot), 30.0, stop)
-        )
+        task = asyncio.create_task(gw._hot_keys_flush_sweeper(cast(Any, hot), 30.0, stop))
         await asyncio.sleep(0.05)
         stop.set()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         hot.flush.assert_not_called()
 
     @pytest.mark.asyncio
@@ -280,12 +260,10 @@ class TestHotKeysFlushSweeper:
         hot = MagicMock()
         hot.flush = MagicMock(return_value=False)
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            gw._hot_keys_flush_sweeper(cast(Any, hot), 30.0, stop)
-        )
+        task = asyncio.create_task(gw._hot_keys_flush_sweeper(cast(Any, hot), 30.0, stop))
         await asyncio.sleep(0)
         task.cancel()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         assert task.done() and not task.cancelled()
 
 
@@ -294,15 +272,10 @@ class TestPrewarmTopupSweeper:
     async def test_triggers_scheduler_each_interval(self):
         calls: list[int] = []
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            gw._prewarm_topup_sweeper(lambda: calls.append(1), 0.01, stop)
-        )
-        for _ in range(200):
-            if calls:
-                break
-            await asyncio.sleep(0.01)
+        task = asyncio.create_task(gw._prewarm_topup_sweeper(lambda: calls.append(1), 0.01, stop))
+        await async_wait_until(lambda: bool(calls))
         stop.set()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         assert calls
 
     @pytest.mark.asyncio
@@ -310,8 +283,8 @@ class TestPrewarmTopupSweeper:
         calls: list[int] = []
         stop = asyncio.Event()
         stop.set()
-        await asyncio.wait_for(
-            gw._prewarm_topup_sweeper(lambda: calls.append(1), 0.01, stop), timeout=5
+        await await_until(
+            asyncio.create_task(gw._prewarm_topup_sweeper(lambda: calls.append(1), 0.01, stop))
         )
         assert calls == []
 
@@ -319,23 +292,19 @@ class TestPrewarmTopupSweeper:
     async def test_stop_event_during_the_wait_skips_the_top_up(self):
         calls: list[int] = []
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            gw._prewarm_topup_sweeper(lambda: calls.append(1), 30.0, stop)
-        )
+        task = asyncio.create_task(gw._prewarm_topup_sweeper(lambda: calls.append(1), 30.0, stop))
         await asyncio.sleep(0.05)
         stop.set()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         assert calls == []
 
     @pytest.mark.asyncio
     async def test_cancellation_is_swallowed(self):
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            gw._prewarm_topup_sweeper(lambda: None, 30.0, stop)
-        )
+        task = asyncio.create_task(gw._prewarm_topup_sweeper(lambda: None, 30.0, stop))
         await asyncio.sleep(0)
         task.cancel()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         assert task.done() and not task.cancelled()
 
 
@@ -381,17 +350,18 @@ class _SweeperPool:
 
 async def _run_one_heartbeat_sweep(pool: Any, pidfile: Optional[Path] = None) -> None:
     stop = asyncio.Event()
-    task = asyncio.create_task(
-        gw._heartbeat_sweeper(cast(Any, pool), 0.01, stop, pidfile)
+    task = asyncio.create_task(gw._heartbeat_sweeper(cast(Any, pool), 0.01, stop, pidfile))
+    await async_wait_until(
+        lambda: bool(
+            pool.deaths
+            or pool.healthy
+            or pool.evicted
+            or pool.reaped
+            or (pidfile is not None and pidfile.exists())
+        )
     )
-    for _ in range(300):
-        if pool.deaths or pool.healthy or pool.evicted or pool.reaped or (
-            pidfile is not None and pidfile.exists()
-        ):
-            break
-        await asyncio.sleep(0.01)
     stop.set()
-    await asyncio.wait_for(task, timeout=5)
+    await await_until(task)
 
 
 class TestHeartbeatSweeper:
@@ -406,7 +376,9 @@ class TestHeartbeatSweeper:
         with caplog.at_level("WARNING"):
             await _run_one_heartbeat_sweep(pool)
 
-        recycled = [r.getMessage() for r in caplog.records if "heartbeat recycled" in r.getMessage()]
+        recycled = [
+            r.getMessage() for r in caplog.records if "heartbeat recycled" in r.getMessage()
+        ]
         assert recycled and all(
             # The fake process has not exited, so this "gone" is a broken pipe.
             m.endswith(backend.lifecycle_fields("backend_gone", "transport_closed"))
@@ -430,7 +402,9 @@ class TestHeartbeatSweeper:
         with caplog.at_level("WARNING"):
             await _run_one_heartbeat_sweep(pool)
 
-        recycled = [r.getMessage() for r in caplog.records if "heartbeat recycled" in r.getMessage()]
+        recycled = [
+            r.getMessage() for r in caplog.records if "heartbeat recycled" in r.getMessage()
+        ]
         assert recycled and all(
             m.endswith(backend.lifecycle_fields("backend_gone", "deadline")) for m in recycled
         )
@@ -458,15 +432,10 @@ class TestHeartbeatSweeper:
         pool = _SweeperPool([(key, backend)], pids=[11, 12])
         pidfile = None
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            gw._heartbeat_sweeper(cast(Any, pool), 0.01, stop, pidfile)
-        )
-        for _ in range(200):
-            if backend._heartbeat_once.await_count:  # type: ignore[attr-defined]
-                break
-            await asyncio.sleep(0.01)
+        task = asyncio.create_task(gw._heartbeat_sweeper(cast(Any, pool), 0.01, stop, pidfile))
+        await async_wait_until(lambda: bool(backend._heartbeat_once.await_count))  # type: ignore[attr-defined]
         stop.set()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
 
         assert pool.healthy == []
         assert pool.deaths == []
@@ -492,12 +461,10 @@ class TestHeartbeatSweeper:
     async def test_cancellation_is_swallowed(self):
         pool = _SweeperPool([])
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            gw._heartbeat_sweeper(cast(Any, pool), 30.0, stop, None)
-        )
+        task = asyncio.create_task(gw._heartbeat_sweeper(cast(Any, pool), 30.0, stop, None))
         await asyncio.sleep(0)
         task.cancel()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         assert task.done() and not task.cancelled()
 
     @pytest.mark.asyncio
@@ -520,12 +487,10 @@ class TestHeartbeatSweeper:
 
             pool = _SweeperPool([])
             stop = asyncio.Event()
-            task = asyncio.create_task(
-                gw._heartbeat_sweeper(cast(Any, pool), 30.0, stop, None)
-            )
+            task = asyncio.create_task(gw._heartbeat_sweeper(cast(Any, pool), 30.0, stop, None))
             await asyncio.sleep(0)
             task.cancel()
-            await asyncio.wait_for(task, timeout=5)
+            await await_until(task)
 
             assert hazards.load_ledger(tmp_path).codes_for_name("srv") == (
                 hazards.HAZARD_UNROUTABLE_SERVER_REQUEST,
@@ -550,18 +515,14 @@ class TestHeartbeatSweeper:
         backend._heartbeat_once = AsyncMock(return_value="alive")  # type: ignore[method-assign]
         pool = _SweeperPool([(key, backend)])
         stop = asyncio.Event()
-        task = asyncio.create_task(
-            gw._heartbeat_sweeper(cast(Any, pool), 30.0, stop, None)
-        )
+        task = asyncio.create_task(gw._heartbeat_sweeper(cast(Any, pool), 30.0, stop, None))
         await asyncio.sleep(0.05)
         stop.set()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         backend._heartbeat_once.assert_not_awaited()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
-    async def test_a_crashing_transport_probe_does_not_stop_the_backend_sweep(
-        self, monkeypatch
-    ):
+    async def test_a_crashing_transport_probe_does_not_stop_the_backend_sweep(self, monkeypatch):
         key = _pool_key(server="probe-crash-mcp")
         backend = _fake_backend(key)
         backend._heartbeat_once = AsyncMock(return_value="alive")  # type: ignore[method-assign]
@@ -600,9 +561,7 @@ class TestDrainAndRewarmOnCredentialChange:
         pool.drain_all_to_bluegreen = AsyncMock(return_value=3)
         rewarms: list[int] = []
 
-        await gw._drain_and_rewarm_on_credential_change(
-            cast(Any, pool), lambda: rewarms.append(1)
-        )
+        await gw._drain_and_rewarm_on_credential_change(cast(Any, pool), lambda: rewarms.append(1))
 
         pool.evict_idle.assert_awaited_once_with(0.0, include_pinned=True)
         pool.drain_all_to_bluegreen.assert_awaited_once()
@@ -617,9 +576,7 @@ class TestDrainAndRewarmOnCredentialChange:
         pool.drain_all_to_bluegreen = AsyncMock(return_value=0)
         rewarms: list[int] = []
 
-        await gw._drain_and_rewarm_on_credential_change(
-            cast(Any, pool), lambda: rewarms.append(1)
-        )
+        await gw._drain_and_rewarm_on_credential_change(cast(Any, pool), lambda: rewarms.append(1))
 
         assert rewarms == []
 
@@ -639,9 +596,7 @@ class TestApplyAbort:
     @pytest.mark.asyncio
     async def test_missing_pids_is_rejected(self, monkeypatch):
         audits: list[tuple[Any, ...]] = []
-        monkeypatch.setattr(
-            gw, "_audit_abort_applied", lambda *a, **k: audits.append((a, k))
-        )
+        monkeypatch.setattr(gw, "_audit_abort_applied", lambda *a, **k: audits.append((a, k)))
         out = await gw._apply_abort({}, cast(Any, _AbortPool([])))
         assert out == {"type": "abort-rejected", "reason": "missing or invalid pids"}
         assert audits
@@ -692,7 +647,11 @@ class TestApplyAbort:
 _AUDIT_CASES = [
     ("_audit_abort_applied", ([1234], "hard-stop", "allowed"), "mcp-gateway.abort-in-flight"),
     ("_audit_pool_fallback", ("caller", "demo-mcp", "pool full"), "mcp-gateway.fallback"),
-    ("_audit_pool_rejected", ("caller", "demo-mcp", "unknown target"), "mcp-gateway.ensure_backend"),
+    (
+        "_audit_pool_rejected",
+        ("caller", "demo-mcp", "unknown target"),
+        "mcp-gateway.ensure_backend",
+    ),
     ("_audit_prewarm_spawn", ("demo-mcp",), "mcp-gateway.prewarm-spawn"),
     (
         "_audit_reserved_stub_prefix_denied",
@@ -712,9 +671,7 @@ class TestAuditEmitters:
 
     @pytest.mark.parametrize("fn_name,args,operation", _AUDIT_CASES)
     def test_audit_failure_never_breaks_the_caller(self, monkeypatch, fn_name, args, operation):
-        monkeypatch.setattr(
-            gw, "SecurityEventLog", MagicMock(side_effect=RuntimeError("sel down"))
-        )
+        monkeypatch.setattr(gw, "SecurityEventLog", MagicMock(side_effect=RuntimeError("sel down")))
         getattr(gw, fn_name)(*args)  # must not raise
 
     def test_denied_abort_reports_the_reason_as_the_error(self, monkeypatch):
@@ -827,8 +784,8 @@ class TestWriteJsonLine:
     async def test_peer_that_stops_reading_cannot_pin_the_handler(self, monkeypatch):
         monkeypatch.setattr(gw, "_WRITE_REPLY_TIMEOUT_SECS", 0.01)
         writer = _FakeWriter(hang=True)
-        await asyncio.wait_for(
-            gw._write_json_line(cast(Any, writer), {"type": "registered"}), timeout=5
+        await await_until(
+            asyncio.create_task(gw._write_json_line(cast(Any, writer), {"type": "registered"}))
         )
 
 
@@ -883,13 +840,8 @@ class TestDrainInboxToStub:
         inbox: asyncio.Queue[bytes] = asyncio.Queue()
         await inbox.put(b'{"id":1}\n')
         writer = _FakeWriter()
-        task = asyncio.create_task(
-            gw._drain_inbox_to_stub(inbox, cast(Any, writer), "stub-1")
-        )
-        for _ in range(200):
-            if writer.writes:
-                break
-            await asyncio.sleep(0.01)
+        task = asyncio.create_task(gw._drain_inbox_to_stub(inbox, cast(Any, writer), "stub-1"))
+        await async_wait_until(lambda: bool(writer.writes))
         await _drain_task(task)
         assert writer.writes == [b'{"id":1}\n']
 
@@ -898,8 +850,8 @@ class TestDrainInboxToStub:
         inbox: asyncio.Queue[bytes] = asyncio.Queue()
         await inbox.put(b'{"id":2}\n')
         writer = _FakeWriter(fail=BrokenPipeError("stub gone"))
-        await asyncio.wait_for(
-            gw._drain_inbox_to_stub(inbox, cast(Any, writer), "stub-2"), timeout=5
+        await await_until(
+            asyncio.create_task(gw._drain_inbox_to_stub(inbox, cast(Any, writer), "stub-2"))
         )
 
     @pytest.mark.asyncio
@@ -908,8 +860,8 @@ class TestDrainInboxToStub:
         inbox: asyncio.Queue[bytes] = asyncio.Queue()
         await inbox.put(b'{"id":3}\n')
         writer = _FakeWriter(hang=True)
-        await asyncio.wait_for(
-            gw._drain_inbox_to_stub(inbox, cast(Any, writer), "stub-3"), timeout=5
+        await await_until(
+            asyncio.create_task(gw._drain_inbox_to_stub(inbox, cast(Any, writer), "stub-3"))
         )
 
     @pytest.mark.asyncio
@@ -919,13 +871,8 @@ class TestDrainInboxToStub:
         await inbox.put(b'{"id":4}\n')
         writer = _FakeWriter()
         setattr(writer, "_mc_write_lock", asyncio.Lock())
-        task = asyncio.create_task(
-            gw._drain_inbox_to_stub(inbox, cast(Any, writer), "stub-4")
-        )
-        for _ in range(200):
-            if writer.writes:
-                break
-            await asyncio.sleep(0.01)
+        task = asyncio.create_task(gw._drain_inbox_to_stub(inbox, cast(Any, writer), "stub-4"))
+        await async_wait_until(lambda: bool(writer.writes))
         await _drain_task(task)
         assert gw._active_stub_writes == before
 
@@ -933,9 +880,7 @@ class TestDrainInboxToStub:
     async def test_cancellation_propagates(self):
         inbox: asyncio.Queue[bytes] = asyncio.Queue()
         writer = _FakeWriter()
-        task = asyncio.create_task(
-            gw._drain_inbox_to_stub(inbox, cast(Any, writer), "stub-5")
-        )
+        task = asyncio.create_task(gw._drain_inbox_to_stub(inbox, cast(Any, writer), "stub-5"))
         await asyncio.sleep(0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -993,7 +938,9 @@ class TestDeclaredNonSecretEnv:
 
     def test_unreadable_config_falls_back_to_the_default_overlay_dir(self, monkeypatch):
         monkeypatch.setattr(
-            gw.KiroCrewConfig, "load", classmethod(lambda cls: (_ for _ in ()).throw(OSError("nope")))
+            gw.KiroCrewConfig,
+            "load",
+            classmethod(lambda cls: (_ for _ in ()).throw(OSError("nope"))),
         )
         assert gw._declared_non_secret_env(_pool_key(server="cfgless-mcp")) == {}
 
@@ -1001,9 +948,7 @@ class TestDeclaredNonSecretEnv:
 class TestDeclaredEnvToForward:
     def test_flag_off_short_circuits_before_any_file_read(self, monkeypatch):
         monkeypatch.setattr(gw, "forward_declared_env_enabled", lambda: False)
-        monkeypatch.setattr(
-            gw, "_declared_non_secret_env", lambda k: {"SHOULD": "not-be-read"}
-        )
+        monkeypatch.setattr(gw, "_declared_non_secret_env", lambda k: {"SHOULD": "not-be-read"})
         assert gw._declared_env_to_forward(_pool_key()) == {}
 
     def test_flag_on_delegates_to_the_sidecar_read(self, monkeypatch):
@@ -1478,9 +1423,7 @@ class TestRespawnBackendForStub:
             return_value=["file:///old-owner.txt"]
         )
         fresh = _fake_backend(key, pid=7171)
-        fresh.attach_stub = AsyncMock(  # type: ignore[method-assign]
-            return_value=asyncio.Queue()
-        )
+        fresh.attach_stub = AsyncMock(return_value=asyncio.Queue())  # type: ignore[method-assign]
         fresh.replay_resource_subscriptions = AsyncMock()  # type: ignore[method-assign]
         monkeypatch.setattr(gw, "_acquire_backend", AsyncMock(return_value=(fresh, True)))
 
@@ -1527,9 +1470,7 @@ class TestRespawnBackendForStub:
         )
         fresh = _fake_backend(key, pid=7272)
         fresh.prime_initialize = AsyncMock()  # type: ignore[method-assign]
-        fresh.attach_stub = AsyncMock(  # type: ignore[method-assign]
-            return_value=asyncio.Queue()
-        )
+        fresh.attach_stub = AsyncMock(return_value=asyncio.Queue())  # type: ignore[method-assign]
         fresh.replay_resource_subscriptions = AsyncMock()  # type: ignore[method-assign]
         monkeypatch.setattr(gw, "_acquire_backend", AsyncMock(return_value=(fresh, True)))
 
@@ -1569,16 +1510,12 @@ class TestRespawnBackendForStub:
             old._served_tool_surfaces[stub] = served
         fresh = _fake_backend(_pool_key(server="respawn-surface-mcp"), pid=8383)
         fresh.prime_initialize = AsyncMock()  # type: ignore[method-assign]
-        fresh.attach_stub = AsyncMock(  # type: ignore[method-assign]
-            return_value=asyncio.Queue()
-        )
+        fresh.attach_stub = AsyncMock(return_value=asyncio.Queue())  # type: ignore[method-assign]
         fresh.probe_tool_surface = AsyncMock(return_value=published)  # type: ignore[method-assign]
         return old, fresh
 
     @pytest.mark.asyncio
-    async def test_a_replacement_whose_tool_set_moved_is_not_adopted(
-        self, monkeypatch
-    ):
+    async def test_a_replacement_whose_tool_set_moved_is_not_adopted(self, monkeypatch):
         """The gap this closes: priming the captured handshake proves the fresh
         process talks MCP, so without this check a server upgraded in place is
         adopted under a session still holding the DEAD process's schema."""
@@ -1735,9 +1672,7 @@ class TestRespawnBackendForStub:
         await _drain_task(out[2])
 
     @pytest.mark.asyncio
-    async def test_a_replacement_that_cannot_be_asked_is_not_adopted(
-        self, monkeypatch
-    ):
+    async def test_a_replacement_that_cannot_be_asked_is_not_adopted(self, monkeypatch):
         """A probe that establishes nothing is not agreement. The old backend
         answered a listing projectably, so a replacement that will not is the
         change — adopting on an unanswered probe would be the silent path again."""
@@ -1822,9 +1757,7 @@ class TestRespawnBackendForStub:
             conn.caller = CallerContext(session_key="dashboard:new-owner")
             return asyncio.Queue()
 
-        fresh.attach_stub = AsyncMock(  # type: ignore[method-assign]
-            side_effect=_attach_then_rekey
-        )
+        fresh.attach_stub = AsyncMock(side_effect=_attach_then_rekey)  # type: ignore[method-assign]
         fresh.detach_stub = AsyncMock(return_value=0)  # type: ignore[method-assign]
 
         with pytest.raises(gw._ReplacementRefused):
@@ -1878,9 +1811,7 @@ class TestRespawnBackendForStub:
         await _drain_task(out[2])
 
     @pytest.mark.asyncio
-    async def test_no_listing_ever_served_skips_the_probe_entirely(
-        self, monkeypatch
-    ):
+    async def test_no_listing_ever_served_skips_the_probe_entirely(self, monkeypatch):
         """With no claim on record there is nothing a replacement can
         contradict, so the recovery this path already performs must not become a
         failure — and the extra round-trip must not be paid either."""
@@ -1927,9 +1858,7 @@ class TestRespawnBackendForStub:
                 published=dict(same) if served is not None else None,
                 stub=stub,
             )
-            monkeypatch.setattr(
-                gw, "_acquire_backend", AsyncMock(return_value=(fresh, True))
-            )
+            monkeypatch.setattr(gw, "_acquire_backend", AsyncMock(return_value=(fresh, True)))
 
             out = await gw._respawn_backend_for_stub(
                 pool,
@@ -1952,9 +1881,7 @@ class TestRespawnBackendForStub:
         assert "not verified" in audits[1][3]
 
     @pytest.mark.asyncio
-    async def test_the_validated_surface_survives_into_the_next_respawn(
-        self, monkeypatch
-    ):
+    async def test_the_validated_surface_survives_into_the_next_respawn(self, monkeypatch):
         """The claim follows the SESSION, not the process. Without carrying it
         the replacement starts anchor-less, so a second respawn of the same stub
         adopts blindly while the client's frozen tool set is still its original
@@ -2007,9 +1934,7 @@ class TestRespawnBackendForStub:
         second.attach_stub.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_a_co_pooled_stubs_listing_is_not_this_stubs_anchor(
-        self, monkeypatch
-    ):
+    async def test_a_co_pooled_stubs_listing_is_not_this_stubs_anchor(self, monkeypatch):
         """One backend serves several sessions. The comparison must be about the
         session being recovered, not whichever tenant listed most recently — a
         sibling's listing must neither supply nor suppress this stub's anchor."""
@@ -2042,9 +1967,7 @@ class TestRespawnBackendForStub:
         await _drain_task(out[2])
 
     @pytest.mark.asyncio
-    async def test_the_anchor_is_read_before_the_detach_that_prunes_it(
-        self, monkeypatch
-    ):
+    async def test_the_anchor_is_read_before_the_detach_that_prunes_it(self, monkeypatch):
         """Real ``detach_stub`` drops the stub's anchor. Reading it after the
         detach would report "nothing was ever served" for a session that was
         told plenty, and adopt a drifted replacement."""
@@ -2095,9 +2018,7 @@ class TestCountOpenFds:
 
     @_POSIX_ONLY
     def test_returns_minus_one_when_no_source_is_available(self, monkeypatch):
-        monkeypatch.setattr(
-            os, "listdir", MagicMock(side_effect=OSError("no such directory"))
-        )
+        monkeypatch.setattr(os, "listdir", MagicMock(side_effect=OSError("no such directory")))
         assert gw._count_open_fds() == -1
 
 
@@ -2203,12 +2124,9 @@ class TestZombieDiagnostic:
         task = asyncio.create_task(
             gw._zombie_diagnostic(cast(Any, server), BackendPool(max_backends=1), set(), stop)
         )
-        for _ in range(300):
-            if diag.exists():
-                break
-            await asyncio.sleep(0.01)
+        await async_wait_until(lambda: diag.exists(), off_loop=True)
         stop.set()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
 
         tags = {json.loads(line)["tag"] for line in diag.read_text().strip().splitlines()}
         assert tags == {"probe"}
@@ -2228,9 +2146,7 @@ class TestZombieDiagnostic:
         stop = asyncio.Event()
         monkeypatch.setattr(stop, "wait", AsyncMock(side_effect=asyncio.TimeoutError))
 
-        await gw._zombie_diagnostic(
-            cast(Any, server), BackendPool(max_backends=1), set(), stop
-        )
+        await gw._zombie_diagnostic(cast(Any, server), BackendPool(max_backends=1), set(), stop)
 
         assert len(writes) == 1
         written_path, records = writes[0]
@@ -2268,8 +2184,9 @@ class TestZombieDiagnostic:
                 opened.append(mode)
                 if len(opened) > 1:
                     raise PermissionError(
-                        13, "The process cannot access the file because it is "
-                        "being used by another process"
+                        13,
+                        "The process cannot access the file because it is "
+                        "being used by another process",
                     )
             return real_open(self, *args, **kwargs)
 
@@ -2315,11 +2232,12 @@ class TestZombieDiagnostic:
         monkeypatch.setattr(gw, "_ZOMBIE_PROBE_INTERVAL_SECS", 0.01)
         stop = asyncio.Event()
         stop.set()
-        await asyncio.wait_for(
-            gw._zombie_diagnostic(
-                cast(Any, MagicMock()), BackendPool(max_backends=1), set(), stop
-            ),
-            timeout=5,
+        await await_until(
+            asyncio.create_task(
+                gw._zombie_diagnostic(
+                    cast(Any, MagicMock()), BackendPool(max_backends=1), set(), stop
+                )
+            )
         )
         assert not diag.exists()
 
@@ -2328,13 +2246,11 @@ class TestZombieDiagnostic:
         monkeypatch.setattr(gw, "_zombie_diagnostic_path", lambda: tmp_path / "d.jsonl")
         stop = asyncio.Event()
         task = asyncio.create_task(
-            gw._zombie_diagnostic(
-                cast(Any, MagicMock()), BackendPool(max_backends=1), set(), stop
-            )
+            gw._zombie_diagnostic(cast(Any, MagicMock()), BackendPool(max_backends=1), set(), stop)
         )
         await asyncio.sleep(0)
         task.cancel()
-        await asyncio.wait_for(task, timeout=5)
+        await await_until(task)
         assert task.done() and not task.cancelled()
 
 
@@ -2399,7 +2315,9 @@ class TestAmain:
         assert _await_kwargs(run)["credential_watch_paths"] == [Path("creds.json")]
 
     @pytest.mark.asyncio
-    async def test_unhandled_exception_returns_one_instead_of_crashing(self, _quiet_amain, monkeypatch):
+    async def test_unhandled_exception_returns_one_instead_of_crashing(
+        self, _quiet_amain, monkeypatch
+    ):
         monkeypatch.setattr(gw, "run_gatewayd", AsyncMock(side_effect=RuntimeError("boom")))
         assert await gw._amain(_quiet_amain) == 1
 
