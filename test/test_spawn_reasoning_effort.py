@@ -1051,7 +1051,8 @@ class TestUnpinnedSpawnVerdictMatchesTheProvider:
                 ("claude", "pending"),
                 ("kas", "pending"),
                 ("pi", ""),
-                ("opencode", "drop"),
+                ("opencode", ""),
+                ("some-harness-nobody-registered", "drop"),
             ):
                 outcome = {
                     "drop": effort_drop_reason("", "high", "", backend=backend),
