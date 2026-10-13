@@ -1813,6 +1813,12 @@ _MAX_SOURCE_LINKS_PER_SLOT = 64
 # and issues together. Shared with the periodic check-status refresh so the
 # driver and the serializer cannot drift.
 _SERIALIZED_SOURCE_LINKS_PER_SLOT = 3
+# How long a slot keeps its PR/MR chips on the fast refresh tier after a turn
+# ended on it or the owner opened it (``DashboardState.note_source_activity``).
+# Past it, and for every tab restored at boot until one of those happens, the
+# periodic driver hands the slot's chips to the slower idle tier
+# (``chip_refresh.schedule_idle_check_refresh``).
+_SOURCE_ACTIVE_WINDOW_SECS = 30 * 60
 # Hard ceiling on a slot's persisted dismissed-source-link set. Additions are
 # gated on an identity being one of the transcript's DISTINCT derived links, so
 # the set is bounded by real transcript content -- but a very long transcript
@@ -6635,6 +6641,10 @@ class DashboardState:
         # WebSocket clients (multiplexed real-time connection)
         self._ws_clients: list[web.WebSocketResponse] = []
         self._owner_ws_clients: set[web.WebSocketResponse] = set()
+        # Slot key -> monotonic time of its last turn end or owner open; what
+        # keeps a slot's chips on the fast refresh tier (see
+        # ``idle_source_link_urls``).
+        self._source_active_at: dict[str, float] = {}
         self._ws_log_subscribers: set[web.WebSocketResponse] = set()
         self._ws_subagent_subscribers: set[web.WebSocketResponse] = set()
         self._websocket_hub = _new_websocket_hub(self)
@@ -9249,12 +9259,57 @@ class DashboardState:
             return []
         urls: list[str] = []
         for s in self._slots.values():
-            urls.extend(
-                link["url"]
-                for link in _budgeted_source_links(s._pr_source_links())
-                if link.get("kind", "change") == "change"
-            )
+            urls.extend(self._slot_chip_urls(s))
         return urls
+
+    @staticmethod
+    def _slot_chip_urls(slot: _ChatSlot) -> list[str]:
+        """The PR/MR chip URLs one slot serializes (sidebar budget, no issues)."""
+        return [
+            link["url"]
+            for link in _budgeted_source_links(slot._pr_source_links())
+            if link.get("kind", "change") == "change"
+        ]
+
+    def note_source_activity(self, key: str) -> None:
+        """Keep this slot's chips on the fast refresh tier for a while.
+
+        Called when a turn ends on the slot and when the owner opens it. Spends
+        no credentials itself: it only decides which tier the owner's own
+        periodic driver puts the slot's chips on.
+        """
+        stamps = getattr(self, "_source_active_at", None)
+        if stamps is None:
+            stamps = self._source_active_at = {}
+        stamps[key] = time.monotonic()
+
+    def idle_source_link_urls(self) -> set[str]:
+        """Chip URLs that only slots nobody is using link to.
+
+        A slot is in use while a turn runs on it, and for
+        ``_SOURCE_ACTIVE_WINDOW_SECS`` after :meth:`note_source_activity`. Every
+        other slot is idle -- in particular every tab restored from
+        ``open_slots.json`` at boot, until it is opened or runs a turn. The
+        periodic driver re-reads these on the slower idle tier, so a long
+        sidebar history stops costing a provider burst every chip TTL. A URL
+        that any in-use slot also links stays on the fast tier.
+        """
+        stamps = getattr(self, "_source_active_at", None)
+        if stamps is None:
+            stamps = self._source_active_at = {}
+        now = time.monotonic()
+        for key in [
+            key
+            for key, at in stamps.items()
+            if key not in self._slots or now - at >= _SOURCE_ACTIVE_WINDOW_SECS
+        ]:
+            del stamps[key]
+        active: set[str] = set()
+        idle: set[str] = set()
+        for key, slot in self._slots.items():
+            in_use = key in stamps or bool(getattr(slot, "turn_running", False))
+            (active if in_use else idle).update(self._slot_chip_urls(slot))
+        return idle - active
 
     def source_link_urls_for_slot(self, key: str) -> list[str]:
         """Sidebar-visible PR/MR chip URLs for one slot (same cap and kind filter).
@@ -9271,11 +9326,7 @@ class DashboardState:
         slot = self._slots.get(key)
         if slot is None:
             return []
-        return [
-            link["url"]
-            for link in _budgeted_source_links(slot._pr_source_links())
-            if link.get("kind", "change") == "change"
-        ]
+        return self._slot_chip_urls(slot)
 
     def push_source_status(self, delta: dict) -> None:
         """Push a single PR/MR status delta to owner websockets only.
@@ -9309,6 +9360,10 @@ class DashboardState:
         # and non-owner windows render the result read-only via the fail-closed
         # is_repo_public gate. With no owner window open there is nobody entitled
         # to drive a credentialed read, so this is a no-op.
+        #
+        # The slot just ran a turn, so it is in use whoever is watching: its
+        # chips stay on the fast tier of the periodic driver for a while.
+        self.note_source_activity(key)
         if not self._owner_ws_clients:
             return
         try:

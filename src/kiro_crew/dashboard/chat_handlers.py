@@ -76,6 +76,7 @@ from kiro_crew.dashboard.chat_api.slot_detail import (  # noqa: F401
     _finite_number,
     _is_answered_permission,
     _load_redacted,
+    _note_owner_focus,
     _same_persisted_body,
     _snapshot_slot_window,
     api_chat_slot_detail,

@@ -875,6 +875,7 @@ async def _serve_ws(
         schedule_check_refresh,
         schedule_visibility_refresh,
     )
+    from kiro_crew.dashboard.source_providers.chip_refresh import schedule_idle_check_refresh
     from kiro_crew.platform.governance_profiles import (
         governance_answer_generation,
         poll_profiles_fresh,
@@ -1099,7 +1100,16 @@ async def _serve_ws(
                 # (fail closed) — no non-owner-driven credentialed probe.
                 if owner_request:
                     schedule_visibility_refresh(urls, state.push_slots_update)
-                    schedule_check_refresh(urls, state.push_slots_update)
+                    # Idle slots' chips (every restored tab, until it is opened
+                    # or runs a turn) go to the slow tier, so a reconnect does
+                    # not re-read the whole sidebar history.
+                    idle = state.idle_source_link_urls()
+                    fast_urls = [url for url in urls if url not in idle]
+                    idle_urls = [url for url in urls if url in idle]
+                    if fast_urls:
+                        schedule_check_refresh(fast_urls, state.push_slots_update)
+                    if idle_urls:
+                        schedule_idle_check_refresh(idle_urls, state.push_slots_update)
     except Exception:
         pass
 
@@ -1223,7 +1233,19 @@ async def _serve_ws(
                     # read-only via is_repo_public. No non-owner-driven
                     # credentialed provider read.
                     schedule_visibility_refresh(urls, state.push_slots_update)
-                    schedule_check_refresh(urls, state.push_slots_update)
+                    # Two tiers. Chips on slots in use (a turn running, or a turn
+                    # ended / the owner opened it recently) keep the chip TTL.
+                    # Chips only idle slots link -- a restored history of tabs --
+                    # go to the idle tier: a slower clock and a small per-TTL
+                    # budget shared by every owner socket, so their cost does
+                    # not grow with the number of tabs ever left open.
+                    idle = state.idle_source_link_urls()
+                    fast_urls = [url for url in urls if url not in idle]
+                    idle_urls = [url for url in urls if url in idle]
+                    if fast_urls:
+                        schedule_check_refresh(fast_urls, state.push_slots_update)
+                    if idle_urls:
+                        schedule_idle_check_refresh(idle_urls, state.push_slots_update)
                 refresh_round += 1
             except asyncio.CancelledError:
                 raise
