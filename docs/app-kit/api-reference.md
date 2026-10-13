@@ -151,6 +151,28 @@ scheduled job). The cards are read-only in the embed: to cancel or edit a queued
 message, open the session in the dashboard. Finished sub-agent results waiting
 for the same turn show as one progress line instead of cards.
 
+A file the agent sends with `file_send` appears in the transcript as the same
+card the main chat shows: a download card, or an inline player or image for
+audio, video and pictures. The card links to `/api/outbox/<filename>` as an
+ordinary same-origin URL, so the browser fetches it with the viewer's dashboard
+sign-in and the gateway's own download checks apply. It does not go through
+`useAppApi`, so the app needs no `allowedApiPaths` entry for it.
+
+A host that can open files or artifacts itself passes `onFileOpen` and
+`onArtifactOpen`. The embed hands both straight to the transcript, as in the
+main chat: `onFileOpen(path, { line, endLine })` turns on a tool row's file chip
+and opens path links in replies, and `onArtifactOpen(slug)` opens an
+`/artifacts/<slug>` link instead of following it. Omitted, the file chip stays
+hidden and both kinds of link behave as before.
+
+```tsx
+<ChatEmbed
+  slotKey="coder-abc123"
+  onFileOpen={path => openInMyViewer(path)}
+  onArtifactOpen={slug => openArtifactTab(slug)}
+/>
+```
+
 ## Native Chat Panel
 
 `ChatPanel` mounts Kiro Crew's native chat experience for an existing session. The required
@@ -288,7 +310,7 @@ That renders the built-in rows. To change one, pass `renderers`.
 ### Adding a row the transcript does not draw
 
 Four roles are deliberately undrawn — `thinking`, `system`, `done` and `queued` — because the
-dashboard shows them through other affordances. `file` is undrawn too. Claim one and it is yours:
+dashboard shows them through other affordances. Claim one and it is yours:
 
 ```jsx
 const renderers = [{

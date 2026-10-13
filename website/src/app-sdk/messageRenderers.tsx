@@ -26,6 +26,7 @@ import { isSafePath } from '../utils/safePath'
 import { isHiddenInvisibleAssistantRow } from '../utils/invisibleText'
 import AssistantMessage, { type TurnStats } from '../pages/chat/AssistantMessage'
 import { type FileChangeEntry } from '../components/FileChangeChips'
+import { FileCard, type FileData } from '../components/FileCard'
 import UserMessage from '../pages/chat/UserMessage'
 import { renderMcpOAuthMessage } from '../pages/chat/McpOAuthBanner'
 import SubagentCompletionCard from '../pages/chat/SubagentCompletionCard'
@@ -524,6 +525,20 @@ export function renderAssistantBubble(
   return <div className="flex flex-col gap-0">{footer ? <>{bubble}{footer}</> : bubble}</div>
 }
 
+/** A `file` row's content is the file_send record as JSON. Returns it only when
+ *  it names a file, since FileCard builds its URL from `filename`. */
+function parseFileRow(content: string): FileData | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(content)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const filename = (parsed as { filename?: unknown }).filename
+  return typeof filename === 'string' && filename ? (parsed as FileData) : null
+}
+
 /**
  * The built-in registry, in resolution order. Skill loads, stop events and
  * sub-agent completions are recognised by shape rather than by a broad role,
@@ -694,10 +709,17 @@ export const defaultMessageRenderers: readonly MessageRenderer[] = [
     render: () => null,
   },
   {
-    // TODO: file download links
+    // A file_send delivery: the same player / download card ChatPage draws.
+    // FileCard is store-free and links to `/api/outbox/<name>` as a plain
+    // same-origin URL, so any surface (ChatEmbed included) can draw it. A row
+    // whose content is not a file record draws nothing rather than a card for
+    // a file named "undefined"; ChatPage overrides this entry to show those.
     id: 'file',
     roles: ['file'],
-    render: () => null,
+    render: (m, ctx) => {
+      const file = parseFileRow(m.content)
+      return file ? ctx.row(<FileCard file={file} />) : null
+    },
   },
   {
     id: 'mcp_oauth',

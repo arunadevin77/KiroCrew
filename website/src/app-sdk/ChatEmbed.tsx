@@ -97,6 +97,17 @@ export interface ChatEmbedProps {
    * (empty) size is unaffected. Omitted, behaviour is unchanged.
    */
   composerMaxHeight?: number
+  /**
+   * Open a workspace file path the transcript names (a tool row's file chip, a
+   * path link in a reply). Handed straight to `ChatMessageList`. Omitted, the
+   * file chip is hidden and path links stay plain, as before.
+   */
+  onFileOpen?: (path: string, opts?: { line?: number; endLine?: number }) => void
+  /**
+   * Open a saved artifact by slug from a link in a reply. Handed straight to
+   * `ChatMessageList`. Omitted, artifact links follow their href as before.
+   */
+  onArtifactOpen?: (slug: string) => void
 }
 
 /** Stable empty transcript. A fresh `[]` fallback would be a new identity on every
@@ -211,6 +222,8 @@ function ChatEmbed({
   onSend,
   aboveComposer,
   composerMaxHeight,
+  onFileOpen,
+  onArtifactOpen,
 }: ChatEmbedProps) {
   const api = useAppApi()
   // The parking scope for receipts that outlive this instance: this app's
@@ -753,6 +766,8 @@ function ChatEmbed({
         onApprove={approve}
         onApproveBatch={approveBatch}
         canTrust
+        onFileOpen={onFileOpen}
+        onArtifactOpen={onArtifactOpen}
         transcript={{
           sessionId: `embed:${slotKey}`,
           followOutput: !!startAtBottom,
