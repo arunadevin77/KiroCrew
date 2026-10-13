@@ -256,7 +256,13 @@ def _url_payload_command(n: int) -> str:
 #: data-consumer exemption. The branch grows a ``(?<!^-)`` guard and its comment states
 #: which terminal ``e`` is the command. Every execute construct it read before is still
 #: read; no other pattern moved.
-_PACKAGE_LINE_BUDGET = 28_864
+#:
+#: Raised again for notification-bridge B1 rebased over main's advanced base: the two
+#: leaves added to ``_CREW_SECRET_LEAVES`` in ``paths.py`` (``notification_settings.json``
+#: and its ``notification-settings-staging`` directory) with their security rationale.
+#: Feature code and its justification comments, disjoint from main's own growth. Value
+#: set BY MEASUREMENT after the rebase, not arithmetic.
+_PACKAGE_LINE_BUDGET = 28_897
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

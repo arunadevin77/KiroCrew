@@ -1028,10 +1028,16 @@ class TestTheCarryForwardReadIsNeverOnTheLoop:
                         " an _impl method resolves 'asyncio' only"
                     )
                     checked += 1
-        # Seven offloads live in _impl methods: the delivery path, the leaked
-        # delivery's mark, the two gateway_restart writes, the digest-hold
-        # settlement, and the drained queue's two (the delivered mark, and a
-        # restart orphan's carried record), the pattern the others follow.
+        # Seven offloads live in _impl methods. In _report_terminal_impl: the delivery
+        # path's mark and the leaked delivery's mark. In monitoring.py: the digest-hold
+        # tombstone and the notify-orphan tombstone (the reconcile delivered-case write is
+        # routed through the module-local _tombstone_unless_present helper, which is not a
+        # writer the probe counts). In the drained queue (settle_queued_delivery_impl): its
+        # delivered mark, its reconcile-settlement tombstone, and the batch settlement.
+        # Orphan-DM tombstone timing follows main's existing contract (the delivered-only
+        # deferred-tombstone variant is tracked as a deferred finding, not implemented
+        # here). Each is off the loop because it writes a file (and some read any existing
+        # tombstone) while the call site is a coroutine on the loop.
         assert checked == 7, f"expected 7 _impl offloads, found {checked}"
 
     def test_the_source_reads_do_not_depend_on_the_working_directory(self, tmp_path, monkeypatch):

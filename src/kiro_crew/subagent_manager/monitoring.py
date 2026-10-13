@@ -11,12 +11,14 @@ from ..session_map import session_files_resumable
 from ..subagent_persistence import (
     _agent_dir,
     _check_result_available,
+    _record_app,
     result_is_whole,
     subagent_id_from_conversation_key,
 )
 from ._component import ManagerComponent
 
 _glue_logger = _logging.getLogger(__name__)
+
 
 #: Longest a start may spend queued for start permits, in total, before it is reaped
 #: as never started. The startup clock pauses while a start is queued, so without a
@@ -461,9 +463,9 @@ class OrphanStallMonitor(ManagerComponent):
         - PID dead + result → tombstone (gateway_restart, delivered)
         - PID dead + no result → tombstone (gateway_restart, notification_pending)
 
-        A surviving ``result.txt`` is classified further by
-        :func:`tombstone_recovery_action`: a whole answer, or a fragment the
-        restart cut off mid-turn.
+        A surviving ``result.txt`` is classified further: only a run that
+        recorded ``result_complete`` has a whole answer on disk, and anything
+        else is a fragment the restart cut off mid-turn.
         """
         try:
             await self._manager._end_leaked_processes()
@@ -485,6 +487,10 @@ class OrphanStallMonitor(ManagerComponent):
             # Written after the scan: a DM-bound notice's tombstone waits for the
             # digest DM below, and a run whose notifier raised is tombstoned with them.
             held_tombstones: list[tuple[str, dict[str, Any]]] = []
+            # The producers of every digest-pending notice, carried onto the digest's bell
+            # so the notification bridge vets each orphaned child's own governance (its
+            # session, agent and app) before routing the digest anywhere.
+            digest_producers: list[dict] = []
 
             def _tombstone_unless_present(agent_id: str, fields: dict[str, Any]) -> None:
                 from kiro_crew.subagent_persistence import read_tombstone
@@ -549,6 +555,11 @@ class OrphanStallMonitor(ManagerComponent):
                         elif undelivered:
                             dm_pending.append(undelivered)
                             held_tombstones.append((agent_id, tombstone))
+                            # F6 governance: carry this digest-bound orphan's own
+                            # producer identities (session, agent, app) onto the
+                            # digest bell so the bridge vets each child's profile
+                            # before routing the digest anywhere.
+                            digest_producers.append(self._orphan_producer(agent_id, state))
                         else:
                             # A slot took the notice: _notify_orphan writes its
                             # delivered tombstone after the injection. When none
@@ -585,7 +596,23 @@ class OrphanStallMonitor(ManagerComponent):
                         f"orphaned by a gateway restart:\n\n" + "\n\n".join(dm_pending)
                     )
                 try:
-                    await self._manager._send_orphan_slack_dm(digest)
+                    # F6 governance: the digest carries each orphan's own producer
+                    # identities so the bridge vets every child's profile. The meta is
+                    # passed only when it resolves (``_merge_producers`` returns None when
+                    # any orphan records no app, the fail-safe), so a digest with no
+                    # resolvable producer calls the send with the bare message -- the shape
+                    # a host-authored notice uses. The send's return is not consulted: the
+                    # tombstones below are written after the digest every time (main's
+                    # contract), so a failed/unwired DM does not re-announce the run at
+                    # every subsequent start (which could loop); only a process that dies
+                    # before the DM leaves the runs to the next start.
+                    producer_meta = self._merge_producers(digest_producers)
+                    if producer_meta:
+                        await self._manager._send_orphan_slack_dm(
+                            digest, producer_meta=producer_meta
+                        )
+                    else:
+                        await self._manager._send_orphan_slack_dm(digest)
                 except Exception:
                     # Raised rather than died: tombstoned as before. A process that
                     # dies before the DM leaves these runs to the next start.
@@ -937,18 +964,114 @@ class OrphanStallMonitor(ManagerComponent):
             return ORPHAN_NOTICE_OWED
         return delivered
 
-    async def _send_orphan_slack_dm_impl(self, msg: str) -> None:
+    @staticmethod
+    def _orphan_producer(agent_id: str, state: dict) -> dict[str, list[str]]:
+        """The governance identities of one orphaned run, read from its own ``state.json``.
+
+        The record the run wrote at spawn, never anything a notice body says: the child's
+        session keys, its parent, its agent name and its owning app.
+        """
+        sessions = [f"subagent:{agent_id}"]
+        for key in ("conversation_key", "parent_session"):
+            value = state.get(key)
+            if isinstance(value, str) and value.strip():
+                sessions.append(value.strip())
+        from kiro_crew.execution_context import producer_agent_names
+
+        return {
+            "producer_session": sessions,
+            "producer_agent": producer_agent_names(
+                state.get("agent"), state.get("execution_context")
+            ),
+            "producer_app": [_record_app(state)] if _record_app(state) else [],
+        }
+
+    @staticmethod
+    def _merge_producers(producers: list[dict[str, list[str]]]) -> dict[str, str] | None:
+        """Fold per-orphan identities into the bell meta the bridge reads (newline-joined).
+
+        Fail-safe: a legacy orphan's app ownership can live only in member-memory, absent
+        from the ``state.json`` this reads, so an empty ``producer_app`` cannot be told
+        apart from a genuinely app-less run WITHOUT an off-loop member-memory lookup. When
+        ANY orphan in the digest records no app, the whole digest therefore carries NO
+        producer meta: the note names no producer, the
+        bridge refuses it as unattributed, and it stays dashboard-only. Genuine app-less
+        orphans lose external delivery too -- the accepted cost of not egressing a note
+        whose owning app's messaging denial we cannot confirm.
+        """
+        if any(not producer.get("producer_app") for producer in producers):
+            return None
+        merged: dict[str, list[str]] = {}
+        for producer in producers:
+            for key, values in producer.items():
+                bucket = merged.setdefault(key, [])
+                bucket.extend(v for v in values if v not in bucket)
+        meta = {key: "\n".join(values) for key, values in merged.items() if values}
+        if meta.get("producer_session"):
+            # Agent attribution is REQUIRED per orphan: the digest names each orphan's
+            # parent and child, and the bridge must consult every orphan's own agent
+            # profile. On a restart whose parent (or own) execution record is unreadable
+            # an orphan resolves NO agent name; without this the note would still egress
+            # on the agents that DID resolve, skipping the unreadable one's Slack denial
+            # (the gap GPT 6.1 named). Each orphan looked up its own agent here, so count
+            # the orphans that resolved none and report it: the bridge refuses the whole
+            # digest when any required producer's agent is unresolved. Reported even when
+            # zero so the bridge sees this is a required-attribution note.
+            unresolved = sum(1 for p in producers if not p.get("producer_agent"))
+            meta["producer_agent_unresolved"] = str(unresolved)
+            # Mark attribution REQUIRED, exactly as the gateway completion sites do
+            # (slack/gateway.py), so the persisted resolver RECOMPUTES the count off the
+            # loop and does not merely trust this digest's own tally. The digest counts
+            # only what each orphan resolved from its own state.json at emit time; a
+            # closed parent whose execution record is unreadable at restart is counted
+            # here as resolved on the agent that DID resolve. Without the flag the bridge
+            # would accept the "0" and egress on that agent, skipping the unreadable
+            # parent's transport-denying profile (GPT 6.1). With it, the resolver's
+            # per-key recompute refuses the digest when any required producer is
+            # unresolved.
+            meta["producer_agent_required"] = "1"
+        return meta or None
+
+    async def _send_orphan_slack_dm_impl(
+        self, msg: str, producer_meta: dict[str, str] | None = None
+    ) -> None:
         """Deliver an orphan notification via the owner DM / notification path.
 
         Delegates to the gateway-wired ``on_orphan_dm`` callback (Slack DM +
         dashboard notification). Falls back to a log line when no callback is
         wired (e.g. slack-only setups constructed without the gateway hooks).
+
+        ``producer_meta`` (F6) carries each digest-bound orphan's own producer
+        identities (session, agent, app) so the notification bridge vets every
+        child's governance profile before routing the digest. It is forwarded to
+        the callback when present, and omitted when none resolved so the note
+        names no producer and the bridge keeps it dashboard-only.
+
+        Returns ``None``: the caller tombstones a digest-bound orphan after this
+        call every time, so a failed or unwired DM does not re-announce the run
+        at every subsequent start (which could loop); only a process that dies
+        before the DM leaves the run to the next start.
+
+        The callback REPORTS whether it delivered (bell durably written or a Slack
+        DM sent). A Slack-less setup whose bell cannot land -- no ``dashboard_state``,
+        a dropped payload, or a persist that fails/times out -- returns a falsy
+        result; a raised callback is caught below. In either case the notice did NOT
+        reach the owner, and because the caller tombstones regardless, returning
+        silently would discard a lost completion with no trace. The warning is
+        therefore emitted whenever delivery is not CONFIRMED, not only when the
+        callback raises -- so an unconfirmed orphan notice always leaves a log line.
         """
         if self._manager._on_orphan_dm is not None:
             try:
-                delivered = bool(await self._manager._on_orphan_dm(msg))
+                if producer_meta:
+                    delivered = await self._manager._on_orphan_dm(msg, producer_meta=producer_meta)
+                else:
+                    delivered = await self._manager._on_orphan_dm(msg)
                 if delivered:
                     return
+                # The callback ran but did not confirm delivery (a Slack-less setup
+                # whose bell could not land). Fall through to the warning: the orphan
+                # is about to be tombstoned, so this is the only trace it leaves.
             except Exception:
                 logger.debug("on_orphan_dm raised", exc_info=True)
         logger.warning("Orphan notification (no delivery channel wired): %s", msg[:200])

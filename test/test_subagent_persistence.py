@@ -1570,13 +1570,15 @@ class TestOrphanReconciliation:
 
     @pytest.mark.asyncio
     async def test_dead_pid_with_complete_result_tombstoned_as_delivered(self, agent_root):
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from kiro_crew.subagent import SubagentManager
         from kiro_crew.subagent_persistence import create_agent_folder, write_result_chunk
 
         sessions = MagicMock()
-        manager = SubagentManager(sessions=sessions, ctx_builder=MagicMock())
+        manager = SubagentManager(
+            sessions=sessions, ctx_builder=MagicMock(), on_orphan_dm=AsyncMock(return_value=True)
+        )
 
         # Simulate orphan from prior run: dead PID, has a result its run
         # finished writing (result_complete recorded at the complete event).
@@ -1594,6 +1596,51 @@ class TestOrphanReconciliation:
         assert ts["recovery_action"] == "result_available"
 
     @pytest.mark.asyncio
+    async def test_orphan_dm_unconfirmed_delivery_warns(self, caplog):
+        """A Slack-less setup whose orphan bell cannot land leaves a trace.
+
+        The orphan-DM callback reports delivery as a bool; a dashboard-only host
+        whose bell could not durably write (and with no Slack DM) returns False.
+        Because the caller tombstones the orphan regardless, the notice would be
+        lost silently if the callback's result were ignored. The fallback warning
+        must fire whenever delivery is NOT confirmed, not only when the callback
+        raises -- so an unconfirmed orphan notice always leaves a log line.
+        """
+        import logging
+        from unittest.mock import AsyncMock, MagicMock
+
+        from kiro_crew.subagent import SubagentManager
+
+        manager = SubagentManager(
+            sessions=MagicMock(),
+            ctx_builder=MagicMock(),
+            on_orphan_dm=AsyncMock(return_value=False),  # ran, did not confirm delivery
+        )
+        with caplog.at_level(logging.WARNING, logger="kiro_crew.subagent_manager.monitoring"):
+            await manager._send_orphan_slack_dm("Sub-agent orphaned by restart: run x")
+        assert any(
+            "no delivery channel wired" in r.getMessage() for r in caplog.records
+        ), "an unconfirmed orphan DM must leave a warning, not be dropped silently"
+
+    @pytest.mark.asyncio
+    async def test_orphan_dm_confirmed_delivery_is_silent(self, caplog):
+        """Paired with the warning above: a confirmed delivery emits no warning,
+        so the fail-closed trace cannot pass by always warning."""
+        import logging
+        from unittest.mock import AsyncMock, MagicMock
+
+        from kiro_crew.subagent import SubagentManager
+
+        manager = SubagentManager(
+            sessions=MagicMock(),
+            ctx_builder=MagicMock(),
+            on_orphan_dm=AsyncMock(return_value=True),
+        )
+        with caplog.at_level(logging.WARNING, logger="kiro_crew.subagent_manager.monitoring"):
+            await manager._send_orphan_slack_dm("Sub-agent orphaned by restart: run y")
+        assert not any("no delivery channel wired" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_dead_pid_with_partial_result_is_not_offered_as_a_result(self, agent_root):
         """Streamed bytes without a complete event are a fragment, not an answer.
 
@@ -1602,12 +1649,14 @@ class TestOrphanReconciliation:
         therefore leaves a file that looks exactly like a finished result to
         anyone measuring its size — which is what the parent is told to go read.
         """
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from kiro_crew.subagent import SubagentManager
         from kiro_crew.subagent_persistence import create_agent_folder, write_result_chunk
 
-        manager = SubagentManager(sessions=MagicMock(), ctx_builder=MagicMock())
+        manager = SubagentManager(
+            sessions=MagicMock(), ctx_builder=MagicMock(), on_orphan_dm=AsyncMock(return_value=True)
+        )
 
         create_agent_folder("orphan1p", task="old task", parent_session="dashboard:default")
         # An opening sentence, nothing more — no complete event ever arrived.
@@ -1827,13 +1876,15 @@ class TestOrphanReconciliation:
 
     @pytest.mark.asyncio
     async def test_dead_pid_no_result_tombstoned_as_notified(self, agent_root):
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from kiro_crew.subagent import SubagentManager
         from kiro_crew.subagent_persistence import create_agent_folder, update_state
 
         sessions = MagicMock()
-        manager = SubagentManager(sessions=sessions, ctx_builder=MagicMock())
+        manager = SubagentManager(
+            sessions=sessions, ctx_builder=MagicMock(), on_orphan_dm=AsyncMock(return_value=True)
+        )
 
         create_agent_folder("orphan2", task="old task")
         update_state("orphan2", pid=99999)
@@ -1847,13 +1898,15 @@ class TestOrphanReconciliation:
 
     @pytest.mark.asyncio
     async def test_alive_pid_killed_and_tombstoned(self, agent_root):
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from kiro_crew.subagent import SubagentManager
         from kiro_crew.subagent_persistence import create_agent_folder, update_state
 
         sessions = MagicMock()
-        manager = SubagentManager(sessions=sessions, ctx_builder=MagicMock())
+        manager = SubagentManager(
+            sessions=sessions, ctx_builder=MagicMock(), on_orphan_dm=AsyncMock(return_value=True)
+        )
 
         create_agent_folder("orphan3", task="stuck task")
         update_state("orphan3", pid=99999)
@@ -1873,12 +1926,14 @@ class TestOrphanReconciliation:
     @pytest.mark.asyncio
     async def test_recycled_pid_not_killed(self, agent_root):
         """A live PID that doesn't belong to the original agent must not be killed."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from kiro_crew.subagent import SubagentManager
         from kiro_crew.subagent_persistence import create_agent_folder, update_state
 
-        manager = SubagentManager(sessions=MagicMock(), ctx_builder=MagicMock())
+        manager = SubagentManager(
+            sessions=MagicMock(), ctx_builder=MagicMock(), on_orphan_dm=AsyncMock(return_value=True)
+        )
 
         create_agent_folder("recycled1", task="old task")
         update_state("recycled1", pid=99999)

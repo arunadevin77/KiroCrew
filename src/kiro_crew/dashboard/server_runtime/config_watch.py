@@ -16,6 +16,7 @@ if TYPE_CHECKING:
         DashboardState,
         KiroCrewConfig,
         logger,
+        system_origin,
     )
 
 
@@ -185,6 +186,7 @@ def _register_config_watch(
                         "agent",
                         "Default model applied",
                         "The saved default model is now active. New sessions will use it.",
+                        meta=system_origin(),
                     )
                 except Exception:
                     logger.debug("default-model recovery notification failed", exc_info=True)
@@ -206,6 +208,7 @@ def _register_config_watch(
                         "The setting was saved but new sessions will keep using the "
                         "previous model. Kiro Crew retries automatically; "
                         "check the gateway logs if this persists.",
+                        meta=system_origin(),
                     )
                 except Exception:
                     logger.debug("default-model failure notification failed", exc_info=True)
