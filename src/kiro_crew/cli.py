@@ -50,6 +50,11 @@ from typing import NoReturn
 from kiro_crew import __version__, cli_help, platform_compat
 from kiro_crew.apps import builtins as _builtins_pkg
 from kiro_crew.apps.builtins import BUILTIN_NAMES as _BUILTIN_NAMES
+from kiro_crew.cli_log_files import (  # noqa: F401 -- re-exported for existing callers
+    _AppendOnlyLogFileHandler,
+    _open_owner_only,
+    _OwnerOnlyRotatingFileHandler,
+)
 from kiro_crew.config import KiroCrewConfig, config_dir, ensure_data_home
 from kiro_crew.config.loader import (
     DASHBOARD_PORT,
@@ -73,13 +78,13 @@ from kiro_crew.knowledge.dedup import dedup_sweep
 from kiro_crew.knowledge.store import KnowledgeStore
 from kiro_crew.log_redaction import install_log_redaction
 from kiro_crew.memory import MemoryStore
-from kiro_crew.owner_only_files import owner_only_opener
 from kiro_crew.platform import (
     PlatformCompositionError,
     boot_platform,
     current_context,
 )
 from kiro_crew.preflight import run_preflight_checks
+from kiro_crew.project_dir import PROJECT_MARKERS, detect_project_dir
 from kiro_crew.seed import seed_cmd
 from kiro_crew.sel import sel
 from kiro_crew.service.live_target import maybe_reexec
@@ -88,12 +93,8 @@ from kiro_crew.skills import SkillsLoader
 
 logger = logging.getLogger(__name__)
 
-# Markers that uniquely identify the KiroCrew repo root for project-dir
-# auto-detection. ``skills/`` + ``src/kiro_crew/`` is the stable signature:
-# ``skills/`` is editable-at-root and ``src/kiro_crew/`` pins this to the
-# KiroCrew package repo (not just any directory that happens to contain a
-# ``skills/`` folder).
-_PROJECT_MARKERS = ("skills", "src/kiro_crew")
+# The project-root signature lives in kiro_crew.project_dir; kept here by name.
+_PROJECT_MARKERS = PROJECT_MARKERS
 
 # Commands that run agent work in-process and so are candidates for the
 # process-isolation jail (CPP JailProvider seam).  The RULE: every command that
@@ -362,17 +363,7 @@ def _detect_project_dir() -> str | None:
     1. Walk up from CWD
     2. Read saved path from config_dir()/project_dir (respects KIROCREW_HOME)
     """
-    cur = Path.cwd().resolve()
-    for d in (cur, *cur.parents):
-        if all((d / m).is_dir() for m in _PROJECT_MARKERS):
-            return str(d)
-    pdf = _project_dir_file()
-    if pdf.is_file():
-        saved = pdf.read_text(encoding="utf-8").strip()
-        p = Path(saved)
-        if p.is_dir() and all((p / m).is_dir() for m in _PROJECT_MARKERS):
-            return saved
-    return None
+    return detect_project_dir(_project_dir_file)
 
 
 def _install_child_watcher() -> None:
@@ -947,84 +938,6 @@ def _redirect_fds_to(path: Path, fds: tuple[int, ...] = (1, 2)) -> None:
 _LOG_FATAL_ERRNOS = frozenset({errno.ENOSYS, errno.EPERM, errno.EACCES, errno.EROFS})
 # Consecutive OSErrors (any errno) after which file logging stops anyway.
 _LOG_ERROR_STREAK_LIMIT = 3
-
-
-def _open_owner_only(handler: logging.FileHandler):  # type: ignore[no-untyped-def]
-    """Open *handler*'s log file the way ``FileHandler._open`` does, but ``0600``.
-
-    The stdlib opens the log with the builtin ``open``, so ``gateway.log`` -- and
-    the fresh file every rollover creates -- would come out at the umask default
-    (``0644``), readable by any local account that can reach the data home. The
-    log carries prompts, tool calls and paths, so it follows the data home's
-    owner-only policy. Only the creation mode changes; an existing file keeps its
-    mode (the startup sweep tightens one an older version created).
-    """
-    # The stdlib's own handle on ``open`` (it survives interpreter teardown),
-    # read through getattr because typeshed does not declare it.
-    open_func = getattr(handler, "_builtin_open", open)
-    return open_func(
-        handler.baseFilename,
-        handler.mode,
-        encoding=handler.encoding,
-        errors=handler.errors,
-        opener=owner_only_opener,
-    )
-
-
-class _OwnerOnlyRotatingFileHandler(RotatingFileHandler):
-    """RotatingFileHandler whose log files are created ``0600`` (see
-    :func:`_open_owner_only`)."""
-
-    def _open(self):  # type: ignore[no-untyped-def]
-        return _open_owner_only(self)
-
-
-class _AppendOnlyLogFileHandler(logging.FileHandler):
-    """Appends each record to ``gateway.log`` and closes the file again.
-
-    Every process that is not the gateway (the ``mcp-*`` stdio servers,
-    ``kirocrew chat``, short CLI verbs) writes through this handler. It never
-    rotates and holds no open handle between records. Windows refuses to rename
-    a file while any other process has it open, so a child that kept its own
-    handle on ``gateway.log`` for its whole lifetime made every one of the
-    gateway's size rollovers fail, and the gateway's file log then dropped
-    every later record until restart. The gateway is the only rotator, and the
-    only window in which a child can block a rename is the write of one record.
-
-    The constructor opens the file once and closes it, so a log path the
-    process may not write (a sandbox deny) still raises at setup, where
-    ``_setup_cli_logging`` falls back to console-only logging.
-    """
-
-    def __init__(self, filename: Path, encoding: str = "utf-8") -> None:
-        super().__init__(filename, mode="a", encoding=encoding)
-        self._close_stream()
-
-    def _open(self):  # type: ignore[no-untyped-def]
-        return _open_owner_only(self)
-
-    def _close_stream(self) -> None:
-        stream, self.stream = self.stream, None  # type: ignore[assignment]
-        if stream is not None:
-            try:
-                stream.close()
-            except OSError:
-                pass  # the record was already written or reported
-
-    def emit(self, record: logging.LogRecord) -> None:
-        # ``Handler.handle`` holds the handler lock around emit, so the
-        # open/write/close below is atomic with respect to this handler.
-        # ``FileHandler.emit`` opens the file outside its own error handling,
-        # so a failed open is routed to ``handleError`` here instead of
-        # raising into the code that logged.
-        try:
-            super().emit(record)
-        except RecursionError:
-            raise
-        except Exception:
-            self.handleError(record)
-        finally:
-            self._close_stream()
 
 
 class _FdTrackingRotatingFileHandler(_OwnerOnlyRotatingFileHandler):
@@ -3414,6 +3327,13 @@ env var overrides it.
     # thread per core. Cap both at one before anything below imports the
     # server; an operator's own value wins. Set in-process rather than in the
     # managed MCP spec env so every spec writer and builtin app server gets it.
+    #
+    # The gateway's own servers (bare ``kirocrew mcp-<name>``, valid port,
+    # stderr not gateway.log) start through kiro_crew.mcp_entry.slim_server,
+    # not here. A start-up step added to this function for mcp-* commands must
+    # be added there too. test_mcp_slim_entry compares the two paths' steps it
+    # spies on and the environment each leaves; a new step that is neither of
+    # those needs a spy added there.
     if (args.command or "").startswith("mcp-"):
         for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS"):
             os.environ.setdefault(_var, "1")

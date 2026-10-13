@@ -2037,6 +2037,73 @@ def run_mcp_stdio_loop(
         sys.exit(INSTALL_PRUNED_EXIT_CODE)
 
 
+#: Backstop wait while only a worker runs. Not a latency: the wake pipe ends
+#: the wait as soon as the worker finishes (see :class:`_WakePipe`).
+_WORKER_WAIT_SECS = 1.0
+#: Poll interval when no wake pipe could be made, and while parked calls are
+#: waiting for their next ``due_at`` (their schedule is still polled).
+_POLL_SECS = 0.1
+
+
+class _WakePipe:
+    """A self-pipe that wakes the read loop's ``select`` when work finishes.
+
+    The tool worker and the deferred-step pool write one byte when they finish;
+    the loop selects on stdin AND :attr:`read_fd`, so a finished call is
+    answered at once instead of at the next poll tick. POSIX only: Windows
+    ``select`` cannot take a pipe, so its stdin-pump loop keeps the
+    _POLL_SECS tick.
+
+    Writes and close share one lock, so a worker still running after the loop
+    exits (EOF joins it with a timeout) never writes into a closed -- or
+    reused -- descriptor.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.read_fd: int | None = None
+        self._write_fd: int | None = None
+        if not platform_compat.IS_POSIX:
+            return
+        try:
+            r, w = os.pipe()
+        except OSError:
+            return
+        try:
+            os.set_blocking(r, False)
+            os.set_blocking(w, False)
+        except OSError:
+            os.close(r)
+            os.close(w)
+            return
+        self.read_fd, self._write_fd = r, w
+
+    def wake(self, *_args: Any) -> None:
+        """Never raises: a full pipe already wakes the loop. Accepts and ignores
+        a future, so it doubles as a ``Future.add_done_callback`` hook."""
+        with self._lock:
+            if self._write_fd is None:
+                return
+            with contextlib.suppress(OSError):
+                os.write(self._write_fd, b"\0")
+
+    def drain(self) -> None:
+        with self._lock:
+            if self.read_fd is None:
+                return
+            with contextlib.suppress(OSError):
+                while os.read(self.read_fd, 4096):
+                    pass
+
+    def close(self) -> None:
+        with self._lock:
+            for fd in (self.read_fd, self._write_fd):
+                if fd is not None:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+            self.read_fd = self._write_fd = None
+
+
 def _run_stdio_dispatch_loop(
     server_name: str,
     server_version: str,
@@ -2248,6 +2315,7 @@ def _run_stdio_dispatch_loop(
             set_current_caller(None)
             set_current_tenant_nonce("")
             _result_ready.set()
+            _wake.wake()
             return
         except Exception as exc:
             result = f"Error: {neutralize_markers(str(exc))}"  # not a directive: see call_tool_with_logging
@@ -2291,6 +2359,7 @@ def _run_stdio_dispatch_loop(
                 )
                 _worker_audited[0] = True
         _result_ready.set()
+        _wake.wake()
 
     def _cancel_quietly(
         deferred: DeferredTool,
@@ -3025,6 +3094,8 @@ def _run_stdio_dispatch_loop(
                 entry.step_queued = now
                 entry.step_started = 0.0  # queued; _run_step stamps the start
                 entry.stepping = _step_pool.submit(_run_step, entry)
+                # A finished step is harvested at once, not at the next tick.
+                entry.stepping.add_done_callback(_wake.wake)
             except Exception:  # noqa: BLE001 - one parked call must not end the server
                 # Same contract as the per-message guard on the read loop:
                 # whatever this entry's bookkeeping raised (a ``due_at`` that
@@ -3177,12 +3248,18 @@ def _run_stdio_dispatch_loop(
     def _next_frame(timeout: float | None) -> dict[str, Any] | _Skipped | _NoFrame | None:
         """The next stdin frame, or :data:`NO_FRAME` when *timeout* seconds
         pass with none (``None`` waits for one). A line already buffered is
-        read first: select cannot see it."""
+        read first: select cannot see it. On POSIX the wait also ends, with
+        :data:`NO_FRAME`, the moment the wake pipe fires (a worker or a step
+        finished)."""
         if _frames is None:
-            if timeout is not None and not (
-                _stdin_holds_a_line(sys.stdin) or select.select([sys.stdin], [], [], timeout)[0]
-            ):
-                return NO_FRAME
+            if timeout is not None and not _stdin_holds_a_line(sys.stdin):
+                wake_fd = _wake.read_fd
+                waits: list[Any] = [sys.stdin] if wake_fd is None else [sys.stdin, wake_fd]
+                ready = select.select(waits, [], [], timeout)[0]
+                if wake_fd is not None and wake_fd in ready:
+                    _wake.drain()
+                if not any(r is sys.stdin for r in ready):
+                    return NO_FRAME
             return _read_message(sys.stdin)
         while True:
             try:
@@ -3197,6 +3274,9 @@ def _run_stdio_dispatch_loop(
                 raise item
             return item
 
+    # Made here, right before the ``try`` that closes it, so no exit path
+    # leaks the two descriptors. The worker and step hooks above read it late.
+    _wake = _WakePipe()
     try:
         while True:
             worker_busy = _worker_thread is not None and _worker_thread.is_alive()
@@ -3208,12 +3288,25 @@ def _run_stdio_dispatch_loop(
                 # Dispatch a queued tools/call (FIFO) before reading new input.
                 req = _pending_calls.popleft()
             elif worker_busy or _deferred:
-                # Something is in flight: wait for stdin with a short timeout
-                # so the loop can also deliver the worker, step parked calls
-                # and answer pings.
+                # Something is in flight: wait for stdin with a timeout so the
+                # loop can also deliver the worker, step parked calls and
+                # answer pings. The wake pipe ends the wait the moment the
+                # worker or a step finishes; the timeout is then only a
+                # backstop, except while parked calls wait for their next
+                # ``due_at`` (polled every _POLL_SECS), and on Windows, which
+                # has no wake pipe and keeps the _POLL_SECS tick.
                 _service_deferred()
                 _maybe_report_inflight()
-                req = _next_frame(0.1)
+                if worker_busy and _result_ready.is_set():
+                    # Deliver a finished result before reading on: an EOF
+                    # read next would end the loop with it unsent.
+                    req = NO_FRAME
+                else:
+                    if _deferred or _wake.read_fd is None:
+                        timeout = _POLL_SECS
+                    else:
+                        timeout = _WORKER_WAIT_SECS
+                    req = _next_frame(timeout)
                 if isinstance(req, _NoFrame):
                     if worker_busy and _result_ready.is_set():
                         _deliver_finished_worker(1.0)
@@ -3319,3 +3412,4 @@ def _run_stdio_dispatch_loop(
                 entry.stepping.cancel()
         if _step_pool is not None:
             _step_pool.shutdown()
+        _wake.close()

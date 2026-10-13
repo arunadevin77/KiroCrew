@@ -83,7 +83,7 @@ from urllib.parse import quote
 
 from kiro_crew.config.loader import KiroCrewConfig
 from kiro_crew.config.sections import FOLDER_SORT_DEFAULT, FOLDER_SORT_MODES
-from kiro_crew.dashboard.chat_folders import (
+from kiro_crew.dashboard.folder_ownership import (
     _folder_owner_app,
     _subtree_holds_foreign_folder,
 )

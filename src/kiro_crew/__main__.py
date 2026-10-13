@@ -49,6 +49,13 @@ if __name__ == "__main__":
         print(f"kirocrew {__version__}")
         raise SystemExit(0)
 
+    # Same slim start for the stdio MCP servers as the console script's
+    # (``_bootstrap.main``): no full CLI import for a bare ``mcp-<name>``.
+    from kiro_crew.mcp_entry import run_if_slim
+
+    if run_if_slim(sys.argv[1:]):
+        raise SystemExit(0)
+
     from kiro_crew.cli import main  # noqa: E402
 
     main()
