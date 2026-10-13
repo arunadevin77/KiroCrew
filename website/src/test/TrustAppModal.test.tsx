@@ -309,6 +309,10 @@ describe('LibraryPage trust gate', () => {
     expect(screen.queryByText(THIRD_PARTY.repo)).toBeNull()
     // The raw backend string never reaches the user.
     expect(screen.queryByText(/is not trusted to run its own code/)).toBeNull()
+    // The enable path keeps the "trust and enable" label: confirming does enable.
+    const dialog = within(screen.getByRole('dialog'))
+    expect(dialog.getByRole('button', { name: `${K}.confirm` })).toBeTruthy()
+    expect(dialog.queryByRole('button', { name: `${K}.confirm_install` })).toBeNull()
   })
 
   it('grants trust for that one app and retries the enable on confirm', async () => {
@@ -484,6 +488,18 @@ describe('registry install trust gate', () => {
     expect(text).toContain(`${K}.on_cancel LaunchDarkly`)
     expect(text).not.toContain(`${K}.on_cancel_granted`)
     expect(text).not.toContain(`${K}.on_close_desktop_unsupported`)
+  })
+
+  it('labels the install-path confirm as trust only, since the install lands the app switched off', async () => {
+    // Confirming re-runs the install and nothing else, and an install leaves the
+    // app disabled, so the button must not say "and enable".
+    installFromRegistryStream.mockResolvedValue(INSTALL_DENIED())
+    renderDetailFromGet()
+    await waitFor(() => expect(modalTitle()).toBeTruthy())
+
+    const dialog = within(screen.getByRole('dialog'))
+    expect(dialog.getByRole('button', { name: `${K}.confirm_install` })).toBeTruthy()
+    expect(dialog.queryByRole('button', { name: `${K}.confirm` })).toBeNull()
   })
 
   it('grants trust then retries the INSTALL — never the enable', async () => {

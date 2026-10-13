@@ -6153,6 +6153,8 @@
         "not_reviewed": "{{productName}} référence cette application mais n'a pas examiné son code, et le nom ci-dessus vient de l'application elle-même.",
         "cancel": "Annuler",
         "confirm": "Faire confiance à cette application et l'activer",
+        "confirm_install": "Faire confiance à cette application",
+        "working_install": "Attribution de la confiance...",
         "confirm_after_failure": "Faire confiance et réessayer",
         "working": "Confiance accordée et activation...",
         "failed": "Faire confiance à « {{app}} » est ce qui l'active. Elle est maintenant de confiance, mais elle n'a pas pu être activée. Choisis Faire confiance et réessayer (cela confirme à nouveau la confiance que tu as déjà donnée, puis réessaie), ou ouvre Paramètres → Sécurité → Applications tierces pour retirer la confiance.",

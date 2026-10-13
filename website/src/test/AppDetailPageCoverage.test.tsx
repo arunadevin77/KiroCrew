@@ -553,7 +553,7 @@ describe('AppDetailPage — uncovered surfaces', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /install/i }))
     await screen.findByText(TRUST_MODAL)
-    fireEvent.click(screen.getByRole('button', { name: /trust this app and enable/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^trust this app$/i }))
 
     // The grant did not take effect, so it is withdrawn and the modal stays up.
     await waitFor(() => expect(untrustApp).toHaveBeenCalledWith(NAME))
@@ -571,7 +571,7 @@ describe('AppDetailPage — uncovered surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: /install/i }))
     expect(await screen.findByText(TRUST_MODAL)).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /trust this app and enable/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^trust this app$/i }))
 
     await waitFor(() => expect(trustApp).toHaveBeenCalledWith(NAME, TRUST_REPOSITORY))
     await waitFor(() => expect(screen.queryByText(TRUST_MODAL)).not.toBeInTheDocument())
@@ -588,7 +588,7 @@ describe('AppDetailPage — uncovered surfaces', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /install/i }))
     await screen.findByText(TRUST_MODAL)
-    fireEvent.click(screen.getByRole('button', { name: /trust this app and enable/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^trust this app$/i }))
 
     // The retry rejected, so the grant it was written for owns nothing — the
     // gate withdraws it rather than leaving it over an absent app.

@@ -6153,6 +6153,8 @@
         "not_reviewed": "{{productName}} incluye esta aplicación en su listado, pero no ha revisado su código, y el nombre de arriba lo proporciona la propia aplicación.",
         "cancel": "Cancelar",
         "confirm": "Confiar en esta aplicación y activarla",
+        "confirm_install": "Confiar en esta aplicación",
+        "working_install": "Concediendo confianza...",
         "confirm_after_failure": "Confiar y reintentar",
         "working": "Concediendo confianza y activando...",
         "failed": "Confiar en “{{app}}” es lo que la activa. Ahora es de confianza, pero no se pudo activar. Elige Confiar y reintentar (esto vuelve a confirmar la confianza que ya diste y luego reintenta), o abre Ajustes → Seguridad → Aplicaciones de terceros para quitar la confianza.",

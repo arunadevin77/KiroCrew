@@ -6153,6 +6153,8 @@
         "not_reviewed": "{{productName}} elenca questa app ma non ne ha esaminato il codice, e il nome sopra viene dall'app stessa.",
         "cancel": "Annulla",
         "confirm": "Autorizza questa app e attivala",
+        "confirm_install": "Autorizza questa app",
+        "working_install": "Autorizzazione in corso...",
         "confirm_after_failure": "Autorizza e riprova",
         "working": "Autorizzazione e attivazione in corso...",
         "failed": "Autorizzare «{{app}}» è ciò che la attiva. Ora è autorizzata, ma non è stato possibile attivarla. Scegli Autorizza e riprova (questo riconferma l'autorizzazione che hai già dato, poi riprova), oppure apri Impostazioni → Sicurezza → App di terze parti per rimuovere l'autorizzazione.",

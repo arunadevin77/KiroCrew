@@ -54,6 +54,12 @@ export type TrustAppTarget = Pick<RegistryApp, 'name' | '_registry' | 'origin'> 
   displayName?: string
   trustRepository?: string
   sessionApproval?: boolean
+  /**
+   * True when confirming re-runs the registry INSTALL rather than the enable.
+   * An install lands the app switched off (enabling is its own step), so the
+   * confirm button must not promise "and enable" on that path.
+   */
+  retryInstalls?: boolean
 }
 
 /** Mirror the backend's credential-free Git coordinate projection. */
@@ -525,11 +531,17 @@ export default function TrustAppModal({
               {i18nT('components.appstore.trustAppModal.cancel')}
             </Btn>
             <Btn primary onClick={onConfirm} disabled={pending}>
+              {/* The install path only installs: the app lands switched off, so
+                  its labels name the trust alone, never "and enable". */}
               {pending
-                ? <><Loader2 size={14} className="animate-spin" /> {i18nT('components.appstore.trustAppModal.working')}</>
+                ? <><Loader2 size={14} className="animate-spin" /> {app?.retryInstalls
+                    ? i18nT('components.appstore.trustAppModal.working_install')
+                    : i18nT('components.appstore.trustAppModal.working')}</>
                 : failed
                   ? <><ShieldAlert size={14} /> {i18nT('components.appstore.trustAppModal.confirm_after_failure')}</>
-                  : <><ShieldAlert size={14} /> {i18nT('components.appstore.trustAppModal.confirm')}</>}
+                  : <><ShieldAlert size={14} /> {app?.retryInstalls
+                      ? i18nT('components.appstore.trustAppModal.confirm_install')
+                      : i18nT('components.appstore.trustAppModal.confirm')}</>}
             </Btn>
           </>
         )

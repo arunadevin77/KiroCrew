@@ -6058,6 +6058,8 @@
         "not_reviewed": "{{productName}} listet diese App, hat ihren Code aber nicht geprüft, und der Name oben stammt von der App selbst.",
         "cancel": "Abbrechen",
         "confirm": "Dieser App vertrauen und aktivieren",
+        "confirm_install": "Dieser App vertrauen",
+        "working_install": "Vertrauen wird gewährt...",
         "confirm_after_failure": "Vertrauen und erneut versuchen",
         "working": "Vertrauen wird gewährt und aktiviert...",
         "failed": "„{{app}}“ zu vertrauen ist das, was sie einschaltet. Ihr wird jetzt vertraut, aber sie konnte nicht eingeschaltet werden. Wähle Vertrauen und erneut versuchen (das bestätigt das Vertrauen, das du schon gegeben hast, noch einmal und versucht es dann erneut), oder öffne Einstellungen → Sicherheit → Drittanbieter-Apps, um das Vertrauen zu entfernen.",

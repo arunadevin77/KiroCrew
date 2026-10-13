@@ -266,7 +266,9 @@ async function openPage(context, base, scenario) {
 async function failThroughTheModal(page, settledFooter) {
   const modal = page.locator('[role="dialog"]').filter({ hasText: /to run its own code\?/ })
   await modal.waitFor({ timeout: 15000 })
-  await modal.getByRole('button', { name: 'Trust this app and enable' }).click()
+  // The install path's confirm says "Trust this app" (an install lands the app
+  // switched off); the enable path's says "Trust this app and enable".
+  await modal.getByRole('button', { name: /^Trust this app( and enable)?$/ }).click()
   await modal.getByRole('alert').waitFor({ timeout: 15000 })
   // Settle the rollback probe + untrust round trip so the copy is final. The
   // footer is the settle signal — and the dialog's own X is also NAMED Close

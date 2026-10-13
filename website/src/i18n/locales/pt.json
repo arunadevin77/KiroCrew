@@ -6153,6 +6153,8 @@
         "not_reviewed": "O {{productName}} lista este app, mas não revisou o código dele, e o nome acima vem do próprio app.",
         "cancel": "Cancelar",
         "confirm": "Confiar neste app e ativar",
+        "confirm_install": "Confiar neste app",
+        "working_install": "Concedendo confiança...",
         "confirm_after_failure": "Confiar e tentar de novo",
         "working": "Concedendo confiança e ativando...",
         "failed": "Confiar no “{{app}}” é o que o liga. Ele agora é confiável, mas não foi possível ligá-lo. Escolha Confiar e tentar de novo (isso confirma de novo a confiança que você já deu e depois tenta outra vez), ou abra Configurações → Segurança → Apps de terceiros para remover a confiança.",

@@ -5963,6 +5963,8 @@
         "not_reviewed": "{{productName}} 只是收录了这个应用，并未审查它的代码；上面显示的名称也由应用自己提供。",
         "cancel": "取消",
         "confirm": "信任并启用此应用",
+        "confirm_install": "信任此应用",
+        "working_install": "正在信任…",
         "confirm_after_failure": "信任并重试",
         "working": "正在信任并启用…",
         "failed": "信任“{{app}}”即是启用它。此应用现已受信任，但未能启用。请选择“信任并重试”（这会重新确认你已给予的信任，然后重试），或打开“设置 → 安全 → 第三方应用”移除信任。",
