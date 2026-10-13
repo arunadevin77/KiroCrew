@@ -2775,6 +2775,33 @@ async def test_a_write_succeeds_for_a_crewmate_that_adopted_nothing(vetted, monk
         assert body["written"] == {"field": "for_you", "type": "array"}, body["written"]
 
 
+async def test_an_unadopted_conductor_writes_needs_you_to_its_own_board(vetted):
+    """A crewmate named ``kirocrew-conductor`` that adopted nothing is shown the shipped
+    page of that id, so its ``needs_you`` write lands through THIS route, and the
+    ``goal-board`` field ``asks`` is refused, as the goal-conductor skill says.
+
+    Driven off the REAL registry and instance store rather than the seam stubs above:
+    what is pinned is that this route resolves the same slug-named page the read route
+    renders.
+    """
+    async with _client("kirocrew-conductor") as c:
+        resp = await c.post(
+            WRITE_PATH,
+            json={"field": "needs_you", "value": ["approve the plan"]},
+            headers={"X-Session-Key": "dashboard:chat-1"},
+        )
+        assert resp.status == 200, await resp.text()
+        assert (await resp.json())["written"] == {"field": "needs_you", "type": "array"}
+
+        refused = await c.post(
+            WRITE_PATH,
+            json={"field": "asks", "value": {}},
+            headers={"X-Session-Key": "dashboard:chat-1"},
+        )
+        assert refused.status == 400, await refused.text()
+        assert (await refused.json())["code"] == "unknown_field"
+
+
 async def test_an_unadopted_crewmate_is_refused_when_the_registry_ships_no_default(
     vetted, monkeypatch
 ):

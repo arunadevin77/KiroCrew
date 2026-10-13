@@ -5318,8 +5318,8 @@ them in an `[OPTIONS: ...]` line or `ask_question`, never as buttons drawn in
 HTML, and keep each answer a few words long so it is read in full.
 
 **When your Dashboard tab already shows the board, do not write a board.** That
-is when a `[DASHBOARD]` block says your tab shows `goal-board` or
-`work-kanban`: those pages draw every task from the work ledger and keep
+is when a `[DASHBOARD]` block says your tab shows `goal-board`,
+`work-kanban` or `kirocrew-conductor`: those pages draw every task from the work ledger and keep
 themselves current; load the `dashboard` skill for them. Do not write the
 "Task board" widget and do not write a `task-dashboard` artifact: a second copy
 only repeats them and costs output. The reply carries only, as plain lines:
