@@ -21,6 +21,7 @@ import { parseOptions } from './protocol'
 import ErrorNotice from '../components/ErrorNotice'
 import { copyToClipboard } from '../utils/clipboard'
 import { extractToolFilePath } from '../utils/toolFilePath'
+import { deriveToolCallTitle } from '../utils/toolCallTitle'
 import { isSafePath } from '../utils/safePath'
 import { isHiddenInvisibleAssistantRow } from '../utils/invisibleText'
 import AssistantMessage, { type TurnStats } from '../pages/chat/AssistantMessage'
@@ -208,7 +209,22 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
   // text for the expanded panel or the file probe.
   const rawLabel = (message.content || '').replace(/^🔧\s*/, '').split('\n')[0]
   const purpose = typeof message.meta?.purpose === 'string' ? message.meta.purpose : ''
-  const label = purpose || rawLabel || message.role
+  // Without a purpose, the title the main chat shows by default (simplified
+  // tool names): the transport title `Running: <cmd>` is a LIVE verb, so on a
+  // finished row it would contradict the done icon. Same derivation, same
+  // persisted meta (`_tool_meta`), as ToolCallLine.
+  const metaStr = (k: string) => (typeof message.meta?.[k] === 'string' ? message.meta[k] as string : '')
+  const derivedTitle = React.useMemo(() => rawLabel ? deriveToolCallTitle({
+    title: rawLabel,
+    kind: metaStr('kind'),
+    rawInput: message.meta?.input,
+    isShell: message.meta?.is_shell === true,
+    toolName: metaStr('tool_name'),
+    mcpServer: metaStr('mcp_server'),
+  }).title : '',
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- metaStr reads message.meta
+  [rawLabel, message.meta])
+  const label = purpose || derivedTitle || rawLabel || message.role
 
   // Status icon + colour mirror the store-connected tool row so an embedded
   // transcript reads with the same visual grammar as a main session: spinner

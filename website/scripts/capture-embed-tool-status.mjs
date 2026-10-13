@@ -10,7 +10,10 @@
  *
  * Assertions:
  *  - the finished call's pill is toned done (text-ok) and does not spin;
- *  - the approval preview carries the whole command, suffix included.
+ *  - the approval preview carries the whole command, suffix included;
+ *  - the finished call is not titled with the live `Running:` verb;
+ *  - the crew chat window's list (`?surface=crew`, ChatMessageList as
+ *    CrewChatWindow mounts it) previews the whole command too.
  *
  * Usage:
  *   npx vite --host 127.0.0.1 --port 6812 --strictPort   # in another shell
@@ -78,7 +81,32 @@ if (ASSERT && preview !== LONG_COMMAND) {
   failures++
 }
 
+// The finished row's title matches the main chat's, not the live `Running:` verb.
+const pillText = ((await pill.textContent()) || '').trim()
+console.log(`[${LABEL}] finished pill label: ${JSON.stringify(pillText)}`)
+if (ASSERT && /^Running:/.test(pillText)) {
+  console.error('FAIL: finished call still titled with the live "Running:" verb')
+  failures++
+}
+
 await page.screenshot({ path: `${OUT}/${LABEL}.png`, fullPage: true })
+
+// Crew chat window: the same list + approval row, mounted as CrewChatWindow does.
+const crew = await browser.newPage({ viewport: { width: 760, height: 660 } })
+await crew.route(u => new URL(u).pathname.startsWith('/api/'), route => route.fulfill({ json: {} }))
+await crew.addInitScript(t => { window.__captureTranscript = t }, TRANSCRIPT)
+await crew.goto(`${BASE}/capture/embed-tool-status.html?theme=dark&surface=crew`, { waitUntil: 'networkidle' })
+const crewPre = crew.locator('pre').filter({ hasText: 'aws s3 sync' }).first()
+await crewPre.waitFor()
+const crewPreview = (await crewPre.textContent()) || ''
+console.log(`[${LABEL}] crew window preview: ${crewPreview.length} chars, suffix shown=${crewPreview.includes(SUFFIX)}`)
+if (ASSERT && crewPreview !== LONG_COMMAND) {
+  console.error('FAIL: crew window approval preview is not the whole command')
+  failures++
+}
+await crew.mouse.move(740, 640)
+await crew.screenshot({ path: `${OUT}/${LABEL}-crew.png`, fullPage: true })
+
 await browser.close()
 if (failures) {
   console.error(`${failures} assertion failure(s)`)

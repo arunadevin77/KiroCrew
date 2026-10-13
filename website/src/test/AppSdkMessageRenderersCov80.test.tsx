@@ -482,6 +482,15 @@ describe('ToolCallPill', () => {
     expect((screen.getByRole('button') as HTMLElement).className).toContain('text-ok')
   })
 
+  it('labels a finished shell call without the live "Running:" verb', () => {
+    render(<ToolCallPill
+      message={msg({ role: 'tool', content: '🔧 Running: npx vite build', meta: { output: 'ok' } })} running
+    />)
+    const label = (screen.getByRole('button') as HTMLElement).textContent || ''
+    expect(label).not.toMatch(/^Running:/)
+    expect(label).toContain('vite')
+  })
+
   it('treats an auto-denied call as terminal, so it never spins', () => {
     render(<ToolCallPill
       message={msg({ role: 'tool', content: '🔧 zzq' })} running autoDenied
