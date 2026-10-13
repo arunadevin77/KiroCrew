@@ -5495,7 +5495,6 @@
         "unreachable": "Couldn't reach {{name}}. Try again once it is back online.",
         "open_crew_dashboard": "Open {{name}}'s dashboard",
         "approval_elsewhere": "The agent on {{name}} is waiting for an approval this window cannot answer. Answer it on the crew's own dashboard.",
-        "stopping": "Stopping…",
         "yolo_elsewhere": "YOLO covers every session on {{name}}. Change it on the crew's own dashboard.",
         "mode_unknown": "Couldn't read the approval mode on {{name}}. Trying again…",
         "update_in_remote_crew": "Update {{name}} in Remote Crew"

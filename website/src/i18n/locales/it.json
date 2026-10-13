@@ -12129,7 +12129,6 @@
         "unreachable": "Impossibile raggiungere {{name}}. Riprova quando torna online.",
         "open_crew_dashboard": "Apri la dashboard di {{name}}",
         "approval_elsewhere": "L’agente su {{name}} attende un’approvazione a cui questa finestra non può rispondere. Rispondi nella dashboard dell’equipaggio.",
-        "stopping": "Interruzione in corso…",
         "yolo_elsewhere": "YOLO vale per ogni sessione su {{name}}. Cambialo nella dashboard della crew.",
         "mode_unknown": "Impossibile leggere la modalità di approvazione su {{name}}. Nuovo tentativo…",
         "update_in_remote_crew": "Aggiorna {{name}} in Crew remota"

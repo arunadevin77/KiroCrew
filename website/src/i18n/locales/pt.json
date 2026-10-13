@@ -12129,7 +12129,6 @@
         "unreachable": "Não foi possível alcançar {{name}}. Tente de novo quando estiver online.",
         "open_crew_dashboard": "Abrir o painel de {{name}}",
         "approval_elsewhere": "O agente em {{name}} aguarda uma aprovação que esta janela não pode responder. Responda no painel da própria equipe.",
-        "stopping": "Parando…",
         "yolo_elsewhere": "O YOLO vale para todas as sessões em {{name}}. Altere-o no painel da própria crew.",
         "mode_unknown": "Não foi possível ler o modo de aprovação em {{name}}. Tentando novamente…",
         "update_in_remote_crew": "Atualizar {{name}} em Crew remota"

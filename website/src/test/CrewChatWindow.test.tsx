@@ -304,10 +304,30 @@ describe('CrewChatWindow', () => {
     slotRow = { ...slotRow, running: true, stopping: true }
     renderWindow()
     expect(await screen.findByRole('button', { name: 'Stopping' }, PEER_ROW_WAIT)).toBeTruthy()
+    // The footer owns the Stopping line; the dock above the composer draws no second one.
+    expect(screen.getAllByText('Stopping…')).toHaveLength(1)
     const es = FakeEventSource.all[0]
     act(() => es.emit('slots', [{ ...slotRow, running: false, stopping: false, compacting: true }]))
     expect(await screen.findByTestId('compacting-indicator')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Stop generation' })).toBeNull()
+  })
+
+  it('draws the peer\'s cooperative stop as the footer\'s red line, once', async () => {
+    slotRow = { ...slotRow, running: true, stopping: true, stop_state: 'soft_pending' }
+    detail = { ...detail, running: true }
+    renderWindow()
+    const footer = await screen.findByTestId('chat-footer', {}, PEER_ROW_WAIT)
+    expect(within(footer).getByText('Stopping…').className).toContain('text-danger')
+    expect(screen.getAllByText('Stopping…')).toHaveLength(1)
+  })
+
+  it('draws the peer\'s force stop as the footer\'s killing line', async () => {
+    slotRow = { ...slotRow, running: true, stopping: true, stop_state: 'killing' }
+    detail = { ...detail, running: true }
+    renderWindow()
+    const footer = await screen.findByTestId('chat-footer', {}, PEER_ROW_WAIT)
+    expect(within(footer).getByText('Killing…').className).toContain('text-danger')
+    expect(screen.queryByText('Stopping…')).toBeNull()
   })
 
   it('shows the peer\'s context reading, with no auto-compact control of this machine', async () => {

@@ -403,7 +403,9 @@ export default function CrewChatWindow({ target, onClose = closeCrewWindow }: { 
         <ReadOnlyCodeCtx.Provider value={true}>
           <ChatMessageList messages={messages} running={displayRunning} renderers={renderers} onApprove={approve} onQuoteMessage={messageQuote.quoteMessage} />
         </ReadOnlyCodeCtx.Provider>
-        <ChatFooter running={displayRunning && !approval?.request_id} stopping={!!slotQ.data?.stopping} state={slotQ.data?.stop_state ?? ''} lastRole={messages[messages.length - 1]?.role ?? ''} />
+        {/* The footer reads the peer's turn phase from `state` and its stop
+            from `stopState`, the same two fields the local chat passes. */}
+        <ChatFooter running={displayRunning && !approval?.request_id} stopping={!!slotQ.data?.stopping} state={slotQ.data?.compacting ? 'compacting' : ''} stopState={slotQ.data?.stop_state} lastRole={messages[messages.length - 1]?.role ?? ''} />
         <div className="px-4 flex flex-col gap-3">
           {nativeApproval && <div className="text-muted mx-auto w-full" style={{ maxWidth: 'var(--mc-content-width, 900px)' }} data-testid="crew-window-approval-hint">{i18nT('pages.chat.crewWindow.approval_hint')}</div>}
           {approval?.request_id && !nativeApproval && (
@@ -452,7 +454,6 @@ export default function CrewChatWindow({ target, onClose = closeCrewWindow }: { 
           {agentMode.readFailed.agents && <ErrorNotice variant="inline" message={i18nT('components.agentSelector.roster_load_failed')} />}
           {agentMode.readFailed.mode && <ErrorNotice variant="inline" message={i18nT('pages.chat.crewWindow.mode_unknown', { name })} />}
           {!connected && <div className="text-muted">{i18nT('pages.chat.crewWindow.offline', { name })}</div>}
-          {!!slotQ.data?.stopping && <div className="text-muted text-[13px] font-mono animate-pulse">{i18nT('pages.chat.crewWindow.stopping')}</div>}
           {rewindTs && (
             <div className="flex items-center gap-2 text-muted">
               {i18nT('pages.chat.crewWindow.rewinding')}

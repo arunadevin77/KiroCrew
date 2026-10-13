@@ -12129,7 +12129,6 @@
         "unreachable": "No se pudo conectar con {{name}}. Vuelve a intentarlo cuando esté en línea.",
         "open_crew_dashboard": "Abrir el panel de {{name}}",
         "approval_elsewhere": "El agente en {{name}} espera una aprobación que esta ventana no puede responder. Respóndela en el panel propio de la tripulación.",
-        "stopping": "Deteniendo…",
         "yolo_elsewhere": "YOLO afecta a todas las sesiones de {{name}}. Cámbialo en el panel de la propia tripulación.",
         "mode_unknown": "No se pudo leer el modo de aprobación de {{name}}. Reintentando…",
         "update_in_remote_crew": "Actualizar {{name}} en Crew remoto"

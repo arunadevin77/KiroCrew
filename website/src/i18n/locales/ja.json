@@ -11777,7 +11777,6 @@
         "unreachable": "{{name}} に接続できませんでした。オンラインに戻ってから、もう一度お試しください。",
         "open_crew_dashboard": "{{name}} のダッシュボードを開く",
         "approval_elsewhere": "{{name}} のエージェントは、このウィンドウでは応答できない承認を待っています。クルー自身のダッシュボードで応答してください。",
-        "stopping": "停止中…",
         "yolo_elsewhere": "YOLO は {{name}} のすべてのセッションに適用されます。クルー自身のダッシュボードで変更してください。",
         "mode_unknown": "{{name}} の承認モードを読み取れませんでした。再試行しています…",
         "update_in_remote_crew": "リモートクルーで {{name}} を更新"

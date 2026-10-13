@@ -11953,7 +11953,6 @@
         "unreachable": "{{name}} war nicht erreichbar. Versuch es erneut, sobald es wieder online ist.",
         "open_crew_dashboard": "Dashboard von {{name}} öffnen",
         "approval_elsewhere": "Der Agent auf {{name}} wartet auf eine Genehmigung, die dieses Fenster nicht beantworten kann. Beantworte sie im Dashboard der Crew.",
-        "stopping": "Wird gestoppt…",
         "yolo_elsewhere": "YOLO gilt für jede Sitzung auf {{name}}. Ändere es im Dashboard der Crew.",
         "mode_unknown": "Der Genehmigungsmodus auf {{name}} konnte nicht gelesen werden. Neuer Versuch läuft…",
         "update_in_remote_crew": "{{name}} unter Remote-Crew aktualisieren"

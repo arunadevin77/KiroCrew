@@ -12129,7 +12129,6 @@
         "unreachable": "Impossible de joindre {{name}}. Réessaie quand il est de nouveau en ligne.",
         "open_crew_dashboard": "Ouvrir le tableau de bord de {{name}}",
         "approval_elsewhere": "L’agent sur {{name}} attend une approbation à laquelle cette fenêtre ne peut pas répondre. Réponds-y sur le tableau de bord de l’équipage.",
-        "stopping": "En cours d’arrêt…",
         "yolo_elsewhere": "YOLO s'applique à toutes les sessions de {{name}}. Modifie-le dans le tableau de bord de l'équipe.",
         "mode_unknown": "Impossible de lire le mode d'approbation sur {{name}}. Nouvelle tentative…",
         "update_in_remote_crew": "Mettre à jour {{name}} dans Crew distante"
