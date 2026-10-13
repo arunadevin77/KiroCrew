@@ -102,6 +102,7 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/wakatime/oauth/authorize", handlers.api_wakatime_oauth_authorize)
     app.router.add_get("/api/wakatime/oauth/callback", handlers.api_wakatime_oauth_callback)
     app.router.add_post("/api/wakatime/oauth/disconnect", handlers.api_wakatime_oauth_disconnect)
+    app.router.add_get("/api/wakatime/oauth/status", handlers.api_wakatime_oauth_status)
     app.router.add_get("/api/telemetry/beacon", handlers.api_beacon_status)
     app.router.add_get("/api/telemetry/collection", handlers.api_collection_status)
     app.router.add_get("/api/tailnet/status", handlers.api_tailnet_status)
