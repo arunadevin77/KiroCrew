@@ -101,15 +101,56 @@ For the full hook list see [getting-started.md](getting-started.md#app-sdk-hooks
 ## Embedded Chat
 
 `ChatEmbed` mounts Kiro Crew's native transcript and compact composer for an
-existing session. The required `slotKey` selects the session. Existing props such
-as `agent`, `placeholder`, `frameless`, `startAtBottom`, `onSend`, and
-`aboveComposer` keep their current contracts.
+existing session. The required `slotKey` selects the session.
 
 ```tsx
 import { ChatEmbed } from '@kirocrew/app-sdk'
 
 <ChatEmbed slotKey="coder-abc123" />
 ```
+
+| Prop | Type | Default | What it does |
+|---|---|---|---|
+| `slotKey` | `string` | required | The chat slot (session) the embed reads and sends to. |
+| `agent` | `string` | `''` | Agent name sent with each `POST /api/chat`, and shown in the title strip. Ignored by `onSend`. |
+| `placeholder` | `string` | localized "Message..." | Composer placeholder while the session is idle. While a turn runs the composer shows its own "agent is working" text instead. |
+| `frameless` | `boolean` | `false` | Drops the outer border, rounding, background and title strip, and makes the input row transparent, so a host card can hold the chat flush. |
+| `startAtBottom` | `boolean` | `false` | Opens scrolled to the newest row and stays pinned there as rows arrive, until the user scrolls up; shows a jump-to-bottom button while unpinned. Without it the embed opens at the top and smooth-scrolls to each new message. |
+| `onSend` | `(message: string) => Promise<unknown> \| void` | none | Replaces `POST /api/chat` as the send path. Use it when the app owns its slots: the generic endpoint creates a missing slot with no app ownership and no project. |
+| `aboveComposer` | `ReactNode` | none | Content placed in normal flow directly above the composer, such as a docked quote bar. |
+| `composerMaxHeight` | `number` (px) | `240` | Cap for the composer's auto-grow (see below). |
+
+### Required permissions and limitations
+
+The embed calls the Gateway through the host's scoped `useAppApi()` client, so
+the app must grant `/api/chat` in its `permissions.api` (a builtin host passes it
+in `AppApiProvider`'s `allowedApiPaths`). That one entry covers every call the
+embed makes:
+
+- `GET /api/chat/slots/{slot}?limit=N` — the transcript poll.
+- `POST /api/chat` — sending, unless `onSend` is supplied.
+- `POST /api/chat/slots/{slot}/approve` — Approve, Reject and Trust on a tool approval.
+
+Without the grant the scoped client throws before any request is sent: the
+transcript shows its load error, and sending and approving fail. Supplying
+`onSend` removes only the send call; the poll and approvals still need the grant.
+
+What the embed does not do today, one line each:
+
+- No live stream. It polls the slot every 1 s while a turn runs and every 5 s
+  when idle, reading the newest 200 rows; "load earlier" widens that by 200 rows
+  a press, up to 500. A reply appears in poll-sized steps, and the `POST /api/chat`
+  response stream is discarded.
+- No Stop control. A running turn cannot be cancelled from the embed.
+- No attachments. The composer takes text only.
+- No reasoning display. Model thinking is sent only as the `chat_thinking`
+  WebSocket event, which the poll never sees.
+- Trust is a lasting grant, not a one-shot approval. Choosing Trust on an
+  approval card approves the call and sets the session's approval policy to
+  auto-approve, so later tool calls in that session run without asking until
+  the policy is changed.
+
+### Composer
 
 The composer accepts multiple lines. `Enter` sends the draft, `Shift+Enter`
 inserts a line break, and an Enter used to commit an input method editor (IME)
