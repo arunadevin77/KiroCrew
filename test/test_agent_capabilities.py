@@ -810,6 +810,68 @@ def test_project_parent_is_pinned_and_never_falls_back(editor, monkeypatch):
     assert spec_for(home, specs)["prompt"] == "project parent"
 
 
+def _use_workspace_project(home, monkeypatch, project):
+    config = json.loads((home / "config.json").read_text())
+    config["workspaces"] = {"default": {"dir": str(project)}}
+    (home / "config.json").write_text(json.dumps(config))
+    monkeypatch.setattr(
+        "kiro_crew.agent_capabilities.default_project_dir", loader.default_project_dir
+    )
+    loader._invalidate_config_cache()
+
+
+def test_global_parent_starts_from_any_project_that_does_not_shadow_it(
+    editor, tmp_path, monkeypatch
+):
+    service, home, specs, parent = editor
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _use_workspace_project(home, monkeypatch, workspace)
+    save(service, enroll=True)
+    saved = prepare_member_capabilities("A", workspace)
+    folder = tmp_path / "folder-project"
+    folder.mkdir()
+    other = prepare_member_capabilities("A", folder)
+    assert other["template"] == saved["template"]
+    assert other["revision"] == saved["revision"]
+    assert prepare_member_capabilities("A", None)["revision"] == saved["revision"]
+
+
+def test_project_that_shadows_a_global_parent_refuses_the_start(editor, tmp_path, monkeypatch):
+    service, home, specs, parent = editor
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _use_workspace_project(home, monkeypatch, workspace)
+    save(service, enroll=True)
+    folder = tmp_path / "folder-project"
+    (folder / ".kiro" / "agents").mkdir(parents=True)
+    (folder / ".kiro" / "agents" / "parent.json").write_text(
+        json.dumps({**parent, "prompt": "folder parent"})
+    )
+    with pytest.raises(CapabilityError, match="^project_identity_changed$"):
+        prepare_member_capabilities("A", folder)
+    assert prepare_member_capabilities("A", workspace)["revision"]
+
+
+def test_project_parent_refuses_a_start_from_another_project(editor, tmp_path, monkeypatch):
+    service, home, specs, parent = editor
+    workspace = tmp_path / "workspace"
+    (workspace / ".kiro" / "agents").mkdir(parents=True)
+    (workspace / ".kiro" / "agents" / "parent.json").write_text(
+        json.dumps({**parent, "prompt": "project parent"})
+    )
+    _use_workspace_project(home, monkeypatch, workspace)
+    save(service, enroll=True)
+    assert prepare_member_capabilities("A", workspace)["revision"]
+    folder = tmp_path / "folder-project"
+    folder.mkdir()
+    with pytest.raises(CapabilityError, match="^project_identity_changed$"):
+        prepare_member_capabilities("A", folder)
+    (workspace / ".kiro" / "agents" / "parent.json").unlink()
+    with pytest.raises(CapabilityError, match="^parent_identity_changed$"):
+        prepare_member_capabilities("A", workspace)
+
+
 @pytest.mark.parametrize("junk", ["{", "[]", "null"])
 def test_unrelated_invalid_spec_does_not_block_resolution(editor, junk):
     service, _, specs, _ = editor

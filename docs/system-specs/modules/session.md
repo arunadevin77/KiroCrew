@@ -311,8 +311,12 @@ Enrolled members prepare capabilities only when allocating a new runtime.
 verifies the saved materialization off-loop before provider construction. It
 passes the immutable template explicitly while preserving the canonical member,
 member memory binding, history key, caller model and approval policy. An explicit
-or resumed cwd wins; otherwise the member's configured workspace is used. A cwd
-that disagrees with the saved Parent identity refuses startup.
+or resumed cwd wins; otherwise the member's configured workspace is used. The
+cwd may name a different project than the one the capabilities were saved in
+(a folder's project directory, for example). Startup is refused with
+`project_identity_changed` only when that project resolves a different Parent:
+a project-scoped Parent belongs to its own project, and a global Parent stays the
+saved Parent until the cwd's project shadows its name with a project template.
 When no caller model is supplied, allocation resolves the member's model pin by
 its canonical alias, including members that have not enrolled capabilities. The id
 it hands the provider is stamped on the registered session, because the allocation

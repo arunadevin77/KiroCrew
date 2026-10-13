@@ -544,6 +544,32 @@ async def test_actual_runtime_cwd_must_match_saved_project(world):
 
 
 @pytest.mark.asyncio
+async def test_new_chat_in_another_project_starts_on_the_same_global_parent(world, tmp_path):
+    """A folder's project directory is the new chat's own project.
+
+    The member saved its capabilities in its workspace; a fresh chat in a folder
+    bound to a different directory resolves the same global Parent there, so
+    it starts in that directory with the saved version applied.
+    """
+    service, cfg, factory, _, project, _, _ = world
+    await asyncio.to_thread(save, service, enroll=True)
+    folder = tmp_path / "folder-project"
+    folder.mkdir()
+    manager = SessionManager(cfg, provider_factory=factory)
+    try:
+        provider, is_new, _ = await manager.get_or_create(
+            "dashboard:A-folder", agent="A", cwd=str(folder)
+        )
+        assert is_new and Path(provider.cwd) == folder.resolve()
+        prepared = await asyncio.to_thread(prepare_member_capabilities, "A", folder)
+        assert prepared["revision"]
+        assert manager.capability_runtime_view("A", prepared["revision"])["status"] == "applied"
+        manager.release("dashboard:A-folder")
+    finally:
+        await manager.close_all(drain_timeout=0)
+
+
+@pytest.mark.asyncio
 async def test_enrolled_member_without_cwd_uses_its_configured_workspace(world):
     service, cfg, factory, _, project, _, _ = world
     await asyncio.to_thread(save, service, enroll=True)

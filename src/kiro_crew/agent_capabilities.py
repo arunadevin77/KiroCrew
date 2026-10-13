@@ -1578,8 +1578,26 @@ def require_unmanaged_template(name: str) -> None:
         raise CapabilityError("capabilities_editor_required")
 
 
+def _parent_identity(descriptor: dict) -> dict:
+    """The Parent file a descriptor names, without the project it was resolved from.
+
+    ``_source`` records the project it searched in, but a global Parent is the
+    same file from every project that does not shadow its name, so that field
+    alone never makes two resolutions different Parents. Name, scope, source and
+    resolved path still must all match.
+    """
+    return {key: value for key, value in descriptor.items() if key != "project"}
+
+
 def prepare_member_capabilities(member: str, project_dir: str | Path | None = None) -> dict:
-    """Read-only startup seam; success proves saved bytes, never runtime loading."""
+    """Read-only startup seam; success proves saved bytes, never runtime loading.
+
+    *project_dir* is the chat's own project. It may differ from the project the
+    capabilities were saved in: the start is refused only when that project
+    resolves a different Parent than the reviewed one (``project_identity_changed``).
+    A project-scoped Parent belongs to its own project; a global Parent stays
+    the reviewed Parent until a project template shadows its name.
+    """
     cfg = KiroCrewConfig.load()
     binding = cfg.agents.get(member)
     if binding is None:
@@ -1588,7 +1606,9 @@ def prepare_member_capabilities(member: str, project_dir: str | Path | None = No
     if intent is None:
         return {"template": binding.kiro_agent, "revision": "", "status": "unverified"}
     project = str(Path(project_dir).resolve()) if project_dir else ""
-    if project != intent["parent"]["project"]:
+    saved_parent = intent["parent"]
+    other_project = project != saved_parent["project"]
+    if other_project and saved_parent["scope"] != "global":
         raise CapabilityError("project_identity_changed")
     if intent.get("status") != "saved":
         raise CapabilityError("materialization_pending")
@@ -1597,9 +1617,11 @@ def prepare_member_capabilities(member: str, project_dir: str | Path | None = No
     lineage = agent_state.get_fork_info(binding.kiro_agent, strict=True)
     if not lineage or lineage["private_to"] != member:
         raise CapabilityError("foreign_private_copy")
-    _, _, descriptor = _source(intent["parent"]["name"], project)
-    if descriptor != intent["parent"]:
-        raise CapabilityError("parent_identity_changed")
+    _, _, descriptor = _source(saved_parent["name"], project)
+    if _parent_identity(descriptor) != _parent_identity(saved_parent):
+        raise CapabilityError(
+            "project_identity_changed" if other_project else "parent_identity_changed"
+        )
     _, spec, own = _source(binding.kiro_agent, project, allow_private=True)
     if own["scope"] != "global":
         raise CapabilityError("private_template_shadowed")
