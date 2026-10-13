@@ -3048,18 +3048,25 @@ def _pid_gone(pid: int, deadline_s: float = 5.0) -> bool:
 
 
 def _tree_script(pid_file: Path) -> list[str]:
-    """A child that starts a grandchild and records its pid and start identity."""
+    """A child that starts a grandchild and records its pid and start identity.
+
+    The record is written to a temporary file and renamed into place, so a
+    reader that sees ``pid_file`` exist always sees the whole record.
+    """
     import sys
 
+    tmp_file = pid_file.with_name(pid_file.name + ".tmp")
     code = (
-        "import subprocess, sys, time\n"
+        "import os, subprocess, sys, time\n"
         "from kiro_crew import platform_compat\n"
         "g = subprocess.Popen(\n"
         "    [sys.executable, '-c', 'import time; time.sleep(60)'],\n"
         f"    cwd={str(pid_file.parent)!r},\n"
         ")\n"
         "start_id = platform_compat.get_process_start_id(g.pid)\n"
-        f"open({str(pid_file)!r}, 'w').write(f'{{g.pid}}:{{start_id or \"\"}}')\n"
+        f"with open({str(tmp_file)!r}, 'w') as f:\n"
+        "    f.write(f'{g.pid}:{start_id or \"\"}')\n"
+        f"os.replace({str(tmp_file)!r}, {str(pid_file)!r})\n"
         "time.sleep(60)\n"
     )
     return [sys.executable, "-c", code]
