@@ -6,9 +6,9 @@ the registry's only gate. A page that renders on a crewmate's Dashboard tab runs
 own script against that crewmate's task titles and summaries inside a frame that can
 navigate itself, so it comes from one of two places a person put it: this directory,
 which went through review, or the operator's own folder (see "An operator's own page"
-below). Twelve ship: the first four are below, five more are in "The round-7 set"
-further down, then `office` in "A desk that ships decks and mail" and the last two in
-"The two views".
+below). Thirteen ship: the first four are below, five more are in "The round-7 set"
+further down, then `office` in "A desk that ships decks and mail", two in
+"The two views", and `kirocrew-conductor` in "A page named for its crewmate".
 
 | id | folds it reads | what it answers |
 |---|---|---|
@@ -17,7 +17,8 @@ further down, then `office` in "A desk that ships decks and mail" and the last t
 | `work-kanban` | `work` | that same board as columns, including the one waiting on the conductor's own verdict |
 | `session-ledger` | `ledger` | what a long-running session is carrying, and what it would resume from |
 
-`project-report` is the DEFAULT: a crewmate that never adopted a template renders it,
+`project-report` is the DEFAULT: a crewmate that never adopted a template, and has no
+page named for it (see "A page named for its crewmate"), renders it,
 so the first thing anybody sees is the report rather than an empty frame
 (`kiro_crew.dashboard_templates.instance.DEFAULT_TEMPLATE_ID`). The three round-3 pages
 it replaced -- `crewmate-overview`, `work-map`, `spend-and-tools` -- were each one slice
@@ -310,3 +311,23 @@ session from -- the same pair the card-action route takes as lookup keys -- and 
 the key. A live click-through needs a host message and handler, which is a host change
 rather than a page one. `test_dashboard_template_views.py` asserts neither page names
 `worker_session_key` or binds a `slot`.
+
+## A page named for its crewmate
+
+| id | folds it reads | the question it answers | agentic |
+|---|---|---|---|
+| `kirocrew-conductor` | `work`, `panel` | what is my conductor running, and what does it need from me | `needs_you` |
+
+A crewmate that adopted nothing gets the page whose id is its own slug, when one ships,
+and `project-report` otherwise (`instance.default_template_id`). This is the crew
+panel's rule that a template named after a crew is that crew's view, so a crewmate
+named like a shipped page gets that page. No page here may be named `default`: a
+crewmate can be.
+
+`kirocrew-conductor` is the conductor's task board. Its tasks, states, goal and round
+come from the `work` fold, bound the way `goal-board` binds them, so the board is
+current even when the conductor publishes nothing. `needs_you` is the conductor's own
+list of lines the person must act on; tasks whose worker asked or is stuck join it from
+the record. `note` is the conductor's last `panel_publish`, read from its own record in
+the `panel` fold, and its `next` line is drawn under a tag that says
+the crewmate wrote it.

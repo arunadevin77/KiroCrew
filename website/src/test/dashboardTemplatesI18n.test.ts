@@ -43,6 +43,7 @@ function decoded(id: string) {
  * the locale shows the English one under zh-CN and fails here.
  */
 const PROBES: Record<string, { en: string; zh: string }> = {
+  'kirocrew-conductor': { en: 'No tasks on this board yet.', zh: '\u770b\u677f\u4e0a\u8fd8\u6ca1\u6709\u4efb\u52a1\u3002' },
   'goal-board': { en: 'No item on this board yet.', zh: '\u770b\u677f\u4e0a\u8fd8\u6ca1\u6709\u4efb\u4f55\u4e8b\u9879\u3002' },
   'project-report': {
     en: 'No workstream yet. Nothing needs you, and nothing has been spent.',
@@ -109,8 +110,8 @@ function mount(id: string, locale: string | undefined) {
 }
 
 describe('built-in dashboard templates pick their words by the reader locale', () => {
-  it('finds all twelve built-ins, so the cases below are not over an empty list', () => {
-    expect(IDS).toHaveLength(12)
+  it('finds all thirteen built-ins, so the cases below are not over an empty list', () => {
+    expect(IDS).toHaveLength(13)
   })
 
   it('labels the project-report All pill in the reader language', () => {

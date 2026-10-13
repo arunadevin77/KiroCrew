@@ -325,8 +325,10 @@ _MEMBER_DASHBOARD_ITEM = """
    lists its fields, `dashboard_types` says which folds exist and what each one holds so
    you read a number from a real path instead of guessing one, and `dashboard_write`
    fills the fields that are yours. Anything a person must ACT on goes into
-   `panel_publish` and those fields, not only into your reply — the tab is what they
-   read when they are not reading this thread. To change the PAGE itself, load the
+   `panel_publish` and those fields, not only into your reply — the Dashboard tab is
+   what they read when they are not reading this thread. `panel_publish` shows only on
+   a page that reads it, such as `kirocrew-conductor`; a needs-you item there goes into
+   the page's agentic field. To change the PAGE itself, load the
    `dashboard` skill and follow it: `dashboard_templates` to search, `dashboard_preview`
    to stage one, `dashboard_apply` once they say yes, `dashboard_rollback` to go back.
    ALWAYS show the preview link and ask first — the page is the reader's to approve, and

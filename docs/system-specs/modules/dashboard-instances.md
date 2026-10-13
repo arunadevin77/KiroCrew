@@ -75,6 +75,11 @@ after it landed. The two need opposite answers from a human -- one is a fresh cr
 the other is a dashboard that stopped working -- so a 404, or one word for both, would
 hide the second behind the first.
 
+An `empty` crewmate is still SHOWN a page, from `default_instance(slug)`: the shipped page
+whose id is the crewmate's slug, else `DEFAULT_TEMPLATE_ID`. Only shipped pages match by
+name; an operator's page never does. The read route and the `[DASHBOARD]` turn block both
+resolve through it, and nothing is written. No shipped page may be named `default`.
+
 `stale` covers two cases with different sentences: the template moved ahead of the copy,
 and the template left the registry. Nothing is missing from the copy in either case --
 it still renders -- which is exactly what the frame's stale band says.

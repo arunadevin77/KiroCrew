@@ -67,6 +67,7 @@ EXPECTED_IDS = frozenset(
     {
         "flow",
         "goal-board",
+        "kirocrew-conductor",
         "office",
         "org-chart",
         "pr-watch",

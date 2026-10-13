@@ -54,7 +54,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, Iterator, Mapping
+from typing import Any, Final, Iterable, Iterator, Mapping
 from urllib.parse import quote, urlencode
 
 from kiro_crew import dashboard_frame, pinned_fs
@@ -107,6 +107,7 @@ __all__ = [
     "adopt",
     "apply_preview",
     "default_instance",
+    "default_template_id",
     "discard_preview",
     "edit",
     "history",
@@ -474,8 +475,28 @@ def _empty(slug: str, reason: str) -> Instance:
     )
 
 
+def default_template_id(slug: str, known: Iterable[str]) -> str | None:
+    """The page an unadopted crewmate named *slug* gets, out of the ids in *known*.
+
+    The page whose id IS the slug, when a shipped page has that id, and
+    :data:`DEFAULT_TEMPLATE_ID` otherwise. This is the crew panel's rule that a
+    template named after a crew is that crew's view, side effect included: a crewmate
+    named like a shipped page gets that page. The slug is only ever compared against
+    ids the catalog already loaded, and never names a directory.
+    """
+    ids = set(known)
+    if slug and slug in ids:
+        return slug
+    return DEFAULT_TEMPLATE_ID if DEFAULT_TEMPLATE_ID in ids else None
+
+
 def default_instance(slug: str) -> Instance | None:
-    """:data:`DEFAULT_TEMPLATE_ID` as an UNADOPTED instance, or ``None`` if it is absent.
+    """The default page for *slug* as an UNADOPTED instance, or ``None`` if it is absent.
+
+    The page is :func:`default_template_id`'s pick: one named for the crewmate, else
+    :data:`DEFAULT_TEMPLATE_ID`. Both the read route and the ``[DASHBOARD]`` turn
+    block resolve through here, so the page a reader sees and the page the crewmate
+    is told about are one page.
 
     What a crewmate renders before it adopts anything. Deliberately not part of
     :func:`read`, which answers for the STORED record and nothing else: a fresh read
@@ -489,9 +510,12 @@ def default_instance(slug: str) -> Instance | None:
     Nothing is persisted either, which is the point -- a later version of the default
     template reaches every crewmate that never adopted one, with no migration.
     """
-    try:
-        entry = catalog.load_one(DEFAULT_TEMPLATE_ID)
-    except catalog.UnknownTemplate:
+    by_id = catalog.list_templates().by_id
+    # Shipped pages only: an operator's page is adopted by a person, never picked up
+    # because its folder name happens to match a crewmate's slug.
+    shipped = [tid for tid, e in by_id.items() if e.origin == catalog.BUILTIN_SOURCE]
+    template_id = default_template_id(slug, shipped)
+    if template_id is None:
         # A build that shipped the loader without the templates, which is the quiet
         # failure the packaging gates exist for. The caller's own empty state is the
         # right answer here, so this is reported and not raised.
@@ -499,6 +523,7 @@ def default_instance(slug: str) -> Instance | None:
             "dashboard: the default template %r is not in the registry", DEFAULT_TEMPLATE_ID
         )
         return None
+    entry = by_id[template_id]
     return Instance(
         slug=slug,
         instance_version=0,
