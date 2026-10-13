@@ -1845,6 +1845,13 @@ def test_a_written_value_reaches_the_real_default_page():
             },
         ),
     )
+    # The `panel` fold as a slot nobody published on renders it: an empty record and
+    # no owners. The page reads it as an empty object, which resolves.
+    feed._cells["panel"] = dashboard_feed._Cell()
+    feed._accept(
+        "panel",
+        SimpleNamespace(revision=1, seq=7, value={"template": "", "data": {}, "owners": {}}),
+    )
     read = feed.read(shipped, {"fields": {"for_you": {"value": written}}})
     assert read.fields["for_you"] == written, "the written value does not reach the page"
     assert "for_you" not in read.missing, "a written field is still reported absent"

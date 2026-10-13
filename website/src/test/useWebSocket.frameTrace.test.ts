@@ -990,6 +990,7 @@ const EXPECTED_FRAMES: Record<string, string[]> = {
   ],
   "panel_published": [
     'query invalidateQueries ["member-panel","crew"]',
+    'query invalidateQueries ["member-dashboard","crew"]',
   ],
   "notification ack, unack and clear": [
     'action notifications/ackNotificationByTs "1"',

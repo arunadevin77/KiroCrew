@@ -252,7 +252,7 @@ async def test_a_live_dashboard_comes_back_with_its_values_filled_in(monkeypatch
     from kiro_crew.crew_log import projection
 
     class FakeFeed:
-        def __init__(self, slot, unit=""):
+        def __init__(self, slot, unit="", panel_record=None):
             self.slot = slot
 
         def subscribe(self, manifest):
@@ -384,7 +384,7 @@ async def test_a_stale_copy_is_still_composed_with_its_values(monkeypatch, tmp_p
     from kiro_crew import dashboard_feed
 
     class FakeFeed:
-        def __init__(self, slot, unit=""):
+        def __init__(self, slot, unit="", panel_record=None):
             self.slot = slot
 
         def subscribe(self, manifest):

@@ -333,6 +333,25 @@ async def test_a_publish_lands_on_the_callers_own_crew(vetted):
         assert folded["publishes"] == 1
 
 
+async def test_the_fold_a_page_reads_carries_the_scrubbed_publish_not_the_raw_body(vetted):
+    """A dashboard page binds the ``panel`` fold, so the fold must hold what the
+    publish path scrubbed, never the body the caller sent."""
+    # Assembled at runtime so the diff carries no credential-shaped literal.
+    token = "ghp" + "_" + "ZXAMPLEzxampleZXAMPLEzxampleZXAMPLE12"
+    _unit_for(CREW)
+    async with _client() as c:
+        resp = await c.post(
+            "/api/agent-panel/publish",
+            json={"data": {"note": f"fetched with {token}"}, "title": f"t {token}"},
+            headers={"X-Session-Key": "dashboard:chat-1"},
+        )
+        assert resp.status == 200, await resp.text()
+    folded = _folded()
+    assert folded is not None, "the publish recorded no history"
+    assert token not in json.dumps(folded), "the fold carries the raw publish body"
+    assert "fetched with" in folded["data"]["note"]
+
+
 async def test_a_publish_keys_on_the_crews_persisted_member_id(vetted):
     """A publish must address the crew the way every READ of it does.
 

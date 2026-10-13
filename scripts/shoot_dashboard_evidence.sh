@@ -109,4 +109,22 @@ shoot dyndash-report-one-workstream-light.png \
 shoot dyndash-report-empty-wide.png   "$F/sample_workstreams-empty.json" --width 1200 --theme dark
 shoot dyndash-report-empty-narrow.png "$F/sample_workstreams-empty.json" --width 430  --theme dark
 
+# ---- what the crewmate published, drawn as text under its own label ------------
+shoot dyndash-report-published-wide-dark.png \
+  "$F/sample_workstreams.json" --width 1200 --theme dark --crop ".pr-pub"
+shoot dyndash-report-published-wide-light.png \
+  "$F/sample_workstreams.json" --width 1200 --theme light --crop ".pr-pub"
+shoot dyndash-report-published-narrow-dark.png \
+  "$F/sample_workstreams.json" --width 430 --theme dark --crop ".pr-pub"
+shoot dyndash-report-published-only-wide-dark.png \
+  "$F/sample_workstreams-published-only.json" --width 1200 --theme dark
+shoot dyndash-report-published-only-wide-light.png \
+  "$F/sample_workstreams-published-only.json" --width 1200 --theme light
+shoot dyndash-report-published-only-narrow-dark.png \
+  "$F/sample_workstreams-published-only.json" --width 430 --theme dark
+shoot dyndash-report-published-busy-wide-dark.png \
+  "$F/sample_workstreams.json" --width 1200 --theme dark
+shoot dyndash-report-published-busy-narrow-light.png \
+  "$F/sample_workstreams.json" --width 430 --theme light
+
 echo "all shots written to $OUT"

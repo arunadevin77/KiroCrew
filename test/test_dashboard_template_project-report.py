@@ -862,3 +862,31 @@ class TestTheAgentPicksTheLanguage:
             "undo",
         ):
             assert f"W('{key}')" in script, f"{key} is not read from ui_words"
+
+
+#: Every way a script can turn a string into markup. The page draws what a crewmate
+#: published, which nothing but the publish scrubber has read, so a value must reach
+#: the DOM as text.
+HTML_SINKS = (
+    "innerHTML",
+    "outerHTML",
+    "insertAdjacentHTML",
+    "document.write",
+    "DOMParser",
+    "createContextualFragment",
+    "srcdoc",
+)
+
+
+def test_the_page_has_no_html_sink(loaded: tuple[Any, str]) -> None:
+    _, html = loaded
+    used = [sink for sink in HTML_SINKS if sink in html]
+    assert not used, f"{TEMPLATE_ID} can build markup from a value through {used}"
+
+
+def test_the_published_field_reads_the_crewmates_own_panel_data(loaded: tuple[Any, str]) -> None:
+    manifest, _ = loaded
+    spec = manifest.fields["published"]
+    assert spec.type == "object"
+    assert (spec.fold, spec.path) == ("panel", "data")
+    assert not spec.agentic, "a publish is the crewmate's record, not an agentic write"

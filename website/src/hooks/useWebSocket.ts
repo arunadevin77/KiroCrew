@@ -351,6 +351,8 @@ export function useWebSocket() {
             if (slug) {
               queryClient.invalidateQueries({ queryKey: ['member-panel', slug] })
             }
+            // The crewmate's dashboard page reads the same publish, so it re-reads too.
+            handleDashboardMoved(queryClient, data)
             break
           }
           case 'dashboard_value_written':

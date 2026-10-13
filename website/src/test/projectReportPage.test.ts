@@ -1114,4 +1114,125 @@ describe('project-report: the page the gateway ships', () => {
       expect(ownButton()).toBe('Write my own')
     })
   })
+
+  // ------------------------------------------------- what the crewmate published
+  describe('the published block', () => {
+    const PANEL = JSON.parse(
+      readFileSync(
+        resolve(__dirname, '../../../test/fixtures/dashboard_templates/sample_panel.json'),
+        'utf-8',
+      ),
+    ).folds.panel.value
+    const published = PANEL.data as Record<string, unknown>
+    const card = () => document.querySelector('#pr-published-host .pr-pub')
+
+    it('draws every published key as text, each shape its own way', () => {
+      mount({ items: [], published })
+      const node = card()
+      expect(node, 'no published block was drawn').not.toBeNull()
+      expect(text('#pr-published-host .pr-card-t')).toBe('Release watch')
+      // A short scalar is a tile.
+      const tiles = all('#pr-published-host .pr-pub-tile').map((t) => t.textContent)
+      expect(tiles).toEqual(['phaserollout', 'open rulings2', 'healthyyes'])
+      // A long string is a paragraph.
+      expect(text('#pr-published-host .pr-pub-prose')).toContain('canary to settle')
+      // An array of objects is a table, columns unioned across rows.
+      const heads = all('#pr-published-host table.pr-pub-t th').map((t) => t.textContent)
+      expect(heads).toEqual(['name', 'state', 'hosts'])
+      expect(all('#pr-published-host table.pr-pub-t td').map((t) => t.textContent)).toContain('canary')
+      // An array of scalars is a list.
+      expect(all('#pr-published-host ul.pr-pub-l li').map((t) => t.textContent)).toEqual([
+        'canary alarm under review',
+        'one host failed its health check',
+      ])
+      // A nested object is key/value rows.
+      expect(all('#pr-published-host dl.pr-pub-kv dt').map((t) => t.textContent)).toEqual([
+        'rollout',
+        'approval',
+      ])
+      // Published order is kept: the section headings follow the keys.
+      expect(all('#pr-published-host .pr-pub-k').map((t) => t.textContent)).toEqual([
+        'summary',
+        'regions',
+        'blockers',
+        'roles',
+      ])
+    })
+
+    it('says the crewmate wrote it', () => {
+      mount({ items: [], published })
+      expect(text('#pr-published-host .pr-agent')).toBe('crewmate wrote this')
+      expect(text('[data-dashboard-field="published"]')).toBe('a board')
+    })
+
+    it('draws markup in a value as text, never as an element', () => {
+      const hostile = '<img src=x onerror="window.__pwned=1"><b>bold</b>'
+      mount({ items: [], published: { note: hostile, rows: [{ cell: hostile }], list: [hostile] } })
+      expect(document.querySelector('#pr-published-host img')).toBeNull()
+      expect(document.querySelector('#pr-published-host b')).toBeNull()
+      expect(card()?.textContent).toContain('<img src=x')
+    })
+
+    it('is hidden when the crewmate never published', () => {
+      for (const value of [undefined, {}, [], 'text']) {
+        mount({ items: [], published: value })
+        expect(card(), `a block was drawn for ${JSON.stringify(value)}`).toBeNull()
+        expect(document.getElementById('pr-published-host')?.childNodes.length).toBe(0)
+      }
+    })
+
+    it('leaves when a refresh drops the publish', () => {
+      mount({ items: [], published })
+      expect(card()).not.toBeNull()
+      refresh({ items: [], published: {} })
+      expect(card()).toBeNull()
+    })
+
+    it('says yes and no in the reader\'s language', () => {
+      mount({ items: [], published: { healthy: true, done: false } }, { locale: 'zh-CN' })
+      const tiles = all('#pr-published-host .pr-pub-tile dd').map((t) => t.textContent)
+      expect(tiles).toEqual(['\u662f', '\u5426'])
+    })
+
+    it('leaves the footer clause out when nothing was published', () => {
+      mount({ items: [board([task()])] })
+      expect((document.getElementById('pr-note-pub') as HTMLElement).style.display).toBe('none')
+      refresh({ items: [board([task()])], published })
+      expect((document.getElementById('pr-note-pub') as HTMLElement).style.display).toBe('')
+    })
+
+    it('caps a long table and says so', () => {
+      const rows = Array.from({ length: 150 }, (_, i) => ({ n: i }))
+      mount({ items: [], published: { rows } })
+      expect(all('#pr-published-host table.pr-pub-t tr')).toHaveLength(101)
+      expect(text('#pr-published-host .pr-pub-note')).toBe('showing 100 of 150')
+    })
+
+    it('says when it drops columns', () => {
+      const row = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`k${i}`, i]))
+      mount({ items: [], published: { rows: [row] } })
+      expect(all('#pr-published-host table.pr-pub-t th')).toHaveLength(20)
+      expect(text('#pr-published-host .pr-pub-note')).toBe('columns capped at 20')
+    })
+
+    it('says once that only a publish is shown, with no zero counters above it', () => {
+      const HINT = 'Below is what this crewmate last published.'
+      mount({ items: [], published })
+      expect(document.body.textContent).toContain(HINT)
+      expect(document.body.textContent).not.toContain('No workstream yet.')
+      expect((document.getElementById('pr-pills') as HTMLElement).style.display).toBe('none')
+      expect((document.getElementById('pr-sentence') as HTMLElement).style.display).toBe('none')
+      // With no publish the page is the ordinary empty page, counters included.
+      mount({ items: [] })
+      expect(document.body.textContent).not.toContain(HINT)
+      expect((document.getElementById('pr-pills') as HTMLElement).style.display).toBe('')
+    })
+
+    it('brings the counters back once tracked work arrives', () => {
+      mount({ items: [], published })
+      refresh({ items: [board([task()])], published })
+      expect((document.getElementById('pr-pills') as HTMLElement).style.display).toBe('')
+      expect((document.getElementById('pr-sentence') as HTMLElement).style.display).toBe('')
+    })
+  })
 })

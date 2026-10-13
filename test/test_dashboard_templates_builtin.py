@@ -56,7 +56,8 @@ FIXTURE = FIXTURES / "pod_folds.json"
 #: file -- delete the line and the fold is demanded from the capture again.
 #:
 #: ``workstreams`` is newer than the capture, so no session in it served the fold.
-SAMPLED_FOLDS: tuple[str, ...] = ("workstreams",)
+#: ``panel`` was never in it: the capture's session called no ``panel_publish``.
+SAMPLED_FOLDS: tuple[str, ...] = ("workstreams", "panel")
 
 #: Built-ins the repo ships. Named rather than discovered, so DELETING one fails here
 #: instead of shrinking the matrix to nothing: a parametrisation over a directory listing

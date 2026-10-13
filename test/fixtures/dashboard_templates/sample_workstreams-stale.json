@@ -655,6 +655,23 @@
         ],
         "last_entry_at": "2026-10-04T17:09:00Z"
       }
+    },
+    "panel": {
+      "seq": 0,
+      "value": {
+        "schema": 1,
+        "template": "",
+        "title": "",
+        "crew": "",
+        "crew_key": "",
+        "data": {},
+        "published_at": "",
+        "history": [],
+        "publishes": 0,
+        "history_omitted": 0,
+        "owners": {},
+        "owners_omitted": 0
+      }
     }
   },
   "agentic_written_at": {

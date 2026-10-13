@@ -60,6 +60,35 @@
   .pr-card-t { font-size: 13px; font-weight: 600; color: var(--text, #e4e4e7); }
   .pr-card-c { font-size: 11px; color: var(--muted, #7f7f88); }
 
+  /* ---- what the crewmate published ---- */
+  .pr-pub { margin-top: 12px; }
+  .pr-pub-k { font: 600 9px/1 var(--pr-mono); letter-spacing: .09em;
+    text-transform: uppercase; color: var(--muted, #7f7f88); margin: 12px 0 6px; }
+  .pr-pub-tiles { display: grid; gap: 7px; margin: 0;
+    grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); }
+  .pr-pub-tile { border: 1px solid var(--pr-line); border-radius: 8px;
+    padding: 8px 10px; min-width: 0; }
+  .pr-pub-tile dt { font: 600 9px/1 var(--pr-mono); letter-spacing: .09em;
+    text-transform: uppercase; color: var(--muted, #7f7f88); margin-bottom: 5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pr-pub-tile dd { margin: 0; font-size: 15px; font-weight: 600;
+    font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  table.pr-pub-t { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.pr-pub-t th { text-align: left; padding: 0 8px 5px; font: 600 9px/1 var(--pr-mono);
+    letter-spacing: .08em; text-transform: uppercase; color: var(--muted, #7f7f88); }
+  table.pr-pub-t td { padding: 5px 8px; border-top: 1px solid var(--pr-line);
+    overflow-wrap: anywhere; }
+  ul.pr-pub-l { margin: 0; padding-left: 18px; }
+  ul.pr-pub-l li { padding: 2px 0; overflow-wrap: anywhere; }
+  dl.pr-pub-kv { margin: 0; display: grid;
+    grid-template-columns: minmax(90px, 168px) 1fr; }
+  dl.pr-pub-kv dt, dl.pr-pub-kv dd { margin: 0; padding: 5px 0;
+    border-top: 1px solid var(--pr-line); overflow-wrap: anywhere; }
+  dl.pr-pub-kv dt { padding-right: 12px; font: 11px/19.5px var(--pr-mono);
+    color: var(--muted, #7f7f88); }
+  .pr-pub-prose { line-height: 1.55; overflow-wrap: anywhere; }
+  .pr-pub-note { font-size: 11px; color: var(--muted, #7f7f88); margin-top: 4px; }
+
   /* ---- KPI row ---- */
   .pr-kpis { display: grid; gap: 10px;
     grid-template-columns: repeat(auto-fit, minmax(164px, 1fr)); }
@@ -505,6 +534,10 @@
 
   <div id="pr-view"></div>
 
+  <!-- What the crewmate published with panel_publish, labelled as its own. Empty
+       when it never published, so a crewmate that does not publish shows nothing. -->
+  <div id="pr-published-host"></div>
+
   <!-- One task's own record, opened by clicking its row. Empty until then, and
        emptied on close, so nothing of a closed drawer is left in the page. -->
   <div id="pr-drawer-host"></div>
@@ -521,6 +554,7 @@
     <span data-dashboard-field="for_you">&mdash;</span> <span data-i18n="note_raised">raised by the crewmate</span>,
     <span data-dashboard-field="verdict">&mdash;</span> <span data-i18n="note_verdict">verdict</span>,
     <span data-dashboard-field="ci">&mdash;</span>,
+    <span id="pr-note-pub"><span data-dashboard-field="published">&mdash;</span> <span data-i18n="note_published">published by the crewmate</span>,</span>
     <span data-i18n="note_last_entry">last entry</span> <span data-dashboard-field="last_entry_at">&mdash;</span>.
   </div>
 </div>
@@ -548,6 +582,10 @@
       verdict_none_head: 'The crewmate has not posted a verdict yet.',
       verdict_past: 'Its last word was "{h}". Read it as a past reading.',
       verdict_blocker_label: 'The one in the way: ', crewmate_wrote: 'crewmate wrote this',
+      note_published: 'published by the crewmate', pub_title: 'Published by the crewmate',
+      pub_none: 'none', pub_shown: 'showing {n} of {m}', pub_a_board: 'a board',
+      pub_cols: 'columns capped at {n}', pub_yes: 'yes', pub_no: 'no',
+      empty_hint_published: 'No tasks tracked yet. Below is what this crewmate last published.',
       vp_accepted: 'Accepted', vp_rejected: 'Rejected', vp_unblock: 'Unblock',
       vp_answer: 'Answer', vp_awaiting: 'Awaiting crewmate review',
       lanes_red: '{n} red', lanes_did_not_run: '{n} did not run',
@@ -635,6 +673,10 @@
       verdict_none_head: '\u961f\u53cb\u8fd8\u6ca1\u6709\u53d1\u5e03\u88c1\u5b9a\u3002',
       verdict_past: '\u5b83\u6700\u540e\u7684\u8bf4\u6cd5\u662f "{h}"\u3002\u8bf7\u5f53\u4f5c\u8fc7\u5f80\u8bfb\u6570\u770b\u5f85\u3002',
       verdict_blocker_label: '\u963b\u788d\u6240\u5728\uff1a', crewmate_wrote: '\u961f\u53cb\u586b\u5199',
+      note_published: '\u961f\u53cb\u53d1\u5e03', pub_title: '\u961f\u53cb\u53d1\u5e03\u7684\u5185\u5bb9',
+      pub_none: '\u65e0', pub_shown: '\u663e\u793a {m} \u9879\u4e2d\u7684 {n} \u9879', pub_a_board: '\u4e00\u4e2a\u770b\u677f',
+      pub_cols: '\u6700\u591a\u663e\u793a {n} \u5217', pub_yes: '\u662f', pub_no: '\u5426',
+      empty_hint_published: '\u8fd8\u6ca1\u6709\u8ddf\u8e2a\u7684\u4efb\u52a1\u3002\u4e0b\u9762\u662f\u8fd9\u4f4d\u961f\u53cb\u6700\u8fd1\u53d1\u5e03\u7684\u5185\u5bb9\u3002',
       vp_accepted: '\u63a5\u53d7', vp_rejected: '\u9a73\u56de', vp_unblock: '\u89e3\u9664\u963b\u585e',
       vp_answer: '\u56de\u7b54', vp_awaiting: '\u7b49\u5f85\u961f\u53cb\u590d\u6838',
       lanes_red: '{n} \u6761\u7ea2\u8272', lanes_did_not_run: '{n} \u6761\u672a\u8fd0\u884c',
@@ -2658,8 +2700,16 @@
       //: actually about: nothing, from any of the three records.
       if (!need.total && !spent) {
         var card = el('div', 'pr-card');
-        card.appendChild(el('div', 'pr-empty', i18n('empty_all')));
-        card.appendChild(el('div', 'pr-empty', i18n('empty_hint')));
+        var hasPub = published();
+        if (hasPub && Object.keys(hasPub).length) {
+          //: Only a publish to show, so the counters above it would all read 0 over
+          //: a full board. They are hidden, and one line says what the board is.
+          card.appendChild(el('div', 'pr-empty', i18n('empty_hint_published')));
+          hideHead(true);
+        } else {
+          card.appendChild(el('div', 'pr-empty', i18n('empty_all')));
+          card.appendChild(el('div', 'pr-empty', i18n('empty_hint')));
+        }
         host.appendChild(card);
         //: The accounting line counts things that do not exist yet, so every clause
         //: would read "0". Hidden rather than reworded: a row of zeroes is not a
@@ -2758,8 +2808,21 @@
 
   // ---------------------------------------------------------------- render
 
+  //: The workstream pills and the one-line totals, which say nothing on a page
+  //: that has only a publish to show.
+  function hideHead(hidden) {
+    var ids = ['pr-pills', 'pr-sentence'];
+    for (var i = 0; i < ids.length; i++) {
+      var node = document.getElementById(ids[i]);
+      //: The style, not the attribute: both hosts are laid out by a class rule,
+      //: which outranks the user agent's own rule for `hidden`.
+      if (node) node.style.display = hidden ? 'none' : '';
+    }
+  }
+
   function render() {
     applyStatic();
+    hideHead(false);
     var list = streams();
     plots = [];
     var found = null;
@@ -2786,6 +2849,12 @@
     put('ci', board
       ? plural(redLanes(board).length, 'red lane', 'red lanes')
       : DASH + ' red lanes');
+    var pub = published();
+    var hasBoard = !!(pub && Object.keys(pub).length);
+    put('published', hasBoard ? i18n('pub_a_board') : null);
+    //: Most crewmates never publish, so the clause only shows when one did.
+    var pubNote = document.getElementById('pr-note-pub');
+    if (pubNote) pubNote.style.display = hasBoard ? '' : 'none';
     //: ELAPSED, not the stamp's hour. `hourLabel` buckets to the hour, which would
     //: print "17:00" for an entry at 17:09 -- and this line's reader is asking how
     //: old the page is, which an hour bucket cannot answer to within an hour.
@@ -2805,6 +2874,7 @@
     //: AFTER the view, and from the new read. `drawerAt` survives the render, which
     //: is what makes a refresh update an open drawer rather than close it.
     renderDrawer();
+    renderPublished();
     //: Only now does a card have a width, so only now can a chart be drawn to one.
     drawPlots();
   }
@@ -3179,6 +3249,133 @@
       host.appendChild(el('div', 'pr-held',
         plural(rows.length - 8, 'task', 'tasks') + ' not shown'));
     }
+  }
+
+  //: WHAT THE CREWMATE PUBLISHED with `panel_publish`, drawn without knowing what its
+  //: keys mean, the way the panel's own default template draws it: a scalar is a tile,
+  //: a long string a paragraph, an array of objects a table, an array of scalars a
+  //: list, a nested object key/value rows. Keys keep the order they were published in,
+  //: because order is the only way the crewmate says what matters most.
+  //:
+  //: The host resolves this field against the crewmate's OWN record, so another crew
+  //: sharing the slot never fills it. Every value goes in as text through `el`, and
+  //: the card says the crewmate wrote it. No keys, no card.
+  var PUB_MAX_ROWS = 100;
+  var PUB_MAX_COLS = 20;
+  var PUB_PROSE = 44;
+
+  function published() {
+    var p = fields().published;
+    return p && typeof p === 'object' && !Array.isArray(p) ? p : null;
+  }
+  function pubLabel(key) {
+    return String(key).replace(/[_-]+/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').trim();
+  }
+  function pubScalar(v) {
+    return v === null || ['string', 'number', 'boolean'].indexOf(typeof v) >= 0;
+  }
+  function pubText(v) {
+    if (v === null || v === undefined || v === '') return DASH;
+    if (v === true) return i18n('pub_yes');
+    if (v === false) return i18n('pub_no');
+    return pubScalar(v) ? String(v) : JSON.stringify(v);
+  }
+  function pubShown(host, shown, total) {
+    if (total > shown) {
+      host.appendChild(el('div', 'pr-pub-note', i18n('pub_shown', { n: shown, m: total })));
+    }
+  }
+  //: Columns are the union of the rows' keys, so both axes are capped where the cells
+  //: are made: rows with disjoint keys would otherwise make rows x keys cells.
+  function pubTable(host, rows) {
+    var n = Math.min(rows.length, PUB_MAX_ROWS);
+    var cols = [];
+    var colsCut = false;
+    for (var i = 0; i < n; i++) {
+      var keys = Object.keys(rows[i]);
+      for (var j = 0; j < keys.length; j++) {
+        if (cols.indexOf(keys[j]) >= 0) continue;
+        if (cols.length >= PUB_MAX_COLS) { colsCut = true; continue; }
+        cols.push(keys[j]);
+      }
+    }
+    var table = el('table', 'pr-pub-t');
+    var head = el('tr');
+    for (var c = 0; c < cols.length; c++) head.appendChild(el('th', null, pubLabel(cols[c])));
+    table.appendChild(head);
+    for (var r = 0; r < n; r++) {
+      var tr = el('tr');
+      for (var k = 0; k < cols.length; k++) tr.appendChild(el('td', null, pubText(rows[r][cols[k]])));
+      table.appendChild(tr);
+    }
+    host.appendChild(table);
+    pubShown(host, n, rows.length);
+    if (colsCut) host.appendChild(el('div', 'pr-pub-note', i18n('pub_cols', { n: PUB_MAX_COLS })));
+  }
+  function pubList(host, items) {
+    var n = Math.min(items.length, PUB_MAX_ROWS);
+    var ul = el('ul', 'pr-pub-l');
+    for (var i = 0; i < n; i++) ul.appendChild(el('li', null, pubText(items[i])));
+    host.appendChild(ul);
+    pubShown(host, n, items.length);
+  }
+  function pubPairs(host, obj) {
+    var keys = Object.keys(obj);
+    var dl = el('dl', 'pr-pub-kv');
+    for (var i = 0; i < keys.length && i < PUB_MAX_ROWS; i++) {
+      dl.appendChild(el('dt', null, pubLabel(keys[i])));
+      dl.appendChild(el('dd', null, pubText(obj[keys[i]])));
+    }
+    host.appendChild(dl);
+    pubShown(host, Math.min(keys.length, PUB_MAX_ROWS), keys.length);
+  }
+  function renderPublished() {
+    var host = document.getElementById('pr-published-host');
+    if (!host) return;
+    clear(host);
+    var data = published();
+    if (!data || !Object.keys(data).length) return;
+    var card = el('div', 'pr-card pr-pub');
+    var h = el('div', 'pr-card-h');
+    h.appendChild(el('div', 'pr-card-t', txt(data.title) || i18n('pub_title')));
+    if (txt(data.subtitle)) h.appendChild(el('div', 'pr-card-c', txt(data.subtitle)));
+    h.appendChild(el('span', 'pr-agent', i18n('crewmate_wrote')));
+    card.appendChild(h);
+    var tiles = null;
+    var keys = Object.keys(data);
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i];
+      if (key === 'title' || key === 'subtitle') continue;
+      var v = data[key];
+      var short = pubScalar(v) && !(typeof v === 'string' && v.length > PUB_PROSE);
+      if (short) {
+        //: A run of short scalars shares one strip of tiles; anything else ends it.
+        if (!tiles) { tiles = el('dl', 'pr-pub-tiles'); card.appendChild(tiles); }
+        var tile = el('div', 'pr-pub-tile');
+        tile.appendChild(el('dt', null, pubLabel(key)));
+        tile.appendChild(el('dd', null, pubText(v)));
+        tiles.appendChild(tile);
+        continue;
+      }
+      tiles = null;
+      card.appendChild(el('div', 'pr-pub-k', pubLabel(key)));
+      if (typeof v === 'string') {
+        card.appendChild(el('div', 'pr-pub-prose', v));
+      } else if (Array.isArray(v)) {
+        if (!v.length) {
+          card.appendChild(el('div', 'pr-dr-none', i18n('pub_none')));
+        } else if (v.every(function (r) { return r && typeof r === 'object' && !Array.isArray(r); })) {
+          pubTable(card, v);
+        } else {
+          pubList(card, v);
+        }
+      } else if (Object.keys(v).length) {
+        pubPairs(card, v);
+      } else {
+        card.appendChild(el('div', 'pr-dr-none', i18n('pub_none')));
+      }
+    }
+    host.appendChild(card);
   }
 
   function put(name, value) {

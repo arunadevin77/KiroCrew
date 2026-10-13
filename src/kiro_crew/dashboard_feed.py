@@ -52,6 +52,7 @@ from dataclasses import field as dc_field
 from typing import Any, Callable, Final, Mapping
 
 from kiro_crew.crew_log import bus as crew_log_bus
+from kiro_crew.crew_log.entry_types import PANEL_FOLD_NAME
 from kiro_crew.crew_log.projection import SESSION_FOLD_NAMES, SLOT_PROJECTION_NAMES
 from kiro_crew.dashboard_templates.manifest import TemplateManifest
 
@@ -75,6 +76,18 @@ class _Missing:
 
 
 MISSING: Final[_Missing] = _Missing()
+
+
+def page_panel(record: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The reader's own panel *record* as a page sees it, or an empty one.
+
+    The record is chosen by the caller, by the panel read route's rule. An absent
+    one reads as an empty ``data`` object, never as another crew's. ``crew_key``
+    is left out, because the read route never hands the digest to a client.
+    """
+    if not isinstance(record, Mapping):
+        return {"template": "", "title": "", "data": {}, "published_at": ""}
+    return {key: item for key, item in record.items() if key != "crew_key"}
 
 
 def resolve_path(value: Any, path: str) -> Any:
@@ -180,9 +193,14 @@ class DashboardFeed:
         slot: str,
         session_unit: str = "",
         on_change: Callable[[str], None] | None = None,
+        panel_record: Mapping[str, Any] | None = None,
     ) -> None:
         #: The crewmate's DM slot, which keys every slot fold.
         self.slot = slot
+        #: The reading crewmate's OWN panel record, chosen by the panel read
+        #: route's rule. A ``panel`` binding resolves against this record and never
+        #: against the fold's top level; ``None`` reads as "never published".
+        self.panel_record = panel_record
         #: The unit id its session folds are keyed by, or ``""`` when the thread is
         #: not running. A dashboard binding only slot folds needs none, which is
         #: why this is optional rather than required: a crewmate whose DM has never
@@ -361,6 +379,18 @@ class DashboardFeed:
                 continue
             fold = spec.fold or ""
             cached = cells.get(fold)
+            if fold == PANEL_FOLD_NAME:
+                # The record comes from the caller, so it resolves even when the
+                # fold has nothing: a publish lives in its file as well as the log.
+                resolved = resolve_path(page_panel(self.panel_record), spec.path or "")
+                if resolved is MISSING:
+                    read.missing.append(name)
+                    unresolved.append(name)
+                    continue
+                read.fields[name] = resolved
+                if cached is not None and cached[2]:
+                    read.seq = max(read.seq, cached[1])
+                continue
             if cached is None or not cached[2]:
                 read.missing.append(name)
                 unresolved.append(name)

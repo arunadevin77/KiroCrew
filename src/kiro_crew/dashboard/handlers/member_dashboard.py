@@ -338,7 +338,10 @@ async def _serve(request: web.Request, slug: str, member: str, slot: str | None)
 #: page. Named for the whole repository's rule rather than for one fold: the conductor
 #: ledger's is that no reader but the conductor sees a session key, and
 #: ``work_ledger_board._MASKED_ITEM_FIELDS`` masks exactly this on the Crew page.
-_MASKED_VALUE_KEYS = frozenset({"worker_session_key"})
+#:
+#: ``crew_key`` is the panel's ownership digest, which the panel read route withholds
+#: from every client; a page that binds the ``panel`` fold must not carry it either.
+_MASKED_VALUE_KEYS = frozenset({"worker_session_key", "crew_key"})
 
 #: Event kinds whose ``text`` IS a session key, so masking the item field alone leaves
 #: the key on the page inside the event log. The line is kept for its ``kind`` and
@@ -557,15 +560,27 @@ def read_fields(slug: str, member: str, manifest: Any, *, slot: str | None = Non
     The page's own read, shared with ``dashboard_fields`` so the values an agent is
     shown are the values the reader sees. File IO; raises on a failed read.
     """
+    from kiro_crew import agent_panel
     from kiro_crew.crew_log import projection
+    from kiro_crew.crew_log.entry_types import PANEL_FOLD_NAME
+    from kiro_crew.dashboard.handlers.agent_panel import owned_panel_record
     from kiro_crew.dashboard_feed import DashboardFeed
 
+    # A root session's page is read by its own slot and has no publish of its own,
+    # whatever crew name the caller carries.
+    own_slot = slot is None
     if slot is None:
         slot = _dashboard_slot(member, slug)
         session = _write_session(slug, member)
     else:
         session = _newest_unit(slot)
-    feed = DashboardFeed(slot, session)
+    # The reader's OWN panel record, picked by the panel read route's own rule, so the
+    # page shows what that route shows and a crew sharing this slot never fills it. A
+    # root session publishes no panel, so it has no owner and reads an empty one.
+    record = None
+    if own_slot and member and PANEL_FOLD_NAME in manifest.folds:
+        record = owned_panel_record(slot, slug, agent_panel.crew_key(member))
+    feed = DashboardFeed(slot, session, panel_record=record)
     try:
         feed.subscribe(manifest)
         agentic: Any = {}

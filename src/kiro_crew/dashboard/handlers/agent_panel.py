@@ -1167,6 +1167,26 @@ def _published_record(slot: str, slug: str, owner_key: str) -> dict[str, Any] | 
     return newest
 
 
+def _owned_by(record: Mapping[str, Any], owner_key: str) -> bool:
+    """Whether *record* belongs to *owner_key*. An unowned record belongs to nobody."""
+    return bool(owner_key) and str(record.get("crew_key") or "") == owner_key
+
+
+def owned_panel_record(slot: str, slug: str, owner_key: str) -> dict[str, Any] | None:
+    """*owner_key*'s own published record, by the read route's rule, or ``None``.
+
+    :func:`_published_record` picks the record, the file first when it is this
+    owner's, and :func:`_owned_by` is the ownership check the read route makes on
+    it. The dashboard page reads through here, so it shows what the route shows.
+    """
+    if not owner_key:
+        return None
+    record = _published_record(slot, slug, owner_key)
+    if record is None or not _owned_by(record, owner_key):
+        return None
+    return record
+
+
 def _read_and_compose(
     slot: str,
     slug: str,
@@ -1394,8 +1414,7 @@ async def api_member_panel(request: web.Request) -> web.Response:
     # with no crew binding (``no_crew``), and :func:`publish` rejects an empty crew
     # outright. A forgery is the only thing left that can write one, which is
     # exactly what must not render.
-    owner_key = str((record or {}).get("crew_key") or "")
-    if record is not None and (not owner_key or owner_key != mine):
+    if record is not None and not _owned_by(record, mine):
         # Another crew owns this slug's record. Reported as "nothing published"
         # rather than as a refusal: from this crew's point of view it HAS no panel,
         # and naming the other crew would disclose a colliding name the viewer of

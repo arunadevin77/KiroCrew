@@ -11,7 +11,7 @@ further down, then `office` in "A desk that ships decks and mail" and the last t
 
 | id | folds it reads | what it answers |
 |---|---|---|
-| `project-report` | `workstreams` | what this crewmate did, what each thing cost, what came of it, what needs the reader |
+| `project-report` | `workstreams`, `panel` | what this crewmate did, what each thing cost, what came of it, what needs the reader |
 | `goal-board` | `work` | the work ledger it conducts: items, states, verdicts |
 | `work-kanban` | `work` | that same board as columns, including the one waiting on the conductor's own verdict |
 | `session-ledger` | `ledger` | what a long-running session is carrying, and what it would resume from |
@@ -80,6 +80,21 @@ the lead already knows which of six reds is the one that matters, and no fold ra
 `ci` is the lead's last reading of a code host's check board, which no fold polls. The
 page draws the `crewmate wrote this` tag only when the host says the field IS agentic, so
 a value arriving some other way cannot borrow the label.
+
+## What a crewmate published
+
+`project-report` also binds `published` to `{"fold": "panel", "path": "data"}`: the
+object the crewmate last sent with `panel_publish`. One slot can carry two crews, and
+the fold's top level is whichever published last, so the host resolves a `panel`
+binding against the reading crewmate's OWN record, by the panel read route's own
+rule (`agent_panel.owned_panel_record`: the publish file first, then the fold). A
+crewmate that never published, or a root session's page, reads an empty object, and
+the page draws no block. The block is always the crewmate's words, so it always wears
+the `crewmate wrote this` tag. It draws any object the way the panel's default
+template does, every value as text: a short scalar is a tile, a long string a
+paragraph, an array of objects a table, an array of scalars a list, a nested object
+key/value rows. The fold holds the publish route's scrubbed copy, and the page read
+redacts again and masks `crew_key`.
 
 `work-kanban` declares none, because every number it shows has a fold. `goal-board`
 declares one, `asks`: the answers the conductor offers for an item waiting on the reader,
