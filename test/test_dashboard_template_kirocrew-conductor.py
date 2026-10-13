@@ -61,8 +61,19 @@ def test_the_board_is_bound_to_the_work_fold_the_way_goal_board_binds_it() -> No
     """The live half: a conductor that skips a publish still has a current board."""
     goal_board = json.loads(GOAL_BOARD.read_text(encoding="utf-8"))["fields"]
     fields = _fields()
-    for name in ("goal", "round", "last_entry_at", "items", "omitted"):
+    for name in ("goal", "round", "last_entry_at", "items", "omitted", "forgotten"):
         assert fields[name]["source"] == goal_board[name]["source"], name
+
+
+def test_the_meter_counts_the_closed_tasks_the_fold_forgot() -> None:
+    """The work fold drops closed items past its window and counts them in
+    ``forgotten``; a meter reading ``items`` alone undercounts on a long goal."""
+    assert _fields()["forgotten"]["source"] == {"fold": "work", "path": "forgotten"}
+    meter = _script().split("function drawMeter(")[1].split("\n      function ")[0]
+    assert "forgotten()" in meter
+    for key in ("gone.items", "gone.accepted"):
+        assert key in meter, key
+    assert 'data-dashboard-field="forgotten"' in _source()
 
 
 def test_needs_you_is_the_one_field_the_conductor_writes() -> None:

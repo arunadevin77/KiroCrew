@@ -90,6 +90,7 @@
   <p class="sub">
     <span id="cb-more"><span data-dashboard-field="omitted">-</span> <span data-i18n="more">more not shown (list truncated)</span></span>
     <span data-dashboard-field="items" hidden></span>
+    <span data-dashboard-field="forgotten" hidden></span>
     <span data-dashboard-field="needs_you" hidden></span>
     <span data-dashboard-field="note" hidden></span>
     <span data-dashboard-field="note_at" hidden></span>
@@ -251,6 +252,16 @@
         host.appendChild(band);
       }
 
+      // The closed items the fold no longer lists, counted per closing state. The
+      // fold keeps only open items and the newest closed ones, so every whole-board
+      // number adds these to what `items` holds. Missing or odd reads as zeros.
+      function forgotten() {
+        var f = bag().forgotten;
+        var g = f && typeof f === 'object' && !Array.isArray(f) ? f : {};
+        function n(k) { var v = num(g[k]); return v && v > 0 ? Math.floor(v) : 0; }
+        return { items: n('items'), accepted: n('accepted') };
+      }
+
       function drawMeter(list) {
         var host = document.getElementById('cb-meter');
         if (!host) return;
@@ -262,9 +273,12 @@
           if (t === 'run') run += 1;
           if (t === 'test') review += 1;
         }
-        // The total counts the tasks the fold cut too, so the meter and the
-        // truncation line below add up.
-        var total = list.length + Math.max(0, num(bag().omitted) || 0);
+        var gone = forgotten();
+        done += gone.accepted;
+        // Every task on the board: the listed ones plus the closed ones the fold
+        // forgot, the way goal-board counts them. `omitted` counts dropped log
+        // ENTRIES, not tasks, so it is not added.
+        var total = list.length + gone.items;
         var row = el('div', 'row');
         row.appendChild(el('b', null, i18n('done_of', { d: done, n: total })));
         row.appendChild(el('span', null, i18n('running', { n: run }) +

@@ -173,11 +173,38 @@ describe('kirocrew-conductor page', () => {
     expect((document.getElementById('cb-more') as HTMLElement).hidden).toBe(true)
   })
 
-  it('counts the tasks the fold cut in the meter total', () => {
+  it('leaves the dropped log entries out of the meter total, as goal-board does', () => {
+    // `omitted` counts fold ENTRIES it dropped, not tasks, so it is no task count.
     mount({ items: [item({ state: 'accepted', status: 'done' }), item({ item_id: 'b', status: 'done' })], omitted: 3 })
-    expect(text('#cb-meter')).toContain('1 of 5 accepted by the conductor')
+    expect(text('#cb-meter')).toContain('1 of 2 accepted by the conductor')
     // The same words as the card's pill, so the two read as one state.
     expect(text('#cb-meter')).toContain('1 conductor checking')
+  })
+
+  it('counts the closed tasks the fold forgot in done and total, as goal-board does', () => {
+    // A long goal: two tasks still listed, eleven closed ones forgotten by the fold.
+    mount({
+      items: [item({ state: 'accepted', status: 'done' }), item({ item_id: 'b', status: 'progress' })],
+      forgotten: { created: 13, items: 11, accepted: 8, rejected: 1, abandoned: 2, in_round: 0 },
+    })
+    // done 1 + 8; total 2 + 11, rejected and abandoned included.
+    expect(text('#cb-meter')).toContain('9 of 13 accepted by the conductor')
+    const bar = document.querySelector('#cb-meter [role="progressbar"]')
+    expect(bar?.getAttribute('aria-valuemax')).toBe('13')
+    expect(bar?.getAttribute('aria-valuenow')).toBe('9')
+  })
+
+  it('keeps a listed rejected task in the total and never calls it working', () => {
+    mount({ items: [item({ state: 'accepted', status: 'done' }), item({ item_id: 'b', state: 'rejected' })] })
+    expect(text('#cb-meter')).toContain('1 of 2 accepted by the conductor')
+    expect(text('#cb-meter')).toContain('0 working')
+  })
+
+  it('reads a missing or odd forgotten block as zeros', () => {
+    for (const forgotten of [undefined, null, 'x', [], { items: -4, accepted: 'many' }]) {
+      mount({ items: [item({ state: 'accepted', status: 'done' }), item({ item_id: 'b' })], forgotten })
+      expect(text('#cb-meter')).toContain('1 of 2 accepted by the conductor')
+    }
   })
 
   it('labels the truncation button with what it does', () => {
