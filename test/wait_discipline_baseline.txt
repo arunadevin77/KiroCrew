@@ -286,10 +286,8 @@
  1 test_meetings_audio_import.py
  2 test_meetings_calendar_poller.py
 12 test_meetings_routes.py
-36 test_meetings_session.py
  3 test_member_memory_mcp_routing.py
  5 test_member_memory_runtime.py
-19 test_members_dm_thread.py
  1 test_members_eventlog_wiring.py
  1 test_memory_admission_queue.py
  4 test_memory_backup.py
@@ -299,7 +297,6 @@
  2 test_memv2_audit_a_prompt.py
  4 test_memv2_audit_b_regressions.py
  2 test_memv2_audit_c_followup.py
-17 test_memv2_audit_c_runtime.py
 11 test_memv2_audit_d_workflows.py
  1 test_messaging_approval.py
  1 test_messaging_attachments.py

@@ -45,7 +45,7 @@ from kiro_crew.members import (
     slug_for_name,
     write_dm_binding,
 )
-from kiro_crew.testing.wait import LoopHop
+from kiro_crew.testing.wait import LoopHop, await_until
 from kiro_crew.validation import normalize_unicode
 
 CREW = "code-reviewer"
@@ -68,6 +68,16 @@ class _RenderedLogs(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         self.lines.append(self.format(record))
+
+
+async def _finished(coro, what: str, *, timeout: float | None = None):
+    """Run ``coro`` under the lost-run bound; fail by name if it hangs (D8)."""
+    task = asyncio.ensure_future(coro)
+    try:
+        return await await_until(task, timeout=timeout, what=what)
+    finally:
+        if not task.done():
+            task.cancel()
 
 
 def _record_or_explain(member, session_key, memory_mode, **kwargs) -> bool:
@@ -801,7 +811,7 @@ class TestMemberRoutes:
                     slot.project = str(tmp_path / "chosen")
                 finally:
                     release.set()
-                    response = await asyncio.wait_for(pending, timeout=5)
+                    response = await await_until(pending, what="the POST /thread response")
                 assert response.status == 200
         assert state._slots[member_slot_key(CREW)] is slot
         assert slot.workspace == "default"
@@ -3691,7 +3701,7 @@ async def test_private_thread_conflict_names_its_actual_cause(tmp_path, monkeypa
     finally:
         finished.set()
         if task is not None:
-            await asyncio.wait_for(task, 5)
+            await await_until(task, what="the running turn task")
 
 
 @pytest.mark.asyncio
@@ -3938,9 +3948,11 @@ async def test_running_private_thread_refuses_ownership_changed_during_read(
         monkeypatch.setattr("kiro_crew.dashboard.handlers.members.pin_private_agent_store", pin)
         try:
             reopen = asyncio.create_task(client.post(f"/api/members/{CREW}/thread"))
-            await asyncio.wait_for(entered.wait(), timeout=5)
+            await await_until(entered, what="the handler entered the slot lock wait")
             if fault in {"member_deleted", "member_recreated"}:
-                deleted = await asyncio.wait_for(client.delete(f"/api/agents/{CREW}"), timeout=5)
+                deleted = await _finished(
+                    client.delete(f"/api/agents/{CREW}"), "the DELETE /agents response"
+                )
                 assert deleted.status == 200, await deleted.text()
                 current = await asyncio.to_thread(KiroCrewConfig.load)
                 assert CREW not in current.agents
@@ -3952,9 +3964,9 @@ async def test_running_private_thread_refuses_ownership_changed_during_read(
             elif fault == "config_lock_order":
                 async with config_lock:
                     resume.set()
-                    await asyncio.wait_for(config_requested.wait(), timeout=5)
+                    await await_until(config_requested, what="the opener requesting config")
                     # A config writer must still be able to take the slot lock.
-                    await asyncio.wait_for(slot._lock.acquire(), timeout=5)
+                    await _finished(slot._lock.acquire(), "the slot lock acquire")
                     try:
                         await asyncio.to_thread(change_ownership)
                     finally:
@@ -3963,7 +3975,7 @@ async def test_running_private_thread_refuses_ownership_changed_during_read(
                 await asyncio.to_thread(change_ownership)
             binding_after_change = await asyncio.to_thread(read_dm_binding, CREW)
             resume.set()
-            response = await asyncio.wait_for(reopen, timeout=5)
+            response = await await_until(reopen, what="the reopen response")
             body = await response.json()
             assert state._slots[slot.key] is slot
             assert slot.task is task and slot.running
@@ -3979,8 +3991,10 @@ async def test_running_private_thread_refuses_ownership_changed_during_read(
             resume.set()
             release_turn.set()
             if reopen is not None:
-                await asyncio.wait_for(asyncio.gather(reopen, return_exceptions=True), timeout=5)
-            await asyncio.wait_for(task, timeout=5)
+                await await_until(
+                    asyncio.gather(reopen, return_exceptions=True), what="the reopen task"
+                )
+            await await_until(task, what="the running turn task")
             slot.task = None
 
 
@@ -4039,18 +4053,18 @@ async def test_private_thread_reopen_rechecks_running_after_slot_lock(
             async with slot._lock:
                 assert slot.running is initial_running
                 reopen = asyncio.create_task(client.post(f"/api/members/{CREW}/thread"))
-                await asyncio.wait_for(waiting.wait(), timeout=5)
+                await await_until(waiting, what="the opener waiting on the slot lock")
                 assert not reopen.done(), "opener did not wait for the held slot lock"
                 if final_running:
                     task = asyncio.create_task(release_turn.wait())
                     slot.task = task
                 elif task is not None:
                     release_turn.set()
-                    await asyncio.wait_for(task, timeout=5)
+                    await await_until(task, what="the turn task settling")
                 assert slot.running is final_running
                 if fault in {"member_deleted", "member_recreated"}:
-                    deleted = await asyncio.wait_for(
-                        client.delete(f"/api/agents/{CREW}"), timeout=5
+                    deleted = await _finished(
+                        client.delete(f"/api/agents/{CREW}"), "the DELETE /agents response"
                     )
                     assert deleted.status == 200, await deleted.text()
                     current = await asyncio.to_thread(KiroCrewConfig.load)
@@ -4067,7 +4081,7 @@ async def test_private_thread_reopen_rechecks_running_after_slot_lock(
                     current.agents[CREW].memory_store = "default"
                     await asyncio.to_thread(current.save)
                 binding_after_change = await asyncio.to_thread(read_dm_binding, CREW)
-            response = await asyncio.wait_for(reopen, timeout=5)
+            response = await await_until(reopen, what="the reopen response")
             body = await response.json()
             assert state._slots[slot.key] is slot
             assert slot.task is task and slot.running is final_running
@@ -4098,9 +4112,11 @@ async def test_private_thread_reopen_rechecks_running_after_slot_lock(
         finally:
             release_turn.set()
             if reopen is not None:
-                await asyncio.wait_for(asyncio.gather(reopen, return_exceptions=True), timeout=5)
+                await await_until(
+                    asyncio.gather(reopen, return_exceptions=True), what="the reopen task"
+                )
             if task is not None:
-                await asyncio.wait_for(task, timeout=5)
+                await await_until(task, what="the turn task")
             slot.task = None
 
 
@@ -4159,7 +4175,7 @@ async def test_private_thread_reopen_rechecks_running_after_assignment(
         try:
             assert not slot.running
             reopen = asyncio.create_task(client.post(f"/api/members/{CREW}/thread"))
-            await asyncio.wait_for(pinned.wait(), timeout=5)
+            await await_until(pinned, what="the opener reaching the gated assignment")
             assert not reopen.done(), "opener did not reach the gated assignment"
             # The turn dispatch this route cannot lock out.
             turn = asyncio.create_task(release_pin.wait())
@@ -4171,7 +4187,7 @@ async def test_private_thread_reopen_rechecks_running_after_assignment(
                 await asyncio.to_thread(current.save)
             binding_after_change = await asyncio.to_thread(read_dm_binding, CREW)
             release_pin.set()
-            response = await asyncio.wait_for(reopen, timeout=5)
+            response = await await_until(reopen, what="the reopen response")
             body = await response.json()
             assert state._slots[slot.key] is slot
             assert slot.task is turn
@@ -4188,7 +4204,9 @@ async def test_private_thread_reopen_rechecks_running_after_assignment(
         finally:
             release_pin.set()
             if reopen is not None:
-                await asyncio.wait_for(asyncio.gather(reopen, return_exceptions=True), timeout=5)
+                await await_until(
+                    asyncio.gather(reopen, return_exceptions=True), what="the reopen task"
+                )
             if turn is not None:
-                await asyncio.wait_for(turn, timeout=5)
+                await await_until(turn, what="the turn task")
             slot.task = None
