@@ -76,12 +76,13 @@ function createManagedLane({
 
   // The install-phase failure for a stop that left a gateway from this app's
   // bundle running. Its own code, so the renderer can tell it from a failed
-  // update command.
+  // update command, plus the command that stops that gateway by hand.
   const emitGatewayStillRunning = (err) => {
     emit("error", {
       phase: "install",
       code: GATEWAY_STILL_RUNNING,
       message: String((err && err.message) || ""),
+      ...(err && err.stopCommand ? { stopCommand: err.stopCommand } : {}),
     });
   };
 

@@ -8,6 +8,14 @@ const {
 
 const FORCE_EXIT_AFTER_MS = 5 * 1000; // failsafe: guarantee exit after quitAndInstall
 
+// The quit-time notification for an install refused because a gateway from
+// this app's bundle kept running. Main-process copy is English-only (outside
+// the renderer catalogs, like the other update notifications here).
+function gatewayStillRunningNotificationBody(stopCommand) {
+  const command = stopCommand || "kirocrew stop";
+  return `The background gateway Kiro Crew started earlier is still running. To install the update, run “${command}” in Terminal, then reopen Kiro Crew. It stops only that gateway; your chats and settings are kept.`;
+}
+
 /**
  * The electron-updater feed lane: discovery against the per-channel feed,
  * the consent and automatic download paths, the staged-update state, and the
@@ -339,13 +347,13 @@ function createFeedLane({
     // STRICT ORDER: stop the gateway and await its exit, THEN quitAndInstall.
     // A live gateway child during the bundle swap can leave a half-replaced app.
     log.info("[update] stopping gateway before install");
-    let gatewayRunning = false;
+    let stillRunning = null;
     try {
       await stopGateway();
     } catch (err) {
-      gatewayRunning = gatewayStillRunning(err);
+      stillRunning = gatewayStillRunning(err) ? err : null;
       log.error(
-        gatewayRunning
+        stillRunning
           ? "[update] a gateway from this app's bundle is still running after the stop"
           : "[update] gateway stop errored (continuing to install)",
         err,
@@ -364,7 +372,7 @@ function createFeedLane({
     // importing from the files the installer replaces. Refuse the swap the way
     // an invalidated stage does: the install did not proceed, and the host
     // restores the gateway it disarmed.
-    if (gatewayRunning) {
+    if (stillRunning) {
       log.info("[update] not installing while a gateway from this app's bundle is running — restoring");
       installing = false;
       try { if (onInstallFailed) onInstallFailed(); } catch { /* advisory */ }
@@ -372,6 +380,7 @@ function createFeedLane({
         phase: "install",
         code: GATEWAY_STILL_RUNNING,
         message: "a gateway from this app's bundle was still running when the install was ready to run",
+        ...(stillRunning.stopCommand ? { stopCommand: stillRunning.stopCommand } : {}),
         ...(foundVersion ? { version: foundVersion } : {}),
       });
       return;
@@ -461,20 +470,23 @@ function createFeedLane({
       // No onInstallDispatched here: this handler only runs from before-quit,
       // where main.js has already set isQuitting -- the watchdog is covered.
       log.info("[update] deferred install on quit");
-      let gatewayRunning = false;
+      let stillRunning = null;
       try { await stopGateway(); } catch (err) {
-        gatewayRunning = gatewayStillRunning(err);
+        stillRunning = gatewayStillRunning(err) ? err : null;
         log.error("[update] stop on quit errored", err);
       }
       // The user asked to QUIT: with a gateway from this app's bundle still
       // running, quit without installing rather than replace its files. The
       // listener state makes the re-entry safe, as for the stage check below.
-      if (gatewayRunning) {
+      // The next launch adopts the same gateway, so the notification names the
+      // command that stops it; without that step every later install is
+      // refused the same way.
+      if (stillRunning) {
         log.info("[update] a gateway from this app's bundle is still running — quitting without installing");
         try {
           new Notification({
             title: "Update not installed",
-            body: "Kiro Crew could not stop its gateway, so the update was not installed. It will be offered again next launch.",
+            body: gatewayStillRunningNotificationBody(stillRunning.stopCommand),
           }).show();
         } catch { /* notifications optional */ }
         app.quit();

@@ -1632,6 +1632,15 @@ function createGatewaySupervisor({
     return { home: path.dirname(candidates[0]), secrets };
   }
 
+  // The command a refused update names for stopping the adopted gateway by
+  // hand. A service-managed gateway is stopped through its service (the CLI's
+  // `stop` without --port stops the service first), because a signal to the
+  // process alone lets the service manager start it again. Any other adopted
+  // gateway gets the same lock-checked command the stale/stuck dialogs name.
+  function adoptedGatewayStopCommand() {
+    return gatewayOwnership === "reused-service" ? "kirocrew stop" : `kirocrew stop --port ${PORT}`;
+  }
+
   /**
    * POST /api/shutdown, then POSIX SIGTERM -> SIGKILL or the bounded Windows
    * tree kill, for the child this app spawned. Quit runs it, and the pre-update
@@ -1732,7 +1741,7 @@ function createGatewaySupervisor({
       });
       if (exit !== "exited") {
         glog(`update: pid ${pid} released :${PORT} but is still running — refusing to replace its files`);
-        throw gatewayStillRunningError(PORT);
+        throw gatewayStillRunningError(PORT, adoptedGatewayStopCommand());
       }
       if (gatewayOwnership === "reused-service") {
         // A service manager can start the gateway again from the same files.
@@ -1746,7 +1755,7 @@ function createGatewaySupervisor({
     }
     if (await isCurrentBundleGateway()) {
       glog(`update: a gateway from this app's bundle still holds :${PORT} — refusing to replace its files`);
-      throw gatewayStillRunningError(PORT);
+      throw gatewayStillRunningError(PORT, adoptedGatewayStopCommand());
     }
     glog(`update: no gateway from this app's bundle holds :${PORT}`);
   }

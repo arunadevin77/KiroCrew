@@ -39,9 +39,13 @@ const KIROCREW_SERVER_SUBCOMMANDS = new Set(["gateway", "dashboard", "start"]);
 // lazily imported modules reading new code against old in-memory ones.
 const GATEWAY_STILL_RUNNING = "gateway-still-running";
 
-function gatewayStillRunningError(port) {
+// `stopCommand` is the command the user runs to stop that gateway themselves.
+// The lanes carry it to the renderer and the quit-time notification, so the
+// refusal names the step that lets the next install through.
+function gatewayStillRunningError(port, stopCommand = `kirocrew stop --port ${port}`) {
   const error = new Error(`a gateway from this app's bundle still holds port ${port}`);
   error.code = GATEWAY_STILL_RUNNING;
+  error.stopCommand = stopCommand;
   return error;
 }
 

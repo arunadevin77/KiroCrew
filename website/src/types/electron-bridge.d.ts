@@ -221,6 +221,9 @@ declare global {
     phase?: 'check' | 'download' | 'install'
     code?: string
     httpStatus?: number
+    // Set with code 'gateway-still-running': the command that stops the
+    // gateway the install was refused for.
+    stopCommand?: string
     percent?: number
     bytesPerSecond?: number
     installHandoff?: 'windows-installer' | 'automatic-relaunch'

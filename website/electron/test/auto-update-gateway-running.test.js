@@ -102,6 +102,7 @@ test("the feed lane does not install while a bundled gateway is still running", 
   assert.strictEqual(last.state, "error");
   assert.strictEqual(last.phase, "install");
   assert.strictEqual(last.code, GATEWAY_STILL_RUNNING);
+  assert.strictEqual(last.stopCommand, "kirocrew stop --port 5476", "the refusal names the command that stops the gateway");
 });
 
 test("the feed lane retries the install once the gateway is gone", async () => {
@@ -133,6 +134,16 @@ test("the feed lane's deferred install quits without installing while a bundled 
   assert.strictEqual(calls.quit, 1, "the quit the user asked for still proceeds");
   assert.strictEqual(calls.notifications.length, 1, "the user is told the update did not install");
   assert.strictEqual(calls.notifications[0].title, "Update not installed");
+  assert.match(
+    calls.notifications[0].body,
+    /run “kirocrew stop --port 5476” in Terminal, then reopen Kiro Crew/,
+    "the notification names the step that lets the next install through",
+  );
+  assert.match(
+    calls.notifications[0].body,
+    /your chats and settings are kept/,
+    "the notification says running the command loses nothing",
+  );
 });
 
 test("a stop error that is not a running gateway keeps the feed lane's install going", async () => {
@@ -162,6 +173,7 @@ test("the managed lane does not run its update command while a bundled gateway i
   assert.strictEqual(last.state, "error");
   assert.strictEqual(last.phase, "install");
   assert.strictEqual(last.code, GATEWAY_STILL_RUNNING);
+  assert.strictEqual(last.stopCommand, "kirocrew stop --port 5476");
 });
 
 test("the managed lane's quit-time apply exits without applying while a bundled gateway runs", async (t) => {

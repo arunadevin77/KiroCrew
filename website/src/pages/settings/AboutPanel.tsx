@@ -29,6 +29,7 @@ import { CopyCommand } from '../../components/agentHarness/CopyCommand'
 import { i18nT } from '../../i18n/t'
 import { fmtDateTimeNumeric, fmtList, fmtRelative } from '../../i18n/format'
 import type { UpdateState } from '../../hooks/useUpdateSubscription'
+import { gatewayStopCommand } from '../../hooks/useUpdateSubscription'
 import { foldStableStamp, sameBuildVersion } from '../../utils/displayVersion'
 import { bytesAreTheStableRelease as followedLanePublishesRunningBytes } from '../../utils/laneMembership'
 
@@ -97,6 +98,7 @@ const UPDATE_ERROR_KEYS = {
   misconfigured: 'pages.settings.aboutPanel.update_error_misconfigured',
   unknown: 'pages.settings.aboutPanel.update_error_unknown',
   installUnknown: 'pages.settings.aboutPanel.update_error_install_unknown',
+  gatewayStillRunning: 'pages.settings.aboutPanel.update_error_gateway_still_running',
 } as const
 
 function updateErrorText(st: UpdateState | null | undefined): string {
@@ -116,6 +118,12 @@ function updateErrorText(st: UpdateState | null | undefined): string {
     case 'stage-invalidated': return i18nT(UPDATE_ERROR_KEYS.stageInvalidated)
     case 'integrity': return i18nT(UPDATE_ERROR_KEYS.integrity)
     case 'misconfigured': return i18nT(UPDATE_ERROR_KEYS.misconfigured)
+    // The command itself renders beside this text (gatewayStopCommand), so the
+    // sentence points at it; without a command the install generic applies.
+    case 'gateway-still-running':
+      return gatewayStopCommand(st)
+        ? i18nT(UPDATE_ERROR_KEYS.gatewayStillRunning)
+        : i18nT(UPDATE_ERROR_KEYS.installUnknown)
     // Unclassified failure. The localized generic WINS over st.message: the raw
     // value is electron-updater's exception text, written for a developer reading
     // logs ("ShipIt could not replace the application bundle") and always English.
@@ -1156,6 +1164,9 @@ export function AboutPanel() {
   const cardFailedPhase = updateState?.phase === 'download' || updateState?.phase === 'install'
   const cardFailed = cardState === 'error' && cardFailedPhase
   const cardInstallFailed = cardState === 'error' && updateState?.phase === 'install'
+  // An install refused because the gateway kept running: the error text ends
+  // by pointing at the command that stops it, rendered right under it.
+  const refusedStopCommand = cardInstallFailed ? gatewayStopCommand(updateState) : null
   const showUpdateCard = !checking && (cardState === 'found' || cardState === 'available' || cardState === 'downloading' || cardState === 'downloaded' || cardFailed)
   const cardBusy = cardState === 'available' || cardState === 'downloading'
   const cardReady = cardState === 'downloaded'
@@ -1226,6 +1237,9 @@ export function AboutPanel() {
           askAgent
           testId="update-download-error"
         />
+      )}
+      {refusedStopCommand && (
+        <CopyCommand><code data-testid="update-gateway-stop-command">{refusedStopCommand}</code></CopyCommand>
       )}
       {/* The IPC call rejected before the updater ever emitted a failure state,
           so no `cardFailed` row describes it: the button would just re-arm with

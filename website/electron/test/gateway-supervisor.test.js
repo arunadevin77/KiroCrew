@@ -3501,7 +3501,10 @@ test("an adopted bundled gateway that refuses the stop fails the update stop and
   const { supervisor, state } = adoptedGatewayHarness({ shutdownStatus: 403 });
   assert.equal(await supervisor.start(), true);
 
-  await assert.rejects(supervisor.stopForUpdate(), { code: "gateway-still-running" });
+  await assert.rejects(supervisor.stopForUpdate(), {
+    code: "gateway-still-running",
+    stopCommand: "kirocrew stop --port 5476",
+  });
 
   assert.equal(state.shutdowns.length, 1);
   assert.deepStrictEqual(state.signals, [], "macOS has no pidfd to pin a signal to the checked process");
@@ -3540,7 +3543,12 @@ test("an adopted bundled gateway its service manager starts again fails the upda
   const { supervisor, state } = adoptedGatewayHarness({ parentPid: 1, rebindPid: 456 });
   assert.equal(await supervisor.start(), true);
 
-  await assert.rejects(supervisor.stopForUpdate(), { code: "gateway-still-running" });
+  // The service would start a signalled process again, so the refusal names
+  // the CLI stop that stops the service itself.
+  await assert.rejects(supervisor.stopForUpdate(), {
+    code: "gateway-still-running",
+    stopCommand: "kirocrew stop",
+  });
 
   assert.equal(state.shutdowns.length, 1);
   assert.deepStrictEqual(state.listenPids, [456], "the restarted gateway runs from the same files");
