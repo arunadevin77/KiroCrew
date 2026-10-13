@@ -450,6 +450,7 @@
     "chatMessageList": {
       "copied": "Copié !",
       "copy": "Copier",
+      "copy_input_and_output": "Copier l’entrée et la sortie",
       "copy_failed": "Échec de la copie",
       "open_path": "Ouvrir {{path}}",
       "show_less": "Afficher moins",

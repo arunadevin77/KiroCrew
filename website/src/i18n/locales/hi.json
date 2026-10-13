@@ -436,6 +436,7 @@
     "chatMessageList": {
       "copied": "कॉपी किया गया!",
       "copy": "कॉपी करें",
+      "copy_input_and_output": "इनपुट और आउटपुट कॉपी करो",
       "copy_failed": "कॉपी विफल",
       "open_path": "{{path}} खोलो",
       "show_less": "कम दिखाएँ",

@@ -422,6 +422,7 @@
     "chatMessageList": {
       "copied": "コピーしました！",
       "copy": "コピー",
+      "copy_input_and_output": "入力と出力をコピー",
       "copy_failed": "コピーに失敗しました",
       "open_path": "{{path}} を開く",
       "show_less": "表示を減らす",

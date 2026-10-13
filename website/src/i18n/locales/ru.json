@@ -464,6 +464,7 @@
     "chatMessageList": {
       "copied": "Скопировано!",
       "copy": "Копировать",
+      "copy_input_and_output": "Копировать ввод и вывод",
       "copy_failed": "Не удалось скопировать",
       "open_path": "Открыть {{path}}",
       "show_less": "Показать меньше",

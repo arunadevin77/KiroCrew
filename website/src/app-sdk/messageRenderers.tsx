@@ -267,9 +267,6 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
   // Hoisted out of the JSX so the panel and the copy button cannot drift: what
   // gets copied is exactly what the panel shows, not the portion the 160px box
   // happens to have scrolled into view.
-  const panelText = purpose && rawLabel && purpose !== rawLabel
-    ? rawLabel + '\n\n' + (message.content || '')
-    : (message.content || '')
   // The backend persists the call's `input` and its `output` on the tool row's
   // meta (`_tool_meta` / the tool-result handler in chat_runner.py), and the
   // embed's transcript response carries them. `message.content` is only the
@@ -280,8 +277,19 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
   const metaInput = typeof message.meta?.input === 'string' ? message.meta.input : ''
   const metaOutput = typeof message.meta?.output === 'string' ? message.meta.output : ''
   const hasPayload = !!(metaInput || metaOutput)
+  // With a payload, Copy takes both halves (input, blank line, output) rather
+  // than whichever tab is showing: `ToolDetails` owns its tab state, and a copy
+  // that silently follows a hidden tab would be a guess about what was meant.
+  const panelText = hasPayload
+    ? [metaInput, metaOutput].filter(Boolean).join('\n\n')
+    : purpose && rawLabel && purpose !== rawLabel
+      ? rawLabel + '\n\n' + (message.content || '')
+      : (message.content || '')
   const detailsId = React.useId()
-  const detailsBar = `color-mix(in srgb, ${isRejected ? 'var(--danger)' : isAutoDenied ? 'var(--warn)' : isDone ? 'var(--ok)' : hasPendingPerm ? 'var(--warn)' : 'var(--accent)'} 70%, transparent)`
+  // Rail colour mirrors the pill's status tone, at the main chat's 70% mix.
+  const detailsRail = {
+    color: `color-mix(in srgb, ${isRejected ? 'var(--danger)' : isAutoDenied ? 'var(--warn)' : isDone ? 'var(--ok)' : hasPendingPerm ? 'var(--warn)' : 'var(--accent)'} 70%, transparent)`,
+  }
   // The two budgets above are width-blind, so the collapsed box is also measured
   // once it is on screen: a real browser then detects the wrap case exactly,
   // while jsdom reports 0 for both heights and falls back to the budgets.
@@ -319,7 +327,9 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
     ? i18nT('appSdk.chatMessageList.copied')
     : copyOutcome === 'failed'
       ? i18nT('appSdk.chatMessageList.copy_failed')
-      : i18nT('appSdk.chatMessageList.copy')
+      : hasPayload
+        ? i18nT('appSdk.chatMessageList.copy_input_and_output')
+        : i18nT('appSdk.chatMessageList.copy')
 
   return (
     <div className="animate-scale-in flex items-center gap-2 flex-wrap">
@@ -342,37 +352,41 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
           <PanelRight size={11} />
         </button>
       )}
-      {expanded && hasPayload && (
-        <div className="w-full mt-1 ml-4" data-testid="tool-pill-details">
-          <ToolDetails
-            purpose={purpose}
-            pillLabel={label}
-            toolName={rawLabel}
-            input={metaInput}
-            output={metaOutput}
-            auto={false}
-            pending={hasPendingPerm}
-            ts={0}
-            hasEntry
-            fmtTime={() => ''}
-            barColor={detailsBar}
-            layoutId={`embed-tool-detail-${detailsId}`}
-            compact
-            flush
-          />
-        </div>
-      )}
-      {expanded && !hasPayload && message.content && (
-        <div className="w-full mt-1 ml-4">
-          <pre ref={panelRef} className={`w-full text-[11px] leading-4 font-mono text-muted bg-bg-elevated rounded-md p-2 ${showAll ? TOOL_PANEL_EXPANDED_MAX_H : 'max-h-40'} overflow-auto whitespace-pre-wrap break-all border border-border`}>
-            {panelText}
-          </pre>
+      {expanded && (hasPayload || message.content) && (
+        <div className="w-full mt-1 ml-4" data-testid={hasPayload ? 'tool-pill-details' : undefined}>
+          {/* Not `compact`: that form caps the payload at 160px, which is what
+              the main transcript reserves for the composer's approval mirror.
+              The full form scrolls at the main chat's own 400/500px caps, so
+              no Show-more toggle is needed on this branch. */}
+          {hasPayload ? (
+            <ToolDetails
+              purpose={purpose}
+              pillLabel={label}
+              toolName={rawLabel}
+              input={metaInput}
+              output={metaOutput}
+              auto={false}
+              pending={hasPendingPerm}
+              ts={0}
+              hasEntry
+              fmtTime={() => ''}
+              barColor={detailsRail.color}
+              layoutId={`embed-tool-detail-${detailsId}`}
+              flush
+            />
+          ) : (
+            <pre ref={panelRef} className={`w-full text-[11px] leading-4 font-mono text-muted bg-bg-elevated rounded-md p-2 ${showAll ? TOOL_PANEL_EXPANDED_MAX_H : 'max-h-40'} overflow-auto whitespace-pre-wrap break-all border border-border`}>
+              {panelText}
+            </pre>
+          )}
           {/* A row of its OWN, below the panel. `website/AUTOSDE.yaml`'s
               `max-two-buttons-per-row` caps a horizontal action group at two and
               does not count "controls in a genuinely different row or a
               separated region", so these two are not siblings of the pill's own
               toggle and file chip — and this row itself holds exactly two. */}
-          <div className="flex items-center gap-1 mt-1">
+          {/* On a payload row the controls start on the payload box's left edge:
+              the rail is a 2px border plus a pl-3 inset (`ROW_RAIL_CLASS`). */}
+          <div className={`flex items-center gap-1 mt-1 ${hasPayload ? 'pl-[14px]' : ''}`}>
             <button
               type="button"
               onClick={copyPanel}
@@ -383,7 +397,7 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
             >
               {copyOutcome === 'copied' ? <Check size={11} className="text-ok" /> : <Copy size={11} />}
             </button>
-            {panelOverflows && (
+            {!hasPayload && panelOverflows && (
               <button
                 type="button"
                 onClick={() => setShowAll(s => !s)}
@@ -411,7 +425,7 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
               variant="inline"
               askAgent
               onDismiss={() => setCopyOutcome('idle')}
-              className="mt-1 ml-0.5"
+              className={`mt-1 ml-0.5 ${hasPayload ? 'pl-[14px]' : ''}`}
               testId="tool-panel-copy-error"
             />
           )}

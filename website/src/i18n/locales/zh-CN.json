@@ -422,6 +422,7 @@
     "chatMessageList": {
       "copied": "已复制！",
       "copy": "复制",
+      "copy_input_and_output": "复制输入和输出",
       "copy_failed": "复制失败",
       "open_path": "打开 {{path}}",
       "show_less": "收起",

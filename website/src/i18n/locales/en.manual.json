@@ -373,6 +373,7 @@
     "chatMessageList": {
       "copied": "Copied!",
       "copy": "Copy",
+      "copy_input_and_output": "Copy input and output",
       "copy_failed": "Copy failed",
       "show_less": "Show less",
       "show_more": "Show more"

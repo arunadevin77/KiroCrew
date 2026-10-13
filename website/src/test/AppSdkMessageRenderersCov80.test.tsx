@@ -795,6 +795,29 @@ describe('ToolCallPill expanded details from persisted meta', () => {
     expect(within(panel).getByText(/zzq-only-input/)).toBeInTheDocument()
   })
 
+  it('keeps Copy on a payload row and copies both halves', async () => {
+    mockedCopy.mockResolvedValue(true)
+    render(<ToolCallPill
+      message={msg({ role: 'tool', content: '🔧 zzq-title', meta: { input: 'zzq-cmd --flag', output: 'zzq-result-line' } } as Partial<ChatMessage>)}
+      running={false}
+    />)
+    await expandPanel()
+    await userEvent.click(screen.getByRole('button', { name: 'Copy input and output' }))
+    expect(mockedCopy).toHaveBeenCalledWith('zzq-cmd --flag\n\nzzq-result-line')
+  })
+
+  it('renders the payload at the full-form height, not the 160px compact cap', async () => {
+    render(<ToolCallPill
+      message={msg({ role: 'tool', content: '🔧 zzq-title', meta: { output: 'zzq-result-line' } } as Partial<ChatMessage>)}
+      running={false}
+    />)
+    await expandPanel()
+    const panel = await screen.findByTestId('tool-pill-details')
+    const box = within(panel).getByText(/zzq-result-line/).closest('pre')
+    expect(box?.className).toContain('max-h-[500px]')
+    expect(box?.className).not.toContain('max-h-[160px]')
+  })
+
   it('falls back to the content panel when no payload was persisted', async () => {
     render(<ToolCallPill message={msg({ role: 'tool', content: '🔧 zzq-legacy' })} running={false} />)
     await expandPanel()
