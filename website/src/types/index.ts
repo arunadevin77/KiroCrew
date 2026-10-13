@@ -1687,6 +1687,9 @@ export interface ToolActivity {
   output?: string       // tool output (stdout, results, etc.)
   input_cut?: ToolPayloadCut   // set only when `input` was clamped
   output_cut?: ToolPayloadCut  // set only when `output` was clamped
+  /** True while `output` holds only a MID-STREAM frame (a shell's streamed
+   *  stdout): the call is still running. Cleared by its terminal result. */
+  output_partial?: boolean
   ts: number
   execution_started_at?: number // when execution began (after approval); survives remount
   auto?: boolean        // auto-approved tool call

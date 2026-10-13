@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderHook } from '@testing-library/react'
+import { act, renderHook } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { configureStore } from '@reduxjs/toolkit'
 import type { ReactNode } from 'react'
@@ -50,6 +50,25 @@ describe('useSlotActivity (the header pill and the chat status line share this r
     const other = makeStore()
     call(other, 'tc-s', 'echo nothing_to_do', 'Echo the name', { tool_name: 'execute_bash', mcp_server: '' })
     expect(run(other, { running: true })).toMatchObject({ kind: 'tool', text: 'Echo the name' })
+  })
+
+  it('keeps naming a running shell while it streams output, until its final result', () => {
+    // A long build streams stdout as mid-stream frames (`final: false`); the
+    // first line of output is not the call returning.
+    const store = makeStore()
+    call(store, 'tc-b', 'make test', 'Running the test suite')
+    const wrapper = ({ children }: { children: ReactNode }) => <Provider store={store}>{children}</Provider>
+    const { result } = renderHook(() => useSlotActivity(SLOT, { running: true }), { wrapper })
+    const frame = (output: string, final: boolean) =>
+      act(() => { store.dispatch(sseToolResult({ slot: SLOT, output, tool_call_id: 'tc-b', final })) })
+    frame('collecting…', false)
+    frame('collecting…\n12 passed', false)
+    expect(result.current).toMatchObject({ kind: 'tool', text: 'Running the test suite' })
+    frame('12 passed', true)
+    expect(result.current.kind).toBe('thinking')
+    // Returned stays returned: a straggling partial frame does not reopen it.
+    frame('late', false)
+    expect(result.current.kind).toBe('thinking')
   })
 
   it('a tool step carries its full label beside the clamped one', () => {

@@ -506,7 +506,7 @@ export function useWebSocket() {
             chatStream.onToolCall(data)
             break
           case 'tool_result':
-            dispatch(sseToolResult(data as { slot: string; output: string; tool_call_id?: string }))
+            dispatch(sseToolResult(data as { slot: string; output: string; tool_call_id?: string; final?: boolean }))
             break
           case 'mcp_app_render':
             // MCP App (SEP-1865) render payload from the gateway. Stored by

@@ -161,7 +161,7 @@ export const activityReducers = {
     if (action.payload.approval_type) entry.approval_type = action.payload.approval_type
     log.push(entry)
   },
-  sseToolResult(state: ChatState, action: PayloadAction<{ slot: string; output: string; tool_call_id?: string }>) {
+  sseToolResult(state: ChatState, action: PayloadAction<{ slot: string; output: string; tool_call_id?: string; final?: boolean }>) {
     const tid = action.payload.tool_call_id
     // Land the output on the tool MESSAGE's meta as well as the tool log, for
     // the one consumer that reads scrollback rather than the tool log: the
@@ -213,6 +213,16 @@ export const activityReducers = {
         if (log[i].type === 'tool' && (!tid || !log[i].tool_call_id)) { target = i; break }
       }
     }
-    if (target >= 0) setClampedField(log[target], 'output', action.payload.output)
+    if (target >= 0) {
+      setClampedField(log[target], 'output', action.payload.output)
+      // `final: false` is a mid-stream frame: the call is still running, so
+      // nothing that reads "has this call returned?" may count it. A frame
+      // without the field (an older server) keeps the old reading: returned.
+      // Once a call returned (`output_partial === false`) it stays returned,
+      // even if a late frame follows.
+      const entry = log[target]
+      if (action.payload.final !== false) entry.output_partial = false
+      else if (entry.output_partial === undefined || entry.output_partial) entry.output_partial = true
+    }
   },
 }

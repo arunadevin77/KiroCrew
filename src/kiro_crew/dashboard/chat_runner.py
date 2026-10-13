@@ -12742,7 +12742,12 @@ async def _run_chat(
                             if tcid:
                                 state.broadcast_ws(
                                     "tool_result",
-                                    {"slot": slot.key, "tool_call_id": tcid, "output": ""},
+                                    {
+                                        "slot": slot.key,
+                                        "tool_call_id": tcid,
+                                        "output": "",
+                                        "final": True,
+                                    },
                                 )
                         # A `card` row is a change card / guide offer the
                         # tool group's own call put into the conversation, so
@@ -13926,6 +13931,13 @@ async def _run_chat(
                         "slot": slot.key,
                         "tool_call_id": _tcid,
                         "output": _out,
+                        # False on a mid-stream frame (a shell's streamed stdout
+                        # arrives as a status-less content update while the
+                        # command still runs). The crewmate's live status line
+                        # reads a result as "the call returned, the model is
+                        # thinking again", so without this the first line of a
+                        # long build's output flipped it to "Thinking".
+                        "final": bool(_tool_terminal),
                     },
                 )
                 # If this tool result belongs to a native sub-agent, stream its
