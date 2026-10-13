@@ -42,9 +42,24 @@
  * open body, hundreds of px away. The next folder and its rows are under the
  * header in the same frame. A header at its natural place keeps the animated
  * close: nothing scrolls, and the folder visibly folds shut below it.
+ *
+ * WHAT RISES must be painted in that same frame. `.session-row` is
+ * `content-visibility: auto` (index.css), so a row that was below the lane
+ * has never been rendered. The browser only notices it has come on screen in
+ * the rendering update after the layout that moved it, and paints it one or
+ * two frames later; the folder header above it has no such rule and paints at
+ * once. So the person sees the next folder's header over an empty lane for
+ * those frames, with motion and without. Before the collapsed commit paints,
+ * the rows that can rise into the lane get `content-visibility: visible`
+ * inline, which renders them in that frame; the override is taken off once
+ * the close has finished and `auto` resumes, now remembering their real size.
+ * Only rows AFTER the collapsing block in document order, and only as many as
+ * can reach the lane: a never-rendered row above the lane would otherwise
+ * swap its placeholder height for its real one and move everything under it.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { ChatFolder } from '../../types'
+import { FOLDER_BODY_COLLAPSE_MS } from '../../components/FolderBody'
 import { holdScrollFloor } from './collapseFloor'
 
 /** How long a click's arm waits for its collapse to render. The optimistic
@@ -93,6 +108,36 @@ export function holdPinnedHeaderThroughCollapse(
 }
 
 /**
+ * Render, in the current frame, the session rows that can rise into `lane` as
+ * `block` closes (see the module note on what rises). Returns the undo, which
+ * lets the rows go back to `content-visibility: auto`.
+ *
+ * Document order is the lane's vertical order, so the walk stops at the first
+ * row that cannot reach the lane's bottom edge even after rising by the body's
+ * current height (already 0 when the body closed with no transition). Rows
+ * inside a CLOSED folder are passed over without a look: `FolderBody` marks a
+ * closed body `inert`, its rows take no room in the lane and so never rise,
+ * and measuring one forces layout of a subtree the browser is skipping, with a
+ * top that keeps growing under the closed header and would end the walk
+ * before the open folder below it.
+ */
+export function renderRowsRisingInto(lane: HTMLElement | null, block: HTMLElement | null): () => void {
+  if (!lane || !block) return () => {}
+  const laneBottom = lane.getBoundingClientRect().bottom
+  const header = block.querySelector<HTMLElement>(':scope > [data-folder-row]')
+  const rise = Math.max(0, block.getBoundingClientRect().height - (header?.getBoundingClientRect().height ?? 0))
+  const forced: HTMLElement[] = []
+  for (const row of lane.querySelectorAll<HTMLElement>('.session-row')) {
+    if (!(block.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) || block.contains(row)) continue
+    if (row.closest('[inert]')) continue
+    if (row.getBoundingClientRect().top - rise >= laneBottom) break
+    row.style.setProperty('content-visibility', 'visible')
+    forced.push(row)
+  }
+  return () => { for (const row of forced) row.style.removeProperty('content-visibility') }
+}
+
+/**
  * The list view's collapse wiring. `armHold` is called from the click with the
  * folder's block; the hold itself runs in a layout effect on the first commit
  * that shows that folder collapsed (see the module note on timing). Expanding,
@@ -116,12 +161,24 @@ export function useHoldPinnedHeaderOnCollapse(laneRef: RefObject<HTMLElement | n
   const [instantCloseId, setInstantCloseId] = useState<string | null>(null)
   const releaseFrame = useRef<number | null>(null)
   const expiry = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The undo for the rows rendered ahead of the rising, and the timer/frame
+  // that will run it.
+  const risingRows = useRef<{ undo: () => void; timer: ReturnType<typeof setTimeout> | null; frame: number | null } | null>(null)
+  const releaseRisingRows = useCallback(() => {
+    const r = risingRows.current
+    if (!r) return
+    risingRows.current = null
+    if (r.timer !== null) clearTimeout(r.timer)
+    if (r.frame !== null) cancelAnimationFrame(r.frame)
+    r.undo()
+  }, [])
   const cancelRelease = useCallback(() => {
     if (releaseFrame.current !== null) cancelAnimationFrame(releaseFrame.current)
     releaseFrame.current = null
     if (expiry.current !== null) clearTimeout(expiry.current)
     expiry.current = null
-  }, [])
+    releaseRisingRows()
+  }, [releaseRisingRows])
   useEffect(() => cancelRelease, [cancelRelease])
   const armHold = useCallback((id: string, block: HTMLElement | null) => {
     const headerTop = block ? paintedHeaderTop(block) : null
@@ -162,9 +219,23 @@ export function useHoldPinnedHeaderOnCollapse(laneRef: RefObject<HTMLElement | n
     if (!folder) { pending.current = null; setInstantCloseId(null); return }
     if (!folder.collapsed) return
     pending.current = null
-    holdPinnedHeaderThroughCollapse(laneRef.current, p.block.isConnected ? p.block : null, p.headerTop)
+    const block = p.block.isConnected ? p.block : null
+    holdPinnedHeaderThroughCollapse(laneRef.current, block, p.headerTop)
+    // The arm has rendered: its TTL, an earlier collapse's instant-close
+    // release and that collapse's rising rows are all finished with.
+    cancelRelease()
+    const r = { undo: renderRowsRisingInto(laneRef.current, block), timer: null as ReturnType<typeof setTimeout> | null, frame: null as number | null }
+    risingRows.current = r
+    r.timer = setTimeout(() => {
+      r.timer = null
+      r.frame = requestAnimationFrame(() => {
+        r.frame = requestAnimationFrame(() => {
+          r.frame = null
+          if (risingRows.current === r) releaseRisingRows()
+        })
+      })
+    }, FOLDER_BODY_COLLAPSE_MS)
     if (instantCloseId === p.id) {
-      cancelRelease()
       releaseFrame.current = requestAnimationFrame(() => {
         releaseFrame.current = requestAnimationFrame(() => {
           releaseFrame.current = null
@@ -172,6 +243,6 @@ export function useHoldPinnedHeaderOnCollapse(laneRef: RefObject<HTMLElement | n
         })
       })
     }
-  }, [folders, laneRef, instantCloseId, cancelRelease])
+  }, [folders, laneRef, instantCloseId, cancelRelease, releaseRisingRows])
   return { armHold, disarm, instantCloseId }
 }

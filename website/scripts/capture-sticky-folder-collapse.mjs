@@ -8,10 +8,10 @@
  * its time from that commit. A frame showing the folder's FIRST sessions under the header means the
  * rows the person was looking at swapped for others before folding away.
  *
- * Runs the REAL built SPA with every /api/** call answered from fixtures (no
- * gateway), like scripts/capture-list-view-tag-filter.mjs. Two folders of 40
- * sessions each; the lane is scrolled 400px into "alpha folder" so its header
- * is pinned and its first sessions are above the lane.
+ * Runs the REAL built SPA on the scene `lib/folder-collapse-scene.mjs` fixes
+ * (no gateway): two folders of 40 sessions each; the lane is scrolled 400px
+ * into "alpha folder" so its header is pinned and its first sessions are above
+ * the lane.
  *
  * Usage: node scripts/capture-sticky-folder-collapse.mjs <baseUrl> <outDir> <label> [reduce]
  * Writes <outDir>/<label>.webm and <outDir>/<label>-filmstrip.png, and prints
@@ -21,26 +21,13 @@
 import { chromium } from 'playwright'
 import { mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { handleBootRoute, json, makeFixedApi } from './lib/boot-api.mjs'
+import { routeFolderCollapseScene } from './lib/folder-collapse-scene.mjs'
 
 const BASE = process.argv[2] || 'http://127.0.0.1:7824'
 const OUT = process.argv[3] || '../temp-screenshots/17529-sticky-folder-collapse'
 const LABEL = process.argv[4] || 'fix'
 const REDUCE = process.argv[5] === 'reduce'
 mkdirSync(OUT, { recursive: true })
-
-const iso = minutesAgo => new Date(Date.now() - minutesAgo * 60_000).toISOString()
-const folders = [
-  { id: 'f-a', name: 'alpha folder', order: 0, collapsed: false },
-  { id: 'f-b', name: 'beta folder', order: 1, collapsed: false },
-]
-const SLOTS = ['a', 'b'].flatMap((f, fi) => Array.from({ length: 40 }, (_, i) => ({
-  key: `${f}-${i}`, title: `${f === 'a' ? 'alpha' : 'beta'} session ${i}`, agent: 'kirocrew',
-  running: false, messages: 3, folder_id: `f-${f}`, last_ts: iso(fi * 100 + i), created: iso(1000 + i),
-})))
-const bootApi = makeFixedApi('/tmp/demo').set('/api/status', {
-  sessions: SLOTS.length, crons: 0, lessons: 0, uptime: 120, version: 'dev',
-})
 
 const browser = await chromium.launch({ env: { ...process.env, LD_LIBRARY_PATH: '/usr/lib64' } })
 try {
@@ -51,25 +38,7 @@ try {
     recordVideo: { dir: videoDir, size: { width: 1400, height: 900 } },
   })
   const page = await context.newPage()
-  await page.routeWebSocket(/\/api\/ws/, () => {})
-  await page.route(url => url.pathname.startsWith('/api/'), async route => {
-    const req = route.request()
-    const path = new URL(req.url()).pathname
-    const m = path.match(/^\/api\/chat\/folders\/([^/]+)$/)
-    if (m && req.method() === 'PATCH') {
-      // The server keeps what it was sent, with a realistic round trip.
-      const body = req.postDataJSON() || {}
-      const f = folders.find(x => x.id === decodeURIComponent(m[1]))
-      if (f) Object.assign(f, body)
-      await new Promise(r => setTimeout(r, 120))
-      return json(route, f || {})
-    }
-    if (path === '/api/chat/folders') return json(route, folders)
-    if (path === '/api/chat/slots') return json(route, SLOTS)
-    if (path === '/api/chat/tags' || path === '/api/chat/tag-columns') return json(route, [])
-    if (path.startsWith('/api/apps')) return json(route, { apps: [], installed: [] })
-    return handleBootRoute(route, path, { project: '/tmp/demo', theme: 'dark', fixedApi: bootApi })
-  })
+  await routeFolderCollapseScene(page)
   page.on('pageerror', err => console.log('PAGEERROR:', String(err).slice(0, 240)))
   await page.addInitScript(() => {
     localStorage.setItem('mc-onboarded', '1')
