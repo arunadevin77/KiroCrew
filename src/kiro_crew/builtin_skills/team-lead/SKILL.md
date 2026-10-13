@@ -106,15 +106,15 @@ acceptance.
 
 **A conductor you dispatch dispatches workers only. Say that in its seed, in
 those words.** The ledger's nesting cap sits one level below you, so a conductor
-dispatched by your conductor comes up sterile: it opens a ledger without
-complaint, looks healthy, and then cannot create the item a worker has to be
-bound to, so the branch produces nothing and reads as a slow start rather than a
-dead end.
+dispatched by your conductor is refused the moment it tries to open a ledger: the
+branch produces nothing, and the seed is what keeps that refusal from being the
+first thing the child learns.
 
 Carry the limit as the refusal rather than as a number. The server owns the cap
-and enforces it at `create`, which answers with a depth error. **That refusal is
-the signal to flatten that branch into workers** -- not an error to retry, and
-not a case for asking to have the cap raised.
+and enforces it on the child's first ledger call (`goal` or `create`), which
+answers `depth_exceeded`. **That refusal is the signal to flatten that branch
+into workers** -- not an error to retry, and not a case for asking to have the
+cap raised.
 
 And never leave `agent` unset on a dispatch. An omitted `agent` inherits YOURS,
 so a leaf comes up as a second lead that dispatches instead of fixing, and the
@@ -143,12 +143,12 @@ real ceiling, and a count in your head is a second ceiling that disagrees with
 it.
 
 **What refuses a third conducting level is `MAX_DEPTH` in `work_ledger.py`.**
-The one-level rule is above; this is the mechanism that enforces it, and the
-depth the guard admits does not yet agree with the ledger's own cap (tracked in
-[#18127](https://github.com/kirodotdev/KiroCrew/issues/18127)) -- which is why
-the safe tree today is the one already stated and not whatever a cap reading
-suggests. Never ask to have the cap raised: the refusal is the signal to
-flatten that branch.
+The one-level rule is above; this is the mechanism that enforces it, and it
+refuses at the child's first ledger call: a conductor dispatched by your
+conductor is turned away the moment it tries to open a ledger, before any
+ledger exists for it, so the branch reads as a refusal the child reports and
+never as a child that opened a ledger and then could create nothing. Never ask
+to have the cap raised: the refusal is the signal to flatten that branch.
 
 **Merge two lines when they stop being two.** Three readings say it: they edit
 the same files, one of them is down to a single item, or handoffs between them

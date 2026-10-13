@@ -232,6 +232,17 @@ DEFAULT_GOAL_ITEM_CAP = 20
 #: could never be crossed, so it would say nothing.
 MAX_GOAL_ITEM_CAP = MAX_STORED_ITEMS_PER_CONDUCTOR
 MAX_EVENTS_PER_ITEM = 200
+#: How many levels may CONDUCT: the root at depth 0 and the one conductor it may
+#: dispatch at depth 1. Depth ``MAX_DEPTH`` itself is the first level that may
+#: only work -- it may neither open a ledger nor create an item -- so a conductor
+#: dispatched by a depth-1 conductor is refused at its first ledger call
+#: (:func:`child_depth` denies the open), before any ledger exists for it. Two levels rather
+#: than three because each level multiplies sessions -- three levels of three items
+#: is twenty-seven -- and because a summary of summaries of summaries is not
+#: evidence any more; that number is a guess informed by session multiplication,
+#: not a measurement (RFC Q5). Read ONLY through :func:`may_conduct`, which every
+#: depth guard asks, so the level a dispatch admits, the level a ledger may open at
+#: and the level that may create an item are one level and cannot drift apart.
 MAX_DEPTH = 2
 
 MAX_GOAL_CHARS = 2000
@@ -1440,25 +1451,37 @@ def _require_count(value: Any, name: str) -> int:
 # --------------------------------------------------------------------------- #
 
 
+def may_conduct(depth: int) -> bool:
+    """Whether a session at *depth* may hold a ledger and dispatch from it.
+
+    The one reading of :data:`MAX_DEPTH`. :func:`child_depth`, :func:`ensure_conductor`
+    and :func:`_create_item` all decide through this predicate so that the level a
+    dispatch admits, the level a ledger may open at and the level that may create
+    an item are the same level by construction.
+    """
+    return depth < MAX_DEPTH
+
+
 def child_depth(parent_depth: int) -> int:
     """The depth a conductor dispatched BY one at *parent_depth* would have.
 
-    Refuses past the cap rather than clamping: a clamped depth would let level three
-    exist while reporting as level two, which is the failure the cap exists to stop.
-    Two levels rather than three because each level multiplies sessions — three
-    levels of three items is twenty-seven — and because a summary of summaries of
-    summaries is not evidence any more. That number is a guess informed by session
-    multiplication, not a measurement (RFC Q5).
+    Refuses rather than clamping: a clamped depth would let a third conducting
+    level exist while reporting as the second, which is the failure the cap exists
+    to stop. The refusal lands HERE, at the child's first ledger call and before
+    any ledger exists for it: the child is told it may only work, and its parent
+    never watches a child that opened a ledger and then could create nothing in
+    it.
     """
     depth = _require_count(parent_depth, "depth")
-    if depth + 1 > MAX_DEPTH:
+    child = depth + 1
+    if not may_conduct(child):
         raise WorkLedgerError(
-            f"depth {depth} is at the cap of {MAX_DEPTH}; this session may not "
-            "dispatch a conductor",
+            f"depth {depth} is the last conducting level (the cap is {MAX_DEPTH}); "
+            "this session may not dispatch a conductor",
             code=CODE_DEPTH_EXCEEDED,
             field="depth",
         )
-    return depth + 1
+    return child
 
 
 # --------------------------------------------------------------------------- #
@@ -1857,14 +1880,16 @@ def ensure_conductor(
 
     *depth* and *parent_item* are SERVER-owned in Phase 2: the value passed here
     comes from the creating session's own record via :func:`child_depth`, never from
-    a model. Refuses a depth past the cap so a ledger cannot exist at a level that
-    is not allowed to conduct.
+    a model. Refuses a depth that :func:`may_conduct` denies, so a ledger cannot
+    exist at a level that is not allowed to conduct -- the same question
+    :func:`child_depth` already answered, asked again here because this function is
+    also reachable with a depth that did not come through it.
     """
     checked_goal = _require_text(goal, MAX_GOAL_CHARS, "goal", required=False)
     checked_depth = _require_count(depth, "depth")
-    if checked_depth > MAX_DEPTH:
+    if not may_conduct(checked_depth):
         raise WorkLedgerError(
-            f"depth {checked_depth} is past the cap of {MAX_DEPTH}",
+            f"depth {checked_depth} may not conduct; the cap is {MAX_DEPTH} levels",
             code=CODE_DEPTH_EXCEEDED,
             field="depth",
         )
@@ -2141,13 +2166,16 @@ def _create_item(
     write. The new item's own lock is taken from inside that hold, in the
     documented order.
 
-    Refuses when the conductor is at the depth cap, because an item is a dispatch and
-    a session at the cap may not dispatch.
+    Refuses when :func:`may_conduct` denies the conductor's depth, because an item
+    is a dispatch and a level that may not conduct may not dispatch. No such record
+    opens through :func:`ensure_conductor`, but a header on disk can carry a depth
+    no guard here admitted -- :func:`rebuild_from_projection` keeps the depth a
+    stored header holds -- so the question is asked here too.
     """
     checked_title = _require_text(title, MAX_TITLE_CHARS, "title")
     checked_acceptance = _require_acceptance(acceptance)
     checked_round = None if round_number is None else _require_count(round_number, "round")
-    if record.depth >= MAX_DEPTH:
+    if not may_conduct(record.depth):
         raise WorkLedgerError(
             f"conductor is at depth {record.depth} and the cap is {MAX_DEPTH}; it may "
             "not dispatch further work",

@@ -223,9 +223,10 @@ cycle; an unbound running worker is neither visible nor recoverable.
 | decomposes into two or more independently acceptable sub-items | `kirocrew-conductor` |
 | `select_crew` names a specialist crew that fits | that crew |
 
-`depth` is computed at `create` time and capped at 2, so you may dispatch a
-conductor and its own workers may not conduct. A `depth_exceeded` error
-means the item has to be flattened into leaves, not retried.
+`depth` is computed when a child first opens its ledger (its first `goal` or
+`create`) and capped at 2, so you may dispatch a conductor and its own
+workers may not conduct. A `depth_exceeded` error means the item has to be
+flattened into leaves, not retried.
 
 A specialist crew that does not mount `@kirocrew-work` cannot report to the
 ledger. Dispatch it anyway when it is the right crew for the item, and fall back
@@ -578,7 +579,7 @@ So the worker contract applies to you on top of everything in this skill:
   round boundaries keeps that to a handful of approvals per goal.
 
 Depth is capped at 2, so your own children may be workers only — a
-`depth_exceeded` on `create` means flatten, not retry.
+`depth_exceeded` on a child's first `goal` or `create` means flatten, not retry.
 
 ## Stop conditions
 

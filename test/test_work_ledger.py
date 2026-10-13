@@ -238,6 +238,14 @@ def test_ensure_conductor_refuses_a_depth_past_the_cap():
     assert caught.value.code == wl.CODE_DEPTH_EXCEEDED
 
 
+def test_ensure_conductor_refuses_the_first_depth_that_may_not_conduct():
+    """A ledger at ``MAX_DEPTH`` could create nothing, so it must not open at all."""
+    with pytest.raises(wl.WorkLedgerError) as caught:
+        wl.ensure_conductor("sterile", goal="g", depth=wl.MAX_DEPTH)
+    assert caught.value.code == wl.CODE_DEPTH_EXCEEDED
+    assert wl.read_conductor("sterile") is None
+
+
 def test_ensure_conductor_records_a_parent_item_and_checks_its_shape():
     parent = wl.mint_item_id()
     record = wl.ensure_conductor("child", depth=1, parent_item=parent)
@@ -249,20 +257,80 @@ def test_ensure_conductor_records_a_parent_item_and_checks_its_shape():
 # ── depth ─────────────────────────────────────────────────────────────────
 
 
-def test_child_depth_advances_one_level_and_refuses_at_the_cap():
+def test_child_depth_advances_one_level_and_refuses_the_last_conducting_level():
+    """A root may dispatch a conductor; that conductor's children may only work.
+
+    The refusal lands on the PARENT's side of the dispatch: ``child_depth(1)`` is
+    what a depth-1 conductor's child would be born at, and refusing there is what
+    keeps a ledger from opening at a depth where every create is refused.
+    """
     assert wl.child_depth(0) == 1
-    assert wl.child_depth(1) == 2
+    with pytest.raises(wl.WorkLedgerError) as caught:
+        wl.child_depth(1)
+    assert caught.value.code == wl.CODE_DEPTH_EXCEEDED
     with pytest.raises(wl.WorkLedgerError) as caught:
         wl.child_depth(2)
     assert caught.value.code == wl.CODE_DEPTH_EXCEEDED
 
 
-def test_create_is_refused_when_the_conductor_is_at_the_depth_cap():
-    wl.ensure_conductor("capped", goal="g", depth=wl.MAX_DEPTH)
+def _header_at_depth(slot_key: str, depth: int) -> None:
+    """Put a ledger on disk whose stored depth no entry guard admitted.
+
+    ``ensure_conductor`` refuses such a depth, so the header is rewritten after a
+    legal open -- the shape a rebuild from the crew log can leave, since it keeps
+    the depth the stored header holds.
+    """
+    wl.ensure_conductor(slot_key, goal="g", depth=0)
+    header_path = wl.conductor_dir(slot_key) / "conductor.json"
+    stored = json.loads(header_path.read_text(encoding="utf-8"))
+    stored["depth"] = depth
+    header_path.write_text(json.dumps(stored), encoding="utf-8")
+    assert wl.read_conductor(slot_key).depth == depth
+
+
+def test_create_is_refused_when_a_stored_header_sits_at_a_depth_that_may_not_conduct():
+    _header_at_depth("capped", wl.MAX_DEPTH)
     with pytest.raises(wl.WorkLedgerError) as caught:
         wl.apply_conductor_action("capped", "create", title="t", acceptance={})
     assert caught.value.code == wl.CODE_DEPTH_EXCEEDED
     assert wl.list_work_items("capped") == []
+
+
+@pytest.mark.parametrize("depth", range(0, 4))
+def test_the_three_depth_guards_agree_at_every_depth(depth: int):
+    """One predicate, three guards: a depth a dispatch admits is a depth a ledger
+    opens at is a depth that may create. No depth is let in by one and refused by
+    another."""
+    allowed = wl.may_conduct(depth)
+    assert allowed == (depth < wl.MAX_DEPTH)
+
+    def refused(call) -> bool:
+        try:
+            call()
+        except wl.WorkLedgerError as exc:
+            assert exc.code == wl.CODE_DEPTH_EXCEEDED
+            return True
+        return False
+
+    def dispatch() -> None:
+        wl.child_depth(depth - 1)
+
+    def open_ledger() -> None:
+        wl.ensure_conductor(f"open-{depth}", goal="g", depth=depth)
+
+    slot = f"stored-{depth}"
+
+    def create() -> None:
+        wl.apply_conductor_action(slot, "create", title="t", acceptance={})
+
+    # Guard 1: the dispatch that would create a conductor at *depth*.
+    if depth > 0:
+        assert refused(dispatch) == (not allowed)
+    # Guard 2: opening a ledger at *depth*.
+    assert refused(open_ledger) == (not allowed)
+    # Guard 3: creating an item from a header stored at *depth*.
+    _header_at_depth(slot, depth)
+    assert refused(create) == (not allowed)
 
 
 def test_a_conductor_one_below_the_cap_may_still_dispatch():

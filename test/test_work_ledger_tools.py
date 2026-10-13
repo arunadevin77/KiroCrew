@@ -338,7 +338,13 @@ async def test_dispatch_table_neither_gets_both_refusals():
 
 @pytest.mark.asyncio
 async def test_a_third_level_conductor_is_refused_at_the_depth_cap():
-    """depth <= 2: a grandchild may work, and may not conduct."""
+    """A grandchild may work, and may not conduct: its ledger never opens.
+
+    The refusal lands at the moment the grandchild tries to open a ledger, not
+    later when it tries to create an item -- a ledger that opens and then refuses
+    every create would read on the parent's board as a child thinking, not as a
+    dispatch that was never viable.
+    """
     await two_by_two()
     assert (await _record(WORKER_A, {"action": "goal", "goal": "level 1", "round": 1}))[0] == 200
     grandchild = "chat-a-grandchild"
@@ -355,18 +361,18 @@ async def test_a_third_level_conductor_is_refused_at_the_depth_cap():
     )[0] == 200
     # The grandchild is a working worker...
     assert (await _report(grandchild, {"status": "progress", "summary": "leaf work"}))[0] == 200
-    # ...and its ledger opens at the cap (depth 2 == MAX_DEPTH) ...
+    # ...whose ledger does not open: depth 2 == MAX_DEPTH is the first level that
+    # may only work, which is what the cap buys -- a summary of summaries of
+    # summaries is not evidence any more.
     status, body = await _record(grandchild, {"action": "goal", "goal": "level 2", "round": 1})
-    assert status == 200, body
-    assert body["conductor"]["depth"] == wl.MAX_DEPTH
-    # ...where it can dispatch nothing, which is what the cap buys: a summary of
-    # summaries of summaries is not evidence any more.
-    status, body = await _record(
-        grandchild,
-        {"action": "create", "title": "great-grandchild", "acceptance": {"kind": "human_approval"}},
-    )
-    assert status == 409
+    assert status == 409, body
     assert body["code"] == wl.CODE_DEPTH_EXCEEDED
+    # Nothing sterile is left behind: no ledger exists for the grandchild to read.
+    status, body = await _read(grandchild)
+    assert status == 404
+    assert body["code"] == wl.CODE_NO_LEDGER
+    # And its worker role is untouched by the refusal.
+    assert (await _report(grandchild, {"status": "progress", "summary": "still working"}))[0] == 200
 
 
 # ── every error code carries its tabulated status ─────────────────────────
