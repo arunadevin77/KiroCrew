@@ -841,6 +841,63 @@ def test_record_progress_and_events_respect_generation(store: TaskStore) -> None
     assert store.events("p")[-1].kind == "deliver"
 
 
+def _reclaim_after_a_lost_owner(
+    store: TaskStore, task_id: str, clock: Clock
+) -> tuple[int, model.TaskRecord]:
+    """Run attempt one to a progress marker, lose its owner, claim attempt two.
+
+    The owner's lease lapses, the sweep marks the row ``recovering`` and due
+    now, and the dispatcher claims it. Returns the first attempt's generation
+    and the row the second claim hands back.
+    """
+    first = store.claim(task_id)
+    assert first is not None
+    assert store.transition(task_id, model.STARTING, generation=first.generation)
+    assert store.transition(task_id, model.RUNNING, generation=first.generation)
+    assert store.record_progress(task_id, first.generation, {"step": 3}) is True
+    clock.advance(store.lease_secs + 1)
+    assert store.transition(
+        task_id, model.RECOVERING, generation=first.generation, next_run_at=clock.t
+    )
+    second = store.claim(task_id)
+    assert second is not None
+    return first.generation, second.record
+
+
+def test_a_new_attempt_starts_without_the_old_attempts_progress(
+    store: TaskStore, clock: Clock
+) -> None:
+    """A re-claimed row reads as a new attempt, not as the lost one's last marker.
+
+    ``claim`` hands the row to a new generation. The marker the earlier attempt
+    recorded describes work that attempt did, so the claim clears it in the same
+    statement and a reader sees no progress until the new attempt records some.
+    """
+    store.accept([_rec("p")])
+    old, record = _reclaim_after_a_lost_owner(store, "p", clock)
+    assert record.generation == old + 1
+    assert record.progress is None
+    got = store.get("p")
+    assert got is not None and got.generation == old + 1
+    assert got.progress is None
+
+
+def test_a_stale_attempt_cannot_record_progress_after_the_reclaim(
+    store: TaskStore, clock: Clock
+) -> None:
+    """The generation fence is the same after a re-claim: only the current attempt records."""
+    store.accept([_rec("p")])
+    old, record = _reclaim_after_a_lost_owner(store, "p", clock)
+    before = store.get("p")
+    assert before is not None
+    assert store.record_progress("p", old, {"step": 99}) is False
+    after = store.get("p")
+    assert after is not None and after.progress == before.progress
+    assert store.record_progress("p", record.generation, {"step": 1}) is True
+    got = store.get("p")
+    assert got is not None and got.progress == {"step": 1}
+
+
 def test_closed_store_raises_typed_error(tmp_path: Path) -> None:
     s = TaskStore(tmp_path / "t.db", network_fs=False).open()
     s.close()

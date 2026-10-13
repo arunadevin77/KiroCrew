@@ -676,7 +676,8 @@ still needs a restart, since with the queue off there is no refusal to retry.
 
 ```sql
 UPDATE tasks SET state='admitted', lease_owner=?, lease_expires_at=now+60,
-                 generation=generation+1, attempts=attempts+1, next_run_at=NULL
+                 generation=generation+1, attempts=attempts+1, next_run_at=NULL,
+                 progress_json=NULL
 WHERE id=? AND state IN ('queued','retry_wait','recovering')
   AND (next_run_at IS NULL OR next_run_at<=now)
   AND (lease_expires_at IS NULL OR lease_expires_at<now)
@@ -686,7 +687,9 @@ Zero rows affected means someone else has it (`claim()` returns `None`).
 `claim_next(kind)` picks the oldest eligible row and claims it, retrying a
 bounded number of times under contention. A claimed (`admitted`..`running`) row
 is never re-claimed however stale its lease: a lapsed lease inside a live
-process is a bug the reconciler surfaces, not a takeover.
+process is a bug the reconciler surfaces, not a takeover. The claim also clears
+`progress_json`: a progress marker belongs to the attempt that recorded it, so a
+row handed to a new generation carries none until that attempt records its own.
 
 Every write a run makes afterwards carries the generation it was dispatched
 under (`transition`, `finish`, `record_progress`, `renew_lease`). A stale

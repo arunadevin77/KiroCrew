@@ -1044,7 +1044,9 @@ class TaskStore:
         claimable state, eligible now (``next_run_at``), and either unleased
         or past its lease. The generation is bumped and ``attempts`` counts
         this dispatch, so every callback the run makes afterwards can be
-        fenced against a later re-dispatch.
+        fenced against a later re-dispatch. The earlier attempt's progress
+        marker is cleared in the same statement, so the new attempt starts
+        with none.
         """
         ts = self.now()
         lease = self._lease_secs if lease_secs is None else float(lease_secs)
@@ -1056,7 +1058,7 @@ class TaskStore:
                 cur = conn.execute(
                     "UPDATE tasks SET state=?, lease_owner=?, lease_expires_at=?, "
                     "generation=generation+1, attempts=attempts+1, next_run_at=NULL, "
-                    "updated_at=? "
+                    "progress_json=NULL, updated_at=? "
                     f"WHERE id=? AND state IN {_SQL_CLAIMABLE} "
                     "AND (next_run_at IS NULL OR next_run_at<=?) "
                     "AND (lease_expires_at IS NULL OR lease_expires_at<?)",
