@@ -618,6 +618,33 @@ test("disabled local gateway does not spawn when the backend is unreachable", as
   );
 });
 
+test("a status for a destroyed WebContents is dropped, not thrown", async () => {
+  // The main window's WebContents object survives its renderer dying, and it
+  // is in exactly that state during a renderer crash loop. `send` on it
+  // throws "Object has been destroyed"; callers reach sendStatus from async
+  // paths with no catch, so the throw surfaced as an unhandledRejection
+  // (#14524). The guard has to read the destroyed state, not the object's
+  // presence, which optional chaining alone cannot see.
+  const sends = [];
+  const destroyedContents = {
+    isDestroyed: () => true,
+    send: (...args) => {
+      sends.push(args);
+      throw new Error("Object has been destroyed");
+    },
+  };
+  const { supervisor, spawnCalls } = harness({
+    store: fakeStore({ runLocalGateway: false }),
+    httpMod: rejectingHttp(),
+    mainWindow: { isDestroyed: () => false, webContents: destroyedContents },
+  });
+
+  // startGateway's first line is a status; with the old code this threw.
+  assert.strictEqual(await supervisor.start(), false);
+  assert.deepStrictEqual(sends, [], "nothing is sent to a destroyed WebContents");
+  assert.strictEqual(spawnCalls.length, 0);
+});
+
 test("AppImage sandbox advice uses the user-facing warning channel", async () => {
   const baseFs = harness().fsMod;
   const { supervisor, logs, warnings } = harness({
@@ -784,7 +811,10 @@ function staleBundleHarness({
     ...(BrowserWindow ? { BrowserWindow } : {}),
     mainWindow: mainWindow || {
       isDestroyed: () => false,
-      webContents: { send: (channel, message) => state.statuses.push(`${channel}:${message}`) },
+      webContents: {
+        isDestroyed: () => false,
+        send: (channel, message) => state.statuses.push(`${channel}:${message}`),
+      },
     },
     processRef: {
       platform,
@@ -1113,7 +1143,7 @@ function clientOnlyClickHarness({
     restore() {},
     show() {},
     focus() {},
-    webContents: { loadFile() {}, send() {} },
+    webContents: { isDestroyed: () => false, loadFile() {}, send() {} },
   };
 
   const built = harness({
@@ -1844,7 +1874,11 @@ async function windowsNoBundleDialog({ pruneMidRun }) {
     focus() {},
     isMinimized: () => false,
     restore() {},
-    webContents: { loadFile() {}, send: (channel, message) => statuses.push(`${channel}:${message}`) },
+    webContents: {
+      isDestroyed: () => false,
+      loadFile() {},
+      send: (channel, message) => statuses.push(`${channel}:${message}`),
+    },
   };
   const statuses = [];
   built = staleBundleHarness({
@@ -2657,6 +2691,7 @@ async function installingDialogHarness({ missing }) {
     isMinimized: () => false,
     restore() {},
     webContents: {
+      isDestroyed: () => false,
       loadFile() {},
       send: (channel, message) => statuses.push(`${channel}:${message}`),
     },
@@ -2870,7 +2905,7 @@ ModuleNotFoundError: No module named 'ssl'
     focus() {},
     isMinimized: () => false,
     restore() {},
-    webContents: { loadFile() {}, send() {} },
+    webContents: { isDestroyed: () => false, loadFile() {}, send() {} },
   };
   const built = harness({
     fsMod,
@@ -2921,7 +2956,7 @@ test("non-installing failure dialogs arm no probe", async () => {
     focus() {},
     isMinimized: () => false,
     restore() {},
-    webContents: { loadFile() {}, send() {} },
+    webContents: { isDestroyed: () => false, loadFile() {}, send() {} },
   };
   const { supervisor } = harness({
     store: fakeStore({ runLocalGateway: false }),

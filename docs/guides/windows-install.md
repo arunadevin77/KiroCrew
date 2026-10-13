@@ -760,6 +760,13 @@ supervision is a separate piece of work, proposed in
   software-rendering relaunch does not help, because rendering is not what is
   failing.
 
+  The app now says so on screen: once its reloads are spent, a native error
+  dialog reports how many times the window process exited and with which code,
+  and on Windows, when that code is `-2147483645` and no dashboard page had
+  loaded yet, it also names this cause, states that the sandbox is not turned
+  off, and has a button that opens this section. An older version shows only
+  the black window; the log lines below are the same either way.
+
   `gateway-launch.log` (in `%APPDATA%\kirocrew-desktop\logs\`; a nightly install
   uses `kirocrew-desktop-nightly`) shows `renderer died` lines up to the reload
   limit. The exit code they carry is commonly `-2147483645`, which

@@ -5,6 +5,7 @@ const path = require("path");
 
 const { createTokenRetryHandler, dashboardRetryPath } = require("./token-retry");
 const { createRendererRecovery, withSafeReload, hasSafeReload } = require("./renderer-recovery");
+const { createRendererExhaustedNotice } = require("./renderer-exhausted-notice");
 const { createHangRecovery } = require("./hang-recovery");
 const { armSplashHistoryClear, fileShellPageBasename } = require("./splash-history");
 const { hideToTray, cancelPendingTrayHide, shouldKeepAppHidden } = require("./hide-to-tray");
@@ -98,6 +99,13 @@ function createWindowLifecycle(options) {
     backendUrl,
     port,
     glog = () => {},
+    // The launch log's path, named in the dead-renderer error dialog so the
+    // user can attach it to a report.
+    logPath = () => "",
+    // Whether a dashboard document has finished loading in this run (the
+    // gpu-crash-fallback latch). Tells the dead-renderer dialog a renderer that
+    // never started from one that crashed later.
+    dashboardLoaded = () => false,
     readInternalSecret = () => "",
     mintLocalToken,
     fetchRemoteToken,
@@ -767,6 +775,42 @@ function createWindowLifecycle(options) {
     // request either way. See pane-asset-journal.js.
     attachPaneAssetJournal(mainWindow.webContents.session, glog, backendUrl);
 
+    function reloadDashboard() {
+      if (mainWindow.isDestroyed()) return;
+      (async () => {
+        let tokenValue = await mintLocalToken(backendUrl);
+        if (!tokenValue) {
+          ({ token: tokenValue } = await fetchRemoteToken(port));
+        }
+        if (mainWindow.isDestroyed()) return;
+        // `safe=1`: do not reopen the chat that may have caused the crash.
+        mainWindow.webContents.loadURL(withSafeReload(
+          tokenValue ? `${backendUrl}?token=${tokenValue}` : backendUrl,
+        ));
+      })().catch((error) => {
+        glog(`renderer recovery reload failed: ${error && error.message}`);
+      });
+    }
+
+    const rendererExhaustedNotice = createRendererExhaustedNotice({
+      dialog,
+      openExternal: (url) => shell.openExternal(url),
+      requestQuit,
+      // "Try again" in the dialog: a fresh reload budget, then one more load.
+      // `rendererRecovery` is created just below; this runs only after the
+      // dialog it belongs to, long after both exist.
+      retry: () => {
+        rendererRecovery.reset();
+        reloadDashboard();
+      },
+      dashboardLoaded,
+      parentWindow: () => mainWindow,
+      isQuitting,
+      platform,
+      logPath,
+      log: glog,
+    });
+
     const rendererRecovery = createRendererRecovery({
       isQuitting,
       log: glog,
@@ -796,24 +840,13 @@ function createWindowLifecycle(options) {
         }
         return parts.join(" ");
       },
-      reload: () => {
-        if (mainWindow.isDestroyed()) return;
-        (async () => {
-          let tokenValue = await mintLocalToken(backendUrl);
-          if (!tokenValue) {
-            ({ token: tokenValue } = await fetchRemoteToken(port));
-          }
-          if (mainWindow.isDestroyed()) return;
-          // `safe=1`: do not reopen the chat that may have caused the crash.
-          mainWindow.webContents.loadURL(withSafeReload(
-            tokenValue ? `${backendUrl}?token=${tokenValue}` : backendUrl,
-          ));
-        })().catch((error) => {
-          glog(`renderer recovery reload failed: ${error && error.message}`);
-        });
-      },
-      onGiveUp: ({ reason }) => {
-        glog(`renderer recovery exhausted (reason=${reason}); leaving the window as-is`);
+      reload: reloadDashboard,
+      // The budget is spent: say so on screen. A dead renderer leaves the
+      // window black with no text, so this is the only readable error the
+      // user gets (renderer-exhausted-notice.js). Never awaited here: the
+      // dialog outlives this event handler.
+      onGiveUp: (info) => {
+        void rendererExhaustedNotice.show(info);
       },
     });
 

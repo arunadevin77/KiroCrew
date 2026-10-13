@@ -344,6 +344,21 @@ Open via **Connection → Open Config File** or the tray menu.
   (`gpu-crash-fallback.js`). The software-mode boot drops the opt-in's
   `--disable-software-rasterizer` so `KIROCREW_DISABLE_GPU=1` cannot veto
   SwiftShader. Remove the key to retry hardware rendering sooner.
+- **Dead renderer.** When the dashboard's renderer process dies, the app
+  reloads it up to three times a minute (`renderer-recovery.js`). When that
+  budget is spent, a native error dialog says so and offers Try again or Quit
+  (`renderer-exhausted-notice.js`); native because no renderer is left to
+  draw an error page. On Windows, when the renderer exited with
+  `0x80000003` before any dashboard document had loaded, the dialog's heading
+  names the cause ("Security software is blocking Kiro Crew's window.") and it
+  explains that Chromium's sandboxed child processes are being blocked on
+  the device, names the supported fix (a process exclusion for the
+  executable in the software that blocks them) and opens the Windows guide,
+  then asks again (same buttons, Try again now the default) so the user is
+  never handed back the bare black window. Esc and the close button act as Try
+  again, never as Quit. The dialog reads the gpu-crash-fallback latch for
+  "has a dashboard document loaded in this run"; there is one such latch.
+  No sandbox switch is ever applied.
 - External links open in your default browser
 - Desktop leaves the child `PATH` unchanged; the gateway-side prerequisite
   service independently probes Kiro CLI's supported user-local, Homebrew,

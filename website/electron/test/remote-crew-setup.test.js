@@ -313,6 +313,7 @@ function captureDialogHtml(storeData, actions = ["mc-action:quit"]) {
     destroy() { this.destroyed = true; },
     on() {}, once() {}, removeListener() {},
     webContents: {
+      isDestroyed() { return false; },
       loadFile() {}, loadURL() {}, send() {},
       on() {}, once() {}, removeListener() {},
     },

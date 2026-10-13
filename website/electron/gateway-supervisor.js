@@ -669,7 +669,13 @@ function createGatewaySupervisor({
   }
 
   function sendStatus(message) {
-    mainWindow()?.webContents?.send("status", message);
+    // A WebContents can exist and still be destroyed -- that is the state of
+    // the main window while its renderer is in a crash loop -- and `send` on
+    // it throws. Several callers reach here from async paths with no catch, so
+    // without this guard that throw surfaced as an unhandledRejection (#14524).
+    const contents = mainWindow()?.webContents;
+    if (!contents || contents.isDestroyed()) return;
+    contents.send("status", message);
   }
 
   function currentThemeAccent() {

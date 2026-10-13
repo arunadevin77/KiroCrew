@@ -190,6 +190,7 @@
       "gateway-liveness.js",
       "gateway-recovery.js",
       "renderer-recovery.js",
+      "renderer-exhausted-notice.js",
       "hang-recovery.js",
       "native-logging.js",
       "crash-collector.js",
