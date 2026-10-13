@@ -207,6 +207,7 @@ class KiroCrewClient:
         self._session: aiohttp.ClientSession | None = None
         self._pending_buffer: list[ContextEntry] = []
         self._default_slot: str | None = None
+        self._last_flush_dropped = 0
 
         # Auto-token: if app_name is set and no explicit auth, read secret
         self._app_secret = ""
@@ -510,6 +511,16 @@ class KiroCrewClient:
             )
 
     async def send_message(self, slot_id: str, message: str) -> None:
+        """Send *message* as a turn on *slot_id*.
+
+        When *slot_id* is the default slot, buffered context is flushed to it
+        first. An entry the Gateway refuses for good (``context_not_queued`` or
+        ``context_secret_shaped``) is dropped so it cannot block this send, and
+        the send still goes through. Read ``last_flush_dropped`` after the call
+        to learn how many entries this send dropped; it is 0 when nothing was
+        dropped or nothing was buffered.
+        """
+        self._last_flush_dropped = 0
         if len(message) > self.message_length_limit:
             raise KiroCrewError(
                 ErrorCode.VALIDATION_ERROR,
@@ -909,6 +920,10 @@ class KiroCrewClient:
         dropped (with a warning) and the call returns rather than
         raising. A transient failure (network, auth, 5xx) is different: the entry
         is put back and the first such error is raised, so a retry can resend it.
+
+        The dropped count is also stored in ``last_flush_dropped``, including
+        when the call raises, so entries dropped before a transient failure are
+        still reported.
         """
         now = time.time()
         to_flush = [
@@ -957,6 +972,7 @@ class KiroCrewClient:
                 last_exc = exc
                 requeue.append(entry)
         self._pending_buffer.extend(requeue)
+        self._last_flush_dropped = dropped
         if last_exc:
             raise last_exc
         return dropped
@@ -967,3 +983,13 @@ class KiroCrewClient:
     @property
     def pending_context_count(self) -> int:
         return len(self._pending_buffer)
+
+    @property
+    def last_flush_dropped(self) -> int:
+        """Buffered context entries the most recent flush dropped for good.
+
+        ``send_message`` resets this to 0 before it sends, so after a send it
+        counts only what that send's flush dropped (0 when nothing was
+        buffered). A direct ``flush_pending_context`` call sets it too.
+        """
+        return self._last_flush_dropped

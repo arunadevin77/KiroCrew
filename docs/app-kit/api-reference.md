@@ -980,6 +980,20 @@ does so before each reconnect.
 | `flushPendingContext(slot)` | `flush_pending_context(slot)` |
 | `setDefaultSlot(slot)` | `set_default_slot(slot)` |
 
+When `send_message` targets the default slot it flushes buffered context first.
+An entry the Gateway refuses for good (`context_not_queued` or
+`context_secret_shaped`) is dropped so it cannot block the send, and the send
+still goes through. Read the `last_flush_dropped` property after the call to see
+how many entries that send dropped: `send_message` resets it to 0 before it
+sends, and a direct `flush_pending_context` call sets it too, including when the
+flush raises on a transient failure.
+
+```python
+await mc.send_message("slot-1", "hello")
+if mc.last_flush_dropped:
+    print(f"{mc.last_flush_dropped} context entries were dropped; the turn ran without them")
+```
+
 The standalone package exports `KiroCrewClient`, `KiroCrewError`, `ErrorCode`,
 `WsClient`, `WsEvent` and `GATEWAY_CONFIG_KEYS`. It does not export
 `AppManifest`, `AppLifecycle`, `GatewayManager` or proxy-auth helpers. Validate

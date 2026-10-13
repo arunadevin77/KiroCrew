@@ -235,6 +235,9 @@ class TestContextNotQueued:
             mc.set_default_slot("slot-1")
             await mc.inject_context(None, "ctx", source="s")
             await mc.send_message("slot-1", "hello")  # must not raise
+            assert mc.last_flush_dropped == 1, "the dropped entry is reported to the caller"
+            await mc.send_message("slot-1", "again")  # nothing buffered this time
+            assert mc.last_flush_dropped == 0, "each send reports only its own drops"
         posts = [r for r in gw.requests if r["method"] == "POST"]
         assert any(r["path"] == "/api/chat" for r in posts), "the turn send went through"
         assert mc.pending_context_count == 0
@@ -283,9 +286,26 @@ class TestContextSecretShaped:
             mc.set_default_slot("slot-1")
             await mc.inject_context(None, "ctx", source="s")
             await mc.send_message("slot-1", "hello")  # must not raise
+            assert mc.last_flush_dropped == 1, "the refused entry is reported to the caller"
         posts = [r for r in gw.requests if r["method"] == "POST"]
         assert any(r["path"] == "/api/chat" for r in posts), "the turn send went through"
         assert mc.pending_context_count == 0
+
+    async def test_drops_before_a_transient_failure_are_still_reported(self, gw):
+        # The first entry is refused for good and dropped; the second hits a
+        # plain 429 with no retries left, so the flush raises. The drop that
+        # happened before the raise must still be visible.
+        gw.statuses = [400, 429]
+        gw.status_bodies = {400: self._REFUSED}
+        async with _client(gw, max_retries=0) as mc:
+            mc.set_default_slot("slot-1")
+            await mc.inject_context(None, "secret-shaped", source="s")
+            await mc.inject_context(None, "ok", source="s")
+            with pytest.raises(KiroCrewError) as exc:
+                await mc.send_message("slot-1", "hello")
+            assert exc.value.code == ErrorCode.RATE_LIMITED
+            assert mc.last_flush_dropped == 1
+            assert mc.pending_context_count == 1, "the transient entry is re-buffered"
 
 
 class TestRequestRetries:
