@@ -6,11 +6,12 @@ nothing enforced that: a conductor that forgot left its workers reporting to a
 ledger nobody read. Two pieces close the gap:
 
 * :func:`ensure_patrol` -- called by the bind route after a bind commits. When
-  the conductor's slot has NO loop at all, it arms a ``watch="work-ledger"``
+  the conductor's slot has no ACTIVE loop, it arms a ``watch="work-ledger"``
   patrol through the same chokepoint an agent's own ``monitor_start`` uses
-  (``autonudge_authz.authorize_and_add_nudge``), create-only, so an existing
-  loop -- active, paused or stopped and retained by a person -- is never
-  displaced or stacked. A refusal is logged at WARNING and never fails the bind.
+  (``autonudge_authz.authorize_and_add_nudge``). A loop the system stopped
+  counts as none and is replaced; an active loop is never displaced or
+  stacked; a loop a person stopped is kept and the arm is refused with
+  ``user-stopped``. A refusal is logged at WARNING and never fails the bind.
   The loop is tagged ``default_patrol``: the conductor's own later
   ``monitor_start`` replaces it rather than meeting a 409.
 * :func:`has_active_patrol` -- read by ``work_ledger_read`` to flag each open
@@ -131,11 +132,48 @@ def has_active_patrol(state: Any, conductor_key: str) -> bool:
         return False
 
 
-async def ensure_patrol(state: Any, conductor_key: str) -> str:
-    """Arm the default patrol on the conductor's slot when it holds no loop.
+#: Why :func:`ensure_patrol` answered what it did, surfaced as ``patrol_reason``.
+REASON_NO_LOOP = "no-loop"
+REASON_REPLACED = "replaced-system-stopped"
+REASON_ACTIVE_LEDGER = "active-work-ledger"
+REASON_ACTIVE_OTHER = "active-other-watch"
+REASON_USER_STOPPED = "user-stopped"
+REASON_OUTSIDE_ARM = "outside-arm-refused"
+REASON_CANNOT_HOST = "session-cannot-host-loop"
+REASON_ARM_FAILED = "arm-failed"
+REASON_DISABLED = "autonudge-disabled"
 
-    Never raises: every failure is logged and answered as an outcome string,
-    because the bind that called this has already committed.
+
+def _refusal_reason(state: Any, slot: str, status: object) -> str:
+    from kiro_crew.autonudge_authz import _EXTERNAL_ARM_REFUSED_MODES
+
+    try:
+        current = state.get_slot(slot)
+    except Exception:  # noqa: BLE001 - a slot-table read must not fail the caller
+        current = None
+    if str(getattr(current, "mode", "") or "") in _EXTERNAL_ARM_REFUSED_MODES:
+        return REASON_OUTSIDE_ARM
+    if status == 403:
+        return REASON_CANNOT_HOST
+    return REASON_ARM_FAILED
+
+
+async def ensure_patrol(state: Any, conductor_key: str) -> tuple[str, str]:
+    """Leave the conductor's slot with a work-ledger patrol, or say why not.
+
+    Answers ``(outcome, reason)``: *outcome* is one of ``ARMED``, ``EXISTING``,
+    ``REFUSED``, ``UNSUPPORTED`` and *reason* one of the ``REASON_*`` tokens.
+
+    A slot holds one loop. An ACTIVE loop is left alone. An inactive loop the
+    SYSTEM stopped -- its subject went terminal, a bound ran out, whoever armed
+    it -- counts as no loop and is replaced, because a new bind is new work to
+    patrol. An inactive loop a PERSON stopped is retained evidence and is
+    refused with ``user-stopped``. The split is ``_stopped_row_is_replaceable``,
+    the allowlist a directive re-arm uses, so this path cannot revive a stop a
+    directive could not.
+
+    Never raises: every failure is logged and answered as an outcome, because
+    the bind that called this has already committed.
     """
     try:
         svc, loop, slot = _loop_on(state, conductor_key)
@@ -145,21 +183,22 @@ async def ensure_patrol(state: Any, conductor_key: str) -> str:
                 conductor_key,
                 "auto-nudge is disabled" if svc is None else "session cannot host a loop",
             )
-            return UNSUPPORTED
-        # Any record is left alone -- active, approval-held, or stopped by a
-        # person -- with one exception: OUR OWN default patrol that the system
-        # stopped (its runtime budget or cycle cap ran out) is re-armed, because a
-        # new bind means there is new work to patrol. ``_stopped_row_is_replaceable``
-        # is the same allowlist the directive re-arm uses, so a person's stop of
-        # the default is still retained as evidence.
-        rearm = bool(
-            loop is not None
-            and getattr(loop, "default_patrol", False) is True
-            and not getattr(loop, "active", False)
-            and _stopped_row_is_replaceable(loop)
-        )
-        if loop is not None and not rearm:
-            return EXISTING
+            return UNSUPPORTED, REASON_DISABLED if svc is None else REASON_CANNOT_HOST
+        rearm = False
+        if loop is not None:
+            if getattr(loop, "active", False):
+                try:
+                    ledger = bool(svc._observes_work_ledger(loop))
+                except Exception:  # noqa: BLE001 - a store read must not fail the caller
+                    ledger = False
+                return EXISTING, REASON_ACTIVE_LEDGER if ledger else REASON_ACTIVE_OTHER
+            if not _stopped_row_is_replaceable(loop):
+                logger.warning(
+                    "conductor patrol not armed for %s: its loop was stopped by a person",
+                    conductor_key,
+                )
+                return REFUSED, REASON_USER_STOPPED
+            rearm = True
         from kiro_crew.autonudge import is_channel_key
         from kiro_crew.autonudge_authz import authorize_and_add_nudge
         from kiro_crew.monitoring.models import MonitorCreationSurface
@@ -178,7 +217,7 @@ async def ensure_patrol(state: Any, conductor_key: str) -> str:
             caller="conductor-patrol",
             # Create-only: a loop that appeared since the read above wins, and
             # nothing is ever stacked beside it. Stopped-row displacement only for
-            # the system-stopped default above.
+            # the system-stopped row above.
             replace_existing=False,
             replace_stopped=rearm,
             # The tag that lets the conductor's own ``monitor_start`` replace this
@@ -192,11 +231,11 @@ async def ensure_patrol(state: Any, conductor_key: str) -> str:
         )
     except Exception:  # noqa: BLE001 - the bind already committed
         logger.warning("conductor patrol arm failed for %s", conductor_key, exc_info=True)
-        return REFUSED
+        return REFUSED, REASON_ARM_FAILED
     if error is not None:
         logger.warning(
             "conductor patrol arm refused for %s: %s [status %s]", conductor_key, error, status
         )
-        return REFUSED
+        return REFUSED, _refusal_reason(state, slot, status)
     logger.info("conductor patrol armed on %s", slot)
-    return ARMED
+    return ARMED, REASON_REPLACED if rearm else REASON_NO_LOOP

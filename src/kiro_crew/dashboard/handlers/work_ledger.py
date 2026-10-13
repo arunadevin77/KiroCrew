@@ -1798,11 +1798,13 @@ async def api_work_ledger_record(request: web.Request) -> web.Response:
             payload["item"] = item.to_dict()
         if action == "bind":
             # A dispatched worker must have a patrol reading its reports. After the
-            # bind committed, arm the default one when this conductor has no loop;
-            # never raises, never displaces a loop, and a refusal does not undo
-            # the bind (``conductor_patrol`` module docstring).
-            patrol = await conductor_patrol.ensure_patrol(state, key)
+            # bind committed, arm the default one when this conductor has no
+            # active loop; never raises, never displaces an active loop or a
+            # person's stop, and a refusal does not undo the bind
+            # (``conductor_patrol`` module docstring).
+            patrol, reason = await conductor_patrol.ensure_patrol(state, key)
             payload["patrol"] = patrol
+            payload["patrol_reason"] = reason
             if not conductor_patrol.has_active_patrol(state, key):
                 payload["patrol_note"] = conductor_patrol.ARM_YOURSELF_NOTE
         conductor = result.get("conductor")

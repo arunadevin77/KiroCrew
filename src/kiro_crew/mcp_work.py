@@ -509,9 +509,10 @@ def _tool_definitions() -> list[dict[str, Any]]:
                 "round (and opens the ledger); 'create' mints an item from title + "
                 "acceptance; 'bind' attaches a worker session key to an item — do this "
                 "BEFORE seeding that session, so the worker never starts unbound. When "
-                "your session has no loop, a bind also arms a default work-ledger "
-                "patrol on it (the reply's 'patrol' says armed, existing, refused or "
-                "unsupported, and 'patrol_note' says what to do when none runs); your "
+                "your session has no active loop (none, or one the system stopped), a "
+                "bind also arms a default work-ledger patrol on it; a loop a person "
+                "stopped is kept. The reply always ends 'patrol=<armed|existing|"
+                "refused|unsupported> (<reason>)', plus what to do when none runs; your "
                 "own monitor_start replaces that default; "
                 "'decide' records what you decided and why (the one field a worker reads "
                 "as an instruction); 'verdict' records accept_eval.py's verdict and the "
@@ -745,15 +746,36 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         item = resp.get("item") or {}
         action = resp.get("action") or payload.get("action") or ""
         if item:
-            return (
+            line = (
                 f"Recorded {action}. item={item.get('item_id') or '(unknown)'} "
                 f"state={item.get('state') or '(unset)'} "
                 f"verdict={item.get('verdict') or '(none)'}"
             )
+            if action == "bind":
+                line += _patrol_line(resp)
+            return line
         conductor = resp.get("conductor") or {}
         return f"Recorded {action}. round={conductor.get('round', '(unset)')}"
 
     return f"Error: unknown tool '{name}'"  # pragma: no cover - guarded above
+
+
+def _patrol_line(resp: dict[str, Any]) -> str:
+    """The bind reply's patrol outcome, always present.
+
+    The route answers ``patrol``, ``patrol_reason`` and, when no work-ledger
+    watch is active afterwards, ``patrol_note``. A reply missing ``patrol`` is
+    reported as ``unknown`` with the arm-yourself note, so a dispatch never ends
+    looking patrolled when nothing says it is.
+    """
+    from kiro_crew.conductor_patrol import ARM_YOURSELF_NOTE
+
+    patrol = str(resp.get("patrol") or "")
+    if not patrol:
+        return f" patrol=unknown. {ARM_YOURSELF_NOTE}"
+    reason = str(resp.get("patrol_reason") or "unspecified")
+    note = str(resp.get("patrol_note") or "")
+    return f" patrol={patrol} ({reason})" + (f". {note}" if note else "")
 
 
 def _refusal(what: str, resp: dict[str, Any]) -> str:

@@ -5,7 +5,7 @@ Pins the four behaviours ``conductor_patrol`` exists for:
 * the first bind on a loop-less conductor arms ONE ``watch="work-ledger"`` loop
   through the real authorizer, as an outside arm, so a crew/member slot refuses
   it and no self-arm trust record is written;
-* a slot that already holds a loop -- active or stopped and retained -- is left
+* a slot that already holds an active loop, or one a person stopped, is left
   alone, so a second bind never stacks a second loop;
 * a refused arm is logged at WARNING and the bind still succeeds;
 * ``work_ledger_read`` flags each OPEN item ``unpatrolled`` while the conductor
@@ -265,11 +265,14 @@ async def test_second_bind_does_not_arm_a_second_loop(svc, audits):
 async def test_a_stopped_retained_loop_is_left_alone(svc, audits):
     """A person's stop must not be revived by a later bind."""
     item_id = await _setup()
-    stopped = SimpleNamespace(id="kept", slot_key=CONDUCTOR, active=False)
+    stopped = SimpleNamespace(
+        id="kept", slot_key=CONDUCTOR, active=False, stopped_reason="", monitor=None
+    )
     svc.loops[CONDUCTOR] = stopped
     body = await _bind(item_id, WORKER)
 
-    assert body["patrol"] == conductor_patrol.EXISTING
+    assert body["patrol"] == conductor_patrol.REFUSED
+    assert body["patrol_reason"] == conductor_patrol.REASON_USER_STOPPED
     assert body["patrol_note"] == conductor_patrol.ARM_YOURSELF_NOTE
     assert svc.added == []
     assert svc.loops[CONDUCTOR] is stopped
@@ -289,7 +292,8 @@ async def test_a_person_stopped_default_patrol_is_left_alone(svc, audits):
     svc.loops[CONDUCTOR] = stopped
     body = await _bind(item_id, WORKER)
 
-    assert body["patrol"] == conductor_patrol.EXISTING
+    assert body["patrol"] == conductor_patrol.REFUSED
+    assert body["patrol_reason"] == conductor_patrol.REASON_USER_STOPPED
     assert body["patrol_note"] == conductor_patrol.ARM_YOURSELF_NOTE
     assert svc.loops[CONDUCTOR] is stopped
 

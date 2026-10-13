@@ -626,7 +626,7 @@ class NudgeLoop:
     # decodes to 0, and a first fire simply captures 0.
     config_generation: int = 0
     # The gateway's default conductor patrol (``conductor_patrol.ensure_patrol``,
-    # armed when a conductor binds a worker and holds no loop). The one thing it
+    # armed when a conductor binds a worker and holds no active loop). The one thing it
     # changes: a create-only arm of a loop that is NOT a default patrol -- the
     # conductor's own ``monitor_start`` -- displaces an ACTIVE default patrol
     # instead of answering 409, so the agent's explicit arm always wins over the
