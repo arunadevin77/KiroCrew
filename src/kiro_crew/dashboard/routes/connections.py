@@ -144,7 +144,7 @@ def register(app: web.Application) -> None:
     app.router.add_get(
         "/api/instances/{id}/capabilities", handlers_instances.api_instances_capabilities
     )
-    # The peer's YOLO flag and denied approval modes, for the crew window's
+    # The peer's YOLO flag only, for the crew window's
     # approval-mode picker. Its own route so the window's poll reads one peer
     # endpoint, not the whole roster. Also BEFORE the catch-all.
     app.router.add_get(

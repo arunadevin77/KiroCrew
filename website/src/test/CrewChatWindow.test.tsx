@@ -1022,6 +1022,18 @@ describe('CrewChatWindow', () => {
       expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
     })
 
+    it('re-reads the peer\'s YOLO before a mode write and skips the write when it is on', async () => {
+      // The picker drew from an "off" read; YOLO turned on before the next poll.
+      mocks.instancesApprovalState.mockResolvedValueOnce({ yolo: false }).mockResolvedValue({ yolo: true })
+      renderWindow()
+      await waitFor(() => expect(screen.getByRole('button', { name: /approval mode/i })).toHaveTextContent('Normal'), PEER_ROW_WAIT)
+      fireEvent.pointerDown(screen.getByRole('button', { name: /approval mode/i }), { button: 0, ctrlKey: false, pointerType: 'mouse' })
+      fireEvent.click(await screen.findByRole('menuitem', { name: /^Trust/ }))
+      // The fresh read redraws the picker as YOLO, and no mode write went out.
+      await waitFor(() => expect(screen.getByRole('button', { name: /approval mode/i })).toHaveTextContent('YOLO'))
+      expect(posted().filter(c => c[0] === 'api/chat/mode')).toEqual([])
+    })
+
     it('draws no approval-mode picker while the peer\'s YOLO state is unknown', async () => {
       mocks.instancesApprovalState.mockResolvedValue({ yolo: null })
       renderWindow()

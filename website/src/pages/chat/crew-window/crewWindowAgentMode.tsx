@@ -5,12 +5,12 @@
  *  The agent list is the peer's roster (`/api/instances/{id}/capabilities`,
  *  already read by the window), and the mode is the peer slot's own trust
  *  flags plus the peer's YOLO flag (`/approval-state`,
- *  polled while the window is open). Both writes are the peer's own routes through the hub proxy, so the
+ *  polled while the window is open and re-read before a mode write). Both writes are the peer's own routes through the hub proxy, so the
  *  peer runs its own owner and policy checks and its refusal comes back here.
  *  YOLO is not offered: it is the peer's app-wide switch, not this session's. */
 import { useCallback, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../api/client'
 import { apiErrorCode } from '../../../api/apiError'
 import AgentDropdownList, { type AgentItem } from '../../../components/AgentDropdownList'
@@ -47,15 +47,25 @@ export function useCrewWindowAgentMode({ instanceId, slotKey, slotPath, name, sl
   /** A write landed (or failed): re-read the peer's slot. */
   onWritten: () => void
 }) {
-  const approvalQ = useQuery({
+  const queryClient = useQueryClient()
+  const approvalQuery = useMemo(() => ({
     queryKey: ['crew-window', instanceId, 'approval-state'],
     queryFn: () => api.instancesApprovalState(instanceId),
-    enabled,
-    refetchInterval: APPROVAL_STATE_REFRESH_MS,
-  })
+  }), [instanceId])
+  const approvalQ = useQuery({ ...approvalQuery, enabled, refetchInterval: APPROVAL_STATE_REFRESH_MS })
   const peer = approvalQ.data
   const mutation = useMutation({
-    mutationFn: ({ path, body }: { path: string; body: object }) => api.crewPeerPost(instanceId, path, body),
+    mutationFn: async ({ path, body, yoloCheck }: { path: string; body: object; yoloCheck?: boolean }) => {
+      // The poll can be up to 30 s old, and a mode write on a peer in YOLO
+      // ends YOLO for every session there. So a mode write first re-reads the
+      // flag and goes out only on a fresh "off"; the re-read also redraws the
+      // picker with what it found.
+      if (yoloCheck) {
+        const fresh = await queryClient.fetchQuery({ ...approvalQuery, staleTime: 0 })
+        if (fresh.yolo !== false) return undefined
+      }
+      return api.crewPeerPost(instanceId, path, body)
+    },
     // One at a time per crew: a second pick waits for the first, so the peer
     // applies them in the order they were made.
     scope: { id: 'crew-window-write:' + instanceId },
@@ -65,7 +75,7 @@ export function useCrewWindowAgentMode({ instanceId, slotKey, slotPath, name, sl
   // A policy refusal of a mode is re-thrown for the picker, which shows it in
   // its own menu as the local picker does; every other failure is the
   // window's notice (`errorText` below).
-  const write = useCallback((path: string, body: object) => mutateAsync({ path, body }).catch((e: unknown) => {
+  const write = useCallback((path: string, body: object, yoloCheck = false) => mutateAsync({ path, body, yoloCheck }).catch((e: unknown) => {
     if (apiErrorCode(e) === 'mode_disabled_by_policy') throw e
   }), [mutateAsync])
 
@@ -102,7 +112,7 @@ export function useCrewWindowAgentMode({ instanceId, slotKey, slotPath, name, sl
     // YOLO): a guessed "Normal" on a peer that auto-approves everything lies.
     approvalMode: slot && typeof peer?.yolo === 'boolean' ? slotApprovalMode(peer.yolo ? 'yolo' : undefined, slot) : undefined,
     approvalModeRemote: {
-      write: mode => write('api/chat/mode', { mode, slot: slotKey }),
+      write: mode => write('api/chat/mode', { mode, slot: slotKey }, true),
       trustScoped: !slot?.trust && !!slot?.trust_scope,
       note: i18nT('pages.chat.crewWindow.yolo_elsewhere', { name }),
     } satisfies ApprovalModeRemote,
