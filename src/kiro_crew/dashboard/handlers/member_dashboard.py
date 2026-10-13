@@ -548,6 +548,19 @@ def _trusted_page(slug: str, record: Any) -> str | None:
             entry.manifest.source,
         )
         return None
+    # The id must still name the page the record was made from. An operator page whose
+    # id a later release ships resolves to the shipped page, which is different markup
+    # under a manifest it was never checked against.
+    if entry.origin != source:
+        logger.warning(
+            "dashboard: %r's record is a %r page but the catalog serves %r as %r; "
+            "refusing to run a different page under that id",
+            slug,
+            source,
+            template_id,
+            entry.origin,
+        )
+        return None
     return entry.html
 
 

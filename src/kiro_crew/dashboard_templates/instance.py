@@ -816,23 +816,22 @@ def history(slug: str, *, session_id: str = "") -> tuple[dict[str, Any], ...]:
 # --------------------------------------------------------------------------
 
 
-#: Template provenances whose page may become a crewmate's live dashboard. One value.
+#: Template provenances whose page may become a crewmate's live dashboard.
 #:
 #: A rendered page runs its own inline script against the crewmate's fold values -- a
 #: chart is script or it is nothing -- inside a frame that can navigate itself. So a
 #: page that executes is a page trusted with every task title and summary it is handed,
-#: and it can carry those somewhere by navigating. Provenance is the only signal that
-#: says whether anyone here ever looked at the page, and ``builtin`` -- a directory in
-#: this repo, which went through review -- is the only provenance that carries one.
+#: and it can carry those somewhere by navigating. Provenance says whether a person put
+#: the page there. Two do:
 #:
-#: A page written by an agent, or imported from a sender, is therefore not renderable at
-#: all: not at preview, not at adopt. Making one renderable needs a wrapper document
-#: minted by this gateway, which holds the authored markup while withholding the frame's
-#: own navigation, plus a surface where a person looks at the page before it runs. Both
-#: are P2 -- see ``docs/request-for-change/rfc-crewmate-dynamic-dashboard.md`` -- and
-#: until they exist the honest answer to "render this page I wrote" is a refusal that
-#: says so.
-RENDERABLE_SOURCES: Final[frozenset[str]] = frozenset({catalog.BUILTIN_SOURCE})
+#: * ``builtin`` -- a directory in this repo, which went through review;
+#: * ``user`` -- a directory the operator placed in the data home's ``panel-templates``
+#:   folder, which no agent write path reaches (see :mod:`catalog`).
+#:
+#: ``shared`` -- a page imported from a sender -- is not renderable, and neither is a
+#: page an agent wrote: not at preview, not at adopt. See
+#: ``docs/request-for-change/rfc-crewmate-dynamic-dashboard.md``.
+RENDERABLE_SOURCES: Final[frozenset[str]] = frozenset({catalog.BUILTIN_SOURCE, catalog.USER_SOURCE})
 
 
 def _check(manifest: Any, html: str) -> dict[str, Any]:
@@ -852,9 +851,9 @@ def _check(manifest: Any, html: str) -> dict[str, Any]:
     if parsed.source not in RENDERABLE_SOURCES:
         raise InstanceRefused(
             f"a {parsed.source!r} template cannot be adopted: only a page that shipped "
-            "with the product has been looked at by anyone here, and a rendered page "
-            "runs its own script against this crewmate's task titles and summaries. A "
-            "page written here is a later change that needs a minted wrapper document"
+            "with the product, or one the operator placed in the panel-templates "
+            "folder, was put there by a person, and a rendered page runs its own "
+            "script against this crewmate's task titles and summaries"
         )
     return dict(manifest)
 

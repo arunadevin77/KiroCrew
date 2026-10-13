@@ -1,23 +1,23 @@
 """The template registry: every dashboard template this gateway can offer.
 
-**One source.** Templates ship with the product under ``builtin/<id>/``, each a
-directory in the format :mod:`kiro_crew.dashboard_templates.manifest` describes, read by
-:func:`~kiro_crew.dashboard_templates.manifest.load_template`. There is exactly one
-place a malformed template is refused, and exactly one place a servable page can come
-from.
+**Two roots, one loader.** Templates ship with the product under ``builtin/<id>/``. An
+operator may also place their own under ``<data home>/panel-templates/<id>/``. Both are
+directories in the format :mod:`kiro_crew.dashboard_templates.manifest` describes, read
+by :func:`~kiro_crew.dashboard_templates.manifest.load_template`. There is exactly one
+place a malformed template is refused.
 
-**The registry serves only pages that shipped with the product.** A dashboard page runs
-its own inline script against a crewmate's fold values -- a chart is script or it is
-nothing -- inside a frame that may navigate itself, so a page that renders is a page
-trusted with the task titles and summaries it is handed. The only provenance that
-carries a human review is a directory in this repo. A registry that also scanned a
-writable directory would serve a page nobody here looked at, and whatever could write
-that directory would choose what a crewmate's dashboard executes.
-
-A template somebody writes themselves is a P2 follow-up, and it needs a wrapper
-document minted by this gateway -- one that holds the authored markup without granting
-it the frame's own navigation -- before any such page can render. See
+**The registry serves only pages a person put there.** A dashboard page runs its own
+inline script against a crewmate's fold values -- a chart is script or it is nothing --
+inside a frame that may navigate itself, so a page that renders is a page trusted with
+the task titles and summaries it is handed. So the registry scans no directory an agent
+can write. The built-in directory went through review. The operator folder is the one
+the panel's own template overrides use, and every agent write path is refused on it:
+the sandbox seals it read-only, the file tools refuse a write under it, and a linked
+folder name is refused. An operator page is ``user``; a built-in id always wins over it,
+and a linked page directory or file is refused rather than followed. See
 ``docs/request-for-change/rfc-crewmate-dynamic-dashboard.md``.
+
+A page an agent writes, or one imported from a sender, renders from neither root.
 
 **A broken template is reported, not raised.** :func:`list_templates` returns the
 entries it could load AND the problems it could not, because one unparsable directory
@@ -29,9 +29,10 @@ agree: a directory holding a manifest that names a different id is two names for
 template, and a lookup by either name would find or miss it depending on which name the
 caller happened to hold.
 
-**``source`` is checked against where the file actually is.** A template in this
-directory may declare only ``builtin``. Without that check the field would be worth
-nothing to a surface that reads it to mean "this shipped in the product".
+**``source`` is checked against where the file actually is.** A template in the
+built-in directory may declare only ``builtin``, and one in the operator folder only
+``user``. Without that check the field would be worth nothing to a surface that reads it
+to mean "this shipped in the product".
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from kiro_crew import platform_compat
 from kiro_crew.dashboard_templates.manifest import (
     ManifestError,
     TemplateManifest,
@@ -49,6 +51,7 @@ from kiro_crew.dashboard_templates.manifest import (
 
 __all__ = [
     "BUILTIN_SOURCE",
+    "USER_SOURCE",
     "CatalogEntry",
     "Catalog",
     "UnknownTemplate",
@@ -60,6 +63,8 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 BUILTIN_SOURCE: Final[str] = "builtin"
+#: A page the operator placed in the data home's ``panel-templates`` folder.
+USER_SOURCE: Final[str] = "user"
 
 
 class UnknownTemplate(KeyError):
@@ -70,11 +75,10 @@ class UnknownTemplate(KeyError):
 class CatalogEntry:
     """One loadable template: its checked manifest, its page, and where it came from.
 
-    ``origin`` is :data:`BUILTIN_SOURCE` -- WHERE the directory sits, which is a fact
-    about the filesystem. ``manifest.source`` is what the file says about itself, and
-    the two are checked equal at load; they are kept apart so a reader can tell the
-    claim from the location, and so a second origin can be added without the claim
-    becoming the only check.
+    ``origin`` is :data:`BUILTIN_SOURCE` or :data:`USER_SOURCE` -- WHERE the directory
+    sits, which is a fact about the filesystem. ``manifest.source`` is what the file
+    says about itself, and the two are checked equal at load; they are kept apart so a
+    reader can tell the claim from the location, so the claim is never the only check.
     """
 
     manifest: TemplateManifest
@@ -136,11 +140,26 @@ def builtin_dir() -> Path:
     return Path(__file__).resolve().parent / "builtin"
 
 
+def _linked_part(directory: Path) -> str | None:
+    """The first of *directory* and its two files that is a link, or ``None``.
+
+    Checked with ``lstat`` semantics, so a link is seen rather than followed. The
+    folder's fences attach to these NAMES; a link would hand the bytes to whatever
+    can write its target.
+    """
+    for path in (directory, directory / "manifest.json", directory / "template.html"):
+        if platform_compat.is_link_or_junction(path):
+            return path.name
+    return None
+
+
 def _scan(root: Path, origin: str) -> tuple[list[CatalogEntry], list[tuple[str, str]]]:
     """Load every template directory under *root*. Never raises for a bad member."""
     entries: list[CatalogEntry] = []
     problems: list[tuple[str, str]] = []
     try:
+        # `is_dir` follows a link, so a linked page directory is still listed here
+        # and then refused below by name, rather than silently skipped.
         children = sorted(p for p in root.iterdir() if p.is_dir())
     except OSError:
         # An absent root is the ordinary empty state: the machinery ships before the
@@ -151,6 +170,13 @@ def _scan(root: Path, origin: str) -> tuple[list[CatalogEntry], list[tuple[str, 
         return entries, problems
     for directory in children:
         name = directory.name
+        if origin == USER_SOURCE:
+            linked = _linked_part(directory)
+            if linked is not None:
+                problems.append(
+                    (name, f"{linked} is a link; an operator page must be a real directory")
+                )
+                continue
         try:
             manifest, html = load_template(directory)
         except ManifestError as exc:
@@ -175,8 +201,32 @@ def _scan(root: Path, origin: str) -> tuple[list[CatalogEntry], list[tuple[str, 
 
 
 def list_templates() -> Catalog:
-    """Every template this gateway can offer, plus every directory that would not load."""
+    """Every template this gateway can offer, plus every directory that would not load.
+
+    Built-in pages first, then the operator's, from the data home's ``panel-templates``
+    folder. The panel's own overrides live there as ``<id>.html`` files; this scan reads
+    only directories, so the two never collide. A built-in id always wins: an operator
+    page with the same id is reported, never served in its place.
+
+    ``agent_panel`` is imported at call time, as ``instance.lock_path`` does, because it
+    pulls in more of the tree than this module needs at import.
+    """
+    from kiro_crew.agent_panel import TEMPLATES_DIRNAME, PanelError, override_templates_dir
+
     entries, problems = _scan(builtin_dir(), BUILTIN_SOURCE)
+    try:
+        root = override_templates_dir()
+    except PanelError as exc:
+        problems.append((TEMPLATES_DIRNAME, str(exc)))
+        return Catalog(tuple(entries), tuple(problems))
+    shipped = {entry.id for entry in entries}
+    user_entries, user_problems = _scan(root, USER_SOURCE)
+    problems.extend(user_problems)
+    for entry in user_entries:
+        if entry.id in shipped:
+            problems.append((entry.id, "a shipped page has this id, so the shipped page is served"))
+            continue
+        entries.append(entry)
     return Catalog(tuple(entries), tuple(problems))
 
 

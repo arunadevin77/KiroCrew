@@ -9,7 +9,7 @@ The instance store is two modules and one route, each with one job:
 
 | Piece | Where | What it owns |
 |---|---|---|
-| registry | `dashboard_templates/catalog.py` | the built-in templates, one loader |
+| registry | `dashboard_templates/catalog.py` | the built-in templates and the operator's own, one loader |
 | instance | `dashboard_templates/instance.py` | the copy, its versions, rollback, state, history |
 | route | `dashboard/handlers/member_dashboard.py` | what the frame reads |
 
@@ -124,9 +124,9 @@ which is the one failure nothing downstream could detect.
 
 An imported template declares `shared`, so a reader asking where it came from gets an
 answer other than "somebody here wrote it". None of this is in the tree, and it cannot
-land on its own: the registry scans only the built-in directory and `RENDERABLE_SOURCES`
-holds only `builtin`, so share ships with the same P2 wrapper document that lets a page
-nobody here reviewed render at all. Import without that wrapper would be a second route
+land on its own: the registry scans only the built-in directory and the operator's own
+folder, and `RENDERABLE_SOURCES` does not hold `shared`, so share ships with the same P2
+wrapper document that lets a page nobody here reviewed render at all. Import without that wrapper would be a second route
 to the hole the preview refusal closes.
 
 ## Registry rules
@@ -142,15 +142,39 @@ is two names for one template, and a lookup would find or miss it depending on w
 name the caller happened to hold.
 
 **`source` is checked against where the file actually is.** A template in the built-in
-directory may declare only `builtin`. Without that check the field would be worth
-nothing to a surface reading it to mean "this shipped in the product".
+directory may declare only `builtin`, and one in the operator folder only `user`.
+Without that check the field would be worth nothing to a surface reading it to mean
+"this shipped in the product".
 
-**One directory is scanned, and it is in this repo.** A page that renders runs its own
-script against the crewmate's values inside a frame that can navigate itself, so a
-registry that also scanned a writable directory would let whatever can write there
-choose what a crewmate's dashboard executes. `builtin` is the only provenance carrying a
-human review, which is why `RENDERABLE_SOURCES` holds one value. A template somebody
-writes themselves is P2 and needs a wrapper document this gateway mints; see the RFC.
+**Two roots are scanned, and no agent can write either.** A page that renders runs its
+own script against the crewmate's values inside a frame that can navigate itself, so a
+registry that scanned an agent-writable directory would let the agent choose what a
+crewmate's dashboard executes. The two roots:
+
+| Root | Origin | Why a person put the page there |
+|---|---|---|
+| `dashboard_templates/builtin/<id>/` | `builtin` | it is in this repo and went through review |
+| `<data home>/panel-templates/<id>/` | `user` | the operator placed it; every agent write path is refused on this folder |
+
+The operator folder is the one the panel's own template overrides use (`<id>.html`
+files). A dashboard page there is a DIRECTORY, so the two never collide: panel
+discovery reads only `.html` files and the catalog reads only directories. Its fences
+are the panel's, and each is pinned for a page one level down by
+`test_dashboard_operator_pages.py`: the sandbox seals the folder read-only and
+pre-creates it, the folder name refuses an alias, the file-tool gate refuses a write
+under it, and it is classified child-readable.
+
+Three more rules hold for the operator root only:
+
+* **A built-in id wins.** An operator page with a shipped id is reported in `problems`
+  and never served in its place.
+* **A linked folder is refused** (`agent_panel.override_templates_dir`), reported under
+  `panel-templates`, and the built-in pages are still served.
+* **A linked entry is refused.** The page directory, `manifest.json` and
+  `template.html` must each be a real file or directory under that name.
+
+`RENDERABLE_SOURCES` is `{builtin, user}`. A page an agent writes, or one imported as
+`shared`, renders from neither root; see the RFC.
 
 ## Snapshots: all five parts or nothing
 

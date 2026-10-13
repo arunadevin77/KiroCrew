@@ -262,18 +262,24 @@ class TestAnAgentWrittenPageCannotBeStaged:
         assert "dashboard_templates" in instance.AUTHORED_PAGE_REFUSAL
         assert "template_id" in instance.AUTHORED_PAGE_REFUSAL
 
-    def test_only_a_built_in_source_is_renderable(self) -> None:
-        """The set behind the adopt-time half of the same rule. ONE value."""
-        assert instance.RENDERABLE_SOURCES == frozenset({catalog.BUILTIN_SOURCE})
+    def test_only_a_built_in_or_operator_source_is_renderable(self) -> None:
+        """The set behind the adopt-time half of the same rule.
 
-    def test_a_user_sourced_record_is_refused_at_adopt_as_well(self) -> None:
+        ``user`` is a page the operator placed in the panel-templates folder, which the
+        catalog serves; an authored page still never reaches the catalog, as above.
+        """
+        assert instance.RENDERABLE_SOURCES == frozenset(
+            {catalog.BUILTIN_SOURCE, catalog.USER_SOURCE}
+        )
+
+    def test_a_shared_sourced_record_is_refused_at_adopt_as_well(self) -> None:
         """Belt and braces, on the path that writes a version rather than stages one.
 
         ``_check`` runs for every committed version, so a record that reached disk
         under an older gateway cannot be rolled forward into a rendered page either.
         """
         with pytest.raises(instance.InstanceRefused) as refused:
-            instance._check(_authored_manifest(), AUTHORED_PAGE)
+            instance._check(_authored_manifest(source="shared"), AUTHORED_PAGE)
         assert "shipped with the product" in str(refused.value)
 
 

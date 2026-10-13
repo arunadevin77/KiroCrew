@@ -1,11 +1,12 @@
 # Built-in dynamic-dashboard templates
 
 Templates in the format `kiro_crew.dashboard_templates.manifest` defines: one
-directory per template, holding `manifest.json` and `template.html`. This is the ONLY
-directory the registry discovers, and `load_template` is its only gate: a page that
-renders on a crewmate's Dashboard tab is a page that went through review here, because
-it runs its own script against that crewmate's task titles and summaries inside a frame
-that can navigate itself. Twelve ship: the first four are below, five more are in "The round-7 set"
+directory per template, holding `manifest.json` and `template.html`. `load_template` is
+the registry's only gate. A page that renders on a crewmate's Dashboard tab runs its
+own script against that crewmate's task titles and summaries inside a frame that can
+navigate itself, so it comes from one of two places a person put it: this directory,
+which went through review, or the operator's own folder (see "An operator's own page"
+below). Twelve ship: the first four are below, five more are in "The round-7 set"
 further down, then `office` in "A desk that ships decks and mail" and the last two in
 "The two views".
 
@@ -107,6 +108,19 @@ Add the directory with both files, add its id to `EXPECTED_IDS` in the test, and
 the packaging globs still cover it (`[options.package_data]` in `setup.cfg` and the
 `recursive-include` lines in `MANIFEST.in`). A template absent from the wheel leaves the
 loader shipped and working while the registry discovers nothing, with every test green.
+
+## An operator's own page
+
+A page you write yourself goes in your data home, not here:
+`<data home>/panel-templates/<id>/manifest.json` and `template.html`, in the same
+format. Its manifest says `"source": "user"`. That folder also holds the panel's
+template overrides as `<id>.html` files; the two never collide.
+
+- A shipped id wins. A page of yours with the same id is listed as a problem.
+- The folder, the page directory and both files must be real, not links.
+- Fill values by `textContent`, as the pages here do.
+
+An agent cannot write that folder, which is why a page there may render.
 
 ## The round-7 set
 
