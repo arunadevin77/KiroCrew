@@ -4,11 +4,14 @@
  * Runs the REAL built SPA (website/dist) behind the shared in-process static
  * server with every /api/** answered from fixtures (gateway-free). The peer's
  * slot row reports a stop in flight: `soft_pending` (a cooperative stop) and
- * then `killing` (a force stop).
+ * then `killing` (a force stop). A third frame has the running peer turn
+ * compacting its context with no stop in flight.
  *
  * With an `after` prefix it asserts as well as shoots: the footer under the
  * transcript draws the stop in the danger colour, and the window carries one
- * Stopping line, not one in the footer and a second above the composer.
+ * Stopping line, not one in the footer and a second above the composer. In the
+ * compacting frame the footer carries the one Compacting line and the composer
+ * shows no compaction hint of its own.
  *
  * Usage: node scripts/capture-crew-window-stop-state.mjs [outDir] [prefix]
  */
@@ -53,7 +56,10 @@ async function shoot(browser, base, stopState, label) {
     // The peer feed stays quiet in the frame; a stub keeps it from erroring.
     window.EventSource = class { addEventListener() {} close() {} }
   })
-  const peerSlot = { ...PEER_ROW, interrupted: false, stopping: true, stop_state: stopState }
+  const compacting = stopState === 'compacting'
+  const peerSlot = compacting
+    ? { ...PEER_ROW, interrupted: false, stopping: false, stop_state: 'idle', compacting: true }
+    : { ...PEER_ROW, interrupted: false, stopping: true, stop_state: stopState }
   await stubDashboardApi(page, {
     folders: [], slots: LOCAL_SLOTS,
     localStorageEntries: { [PREVIEW_INSTANCE_SESSIONS]: '1' },
@@ -89,7 +95,14 @@ async function shoot(browser, base, stopState, label) {
   await page.mouse.move(900, 60)
   await page.waitForTimeout(600)
 
-  if (ASSERT) {
+  if (ASSERT && compacting) {
+    const compactingLines = await win.getByText('Compacting…', { exact: true }).count()
+    if (compactingLines !== 1) throw new Error(`compacting: ${compactingLines} Compacting lines in the window, expected 1`)
+    const footerLines = await win.locator('[data-testid="chat-footer"]').getByText('Compacting…', { exact: true }).count()
+    if (footerLines !== 1) throw new Error('compacting: the Compacting line is not in the footer')
+    const composerHints = await win.locator('[data-testid="compacting-indicator"]').count()
+    if (composerHints !== 0) throw new Error(`compacting: the composer shows ${composerHints} compaction hint(s) beside the footer line`)
+  } else if (ASSERT) {
     const footerLine = win.locator('[data-testid="chat-footer"] span').first()
     const cls = (await footerLine.getAttribute('class')) ?? ''
     if (!cls.includes('text-danger')) throw new Error(`${stopState}: the footer line is not drawn in the danger colour (${cls})`)
@@ -109,6 +122,7 @@ async function main() {
   const browser = await chromium.launch({ env: browserEnv })
   await shoot(browser, base, 'soft_pending', '1-soft-pending')
   await shoot(browser, base, 'killing', '2-killing')
+  await shoot(browser, base, 'compacting', '3-compacting')
   await browser.close()
   srv.close()
 }

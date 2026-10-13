@@ -330,6 +330,16 @@ describe('CrewChatWindow', () => {
     expect(screen.queryByText('Stopping…')).toBeNull()
   })
 
+  it('draws the running peer\'s compaction as the footer\'s one Compacting line', async () => {
+    slotRow = { ...slotRow, running: true, stopping: false, compacting: true }
+    detail = { ...detail, running: true }
+    renderWindow()
+    const footer = await screen.findByTestId('chat-footer', {}, PEER_ROW_WAIT)
+    expect(within(footer).getByText('Compacting…')).toBeTruthy()
+    expect(screen.getAllByText('Compacting…')).toHaveLength(1)
+    expect(screen.queryByTestId('compacting-indicator')).toBeNull()
+  })
+
   it('shows the peer\'s context reading, with no auto-compact control of this machine', async () => {
     slotRow = { ...slotRow, project: '/srv/peer/work/api' }
     detail = { ...detail, context_pct: 42, context_used_tokens: 84000, context_window_tokens: 200000 }
