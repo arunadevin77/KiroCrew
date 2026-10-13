@@ -90,6 +90,31 @@ export function useCtx(): AppSdkContextValue {
 }
 
 
+/** Whether a NORMALIZED pathname matches one of the declared API patterns.
+ *  Mirrors token_auth._api_pattern_matches: only declared trailing wildcards
+ *  are interpreted, and there are no implicit feature grants. */
+function matchesDeclared(allowedPaths: readonly string[], normalized: string): boolean {
+  return allowedPaths.some(entry => {
+    const pattern = entry.trim()
+    if (!pattern) return false
+    if (pattern.endsWith('/*')) {
+      const base = pattern.slice(0, -2)
+      return normalized === base || normalized.startsWith(base + '/')
+    }
+    if (pattern.endsWith('*')) return normalized.startsWith(pattern.slice(0, -1))
+    return normalized === pattern || normalized.startsWith(pattern + '/')
+  })
+}
+
+/** Whether the scoped client would let `path` through for these declared
+ *  patterns -- the same answer its request check gives, without throwing. A
+ *  component uses it to hide a control whose request would be refused (the
+ *  ChatEmbed attach control reads it for `/api/upload/file`). */
+export function apiPathAllowed(allowedPaths: readonly string[], path: string): boolean {
+  if (/^(?:https?:)?[/\\]{2}/i.test(path) || path.includes('\\')) return false
+  return matchesDeclared(allowedPaths, new URL(path, 'http://localhost').pathname)
+}
+
 function createScopedApi(allowedPaths: string[], appName: string, sessionKey: string | undefined, appLabel: string): AppApi {
   const check = (path: string): string => {
     // Reject absolute and protocol-relative URLs to prevent SSRF. Backslashes
@@ -102,19 +127,7 @@ function createScopedApi(allowedPaths: string[], appName: string, sessionKey: st
     // declared scope (e.g. `/api/apps/x/../../secret` → `/api/secret`).
     const parsed = new URL(path, 'http://localhost')
     const normalized = parsed.pathname
-    // Match token_auth._api_pattern_matches: normalize the request first, then
-    // interpret only declared trailing wildcards. No implicit feature grants.
-    const allowed = allowedPaths.some(entry => {
-      const pattern = entry.trim()
-      if (!pattern) return false
-      if (pattern.endsWith('/*')) {
-        const base = pattern.slice(0, -2)
-        return normalized === base || normalized.startsWith(base + '/')
-      }
-      if (pattern.endsWith('*')) return normalized.startsWith(pattern.slice(0, -1))
-      return normalized === pattern || normalized.startsWith(pattern + '/')
-    })
-    if (!allowed) {
+    if (!matchesDeclared(allowedPaths, normalized)) {
       throw new AppApiPermissionError(`[app-sdk] App "${appName}" not permitted to access ${normalized}. Declared: [${allowedPaths.join(', ')}]`, appLabel)
     }
     return normalized + parsed.search

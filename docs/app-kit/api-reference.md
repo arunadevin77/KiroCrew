@@ -173,6 +173,33 @@ hidden and both kinds of link behave as before.
 />
 ```
 
+### Attachments
+
+The composer attaches files the way the main chat does: paste a file or
+screenshot, drop one on the box, or press the paperclip to pick files. Each file
+uploads to `POST /api/upload/file` through the app's scoped client and shows as
+a chip above the composer; a chip's remove button unstages it. An attachment
+alone is a sendable turn. On send, images become inline image lines and other
+files become `[attached_file N]` markers whose paths ride `meta.files`, exactly
+as the main chat sends them.
+
+The upload writes to the gateway's disk, so it is an explicit grant. Declare it
+in the manifest to turn attachments on; nothing grants it by default:
+
+```json
+"permissions": { "api": ["/api/chat", "/api/chat/slots", "/api/upload/file"] }
+```
+
+Without the grant the paperclip is not rendered, and a pasted or dropped file
+shows "This app can't attach files" above the composer instead of uploading.
+A server refusal (unsupported type, over the size cap) shows the same way with
+the server's reason.
+
+A host that passes `onSend` receives the meta as a second argument on a send
+with non-image attachments, `onSend(message, { files })`, and forwards it as
+`meta` on its own chat POST. A send without attachments still calls
+`onSend(message)` alone.
+
 ## Native Chat Panel
 
 `ChatPanel` mounts Kiro Crew's native chat experience for an existing session. The required

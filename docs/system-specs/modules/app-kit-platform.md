@@ -33,6 +33,24 @@ The handler owns existing single-flight refresh, embedded handoff and banner
 behavior. A document without that handler still throws the original HTTP error;
 there is no SDK-owned credential refresh or automatic request replay.
 
+`apiPathAllowed(declared, path)` answers the same check without throwing, so a
+component can hide a control whose request the client would refuse. It shares
+the client's matcher and its absolute-URL refusal; it grants nothing the check
+would not.
+
+`ChatEmbed`'s composer attachments use it for `/api/upload/file`. The upload
+writes to the gateway's disk, so it is an explicit host grant and is never
+implied by `/api/chat`: the attach control renders only when the host's
+declared paths cover the upload path, and the permissions are read off the SDK
+context so a surface with no provider fails closed. Uploads go through the
+scoped `raw` transport with the multipart body untouched, so the token's own
+manifest check still applies server-side. A pasted or dropped file on an
+ungranted host is refused in the composer with a visible notice; a drop with
+files is always default-prevented so the browser never navigates to the file.
+The send reuses chat-core's `buildOutgoingTurn`, so the wire text and
+`meta.files` match the main chat's. A slot switch or unmount aborts in-flight
+uploads and drops their late results.
+
 The host owns session attribution. Chat hosts bind their session; routed app
 pages bind the established `dashboard:ui` page identity. A provided host key
 wins over caller headers; an unbound host rejects caller-selected session keys.

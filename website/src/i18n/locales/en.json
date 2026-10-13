@@ -61,7 +61,9 @@
       "send": "Send",
       "send_message": "Send message",
       "session_ready_type_a_message_to_start": "Session ready. Type a message to start.",
-      "streaming": "streaming"
+      "streaming": "streaming",
+      "attachments_not_allowed": "This app can't attach files. Its author has to allow uploads.",
+      "uploading_files": "Uploading files…"
     },
     "chatMessageList": {
       "open_path": "Open {{path}}"

@@ -416,7 +416,9 @@
       "send": "Senden",
       "send_message": "Nachricht senden",
       "session_ready_type_a_message_to_start": "Sitzung bereit. Geben Sie eine Nachricht ein, um zu beginnen.",
-      "streaming": "Streaming"
+      "streaming": "Streaming",
+      "attachments_not_allowed": "Diese App kann keine Dateien anhängen. Ihr Autor muss Uploads erlauben.",
+      "uploading_files": "Dateien werden hochgeladen…"
     },
     "chatMessageList": {
       "copied": "Kopiert!",

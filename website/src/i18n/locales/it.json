@@ -430,7 +430,9 @@
       "send": "Invia",
       "send_message": "Invia il messaggio",
       "session_ready_type_a_message_to_start": "Sessione pronta. Digita un messaggio per iniziare.",
-      "streaming": "streaming"
+      "streaming": "streaming",
+      "attachments_not_allowed": "Questa app non può allegare file. Il suo autore deve consentire i caricamenti.",
+      "uploading_files": "Caricamento dei file…"
     },
     "chatMessageList": {
       "copied": "Copiato!",

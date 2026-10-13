@@ -402,7 +402,9 @@
       "send": "送信",
       "send_message": "メッセージを送信",
       "session_ready_type_a_message_to_start": "セッション準備完了。メッセージを入力して開始してください。",
-      "streaming": "ストリーミング中"
+      "streaming": "ストリーミング中",
+      "attachments_not_allowed": "このアプリはファイルを添付できません。作成者がアップロードを許可する必要があります。",
+      "uploading_files": "ファイルをアップロード中…"
     },
     "chatMessageList": {
       "copied": "コピーしました！",
