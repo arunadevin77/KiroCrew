@@ -91,6 +91,28 @@ describe('toApiError', () => {
   })
 })
 
+describe('friendlyErrText on 429', () => {
+  // The gateway authors 429s with a human `error` field (e.g. creating a
+  // channel past the limit); the Builder Tunnels edge authors the opaque
+  // `{"message":"Rate exceeded"}`. Only the edge's body should get the
+  // tunnel-edge wording.
+  it('shows a gateway-authored 429 body, not the tunnel-edge wording', () => {
+    const body = JSON.stringify({ error: 'Channel limit reached. Close an existing channel first.', code: 'channel_limit_reached' })
+    const text = friendlyErrText(429, body)
+    expect(text).toBe('Channel limit reached. Close an existing channel first.')
+    expect(text).not.toContain('tunnel')
+  })
+
+  it('still maps the opaque tunnel-edge throttle body to the tunnel wording', () => {
+    expect(friendlyErrText(429, JSON.stringify({ message: 'Rate exceeded', throttlingReasons: null })))
+      .toMatch(/tunnel/i)
+  })
+
+  it('still maps an empty 429 body to the tunnel wording', () => {
+    expect(friendlyErrText(429, '')).toMatch(/tunnel/i)
+  })
+})
+
 describe('isTerminalApprovalRefusal', () => {
   it.each([
     ['a 404', new ApiError(404, 'not found or expired'), true],

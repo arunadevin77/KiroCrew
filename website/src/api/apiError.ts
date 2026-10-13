@@ -138,20 +138,20 @@ export const isSlotCapError = (status: number, body: string): boolean => {
  * one place. The raw body remains on `ApiError.body` for diagnostics.
  */
 export const friendlyErrText = (status: number, body: string): string => {
-  if (status === 429) {
-    // Two different 429s reach here. The live-slot caps -- `slot_cap_reached`
-    // (global) and `creator_slot_cap_reached` (per-caller) -- are hit by
-    // Duplicate/Fork (each mints a new slot) once too many session tabs are
-    // open; a generic "wait a few seconds and reload" is a dead end there,
-    // because a reload re-restores the same open tabs straight back over the
-    // cap, so the guidance names the one thing that clears it. Match the parsed
-    // `code` EXACTLY, not a substring of the body, so an unrelated 429 whose
-    // message happens to contain the text does not get the wrong copy. Every
-    // other 429 is the tunnel edge's burst throttle, where retrying works.
-    if (isSlotCapError(status, body)) {
-      return i18nT('api.client.too_many_open_sessions_http_429_close_old')
-    }
-    return i18nT('api.client.rate_limited_by_the_tunnel_edge_http_429_too_man')
+  // Two different 429s reach here. The live-slot caps -- `slot_cap_reached`
+  // (global) and `creator_slot_cap_reached` (per-caller) -- are hit by
+  // Duplicate/Fork (each mints a new slot) once too many session tabs are
+  // open; a generic "wait a few seconds and reload" is a dead end there,
+  // because a reload re-restores the same open tabs straight back over the
+  // cap, so the guidance names the one thing that clears it. Match the parsed
+  // `code` EXACTLY, not a substring of the body, so an unrelated 429 whose
+  // message happens to contain the text does not get the wrong copy. Checked
+  // BEFORE the JSON unwrap: a slot-cap body carries an `error` field too, and
+  // the actionable guidance must win over the raw server text. Every other
+  // 429 is either the gateway's own refusal (unwrapped below) or the tunnel
+  // edge's burst throttle, where retrying works.
+  if (isSlotCapError(status, body)) {
+    return i18nT('api.client.too_many_open_sessions_http_429_close_old')
   }
   // Backends return errors as {"error": "…"} (or detail/message). Unwrap the
   // field so the UI shows the human message with its real newlines, not the
@@ -160,9 +160,17 @@ export const friendlyErrText = (status: number, body: string): string => {
   if (trimmed.startsWith('{')) {
     try {
       const parsed = JSON.parse(trimmed)
-      const msg = parsed?.error ?? parsed?.detail ?? parsed?.message
+      // A 429 that carries an `error` field is the gateway's own (e.g.
+      // `channel_limit_reached`), not the tunnel edge throttle — the edge's
+      // body is the opaque `{"message":"Rate exceeded"}` with no `error`
+      // field. So on 429 only an `error` field counts as a human message;
+      // anything else falls through to the tunnel-edge wording below.
+      const msg = status === 429 ? parsed?.error : parsed?.error ?? parsed?.detail ?? parsed?.message
       if (typeof msg === 'string' && msg.trim()) return msg
     } catch { /* not JSON — fall through to raw body */ }
+  }
+  if (status === 429) {
+    return i18nT('api.client.rate_limited_by_the_tunnel_edge_http_429_too_man')
   }
   // An error PAGE has no message field to unwrap, so returning it verbatim put
   // `<!DOCTYPE html><html><head><meta charset="utf…` in the dashboard's topbar.

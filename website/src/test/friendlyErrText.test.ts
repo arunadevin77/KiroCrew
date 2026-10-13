@@ -26,8 +26,10 @@ describe('friendlyErrText', () => {
     expect(friendlyErrText(500, body)).toBe(body)
   })
 
-  it('keeps the tunnel-edge 429 message for an ordinary burst throttle', () => {
-    const out = friendlyErrText(429, '{"error":"x"}')
+  it('keeps the tunnel-edge 429 message for the opaque edge throttle body', () => {
+    // API Gateway's throttle body carries no `error` field, so it keeps the
+    // tunnel-edge wording; a 429 with an `error` field is the gateway's own.
+    const out = friendlyErrText(429, '{"message":"Rate exceeded","throttlingReasons":null}')
     expect(out).toContain('Rate limited by the tunnel edge')
     expect(out).not.toContain('session')
   })
@@ -45,11 +47,21 @@ describe('friendlyErrText', () => {
   })
 
   it('matches the slot-cap code exactly, not a substring of the body', () => {
-    // An unrelated 429 whose message merely mentions slot_cap_reached, but whose
-    // real code is something else, must keep the tunnel-edge message.
+    // An unrelated 429 that merely mentions slot_cap_reached, but whose real
+    // code is something else, must not get the close-old-sessions guidance;
+    // its gateway-authored `error` field is the human message instead.
     const out = friendlyErrText(429, JSON.stringify({ error: 'rate exceeded near slot_cap_reached handler', code: 'throttled' }))
-    expect(out).toContain('Rate limited by the tunnel edge')
+    expect(out).toBe('rate exceeded near slot_cap_reached handler')
     expect(out).not.toContain('Too many sessions are open')
+  })
+
+  it('unwraps a gateway-authored 429 body instead of the tunnel-edge wording', () => {
+    // The gateway sends its own 429 with a human `error` field (e.g. a channel
+    // past its limit); only the Builder Tunnels edge's opaque throttle body —
+    // which has no `error` field — gets the tunnel-edge wording.
+    expect(friendlyErrText(429, JSON.stringify({ error: 'Channel limit reached. Close an existing channel first.', code: 'channel_limit_reached' })))
+      .toBe('Channel limit reached. Close an existing channel first.')
+    expect(friendlyErrText(429, '')).toContain('Rate limited')
   })
 
   it('reports no message for an HTML error page, whichever doctype it carries', () => {
