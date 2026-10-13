@@ -5509,7 +5509,7 @@
       "send_failed_with_error": "Send failed: {{error}}",
       "send_failed_with_error_restored": "Couldn't send this message: {{error}}. Your text is back in the composer.",
       "delivery_unconfirmed": "Delivery not confirmed — your text is back in the composer; check the conversation above before sending it again.",
-      "delivery_unconfirmed_pending": "Delivery not confirmed — this message may still be pending. If no reply arrives, send it again.",
+      "delivery_unconfirmed_pending": "Delivery not confirmed yet. If no reply arrives within a minute and the message above still says it is pending, copy it and send it again. If the first send did get through, the agent receives it twice.",
       "could_not_read_file_reason": "Could not read {{path}} ({{reason}})",
       "screenshot_failed_reason": "Screenshot failed: {{reason}}",
       "source_hosts_failed_reason": "Loading the GitLab and Jira link settings failed: {{reason}}",

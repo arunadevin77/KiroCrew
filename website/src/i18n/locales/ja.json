@@ -11862,7 +11862,7 @@
       "send_failed_with_error": "送信に失敗しました: {{error}}",
       "send_failed_with_error_restored": "このメッセージを送信できませんでした: {{error}}。入力欄にテキストを戻しました。",
       "delivery_unconfirmed": "送信が確認できません — 入力欄にテキストを戻しました。再送信する前に会話履歴を確認してください。",
-      "delivery_unconfirmed_pending": "送信が確認できません — このメッセージはまだ確認待ちの可能性があります。返信が届かない場合は、もう一度送信してください。",
+      "delivery_unconfirmed_pending": "送信はまだ確認できていません。1分以内に返信がなく、上のメッセージが確認待ちのままなら、コピーしてもう一度送信してください。最初の送信が届いていた場合、エージェントは同じメッセージを2回受け取ります。",
       "could_not_read_file_reason": "{{path}} を読み取れませんでした（{{reason}}）",
       "screenshot_failed_reason": "スクリーンショットに失敗しました：{{reason}}",
       "source_hosts_failed_reason": "GitLab と Jira のリンク設定の読み込みに失敗しました：{{reason}}",

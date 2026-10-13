@@ -11862,7 +11862,7 @@
       "send_failed_with_error": "发送失败：{{error}}",
       "send_failed_with_error_restored": "无法发送这条消息：{{error}}。你的文字已放回输入框。",
       "delivery_unconfirmed": "尚未确认送达——你的文字已放回输入框；再次发送前请先查看对话记录。",
-      "delivery_unconfirmed_pending": "尚未确认送达——这条消息可能仍在等待中。如果没有收到回复，请再次发送。",
+      "delivery_unconfirmed_pending": "尚未确认送达。如果一分钟内没有收到回复，且上方消息仍显示等待中，请复制该消息并再次发送。如果第一次发送其实已送达，代理会收到两次。",
       "could_not_read_file_reason": "无法读取 {{path}}（{{reason}}）",
       "screenshot_failed_reason": "截图失败：{{reason}}",
       "source_hosts_failed_reason": "加载 GitLab 和 Jira 链接设置失败：{{reason}}",

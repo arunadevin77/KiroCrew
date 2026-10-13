@@ -12200,7 +12200,7 @@
       "send_failed_with_error": "Error al enviar: {{error}}",
       "send_failed_with_error_restored": "No se pudo enviar este mensaje: {{error}}. Tu texto ha vuelto al cuadro de redacción.",
       "delivery_unconfirmed": "Entrega sin confirmar: tu texto ha vuelto al cuadro de redacción; revisa la conversación antes de enviarlo de nuevo.",
-      "delivery_unconfirmed_pending": "Entrega sin confirmar: es posible que este mensaje siga pendiente. Si no llega ninguna respuesta, envíalo de nuevo.",
+      "delivery_unconfirmed_pending": "Entrega aún sin confirmar. Si no llega ninguna respuesta en un minuto y el mensaje de arriba sigue pendiente, cópialo y envíalo de nuevo. Si el primer envío sí llegó, el agente lo recibirá dos veces.",
       "could_not_read_file_reason": "No se pudo leer {{path}} ({{reason}})",
       "screenshot_failed_reason": "Error en la captura de pantalla: {{reason}}",
       "source_hosts_failed_reason": "Error al cargar la configuración de enlaces de GitLab y Jira: {{reason}}",
