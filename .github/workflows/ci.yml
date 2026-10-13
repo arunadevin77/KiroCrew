@@ -3545,6 +3545,22 @@ jobs:
             pyproject.toml
             setup.cfg
 
+      # A supported Node on PATH before any gateway boots. Without it the
+      # gateway's boot-time Node repair (`_ensure_node`, run when `node` is
+      # below the supported major) sees the image's Node 18 and runs
+      # ensure-node.sh, which downloads mise and a Node release INSIDE the
+      # 60 s readiness window; a slow download then times the boot out with
+      # the progress bar as the stderr tail. Installing it here keeps the
+      # network fetch out of the timed boot. Windows already gets Node 24
+      # from setup-windows-tests.
+      - uses: ./.github/actions/seed-node-tool-cache
+        if: runner.os != 'Windows'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: runner.os != 'Windows'
+        with:
+          node-version: 24
+          package-manager-cache: false
+
       - name: Install dependencies
         shell: bash
         run: uv pip install --system -e ".[voice,desktop]" --group dev
