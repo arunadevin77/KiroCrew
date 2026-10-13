@@ -102,6 +102,17 @@ declare global {
     detect: () => Promise<WslDetectResult>
   }
 
+  /**
+   * The OS-native folder chooser (desktop shell only). Neither call takes an
+   * argument: the dialog's options are fixed in the main process.
+   */
+  interface FolderPickAPI {
+    /** Whether this window's gateway runs on this machine, so a pick can work. */
+    available: () => Promise<boolean>
+    /** The chosen absolute folder, or null when the user cancels; rejects when no dialog could be shown. */
+    pick: () => Promise<string | null>
+  }
+
   interface ZoomAPI {
     get: () => Promise<number>
     set: (factor: number) => Promise<number>
@@ -257,6 +268,7 @@ declare global {
     localGatewayAPI?: LocalGatewayAPI
     crashReportsAPI?: CrashReportsAPI
     wslAPI?: WslAPI
+    folderPickAPI?: FolderPickAPI
     zoomAPI?: ZoomAPI
     browserAPI?: BrowserAPI
     updateAPI?: UpdateAPI

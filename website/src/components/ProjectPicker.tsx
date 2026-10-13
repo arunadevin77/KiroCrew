@@ -1,13 +1,14 @@
 import { useState, useEffect, useMemo, useRef, useCallback, RefObject } from 'react'
 import { useImeGuard } from '../hooks/useImeGuard'
 import { createPortal } from 'react-dom'
-import { FolderOpen, ChevronRight, ChevronLeft, Clock, Search, Star } from 'lucide-react'
+import { FolderOpen, FolderSearch, ChevronRight, ChevronLeft, Clock, Search, Star } from 'lucide-react'
 import { api } from '../api/client'
 import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
 import ErrorNotice from './ErrorNotice'
 import { reportForError, type ErrorReport } from '../utils/errorReport'
 import { endsWithSeparator, isWindowsPath, lastSegment, parentIsDriveList, pathSeparator, stripTrailingSeparator } from '../utils/browsePath'
 import { searchErrorCause, type SearchErrorCause } from '../lib/searchErrorCause'
+import { canPickFolderNatively, hasNativeFolderPicker, pickFolderNatively } from '../lib/electron'
 
 import { i18nT } from '../i18n/t'
 
@@ -220,6 +221,18 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
   // A keystroke retires the ticket without settling it, and clears the notice the control sits
   // in on the same keystroke, so a stale `true` has nothing to make inert; the next request resets it.
   const [listingInFlight, setListingInFlight] = useState(false)
+  // The desktop app's OS-native folder chooser: offered only where the shell confirms a pick
+  // can work (its bridge is present and this window's gateway runs on this machine), asked
+  // afresh on every open. `nativePickBusy` covers the dialog and the listing that checks its
+  // answer, so one click opens one dialog.
+  const [nativePickReady, setNativePickReady] = useState(false)
+  const [nativePickBusy, setNativePickBusy] = useState(false)
+  // Why the last native pick produced no project: the dialog could not open, or the folder chosen
+  // in it did not list. Told at the foot of the picker beside the button, on whichever tab is up.
+  const [nativePickError, setNativePickError] = useState<{ message: string; report?: ErrorReport } | null>(null)
+  // A pick answers only the open it started in. Every open, close and unmount moves the
+  // generation on, so an answer that lands after any of them is dropped.
+  const openGen = useRef(0)
   const listFailed = listFailure?.kind ?? null
   const noteFailure = (kind: ListFailureKind, path: string, err: unknown) => {
     setListFailure({
@@ -437,6 +450,22 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
     })
   }, [open, browse])
 
+  // Ask the shell, on every open, whether this window can use the native chooser. The answer
+  // can change between opens (a remote-host record added or cleared), and a browser tab or the
+  // PWA has no bridge at all, so there is nothing to ask there.
+  useEffect(() => {
+    if (!open || !hasNativeFolderPicker()) return
+    let live = true
+    canPickFolderNatively().then(ok => { if (live) setNativePickReady(ok) })
+    return () => { live = false }
+  }, [open])
+
+  useEffect(() => {
+    const generation = openGen
+    if (open) { generation.current++; setNativePickError(null) }
+    return () => { generation.current++ }
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     let cleanup = () => {}
@@ -465,6 +494,40 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
     // Windows drive root `C:\` / `C:/` (stripping `C:/` to `C:` would yield a
     // drive-RELATIVE path, not the drive root).
     onSelect(stripTrailingSeparator(path)); onOpenChange(false)
+  }
+
+  /**
+   * Choose the project folder in the OS-native dialog. A cancel leaves the picker exactly as it
+   * was. A chosen folder is trusted no more than a typed path: it goes through the gateway's own
+   * directory listing first -- the read that refuses a missing or sensitive path -- and only a
+   * folder that lists is committed, through `select` like every other row. A dialog that could
+   * not open, and a chosen folder that did not list, are each told beside the button; the tab,
+   * the path field and the listing on screen are left as they were.
+   */
+  const pickNative = () => {
+    if (nativePickBusy) return
+    setNativePickBusy(true)
+    setNativePickError(null)
+    const gen = openGen.current
+    const current = () => openGen.current === gen
+    pickFolderNatively().then(result => {
+      if (!current()) return
+      if (result.status === 'failed') {
+        setNativePickError({ message: i18nT('components.projectPicker.system_folder_picker_failed') })
+        return
+      }
+      if (result.status !== 'picked') return
+      const picked = result.path
+      return api.browseDirs(picked).then(() => {
+        if (current()) select(picked)
+      }).catch((err: unknown) => {
+        if (!current()) return
+        const key = searchErrorCause(err) === 'timed_out'
+          ? 'components.projectPicker.system_folder_refused_timed_out'
+          : 'components.projectPicker.system_folder_refused'
+        setNativePickError({ message: i18nT(key, { failed: picked }), report: reportForError(err) })
+      })
+    }).finally(() => setNativePickBusy(false))
   }
   const rq = recentQuery.trim().toLowerCase()
   const filteredRecent = rq ? recentDirs.filter(d => d.toLowerCase().includes(rq)) : recentDirs
@@ -968,6 +1031,37 @@ export default function ProjectPicker({ open, onOpenChange, anchorRef, anchorRec
             ))}
           </div>
         </>
+      )}
+      {nativePickReady && (
+        <div className="px-2 py-1.5 border-t border-border shrink-0 flex flex-col gap-1.5">
+          {/* Why the last pick produced no project, told where the user just clicked. The
+              hand-off follows the mount's opt-in (`errorHandoff`), as every other notice here. */}
+          {nativePickError && (
+            <ErrorNotice
+              variant="inline"
+              className="whitespace-normal px-1"
+              askAgent={errorHandoff}
+              onHandoff={() => onOpenChange(false)}
+              report={nativePickError.report}
+              message={nativePickError.message}
+              testId="pp-native-pick-error"
+            />
+          )}
+          {/* The desktop app's OS-native folder chooser, on every tab. Shown only where the shell
+              confirmed a pick can work; everywhere else the panes above are the whole picker.
+              A bordered resting state so it reads as a control; dimmed only while its dialog (or
+              the listing that checks the answer) is out, and inert then like the Retry control:
+              `aria-disabled` plus the in-handler guard. */}
+          <button
+            type="button"
+            onClick={pickNative}
+            aria-disabled={nativePickBusy || undefined}
+            className="w-full px-2 py-1.5 text-[12px] text-text bg-bg-hover/60 border border-border rounded hover:bg-bg-hover flex items-center justify-center gap-1.5 aria-disabled:opacity-50 aria-disabled:cursor-progress"
+          >
+            <FolderSearch size={13} className="shrink-0 text-accent" />
+            <span className="truncate">{i18nT('components.projectPicker.system_folder_picker')}</span>
+          </button>
+        </div>
       )}
     </div>,
     document.body

@@ -141,6 +141,56 @@ export async function openFileInEditor(
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
+
+/**
+ * Whether the desktop shell's `folderPickAPI` bridge is present. Synchronous, so
+ * a surface can skip the availability round trip in a plain browser tab and the
+ * PWA, where the bridge never exists. Presence alone does NOT mean a pick can
+ * work -- ask {@link canPickFolderNatively} for that.
+ */
+export function hasNativeFolderPicker(): boolean {
+  const api = window.folderPickAPI
+  return typeof api?.available === 'function' && typeof api?.pick === 'function'
+}
+
+/**
+ * Whether this window can open the OS-native folder chooser: the bridge is
+ * present AND the shell's main process confirms this window's gateway runs on
+ * this machine. A connection window pointed at a remote gateway carries the same
+ * bridge, but a folder chosen there names a path on the wrong host, so the
+ * shell answers false for it. Resolves false with no bridge and on any error.
+ */
+export async function canPickFolderNatively(): Promise<boolean> {
+  if (!hasNativeFolderPicker()) return false
+  try {
+    return (await window.folderPickAPI!.available()) === true
+  } catch {
+    return false
+  }
+}
+
+/** How a native folder pick ended: a folder, a cancel, or a dialog that could not be used. */
+export type NativeFolderPick =
+  | { status: 'picked'; path: string }
+  | { status: 'cancelled' }
+  | { status: 'failed' }
+
+/**
+ * Open the OS-native folder chooser. Resolves the chosen absolute folder, a cancel, or a
+ * failure -- no bridge, a refusal from the shell, a dialog that could not open, or a malformed
+ * answer -- and never throws. The path is one the USER chose on this machine, not one the
+ * gateway vouched for: callers validate it the way they validate a typed path before using it.
+ */
+export async function pickFolderNatively(): Promise<NativeFolderPick> {
+  if (!hasNativeFolderPicker()) return { status: 'failed' }
+  try {
+    const picked = await window.folderPickAPI!.pick()
+    if (picked === null) return { status: 'cancelled' }
+    return typeof picked === 'string' && picked ? { status: 'picked', path: picked } : { status: 'failed' }
+  } catch {
+    return { status: 'failed' }
+  }
+}
 /**
  * Width reserved on the right for the Windows titleBarOverlay caption buttons
  * (minimize/maximize/close). The overlay is 138px wide at default DPI on

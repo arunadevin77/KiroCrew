@@ -1168,12 +1168,18 @@ test("dashboard:pick-folder opens one dialog at a time", async () => {
   assert.equal(h.dialogCalls.length, 2);
 });
 
-test("dashboard:pick-folder reports a failed dialog as no choice", async () => {
+test("dashboard:pick-folder rejects when the dialog fails to open, without naming a path", async () => {
   const h = harness({
     dialogResult: () => { throw new Error("dialog backend unavailable"); },
   });
   h.registrar.registerShell();
-  assert.equal(await h.handlers.get("dashboard:pick-folder")(wslEvent()), null);
+  await assert.rejects(
+    () => h.handlers.get("dashboard:pick-folder")(wslEvent()),
+    (error) => {
+      assert.equal(error && error.message, "dashboard:pick-folder could not open the folder dialog");
+      return true;
+    },
+  );
   assert.ok(
     h.logs.some((line) => line === "dashboard:pick-folder failed: dialog backend unavailable"),
     h.logs.join("\n"),

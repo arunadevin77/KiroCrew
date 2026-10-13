@@ -239,13 +239,16 @@ contextBridge.exposeInMainWorld("fileOpenAPI", {
   open: (filePath) => ipcRenderer.invoke("dashboard:open-file", String(filePath || "")),
 });
 
-// Native folder chooser for the project picker's "Browse with system dialog"
+// Native folder chooser for the project picker's "Open system folder picker"
 // button. Neither call passes anything to the main process: the dialog's
-// options are fixed there. `available` resolves whether this window's gateway
+// options are fixed there. `available()` resolves whether this window's gateway
 // runs on this machine (the main process answers false for a connection window
-// pointed at a remote gateway); `pick` resolves the chosen absolute folder, or
-// null when the user cancels. Absent in a plain browser and in the PWA -- the
-// picker hides the button there and keeps its in-app browser as the only path.
+// pointed at a remote gateway).
+// `pick()` invokes `dashboard:pick-folder`, which runs the same checks and opens
+// the dialog; it resolves the chosen absolute folder, or null when the user
+// cancels, and rejects when the shell refuses or no dialog could be shown.
+// Absent in a plain browser and in the PWA -- the picker hides the button there
+// and keeps its in-app browser as the only path.
 contextBridge.exposeInMainWorld("folderPickAPI", {
   available: () => ipcRenderer.invoke("dashboard:can-pick-folder"),
   pick: () => ipcRenderer.invoke("dashboard:pick-folder"),

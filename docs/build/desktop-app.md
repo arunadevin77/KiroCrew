@@ -628,6 +628,25 @@ therefore refused; only then may
 [`wsl-detection.js`](../../website/electron/wsl-detection.js) run the trusted
 system `wsl.exe` path.
 
+The project picker's **Open system folder picker…** button rides the same gate.
+`window.folderPickAPI` in [`preload.js`](../../website/electron/preload.js) has
+two calls, and neither passes anything to the main process. `available()`
+invokes `dashboard:can-pick-folder`, which runs the three checks above and
+answers a boolean without opening anything; the picker shows the button only on
+`true`, so a browser tab, the PWA and a connection window pointed at a remote
+gateway keep the in-app picker alone. `pick()` invokes `dashboard:pick-folder`,
+which runs the same checks and then opens Electron's own
+`dialog.showOpenDialog` parented to the sender's window with fixed
+`openDirectory` options. The page cannot choose a default path, properties or
+filters. The dialog is drawn by the main process, so nothing is spawned and the
+sandbox is unchanged. It answers the one absolute folder chosen, or `null` for a
+cancel or a malformed result, and a second request while a dialog is open
+answers `null`; a dialog that fails to open rejects, so the picker can say so
+rather than read it as a cancel. The chosen path is never logged. The picker
+then lists the folder through `/api/browse-dirs`, the read its path field uses,
+and commits it only when that listing succeeds; a refusal, a failed dialog and
+a refused gate are each told beside the button.
+
 Before spawning a **bundled** backend the shell checks that the bundle's Python
 stdlib is fully on disk
 ([`bundle-integrity.js`](../../website/electron/bundle-integrity.js)). The
