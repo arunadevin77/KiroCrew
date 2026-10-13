@@ -368,6 +368,23 @@ class TestShippedScenarios:
                 assert '"Crewmates" item appears in the left rail' in step, (path.name, step)
         assert checked >= 5
 
+    def test_created_crewmate_speaks_first_with_no_user_greeting_bubble(self) -> None:
+        """A new crewmate's first turn is a hidden kickoff, so the only bubble is its reply.
+
+        The create sends ``first_greeting`` and the server starts the
+        crewmate's first turn from a kickoff that is never written to the
+        transcript (``mate_welcome``). No user bubble is drawn, so an
+        expectation that asks for one fails on every nightly.
+        """
+        sc = scenarios.load_scenario(SCENARIOS_DIR / "crewmate-create-first.yaml")
+        expectations = " ".join(sc.expectations)
+        assert "welcome to the team" not in expectations
+        assert "on your behalf" not in expectations
+        from kiro_crew.testing.fake_acp_backend import REPLY_TEXT
+
+        assert f'"{REPLY_TEXT}"' in expectations
+        assert "no bubble from you" in expectations
+
     def test_scenarios_name_the_dormant_row_by_its_shipped_sentence(self) -> None:
         """The dormant expander reads "1 dormant session hidden/shown".
 

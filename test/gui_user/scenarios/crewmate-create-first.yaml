@@ -38,6 +38,6 @@ steps:
 expectations:
   - The "New crewmate" dialog is closed.
   - A chat conversation is open and "Radar{attempt_suffix}" is visible in its header or on the selected crewmate card.
-  - A chat bubble containing "welcome to the team" is visible in the conversation (the greeting the page sends on your behalf).
+  - Without you typing anything, the conversation shows a reply bubble from the crewmate (on this test build it reads "pong from the fake ACP backend"). The crewmate speaks first; the note that starts it is hidden, so no bubble from you is expected above it.
 max_steps: 18
 max_seconds: 480
