@@ -755,10 +755,12 @@ an admitted actor: that actor did not supply the code being run. The same
 restriction applies to every inline PR route and both platform resolvers.
 The same actor check covers the existing inline routes, including every
 unconditional Fast Gate. Pages and the main ratchet audit also admit manual
-runs from listed actors. The three non-agentic code-review checks use the PR
+runs from listed actors. The four non-agentic code-review checks
+(`autosde-rules`, `inclusive-language`, `pr-hygiene`, `sast`) use the PR
 route; the merge-conflict label job and the reusable wheel/dependency-audit
 jobs use the fleet only for push events, keeping scheduled/manual callers hosted.
-Their steps, permissions and triggers are unchanged.
+Their permissions and triggers are unchanged. `sast` alone changed its steps:
+it dropped its job container and installs the pinned Semgrep on the runner.
 Sensitive Change Review uses the fleet on every PR and review event, not just
 `opened`/`synchronize`: it checks out only default-branch scripts and runs no
 PR code, so the "actor did not supply the code" reason does not apply.
@@ -1851,7 +1853,9 @@ of the AUTOSDE rules; the semantic half is delegated to the line reviewers.
   hardcoded Tailwind colors, new CSS `@keyframes`, sub-10px text.
 - **`inclusive-language`** runs a SHA-pinned `woke` (`WOKE_VERSION`, fetched through `get-woke`) over added lines only, failing on `(error)` severity findings; grepping the terms in `.woke.yml` is NOT equivalent to the gate, and an intentional term is exempted with `# wokeignore:rule=<term>` **on the offending line itself** — `woke` matches per line, so a marker on its own line exempts nothing and leaves the gate red (see the markers beside `master_fd` in `dashboard/handlers/terminal.py`). <!-- wokeignore:rule=master --> Legacy violations are burned down separately; this stops
   new ones.
-- **`sast`** runs Semgrep in a pinned container: first `semgrep --test` over the
+- **`sast`** runs a pinned Semgrep (`semgrep==1.78.0`, installed with pip on the
+  runner, no job container) on the CodeBuild fleet for eligible same-repo PRs and
+  `ubuntu-latest` otherwise: first `semgrep --test` over the
   custom rules in `semgrep/` against the annotated fixtures in `semgrep-tests/`
   (both directions — a `ruleid:` line must match, an `ok:` line must not — so a
   rule regression goes red here, not on a later unrelated PR; the rules dir is

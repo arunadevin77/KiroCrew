@@ -114,7 +114,6 @@ _PERMANENT_EXCEPTIONS = {
     ("first-principles-review.yml", "first-principles-review"),
     ("ux-review.yml", "ux-review"),
     ("design-review.yml", "design-review"),
-    ("code-review.yml", "sast"),
     ("ci-runner-watchdog.yml", "watchdog"),
 }
 
@@ -159,6 +158,7 @@ _EXPECTED_ROUTED_JOBS = {
     ("code-review.yml", "autosde-rules"),
     ("code-review.yml", "inclusive-language"),
     ("code-review.yml", "pr-hygiene"),
+    ("code-review.yml", "sast"),
     ("pr-merge-conflict-label.yml", "label"),
     ("build-wheel.yml", "build-wheel"),
     ("dependency-vulnerability.yml", "audit-production-dependencies"),
