@@ -634,8 +634,15 @@ export const NavItem = forwardRef(function NavItem({ path, label, icon, active, 
     // dialog — and unmounts nothing, so it keeps its exemption; an unqualified
     // ask would pop a discard-confirm over a click that was never going to
     // destroy anything.
-    if (!onClickOverride && !isCurrentUrl(path) && !mayLeave()) return
-    onClick?.(); (onClickOverride || (() => navigate(path, { replace })))()
+    const asked = !onClickOverride && !isCurrentUrl(path)
+    if (asked && !mayLeave()) return
+    // `leaveGranted`: the page's guards were asked just now, in this same
+    // synchronous step (the guide's `enter` writes the same mark), so a landing
+    // page that stays mounted through this navigation and acts on it — the
+    // Crewmates page closing its open create card — must not ask the same
+    // question again. A same-address click asked nothing, so it carries no
+    // mark and that page asks for itself.
+    onClick?.(); (onClickOverride || (() => navigate(path, { replace, state: asked ? { leaveGranted: true } : undefined })))()
   }
   return (
     <motion.div layout={isMobileRow ? undefined : 'position'}

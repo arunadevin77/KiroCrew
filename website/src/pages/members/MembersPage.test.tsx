@@ -435,6 +435,7 @@ async function renderPage(
       <MembersPage />
       <LocationProbe />
       <LeaveProbe />
+      <RailProbe />
       <GuideNavProbe />
     </NavigationLeaveGuardProvider>
     </MobileRosterBarContext.Provider>,
@@ -466,6 +467,29 @@ function GuideNavProbe() {
     </>
   )
 }
+
+/** Stands in for the rail's Crewmates row, exactly `NavItem`'s sequence: when
+ *  the address changes it asks the page and, allowed, navigates to `/members`
+ *  carrying `leaveGranted`; when the address is already `/members` it asks
+ *  nothing and navigates bare. `rail-members-raw` is a push nobody guarded (a
+ *  command-bar row's plain `navigate('/members')`). */
+function RailProbe() {
+  const mayLeave = useMayLeaveForNavigation()
+  const navigate = useNavigate()
+  const loc = useLocation()
+  const current = loc.pathname + loc.search === '/members'
+  return (
+    <>
+      <button type="button" data-testid="rail-members" onClick={() => {
+        if (current) { navigate('/members'); return }
+        if (mayLeave()) navigate('/members', { state: { leaveGranted: true } })
+      }}>Crewmates</button>
+      <button type="button" data-testid="rail-members-raw" onClick={() => navigate('/members')}>Crewmates (unguarded)</button>
+    </>
+  )
+}
+const clickRailMembers = () => fireEvent.click(screen.getByTestId('rail-members'))
+const clickRawMembers = () => fireEvent.click(screen.getByTestId('rail-members-raw'))
 
 /** Stands in for an app-shell navigation surface (sidebar, palette, Back): asks
  *  the page's registered leave guard and records the answer. */
@@ -3125,6 +3149,98 @@ describe('New crewmate dialog', () => {
     } finally {
       confirmSpy.mockRestore()
     }
+  })
+
+  it('the rail\'s Crewmates row over a typed card: Stay keeps the card and its text, Leave closes it; an untouched card closes unasked', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    try {
+      await renderPage([row()])
+      expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-oncall')
+      await openDialog()
+      fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'radar' } })
+      // Stay: the row asked, the user kept the draft, nothing moved.
+      clickRailMembers()
+      expect(confirmSpy).toHaveBeenCalledWith('Leave this page? Your unsaved crewmate draft will be lost.')
+      expect(screen.getByTestId('crewmate-create-form')).toBeInTheDocument()
+      expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('radar')
+      expect(currentUrl()).toBe('/members?member=oncall')
+      // Leave: the row navigates to this same page, which stays mounted -- the
+      // card the user agreed to leave must close rather than sit there as if
+      // the click did nothing. The chat is back.
+      confirmSpy.mockReturnValue(true)
+      clickRailMembers()
+      await waitFor(() => expect(screen.queryByTestId('crewmate-create-form')).toBeNull())
+      expect(screen.getByTestId('chat-pane-stub').closest('[style*="display: none"]')).toBeNull()
+      // An untouched card: nothing to lose, so no question, and the click still
+      // means "show me the page".
+      confirmSpy.mockClear()
+      await openDialog()
+      clickRailMembers()
+      await waitFor(() => expect(screen.queryByTestId('crewmate-create-form')).toBeNull())
+      expect(confirmSpy).not.toHaveBeenCalled()
+    } finally {
+      confirmSpy.mockRestore()
+    }
+  })
+
+  it('a push to /members that nobody guarded still asks before a typed card closes: Stay keeps it, Leave closes it', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    try {
+      await renderPage([row()])
+      expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-oncall')
+      await openDialog()
+      fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'radar' } })
+      // No `leaveGranted` on the entry: the landing is not proof anyone asked,
+      // so the page asks the card's own guard before it would drop the text.
+      clickRawMembers()
+      await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1))
+      expect(confirmSpy).toHaveBeenCalledWith('Leave this page? Your unsaved crewmate draft will be lost.')
+      expect(screen.getByTestId('crewmate-create-form')).toBeInTheDocument()
+      expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('radar')
+      confirmSpy.mockReturnValue(true)
+      clickRawMembers()
+      await waitFor(() => expect(screen.queryByTestId('crewmate-create-form')).toBeNull())
+      expect(confirmSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      confirmSpy.mockRestore()
+    }
+  })
+
+  it('the rail row clicked while the address is already a bare /members (empty roster, card from the hero) asks before closing a typed card', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    try {
+      await renderPage([])
+      const [cta] = await screen.findAllByTestId('crewmate-empty-cta', undefined, PANE_READY)
+      expect(currentUrl()).toBe('/members')
+      fireEvent.click(cta)
+      await screen.findByTestId('crewmate-create-form')
+      fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'radar' } })
+      // Same address: the rail asks nothing and navigates anyway (no mark), so
+      // the page asks for itself; Stay keeps the card and its text.
+      clickRailMembers()
+      await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1))
+      expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('radar')
+      // Leave: the card closes; the hero is the page again.
+      confirmSpy.mockReturnValue(true)
+      clickRailMembers()
+      await waitFor(() => expect(screen.queryByTestId('crewmate-create-form')).toBeNull())
+      expect(screen.getAllByTestId('crewmate-empty-cta').length).toBeGreaterThan(0)
+    } finally {
+      confirmSpy.mockRestore()
+    }
+  })
+
+  it('a create link to /members?create=1 opens the card and its own URL cleanup to a bare /members does not close it', async () => {
+    await renderPage([row()])
+    expect(await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)).toHaveTextContent('member-oncall')
+    fireEvent.click(screen.getByTestId('guide-nav-granted'))
+    const form = await screen.findByTestId('crewmate-create-form')
+    // The link's params are cleaned off the address (a bare `/members` lands
+    // before the page re-opens the remembered chat's `?member=`); neither
+    // landing is a click on the page, so the card it opened stays open.
+    await waitFor(() => expect(currentUrl()).not.toContain('create=1'))
+    expect(screen.getByTestId('crewmate-create-form')).toBe(form)
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('scout')
   })
 
   it('a draft in the nested New workspace form counts toward the leave guard, and stops counting once that form is closed', async () => {

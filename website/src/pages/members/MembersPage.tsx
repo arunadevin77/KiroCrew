@@ -1376,6 +1376,39 @@ export default function MembersPage() {
     }
     return true
   }, [mayLeave])
+  // The rail's Crewmates row (or a palette jump to `/members`) while the card
+  // is up means "show me the page", like choosing a chat does. The navigation
+  // lands on this same page, which stays mounted with `createOpen` still true,
+  // so without this the card stayed exactly where it was and the click read as
+  // dead -- even after the user answered Leave. Read off the location LANDING:
+  // a PUSH onto a bare `/members` while the card is open. Three marks tell that
+  // click from every other way this location changes -- this page's own URL
+  // writes (the remembered chat, a gone name cleared, a create link's cleanup)
+  // are replaces, the phone's drawer and team pushes name a member or a team,
+  // and the Back guard's own duplicate entry carries its marker.
+  //
+  // The URL is where the user landed, never proof that anyone asked. A caller
+  // that asked the guards just now says so with `leaveGranted` in the entry's
+  // state (the rail's `NavItem`, the palette, the guide's `enter`): then Leave
+  // was the answer and the card closes without a second question. Any other
+  // push here -- the rail row clicked while the address is already a bare
+  // `/members`, which asks nothing; a raw `navigate('/members')` -- goes through
+  // `leaveCreate`, which asks the card's own guard when there is text to lose
+  // and leaves the card standing when the user says Stay. Typed text is never
+  // dropped unasked. A create in flight is left, not blanked, and its settle
+  // must not replace the chat (`leftCreateRef`), exactly as `leaveCreate` does.
+  const navigationType = useNavigationType()
+  const landingKeyRef = useRef(location.key)
+  useEffect(() => {
+    if (location.key === landingKeyRef.current) return
+    landingKeyRef.current = location.key
+    if (navigationType !== 'PUSH' || isTrapEntry(location.state)) return
+    if (location.pathname !== '/members' || location.search !== '' || !createOpen) return
+    const granted = (location.state as { leaveGranted?: boolean } | null)?.leaveGranted === true
+    if (!granted) { leaveCreate(); return }
+    if (createBusyRef.current) leftCreateRef.current = true
+    setCreateOpen(false)
+  }, [location.key, location.pathname, location.search, location.state, navigationType, createOpen, leaveCreate])
   const openAdvanced = useCallback(() => openCreate(true), [openCreate])
   const openQuick = useCallback(() => openCreate(false), [openCreate])
   /** The DM column, the containing block of the modal profile card. */
@@ -1865,7 +1898,6 @@ export default function MembersPage() {
   // A Back that lands on the entry below the drawer's closes the drawer and
   // stays on the crewmate; a pop this page issued for a drawer pick carries the
   // pick out now that it has landed. `location.key`, so it runs once per entry.
-  const navigationType = useNavigationType()
   useEffect(() => {
     if (navigationType !== 'POP') return
     if (afterRosterDrawerPopRef.current) { runAfterRosterDrawerPop(); return }
