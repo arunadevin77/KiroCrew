@@ -421,6 +421,20 @@ re-reads the candidate's header before writing, because it is the one place an o
 a unit that is not this session's own, and it closes no unmatched `subagent/spawned`: those children
 were dispatched by a session that is gone.
 
+A repair that lands goes on to the repaired crew log's OWN predecessor, read from that log's own
+`session/opened` entry, and queues the same repair for it, so the walk follows the whole durable chain
+rather than one hop. One hop is not enough: the edge is an append and the repair rides the in-memory
+buffer, so a crash between them loses only the repair, and a superseded log is never resumed to
+re-queue it. In A -> B -> C, a crash after B named A but before A was repaired leaves A open, and C's
+supersede names only B. A hop whose tail was already closed says nothing about the hop before it, so
+the walk does not stop there. Each hop is its own queued job with every guard the first hop has: the
+wait behind what that log still owes, the live-turn stand-down and the same-slot header re-check. A hop
+that stands down or refuses ends the walk. The walk also stops at three points: a log already on this
+walk (a loop, reachable only through a damaged or hand-edited entry, logged as a warning); a log this
+process already repaired, whose own walk went on from it (silent, so a long-lived slot's history is not
+rescanned on every supersede); and a bound of 32 logs, logged with the log it stopped before, because
+every hop is a whole-file scan on the writer thread.
+
 The read side is `session/opened.data.previous` itself, folded into the `status` projection and served
 by the existing projection route. A reader that wants the SLOT rather than the session folds the newest
 crew log, follows `previous` to the one before it, and repeats. There is deliberately no chain-walking

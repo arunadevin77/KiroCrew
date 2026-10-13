@@ -5544,6 +5544,224 @@ def test_the_recovery_reads_this_logs_own_edge_not_the_callers(caplog):
     assert not any("recovered the superseded crew log" in r.message for r in caplog.records)
 
 
+# --------------------------------------------------------------------------- #
+# A superseded crew log: walking the whole predecessor chain
+# --------------------------------------------------------------------------- #
+
+
+def _open_on_chat_7(session_id: str, **kwargs) -> None:
+    """Open *session_id* on the slot ``_open_session`` uses."""
+    emit.on_session_opened(
+        session_id,
+        agent="kirocrew",
+        slot="chat-7",
+        model="claude-opus-5",
+        cwd="/home/dev/project",
+        owner="default",
+        **kwargs,
+    )
+
+
+def _lose_the_repair():
+    """The supersede's follow-on repair, lost exactly as a crash loses it.
+
+    The opening entry carrying ``previous.sid`` still lands durably; only the job
+    queued behind it never runs.
+    """
+    return unittest.mock.patch.object(emit, "_queue_tail_repair", lambda *_a, **_k: None)
+
+
+def _chain_of_open_tails(sids: "list[str]") -> None:
+    """Build one slot's chain ``sids[0] -> sids[1] -> ...``, every tail left OPEN.
+
+    Each log after the first supersedes the one before it with the repair lost, and
+    each process is gone before the next one starts (``reset_caches``), so no live
+    record of any turn survives: a crash loop that never got as far as one repair.
+    """
+    for index, sid in enumerate(sids):
+        if index == 0:
+            _open_on_chat_7(sid)
+        else:
+            with _lose_the_repair():
+                _open_on_chat_7(sid, previous_sid=sids[index - 1])
+        emit.on_turn_started(sid, 1, "user")
+        assert emit.flush()
+        emit.reset_caches()
+    for sid in sids:
+        assert _closers(sid) == [], f"{sid} was closed while building the chain"
+
+
+def test_a_cold_start_closes_a_tail_two_hops_back_in_the_chain():
+    """A to B to C, and a crash after B named A but before A was repaired.
+
+    The repair of A is a job on the in-memory write buffer and the edge naming A is
+    a durable append, so a crash between them loses only the repair. B is never
+    resumed after it is superseded, so the re-attach recovery never re-queues it,
+    and C's supersede repaired B alone: A's ``turn/started`` stayed open for the life
+    of a file nothing rewrites.
+
+    B's own turn ENDS normally here, so B's tail needs nothing. That is the case a
+    walk that stops at the first hop with nothing to close would get wrong: a hop's
+    tail being closed says nothing about whether the repair of the hop BEFORE it ran.
+
+    Mutation guard: dropping the walk from `_repair_superseded` (closing only the hop
+    it was queued for) leaves A's closer count at 0.
+    """
+    third = "acp-sess-0003"
+    _dangling_predecessor()
+    emit.reset_caches()
+    with _lose_the_repair():
+        _open_successor(previous_sid=SESSION)
+        emit.on_turn_started(SUCCESSOR, 1, "user")
+        emit.on_turn_completed(SUCCESSOR, 1, stop_reason="end_turn")
+        assert emit.flush()
+    emit.reset_caches()
+    assert _closers(SESSION) == [], "A's repair was not actually lost, so this proves nothing"
+
+    _open_on_chat_7(third, previous_sid=SUCCESSOR)
+    assert emit.flush()
+
+    closers = _closers(SESSION)
+    assert len(closers) == 1, "the tail two hops back stayed open after the cold start"
+    assert closers[0]["data"] == {"turn": 1, "stop_reason": "interrupted"}
+    results = [e for e in _body(SESSION) if e["type"] == "tool/completed"]
+    assert [r["data"]["status"] for r in results] == ["unknown"]
+    # B's one real outcome is left as it is: no second outcome for one turn.
+    assert [c["data"]["stop_reason"] for c in _closers(SUCCESSOR)] == ["end_turn"]
+
+
+def test_a_cold_start_closes_every_open_tail_of_the_chain():
+    """The whole durable chain, not a fixed depth: three open tails, one cold start.
+
+    Mutation guard: walking a fixed number of extra hops instead of following each
+    log's own ``previous`` to the chain's start leaves the oldest tail open.
+    """
+    chain = ["acp-sess-0001", "acp-sess-0002", "acp-sess-0003", "acp-sess-0004"]
+    _chain_of_open_tails(chain[:3])
+
+    _open_on_chat_7(chain[3], previous_sid=chain[2])
+    assert emit.flush()
+
+    for sid in chain[:3]:
+        closers = _closers(sid)
+        assert len(closers) == 1, f"{sid}'s tail was not closed exactly once"
+        assert closers[0]["data"] == {"turn": 1, "stop_reason": "interrupted"}
+    assert _closers(chain[3]) == [], "the newest log's own turn never started"
+
+
+def test_a_reattach_recovery_walks_the_chain_too():
+    """The re-attach recovery queues the same repair, so it walks the same chain.
+
+    A crash loop: A's repair and B's are both lost, then C re-attaches. C's own
+    opening entry names B, the recovery closes B, and the walk goes on to A.
+
+    Mutation guard: walking only from the supersede site, not from inside the
+    repair every caller queues, leaves A open here.
+    """
+    chain = ["acp-sess-0001", "acp-sess-0002", "acp-sess-0003"]
+    _chain_of_open_tails(chain)
+
+    _open_on_chat_7(chain[2], resumed=True)
+    assert emit.flush()
+
+    assert len(_closers(chain[1])) == 1, "the recovered hop was not closed"
+    assert len(_closers(chain[0])) == 1, "the recovery did not walk past the first hop"
+
+
+@pytest.mark.parametrize(
+    "edges",
+    [
+        pytest.param({"acp-sess-0001": "acp-sess-0001"}, id="self-loop"),
+        pytest.param(
+            {"acp-sess-0001": "acp-sess-0002", "acp-sess-0002": "acp-sess-0001"},
+            id="two-log-loop",
+        ),
+    ],
+)
+def test_a_cyclic_predecessor_pointer_ends_the_walk_with_a_logged_stop(edges, monkeypatch, caplog):
+    """A looping ``previous`` ends the walk, says so, and closes each tail once.
+
+    The emitter refuses to WRITE such an edge, but the walk reads files written by
+    any earlier build, and a damaged or hand-edited opening entry can name anything.
+    Each log of the loop is a real log of this slot, so the same-slot check passes
+    every step and only the walk's own guard can stop it.
+
+    Mutation guard: removing the already-walked check stops the walk only at the
+    process's repair memo (silently, so the warning below is missing) or at the hop
+    bound (after closing nothing more, but logging the wrong reason).
+    """
+    for sid in sorted(set(edges) | set(edges.values())):
+        _open_on_chat_7(sid)
+        emit.on_turn_started(sid, 1, "user")
+        assert emit.flush()
+    emit.reset_caches()
+    monkeypatch.setattr(emit, "_durable_previous", lambda sid: edges.get(sid, ""))
+
+    with caplog.at_level(logging.WARNING, logger="kiro_crew.crew_log.emit"):
+        emit._queue_tail_repair("acp-sess-0001", "chat-7")
+        assert emit.flush(), "the walk did not terminate"
+
+    for sid in edges:
+        assert len(_closers(sid)) == 1, f"{sid}'s tail was not closed exactly once"
+    stops = [r.message for r in caplog.records if "loops back on itself" in r.message]
+    assert len(stops) == 1, f"the cycle stop was not logged exactly once: {stops}"
+
+
+def test_the_walk_stops_at_its_hop_bound_with_a_logged_stop(monkeypatch, caplog):
+    """A chain longer than the bound is walked to the bound and no further.
+
+    Each hop opens and scans a whole crew log on the writer thread, so the bound is
+    what keeps one repair walk's cost finite whatever the chain holds, and stopping
+    at it is logged with the log it stopped before.
+
+    Mutation guard: removing the bound check closes all four tails here.
+    """
+    chain = ["acp-sess-0001", "acp-sess-0002", "acp-sess-0003", "acp-sess-0004"]
+    _chain_of_open_tails(chain)
+    monkeypatch.setattr(emit, "_REPAIR_WALK_HOPS", 2)
+
+    with caplog.at_level(logging.WARNING, logger="kiro_crew.crew_log.emit"):
+        emit._queue_tail_repair(chain[3], "chat-7")
+        assert emit.flush()
+
+    assert [len(_closers(sid)) for sid in chain] == [0, 0, 1, 1]
+    stops = [r.message for r in caplog.records if "the walk's bound" in r.message]
+    assert len(stops) == 1, f"the bound stop was not logged exactly once: {stops}"
+    assert chain[1] in stops[0], "the stop did not name the log it stopped before"
+
+
+def test_a_second_supersede_in_one_process_does_not_rewalk_the_chain(monkeypatch):
+    """Each crew log is walked once per process, not once per supersede.
+
+    A slot gets a new log on every compaction, reset or model switch, so its chain
+    grows for as long as it lives, and every hop is a whole-file scan on the writer
+    thread. Re-walking the whole chain on each supersede would make each one cost
+    the slot's whole history. Within one process a log already queued for repair
+    needs no second walk: a superseded log is never resumed, so nothing reopens a
+    tail this process has closed.
+
+    Mutation guard: dropping the already-queued check makes the second supersede
+    repair B and A again, so their counts below read 2.
+    """
+    chain = ["acp-sess-0001", "acp-sess-0002", "acp-sess-0003", "acp-sess-0004"]
+    _chain_of_open_tails(chain[:2])
+    repaired: "list[str]" = []
+    real_repair = emit._repair_superseded
+
+    def _spy(previous_sid: str, slot: str, **kwargs) -> None:
+        repaired.append(previous_sid)
+        real_repair(previous_sid, slot, **kwargs)
+
+    monkeypatch.setattr(emit, "_repair_superseded", _spy)
+    _open_on_chat_7(chain[2], previous_sid=chain[1])
+    assert emit.flush()
+    _open_on_chat_7(chain[3], previous_sid=chain[2])
+    assert emit.flush()
+
+    assert sorted(repaired) == sorted(chain[:3]), f"a log was walked twice: {repaired}"
+    assert [len(_closers(sid)) for sid in chain[:2]] == [1, 1]
+
+
 def test_a_superseded_repair_survives_the_pending_ceiling():
     """Refusing only the FOLLOW-ON leaves the tail open with nothing to re-queue it.
 
