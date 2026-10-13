@@ -2,7 +2,9 @@
  * ChatEmbed — embeddable chat widget using KiroCrew's native rendering.
  *
  * Uses ChatMessageList (shared with ChatPage) for message rendering.
- * Manages its own state via useAppApi() + React Query. No Redux dependency.
+ * Manages its own state via useAppApi() + React Query. No Redux store: the
+ * only chat-state imports are the pure queue-hydration helpers, so a queued
+ * send renders here exactly as the dashboard's QueueStack shows it.
  *
  * State management: polling via useQuery refetchInterval.
  * Poll faster during streaming (1s), slower when idle (5s).
@@ -27,6 +29,8 @@ import { useComposerDraft } from './useComposerDraft'
 import { useAppApi } from './index'
 import type { ChatMessage } from '../types'
 import { loadChatConfig } from '../pages/chat/ChatSettings'
+import QueueStack, { SubagentDeliveryProgress, splitPaneMessages } from '../components/QueueStack'
+import { hydrateQueuedBubbles, normalizeQueueEntries } from '../store/chatSlice'
 
 import { i18nT } from '../i18n/t'
 export interface ChatEmbedProps {
@@ -92,6 +96,9 @@ interface ChatSlotData {
   title?: string
   /** Older rows exist beyond the bounded page. */
   has_more?: boolean
+  /** Messages waiting for the running turn: sent from this embed while busy,
+   *  or from another surface. Rendered read-only above the composer. */
+  queue?: unknown[]
 }
 
 /** Rows per page of the bounded poll — the slot-detail handler's own default,
@@ -178,6 +185,15 @@ function ChatEmbed({
   const messages = shown?.messages ?? EMPTY_MESSAGES
   const running = shown?.running ?? false
   const title = shown?.title ?? ''
+  // Queued sends, through the same hydration and split the dashboard panes
+  // use, so a sub-agent delivery or a recovery continuation never shows as a
+  // user card here either. Read-only: the embed offers no cancel/edit, so it
+  // adds no write path; the cards retire when the drain lands the row.
+  const queueRaw = shown?.queue
+  const { queuedMessages, systemDeliveryCount } = useMemo(
+    () => splitPaneMessages(hydrateQueuedBubbles([], normalizeQueueEntries(queueRaw))),
+    [queueRaw],
+  )
   // The widen failed: the wider read errored and the rows on screen are still
   // the narrower page. An ambient poll error on a settled page (nothing being
   // widened) is not the bar's to report.
@@ -385,6 +401,16 @@ function ChatEmbed({
       )}
 
       {aboveComposer && <div className="shrink-0">{aboveComposer}</div>}
+
+      {/* fuseBelow off: the embed's input row is a flat strip, not the
+          dock's glass the front card slides under, so the stack stands as
+          whole cards above it. */}
+      {(queuedMessages.length > 0 || systemDeliveryCount > 0) && (
+        <div className="shrink-0 pt-1 pb-1" data-testid="chat-embed-queue">
+          <SubagentDeliveryProgress count={systemDeliveryCount} />
+          <QueueStack messages={queuedMessages} fuseBelow={false} />
+        </div>
+      )}
 
       {followUpOptions.length > 0 && (
         <div className={`shrink-0 px-3 ${frameless ? '' : 'bg-bg-accent'}`}>

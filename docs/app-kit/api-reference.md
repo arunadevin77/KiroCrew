@@ -127,6 +127,14 @@ moves. Omitted, the 240-pixel default applies.
 </div>
 ```
 
+A message sent while the session is busy waits in the session's queue. The embed
+shows each waiting message as a card above the composer, the same card the
+dashboard's chat shows, and the card leaves when the message is delivered. This
+covers sends from the embed itself and from any other surface (another tab, a
+scheduled job). The cards are read-only in the embed: to cancel or edit a queued
+message, open the session in the dashboard. Finished sub-agent results waiting
+for the same turn show as one progress line instead of cards.
+
 ## Native Chat Panel
 
 `ChatPanel` mounts Kiro Crew's native chat experience for an existing session. The required

@@ -151,6 +151,13 @@ export async function fetchSlotDetail(key: string, limit?: number) {
  *  and the coverage walk, so a walked page reports its run state, queue and
  *  context meter exactly as a first page does. */
 export function normalizeSlotDetail(key: string, d: Awaited<ReturnType<Response['json']>>, boundedRead: boolean) {
+  return { key, boundedRead, nextBefore: d.next_before || 0, messages: filterMessages(d.messages || []), running: d.running || false, turn: d.turn, turn_gen: d.turn_gen, stopping: d.stopping || false, hasMore: d.has_more || false, total: d.total || 0, queue: normalizeQueueEntries(d.queue), context: d.context_pct != null ? { pct: d.context_pct, used: d.context_used_tokens ?? undefined, window: d.context_window_tokens ?? undefined } : undefined }
+}
+
+/** A slot-detail `queue` field in the store's entry shape. Shared by
+ *  `normalizeSlotDetail` and the app-SDK `ChatEmbed`, which reads the same
+ *  payload without the store, so both surfaces see one entry shape. */
+export function normalizeQueueEntries(raw: unknown): SlotQueueItem[] {
   type QueueItem = string | { content: string; id: string; meta?: unknown }
-  return { key, boundedRead, nextBefore: d.next_before || 0, messages: filterMessages(d.messages || []), running: d.running || false, turn: d.turn, turn_gen: d.turn_gen, stopping: d.stopping || false, hasMore: d.has_more || false, total: d.total || 0, queue: ((d.queue || []) as QueueItem[]).map((q: QueueItem) => typeof q === 'string' ? { content: q, queueId: crypto.randomUUID(), ts: new Date().toISOString() } : { content: q.content, queueId: q.id, ts: new Date().toISOString(), ...(typeof (q.meta as Record<string, unknown> | undefined)?.kind === 'string' ? { kind: (q.meta as Record<string, unknown>).kind as string } : {}), ...(typeof (q.meta as Record<string, unknown> | undefined)?.appLabel === 'string' ? { appLabel: (q.meta as Record<string, unknown>).appLabel as string } : {}), ...queueEntryAttachments(q.meta), ...queueEntryQuote(q.meta) }), context: d.context_pct != null ? { pct: d.context_pct, used: d.context_used_tokens ?? undefined, window: d.context_window_tokens ?? undefined } : undefined }
+  return ((Array.isArray(raw) ? raw : []) as QueueItem[]).map((q: QueueItem) => typeof q === 'string' ? { content: q, queueId: crypto.randomUUID(), ts: new Date().toISOString() } : { content: q.content, queueId: q.id, ts: new Date().toISOString(), ...(typeof (q.meta as Record<string, unknown> | undefined)?.kind === 'string' ? { kind: (q.meta as Record<string, unknown>).kind as string } : {}), ...(typeof (q.meta as Record<string, unknown> | undefined)?.appLabel === 'string' ? { appLabel: (q.meta as Record<string, unknown>).appLabel as string } : {}), ...queueEntryAttachments(q.meta), ...queueEntryQuote(q.meta) })
 }
