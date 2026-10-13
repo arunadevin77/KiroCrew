@@ -8287,9 +8287,9 @@ def open_file_no_reparse(
 
 #: ``CreateFileW`` arguments only :func:`win_open_no_reparse` uses. A directory is
 #: opened for ``LIST_DIRECTORY`` (data access, so it takes part in sharing) with
-#: read-only sharing; a file read-write, open-or-create, sharing read and write.
+#: read-only sharing (``_WIN_FILE_SHARE_READ``, defined above); a file read-write,
+#: open-or-create, sharing read and write.
 _WIN_FILE_LIST_DIRECTORY = 0x00000001
-_WIN_FILE_SHARE_READ = 0x00000001
 _WIN_OPEN_ALWAYS = 4
 #: ``FILE_INFO_BY_HANDLE_CLASS.FileAttributeTagInfo``.
 _WIN_FILE_ATTRIBUTE_TAG_INFO = 9
