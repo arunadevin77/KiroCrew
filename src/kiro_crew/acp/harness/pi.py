@@ -163,7 +163,7 @@ _PI_MCP_SERVER_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 # digest over the raw bytes would read every Windows install as tampered and refuse
 # every pi session there. ``.gitattributes`` pins the checkout LF as well; the
 # normalization here is what keeps the property from resting on a repo-config line.
-PI_GATE_EXTENSION_SHA256 = "cea63649151641c1b9a93776359da3266b52803e771271a136f8ea0304e3073a"
+PI_GATE_EXTENSION_SHA256 = "33524636eca152b5601be722082da26f217bc58346e98643ce1580e59645a81d"
 
 _pi_acp_argv_cache: tuple[list[str] | None, str] | object = launch_mod._UNRESOLVED
 

@@ -223,7 +223,9 @@ function readMcpHandoff(): Record<string, Record<string, unknown>> | null {
   if (!body || typeof body !== "object") return null;
   const record = body as Record<string, unknown>;
   const nonce = process.env[NONCE_ENV] ?? "";
-  if (record[MCP_HANDOFF_MARKER] !== 1 || !nonce || record.nonce !== nonce) return null;
+  if (record[MCP_HANDOFF_MARKER] !== 1 || !nonce) return null;
+  // The session binding is the seal itself: this process's nonce is the
+  // associated data, so a file sealed for any other nonce does not open.
   const opened = openSeal(record, nonce);
   if (!opened || typeof opened !== "object") return null;
   const servers = (opened as Record<string, unknown>).servers;
