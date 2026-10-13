@@ -43,7 +43,7 @@ from kiro_crew.dashboard.upload_limits import bytes_to_mb_figure, knowledge_uplo
 from kiro_crew.executors import run_in_embed_pool
 from kiro_crew.knowledge.agent_fetch import fetch_url_content
 from kiro_crew.knowledge.agent_source import add_agent_document
-from kiro_crew.knowledge.artifact_ingest import ArtifactKnowledgeSync
+from kiro_crew.knowledge.artifact_ingest import ARTIFACT_SOURCE_URI, ArtifactKnowledgeSync
 from kiro_crew.knowledge.chunker import HeadingAwareChunker
 from kiro_crew.knowledge.connectors.base import BaseConnector
 from kiro_crew.knowledge.connectors.local_folder import LocalFolderConnector
@@ -1519,6 +1519,47 @@ async def add_source(request: web.Request) -> web.Response:
     return web.json_response({"id": sid, "status": "created"}, status=201)
 
 
+async def _claim_sync_for_task(  # type: ignore[no-untyped-def]
+    store, source_id: str, claim_settled: asyncio.Event | None
+) -> bool:
+    """Take a source's 'syncing' claim from a background sync task.
+
+    Returns whether THIS task won the claim. ``False`` also covers a claim that
+    could not be taken at all, which leaves the row's status untouched.
+    *claim_settled* is set once the answer is known either way, which is what
+    ``_hand_off_under_gate`` waits on.
+    """
+    claim = asyncio.ensure_future(asyncio.to_thread(_claim_sync, store, source_id))
+    try:
+        try:
+            return bool(await asyncio.shield(claim))
+        except asyncio.CancelledError:
+            # A cancel here does not stop the worker: the thread runs to
+            # completion and can still commit 'syncing' after this task is
+            # gone -- the same strand the work sites in the sync tasks close.
+            # Wait for the thread's answer and finalize only a claim THIS task
+            # won; a lost claim is a sibling sync's row. Everything is
+            # suppressed because a finalizer must never replace the
+            # cancellation.
+            with contextlib.suppress(BaseException):
+                if await claim:
+                    await _finalize_sync_status(store, source_id, "error")
+            raise
+        except Exception:
+            # Failing to TAKE the work is not the work failing. 'error' is terminal --
+            # sync_all skips an errored row on every sweep -- so stamping it for a
+            # transient writer-lock timeout would quiesce a healthy source until
+            # someone re-syncs by hand. Leave the row as it was and let the next sweep
+            # retry it. Caught rather than left to propagate: these tasks carry
+            # `add_done_callback(set.discard)`, which never retrieves an exception.
+            logger.exception(
+                "Could not claim sync for source %s; leaving its status untouched", source_id)
+            return False
+    finally:
+        if claim_settled is not None:
+            claim_settled.set()
+
+
 async def _ingest_local_file_task(  # type: ignore[no-untyped-def]
     pipeline, store, path: str, source_id: str, *, claim_settled: asyncio.Event | None = None
 ) -> None:
@@ -1540,35 +1581,7 @@ async def _ingest_local_file_task(  # type: ignore[no-untyped-def]
     (``sync_source``) waits on it, so the orphan sweep cannot take an itemless
     row in a terminal status between that caller's read and the claim here.
     """
-    claim = asyncio.ensure_future(asyncio.to_thread(_claim_sync, store, source_id))
-    try:
-        try:
-            claimed = await asyncio.shield(claim)
-        except asyncio.CancelledError:
-            # A cancel here does not stop the worker: the thread runs to
-            # completion and can still commit 'syncing' after this task is
-            # gone -- the same strand the work sites below close. Wait for the
-            # thread's answer and finalize only a claim THIS task won; a lost
-            # claim is a sibling sync's row. Everything is suppressed because
-            # a finalizer must never replace the cancellation.
-            with contextlib.suppress(BaseException):
-                if await claim:
-                    await _finalize_sync_status(store, source_id, "error")
-            raise
-        except Exception:
-            # Failing to TAKE the work is not the work failing. 'error' is terminal --
-            # sync_all skips an errored row on every sweep -- so stamping it for a
-            # transient writer-lock timeout would quiesce a healthy source until
-            # someone re-syncs by hand. Leave the row as it was and let the next sweep
-            # retry it. Caught rather than left to propagate: these tasks carry
-            # `add_done_callback(set.discard)`, which never retrieves an exception.
-            logger.exception(
-                "Could not claim sync for source %s; leaving its status untouched", source_id)
-            return
-    finally:
-        if claim_settled is not None:
-            claim_settled.set()
-    if not claimed:
+    if not await _claim_sync_for_task(store, source_id, claim_settled):
         return
     try:
         if is_sensitive_path(str(Path(path).resolve())):
@@ -1667,6 +1680,12 @@ async def _sync_source_body(request: web.Request) -> web.Response:
             _sel_log("source.sync", source_id=source_id)
             return web.json_response(result)
 
+    # The aggregate Artifacts source is kept in step with the artifact store by
+    # ArtifactKnowledgeSync, not fetched from its uri: 'artifact://' is not a
+    # URL, and the agent URL-fetch fallback below can only fail on it.
+    if source["uri"] == ARTIFACT_SOURCE_URI:
+        return await _sync_artifact_source(request, store, source)
+
     # local_file sources carry a filesystem path, not a URL -- re-ingest the file
     # directly through the FileReader pipeline (same path as add_source), never the
     # agent URL-fetch fallback below (which would hand the path to ReadInternalWebsites
@@ -1724,6 +1743,75 @@ async def _sync_source_body(request: web.Request) -> web.Response:
     return web.json_response({"synced": False, "status": "syncing", "source_id": source_id})
 
 
+async def _sync_artifact_source(request: web.Request, store, source) -> web.Response:  # type: ignore[no-untyped-def]
+    """Manual Sync on the aggregate Artifacts source: run its reconcile pass.
+
+    The pass is the repair that runs at every gateway start (ingest what the
+    artifact store has and the Library lacks, drop what is gone), run here in
+    the background under the sync's own lock. The row survives
+    ``knowledge.auto_ingest_artifacts`` being switched off, and then no sync
+    object is running to do the pass, so the request is refused with the row's
+    status left as it is.
+    """
+    source_id = source["id"]
+    sync = request.app.get("artifact_knowledge_sync")
+    if sync is None:
+        return web.json_response(
+            {
+                "error": "artifact auto-ingest is disabled",
+                "code": "artifact_auto_ingest_disabled",
+                "source_id": source_id,
+            },
+            status=409,
+        )
+    if source["sync_status"] == "syncing":
+        return web.json_response(
+            {"error": "sync already in progress", "code": "sync_in_progress", "source_id": source_id},
+            status=409,
+        )
+    pipeline = _pipeline(request)
+    if not pipeline:
+        return web.json_response(
+            {"error": "pipeline not configured", "code": "pipeline_unavailable"}, status=503)
+    await _hand_off_under_gate(
+        request, pipeline,
+        lambda settled: _reconcile_artifact_source_task(
+            sync, store, source_id, claim_settled=settled),
+    )
+    _sel_log("source.sync.artifact", source_id=source_id)
+    return web.json_response({"synced": False, "status": "syncing", "source_id": source_id})
+
+
+async def _reconcile_artifact_source_task(  # type: ignore[no-untyped-def]
+    sync: ArtifactKnowledgeSync, store, source_id: str,
+    *, claim_settled: asyncio.Event | None = None,
+) -> None:
+    """Background task: reconcile the aggregate Artifacts source, then stamp it.
+
+    Claims 'syncing' first, for the reason ``_ingest_local_file_task`` documents.
+    Each artifact the pass ingests stamps the row itself as it lands, so the
+    closing 'synced' is a compare-and-set over a row still 'syncing': a
+    terminal state one of those ingests wrote is left as it is. A failure of the
+    pass itself, or a cancel, ends in 'error'.
+    """
+    if not await _claim_sync_for_task(store, source_id, claim_settled):
+        return
+    try:
+        await sync.reconcile_now(source_id)
+        await asyncio.to_thread(_finalize_sync_status_write, store, source_id, "synced")
+    except BaseException as exc:
+        # ``except BaseException`` for the reason _ingest_local_file_task
+        # documents: a cancel must not strand the row at 'syncing'.
+        is_cancel = isinstance(exc, asyncio.CancelledError)
+        if is_cancel:
+            logger.debug("Artifact source reconcile cancelled: source=%s", source_id)
+        else:
+            logger.exception("Artifact source reconcile failed: source=%s", source_id)
+        await _finalize_sync_status(store, source_id, "error")
+        if is_cancel:
+            raise
+
+
 async def _background_agent_sync(  # type: ignore[no-untyped-def]
     source_id: str, url: str, name: str, store, pipeline, pool: LLMPool,
     *, claim_settled: asyncio.Event | None = None,
@@ -1734,35 +1822,7 @@ async def _background_agent_sync(  # type: ignore[no-untyped-def]
     the claim is atomic and the task owns both ends of the row's lifecycle.
     *claim_settled* is set once the claim is decided (see that task).
     """
-    claim = asyncio.ensure_future(asyncio.to_thread(_claim_sync, store, source_id))
-    try:
-        try:
-            claimed = await asyncio.shield(claim)
-        except asyncio.CancelledError:
-            # A cancel here does not stop the worker: the thread runs to
-            # completion and can still commit 'syncing' after this task is
-            # gone -- the same strand the work sites below close. Wait for the
-            # thread's answer and finalize only a claim THIS task won; a lost
-            # claim is a sibling sync's row. Everything is suppressed because
-            # a finalizer must never replace the cancellation.
-            with contextlib.suppress(BaseException):
-                if await claim:
-                    await _finalize_sync_status(store, source_id, "error")
-            raise
-        except Exception:
-            # Failing to TAKE the work is not the work failing. 'error' is terminal --
-            # sync_all skips an errored row on every sweep -- so stamping it for a
-            # transient writer-lock timeout would quiesce a healthy source until
-            # someone re-syncs by hand. Leave the row as it was and let the next sweep
-            # retry it. Caught rather than left to propagate: these tasks carry
-            # `add_done_callback(set.discard)`, which never retrieves an exception.
-            logger.exception(
-                "Could not claim sync for source %s; leaving its status untouched", source_id)
-            return
-    finally:
-        if claim_settled is not None:
-            claim_settled.set()
-    if not claimed:
+    if not await _claim_sync_for_task(store, source_id, claim_settled):
         return
     try:
         content = await fetch_url_content(url, pool)

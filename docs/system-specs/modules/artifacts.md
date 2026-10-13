@@ -1542,6 +1542,18 @@ adding a parallel watcher (see `kiro_crew.knowledge.artifact_ingest`):
     redacted name, so a rename during the off-window stops showing the old
     label. Neither pass touches content hashes — a converged store still spends
     nothing.
+- **A manual Sync runs the same reconcile pass.** The aggregate row shows a
+  Sync button like any manual source, but its uri `artifact://` is not a URL,
+  so `POST /api/knowledge/sources/{id}/sync` never hands it to the agent
+  URL-fetch fallback. For the row whose uri is `artifact://` the handler runs
+  `ArtifactKnowledgeSync.reconcile_now` in a background task: it claims
+  `syncing` like the other sync tasks, runs the pass under the sync's own lock
+  (the one the live listener takes, so the two never interleave), and closes
+  with a compare-and-set to `synced` — a terminal status an ingest inside the
+  pass wrote is left as it is — or `error` when the pass itself fails. With
+  `knowledge.auto_ingest_artifacts` off there is no sync object (the row
+  outlives the feature), so the request answers 409
+  `artifact_auto_ingest_disabled` and the row's status is unchanged.
 - **A dead source pointer neither deletes nor rewrites an index.**
   `ingest_artifact` returns early whenever `get()` reported `source_missing`
   (live file moved / unreadable, so the content is a snapshot fallback). That
