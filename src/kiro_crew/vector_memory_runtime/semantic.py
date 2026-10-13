@@ -502,25 +502,6 @@ def embed_semantic_retirement(
     return store._try_embed(f"{key_suffix}: {old_value}")
 
 
-def identity_key(store: VectorMemoryStore, key: str, metadata: dict | None) -> str:
-    """Return the key of the active fact holding *metadata*'s identity, else *key*.
-
-    ``(scope, subject, predicate)`` is unique among active facts, so a write
-    naming an identity another key already holds must land on that key; a new
-    key would INSERT a second holder and fail the unique index. *metadata* must
-    already be normalized.
-    """
-    if not (metadata and metadata.get("subject") and metadata.get("predicate")):
-        return key
-    with store._db_lock:
-        identity = store.db.execute(
-            "SELECT record_id FROM memory_record_meta WHERE scope=? AND subject=? "
-            "AND predicate=? AND status='active' AND kind IN ('fact','directive')",
-            (metadata.get("scope", ""), metadata["subject"], metadata["predicate"]),
-        ).fetchone()
-    return identity[0].removeprefix("key:") if identity else key
-
-
 def write_value(
     store: VectorMemoryStore,
     key: str,
@@ -579,7 +560,8 @@ def write_value(
         metadata = record_meta.normalize_metadata(metadata) if metadata is not None else None
     except ValueError as exc:
         return (vm.SemanticRejectCode.CONFLICT, str(exc))
-    key = identity_key(store, key, metadata)
+    with store._db_lock:
+        key = record_meta.identity_key(store.db, key, metadata)
     conflict = store._write_semantic(
         key,
         value_json,

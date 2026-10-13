@@ -163,6 +163,23 @@ def ensure_schema(db: sqlite3.Connection) -> None:
         db.execute(statement)
 
 
+def identity_key(db: sqlite3.Connection, key: str, metadata: dict | None) -> str:
+    """Return the key of the active fact holding *metadata*'s identity, else *key*.
+
+    ``idx_memory_fact_identity`` makes the identity unique among active facts,
+    so a write naming an identity another key holds must land on that key; a
+    new key would INSERT a second holder. *metadata* must be normalized.
+    """
+    if not (metadata and metadata.get("subject") and metadata.get("predicate")):
+        return key
+    holder = db.execute(
+        "SELECT record_id FROM memory_record_meta WHERE scope=? AND subject=? "
+        "AND predicate=? AND status='active' AND kind IN ('fact','directive')",
+        (metadata.get("scope", ""), metadata["subject"], metadata["predicate"]),
+    ).fetchone()
+    return holder[0].removeprefix("key:") if holder else key
+
+
 def record_id_for(kind: str, record_id: str) -> str:
     if kind not in _KINDS or not isinstance(record_id, str) or not record_id:
         raise ValueError("Memory record kind and id are required")
