@@ -536,3 +536,56 @@ export function InstantTip({ tip, tipId, className = '', children }: {
     document.body,
   )
 }
+
+type LabelTipHandlers = {
+  onPointerEnter?: React.PointerEventHandler<HTMLElement>
+  onPointerDown?: React.PointerEventHandler<HTMLElement>
+  onPointerUp?: React.PointerEventHandler<HTMLElement>
+  onMouseEnter?: React.MouseEventHandler<HTMLElement>
+  onMouseLeave?: React.MouseEventHandler<HTMLElement>
+  onFocus?: React.FocusEventHandler<HTMLElement>
+  onBlur?: React.FocusEventHandler<HTMLElement>
+}
+
+/** Whether `el`'s focus is one the browser would ring (`:focus-visible`): a
+ *  tab stop, not the focus a menu hands back to its trigger after a mouse
+ *  pick. A hint painted on that returned focus would float over a button the
+ *  mouse user already left. Where the selector is unsupported, every focus
+ *  counts. */
+function keyboardFocused(el: Element): boolean {
+  try { return el.matches(':focus-visible') } catch { return true }
+}
+
+function both<E>(own: ((e: E) => void) | undefined, tip: (e: E) => void): (e: E) => void {
+  return own ? (e: E) => { own(e); tip(e) } : tip
+}
+
+/**
+ * The hover/focus hint for an icon-only control, whose text is the control's
+ * own accessible name (its `aria-label`). The label is already translated and
+ * already names what the control does, so the hint adds no new copy; it only
+ * makes the name visible, at once, to a pointer or keyboard user, instead of
+ * after the browser's native `title` delay.
+ *
+ * `label` undefined turns it off: no handlers are added and nothing renders
+ * (the hook still runs, so a caller may switch it on and off). `own` is the
+ * caller's handlers for the same events; each one runs before the hint's.
+ * No `aria-describedby`: the description would repeat the accessible name
+ * the screen reader just read.
+ */
+export function useLabelTip(label: string | undefined, own: LabelTipHandlers = {}): { handlers: LabelTipHandlers; bubble: React.ReactNode } {
+  const { tip, tipHandlers, tipId } = useInstantTip()
+  if (!label) return { handlers: own, bubble: null }
+  return {
+    handlers: {
+      onPointerEnter: both(own.onPointerEnter, tipHandlers.onPointerEnter),
+      onPointerDown: both(own.onPointerDown, tipHandlers.onPointerDown),
+      onPointerUp: both(own.onPointerUp, tipHandlers.onPointerUp),
+      onMouseEnter: both(own.onMouseEnter, tipHandlers.onMouseEnter),
+      onMouseLeave: both(own.onMouseLeave, tipHandlers.onMouseLeave),
+      onFocus: both(own.onFocus, e => { if (keyboardFocused(e.currentTarget)) tipHandlers.onFocus(e) }),
+      onBlur: both(own.onBlur, tipHandlers.onBlur),
+    },
+    bubble: <InstantTip tip={tip} tipId={tipId} className="w-max max-w-[20rem] break-words">{label}</InstantTip>,
+  }
+}

@@ -312,6 +312,7 @@ import type { ParsedSubagentCompletion } from './chat/subagentCompletion'
 import { useConnectionsUiEnabled } from '../hooks/useConnectionsUi'
 import TurnBlock from './chat/TurnBlock'
 import Clickable from '../components/Clickable'
+import { useLabelTip } from '../components/InstantTip'
 import WorkflowProgressBar from './chat/WorkflowProgressBar'
 import { tryQuickSend } from '../lib/quickSend'
 import { rewindWithRollback } from '../lib/rewindCall'
@@ -5439,6 +5440,11 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
     dismissTip,
   })
   const composerSessionControls = useSessionControlChips({ sessionControls, openSessionControl, activeSlot, sessionControlStatuses })
+  // The two icon-only controls at the header bar's right end look alike, so
+  // each shows its own aria-label in an InstantTip on hover or focus, at once,
+  // instead of a native title the browser holds back for about a second.
+  const popOutTip = useLabelTip(i18nT('pages.chatPage.pop_out_session_to_its_own_window'))
+  const activityTip = useLabelTip(i18nT('pages.chatPage.open_activity_panel'))
 
   return (
     <RunInTerminalScope.Provider value={runInTerminalScope}>
@@ -5967,8 +5973,9 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                   <ExternalLink size={13} /> {i18nT('pages.chatPage.popped_out')}
                 </Clickable>
               ) : (
-                <Clickable className="flex items-center justify-center w-7 h-7 rounded-md hover:bg-bg-hover transition-colors bg-transparent border-none cursor-pointer shrink-0 text-muted hover:text-text pointer-events-auto" onClick={() => openActivePopout(activeSlot, currentSlot?.title)} title={i18nT('pages.chatPage.pop_out_to_window')} aria-label={i18nT('pages.chatPage.pop_out_session_to_its_own_window')}>
+                <Clickable className="flex items-center justify-center w-7 h-7 rounded-md hover:bg-bg-hover transition-colors bg-transparent border-none cursor-pointer shrink-0 text-muted hover:text-text pointer-events-auto" onClick={() => openActivePopout(activeSlot, currentSlot?.title)} aria-label={i18nT('pages.chatPage.pop_out_session_to_its_own_window')} {...popOutTip.handlers}>
                   <ExternalLink size={15} />
+                  {popOutTip.bubble}
                 </Clickable>
               ))}
               {/* Activity panel open toggle — relocated here from the top bar
@@ -5982,11 +5989,12 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                 <Clickable
                   className="pi-morph flex items-center justify-center w-7 h-7 rounded-md transition-colors bg-transparent border-none shrink-0 pointer-events-auto text-muted hover:text-text hover:bg-bg-hover cursor-pointer"
                   onClick={toggleAct}
-                  title={i18nT('pages.chatPage.open_activity_panel')}
                   aria-label={i18nT('pages.chatPage.open_activity_panel')}
                   {...uiLocation('chat.side-panel-open')}
+                  {...activityTip.handlers}
                 >
                   <SidePanelGlyph size={15} />
+                  {activityTip.bubble}
                 </Clickable>
               )}
               {!embedMode && splitFeatureEnabled && (splitAnchorForActive && !activeIsSplitAnchor ? (

@@ -2,6 +2,7 @@ import React from 'react'
 import { twMerge } from 'tailwind-merge'
 import { motion, useMotionValue, useSpring, useMotionTemplate, useReducedMotion } from 'framer-motion'
 import InfoTip from './InfoTip'
+import { useLabelTip } from './InstantTip'
 import { i18nT } from '../i18n/t'
 import { haptic } from '../lib/haptic'
 import { autoSiteRef } from '../uiLocations/targetRegistry'
@@ -109,7 +110,10 @@ export const SendBtn = React.forwardRef<HTMLButtonElement, { children: React.Rea
  * rows, the widget header, and other row/card affordances. `IconButtonGroup`
  * is the bordered `bg-card` capsule; pass `reveal` to fade it in on the parent's
  * :hover / focus-within (the parent element must carry the `group` class).
- * `IconButton` is a single square icon button; `variant` sets the hover color. */
+ * `IconButton` is a single square icon button; `variant` sets the hover color.
+ * With no `title`, hovering or focusing it shows its `aria-label` in an
+ * `InstantTip` (`useLabelTip`). A caller that passes `title` keeps that native
+ * tooltip instead, since several use it to say more than the label does. */
 const ICON_BUTTON_VARIANTS: Record<'default' | 'accent' | 'danger' | 'active', string> = {
   default: 'text-muted hover:text-text hover:bg-bg-hover',
   accent: 'text-muted hover:text-accent hover:bg-bg-hover',
@@ -120,20 +124,27 @@ const ICON_BUTTON_VARIANTS: Record<'default' | 'accent' | 'danger' | 'active', s
 export const IconButton = React.forwardRef<
   HTMLButtonElement,
   Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label'> & { variant?: keyof typeof ICON_BUTTON_VARIANTS; 'aria-label': string }
->(({ variant = 'default', className, children, ...rest }, ref) => (
-  <button
-    ref={autoSiteRef((rest as Record<string, unknown>)['data-ui-auto'], ref)}
-    type="button"
-    className={twMerge(
-      'p-[4px] rounded transition-all active:scale-[0.97] active:duration-75 cursor-pointer bg-transparent border-none disabled:opacity-30 disabled:cursor-not-allowed',
-      ICON_BUTTON_VARIANTS[variant],
-      className,
-    )}
-    {...rest}
-  >
-    {children}
-  </button>
-))
+>(({ variant = 'default', className, children, onPointerEnter, onPointerDown, onPointerUp, onMouseEnter, onMouseLeave, onFocus, onBlur, ...rest }, ref) => {
+  const { handlers, bubble } = useLabelTip(rest.title === undefined ? rest['aria-label'] : undefined, {
+    onPointerEnter, onPointerDown, onPointerUp, onMouseEnter, onMouseLeave, onFocus, onBlur,
+  })
+  return (
+    <button
+      ref={autoSiteRef((rest as Record<string, unknown>)['data-ui-auto'], ref)}
+      type="button"
+      className={twMerge(
+        'p-[4px] rounded transition-all active:scale-[0.97] active:duration-75 cursor-pointer bg-transparent border-none disabled:opacity-30 disabled:cursor-not-allowed',
+        ICON_BUTTON_VARIANTS[variant],
+        className,
+      )}
+      {...rest}
+      {...handlers}
+    >
+      {children}
+      {bubble}
+    </button>
+  )
+})
 
 export function IconButtonGroup({ reveal, className, children }: { reveal?: boolean; className?: string; children: React.ReactNode }) {
   return (
