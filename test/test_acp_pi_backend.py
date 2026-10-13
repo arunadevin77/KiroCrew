@@ -2237,7 +2237,7 @@ class TestTheEffortChannel:
     def test_the_channel_membership_is_explicit(self) -> None:
         """Written out rather than derived from the set, which would pass tautologically."""
         assert ACP_BACKEND_PI in ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION
-        assert ACP_BACKEND_OPENCODE not in ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION
+        assert ACP_BACKEND_OPENCODE in ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION
         assert ACP_BACKEND_KIRO not in ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION
 
     def test_the_one_level_pi_does_not_advertise_is_folded_to_its_ceiling(self) -> None:
@@ -2383,7 +2383,7 @@ class TestTheEffortControlIsReachableOnThisHarness:
     def test_the_advertised_option_answers_for_this_harness(self) -> None:
         """Written out per harness, so a silently granted authority names its own."""
         assert ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION == frozenset(
-            {ACP_BACKEND_DEEPSEEK, ACP_BACKEND_GOOSE, ACP_BACKEND_PI}
+            {ACP_BACKEND_DEEPSEEK, ACP_BACKEND_GOOSE, ACP_BACKEND_OPENCODE, ACP_BACKEND_PI}
         )
         assert ACP_BACKEND_KIRO not in ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION
         assert ACP_BACKEND_CLAUDE not in ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION

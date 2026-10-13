@@ -20,6 +20,7 @@ from kiro_crew.acp.types import (
     ACP_BACKEND_DEEPSEEK,
     ACP_BACKEND_GOOSE,
     ACP_BACKEND_KAS,
+    ACP_BACKEND_OPENCODE,
     ACP_BACKEND_PI,
     ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION,
     effort_config_option_id,
@@ -29,7 +30,7 @@ from kiro_crew.llm_helpers import resolve_substitute_set_model
 from kiro_crew.providers.acp import AcpProvider
 
 #: Per config-option backend: (model left, model switched to, whether the new
-#: model takes an effort write). deepseek, goose and pi answer from the option
+#: model takes an effort write). deepseek, goose, opencode and pi answer from the option
 #: their session advertised rather than the registry, so their fallback writes it too.
 BACKEND_CASES = {
     ACP_BACKEND_CLAUDE: ("claude-opus-4.7", "claude-sonnet-4.6", True),
@@ -37,6 +38,7 @@ BACKEND_CASES = {
     ACP_BACKEND_DEEPSEEK: ("deepseek-3.2", "deepseek-v4", True),
     ACP_BACKEND_GOOSE: ("goose-model-a", "goose-model-b", True),
     ACP_BACKEND_KAS: ("claude-opus-5", "claude-opus-5.5", True),
+    ACP_BACKEND_OPENCODE: ("stub/think-1", "stub/think-2", True),
     ACP_BACKEND_PI: ("pi-model-a", "pi-model-b", True),
 }
 

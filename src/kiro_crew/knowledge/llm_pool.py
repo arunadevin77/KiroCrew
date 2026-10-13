@@ -537,9 +537,9 @@ class AcpWorker(Worker):
         This pool's ``acp_backend`` is restricted by ``_get_acp_backend`` to a
         backend that answers both ``honors_zero_tool_ban`` and
         ``acp_client_spawnable`` True, and those do NOT all answer these capabilities
-        the same way -- kiro takes the slash command, goose takes the config option
-        (``thinking_effort``), opencode takes neither -- which is exactly why they
-        are asked here instead of an identity.
+        the same way -- kiro takes the slash command, goose and opencode take the
+        config option (``thinking_effort`` and ``effort``) -- which is exactly why
+        they are asked here instead of an identity.
         ``test_agent_sdk_capabilities`` pins every member's answers, so a backend
         that later qualifies with different answers is caught there, not assumed to
         inherit an existing member's.

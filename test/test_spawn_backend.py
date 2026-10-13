@@ -480,7 +480,7 @@ class TestSuccessorsKeepTheBackend:
 
 
 class TestEffortVerdict:
-    @pytest.mark.parametrize("backend", ["pi", "goose"])
+    @pytest.mark.parametrize("backend", ["pi", "goose", "opencode"])
     def test_a_backend_that_advertises_its_effort_gets_no_verdict(self, backend):
         # These report their levels at session/new (goose per model); the registry
         # cannot judge them, so neither line may be printed -- a "dropped" there
@@ -504,9 +504,9 @@ class TestEffortVerdict:
         assert kiro.endswith(".effort") and "config option" not in kiro
         assert subagent.effort_applied_note("gpt-5", "high") == kiro
 
-    @pytest.mark.parametrize("backend", ["opencode"])
+    @pytest.mark.parametrize("backend", ["some-harness-nobody-registered"])
     def test_a_backend_that_takes_no_effort_is_reported_dropped(self, monkeypatch, backend):
-        # Neither cli.json nor a config option reaches this harness: the level
+        # Neither cli.json nor a config option reaches such a harness: the level
         # is never sent, so the receipt must say dropped, not applied.
         from kiro_crew import subagent
 

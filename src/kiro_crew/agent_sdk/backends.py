@@ -1914,6 +1914,15 @@ def model_refusal_phrase(backend: str) -> str:
 # with, so without this channel a KAS session always ran at the model's built-in
 # default. A value KAS does not offer is answered with success and left unchanged
 # (probed against kiro-cli 2.28.0), so the step-down ladder never fires on it.
+#
+# opencode IS a member, under the default ``effort`` id (category ``thought_level``).
+# ``opencode acp`` builds that select per model from the model's own variants and
+# omits it on a model that has none; a write sets the session's variant, which its
+# ``session/prompt`` hands to the model as the request's reasoning effort. A value
+# the model does not offer is answered ``-32602`` "effort not found: <value>", so
+# the bare code is a value refusal there too. A ``model`` write resets the variant
+# to the new model's first one, which is why the live switch re-applies the level.
+# ``test/fixtures/acp_frames/opencode/effort-live.jsonl`` is the evidence.
 ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION = frozenset(
     {
         ACP_BACKEND_CLAUDE,
@@ -1921,6 +1930,7 @@ ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION = frozenset(
         ACP_BACKEND_DEEPSEEK,
         ACP_BACKEND_GOOSE,
         ACP_BACKEND_KAS,
+        ACP_BACKEND_OPENCODE,
         ACP_BACKEND_PI,
     }
 )
@@ -1941,9 +1951,9 @@ ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS = frozenset({ACP_BACKEND_CODEX})
 # for a fact that is per-harness vocabulary, not a constant: claude-agent-acp
 # advertises ``effort``, codex-acp advertises ``reasoning_effort``, KAS advertises
 # ``effortLevel``, pi-acp advertises ``thought_level`` and goose advertises
-# ``thinking_effort``, and a session that writes another one's spelling is
-# answered with "unknown config option" and silently keeps whatever effort it
-# already had.
+# ``thinking_effort`` (opencode takes the default ``effort``), and a session that
+# writes another one's spelling is answered with "unknown config option" and
+# silently keeps whatever effort it already had.
 #
 # Opt-in by exception (harness-parity H13): the default is the ``effort`` spelling
 # every existing member of ``ACP_BACKENDS_EFFORT_VIA_CONFIG_OPTION`` runs through,
@@ -2006,6 +2016,13 @@ DEFAULT_EFFORT_CONFIG_OPTION_ID = "effort"
 # offering a control whose every write reads back as ``off``. Like deepseek it omits
 # ``xhigh``, which is hidden the same way, so it needs no values row either.
 #
+# opencode is a member for goose's reason: it serves the operator's own
+# ``provider/model`` ids and decides per model which ones take a level, offering
+# only that model's variants (``low``, ``medium`` and ``high`` on an
+# OpenAI-compatible reasoning model) and no select at all on a model without them.
+# A level the model does not offer is hidden; its shared levels are spelled as
+# Crew spells them, so it needs no values row.
+#
 # The kiro family and claude are NOT members, and that is the split this set
 # exists for: there the level rides the MODEL. kiro-cli refuses effort with
 # "Effort configuration is currently not available on <model>", and
@@ -2013,7 +2030,7 @@ DEFAULT_EFFORT_CONFIG_OPTION_ID = "effort"
 # ``supportedEffortLevels`` -- so the registry, which knows which model families
 # take a level, is the right authority for them.
 ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION = frozenset(
-    {ACP_BACKEND_DEEPSEEK, ACP_BACKEND_GOOSE, ACP_BACKEND_PI}
+    {ACP_BACKEND_DEEPSEEK, ACP_BACKEND_GOOSE, ACP_BACKEND_OPENCODE, ACP_BACKEND_PI}
 )
 
 

@@ -744,8 +744,8 @@ def test_the_knowledge_pool_client_takes_the_default_backend() -> None:
     (``Routing.SEEDED_SETTINGS``) is declared but not enforced by this core, so
     an inherited ``~/.claude`` pre-approval can skip the permission request the
     refusal needs to run. Asking the EFFORT capabilities rather than the identity
-    in ``_apply_effort`` means each member's answers (no config option for any of
-    the three, the ``/effort`` slash command for kiro alone) are handled correctly
+    in ``_apply_effort`` means each member's answers (the config option for
+    opencode and goose, the ``/effort`` slash command for kiro alone) are handled correctly
     with no branch in the pool itself; this pin exists so a backend that newly
     qualifies for the pool with different effort answers is caught here, not
     assumed to inherit an existing member's.
@@ -781,7 +781,7 @@ def test_the_knowledge_pool_client_takes_the_default_backend() -> None:
         "update this pin"
     )
     assert capabilities_for(ACP_BACKEND_KIRO).effort_via_config_option is False
-    assert capabilities_for(ACP_BACKEND_OPENCODE).effort_via_config_option is False
+    assert capabilities_for(ACP_BACKEND_OPENCODE).effort_via_config_option is True
     assert capabilities_for(ACP_BACKEND_GOOSE).effort_via_config_option is True
     assert capabilities_for(ACP_BACKEND_KIRO).effort_via_slash_command is True
     assert capabilities_for(ACP_BACKEND_OPENCODE).effort_via_slash_command is False

@@ -1442,13 +1442,13 @@ class TestAcpWorkerEffort:
         assert "unsupported" in caplog.text
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("backend", [ACP_BACKEND_OPENCODE])
+    @pytest.mark.parametrize("backend", ["some-harness-nobody-registered"])
     async def test_backend_with_no_effort_channel_sends_nothing_and_warns(
         self, backend, tmp_path, caplog
     ):
-        """opencode implements neither ``session/set_config_option`` for effort nor
-        the kiro-native ``/effort`` command, so the pool says the provider default
-        applies instead of sending a command that cannot land."""
+        """A harness with neither ``session/set_config_option`` for effort nor the
+        kiro-native ``/effort`` command gets nothing sent: the pool says the
+        provider default applies instead of sending a command that cannot land."""
         client = _mock_effort_client(["low", "medium", "high"], backend=backend)
         client.spec_zero_tools = True
         with (
@@ -1467,6 +1467,34 @@ class TestAcpWorkerEffort:
             and "using provider default" in r.getMessage()
             for r in caplog.records
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("supports", "written"), [(True, "medium"), (False, None)], ids=["variants", "none"]
+    )
+    async def test_opencode_writes_effort_only_on_a_model_with_variants(
+        self, supports, written, tmp_path
+    ):
+        """opencode serves an ``effort`` select only on a model with variants: there
+        the highest offered level at or below the request is written, and on a model
+        without one nothing is sent."""
+        client = _mock_effort_client(
+            ["low", "medium"], supports=supports, backend=ACP_BACKEND_OPENCODE
+        )
+        client.spec_zero_tools = True
+        with (
+            patch("pathlib.Path.home", return_value=tmp_path),
+            patch("kiro_crew.knowledge.llm_pool.AcpClient", return_value=client),
+        ):
+            worker = AcpWorker(effort="high", acp_backend=ACP_BACKEND_OPENCODE)
+            await worker.start()
+
+        client.send_command.assert_not_awaited()
+        if written is None:
+            client.set_config_option.assert_not_awaited()
+        else:
+            client.set_config_option.assert_awaited_once_with("effort", written)
+        assert worker._effective_effort == written
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
