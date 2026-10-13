@@ -12,6 +12,7 @@ import site
 import socket
 import struct
 import sys
+import time
 import warnings
 
 import pytest
@@ -66,17 +67,31 @@ _SOCKET_STATE = (
     (socket, "AF_INET6"),
     (asyncio.proactor_events, "socket"),
 )
+#: Module globals that later tests read at call time, checked with the socket state
+#: above. A stand-in one test leaves here fails tests in other files on the worker.
+LEAK_SENTINELS = (
+    # An inline stand-in runs every later ``asyncio.to_thread`` hop on the event loop,
+    # so a test that asserts its work runs off the loop fails.
+    (asyncio, "to_thread"),
+    # The event loop's clock (``BaseEventLoop.time``): a fake one stops or skews the
+    # timers of every later loop.
+    (time, "monotonic"),
+    # Every later retry, poll and backoff sleeps through these two.
+    (time, "sleep"),
+    (asyncio, "sleep"),
+)
+_CHECKED_STATE = _SOCKET_STATE + LEAK_SENTINELS
 _SOCKET_STATE_KEY = pytest.StashKey[tuple]()
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item: pytest.Item) -> None:
-    item.stash[_SOCKET_STATE_KEY] = tuple(getattr(m, n) for m, n in _SOCKET_STATE)
+    item.stash[_SOCKET_STATE_KEY] = tuple(getattr(m, n) for m, n in _CHECKED_STATE)
 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None):
-    """Put back socket state a test left rebound, then fail that test by name.
+    """Put back a checked global a test left rebound, then fail that test by name.
 
     A tripwire, not a leak finder: it stops one leak from killing the shard and names
     the test that left it. A hook rather than an autouse fixture because it must read
@@ -89,7 +104,7 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None):
         result = yield
     finally:
         before = item.stash.get(_SOCKET_STATE_KEY, None)
-        for (module, name), value in zip(_SOCKET_STATE, before or ()):
+        for (module, name), value in zip(_CHECKED_STATE, before or ()):
             if getattr(module, name, None) is not value:
                 setattr(module, name, value)
                 leaked.append(f"{module.__name__}.{name}")
@@ -656,8 +671,16 @@ def _a_shared_monkeypatch_first(monkeypatch):  # flake-ok: patches nothing; only
     without this anchor the shared instance would be created last and undone FIRST,
     before the teardowns below. Fixtures here are written for it being undone after
     them: ``_no_leaked_interleave_hook`` checks on the way in for exactly that reason,
-    and the socket tripwire is a hook rather than a fixture because of it. Named to
+    and the teardown tripwire is a hook rather than a fixture because of it. Named to
     sort first: autouse fixtures in one conftest are set up in name order.
+
+    Every function-scoped fixture a test file declares is therefore set up after the
+    shared instance and torn down before it. A fixture holding an attribute through
+    ``with patch(...)`` puts the original back first; a ``monkeypatch.setattr`` the
+    test made over that attribute is undone second and re-installs the fixture's
+    stand-in for every later test on the worker. Scope such a patch to the one call
+    with its own ``with patch(...)``; the tripwire fails a test that leaves a
+    ``LEAK_SENTINELS`` entry rebound.
     """
     yield
 

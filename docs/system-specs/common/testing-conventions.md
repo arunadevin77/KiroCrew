@@ -2305,11 +2305,12 @@ about the code. Each is a hermeticity gap, and each has one fix:
   and `too_deep_to_decode()`. An in-process child `main()` that arms an `os._exit`
   watchdog (`pdf_extract_child.start_rss_watchdog`) kills the xdist worker, so stub
   the starter.
-- **Socket state is checked after every test.** A hook in `test/conftest.py`
-  restores `socket.socket`, `socket.socketpair`, `AF_INET`, `AF_INET6` and
-  `asyncio.proactor_events.socket` and fails the test with `test left ... rebound
-  (restored)`. It is a hook rather than an autouse fixture so it reads the state
-  after `monkeypatch` has undone, which is why it lives in the root conftest.
+- **Socket state and the leak sentinels are checked after every test.** A hook in
+  `test/conftest.py` restores `socket.socket`, `socket.socketpair`, `AF_INET`,
+  `AF_INET6`, `asyncio.proactor_events.socket` and each `LEAK_SENTINELS` entry, and
+  fails the test with `test left ... rebound (restored)`. It is a hook rather than an
+  autouse fixture so it reads the state after `monkeypatch` has undone, which is why
+  it lives in the root conftest.
 - **A fixed system path is the host's, not the test's.** `service.linux` reads
   `/etc/kirocrew/kirocrew.env` to decide whether uninstall deletes it, so on a host where
   a real install left the untouched seed there, a test that pinned only `UNIT_PATH` saw
@@ -4820,6 +4821,18 @@ fixture requests it instead; no autouse fixture in either conftest patches throu
 shared instance. `test/conftest.py`'s `_a_shared_monkeypatch_first` requests it only so
 that it is created before the others there and undone after their teardowns, which read
 the test's patches while they unwind.
+
+**A test does not patch over an attribute a fixture holds through `with patch(...)`.**
+`_a_shared_monkeypatch_first` builds the shared `monkeypatch` before every
+function-scoped fixture a test file declares, so at teardown the fixture's patch unwinds
+first and puts the original back, and the test's `monkeypatch.setattr` over the same
+attribute is undone second and re-installs the fixture's stand-in for every later test on
+the worker. A run of that file alone passes; the tests that fail come after it on the
+worker, in other files. Scope the inner patch to the one call with its own
+`with patch(...)`. The teardown tripwire in `test/conftest.py` puts back a
+`LEAK_SENTINELS` entry (`asyncio.to_thread`, `time.monotonic`, `time.sleep`,
+`asyncio.sleep`) that a test left rebound and fails that test by name; a module global
+that later tests read at call time belongs in that table.
 
 **Never rebind a stdlib clock or `time.sleep`.**
 `monkeypatch.setattr(time, "time", ...)` or a string target such as
