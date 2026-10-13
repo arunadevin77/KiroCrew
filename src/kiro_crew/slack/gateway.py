@@ -187,6 +187,13 @@ from kiro_crew.dashboard.origin import (
     parse_dashboard_url,
     resolve_dashboard_host,
 )
+from kiro_crew.dashboard.persistence_watchdog import (
+    probe_data_home,
+    run_persistence_watchdog,
+)
+from kiro_crew.dashboard.persistence_watchdog import (
+    shutdown_exit_code as persistence_lost_exit_code,
+)
 from kiro_crew.dashboard.sign_in_refresher import drain_sign_in_refresher, run_sign_in_refresher
 from kiro_crew.dashboard.stale_asset_watchdog import (
     run_stale_asset_watchdog,
@@ -14475,6 +14482,25 @@ class GatewayOrchestrator:
         self._background_tasks.add(_watchdog)
         _watchdog.add_done_callback(self._background_tasks.discard)
 
+        # Persistence watchdog: the boot preflight refuses to start a gateway
+        # whose data home cannot create/lock/replace/remove files, but it runs
+        # once. A seccomp filter inherited from a sandboxed parent passes that
+        # probe at boot (the sandbox is still alive) and then breaks every file
+        # open with ENOSYS when the sandbox is torn down minutes later — at
+        # which point every static asset 404s silently, file logging dies, and
+        # the process never exits. This re-runs the SAME probe periodically and,
+        # on a re-confirmed restart-curable (ENOSYS) failure, exits non-zero so
+        # a supervisor restarts a fresh process with no inherited filter.
+        _persistence_watchdog = asyncio.create_task(
+            run_persistence_watchdog(
+                shutdown_event,
+                probe_data_home(data_home()),
+            )
+        )
+        self._background_tasks.add(_persistence_watchdog)
+        _persistence_watchdog.add_done_callback(self._background_tasks.discard)
+        self._persistence_watchdog_task = _persistence_watchdog
+
         # Renew the stored Kiro sign-in before it expires, not only when an
         # agent turn asks for a token. Loads the auth subsystem only
         # once a sign-in vault exists; see dashboard/sign_in_refresher.
@@ -14627,8 +14653,15 @@ class GatewayOrchestrator:
         # blanked -- a live credential readable for an address nothing holds --
         # and reading only the primary would turn that escalation into an exit 0
         # the supervisor does not relaunch.
+        #
+        # The persistence watchdog is a third self-initiated shutdown: it set
+        # the event because the data home stopped persisting after a healthy
+        # boot (a seccomp filter inherited from a torn-down sandbox turning
+        # file opens into ENOSYS). That cannot be cured in-process, so it must
+        # exit non-zero too for the supervisor to relaunch a fresh process.
         exit_code = (
             shutdown_exit_code(watchdog)
+            or persistence_lost_exit_code(getattr(self, "_persistence_watchdog_task", None))
             or listener_guard_exit_code(getattr(self.dashboard_state, "_listener_guard", None))
             or listener_guard_exit_code(
                 getattr(self.dashboard_state, "_secondary_listener_guard", None)
