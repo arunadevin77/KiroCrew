@@ -33,7 +33,9 @@ const SHELL_HANDLES = [
   "browser:track-session",
   "crash-reports:get",
   "crash-reports:reveal",
+  "dashboard:can-pick-folder",
   "dashboard:open-file",
+  "dashboard:pick-folder",
   "global-hotkey:get",
   "local-gateway:get",
   "local-gateway:set",
@@ -186,6 +188,9 @@ function harness({
   // process state that only holds for the duration of the native launch (the
   // narrowed launcher PATH openPathHardened installs and then restores).
   onOpenPath = null,
+  // What the fake native folder dialog answers: a value, or a function of the
+  // call's arguments so a test can hold the dialog open.
+  dialogResult = { canceled: true, filePaths: [] },
   detectWsl = async () => ({
     available: true,
     distros: [],
@@ -201,6 +206,7 @@ function harness({
   const notifications = [];
   const sentUpdates = [];
   const wslDetections = [];
+  const dialogCalls = [];
   const handlers = new Map();
   const listeners = new Map();
   const store = fakeStore(storeValues);
@@ -245,7 +251,13 @@ function harness({
       focus: (...args) => appCalls.push(["focus", ...args]),
       setBadgeCount: (...args) => appCalls.push(["setBadgeCount", ...args]),
     },
-    dialog: { fake: "dialog" },
+    dialog: {
+      fake: "dialog",
+      showOpenDialog: async (...args) => {
+        dialogCalls.push(args);
+        return typeof dialogResult === "function" ? dialogResult(...args) : dialogResult;
+      },
+    },
     Notification: FakeNotification,
     ipcMain,
     shell: {
@@ -380,6 +392,7 @@ function harness({
     wslDetections,
     shellCalls,
     crashScans,
+    dialogCalls,
     logs,
   };
 }
@@ -454,13 +467,13 @@ test("registerShell owns the exact shell channel set and is idempotent", () => {
 
   assert.deepEqual([...h.handlers.keys()].sort(), SHELL_HANDLES);
   assert.deepEqual([...h.listeners.keys()].sort(), SHELL_LISTENERS);
-  assert.equal(h.handlers.size + h.listeners.size, 36);
+  assert.equal(h.handlers.size + h.listeners.size, 38);
 
   // boot-complete is a further non-update host channel, but it is deliberately
   // gateway-owned and scoped to a single connecting WebContents. Registering it
   // globally here would weaken its sender check and leak listeners.
   assert.match(GATEWAY_SOURCE, /ipcMain\.on\("boot-complete", onComplete\)/);
-  assert.equal(h.handlers.size + h.listeners.size + 1, 37);
+  assert.equal(h.handlers.size + h.listeners.size + 1, 39);
   assert.equal(h.handlers.has("boot-complete"), false);
   assert.equal(h.listeners.has("boot-complete"), false);
 
@@ -1032,6 +1045,142 @@ test("dashboard:open-file hardens the launcher PATH across the native launch", a
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
+});
+
+// The native folder chooser for the project picker. Opening a dialog is an
+// action on the machine in front of the user, so both channels take the full
+// three-gate local-dashboard check; the availability probe answers `false`
+// where the pick itself would be refused, and neither ever reaches the dialog
+// from a rejected sender.
+const PICK_REJECTIONS = [
+  ["wrong origin", {}, "https://remote.example/chat"],
+  ["remote window", { wslOwner: { fake: "remote-window" }, wslGatewayLocal: false }, undefined],
+  ["foreign port owner", { primaryPortOwner: "foreign" }, undefined],
+  ["unknown port owner", { primaryPortOwner: "unknown" }, undefined],
+];
+
+test("dashboard:pick-folder is refused outside the local dashboard and opens no dialog", async () => {
+  for (const [label, options, url] of PICK_REJECTIONS) {
+    const h = harness({
+      ...options,
+      dialogResult: { canceled: false, filePaths: [path.resolve(os.tmpdir(), "never")] },
+    });
+    h.registrar.registerShell();
+    await assert.rejects(
+      () => h.handlers.get("dashboard:pick-folder")(wslEvent(url)),
+      (error) => {
+        assert.equal(
+          error && error.message,
+          "dashboard:pick-folder is restricted to the local dashboard",
+          label,
+        );
+        return true;
+      },
+    );
+    assert.equal(h.dialogCalls.length, 0, `${label}: a rejected sender must not open a dialog`);
+  }
+});
+
+test("dashboard:can-pick-folder answers false wherever the pick is refused", async () => {
+  for (const [label, options, url] of PICK_REJECTIONS) {
+    const h = harness(options);
+    h.registrar.registerShell();
+    assert.equal(await h.handlers.get("dashboard:can-pick-folder")(wslEvent(url)), false, label);
+    assert.equal(h.dialogCalls.length, 0, `${label}: the probe must never open a dialog`);
+  }
+});
+
+test("dashboard:can-pick-folder answers true on the local dashboard without opening a dialog", async () => {
+  for (const portOwner of ["kirocrew", "service"]) {
+    const h = harness({ primaryPortOwner: portOwner });
+    h.registrar.registerShell();
+    assert.equal(await h.handlers.get("dashboard:can-pick-folder")(wslEvent()), true, portOwner);
+    assert.equal(h.dialogCalls.length, 0);
+  }
+});
+
+test("dashboard:pick-folder returns null when the dialog yields no absolute folder", async () => {
+  for (const [label, dialogResult] of [
+    ["cancelled", { canceled: true, filePaths: [] }],
+    ["cancelled with a stale path", { canceled: true, filePaths: [path.resolve(os.tmpdir(), "x")] }],
+    ["no paths", { canceled: false, filePaths: [] }],
+    ["relative path", { canceled: false, filePaths: ["relative/dir"] }],
+    ["empty path", { canceled: false, filePaths: [""] }],
+    ["non-string path", { canceled: false, filePaths: [42] }],
+    ["malformed result", null],
+  ]) {
+    const h = harness({ dialogResult });
+    h.registrar.registerShell();
+    assert.equal(await h.handlers.get("dashboard:pick-folder")(wslEvent()), null, label);
+    assert.equal(h.dialogCalls.length, 1, `${label}: exactly one dialog`);
+  }
+});
+
+test("dashboard:pick-folder returns the chosen folder and ignores renderer-supplied options", async () => {
+  const chosen = path.resolve(os.tmpdir(), "picked-project");
+  const owner = { fake: "dashboard-window" };
+  const h = harness({ wslOwner: owner, dialogResult: { canceled: false, filePaths: [chosen] } });
+  h.registrar.registerShell();
+  const event = wslEvent();
+  const result = await h.handlers.get("dashboard:pick-folder")(
+    event,
+    { defaultPath: "/etc", properties: ["openFile", "multiSelections"], filters: [] },
+    "/root",
+  );
+  assert.equal(result, chosen);
+  // The dialog is parented to the sender's own window and takes ONLY the fixed
+  // options: the renderer chooses no default path, properties or filters.
+  assert.deepEqual(h.dialogCalls, [[owner, { properties: ["openDirectory"] }]]);
+  assert.deepEqual(
+    lastCall(h.windowCalls, "windowForWebContents").slice(1),
+    [event.sender],
+  );
+  assert.equal(
+    h.logs.some((line) => line.includes(chosen) || line.includes("picked-project")),
+    false,
+    "the chosen folder must never be logged",
+  );
+});
+
+test("dashboard:pick-folder opens one dialog at a time", async () => {
+  const chosen = path.resolve(os.tmpdir(), "first-pick");
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const h = harness({ dialogResult: () => pending });
+  h.registrar.registerShell();
+  const handler = h.handlers.get("dashboard:pick-folder");
+
+  const first = handler(wslEvent());
+  // The gate's port probe is asynchronous: wait until the first call has
+  // actually reached the dialog before asking again.
+  for (let hop = 0; hop < 50 && h.dialogCalls.length === 0; hop += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(h.dialogCalls.length, 1);
+  assert.equal(await handler(wslEvent()), null, "a second pick while one is open answers null");
+  assert.equal(h.dialogCalls.length, 1, "the second pick must not open another dialog");
+
+  release({ canceled: false, filePaths: [chosen] });
+  assert.equal(await first, chosen);
+
+  // Once the first dialog has settled, a new pick opens a new dialog.
+  await handler(wslEvent());
+  assert.equal(h.dialogCalls.length, 2);
+});
+
+test("dashboard:pick-folder reports a failed dialog as no choice", async () => {
+  const h = harness({
+    dialogResult: () => { throw new Error("dialog backend unavailable"); },
+  });
+  h.registrar.registerShell();
+  assert.equal(await h.handlers.get("dashboard:pick-folder")(wslEvent()), null);
+  assert.ok(
+    h.logs.some((line) => line === "dashboard:pick-folder failed: dialog backend unavailable"),
+    h.logs.join("\n"),
+  );
+  // The in-flight latch is released by a failure too.
+  h.electron.dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
+  assert.equal(await h.handlers.get("dashboard:pick-folder")(wslEvent()), null);
 });
 
 test("bind and unregister remain owned by the dedicated hotkey helper", () => {

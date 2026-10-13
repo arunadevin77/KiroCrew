@@ -239,6 +239,18 @@ contextBridge.exposeInMainWorld("fileOpenAPI", {
   open: (filePath) => ipcRenderer.invoke("dashboard:open-file", String(filePath || "")),
 });
 
+// Native folder chooser for the project picker's "Browse with system dialog"
+// button. Neither call passes anything to the main process: the dialog's
+// options are fixed there. `available` resolves whether this window's gateway
+// runs on this machine (the main process answers false for a connection window
+// pointed at a remote gateway); `pick` resolves the chosen absolute folder, or
+// null when the user cancels. Absent in a plain browser and in the PWA -- the
+// picker hides the button there and keeps its in-app browser as the only path.
+contextBridge.exposeInMainWorld("folderPickAPI", {
+  available: () => ipcRenderer.invoke("dashboard:can-pick-folder"),
+  pick: () => ipcRenderer.invoke("dashboard:pick-folder"),
+});
+
 // Native zoom bridge for the Settings > Display "Zoom Level" stepper.
 // Chromium's per-origin zoom (the thing Cmd/Ctrl +/- changes) is not
 // reachable from page JS, so the renderer round-trips through main.js.

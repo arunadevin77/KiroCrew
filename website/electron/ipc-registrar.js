@@ -58,6 +58,7 @@ function createIpcRegistrar({
 
   const {
     app,
+    dialog,
     Notification,
     ipcMain,
     shell,
@@ -68,6 +69,9 @@ function createIpcRegistrar({
   let shellRegistered = false;
   let updaterRegistered = false;
   let updater = null;
+  // True while a native folder chooser is on screen, so a second request
+  // answers "no choice" instead of stacking another dialog.
+  let folderPickOpen = false;
 
   setGlobalHotkeyLogger(log);
   const summonDashboard = createSummonHandler({
@@ -405,6 +409,60 @@ function createIpcRegistrar({
       } catch (e) {
         log(`dashboard:open-file refused: ${e && e.message}`);
         return { ok: false, error: String((e && e.message) || e) };
+      }
+    });
+
+    // The OS-native folder chooser behind the project picker's "Browse with
+    // system dialog" button. Electron's own dialog draws it from this process,
+    // so it spawns nothing and needs no sandbox allowance.
+    //
+    // Gated like `crash-reports:reveal`: a dialog is an action on the machine in
+    // front of the user, and the folder it returns is a path on THIS machine, so
+    // it is only meaningful to a window whose gateway runs here. A connection
+    // window pointed at a remote gateway shares this preload and is refused.
+    //
+    // The renderer supplies nothing. The handler reads only the event: the
+    // options are fixed here, so a page cannot choose the default path, the
+    // properties (files, multi-select) or the filters. The answer is the one
+    // absolute folder the user chose, or null for a cancel, a malformed result
+    // or a dialog that failed to open; the picker validates the path through
+    // the gateway's directory listing before using it. The chosen path is never
+    // logged.
+    ipcMain.handle("dashboard:pick-folder", async (event) => {
+      await assertLocalDashboard(event, "dashboard:pick-folder");
+      if (folderPickOpen) return null;
+      folderPickOpen = true;
+      try {
+        const owner = windows.windowForWebContents(event.sender);
+        const parent = owner && !(typeof owner.isDestroyed === "function" && owner.isDestroyed())
+          ? owner
+          : null;
+        const options = { properties: ["openDirectory"] };
+        const result = parent
+          ? await dialog.showOpenDialog(parent, options)
+          : await dialog.showOpenDialog(options);
+        if (!result || result.canceled || !Array.isArray(result.filePaths)) return null;
+        const picked = result.filePaths[0];
+        if (typeof picked !== "string" || !require("path").isAbsolute(picked)) return null;
+        return picked;
+      } catch (e) {
+        log(`dashboard:pick-folder failed: ${e && e.message}`);
+        return null;
+      } finally {
+        folderPickOpen = false;
+      }
+    });
+
+    // Whether this window may use `dashboard:pick-folder`, so the picker shows
+    // the button only where it works. Runs the same gate and answers a bare
+    // boolean -- the same fact a gated channel's rejection already tells -- and
+    // never opens a dialog.
+    ipcMain.handle("dashboard:can-pick-folder", async (event) => {
+      try {
+        await assertLocalDashboard(event, "dashboard:can-pick-folder");
+        return true;
+      } catch {
+        return false;
       }
     });
 
