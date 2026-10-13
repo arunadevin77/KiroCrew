@@ -6896,6 +6896,10 @@
       "this_document_is_tracked_as_a_session_artifact_n": "Este documento é rastreado como artefato da sessão, não como alteração de arquivo-fonte",
       "toggle_diff": "Mostrar ou ocultar o diff de {{path}}"
     },
+    "openFileChips": {
+      "open_file": "Abrir arquivo",
+      "open_in_side_panel": "Abrir {{path}} no painel lateral"
+    },
     "filePickerMenu": {
       "folder": "Pasta",
       "folder_kind": "pasta",

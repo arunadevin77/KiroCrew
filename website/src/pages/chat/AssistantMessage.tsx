@@ -17,6 +17,7 @@ import { useSearchHighlight, useCurrentOcc } from '../../hooks/SearchHighlightCo
 import { applySearchHighlights, clearSearchHighlights } from '../../utils/domHighlight'
 import { scrollCurrentMatchIntoView } from '../../utils/searchScroll'
 import FileChangeChips, { type FileChangeEntry } from '../../components/FileChangeChips'
+import OpenFileChips from '../../components/OpenFileChips'
 import DecisionStrip from './DecisionStrip'
 import { readDecisionRecords, readMemoryRecallInStrip } from './decisionRecord'
 import MemoryRecallStrip from './MemoryRecallStrip'
@@ -701,6 +702,11 @@ const AssistantMessage = memo(function AssistantMessage({ content, isStreaming, 
          are directly compatible: extra optional params are ignored. */
       <FileChangeChips fileChanges={fileChanges} omittedFiles={fileChangesOmittedFiles} onOpenDiff={onOpenDiff} onFileOpen={onFileOpen} style={fileChipStyle} artifactPaths={artifactPaths} disclosureKey={messageTs ? `fcc-${messageTs}` : undefined} />
     )}
+    {/* The files this reply offers with an open-file marker, as one-click chips.
+        End of turn like the file chips above, and handed the SAME `onFileOpen`
+        (by identity) the reply's path chips get, so a click opens the file the
+        way a path-chip click does. Showing a chip opens nothing. */}
+    {!isStreaming && <OpenFileChips content={steerCleaned} onFileOpen={onFileOpen} />}
     {!isStreaming && showFooter && turnStats && turnStats.elapsed_ms > 0 && (
       /* No `font-mono`: "1.98 credits · 59s" is a labelled measurement, not
          code, and Tailwind's `font-mono` pins `var(--mono)` — a token the Font

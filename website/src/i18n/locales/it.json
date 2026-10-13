@@ -6896,6 +6896,10 @@
       "this_document_is_tracked_as_a_session_artifact_n": "Questo documento è tracciato come artefatto di sessione, non come modifica a un file sorgente",
       "toggle_diff": "Mostra o nascondi il diff di {{path}}"
     },
+    "openFileChips": {
+      "open_file": "Apri file",
+      "open_in_side_panel": "Apri {{path}} nel pannello laterale"
+    },
     "filePickerMenu": {
       "folder": "Cartella",
       "folder_kind": "cartella",

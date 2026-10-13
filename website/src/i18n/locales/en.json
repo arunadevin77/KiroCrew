@@ -4582,6 +4582,10 @@
       "this_document_is_tracked_as_a_session_artifact_n": "This document is tracked as a session artifact, not a source-file change",
       "toggle_diff": "Show or hide the diff for {{path}}"
     },
+    "openFileChips": {
+      "open_file": "Open file",
+      "open_in_side_panel": "Open {{path}} in side panel"
+    },
     "filePickerMenu": {
       "folder": "Folder",
       "folder_kind": "folder",

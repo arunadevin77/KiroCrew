@@ -4315,6 +4315,21 @@ React 18 + TypeScript + Vite 8 + Redux Toolkit + React Router v7 + Tailwind CSS 
 - `TypewriterText.tsx` — animated title reveal
 
 **Inline code chips** (`components/markdown/InlineCode.tsx`): an inline-code span that names a path is a path chip: a click opens the file or browses the directory, Shift+click reveals it in the gateway host's file manager (or copies the path on a remote or tunneled session, where `/api/reveal` cannot drive that host), and Ctrl/Cmd+click copies. Any other span is a copy chip (`data-chip-action="copy"`, neutral colour, dotted underline): its click copies, and the tooltip bubble reads "Click to copy", then flips to "Copied!" or a copy-failed notice. Whether a span names a file, a directory or nothing comes from `hooks/usePathKind.ts`, the one existence cache the chips, diff-block headers (`DiffBlock`) and tool-call lines (`ToolCallLine`) share: the paths every consumer asks about in one React commit go out as one `POST /api/file-kinds` `{"paths": [...]}` (at most 100 per request), which answers each path as `HEAD /api/file-read?resolve=1` would, `file`, `dir` or `missing`, with a refused path (a credential store, a path outside the project) reading as `missing` exactly as on the per-path route. `file` and `dir` are kept for the page, `missing` for 10 s. The per-path `HEAD /api/file-read` stays.
+
+**Open file chips** (`components/OpenFileChips.tsx`, rendered by `pages/chat/AssistantMessage.tsx`
+under a finished reply): a hidden `<!-- kirocrew:open-file path="..." -->` comment in an
+assistant reply shows one "Open file" chip for that file (`openFileMarkerPaths` in
+`utils/detectOpenFileMarker.ts`: each path once, in reply order, at most 8). A marker shown
+inside a code fence or inline code span gets no chip, and neither does a path that is not
+absolute (POSIX or a Windows drive path) and in normal form, or that can reach another host
+(a root of two separators in any mix, `?` and `*`, a `:` beyond a drive letter, the `/net`
+and `/afs` automount roots), nor control characters or a path over 4096 characters. Showing
+a chip opens nothing, whether on render, while streaming or after a reload. A click calls the
+host's `onFileOpen` with the path alone: the same handler, with the same arguments, a click
+on a file path chip uses (`activatePath`), so the file opens through today's read as a plain
+file tab, never a diff. Without an `onFileOpen` no chip renders. Pinned by
+`website/src/test/OpenFileChips.test.tsx` and `website/src/test/detectOpenFileMarker.test.ts`.
+
 **Chat table width**: top-level assistant Markdown tables use the transcript pane's
 available width minus a 40px band at each pane edge (never narrower than the
 message row's own 16px gutters). Only a table in an unbordered bubble breaks out: a

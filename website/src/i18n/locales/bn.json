@@ -6786,6 +6786,10 @@
       "this_document_is_tracked_as_a_session_artifact_n": "এই ডকুমেন্টটি সেশন আর্টিফ্যাক্ট হিসেবে ট্র্যাক করা হয়, সোর্স-ফাইলের পরিবর্তন হিসেবে নয়",
       "toggle_diff": "{{path}}-এর ডিফ দেখান বা লুকান"
     },
+    "openFileChips": {
+      "open_file": "ফাইল খোলো",
+      "open_in_side_panel": "সাইড প্যানেলে {{path}} খোলো"
+    },
     "filePickerMenu": {
       "folder": "ফোল্ডার",
       "folder_kind": "ফোল্ডার",

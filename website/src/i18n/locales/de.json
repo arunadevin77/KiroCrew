@@ -6786,6 +6786,10 @@
       "this_document_is_tracked_as_a_session_artifact_n": "Dieses Dokument wird als Sitzungsartefakt erfasst, nicht als Änderung einer Quelldatei",
       "toggle_diff": "Diff für {{path}} ein- oder ausblenden"
     },
+    "openFileChips": {
+      "open_file": "Datei öffnen",
+      "open_in_side_panel": "{{path}} im Seitenpanel öffnen"
+    },
     "filePickerMenu": {
       "folder": "Ordner",
       "folder_kind": "Ordner",
