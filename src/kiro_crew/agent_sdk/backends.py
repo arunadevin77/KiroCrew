@@ -1039,9 +1039,25 @@ ACP_BACKENDS_MEMBER_TOOL_LIMITS = frozenset({ACP_BACKEND_KIRO})
 # ``WHOLE_SERVER``, so narrowing a dashboard tool withholds the whole mount and the
 # thread runs as plain chat.
 #
-# pi is not a member yet. Its servers reach the session through the gate
-# extension's handoff file (``ACP_BACKENDS_SESSION_MCP_ARRAY``), and a member
-# dispatch mount has not been driven on it.
+# pi is a member, on the same two facts held for THIS harness:
+#
+#   * the per-session mount exists, on a RECORDED ROUND TRIP --
+#     ``test/fixtures/acp_frames/pi/mcp-stdio-mount-live.jsonl``: one stdio element
+#     the client composed reaches pi through the gate extension's handoff file (the
+#     adapter drops the wire array), pi's built-in MCP support registers it, and the
+#     named child is asked ``initialize``, ``tools/list`` and ``tools/call`` with the
+#     tool's own result coming back. The member mount is one more element in that
+#     same composition: ``_mirrorless_member_mounts`` builds it, and
+#     ``acp.harness.pi.pi_mcp_handoff_payload`` carries it, env included;
+#   * the session is GATED -- its routing is ``VERIFIED_GATE_EXTENSION``. Crew's
+#     extension raises a confirm dialog for every tool call, MCP calls included, and
+#     the harness's own command registry is READ BACK before the first prompt, so a
+#     session that cannot establish it is REFUSED rather than run.
+#
+# Like deepseek it has no mirror, so a narrowed dashboard tool withholds the whole
+# mount and the thread runs as plain chat. And a same-named server in pi's own
+# ``mcp.json`` outranks the registration, so the gate extension refuses that name's
+# tools rather than let another command answer for session control.
 # deepseek is a member, and it holds the same two things goose does:
 #
 #   * the per-session mount exists, on a RECORDED ROUND TRIP --
@@ -1072,7 +1088,7 @@ ACP_BACKENDS_MEMBER_TOOL_LIMITS = frozenset({ACP_BACKEND_KIRO})
 #
 # WHERE the mount happens differs by backend, and opencode's is the client's.
 # ``AcpClient._append_member_dispatch_server`` serves the backends whose array the
-# CLIENT composes -- claude's, opencode's, goose's and deepseek's -- while codex and
+# CLIENT composes -- claude's, opencode's, goose's, deepseek's and pi's -- while codex and
 # KAS are served by
 # ``AcpRuntime``: their arrays come from ``AcpRuntime._mirrored_session_mcp`` and
 # ``create_session`` / ``load_session`` append the entry themselves, on a non-empty
@@ -1100,6 +1116,7 @@ ACP_BACKENDS_MEMBER_DISPATCH = frozenset(
         ACP_BACKEND_OPENCODE,
         ACP_BACKEND_GOOSE,
         ACP_BACKEND_DEEPSEEK,
+        ACP_BACKEND_PI,
     }
 )
 
@@ -1136,8 +1153,8 @@ ACP_BACKENDS_MEMBER_DISPATCH = frozenset(
 # routing (``Routing.VERIFIED_GATE_EXTENSION``) is enforced. The decision is that a
 # member session on deepseek gets a panel.
 #
-# pi is not a member: it holds no member session key (it is outside
-# ``ACP_BACKENDS_MEMBER_DISPATCH``), and a panel mount has not been driven on it.
+# pi is not a member. It holds a member session key (``ACP_BACKENDS_MEMBER_DISPATCH``),
+# and H6 asks for the panel on its own evidence: no panel mount has been driven on it.
 #
 # kiro is excluded and cannot be added by this set alone: a member session's key is
 # what every mount reads, and ``providers/acp.py`` ``_member_session_key`` gates

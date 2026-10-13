@@ -159,10 +159,10 @@ class TestDeepseekSessionArray:
         client = _client(tmp_path, MEMBER_KEY)
         assert client._resolve_session_mcp_servers() == []
 
-    def test_pi_stays_plain_chat(self, agents_dir, tmp_path):
-        """The mirror-less branch is gated on membership, and pi is not a member."""
+    def test_pi_takes_session_control_and_not_the_panel(self, agents_dir, tmp_path):
+        """The mirror-less branch is gated per membership: pi holds dispatch, not panel."""
         client = _client(tmp_path, MEMBER_KEY, backend=ACP_BACKEND_PI)
-        assert client._resolve_session_mcp_servers() == []
+        assert _names(client._resolve_session_mcp_servers()) == [MEMBER_DISPATCH_SERVER]
 
 
 class TestPooledStubsBesideTheMount:
