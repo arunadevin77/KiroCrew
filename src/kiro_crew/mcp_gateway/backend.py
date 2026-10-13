@@ -54,7 +54,7 @@ from kiro_crew.mcp_caller import (
     build_caller_meta,
     build_tenant_meta,
 )
-from kiro_crew.mcp_gateway import hazards
+from kiro_crew.mcp_gateway import hazards, lifecycle_log
 from kiro_crew.mcp_gateway.apps import (
     WithheldTools,
     append_marker,
@@ -501,6 +501,10 @@ class _PendingRequest:
     # the backend is handshaken again. ``None`` for every other request, and on
     # the retry itself, which is never retried a second time.
     retry_frame: Optional[dict[str, Any]] = None
+    # Set only on a re-sent ``initialize`` (stub_uuid ==
+    # ``_REHANDSHAKE_STUB_SENTINEL``): the ``attempt_id`` it was sent under, a
+    # log join key read by no decision. Empty for every other request.
+    attempt_id: str = ""
 
 
 # A request the Python MCP SDK refuses because ITS session is not initialized
@@ -1201,6 +1205,11 @@ class Backend:
     # become one.
     _served_tool_surfaces: dict[str, ToolSurface] = field(default_factory=dict)
 
+    # Log join keys (``lifecycle_log``): one generation per process, one
+    # attempt per launch or re-sent ``initialize``. Never read by any decision.
+    backend_generation_id: str = field(default_factory=lifecycle_log.new_lifecycle_id)
+    attempt_id: str = field(default_factory=lifecycle_log.new_lifecycle_id)
+
     def __post_init__(self) -> None:
         # Serialize concurrent writes to the SHARED backend stdin. Every
         # co-pooled stub's forward_from_stub, initialize handling, prime, and
@@ -1213,6 +1222,15 @@ class Backend:
     @property
     def pid(self) -> Optional[int]:
         return self.process.pid
+
+    def lifecycle_fields(self, event: str, reason: Optional[str] = None) -> str:
+        """This backend's log join fields for ``event`` (see ``lifecycle_log``)."""
+        return lifecycle_log.lifecycle_fields(
+            event,
+            reason,
+            generation=self.backend_generation_id,
+            attempt=self.attempt_id,
+        )
 
     @property
     def is_alive(self) -> bool:
@@ -1940,7 +1958,9 @@ class Backend:
         reason = f"initialize did not complete within {timeout:g}s"
         self._dead_reason = self._dead_reason or reason
         with contextlib.suppress(Exception):
-            await self._fail_init(reason)
+            await self._fail_init(
+                reason, log_event="initialize_timed_out", log_reason="deadline"
+            )
         with contextlib.suppress(Exception):
             await self.shutdown()
 
@@ -2568,8 +2588,15 @@ class Backend:
             # never delivered to a stub.
             if "error" in msg:
                 logger.warning(
-                    "backend pid=%s refused the re-sent initialize: %s",
+                    "backend pid=%s refused the re-sent initialize: %s %s",
                     self.pid, _tool_call_error_text(msg),
+                    # Another re-handshake may have minted a newer attempt
+                    # since this initialize went out, so name its own.
+                    lifecycle_log.lifecycle_fields(
+                        "initialize_failed", "unknown",
+                        generation=self.backend_generation_id,
+                        attempt=pending.attempt_id or self.attempt_id,
+                    ),
                 )
             return
         if pending.t_start_ms:
@@ -2922,11 +2949,14 @@ class Backend:
         assert pending.retry_frame is not None
         init_fid = self._next_forward_id()
         retry_fid = self._next_forward_id()
+        # A re-sent initialize is a new attempt on the same process.
+        self.attempt_id = lifecycle_log.new_lifecycle_id()
         self._pending_requests[init_fid] = _PendingRequest(
             stub_uuid=_REHANDSHAKE_STUB_SENTINEL, original_id=None, method="initialize",
             # Stamped like every other pending: the wedge sweep reads an unset
             # start as an hour-old request.
             t_start_ms=time.monotonic() * 1000.0,
+            attempt_id=self.attempt_id,
         )
         retry_frame = dict(pending.retry_frame)
         retry_frame["id"] = retry_fid
@@ -2936,10 +2966,11 @@ class Backend:
         logger.warning(
             "backend pid=%s server=%s refused %s as not initialized; its MCP session "
             "was lost behind the pipe (a pooling proxy respawned it cold?) -- "
-            "re-sending initialize and retrying once",
+            "re-sending initialize and retrying once %s",
             self.pid,
             _log_safe_identifier(self.pool_key.server_name),
             _log_safe_identifier(pending.method),
+            self.lifecycle_fields("initialize_started"),
         )
         frames = [
             {**init_frame, "id": init_fid},
@@ -2993,7 +3024,13 @@ class Backend:
                 name, code,
             )
 
-    async def _fail_init(self, reason: str) -> None:
+    async def _fail_init(
+        self,
+        reason: str,
+        *,
+        log_event: str = "initialize_failed",
+        log_reason: str = "unknown",
+    ) -> None:
         """Transition init to the terminal ``"failed"`` state and flush every
         queued waiter with an explicit JSON-RPC error.
 
@@ -3007,7 +3044,12 @@ class Backend:
         self._dead_reason = self._dead_reason or f"init failed: {reason}"
         self._init_done_event.set()
         self._cancel_init_deadline()
-        logger.error("backend pid=%s %s", self.pid, self._dead_reason)
+        logger.error(
+            "backend pid=%s %s %s",
+            self.pid,
+            self._dead_reason,
+            self.lifecycle_fields(log_event, log_reason),
+        )
         pending = list(self._init_pending)
         self._init_pending.clear()
         async with self._inbox_lock:
@@ -3049,8 +3091,9 @@ class Backend:
         self._init_done_event.set()
         self._cancel_init_deadline()
         logger.info(
-            "backend pid=%s initialized supports_caller_identity=%s",
+            "backend pid=%s initialized supports_caller_identity=%s %s",
             self.pid, self.supports_caller_identity,
+            self.lifecycle_fields("initialize_succeeded", "success"),
         )
         # Forward exactly one synthetic
         # notifications/initialized to the backend now the handshake is
@@ -4419,8 +4462,9 @@ class Backend:
                     f"(ping_age={ping_age:.1f}s)"
                 )
                 logger.warning(
-                    "backend pid=%s pool=%s %s; recycling",
+                    "backend pid=%s pool=%s %s; recycling %s",
                     self.pid, self.pool_key.human_readable(), self._dead_reason,
+                    self.lifecycle_fields("backend_gone", "deadline"),
                 )
                 await self._broadcast_backend_gone(self._dead_reason)
                 return "wedged"
@@ -4433,8 +4477,9 @@ class Backend:
                     f"ping stale {ping_age:.1f}s >= {PING_STALE_SECS:.0f}s"
                 )
                 logger.warning(
-                    "backend pid=%s pool=%s %s; recycling",
+                    "backend pid=%s pool=%s %s; recycling %s",
                     self.pid, self.pool_key.human_readable(), self._dead_reason,
+                    self.lifecycle_fields("backend_gone", "deadline"),
                 )
                 await self._broadcast_backend_gone(self._dead_reason)
                 return "wedged"
@@ -4639,8 +4684,9 @@ class Backend:
             except asyncio.TimeoutError:
                 logger.warning(
                     "backend pid=%s did not exit within %.1fs after stdin close; "
-                    "escalating to SIGKILL",
+                    "escalating to SIGKILL %s",
                     self.process.pid, timeout,
+                    self.lifecycle_fields("forced_exit", "deadline"),
                 )
                 # Kill the whole process TREE, not just the launcher PID:
                 # on POSIX spawn uses start_new_session=True, so the backend is
@@ -4737,11 +4783,18 @@ async def spawn_backend(
     Tightening this to a full mount namespace for pooled backends is tracked
     as Phase-2 hardening; broader rollout is gated on it.
     """
+    # Minted before the process exists so the spawn line carries the same keys
+    # as every later line about this backend.
+    generation_id = lifecycle_log.new_lifecycle_id()
+    attempt_id = lifecycle_log.new_lifecycle_id()
     logger.info(
-        "spawning backend pool=%s command=%s args=%s",
+        "spawning backend pool=%s command=%s args=%s %s",
         pool_key.human_readable(),
         command,
         redact(" ".join(args)),
+        lifecycle_log.lifecycle_fields(
+            "initialize_started", generation=generation_id, attempt=attempt_id
+        ),
     )
     # Positive-identity marker for the orphan sweep. Safe re: the pooled-backend
     # PoolKey invariant — the marker is a compile-time constant, so it is
@@ -4882,6 +4935,8 @@ async def spawn_backend(
         created_at=now,
         last_used_at=now,
         initialize_timeout_secs=_effective_initialize_timeout_secs(initialize_timeout_secs),
+        backend_generation_id=generation_id,
+        attempt_id=attempt_id,
     )
     backend._last_ping_response_mono = now  # cold-start: not insta-stale
     backend._stderr_task = stderr_task
@@ -4971,8 +5026,9 @@ async def send_initialize(
     backend._init_result = result
     backend._init_state = "ready"
     logger.info(
-        "backend pid=%s initialized; supports_caller_identity=%s",
+        "backend pid=%s initialized; supports_caller_identity=%s %s",
         backend.pid, backend.supports_caller_identity,
+        backend.lifecycle_fields("initialize_succeeded", "success"),
     )
     return result
 

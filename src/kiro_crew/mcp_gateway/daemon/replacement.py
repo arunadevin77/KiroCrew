@@ -472,10 +472,13 @@ async def _respawn_backend_for_stub_unrecorded(
         name=f"mcp-gateway-stub-writer-{stub_uuid[:8]}",
     )
     logger.info(
-        "transparent respawn: stub=%s rebound to fresh backend pid=%s pool=%s",
+        "transparent respawn: stub=%s rebound to fresh backend pid=%s pool=%s %s "
+        "previous_backend_generation_id=%s",
         stub_uuid,
         new_backend.pid,
         pool_key.human_readable(),
+        new_backend.lifecycle_fields("reconnect_succeeded", "success"),
+        old_backend.backend_generation_id,
     )
     # Audited HERE, not at the comparison: this is the point the replacement
     # actually gains authority to serve the session — stub attached,

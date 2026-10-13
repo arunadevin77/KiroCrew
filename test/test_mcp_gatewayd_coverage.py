@@ -396,14 +396,22 @@ async def _run_one_heartbeat_sweep(pool: Any, pidfile: Optional[Path] = None) ->
 
 class TestHeartbeatSweeper:
     @pytest.mark.asyncio
-    async def test_gone_backend_is_evicted_and_charged_to_the_breaker(self):
+    async def test_gone_backend_is_evicted_and_charged_to_the_breaker(self, caplog):
         key = _pool_key()
         backend = _fake_backend(key)
         backend._heartbeat_once = AsyncMock(return_value="gone")  # type: ignore[method-assign]
         backend.shutdown = AsyncMock()  # type: ignore[method-assign]
         pool = _SweeperPool([(key, backend)])
 
-        await _run_one_heartbeat_sweep(pool)
+        with caplog.at_level("WARNING"):
+            await _run_one_heartbeat_sweep(pool)
+
+        recycled = [r.getMessage() for r in caplog.records if "heartbeat recycled" in r.getMessage()]
+        assert recycled and all(
+            # The fake process has not exited, so this "gone" is a broken pipe.
+            m.endswith(backend.lifecycle_fields("backend_gone", "transport_closed"))
+            for m in recycled
+        )
 
         # The sweeper may complete more than one pass before the test observes
         # it, so assert on the distinct decisions rather than the call count.
@@ -412,14 +420,20 @@ class TestHeartbeatSweeper:
         backend.shutdown.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_wedged_backend_takes_the_same_recycle_path(self):
+    async def test_wedged_backend_takes_the_same_recycle_path(self, caplog):
         key = _pool_key(server="wedged-mcp")
         backend = _fake_backend(key)
         backend._heartbeat_once = AsyncMock(return_value="wedged")  # type: ignore[method-assign]
         backend.shutdown = AsyncMock()  # type: ignore[method-assign]
         pool = _SweeperPool([(key, backend)])
 
-        await _run_one_heartbeat_sweep(pool)
+        with caplog.at_level("WARNING"):
+            await _run_one_heartbeat_sweep(pool)
+
+        recycled = [r.getMessage() for r in caplog.records if "heartbeat recycled" in r.getMessage()]
+        assert recycled and all(
+            m.endswith(backend.lifecycle_fields("backend_gone", "deadline")) for m in recycled
+        )
 
         assert set(pool.deaths) == {key.stable_hash()}
         assert set(pool.evicted) == {key}
@@ -1351,7 +1365,7 @@ class TestRespawnBackendForStub:
         pool.unreserve.assert_called_once_with(key)
 
     @pytest.mark.asyncio
-    async def test_successful_respawn_rebinds_the_stub_transparently(self, monkeypatch):
+    async def test_successful_respawn_rebinds_the_stub_transparently(self, monkeypatch, caplog):
         key = _pool_key(server="respawn-ok-mcp")
         pool = BackendPool(max_backends=2)
         pool.unreserve = MagicMock()  # type: ignore[method-assign]
@@ -1363,23 +1377,32 @@ class TestRespawnBackendForStub:
         fresh.attach_stub = AsyncMock(return_value=new_inbox)  # type: ignore[method-assign]
         monkeypatch.setattr(gw, "_acquire_backend", AsyncMock(return_value=(fresh, True)))
 
-        out = await gw._respawn_backend_for_stub(
-            pool,
-            key,
-            lambda k: None,
-            "stub-r5",
-            cast(Any, _FakeWriter()),
-            {"id": 0, "method": "initialize"},
-            old,
-            None,
-            None,
-        )
+        with caplog.at_level("INFO"):
+            out = await gw._respawn_backend_for_stub(
+                pool,
+                key,
+                lambda k: None,
+                "stub-r5",
+                cast(Any, _FakeWriter()),
+                {"id": 0, "method": "initialize"},
+                old,
+                None,
+                None,
+            )
 
         assert out is not None
         got_backend, got_inbox, got_task = out
         assert got_backend is fresh
         assert got_inbox is new_inbox
         pool.unreserve.assert_called_once_with(key)
+        # The rebind line names the FRESH backend's generation and attempt.
+        [rebound] = [r.getMessage() for r in caplog.records if "rebound to fresh" in r.getMessage()]
+        # It also names the dead backend's generation, so a chain joins across the respawn.
+        assert rebound.endswith(
+            fresh.lifecycle_fields("reconnect_succeeded", "success")
+            + f" previous_backend_generation_id={old.backend_generation_id}"
+        )
+        assert fresh.backend_generation_id != old.backend_generation_id
         await _drain_task(got_task)
 
     @pytest.mark.asyncio

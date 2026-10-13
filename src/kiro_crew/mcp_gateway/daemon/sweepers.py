@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from kiro_crew.mcp_gateway import backend_record, hazards
+from kiro_crew.mcp_gateway import backend_record, hazards, lifecycle_log
 from kiro_crew.mcp_gateway.daemon import logger
 from kiro_crew.mcp_gateway.pool import BackendPool
 
@@ -295,9 +295,15 @@ async def _heartbeat_sweeper(
                             with contextlib.suppress(Exception):
                                 await evicted.shutdown(timeout=2.0)
                         logger.warning(
-                            "heartbeat recycled %s backend pool=%s",
+                            "heartbeat recycled %s backend pool=%s %s",
                             state,
                             key.human_readable(),
+                            backend.lifecycle_fields(
+                                "backend_gone",
+                                lifecycle_log.heartbeat_recycle_reason(
+                                    state, backend.process.returncode
+                                ),
+                            ),
                         )
                     elif state == "alive":
                         pool.note_backend_healthy(key.stable_hash())
