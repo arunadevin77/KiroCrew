@@ -27,7 +27,7 @@ import { useSidePanelDock } from './hooks/useSidePanelDock'
 import { useAppRailOrder, SortableAppNavRow, NavToggle } from './shell/nav/appRail'
 import { setRailWidth, railWidthFor } from './hooks/useRailWidth'
 import { FOCUS_INSET } from './hooks/useFocusMode'
-import { useFocusChrome } from './shell/focus/focusChrome'
+import { hiddenChromeProps, useFocusChrome } from './shell/focus/focusChrome'
 import { OVERLAY_Z_MAX, THEME_DECOR_SLOT_ID, TOPBAR_FOCUS_Z, TOPBAR_Z, registerThemeDecorSlot } from './lib/themeDecorLayer'
 import { useNativeNotification } from './hooks/useNativeNotification'
 import { useNotificationSound } from './hooks/useNotificationSound'
@@ -121,8 +121,9 @@ import { getBuiltinIcon } from './apps/builtinIcons'
 import { getTopBarWidgets } from './apps/topBarWidgets'
 import { getCapsuleSegments } from './apps/capsuleSegments'
 import { useRequestFeature } from './shell/topbar/requestFeature'
-import { IS_MAC } from './hooks/useKeyboardShortcuts'
-import { useNavShortcutHint } from './hooks/useNavShortcutHint'
+import { IS_MAC, formatShortcut, shortcutDefFromChord, useShortcutBindings } from './hooks/useKeyboardShortcuts'
+import { shortcutEntry } from './lib/shortcutRegistry'
+import { ariaKeyshortcutsFor, useNavShortcutHint } from './hooks/useNavShortcutHint'
 import { useShellKeyboard } from './shell/shortcuts/shellKeyboard'
 import { MobileNavRailContext, MobileRosterBarContext, type MobileNavRailOptions, type MobileRosterBarState } from './components/MobileNavRailContext'
 import ShortcutsModal from './components/ShortcutsModal'
@@ -866,6 +867,55 @@ export default function App() {
   // before App mounted (e.g. a 403 fired during the very first /api/status
   // before React hydrated).
   const [authRequired, setAuthRequired] = useState<boolean>(isAuthBannerShown)
+  // The connection capsule's accessible name and its role="status" live region
+  // are the ONLY screen-reader carriers of the offline cause: the
+  // session-expired banner api/client.ts injects is a plain <div> with no
+  // role="alert"/aria-live, so it is never announced. When auth is the real
+  // cause they must therefore say so -- announcing the generic "Gateway offline"
+  // points a screen-reader user at reconnection when pasting a token is the fix.
+  // Auth takes precedence over transport for the ANNOUNCED cause: `authRequired`
+  // (a 403 auth flag) and `connected` (Redux transport state) are independently
+  // sourced, so the session can expire while the socket is still up. In that
+  // state a transport-first ternary announces "Gateway connected" -- a
+  // reassuring lie -- and nothing else corrects it. The transport being up does
+  // not help a user whose session is dead, so the auth wording wins whenever
+  // auth is the real blocker. Computed here, outside the header, because two
+  // places speak it: the capsule inside the header, and the stand-in live region
+  // the shell mounts while focus mode has made the header inert.
+  const gatewayStatusMsg = authRequired
+    ? i18nT('app.gateway_offline_session_expired_see_banner_above')
+    : connected
+      ? i18nT('app.gateway_connected')
+      : i18nT('app.gateway_offline_reconnecting')
+  // The chord that turns focus mode off, as the user has it bound RIGHT NOW. In
+  // focus mode the top bar (and its toggle) is inert, so this chord is the only
+  // keyboard route back; it is spoken when focus mode turns on and declared on
+  // the toggle as `aria-keyshortcuts`. Read from the live bindings, not the
+  // registry default: a rebound shortcut announced as its default would send the
+  // user to a key that no longer does anything. `null` when the user unbound it.
+  // The ARIA spelling (Alt+Shift+M) rather than the display glyphs (⌥⇧M): the
+  // glyphs are for the eye and a screen reader has no names for them.
+  //
+  // `null` = unbound. Nothing in the product can produce that today: the only
+  // writer of the overrides store is the Settings > Keyboard UI, which does not
+  // exist yet (shortcutRegistry.ts, "No writer here on purpose"). What unbinding
+  // the one chord that leaves a mode with no reachable controls should mean is
+  // that writer's decision; until it exists the carriers below simply say nothing
+  // about a chord, rather than naming a page the inert chrome cannot reach.
+  const shortcutBindings = useShortcutBindings()
+  const focusModeChordDef = (() => {
+    const entry = shortcutEntry('toggle-focus-mode')
+    const chord = shortcutBindings['toggle-focus-mode']?.primary
+    return entry && chord ? shortcutDefFromChord(entry, chord) : null
+  })()
+  const focusModeChord = focusModeChordDef ? ariaKeyshortcutsFor(focusModeChordDef) : null
+  const focusModeExitMsg = focusModeChord ? i18nT('app.focus_mode_on_announce', { chord: focusModeChord }) : ''
+  // The same sentence for the EYE, in the product's display spelling
+  // (formatShortcut: ⌥⇧M on a Mac, Alt + Shift + M elsewhere) -- a Mac user shown
+  // "Alt" has to work out which key that is, and this is their way out.
+  const focusModeExitMsgVisible = focusModeChordDef
+    ? i18nT('app.focus_mode_on_announce', { chord: formatShortcut(focusModeChordDef) })
+    : ''
   useEffect(() => {
     const onRequired = () => setAuthRequired(true)
     const onCleared = () => setAuthRequired(false)
@@ -1306,6 +1356,12 @@ export default function App() {
   const { shortcutsOpen, setShortcutsOpen, toggleShortcutsModal, commandPalette, agentSwitchNotice } = useShellKeyboard({
     toggleFocusMode, toggleNav: () => toggleNav(), terminalEnabled, isPopout, isEmbed, terminalPoppedOut, activeSlotProject,
   })
+  // Leaving focus mode within the shell notice's 6s puts OUR notice away (and
+  // only ours: the slot is shared with the agent-switch and folder notices).
+  useEffect(() => {
+    if (focusActive || !agentSwitchNotice || agentSwitchNotice.message !== focusModeExitMsgVisible) return
+    dispatch(setAgentSwitchNotice(null))
+  }, [focusActive, agentSwitchNotice, focusModeExitMsgVisible, dispatch])
 
   const { kiroUsageOpen, setKiroUsageOpen, kiroUsageState, kiroCreditSurface, kiroAccountEntry } = useKiroUsageReadout()
   // Both forms use the side groups' container-query ladders. On desktop the
@@ -1833,6 +1889,16 @@ export default function App() {
 
       {/* Skip to content — visible only on focus for keyboard users */}
       <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[9999] focus:px-4 focus:py-2 focus:rounded-lg focus:bg-accent focus:text-accent-fg focus:text-sm focus:font-medium">{i18nT('app.skip_to_content')}</a>
+      {/* Spoken way out of focus mode. Turning it on makes the header and rail
+          inert and moves focus to main, so a screen-reader user who clicked the
+          toggle has lost every chrome control and hears nothing about how to get
+          them back. This region is mounted permanently and its TEXT changes, so
+          the message is announced (a live region does not speak content it
+          mounts with). Outside the header on purpose: that is the element that
+          turns aria-hidden. Empty while focus mode is off. */}
+      <span role="status" className="sr-only" data-testid="focus-mode-announce">
+        {focusActive ? focusModeExitMsg : ''}
+      </span>
 
       {/* Focus mode: edge strips that summon the hidden chrome. Rendered before
           the chrome itself, but BELOW it in z-order (61 vs 62): the chrome covers
@@ -1862,6 +1928,17 @@ export default function App() {
             style={{ top: FOCUS_INSET }}
             {...railPeek.triggerProps}
           />
+          {/* While the header is hidden it is aria-hidden, which silences the
+              connection capsule's role="status" region -- the only
+              screen-reader carrier of the gateway going offline. This stand-in
+              carries the same message from outside the header for exactly that
+              interval. Mounted only while hidden, so the two regions never
+              announce the same change twice; a live region does not speak the
+              text it mounts with, only later changes, which is the case that
+              matters (the gateway dropping mid focus mode). */}
+          {!topChromeShown && (
+            <span role="status" className="sr-only" data-testid="focus-gateway-status">{gatewayStatusMsg}</span>
+          )}
         </>
       )}
 
@@ -1908,6 +1985,8 @@ export default function App() {
             pointerEvents: topChromeShown ? 'auto' : 'none',
           }
           : { gridArea: 'topbar', zIndex: TOPBAR_Z }}
+        // ...nor stay a Tab stop or be announced while off screen (hiddenChromeProps).
+        {...hiddenChromeProps(focusActive && !topChromeShown)}
         {...(focusActive ? topPeek.surfaceProps : {})}
       >
         {/* Left: mobile menu toggle + inline instance selector. The brand now
@@ -2056,10 +2135,28 @@ export default function App() {
           <button
             type="button"
             data-testid="focus-mode-toggle"
-            onClick={toggleFocusMode}
+            // A sighted keyboard user who activates this with Enter/Space is the
+            // one person the inert chrome leaves stranded: the toggle they just
+            // pressed vanishes, Tab cannot bring it back, and the chord that can
+            // lived only in the hover title. So on a keyboard activation that
+            // turns focus mode ON, the shared shell notice (the agent-switch card)
+            // shows the same sentence the live region speaks, in display
+            // spelling. `detail === 0` is how a keyboard-synthesised click differs
+            // from a pointer click (which counts its clicks). A pointer user can
+            // hover an edge; a chord user just typed the chord; neither gets the
+            // card. The sr-only region is the spoken carrier either way.
+            onClick={e => {
+              const turningOn = !focusMode
+              toggleFocusMode()
+              if (turningOn && e.detail === 0 && focusModeExitMsgVisible) dispatch(setAgentSwitchNotice(focusModeExitMsgVisible))
+            }}
             className={`flex items-center justify-center w-7 h-7 rounded-md hover:bg-bg-hover transition-colors bg-transparent border-none cursor-pointer shrink-0 ${focusMode ? 'text-accent' : 'text-muted hover:text-text'}`}
             aria-label={i18nT('app.focus_mode')}
             aria-pressed={focusMode}
+            // The chord as currently bound (focusModeChord): the `title` below
+            // names the default for sighted hover, this names the live one for
+            // assistive tech. Omitted when the user unbound it.
+            aria-keyshortcuts={focusModeChord ?? undefined}
             {...uiLocation('shell.focus-mode')}
             title={i18nT(IS_MAC ? 'app.focus_mode_title_mac' : 'app.focus_mode_title')}
           >
@@ -2141,29 +2238,11 @@ export default function App() {
               stays the offline signal there. */}
           {!isMobile && (() => {
             const offline = !connected
-            // The accessible name and the role="status" live region are the
-            // ONLY screen-reader carriers of the offline cause: the
-            // session-expired banner api/client.ts injects is a plain <div>
-            // with no role="alert"/aria-live, so it is never announced. When
-            // auth is the real cause they must therefore say so -- announcing
-            // the generic "Gateway offline" points a screen-reader user at
-            // reconnection when pasting a token is the fix. This mirrors the
-            // branch the button `title` already uses (minus the collapse-toggle
-            // suffix, which is interaction text, not a status cause).
-            // Auth takes precedence over transport for the ANNOUNCED cause:
-            // `authRequired` (a 403 auth flag) and `connected` (Redux transport
-            // state) are independently sourced, so the session can expire while
-            // the socket is still up. In that state a transport-first ternary
-            // announces "Gateway connected" -- a reassuring lie -- and the
-            // session-expired banner api/client.ts injects is a plain <div>
-            // with no role="alert"/aria-live, so nothing else corrects it. The
-            // transport being up does not help a user whose session is dead, so
-            // the auth wording wins whenever auth is the real blocker.
-            const gatewayStatusMsg = authRequired
-              ? i18nT('app.gateway_offline_session_expired_see_banner_above')
-              : connected
-                ? i18nT('app.gateway_connected')
-                : i18nT('app.gateway_offline_reconnecting')
+            // `gatewayStatusMsg` (App scope) is the announced cause; see its
+            // comment for why auth wording wins over transport state. It mirrors
+            // the branch the button `title` already uses (minus the
+            // collapse-toggle suffix, which is interaction text, not a status
+            // cause).
             // The connection dot doubles as the capsule collapse toggle, so its
             // accessible name must name that action -- not just the gateway
             // state. title and aria-label share this composed value; the
@@ -2772,6 +2851,7 @@ export default function App() {
               : { gridArea: 'nav', width: 'auto' }}
             role="navigation"
             aria-label={i18nT('app.main_navigation')}
+            {...hiddenChromeProps(focusActive && !railPeek.open)}
             {...(focusActive ? railPeek.surfaceProps : {})}
           >
             {navBody}
