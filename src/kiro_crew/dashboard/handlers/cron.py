@@ -10,6 +10,7 @@ import math
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
@@ -252,6 +253,39 @@ _CONTRADICTION_MODEL = "auto"  # inherit the governed default; a hardcoded id 40
 # fire-and-forget after the lesson is already persisted, so this bounds a hung
 # model call rather than gating the write path.
 _CONTRADICTION_TIMEOUT = 60.0
+# Budget for embedding a submitted lesson rule before it is written. The shared
+# inference thread serves one job at a time and cannot preempt a running one, so
+# a short rule can wait behind a long prompt embed for longer than the embedder's
+# own default wait -- which equals the MCP client's read timeout
+# (``mcp_core._post``), so the write was never reached. Well under that timeout,
+# so an expired embed still leaves time to write the row with a NULL vector for
+# the standing repair sweep to fill.
+_LESSON_EMBED_DEADLINE_SECS = 5.0
+
+
+def _embed_lesson_bounded(vs: Any, rule: str) -> list[float] | None:
+    """Embed *rule* for a lesson write within ``_LESSON_EMBED_DEADLINE_SECS``.
+
+    Synchronous; run it via ``asyncio.to_thread``. Returns ``None`` when the
+    embed could not finish in time, the same value as any other unavailable
+    embedding, so the caller writes the lesson without a vector.
+    """
+    from kiro_crew.embeddings import PRIORITY_NORMAL, EmbeddingWork, embedding_work
+
+    inherited = embedding_work.get()
+    deadline = time.monotonic() + _LESSON_EMBED_DEADLINE_SECS
+    if inherited is not None:
+        deadline = min(deadline, inherited.deadline)
+    work = EmbeddingWork(
+        deadline=deadline,
+        cancelled=inherited.cancelled if inherited is not None else threading.Event(),
+        priority=PRIORITY_NORMAL,
+    )
+    token = embedding_work.set(work)
+    try:
+        return vs.embed_lesson(rule)
+    finally:
+        embedding_work.reset(token)
 
 
 async def _classify_contradiction(state: DashboardState, prompt: str) -> str:
@@ -2970,7 +3004,9 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         # space of a vector computed out here, and a model swap landing between this
         # embed and the write would otherwise commit it into the wrong space.
         rule_emb_generation = vs.space_generation
-        rule_emb = await asyncio.to_thread(vs.embed_lesson, rule)
+        # Bounded: a saturated inference queue yields None here rather than holding
+        # the request past the client timeout, and the lesson still lands below.
+        rule_emb = await asyncio.to_thread(_embed_lesson_bounded, vs, rule)
         # Persist the lesson immediately so the request returns fast. The
         # contradiction sweep below makes a per-candidate LLM call (~27s each);
         # running it inline would exceed the MCP client's 30s timeout while the
@@ -2988,6 +3024,9 @@ async def api_lessons_create(request: web.Request) -> web.Response:
             rule_emb_generation,
             repo_scope,
             applies=applies,
+            # The embed above was attempted; a None from it must not trigger a
+            # second, unbounded embed of the same text inside the write.
+            rule_emb_resolved=True,
             # Stored lessons that still lack a vector are the standing repair
             # sweep's to fill. Embedding them here is PRIORITY_BULK work with no
             # deadline, queued behind every other bulk job, so it can hold this
@@ -3020,7 +3059,10 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         superseded = _redact_memory_field(list(result.superseded))
         # Avoid even scanning or scheduling the model-based sweep for V2;
         # explicit corrections remain available through the owner review flow.
-        if result.wrote and getattr(vs, "algorithm_version", "v1") != "v2":
+        # Skipped without a rule vector too: the scan would embed the rule again
+        # on the embedder's default wait, behind the same full queue, and hold
+        # this request past the client timeout. That lesson gets no sweep.
+        if result.wrote and rule_emb is not None and getattr(vs, "algorithm_version", "v1") != "v2":
             candidates = await asyncio.to_thread(
                 vs.find_contradiction_candidates, rule, 0.4, 0.85, rule_emb, repo_scope
             )

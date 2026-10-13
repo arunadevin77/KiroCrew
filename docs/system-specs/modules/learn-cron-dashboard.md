@@ -219,7 +219,11 @@ the CPP contract. Update authorization and command-provider precedence are uncha
 ## Self-Learning (`learn.py`)
 
 Global Memory V1 retains the background LLM contradiction sweep after a
-successful lesson write. Member Memory V2 never schedules that sweep, and the
+successful lesson write. `api_lessons_create` embeds the rule under a 5 s
+`PRIORITY_NORMAL` budget (`_LESSON_EMBED_DEADLINE_SECS`) so a full embedding
+queue cannot hold the write past the MCP client timeout; when that embed returns
+no vector, the lesson is stored without one and its sweep is skipped, like any
+missed sweep, until the next write on the topic. Member Memory V2 never schedules that sweep, and the
 helper refuses V2 even when called directly: inferred contradictions cannot
 delete private rules. Distinct rules remain available for explicit owner review;
 same-identity conflict proposals and evidence-backed owner correction/undo are
