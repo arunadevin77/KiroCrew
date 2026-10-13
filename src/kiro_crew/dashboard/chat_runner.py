@@ -308,6 +308,7 @@ from kiro_crew.dashboard.chat_turn.turn_marker import (  # noqa: F401
     _retire_local_turn_marker,
 )
 from kiro_crew.dashboard.chat_turn.turn_stats import (  # noqa: F401
+    _attach_owned_turn_stats,
     _attach_turn_stats,
     _context_usage_payload,
     _FirstVisibleClock,
@@ -9302,6 +9303,8 @@ async def _run_chat(
     # cannot apply to chat at all (it applies to the owner's dashboard file
     # viewer only -- see ``security.redaction_switch``).
     _wsred = StreamRedactor()
+    # Set once the end-of-turn flush has saved ``assistant_text`` as the reply.
+    _reply_flushed = False
 
     async def _persist_partial_reply(reason: str = "") -> None:
         """Persist the partial reply of a turn that is ending abnormally.
@@ -9348,7 +9351,12 @@ async def _run_chat(
         # also drop the body the user watched stream. The usage row is the
         # recoverable loss (a continuation re-reads provider stats; the text does
         # not re-materialise), so it goes last.
-        if assistant_text:
+        #
+        # ``_reply_flushed``: the end-of-turn flush already saved this text and
+        # leaves it in ``assistant_text``, so a cancel landing after it (a late
+        # Stop, the turn ceiling's task cancel) must not save it a second time.
+        nonlocal _reply_flushed
+        if assistant_text and not _reply_flushed:
             # Same glued-marker repair as _flush_segment: the interrupted body is
             # the same accumulated text, and it is rendered by the same grammar.
             body = _reflow_label_and_audit(slot, assistant_text)
@@ -9366,6 +9374,9 @@ async def _run_chat(
                     meta=_segment_row_meta(slot, _blocked, _redactions),
                 ),
             )
+            # Saved once per turn: a recovery arm saves it here, and a cancel
+            # landing on the usage write below re-enters this helper.
+            _reply_flushed = True
             crew_log_emit.on_message_sent(
                 _crew_log_sid,
                 _crew_log_turn_no,
@@ -9424,6 +9435,19 @@ async def _run_chat(
         still reachable.
         """
         nonlocal _turn_usage_persisted
+        if _turn_boundary_set and _turn_stats_captured:
+            # The turn completed, so EVENT_COMPLETE already measured it and owns
+            # its usage row; what it can miss is the footer, because a recovery
+            # arm returns before the end-of-turn attach and a cancel (the turn
+            # ceiling's task cancel) can land between the two. Attach the
+            # completion's own figures here, before the guard below returns.
+            _attach_abnormal_turn_stats(
+                _turn_elapsed_ms,
+                _turn_credits,
+                _turn_cost_usd,
+                _turn_model,
+                ttft_ms=_ttft_visible.ms,
+            )
         if _turn_usage_persisted:
             return
         if slot._acp_client is None:
@@ -9433,14 +9457,16 @@ async def _run_chat(
         # accumulated multi-attempt total, so a second read for the footer would
         # see only the last attempt. The row and the footer share this value.
         _usage = provider_last_turn_usage(client, since=_turn_stats0)
-        if reason == STOP_REASON_CANCELLED and _turn_boundary_set:
-            # A Stop press is the one abnormal end the user caused on purpose,
-            # and the partial reply it leaves is a reply they read: give it the
-            # same footer a completed turn gets, so what the stopped turn cost
-            # is visible where the turn ended. A Stop before dispatch has no
-            # boundary yet, and attaching then would overwrite the previous
-            # turn's footer, so it writes only the usage row.
-            _attach_stopped_turn_stats(_usage, _elapsed_ms)
+        if _turn_boundary_set and not _turn_stats_captured:
+            # Every reply an abnormal end leaves is a reply the user read: a
+            # Stop press, an error card, a mid-reply 5xx, an involuntary cancel.
+            # Give it the footer a completed turn gets, so what the turn cost is
+            # visible where it ended. A turn cut before dispatch has no boundary
+            # yet, and attaching then would overwrite the previous turn's
+            # footer, so it writes only the usage row.
+            _attach_abnormal_turn_stats(
+                _elapsed_ms, float(_usage.credits or 0.0), float(_usage.cost_usd or 0.0)
+            )
         if await _persist_abnormal_turn_usage(
             slot,
             client,
@@ -9452,8 +9478,15 @@ async def _run_chat(
         ):
             _turn_usage_persisted = True
 
-    def _attach_stopped_turn_stats(usage: TurnUsage, elapsed_ms: int) -> None:
-        """Put ``meta.turn_stats`` on a stopped turn's last reply row.
+    def _attach_abnormal_turn_stats(
+        elapsed_ms: int,
+        credits: float,
+        cost_usd: float,
+        model: str | None = None,
+        *,
+        ttft_ms: int = 0,
+    ) -> None:
+        """Put ``meta.turn_stats`` on an abnormally ended turn's last reply row.
 
         Same writer and the same shape as a completed turn
         (``_attach_turn_stats`` -> ``turn_stats_meta``), so the footer renders
@@ -9467,18 +9500,28 @@ async def _run_chat(
         ``finally`` runs ``_flush_file_changes``, which marks the slot dirty on
         every exit. Best-effort: a failure never disturbs the cancel teardown or
         the usage row.
+
+        Only a row THIS runner appended (``slot._turn_reply_mids``) can carry
+        it: a workflow or sub-agent result is appended into the same window by
+        another writer while the turn runs, and must not take this turn's
+        figures. A slot double with no id list falls back to the boundary scan.
         """
         try:
-            _attach_turn_stats(
+            reply_mids = getattr(slot, "_turn_reply_mids", None)
+            _attach_owned_turn_stats(
                 slot,
                 elapsed_ms,
-                float(usage.credits or 0.0),
-                float(usage.cost_usd or 0.0),
+                credits,
+                cost_usd,
                 turn_boundary=_turn_msg_boundary,
-                model=read_turn_model(client) or "",
+                model=(read_turn_model(client) or "") if model is None else model,
+                ttft_ms=ttft_ms,
+                reply_mids=reply_mids if isinstance(reply_mids, list) else None,
             )
         except Exception:
-            logger.debug("Failed to attach stopped-turn stats for slot %s", slot.key, exc_info=True)
+            logger.debug(
+                "Failed to attach abnormal-turn stats for slot %s", slot.key, exc_info=True
+            )
 
     def _flush_text_stream() -> None:
         """Emit the redactor's withheld tail as a final chat_chunk before a
@@ -12566,6 +12609,8 @@ async def _run_chat(
         _turn_credits = 0.0
         _turn_cost_usd = 0.0
         _turn_model = ""
+        # Set once EVENT_COMPLETE has filled the four figures above.
+        _turn_stats_captured = False
         _turn_msg_boundary = len(slot.messages)
         _turn_boundary_set = True
         _turn_start_mid = row_mid(slot.messages[-1]) if slot.messages else ""
@@ -16484,6 +16529,7 @@ async def _run_chat(
                 # with a missing measurement. Still never guesses: an
                 # unattributable turn stays "" and the footer omits the field.
                 _turn_model = read_turn_model(client)
+                _turn_stats_captured = True
                 # ── Turn outcome for this turn's histogram sample ──
                 # ``exhausted`` mirrors the stop-reason branches below: the
                 # recovery-outcome exclusion from fault_rate is earned only by a
@@ -16815,6 +16861,11 @@ async def _run_chat(
         # which surfaces the stuck sessions this cannot recover.
         if _stop_reason == STOP_REASON_STALE_RECOVER:
             needs_session_reset = True  # checked in finally block (reset + resume)
+            # This arm and the three below return before the end-of-turn flush,
+            # where the streamed text exists only as chunk rows, which a save
+            # never writes. Keep it as the interrupted reply, with its footer,
+            # above the recovery card.
+            await _persist_partial_reply(_stop_reason)
 
             def _emit_stale(msg: str, *, will_retry: bool = False) -> None:
                 slot.append(
@@ -16867,6 +16918,7 @@ async def _run_chat(
         # verdicts) says to re-run non-interactively. Separate retry budget
         # from pipe-death so a stall can never burn the reconnect budget.
         if _stop_reason == STOP_REASON_TOOL_STALL:
+            await _persist_partial_reply(_stop_reason)
 
             def _emit_stall(msg: str, *, will_retry: bool = False) -> None:
                 slot.append(
@@ -16934,6 +16986,7 @@ async def _run_chat(
         # backend hiccup the very next attempt would clear.
         if _stop_reason == STOP_REASON_COMPACTION_FAILED:
             needs_session_reset = True  # checked in finally block
+            await _persist_partial_reply(_stop_reason)
             if (
                 # Attribute, not a stop-reason variant: the reason is the ACP
                 # layer's to classify, and both client classes record it.
@@ -17009,6 +17062,7 @@ async def _run_chat(
         # handled above (or are non-retryable), so only transport / process
         # death reaches this re-queue.
         if _stop_class.name == STOP_CLASS_FAILED and _stop_class.retryable:
+            await _persist_partial_reply(_stop_reason)
             _rc = getattr(client, "exit_code", None)
             _rc_suffix = f" (exit {_rc})" if _rc is not None else ""
 
@@ -17202,6 +17256,7 @@ async def _run_chat(
         if assistant_text and not _answer_text:
             _flush_text_stream()
             _flush_segment(state, slot, assistant_text, broadcast=False)
+            _reply_flushed = True
 
         if _terminal_directive_applied and _activity_after_terminal:
             # Turn-end contract: a terminal directive is the LAST thing in its
@@ -17223,6 +17278,7 @@ async def _run_chat(
         if _answer_text:
             _flush_text_stream()
             _flush_segment(state, slot, assistant_text, broadcast=False)
+            _reply_flushed = True
             if _stop_reason == STOP_REASON_REFUSAL:
                 # The Kiro service's content filter STREAMS its canned
                 # explanation as assistant text and then ends the turn, so the
@@ -18146,8 +18202,13 @@ async def _run_chat(
         if not _retrying_empty:
             # Attach per-turn stats (elapsed / credits) to the last assistant
             # message so the footer can show them (parity with kiro-cli).
-            # Scoped to this turn's messages via _turn_msg_boundary.
-            _stats_attached = _attach_turn_stats(
+            # Scoped to this turn's messages via _turn_msg_boundary, and to the
+            # rows this runner appended when it appended any: a workflow result
+            # another writer appended mid-turn must not take this turn's figures.
+            # A turn whose only row is not a recorded reply (a command's own
+            # confirmation) keeps the plain boundary scan.
+            _reply_mids = getattr(slot, "_turn_reply_mids", None)
+            _stats_attached = _attach_owned_turn_stats(
                 slot,
                 _turn_elapsed_ms,
                 _turn_credits,
@@ -18155,6 +18216,7 @@ async def _run_chat(
                 turn_boundary=_turn_msg_boundary,
                 model=_turn_model,
                 ttft_ms=_ttft_visible.ms,
+                reply_mids=_reply_mids if isinstance(_reply_mids, list) and _reply_mids else None,
             )
             if _prompt_depth == 0 and _stats_attached:
                 slot._carried_ttft_clock = None
@@ -20184,6 +20246,14 @@ async def _run_chat(
         else:
             logger.exception("Dashboard chat error in slot %s", slot.key)
         _crew_log_error = type(exc).__name__
+        # A prompt timeout from the shared runtime (AcpRequestTimeout) and any
+        # other non-AcpError end land here: keep what streamed as the
+        # interrupted reply, with its footer and usage row, like every other
+        # abnormal end. Guarded so a failure here can never cost the error card.
+        try:
+            await _persist_partial_reply("error: terminal")
+        except Exception:
+            logger.debug("Keeping the partial reply failed for slot %s", slot.key, exc_info=True)
         _err_text, _ = redact_exfiltration_urls(str(exc))
         _err_text, _ = redact_credentials(_err_text)
         from kiro_crew.memory_startup import MemoryStartupUnavailable

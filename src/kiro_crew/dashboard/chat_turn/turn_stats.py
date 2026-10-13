@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from kiro_crew.dashboard.chat_runner import (
         _ChatSlot,
+        row_mid,
         turn_stats_meta,
     )
 
@@ -92,6 +93,35 @@ def _attach_turn_stats(
     with the failed turn's numbers. No-op when the turn produced no assistant
     message or when there is nothing to show.
     """
+    return _attach_owned_turn_stats(
+        slot,
+        elapsed_ms,
+        credits,
+        cost_usd,
+        turn_boundary=turn_boundary,
+        model=model,
+        ttft_ms=ttft_ms,
+        reply_mids=None,
+    )
+
+
+def _attach_owned_turn_stats(
+    slot: "_ChatSlot",
+    elapsed_ms: int,
+    credits: float,
+    cost_usd: float,
+    *,
+    turn_boundary: int,
+    model: str,
+    ttft_ms: int,
+    reply_mids: list[str] | None,
+) -> bool:
+    """``_attach_turn_stats``, narrowed to rows the runner in flight appended.
+
+    ``reply_mids`` is ``slot._turn_reply_mids``: a workflow or sub-agent result
+    another writer appends into the window mid-turn is skipped, so it never
+    takes this turn's figures. ``None`` keeps the plain boundary scan.
+    """
     stats = turn_stats_meta(elapsed_ms, credits, cost_usd, model)
     if stats is None:
         return False
@@ -99,9 +129,12 @@ def _attach_turn_stats(
         stats["ttft_ms"] = int(ttft_ms)
     boundary = max(0, turn_boundary)
     for m in reversed(slot.messages[boundary:]):
-        if m.get("role") == "assistant":
-            m.setdefault("meta", {})["turn_stats"] = stats
-            return True
+        if m.get("role") != "assistant":
+            continue
+        if reply_mids is not None and row_mid(m) not in reply_mids:
+            continue
+        m.setdefault("meta", {})["turn_stats"] = stats
+        return True
     return False
 
 
