@@ -9,6 +9,7 @@ const mockRaw = vi.fn()
 
 vi.mock('../app-sdk/index', () => ({
   useAppApi: () => ({ get: mockGet, post: mockPost, raw: mockRaw }),
+  useAppInfo: () => ({ name: 'host', version: '0', permissions: { api: [], events: [] } }),
 }))
 
 vi.mock('../app-sdk/ChatMessageList', () => ({
@@ -18,6 +19,8 @@ vi.mock('../app-sdk/ChatMessageList', () => ({
 import ChatEmbed from '../app-sdk/ChatEmbed'
 import { AppSdkContext, apiPathAllowed, type AppSdkContextValue } from '../app-sdk/scopedApi'
 import { EMBED_UPLOAD_PATH } from '../app-sdk/useEmbedAttachments'
+import { ApiError } from '../api/apiError'
+import { resetEmbedRecoveryForTests } from '../app-sdk/embedSendRecovery'
 
 let queryClient: QueryClient
 
@@ -49,6 +52,7 @@ const UNGRANTED = ['/api/chat', '/api/chat/slots']
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resetEmbedRecoveryForTests()
   // A Once-queued response a failed test never consumed must not leak.
   mockRaw.mockReset()
   Element.prototype.scrollIntoView = vi.fn()
@@ -80,7 +84,9 @@ describe('ChatEmbed attachments without the upload grant', () => {
     const box = screen.getByLabelText('Chat message')
     const notPrevented = fireEvent.paste(box, { clipboardData: { files: [png()], types: ['Files'] } })
     expect(notPrevented).toBe(false)
-    expect(await screen.findByTestId('chat-embed-attach-notice')).toHaveTextContent("This app can't attach files")
+    expect(await screen.findByTestId('chat-embed-attach-notice')).toHaveTextContent("This app doesn't accept files")
+    // The page is named by its own sidebar label, not a description of it.
+    expect(screen.getByTestId('chat-embed-attach-notice')).toHaveTextContent('Attach them in Sessions instead.')
     expect(mockRaw).not.toHaveBeenCalled()
   })
 
@@ -127,7 +133,7 @@ describe('ChatEmbed attachments with the upload grant', () => {
     const sendBtn = screen.getByLabelText('Send message')
     await waitFor(() => expect(sendBtn).not.toBeDisabled())
     await act(async () => { fireEvent.click(sendBtn) })
-    const chat = mockPost.mock.calls.find(c => c[0] === '/api/chat')
+    const chat = mockPost.mock.calls.find(c => c[0] === '/api/chat?ws=1')
     expect(chat).toBeTruthy()
     expect(chat![1].message).toContain('/up/shot.png')
   })
@@ -143,10 +149,58 @@ describe('ChatEmbed attachments with the upload grant', () => {
     const sendBtn = screen.getByLabelText('Send message')
     await waitFor(() => expect(sendBtn).not.toBeDisabled())
     await act(async () => { fireEvent.click(sendBtn) })
-    const chat = mockPost.mock.calls.find(c => c[0] === '/api/chat')!
-    expect(chat[1].meta).toEqual({ files: ['/up/spec.pdf'] })
+    const chat = mockPost.mock.calls.find(c => c[0] === '/api/chat?ws=1')!
+    expect(chat[1].meta).toEqual({ files: ['/up/spec.pdf'], sendId: expect.any(String) })
     expect(chat[1].message).toContain('[attached_file 1]')
     expect(chat[1].message).toContain('review this')
+  })
+
+  it('keeps the staged files when the send fails', async () => {
+    uploadReturns(['/up/spec.pdf'])
+    await act(async () => { mount(GRANTED) })
+    fireEvent.drop(screen.getByLabelText('Chat message'), { dataTransfer: { files: [pdf()], types: ['Files'] } })
+    const sendBtn = screen.getByLabelText('Send message')
+    await waitFor(() => expect(sendBtn).not.toBeDisabled())
+    mockPost.mockRejectedValueOnce(new Error('offline'))
+    await act(async () => { fireEvent.click(sendBtn) })
+    // The file is staged again, so a retry carries it without a new upload.
+    await waitFor(() => expect(sendBtn).not.toBeDisabled())
+    await act(async () => { fireEvent.click(sendBtn) })
+    const chats = mockPost.mock.calls.filter(c => c[0] === '/api/chat?ws=1')
+    expect(chats).toHaveLength(2)
+    expect(chats[1][1].meta).toEqual({ files: ['/up/spec.pdf'], sendId: expect.any(String) })
+    expect(mockRaw).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives the staged files back when the server refuses the send', async () => {
+    uploadReturns(['/up/spec.pdf'])
+    await act(async () => { mount(GRANTED) })
+    fireEvent.drop(screen.getByLabelText('Chat message'), { dataTransfer: { files: [pdf()], types: ['Files'] } })
+    const sendBtn = screen.getByLabelText('Send message')
+    await waitFor(() => expect(sendBtn).not.toBeDisabled())
+    mockPost.mockRejectedValueOnce(new ApiError(409, 'API 409: {"error":"slot agent mismatch"}', '{"error":"slot agent mismatch"}'))
+    await act(async () => { fireEvent.click(sendBtn) })
+    await waitFor(() => expect(screen.getByRole('group', { name: '/up/spec.pdf' })).toBeInTheDocument())
+  })
+
+  it('unstages the handed-back files once the poll proves the send was delivered', async () => {
+    uploadReturns(['/up/spec.pdf'])
+    // The poll answers with this send's own user row once the send has gone out.
+    const sentId = () => (mockPost.mock.calls.find(c => c[0] === '/api/chat?ws=1')?.[1] as { meta?: { sendId?: string } } | undefined)?.meta?.sendId
+    mockGet.mockImplementation(async () => {
+      const id = sentId()
+      return { messages: id ? [{ role: 'user', content: 'x', cls: '', meta: { sendId: id } }] : [], running: false, title: '' }
+    })
+    await act(async () => { mount(GRANTED) })
+    fireEvent.drop(screen.getByLabelText('Chat message'), { dataTransfer: { files: [pdf()], types: ['Files'] } })
+    const sendBtn = screen.getByLabelText('Send message')
+    await waitFor(() => expect(sendBtn).not.toBeDisabled())
+    // A rejected fetch is unconfirmed: the files come back, then proof takes them out.
+    mockPost.mockRejectedValueOnce(new Error('offline'))
+    await act(async () => { fireEvent.click(sendBtn) })
+    expect(sentId()).toMatch(/^s-/)
+    await waitFor(() => expect(screen.queryByRole('group', { name: '/up/spec.pdf' })).toBeNull())
+    expect(sendBtn).toBeDisabled()
   })
 
   it('hands meta to a host onSend', async () => {
@@ -158,6 +212,83 @@ describe('ChatEmbed attachments with the upload grant', () => {
     await waitFor(() => expect(sendBtn).not.toBeDisabled())
     await act(async () => { fireEvent.click(sendBtn) })
     expect(onSend).toHaveBeenCalledWith(expect.stringContaining('[attached_file 1]'), { files: ['/up/spec.pdf'] })
+  })
+
+  it('keeps the text of a paste that carries text and an image of it', async () => {
+    await act(async () => { mount(GRANTED) })
+    const box = screen.getByLabelText('Chat message')
+    const notPrevented = fireEvent.paste(box, { clipboardData: { files: [png()], types: ['text/plain', 'Files'] } })
+    expect(notPrevented).toBe(true)
+    expect(mockRaw).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('chat-embed-attach-notice')).toBeNull()
+  })
+
+  it('does not send on Enter while an upload is still running', async () => {
+    let answer: (r: Response) => void = () => {}
+    mockRaw.mockReturnValueOnce(new Promise<Response>(r => { answer = r }))
+    await act(async () => { mount(GRANTED) })
+    const box = screen.getByLabelText('Chat message')
+    fireEvent.paste(box, { clipboardData: { files: [pdf()], types: ['Files'] } })
+    await waitFor(() => expect(mockRaw).toHaveBeenCalledTimes(1))
+    fireEvent.change(box, { target: { value: 'see attached' } })
+    await act(async () => { fireEvent.keyDown(box, { key: 'Enter', code: 'Enter' }) })
+    expect(mockPost.mock.calls.find(c => c[0] === '/api/chat?ws=1')).toBeUndefined()
+    expect(box).toHaveValue('see attached')
+    await act(async () => { answer(new Response(JSON.stringify({ paths: ['/up/spec.pdf'] }), { status: 200 })) })
+    await act(async () => { fireEvent.keyDown(box, { key: 'Enter', code: 'Enter' }) })
+    const chat = mockPost.mock.calls.find(c => c[0] === '/api/chat?ws=1')!
+    expect(chat[1].meta).toEqual({ files: ['/up/spec.pdf'], sendId: expect.any(String) })
+  })
+
+  // This surface carries no `meta.dirs`, so a folder token must reach the
+  // agent as typed, the same with a file as without one.
+  it.each([
+    ['a non-image file', pdf, '/up/spec.pdf', '[attached_file 1]'],
+    ['an image', png, '/up/shot.png', '![image](/up/shot.png)'],
+  ])('keeps an @folder/ token as typed when the send carries %s', async (_label, file, path, marker) => {
+    uploadReturns([path])
+    await act(async () => { mount(GRANTED) })
+    const box = screen.getByLabelText('Chat message')
+    fireEvent.drop(box, { dataTransfer: { files: [file()], types: ['Files'] } })
+    fireEvent.change(box, { target: { value: 'compare with @src/utils/' } })
+    const sendBtn = screen.getByLabelText('Send message')
+    await waitFor(() => expect(sendBtn).not.toBeDisabled())
+    await act(async () => { fireEvent.click(sendBtn) })
+    const chat = mockPost.mock.calls.find(c => c[0] === '/api/chat?ws=1')!
+    expect(chat[1].message).toContain('compare with @src/utils/')
+    expect(chat[1].message).toContain(marker)
+    expect(chat[1].message).not.toContain('[attached_dir')
+    expect(chat[1].meta.dirs).toBeUndefined()
+  })
+
+  it('sends the same @folder/ draft unchanged when no file is staged', async () => {
+    await act(async () => { mount(GRANTED) })
+    fireEvent.change(screen.getByLabelText('Chat message'), { target: { value: 'compare with @src/utils/' } })
+    await act(async () => { fireEvent.click(screen.getByLabelText('Send message')) })
+    const chat = mockPost.mock.calls.find(c => c[0] === '/api/chat?ws=1')!
+    expect(chat[1].message).toBe('compare with @src/utils/')
+    expect(chat[1].meta).toEqual({ sendId: expect.any(String) })
+    expect(mockRaw).not.toHaveBeenCalled()
+  })
+
+  it('names a file the moment it is picked and holds the picker until it lands', async () => {
+    let answer: (r: Response) => void = () => {}
+    mockRaw.mockReturnValueOnce(new Promise<Response>(r => { answer = r }))
+    await act(async () => { mount(GRANTED) })
+    fireEvent.change(screen.getByTestId('chat-embed-file-input'), { target: { files: [pdf()] } })
+    const status = await screen.findByTestId('chat-embed-uploading')
+    expect(status).toHaveTextContent('Uploading files…')
+    expect(status).toHaveTextContent('spec.pdf')
+    const picker = screen.getByLabelText('Uploading files…')
+    expect(picker).toBeDisabled()
+    expect(picker).toHaveAttribute('title', 'Uploading files…')
+    // Text alone would make the turn sendable; the running upload still holds it.
+    fireEvent.change(screen.getByLabelText('Chat message'), { target: { value: 'see attached' } })
+    expect(screen.getByLabelText('Send message')).toBeDisabled()
+    await act(async () => { answer(new Response(JSON.stringify({ paths: ['/up/spec.pdf'] }), { status: 200 })) })
+    await waitFor(() => expect(screen.queryByTestId('chat-embed-uploading')).toBeNull())
+    expect(screen.getByLabelText('Attach files')).not.toBeDisabled()
+    expect(screen.getByRole('group', { name: '/up/spec.pdf' })).toBeInTheDocument()
   })
 
   it('shows the server refusal when an upload fails', async () => {

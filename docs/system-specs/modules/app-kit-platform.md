@@ -44,11 +44,30 @@ implied by `/api/chat`: the attach control renders only when the host's
 declared paths cover the upload path, and the permissions are read off the SDK
 context so a surface with no provider fails closed. Uploads go through the
 scoped `raw` transport with the multipart body untouched, so the token's own
-manifest check still applies server-side. A pasted or dropped file on an
+manifest check still applies server-side. The upload body itself (image
+downscaling, multipart parts, the `paths` contract) is the one
+`utils/composerUpload.ts` the dashboard client also uses; only the transport
+differs. A pasted or dropped file on an
 ungranted host is refused in the composer with a visible notice; a drop with
 files is always default-prevented so the browser never navigates to the file.
 The send reuses chat-core's `buildOutgoingTurn`, so the wire text and
-`meta.files` match the main chat's. A slot switch or unmount aborts in-flight
+`meta.files` match the main chat's, with `meta.sendId` alongside. It uses the
+text-only `'steer'` serialization: this surface carries no `meta.dirs`, so an
+`@rel/` folder token stays as typed instead of becoming an `[attached_dir N]`
+marker naming a path nothing travels with -- the same text a send without a
+file carries. The refusal notice names the page that accepts files by its rail
+label (`nav.sessions`), as text, never a link that would leave the unsaved
+draft. While an upload runs, the composer shows the files' names, refuses the
+picker (its label reads "Uploading files…") and refuses Send through the Send
+atom's `uploading` input; staged files reach the atom as `hasAttachments`, so
+a file-only turn sends, or queues while a turn runs. Wherever
+the send-recovery path hands a composer submit's text back (a refused send, an
+unconfirmed one, a host `onSend` that rejects), its staged files come back with
+it, ahead of any staged since, so a retry needs no new upload; the files ride
+the parked receipt too, so an embed remounted for the slot gets them. Proof
+that an unconfirmed send was delivered unstages the handed-back files still in
+the composer, as it takes the text back, so they are not sent twice. A
+slot switch or unmount aborts in-flight
 uploads and drops their late results.
 
 The host owns session attribution. Chat hosts bind their session; routed app

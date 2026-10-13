@@ -417,7 +417,7 @@
       "send_message": "মেসেজ পাঠান",
       "session_ready_type_a_message_to_start": "সেশন প্রস্তুত। শুরু করতে একটি মেসেজ লিখুন।",
       "streaming": "স্ট্রিমিং হচ্ছে",
-      "attachments_not_allowed": "এই অ্যাপ ফাইল সংযুক্ত করতে পারে না। এর নির্মাতাকে আপলোডের অনুমতি দিতে হবে।",
+      "attachments_not_allowed": "এই অ্যাপ ফাইল গ্রহণ করে না। এর বদলে {{page}}-এ সংযুক্ত করো।",
       "uploading_files": "ফাইল আপলোড হচ্ছে…"
     },
     "chatMessageList": {

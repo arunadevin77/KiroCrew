@@ -7,7 +7,9 @@
  * Deliberately small: no mention, slash, paste or attach behaviour lives here.
  * Those are their own atoms; `ChatInput` keeps its own editor and send controls
  * until it is rebuilt as a composition of atoms. A Send input arrives with the
- * surface that writes it (a stop control, staged attachments), not ahead of it.
+ * surface that writes it, not ahead of it: staged attachments arrived with
+ * ChatEmbed's attach control (`hasAttachments`, `uploading`); a stop control
+ * has not arrived yet.
  *
  * Nothing in this module may import the Redux store: ChatEmbed mounts it inside
  * an app that has no `Provider` (pinned by `ChatEmbed.composerStoreFree.test`).
@@ -52,6 +54,12 @@ export interface ComposerSendProps {
   running?: boolean
   /** A send is in flight: the button shows progress and refuses a second press. */
   pending?: boolean
+  /** Files are staged: a submit with no text still carries them, so it can
+   *  send (or queue, while a turn runs). */
+  hasAttachments?: boolean
+  /** An upload is still running: a submit now would leave that file behind,
+   *  so the press is refused until it lands. */
+  uploading?: boolean
   /** Accessible name of the idle send. Defaults to the composer's "Send". */
   sendLabel?: string
   /** Tooltip of the idle send. Defaults to the accessible name. */
@@ -64,9 +72,9 @@ const QUEUE_CLASS = 'bg-warn text-warn-fg hover:bg-warn/80 hover:shadow-none'
 /** The composer's send control. While a turn runs it reads "Queue" in words,
  *  not only by colour and glyph: the press does not run the message now, and a
  *  reader has to see that before pressing. */
-export function ComposerSend({ onSend, running = false, pending = false, sendLabel, sendTitle, className }: ComposerSendProps) {
+export function ComposerSend({ onSend, running = false, pending = false, hasAttachments = false, uploading = false, sendLabel, sendTitle, className }: ComposerSendProps) {
   const { text } = useComposerEditor()
-  const hasContent = text.trim().length > 0
+  const hasContent = text.trim().length > 0 || hasAttachments
   const state = composerSendState({ running, hasContent })
   const queue = state === 'queue'
   const label = queue ? i18nT('components.chatInput.queue_message') : (sendLabel ?? i18nT('components.chatInput.send'))
@@ -75,7 +83,7 @@ export function ComposerSend({ onSend, running = false, pending = false, sendLab
     <SendBtn
       className={`${className ?? ''} ${queue ? `${QUEUE_CLASS} flex items-center gap-1.5` : ''}`.trim()}
       onClick={onSend}
-      disabled={pending || !hasContent}
+      disabled={pending || uploading || !hasContent}
       title={title}
       aria-label={label}
       data-composer-send={state}

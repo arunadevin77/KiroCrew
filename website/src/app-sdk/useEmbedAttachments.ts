@@ -12,14 +12,17 @@
  * swallowed, because the browser's default for a file dropped on a textarea is
  * to navigate the page to that file.
  */
-import { useCallback, useContext, useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
 import type { AppApi } from './scopedApi'
 import { AppSdkContext, apiPathAllowed } from './scopedApi'
-import { resizeImageForModel, type ResizeInfo } from '../utils/resizeImage'
+import { carriesFiles } from '../lib/fileDrag'
+import { hasPlainClipboardText } from '../components/composerPastePolicy'
+import type { ResizeInfo } from '../utils/resizeImage'
+import { COMPOSER_UPLOAD_PATH, uploadComposerFiles } from '../utils/composerUpload'
 import { i18nT } from '../i18n/t'
 
 /** The composer upload endpoint. A host opts in by declaring it. */
-export const EMBED_UPLOAD_PATH = '/api/upload/file'
+export const EMBED_UPLOAD_PATH = COMPOSER_UPLOAD_PATH
 
 export interface EmbedAttachments {
   /** The host declared the upload path, so files can be attached. */
@@ -29,6 +32,9 @@ export interface EmbedAttachments {
   resizedInfo: Record<string, ResizeInfo>
   /** Uploads in flight; a send waits until this is 0. */
   uploading: boolean
+  /** Names of the files still uploading, in pick order, so the composer can
+   *  show what is on its way before the server returns their paths. */
+  uploadingNames: string[]
   /** A refusal or failure to show above the composer; '' for none. */
   notice: string
   dismissNotice: () => void
@@ -36,13 +42,12 @@ export interface EmbedAttachments {
   removeFile: (path: string) => void
   /** Drop the staged files (after a send took them). */
   clear: () => void
+  /** Put a failed send's files back in front of anything staged since. */
+  restore: (paths: string[]) => void
   onPaste: (e: ClipboardEvent<HTMLTextAreaElement>) => void
   onDragOver: (e: DragEvent<HTMLElement>) => void
   onDrop: (e: DragEvent<HTMLElement>) => void
 }
-
-const hasFiles = (dt: DataTransfer | null | undefined): boolean =>
-  !!dt && Array.from(dt.types ?? []).includes('Files')
 
 const NO_PATHS: readonly string[] = []
 
@@ -54,7 +59,9 @@ export function useEmbedAttachments(api: AppApi, slotKey: string): EmbedAttachme
   const granted = apiPathAllowed(allowedPaths, EMBED_UPLOAD_PATH)
   const [files, setFiles] = useState<string[]>([])
   const [resizedInfo, setResizedInfo] = useState<Record<string, ResizeInfo>>({})
-  const [inFlight, setInFlight] = useState(0)
+  // One entry per upload request still running, with the names it carries.
+  const [inFlight, setInFlight] = useState<Array<{ id: number; names: string[] }>>([])
+  const nextUploadId = useRef(0)
   const [notice, setNotice] = useState('')
   // Uploads started for the current slot. A slot switch or unmount aborts
   // them, and a late result for an earlier slot is dropped rather than staged
@@ -68,37 +75,37 @@ export function useEmbedAttachments(api: AppApi, slotKey: string): EmbedAttachme
     setFiles([])
     setResizedInfo({})
     setNotice('')
-    setInFlight(0)
+    setInFlight([])
     return () => { live.forEach(c => c.abort()); live.clear() }
   }, [slotKey])
 
   const addFiles = useCallback((list: File[]) => {
     if (!list.length) return
     if (!granted) {
-      setNotice(i18nT('appSdk.chatEmbed.attachments_not_allowed'))
+      // Name the dashboard page that accepts files by its own rail label
+      // (`nav.sessions`, the `/chat` surface), so the notice and the sidebar
+      // agree in every language. Text only: a link would navigate away from
+      // this embed's unsaved draft.
+      setNotice(i18nT('appSdk.chatEmbed.attachments_not_allowed', { page: i18nT('nav.sessions') }))
       return
     }
     setNotice('')
     const gen = generation.current
     const controller = new AbortController()
     controllers.current.add(controller)
-    setInFlight(n => n + 1)
+    const uploadId = ++nextUploadId.current
+    setInFlight(prev => [...prev, { id: uploadId, names: list.map(f => f.name) }])
     void (async () => {
       try {
-        const prepared = await Promise.all(list.map(f => resizeImageForModel(f)))
-        const fd = new FormData()
-        prepared.forEach(p => fd.append('file', p.file))
         // `raw` forwards the multipart body untouched (no JSON content type),
         // through the same declared-path check as every other scoped call.
-        const res = await api.raw(EMBED_UPLOAD_PATH, { method: 'POST', body: fd, signal: controller.signal })
-        let body: { paths?: unknown; error?: string } = {}
-        try { body = await res.json() } catch { /* empty or non-JSON body */ }
+        // It throws on an HTTP failure; the catch below reads the refusal.
+        const res = await uploadComposerFiles(list, body =>
+          api.raw(EMBED_UPLOAD_PATH, { method: 'POST', body, signal: controller.signal }))
         if (gen !== generation.current) return
-        if (body.error) throw new Error(body.error)
-        if (!Array.isArray(body.paths)) throw new Error(i18nT('api.client.unexpected_server_response'))
-        const paths = (body.paths as unknown[]).filter((p): p is string => typeof p === 'string' && p !== '')
-        const info: Record<string, ResizeInfo> = {}
-        prepared.forEach((p, i) => { if (p.info && paths[i]) info[paths[i]] = p.info })
+        if (res.error) throw new Error(res.error)
+        const paths = res.paths.filter((p): p is string => typeof p === 'string' && p !== '')
+        const info = res.resizedByPath
         setFiles(prev => [...prev, ...paths.filter(p => !prev.includes(p))])
         setResizedInfo(prev => ({ ...prev, ...info }))
       } catch (err) {
@@ -112,38 +119,46 @@ export function useEmbedAttachments(api: AppApi, slotKey: string): EmbedAttachme
         setNotice(i18nT('pages.chatPage.upload_failed_error', { error: reason }))
       } finally {
         controllers.current.delete(controller)
-        if (gen === generation.current) setInFlight(n => Math.max(0, n - 1))
+        if (gen === generation.current) setInFlight(prev => prev.filter(u => u.id !== uploadId))
       }
     })()
   }, [api, granted])
+
+  const uploadingNames = useMemo(() => inFlight.flatMap(u => u.names), [inFlight])
 
   const removeFile = useCallback((path: string) => {
     setFiles(prev => prev.filter(p => p !== path))
   }, [])
 
   const clear = useCallback(() => { setFiles([]); setResizedInfo({}) }, [])
+  const restore = useCallback((paths: string[]) => {
+    setFiles(prev => [...paths, ...prev.filter(p => !paths.includes(p))])
+  }, [])
   const dismissNotice = useCallback(() => setNotice(''), [])
 
   const onPaste = useCallback((e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const pasted = Array.from(e.clipboardData?.files ?? [])
-    // Plain text pastes keep the textarea's own behaviour.
-    if (!pasted.length) return
+    const data = e.clipboardData
+    const pasted = Array.from(data?.files ?? [])
+    // A paste carrying text keeps the textarea's own behaviour, as in the main
+    // chat: a macOS Office text copy also carries an image of the selection,
+    // and taking that image would throw the text away.
+    if (!pasted.length || (data && hasPlainClipboardText(data))) return
     e.preventDefault()
     addFiles(pasted)
   }, [addFiles])
 
   const onDragOver = useCallback((e: DragEvent<HTMLElement>) => {
-    if (hasFiles(e.dataTransfer)) e.preventDefault()
+    if (carriesFiles(e.dataTransfer)) e.preventDefault()
   }, [])
 
   const onDrop = useCallback((e: DragEvent<HTMLElement>) => {
-    if (!hasFiles(e.dataTransfer)) return
+    if (!carriesFiles(e.dataTransfer)) return
     e.preventDefault()
     addFiles(Array.from(e.dataTransfer.files ?? []))
   }, [addFiles])
 
   return {
-    granted, files, resizedInfo, uploading: inFlight > 0, notice, dismissNotice,
-    addFiles, removeFile, clear, onPaste, onDragOver, onDrop,
+    granted, files, resizedInfo, uploading: inFlight.length > 0, uploadingNames, notice, dismissNotice,
+    addFiles, removeFile, clear, restore, onPaste, onDragOver, onDrop,
   }
 }

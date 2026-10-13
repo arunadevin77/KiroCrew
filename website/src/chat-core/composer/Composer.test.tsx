@@ -167,13 +167,13 @@ describe('Composer capabilities (embedded preset)', () => {
 })
 
 describe('Composer Editor + Send atoms (P3-f)', () => {
-  function Host({ running = false }: { running?: boolean }) {
+  function Host({ running = false, hasAttachments = false, uploading = false }: { running?: boolean; hasAttachments?: boolean; uploading?: boolean }) {
     const [text, setText] = useState('')
     const [sent, setSent] = useState<string[]>([])
     return (
       <Composer slotKey="s" value={text} onChange={setText} capabilities={{ voice: false }}>
         <ComposerEditor aria-label="Editor" />
-        <ComposerSend onSend={() => setSent(s => [...s, text])} running={running} />
+        <ComposerSend onSend={() => setSent(s => [...s, text])} running={running} hasAttachments={hasAttachments} uploading={uploading} />
         <output data-testid="sent">{sent.join('|')}</output>
       </Composer>
     )
@@ -199,6 +199,24 @@ describe('Composer Editor + Send atoms (P3-f)', () => {
     // Visible text, not only colour, glyph and a tooltip.
     expect(send().textContent).toBe('Queue')
     expect(send().title).toBe('Run after the current work finishes')
+  })
+
+  it('staged files alone make a sendable turn, and queue while a turn runs', () => {
+    const { rerender } = render(<Host hasAttachments />)
+    expect(send().disabled).toBe(false)
+    expect(send().dataset.composerSend).toBe('idle')
+    rerender(<Host hasAttachments running />)
+    expect(send().dataset.composerSend).toBe('queue')
+    expect(send().disabled).toBe(false)
+  })
+
+  it('an upload still running refuses the press, with or without text', () => {
+    const { rerender } = render(<Host uploading hasAttachments />)
+    expect(send().disabled).toBe(true)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Editor' }), { target: { value: 'see attached' } })
+    expect(send().disabled).toBe(true)
+    rerender(<Host hasAttachments />)
+    expect(send().disabled).toBe(false)
   })
 
   it('reads a draft store without the host re-rendering', async () => {

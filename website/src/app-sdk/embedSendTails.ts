@@ -42,6 +42,9 @@ export interface SendTail {
    *  this text back out. Absent for a chip send, which never consumed the
    *  draft. */
   restore?: { text: string; before: string; after: string }
+  /** The attachment paths this record handed back to the composer, so proven
+   *  delivery can unstage them instead of inviting a second send. */
+  restoreFiles?: string[]
 }
 
 export interface RetireResult {

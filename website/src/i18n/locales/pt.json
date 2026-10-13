@@ -431,7 +431,7 @@
       "send_message": "Enviar mensagem",
       "session_ready_type_a_message_to_start": "Sessão pronta. Digite uma mensagem para começar.",
       "streaming": "em streaming",
-      "attachments_not_allowed": "Este app não pode anexar arquivos. O autor precisa permitir envios.",
+      "attachments_not_allowed": "Este app não aceita arquivos. Anexe-os em \"{{page}}\".",
       "uploading_files": "Enviando arquivos…"
     },
     "chatMessageList": {

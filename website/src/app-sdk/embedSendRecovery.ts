@@ -45,6 +45,9 @@ export interface PendingEmbedRecovery {
   /** The composer text to hand back, as typed. Absent for a chip send, which
    *  never consumed the draft. */
   restoreText?: string
+  /** The staged attachment paths to hand back with the text. Absent when the
+   *  send carried none, and for a chip send. */
+  restoreFiles?: string[]
 }
 
 /** The parking address: one app's embeds for one slot. `app` is the manifest
