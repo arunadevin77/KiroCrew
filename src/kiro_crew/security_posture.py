@@ -1308,6 +1308,15 @@ _REDACTION_SINKS: tuple[tuple[str, str, str], ...] = (
         "chunked to the channel's own message limit rather than truncated.",
     ),
     (
+        "Unattended channel egress",
+        "messaging/egress.py",
+        "Text pushed to a non-Slack channel without a renderer: the dashboard reply "
+        "mirror, subagent and cron results, and the compaction notice. Control tags "
+        "are stripped, the text is redacted in display form through "
+        "redact_via_context, and each transport chunk is seam-checked with the same "
+        "redactor before send.",
+    ),
+    (
         "Slack Block Kit views",
         "slack/blocks.py",
         "Message text rendered into Block Kit payloads (Home Tab, session views).",

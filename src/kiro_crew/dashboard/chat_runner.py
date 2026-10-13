@@ -111,10 +111,10 @@ from kiro_crew.config.loader import (  # noqa: F401
 )
 from kiro_crew.config.sections import ResolvedBindings
 from kiro_crew.connections import get_visible_providers  # noqa: F401
+from kiro_crew.constants import strip_control_comments  # noqa: F401
 from kiro_crew.constants import (
     STEER_NOTICE_BOUND_SECS,
     reflow_and_label_glued_option_marker,
-    strip_control_comments,
 )
 from kiro_crew.context import prepare_store_vectors
 from kiro_crew.context_blocks import (
@@ -531,6 +531,7 @@ from kiro_crew.messaging.dispatch import (
     rollback_skill_bodies,
 )
 from kiro_crew.messaging.display_safety import redact_for_display
+from kiro_crew.messaging.egress import channel_egress_parts, send_channel_parts
 from kiro_crew.messaging.empty_turn_copy import (
     EMPTY_TURN_NOTICE,
     EMPTY_TURN_NOTICE_AFTER_RECOVERY,
@@ -543,7 +544,7 @@ from kiro_crew.messaging.link import (  # noqa: F401
     parse_session_key,
     telemetry_channel_of,
 )
-from kiro_crew.messaging.renderer import chunk_for_transport, render_options_as_text
+from kiro_crew.messaging.renderer import chunk_for_transport  # noqa: F401
 from kiro_crew.metrics.events import TURN_TIMEOUT_CAUSE, emit_counter
 from kiro_crew.metrics.provider import get_recorder
 from kiro_crew.metrics.turns import emit_turn_duration, emit_turn_usage, turn_outcome
@@ -3570,50 +3571,17 @@ async def _deliver_cross_surface_reply(
     if target is None:
         return
     link, transport = target
-    # Redact through the canonical egress shim so a loaded companion's extra
-    # credential/token regexes apply (not just the OSS baseline) -- wrapped in the
-    # DISPLAY-form floor for the reason spelled out at the Slack leg's own
-    # chokepoint (``slack/gateway.py``): this leg does not pass a RENDERER, and a
-    # renderer is where a turn normally gets that floor. A literal-only scan lets a
-    # markdown-collapse credential (``AKIA**...**``, which the client reassembles
-    # whole on screen) reach the channel. ``redact_via_context`` stays the redactor
-    # rather than the neutral ``display_safe``, because it is context-aware and the
-    # shared sink's default pair would silently drop that.
-    #
-    # Strip trailing control-tag lines first: this leg mirrors a
-    # dashboard turn — a marker-taught session — to a channel whose client
-    # renders HTML comments literally. Strip-then-redact matches display_safe.
-    text, _ = redact_for_display(strip_control_comments(assistant_text), redact_via_context)
-    # ``send_message`` takes no choices, so the mirror builds no button: number the
-    # ``[OPTIONS:]`` choices rather than ship the raw marker.
-    text = render_options_as_text(text, transport.capabilities)
-    # Split on the channel's max message length so a long reply mirrors in full
-    # rather than being hard-truncated by the transport (Telegram caps at 4096,
-    # and its client slices at that width), matching the Slack leg's chunking.
-    #
-    # ``chunk_for_transport`` measures in the transport's OWN unit -- bytes for a
-    # byte-capped channel (Webex), chars otherwise -- and is fence-safe on both
-    # paths: a blind slice through a code block leaves part two with no opener, so
-    # every line in it reads as prose and a channel's dialect converter rewrites
-    # the `**`, `#` and `- ` INSIDE the code. Cron log and diff dumps are exactly
-    # that shape. The shared splitter seals each chunk with a synthetic closer and
-    # reopens the next with the original opener line, so each part stands alone.
-    # ``redactor=redact_via_context``: the seam check must grade with the SAME
-    # context-aware pair the display redaction above uses, not the shared sink's
-    # default -- a companion-contributed credential split across a transport seam
-    # is invisible to the narrower default pair and would ship whole across two
-    # adjacent messages.
-    parts = await asyncio.to_thread(
-        chunk_for_transport, text, transport.capabilities, redactor=redact_via_context
-    )
+    # Strip, display-redact, number the ``[OPTIONS:]`` choices (``send_message``
+    # takes none, so the mirror builds no button), chunk and send: the shared
+    # unattended-egress leg, ``messaging.egress``. Chunking keeps a long reply
+    # whole rather than hard-truncated by the transport (Telegram caps at 4096).
+    parts = await channel_egress_parts(assistant_text, transport.capabilities, number_options=True)
     try:
-        for part in parts:
-            await transport.send_message(link.channel_id, part, thread_id=link.thread_id)
+        await send_channel_parts(transport, link.channel_id, parts, thread_id=link.thread_id)
         logger.info(
-            "cross-surface: mirrored reply to %s:%s (%d chars, %d part(s))",
+            "cross-surface: mirrored reply to %s:%s (%d part(s))",
             link.channel_type,
             link.channel_id,
-            len(text),
             len(parts),
         )
     except Exception:

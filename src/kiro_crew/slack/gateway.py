@@ -119,7 +119,6 @@ from kiro_crew.config.paths import kiro_agents_dir
 from kiro_crew.constants import (
     NO_TOOL_CALLS_NOTE,
     SUBAGENT_COMPLETION_META_KEY,
-    strip_control_comments,
 )
 from kiro_crew.context import ContextBuilder, session_store_for_turn
 from kiro_crew.context_management import summarize_result
@@ -289,6 +288,7 @@ from kiro_crew.messaging.dispatch import (
     stop_reason_landed,
 )
 from kiro_crew.messaging.display_safety import redact_for_display
+from kiro_crew.messaging.egress import channel_egress_parts, send_channel_parts
 from kiro_crew.messaging.identity import channel_inbound_permitted, publish_turn_identity
 from kiro_crew.messaging.link import (  # noqa: F401
     CHANNEL_SESSION_NAMESPACES,
@@ -306,7 +306,7 @@ from kiro_crew.messaging.renderer import (  # noqa: F401
     display_safe,
 )
 from kiro_crew.messaging.spawn_approval_delivery import deliver_spawn_approval
-from kiro_crew.messaging.transport import InboundMessage, delivery_confirmed
+from kiro_crew.messaging.transport import InboundMessage
 from kiro_crew.monitoring.completion import (
     MonitorCompletionHook,
     disposition_for_stop_reason,
@@ -2988,63 +2988,26 @@ class GatewayOrchestrator:
                 if not dm_target or not dm_target[0]:
                     return False
                 conversation_id = dm_target[0]
-            # Redact through the canonical egress shim so a loaded companion's
-            # extra credential/token regexes apply, then split on the
-            # channel's max message length, mirroring the cross-surface
-            # mirror leg.
-            #
-            # Wrapped in the DISPLAY-form floor, because this is the chokepoint
+            # Strip, display-redact, chunk and send through the shared
+            # unattended-egress leg (``messaging.egress``): this is the chokepoint
             # every proactive channel egress passes (cron results, cron failure
-            # and crash alerts, subagent completions) and NONE of them passes a
-            # renderer -- the renderers are where a turn gets that floor. A
-            # literal-only scan here would let a markdown-collapse credential
-            # (`AKIA**...**`, which the client renders whole) reach the channel,
-            # and every caller would inherit that gap rather than each one
-            # carrying the floor itself.
-            # ``redact_via_context`` stays the redactor rather than the neutral
-            # ``display_safe``: it is context-aware, and the shared sink's default
-            # pair would silently drop that.
-            #
-            # Trailing control-tag lines are stripped FIRST: this is the
-            # proactive egress chokepoint for cron results and subagent
-            # completions authored under dashboard rules, and Slack renders
-            # HTML comments literally. Strip-then-redact matches display_safe.
-            safe_text, _ = redact_for_display(strip_control_comments(text), redact_via_context)
-            # ``chunk_for_transport``: the transport's OWN unit (bytes for a
-            # byte-capped channel like Webex, chars otherwise) and fence-safe on
-            # both paths. A blind slice through a code block leaves part two with
-            # no opener, so every line reads as prose and a channel's dialect
-            # converter rewrites the `**`, `#` and `- ` INSIDE the code -- a
-            # sub-agent's diff or log dump is exactly that shape. The shared
-            # splitter seals each chunk with a synthetic closer and reopens the
-            # next with the original opener line.
-            # ``redactor=redact_via_context``: the seam check must grade with the
-            # SAME context-aware pair the display pass above uses, not the shared
-            # sink's default -- a companion-contributed credential split across a
-            # transport seam is invisible to the narrower default pair and would
-            # ship whole across two adjacent messages.
-            parts = await asyncio.to_thread(
-                chunk_for_transport,
-                safe_text,
-                transport.capabilities,
-                redactor=redact_via_context,
-            )
-            for part in parts:
-                # Stop on the first UNCONFIRMED part rather than pressing on: the
-                # remaining chunks of a message whose head never landed would arrive
-                # as an orphaned fragment. `delivery_confirmed` owns which of the two
-                # id conventions this transport follows.
-                sent = await transport.send_message(
-                    conversation_id, part, thread_id=resolved.thread_id
+            # and crash alerts, subagent completions), and none of them passes a
+            # renderer. Stop on the first UNCONFIRMED part rather than pressing on.
+            parts = await channel_egress_parts(text, transport.capabilities)
+            if not await send_channel_parts(
+                transport,
+                conversation_id,
+                parts,
+                thread_id=resolved.thread_id,
+                require_confirmation=True,
+            ):
+                logger.warning(
+                    "%s reply: %s returned no message id for %s; treating as undelivered",
+                    caller,
+                    link.channel_type,
+                    parent_key,
                 )
-                if not delivery_confirmed(transport.capabilities, sent):
-                    logger.warning(
-                        "%s reply: %s returned no message id for %s; treating as undelivered",
-                        caller,
-                        link.channel_type,
-                        parent_key,
-                    )
-                    return False
+                return False
         except Exception:
             logger.warning(
                 "%s reply: %s delivery failed for %s",
