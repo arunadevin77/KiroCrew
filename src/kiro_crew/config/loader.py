@@ -176,6 +176,7 @@ from kiro_crew.config.section_builders import (  # noqa: F401
     _build_memory_config,
     _build_messaging_config,
     _build_monitoring_config,
+    _build_power_config,
     _build_publish_config,
     _build_session_summary_config,
     _build_skills_config,
@@ -383,6 +384,7 @@ from kiro_crew.config.sections import (  # noqa: F401
     resolve_selected_backend,
     yolo_duration_to_secs,
 )
+from kiro_crew.config.service_sections import PowerConfig
 
 # Superseded-default registry. Leaf module: stdlib only, so importing it
 # here creates no cycle. The same module owns the one-shot adoption of the
@@ -3977,6 +3979,10 @@ class KiroCrewConfig:
         default_factory=WatchdogConfig,
         metadata=_meta("Watchdog", "ACP per-session watchdog / liveness-oracle windows."),
     )
+    power: PowerConfig = field(
+        default_factory=PowerConfig,
+        metadata=_meta("Power", "What Knowledge Library sweeps do while on battery."),
+    )
     resource_limits: ResourceLimitsConfig = field(
         default_factory=ResourceLimitsConfig,
         metadata=_meta(
@@ -4398,6 +4404,7 @@ class KiroCrewConfig:
             "mcp": asdict(self.mcp),
             "taskrunner": asdict(self.taskrunner),
             "watchdog": asdict(self.watchdog),
+            "power": asdict(self.power),
             "resource_limits": asdict(self.resource_limits),
             "messaging": asdict(self.messaging),
             "cron_history": asdict(self.cron_history),
@@ -5727,6 +5734,7 @@ def build_config(
     messaging_data = _coerced_section(data, "messaging", _degraded)
     telemetry_data = _coerced_section(data, "telemetry", _degraded)
     watchdog_data = _coerced_section(data, "watchdog", _degraded)
+    power_data = _coerced_section(data, "power", _degraded)
     decisions_data = _coerced_section(data, "decisions", _degraded)
     resource_limits_data = _coerced_section(data, "resource_limits", _degraded)
 
@@ -5910,6 +5918,7 @@ def build_config(
         # passes this kwarg — without it config.json values would be
         # silently ignored and the dataclass defaults would always win.
         watchdog=_build_watchdog_config(watchdog_data),
+        power=_build_power_config(power_data),
         resource_limits=ResourceLimitsConfig.from_raw(resource_limits_data),
         telemetry=_build_telemetry_config(telemetry_data),
         memory=_build_memory_config(memory_data),

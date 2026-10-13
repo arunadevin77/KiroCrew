@@ -74,6 +74,7 @@ _KNOWN_CONFIG_SECTIONS: frozenset = frozenset(
         "mcp",
         "taskrunner",
         "watchdog",
+        "power",
         "resource_limits",
         "messaging",
         "cron_history",
