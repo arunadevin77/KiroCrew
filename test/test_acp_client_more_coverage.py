@@ -24,6 +24,7 @@ import pytest
 from stray_line_helpers import too_deep_to_decode as _too_deep_to_decode
 
 import kiro_crew.acp.client as acp_client
+import kiro_crew.acp.skill_reads as skill_reads
 from kiro_crew import model_registry as mr
 from kiro_crew.acp._dispatch import UNSERIALISABLE_SIBLING_VALUE
 from kiro_crew.acp.client import (
@@ -48,6 +49,7 @@ from kiro_crew.acp.client import (
     advertised_model_ids,
     resolve_usable_model,
 )
+from kiro_crew.acp.skill_reads import _MAX_NOTED_SKILL_READS, _call_key
 from kiro_crew.acp.types import (
     ACP_BACKEND_CLAUDE,
     ACP_BACKEND_CODEX,
@@ -1758,51 +1760,52 @@ class TestSkillReadTelemetry:
     @pytest.mark.asyncio
     async def test_noted_set_is_capped_then_credited_on_completion(self, tmp_path, monkeypatch):
         observer = _Observer(keys=["demo"])
-        monkeypatch.setattr(acp_client, "get_global_skill_read_observer", lambda: observer)
+        monkeypatch.setattr(skill_reads, "get_global_skill_read_observer", lambda: observer)
         client = _client(tmp_path)
-        client._skill_read_noted = {f"old-{i}" for i in range(acp_client._MAX_NOTED_SKILL_READS)}
-        client._pending_skill_reads = {"old-0": ["stale"]}
+        client._skill_reads.noted = {f"old-{i}" for i in range(_MAX_NOTED_SKILL_READS)}
+        client._skill_reads.pending = {"old-0": ["stale"]}
 
-        await client._maybe_note_skill_read(_skill_call())
+        await client._skill_reads.note(_skill_call())
 
-        assert client._skill_read_noted == {"tc-1"}  # cleared wholesale, then re-seeded
-        assert client._pending_skill_reads == {"tc-1": ["demo"]}
+        # cleared wholesale, then re-seeded under the call's fixed-size key
+        assert client._skill_reads.noted == {_call_key("tc-1")}
+        assert client._skill_reads.pending == {_call_key("tc-1"): ["demo"]}
 
-        client._maybe_credit_skill_read(
+        client._skill_reads.credit(
             AcpEvent(kind=EVENT_TOOL_RESULT, tool_call_id="tc-1", tool_final=True)
         )
 
         assert observer.credited == [["demo"]]
-        assert client._pending_skill_reads == {}
+        assert client._skill_reads.pending == {}
 
     @pytest.mark.asyncio
     async def test_resolution_failure_leaves_nothing_pending(self, tmp_path, monkeypatch):
         observer = _Observer(resolve_exc=RuntimeError("skills tree unreadable"))
-        monkeypatch.setattr(acp_client, "get_global_skill_read_observer", lambda: observer)
+        monkeypatch.setattr(skill_reads, "get_global_skill_read_observer", lambda: observer)
         client = _client(tmp_path)
 
-        await client._maybe_note_skill_read(_skill_call("tc-2"))
+        await client._skill_reads.note(_skill_call("tc-2"))
 
-        assert client._pending_skill_reads == {}
+        assert client._skill_reads.pending == {}
 
     def test_credit_is_skipped_without_an_observer(self, tmp_path, monkeypatch):
         client = _client(tmp_path)
-        client._pending_skill_reads = {"tc-3": ["demo"]}
-        monkeypatch.setattr(acp_client, "get_global_skill_read_observer", lambda: None)
+        client._skill_reads.pending = {_call_key("tc-3"): ["demo"]}
+        monkeypatch.setattr(skill_reads, "get_global_skill_read_observer", lambda: None)
 
-        client._maybe_credit_skill_read(
+        client._skill_reads.credit(
             AcpEvent(kind=EVENT_TOOL_RESULT, tool_call_id="tc-3", tool_final=True)
         )
 
-        assert client._pending_skill_reads == {}  # popped, but nothing delivered
+        assert client._skill_reads.pending == {}  # popped, but nothing delivered
 
     def test_credit_failure_is_swallowed(self, tmp_path, monkeypatch):
         observer = _Observer(credit_exc=RuntimeError("ledger locked"))
-        monkeypatch.setattr(acp_client, "get_global_skill_read_observer", lambda: observer)
+        monkeypatch.setattr(skill_reads, "get_global_skill_read_observer", lambda: observer)
         client = _client(tmp_path)
-        client._pending_skill_reads = {"tc-4": ["demo"]}
+        client._skill_reads.pending = {_call_key("tc-4"): ["demo"]}
 
-        client._maybe_credit_skill_read(
+        client._skill_reads.credit(
             AcpEvent(kind=EVENT_TOOL_RESULT, tool_call_id="tc-4", tool_final=True)
         )
 

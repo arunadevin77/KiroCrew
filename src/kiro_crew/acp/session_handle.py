@@ -118,6 +118,7 @@ from kiro_crew.acp.mcp_session_report import (
     sanitize_sink_text,
 )
 from kiro_crew.acp.prompt_blocks import build_prompt_blocks, summarize_prompt_structure
+from kiro_crew.acp.skill_reads import SkillReadTracker
 from kiro_crew.acp.types import (
     ACP_BACKEND_KAS,
     ACP_BACKEND_KIRO,
@@ -147,6 +148,7 @@ from kiro_crew.acp.types import (
     EVENT_TEXT_CHUNK,
     EVENT_TODO_UPDATE,
     EVENT_TOOL_CALL,
+    EVENT_TOOL_CALL_UPDATE,
     EVENT_TOOL_RESULT,
     JSONRPC_METHOD_NOT_FOUND,
     METHOD_CANCEL,
@@ -1387,6 +1389,11 @@ class AcpSessionHandle:
         # raw_tool_params for the governance keystone (sensitive-path /
         # write-protected-config) checks. Mirrors AcpClient's _tool_call_params.
         self._tool_call_raw_params: dict[str, dict] = {}
+        # Skill bodies this session's tool calls read directly, credited to the
+        # usage ledger once each read completes. The same tracker AcpClient
+        # owns, so a backend served by the shared runtime earns the credit a
+        # per-process one does. Same per-turn lifecycle as the caches above.
+        self._skill_reads = SkillReadTracker()
         # toolCallId -> path named by the tool_call's diff content block, so the
         # permission event can carry diff_path for the edit gate when the
         # params themselves carry no path key. Same lifecycle as the caches above.
@@ -1894,6 +1901,7 @@ class AcpSessionHandle:
         self._tool_call_input_redacted.clear()
         self._tool_call_is_shell.clear()
         self._tool_call_raw_params.clear()
+        self._skill_reads.clear()
         self._tool_call_diff_path.clear()
         self._tool_call_kind.clear()
         self._tool_call_cache_overflow.clear()
@@ -5622,6 +5630,16 @@ class AcpSessionHandle:
                         # consumer that stops pulling: the call already ran, and this
                         # is the only in-band notice that it did.
                         self._tripwire_spec_disabled_tool(ev, msg)
+                        # Skill-read credit, awaited per frame so a call is noted
+                        # before its completion frame can arrive. The initial
+                        # tool_call and its refinement are both noted (the
+                        # arguments may ride either); the tracker dedupes by id.
+                        # Child-routed frames surface as subagent activity, not
+                        # these kinds, so a native child's reads are not credited.
+                        if ev.kind in (EVENT_TOOL_CALL, EVENT_TOOL_CALL_UPDATE):
+                            await self._skill_reads.note(ev)
+                        elif ev.kind == EVENT_TOOL_RESULT:
+                            self._skill_reads.credit(ev)
                         # After the tripwire read the row: a terminal frame settles
                         # the call, and its provenance is released so the caches
                         # hold calls in flight, not the turn's history.

@@ -4282,13 +4282,20 @@ canonical rule as `resolve_ledger_aliases` (real file beats symlink, then
 alphabetical), so a read through a symlinked skill lands on the key the Context
 Budget screen displays instead of splitting one file's cost.
 
-Observation sits in the **ACP client**, registered process-wide via
+Observation sits in the **ACP layer**, registered process-wide via
 `set_global_skill_read_observer` — the same module-level-slot pattern as
 `get_global_hook_store`. That layer is the only one that sees every surface's
 tool calls (dashboard, Slack, subagents, task runner); wiring it per surface
 would have left subagent reads uncounted, which is a skewed ledger rather than a
-partial one. The per-surface permission gate (`HookManager.on_tool_call`) is NOT
-usable here: file reads are auto-approved and never reach it.
+partial one. A session reaches that layer by one of two transports — `AcpClient`
+(one process per session) or `AcpSessionHandle` on the shared `AcpRuntime`
+process (kiro-cli, KAS, codex) — and both own one `acp/skill_reads.py`
+`SkillReadTracker` fed from their dispatch loops, so the credit a backend earns
+does not depend on the transport that serves it. Wiring only the client left
+every shared-runtime read uncounted: the same route-dependent bias, by
+transport instead of surface. The per-surface permission gate
+(`HookManager.on_tool_call`) is NOT usable here: file reads are auto-approved and
+never reach it.
 
 Registration goes through one helper, `register_skill_read_observer` in
 `skill_usage.py` — a leaf module, so no runtime imports another surface just to
@@ -4308,14 +4315,14 @@ pre-existing undercount. A call whose arguments clearly name a `SKILL.md` yet
 yields no candidate is therefore logged at debug — the one signal that separates
 tool-name drift from a legitimately non-reading call.
 
-`_maybe_note_skill_read` resolves at the tool call and **offloads to a thread** —
+`SkillReadTracker.note` resolves at the tool call and **offloads to a thread** —
 resolution resolves every served skill, which on the event loop would stall every
 session in the gateway. It does not walk the tree after cache expiry (the
 snapshot serves the list and expiry only schedules a re-walk), but the resolution
 itself is still per-skill filesystem work and stays off the loop. Both the
 initial `tool_call` and its `tool_call_update` refinement are observed, since
 which one carries `rawInput` is provider-specific, deduped by `tool_call_id`.
-`_maybe_credit_skill_read` then records only on a `status == "completed"` result
+`SkillReadTracker.credit` then records only on a `status == "completed"` result
 (`tool_final`), so a read that was denied, errored, or never ran leaves no
 delivery; that call is in-memory and safe inline. A cheap `SKILL.md` substring
 gate runs before the offload, so a tool call touching no skill costs a substring

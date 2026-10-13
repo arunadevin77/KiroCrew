@@ -133,6 +133,7 @@ from kiro_crew.acp.runtime_models import (
 )
 from kiro_crew.acp.runtime_process_tree import ChildRecord
 from kiro_crew.acp.session_mcp import agent_spec_snapshot, session_mcp_deny_rules
+from kiro_crew.acp.skill_reads import SkillReadTracker
 from kiro_crew.acp.transport_errors import (
     AcpAuthRequired,
     AcpError,
@@ -322,7 +323,7 @@ from kiro_crew.security import is_sensitive_path, redact_credentials, redact_exf
 from kiro_crew.security.credential_sources import tool_output_fingerprints
 from kiro_crew.sel import sel
 from kiro_crew.session_token_sig import schedule_session_token_publish
-from kiro_crew.skill_usage import get_global_skill_read_observer, names_skill_file
+from kiro_crew.skill_usage import get_global_skill_read_observer  # noqa: F401  (facade surface)
 from kiro_crew.trust_patterns import GrantDeadline, GrantEnded, grant_deadline_guard
 from kiro_crew.turn_limit import current_turn_limit_secs
 from kiro_crew.user_json import loads_user_json
@@ -1348,12 +1349,6 @@ _MAX_CONSECUTIVE_EMPTY = 5
 _MAX_CACHED_TOOL_PARAMS = 256
 
 
-#: Backstop on the per-session set of tool-call ids already credited as skill
-#: reads. Far above any real turn's distinct skill reads; bounds memory for a
-#: long-lived session at the cost of at most one duplicate credit after a reset.
-_MAX_NOTED_SKILL_READS = 512
-
-
 # Emitted by kiro-cli as a plain agent_message_chunk when its built-in, non-overridable
 # security filter cancels every tool use in an assistant turn (e.g. shell commands
 # containing "credentials").  After this text kiro-cli returns to an idle state waiting
@@ -2224,14 +2219,11 @@ class AcpClient:
         # be refused rather than answered blind. Mirrors _tool_call_is_shell's
         # lifecycle.
         self._tool_call_unclassified: dict[str, bool] = {}
-        # toolCallIds already credited to the skill-usage ledger as a body read.
-        # The arguments arrive on either the initial tool_call or its refinement
-        # depending on the provider, so both are observed and this prevents one
-        # read being counted twice. Mirrors _tool_call_is_shell's lifecycle.
-        self._skill_read_noted: set[str] = set()
-        # toolCallId -> skill keys resolved at call time, credited only when
-        # the tool reports completion so a denied read leaves no delivery.
-        self._pending_skill_reads: dict[str, list[str]] = {}
+        # Skill bodies this session's tool calls read directly, credited to the
+        # usage ledger once each read completes. Shared with AcpSessionHandle so
+        # the credit does not depend on the transport. Mirrors
+        # _tool_call_is_shell's lifecycle.
+        self._skill_reads = SkillReadTracker()
         # Map toolCallId → trusted MCP server name (_meta.kiro.mcpServerName),
         # cached from the tool_call notification so the later permission_request
         # event (which carries no _meta) can inherit it — the signal the
@@ -9243,8 +9235,7 @@ class AcpClient:
         self._tool_call_input_redacted.clear()
         self._tool_call_is_shell.clear()
         self._tool_call_unclassified.clear()
-        self._skill_read_noted.clear()
-        self._pending_skill_reads.clear()
+        self._skill_reads.clear()
         self._tool_call_mcp_server.clear()
         self._tool_call_tool_name.clear()
         self._tool_call_harness_tool_name.clear()
@@ -9449,7 +9440,7 @@ class AcpClient:
                     # with the main agent / SubagentManager. PostToolUse fires
                     # separately on the tool_result branch below (fire_tool_hooks
                     # is Pre-only). No-op unless audit_source is set.
-                    await self._maybe_note_skill_read(tool_event)
+                    await self._skill_reads.note(tool_event)
                     await self._maybe_fire_pre_tool_hooks(tool_event)
                     yield tool_event
                 # Real-time tool result from `tool_call_update` session updates.
@@ -9470,7 +9461,7 @@ class AcpClient:
                     # (and its output) exists — the Pre-vs-Post split is required
                     # because fire_tool_hooks above is PreToolUse-only. No-op
                     # unless audit_source is set.
-                    self._maybe_credit_skill_read(tool_result_event)
+                    self._skill_reads.credit(tool_result_event)
                     await self._maybe_fire_post_tool_hooks(tool_result_event)
                     self._tripwire_spec_disabled_tool(tool_result_event)
                     yield tool_result_event
@@ -9482,7 +9473,7 @@ class AcpClient:
                 # patched in place — see `EVENT_TOOL_CALL_UPDATE` in chat_runner.
                 tool_refine_event = self._extract_tool_call_refinement(msg)
                 if tool_refine_event:
-                    await self._maybe_note_skill_read(tool_refine_event)
+                    await self._skill_reads.note(tool_refine_event)
                     yield tool_refine_event
             elif action == "metadata":
                 self._track_metadata(msg)
@@ -10225,13 +10216,13 @@ class AcpClient:
                             tool_event.tool_kind or "",
                         )
                     await self._maybe_audit_tool_call(tool_event)
-                    await self._maybe_note_skill_read(tool_event)
+                    await self._skill_reads.note(tool_event)
                     await self._maybe_fire_pre_tool_hooks(tool_event)
                 await self._tripwire_pi_gate(msg)
                 await self._tripwire_goose_mode(msg)
                 tool_result_event = self._extract_tool_call_update(msg)
                 if tool_result_event:
-                    self._maybe_credit_skill_read(tool_result_event)
+                    self._skill_reads.credit(tool_result_event)
                     await self._maybe_fire_post_tool_hooks(tool_result_event)
                     self._tripwire_spec_disabled_tool(tool_result_event)
             elif action == "metadata":
@@ -10986,85 +10977,6 @@ class AcpClient:
             )
         except Exception:
             logger.warning("ACP-layer SEL audit failed", exc_info=True)
-
-    async def _maybe_note_skill_read(self, tool_event: "AcpEvent") -> None:
-        """Resolve which skills a tool call is about to read, crediting later.
-
-        Lives here because the ACP layer is the one place that sees EVERY
-        surface's tool calls — dashboard, Slack, subagents, task runner. The
-        per-surface permission gate (``HookManager.on_tool_call``) is not usable
-        for this: file reads are auto-approved, so they never reach it.
-
-        Resolution is filesystem-bound (a skills-tree walk after cache expiry,
-        plus a ``resolve()`` per served skill), so it is offloaded to a thread —
-        on the event loop it would stall every session in the gateway. Nothing
-        is recorded here: the keys are held until ``_maybe_credit_skill_read``
-        sees the tool complete, so a denied or failed read leaves no delivery.
-
-        Fires for the initial ``tool_call`` and its ``tool_call_update``
-        refinement, whichever first carries the arguments (claude-agent-acp
-        leaves ``rawInput`` empty on the initial notification), deduped by
-        ``tool_call_id``.
-
-        Gated on the skill basename appearing in the arguments BEFORE any
-        offload, so a tool call unrelated to skills costs one substring scan.
-        Whether the call is a content-delivering READ (rather than a delete,
-        move, or grep that merely names the path) is decided by the observer.
-        Failures are swallowed: telemetry must not disturb the tool call.
-        """
-        observer = get_global_skill_read_observer()
-        if observer is None:
-            return
-        tool_id = tool_event.tool_call_id or ""
-        if tool_id and tool_id in self._skill_read_noted:
-            return
-        raw_params = tool_event.raw_tool_params
-        command = tool_event.shell_command
-        if not names_skill_file(raw_params, command):
-            return
-        if tool_id:
-            if len(self._skill_read_noted) >= _MAX_NOTED_SKILL_READS:
-                # A single turn cannot legitimately hold this many distinct
-                # skill reads; drop the tracking wholesale rather than letting
-                # it grow for the life of the session. Worst case after a reset
-                # is one duplicate credit, not a leak.
-                self._skill_read_noted.clear()
-                self._pending_skill_reads.clear()
-            self._skill_read_noted.add(tool_id)
-        try:
-            keys = await asyncio.to_thread(
-                observer.resolve_tool_read_keys,
-                tool_event.tool_name or "",
-                raw_params,
-                command,
-            )
-        except Exception:
-            logger.warning("skill-read resolution failed", exc_info=True)
-            return
-        if keys and tool_id:
-            self._pending_skill_reads[tool_id] = keys
-
-    def _maybe_credit_skill_read(self, tool_result_event: "AcpEvent") -> None:
-        """Credit the reads resolved for a tool call that has now completed.
-
-        Only a ``status == "completed"`` result (``tool_final``) credits, so a
-        read that was denied, errored, or never ran contributes no delivery.
-        In-memory only — the ledger debounces its own disk write — so this is
-        safe to run inline on the event loop.
-        """
-        if not tool_result_event.tool_final:
-            return
-        tool_id = tool_result_event.tool_call_id or ""
-        keys = self._pending_skill_reads.pop(tool_id, None) if tool_id else None
-        if not keys:
-            return
-        observer = get_global_skill_read_observer()
-        if observer is None:
-            return
-        try:
-            observer.credit_skill_reads(keys)
-        except Exception:
-            logger.warning("skill-read credit failed", exc_info=True)
 
     async def _maybe_fire_pre_tool_hooks(self, tool_event: "AcpEvent") -> None:
         """Fire the PreToolUse HOOK ENGINE for a tool_call, for audit-source clients.
