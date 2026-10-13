@@ -429,11 +429,14 @@ re-queue it. In A -> B -> C, a crash after B named A but before A was repaired l
 supersede names only B. A hop whose tail was already closed says nothing about the hop before it, so
 the walk does not stop there. Each hop is its own queued job with every guard the first hop has: the
 wait behind what that log still owes, the live-turn stand-down and the same-slot header re-check. A hop
-that stands down or refuses ends the walk. The walk also stops at three points: a log already on this
+that stands down or refuses ends the walk. The walk also stops at four points: a log already on this
 walk (a loop, reachable only through a damaged or hand-edited entry, logged as a warning); a log this
 process already repaired, whose own walk went on from it (silent, so a long-lived slot's history is not
-rescanned on every supersede); and a bound of 32 logs, logged with the log it stopped before, because
-every hop is a whole-file scan on the writer thread.
+rescanned on every supersede); a bound of 32 logs, logged with the log it stopped before, because
+every hop is a whole-file scan on the writer thread; and a hop whose header, read before it is queued,
+does not name this slot. That last stop is quiet when the log is gone or its header is unreadable,
+because retention removing the oldest logs is how an old chain normally ends, and logged as a warning
+when the header names another slot.
 
 The read side is `session/opened.data.previous` itself, folded into the `status` projection and served
 by the existing projection route. A reader that wants the SLOT rather than the session folds the newest

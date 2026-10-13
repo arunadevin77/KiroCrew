@@ -5730,6 +5730,59 @@ def test_the_walk_stops_at_its_hop_bound_with_a_logged_stop(monkeypatch, caplog)
     assert chain[1] in stops[0], "the stop did not name the log it stopped before"
 
 
+def test_a_walk_that_reaches_a_log_retention_removed_ends_quietly(caplog):
+    """The ordinary end of an old chain is not reported as damage.
+
+    Retention removes a long-lived slot's oldest crew logs, so the walk reaching a
+    log that is gone is how most chains end, on every restart. The walk reads the
+    hop's header before queueing it and stops there; queueing it anyway would have
+    the repair warn that it is not closing a log that is already gone.
+
+    Mutation guard: removing the header read before the hop is queued brings back
+    the repair's "NOT closing" warning for the removed log.
+    """
+    chain = ["acp-sess-0001", "acp-sess-0002", "acp-sess-0003"]
+    _chain_of_open_tails(chain[:2])
+    _remove_as_retention_does(lambda: shutil.rmtree(_log_path(chain[0]).parent))
+
+    with caplog.at_level(logging.WARNING, logger="kiro_crew.crew_log.emit"):
+        _open_on_chat_7(chain[2], previous_sid=chain[1])
+        assert emit.flush()
+
+    assert len(_closers(chain[1])) == 1, "the hop that still exists was not closed"
+    warned = [r.getMessage() for r in caplog.records if chain[0] in r.getMessage()]
+    assert warned == [], f"the removed log was reported as damage: {warned}"
+
+
+def test_a_walk_does_not_follow_an_edge_to_another_slots_log(monkeypatch, caplog):
+    """A hop whose own header names another slot ends the walk, and says so.
+
+    The emitter refuses to write such an edge, but a damaged or older entry can
+    carry one, and following it would author an outcome into another slot's log.
+
+    Mutation guard: queueing the hop without reading its header leaves the other
+    slot's log unclosed as well (the repair refuses it), but the walk's own warning
+    naming the edge is missing.
+    """
+    foreign = "acp-sess-0009"
+    emit.on_session_opened(foreign, agent="kirocrew", slot="chat-8", owner="default")
+    emit.on_turn_started(foreign, 1, "user")
+    assert emit.flush()
+    _chain_of_open_tails(["acp-sess-0001"])
+    monkeypatch.setattr(
+        emit, "_durable_previous", lambda sid: foreign if sid == "acp-sess-0001" else ""
+    )
+
+    with caplog.at_level(logging.WARNING, logger="kiro_crew.crew_log.emit"):
+        emit._queue_tail_repair("acp-sess-0001", "chat-7")
+        assert emit.flush()
+
+    assert len(_closers("acp-sess-0001")) == 1
+    assert _closers(foreign) == [], "another slot's log was closed"
+    stops = [r.getMessage() for r in caplog.records if "names another slot" in r.getMessage()]
+    assert len(stops) == 1, f"the foreign edge was not reported exactly once: {stops}"
+
+
 def test_a_second_supersede_in_one_process_does_not_rewalk_the_chain(monkeypatch):
     """Each crew log is walked once per process, not once per supersede.
 

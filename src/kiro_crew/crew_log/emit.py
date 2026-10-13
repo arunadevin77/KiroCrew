@@ -2095,7 +2095,7 @@ def _walk_to_predecessor(repaired_sid: str, slot: str, walked: "tuple[str, ...]"
     refuses ends the walk there, because a log not known to be this slot's is not one
     whose edge may be followed.
 
-    Three stops, checked in this order:
+    Four stops, checked in this order:
 
     * **A loop.** The next hop is already on this walk. The emitter refuses to WRITE
       such an edge, but this reads files any earlier build wrote, and a damaged or
@@ -2105,6 +2105,10 @@ def _walk_to_predecessor(repaired_sid: str, slot: str, walked: "tuple[str, ...]"
       whole history. Silent, because this is the ordinary case for a long-lived slot.
     * **The bound** (:data:`_REPAIR_WALK_HOPS`). Logged, naming the log the walk
       stopped before, so a tail left open past it is reported rather than hidden.
+    * **A hop that is not this slot's.** Its header is read before the hop is
+      queued. A log that is gone, or whose header cannot be read, ends the walk
+      quietly, because retention removing the oldest logs is how an old chain
+      normally ends. A header naming ANOTHER slot is damage and is logged.
     """
     walked = (*walked, repaired_sid)
     with _lock:
@@ -2135,6 +2139,31 @@ def _walk_to_predecessor(repaired_sid: str, slot: str, walked: "tuple[str, ...]"
             slot,
             _REPAIR_WALK_HOPS,
             following,
+        )
+        return
+    # The same header comparison `_candidate_is_same_slot` makes, read here so the
+    # two failures can be told apart. The repair re-checks it next to its write.
+    from kiro_crew.crew_log.store import unit_header_slot
+
+    owner = unit_header_slot(_KIND, following)
+    if owner is None:
+        # Retention removing the oldest logs is the ordinary end of a long-lived
+        # slot's chain, so it ends the walk quietly: queueing the hop would only
+        # have the repair warn about a gone log on every restart.
+        logger.debug(
+            "session log %s: the predecessor walk ends at %s -- its crew log is gone "
+            "or its header cannot be read",
+            slot,
+            following,
+        )
+        return
+    if owner != slot:
+        logger.warning(
+            "session log %s: the predecessor walk stops at %s -- crew log %s names it, "
+            "but its own header names another slot, so the edge is not followed",
+            slot,
+            following,
+            repaired_sid,
         )
         return
     _queue_tail_repair(following, slot, walked=walked)
