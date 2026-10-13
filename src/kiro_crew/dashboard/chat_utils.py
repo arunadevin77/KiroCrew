@@ -2324,8 +2324,12 @@ def _redact_meta_for_role(role: str, meta: dict) -> dict:
 # ``SLOT_DETAIL_MAX_LIMIT`` in ``website/src/store/chat/paging.ts``.
 SLOT_DETAIL_MAX_LIMIT = 500
 _DISPLAY_REDACTION_STRINGS_PER_ROW = 8
-_DISPLAY_REDACTION_CACHE_MAX_ENTRIES = (
-    SLOT_DETAIL_MAX_LIMIT * _DISPLAY_REDACTION_STRINGS_PER_ROW * 2
+# The entry cap must also hold the strings the battery DOES change across the
+# sessions a reader moves between: 39 real dashboard transcripts held 35.6k of
+# them, so the old 8,000-entry cap evicted them on every render. The 16 MiB byte
+# cap below is unchanged and still bounds the memory.
+_DISPLAY_REDACTION_CACHE_MAX_ENTRIES = max(
+    SLOT_DETAIL_MAX_LIMIT * _DISPLAY_REDACTION_STRINGS_PER_ROW * 2, 40_000
 )
 _DISPLAY_REDACTION_CACHE_MAX_BYTES = 16 * 1024 * 1024
 _DisplayRedactionKey = tuple[bytes, int]
@@ -2360,10 +2364,12 @@ def _display_redaction_cache_key(text: str) -> tuple[_DisplayRedactionKey, int]:
 
 def _clear_display_redaction_cache() -> None:
     """Reset the process-local cache for deterministic tests."""
-    global _display_redaction_cache_bytes
+    global _display_redaction_cache_bytes, _display_clean_young, _display_clean_old
     with _display_redaction_cache_lock:
         _display_redaction_cache.clear()
         _display_redaction_cache_bytes = 0
+        _display_clean_young = set()
+        _display_clean_old = set()
 
 
 def _display_redaction_cache_info() -> tuple[int, int]:
@@ -2372,11 +2378,70 @@ def _display_redaction_cache_info() -> tuple[int, int]:
         return len(_display_redaction_cache), _display_redaction_cache_bytes
 
 
+# Verdicts for strings the battery returned UNCHANGED -- nearly every string a
+# transcript holds (on a real 708k-string corpus, 110 were redacted). The output
+# cache above has to store each output, so its 16 MiB / entry caps hold a few
+# thousand rows, while one slot-detail render of a long session redacts hundreds
+# of thousands: every render evicted the previous one and the cache never hit.
+# For an unchanged string the input IS the output, so the verdict needs only the
+# key -- 128 bits of the same keyed digest (which already covers the exempt-host
+# set) plus the input byte length, as one int of about 86 bytes with its set
+# slot. Strings the battery changes still go
+# through the output cache, so a returned value is always either a cached output
+# for this exact key or the caller's own string the battery left untouched.
+#
+# Bounded as two generations of at most _DISPLAY_CLEAN_GENERATION entries each:
+# a hit in the old generation is copied to the young one, and when the young one
+# fills it becomes the old one and the previous old one is dropped. So at most
+# 2 * _DISPLAY_CLEAN_GENERATION verdicts (~34 MB) are held, and what is dropped
+# first is what no render has touched for a whole generation. 39 real dashboard
+# transcripts needed ~160k verdicts; a generation smaller than the set a reader
+# cycles through evicts it before the next render reaches it (at 150k a repeat
+# pass still redacted 45.6k strings, at 200k none).
+_DISPLAY_CLEAN_GENERATION = 200_000
+_display_clean_young: set[int] = set()
+_display_clean_old: set[int] = set()
+
+
+def _clean_verdict_key(key: _DisplayRedactionKey) -> int:
+    """128 bits of the digest with the input byte length above them.
+
+    The MAC input ``text + NUL + hosts`` alone does not say where the text ends:
+    a text that itself ends in ``NUL + host`` under a smaller host set yields the
+    same bytes. The length in the key is what separates those two, exactly as it
+    does for the output cache, so the verdict must keep it too.
+    """
+    digest, length = key
+    return (length << 128) | int.from_bytes(digest[:16], "big")
+
+
+def _display_clean_seen(ck: int) -> bool:
+    """Whether *ck* is a known-unchanged string. Caller holds the cache lock."""
+    if ck in _display_clean_young:
+        return True
+    if ck in _display_clean_old:
+        _display_clean_add(ck)
+        return True
+    return False
+
+
+def _display_clean_add(ck: int) -> None:
+    """Record a known-unchanged string. Caller holds the cache lock."""
+    global _display_clean_young, _display_clean_old
+    if len(_display_clean_young) >= _DISPLAY_CLEAN_GENERATION:
+        _display_clean_old = _display_clean_young
+        _display_clean_young = set()
+    _display_clean_young.add(ck)
+
+
 def _redact_for_display(text: str) -> str:
     """Apply all display redactors, reusing only an exact content-hash match."""
     global _display_redaction_cache_bytes
     key, input_bytes = _display_redaction_cache_key(text)
+    ck = _clean_verdict_key(key)
     with _display_redaction_cache_lock:
+        if _display_clean_seen(ck):
+            return text
         cached = _display_redaction_cache.get(key)
         if cached is not None:
             _display_redaction_cache.move_to_end(key)
@@ -2384,6 +2449,10 @@ def _redact_for_display(text: str) -> str:
 
     redacted, _ = redact_exfiltration_urls(text)
     redacted, _ = redact_credentials(redacted)
+    if redacted == text:
+        with _display_redaction_cache_lock:
+            _display_clean_add(ck)
+        return text
     entry_bytes = len(key[0]) + input_bytes + len(redacted.encode("utf-8", errors="surrogatepass"))
     if entry_bytes > _DISPLAY_REDACTION_CACHE_MAX_BYTES:
         return redacted

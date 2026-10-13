@@ -1581,6 +1581,7 @@ def test_the_import_prefix_is_streamed_not_joined(tmp_path):
     reserved, on exactly the large imports it admits."""
     import tracemalloc
 
+    from kiro_crew.dashboard import chat_utils
     from kiro_crew.dashboard import session_transfer as st
 
     n, width = 4000, 2000
@@ -1594,6 +1595,10 @@ def test_the_import_prefix_is_streamed_not_joined(tmp_path):
         for i in range(n)
     ]
     path = tmp_path / "s" / "slot.jsonl"
+    # The display-redaction verdict store is a bounded process-wide cache that
+    # other tests fill; its table doubling when this write adds 4,000 verdicts is
+    # not a copy of the prefix, so start it empty to measure only the write.
+    chat_utils._clear_display_redaction_cache()
     tracemalloc.start()
     try:
         st._write_import_prefix(path, "2026-01-01T00:00:00Z", rows)
