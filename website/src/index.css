@@ -1939,9 +1939,16 @@ html[data-font-family="custom"][data-custom-ligatures="off"] body{font-variant-l
    Kiro code rules (0,2,2); the chip rules are (0,3,2) but now say `color:var(--text)` /
    `var(--accent)`, which resolve to the redefined tokens anyway. The two Kiro-dark literals
    (`#b07fff` links / code, `#28242e` code bg) are the one thing tokens cannot reach, hence the
-   two code / link rules that stay. */
+   two code / link rules that stay.
+   CLI mode (`data-ui="cli"`) draws this bubble neutral, like every other user bubble.
+   cli-mode.css paints user bubbles with `var(--bg-elevated)` and `var(--text)` under
+   `!important`; read on this element, those are the redefined tokens below, a 15%-black patch
+   and accent-fg text (`#000` on `#222222` in gruvbox-dark). So every rule that
+   starts with the hook carries `:where(:root:not([data-ui="cli"]))`: `:where()` adds no
+   specificity, so chat mode's cascade is unchanged. The `--bubble-accent` snapshot needs no
+   guard, because nothing reads it in CLI mode. */
 :has(>.msg-content.user-bubble.user-bubble-accent){--bubble-accent:var(--accent)}
-.msg-content.user-bubble.user-bubble-accent{
+:where(:root:not([data-ui="cli"])) .msg-content.user-bubble.user-bubble-accent{
   --text:var(--accent-fg);--text-strong:var(--accent-fg);--card-fg:var(--accent-fg);
   /* Text and strokes are accent-fg mixes; SURFACES are translucent black. A lighter patch
      (accent-fg mixed in) would pull the fill toward the text colour and cost contrast where it
@@ -1957,16 +1964,16 @@ html[data-font-family="custom"][data-custom-ligatures="off"] body{font-variant-l
   --bg:rgba(0,0,0,.12);--bg-elevated:rgba(0,0,0,.15);--bg-hover:rgba(0,0,0,.18);--card:rgba(0,0,0,.12);
   background-color:var(--bubble-accent);color:var(--accent-fg);
 }
-.msg-content.user-bubble.user-bubble-accent :not(pre)>code{background:var(--bg-hover);color:var(--accent-fg)}
+:where(:root:not([data-ui="cli"])) .msg-content.user-bubble.user-bubble-accent :not(pre)>code{background:var(--bg-hover);color:var(--accent-fg)}
 /* A link keeps a link SIGNAL once its colour is the body colour: a solid underline (UX review on
    #17918: white-on-accent with the colour cue gone read as a label). The two link pills
    (`.mc-md-ref-chip` in MarkdownRenderer, `LinkChip` in LinkPreview: `bg-accent/10` +
    `border-border/60`, label `no-underline`) read the redefined tokens for their patch and
    outline and get their label's underline back here. */
-.msg-content.user-bubble.user-bubble-accent a{color:var(--accent-fg);text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--accent-fg) 75%,transparent);text-underline-offset:2px}
-.msg-content.user-bubble.user-bubble-accent span.group:has(>a){background:var(--bg-hover);border-color:var(--border)}
-.msg-content.user-bubble.user-bubble-accent span.group>a.no-underline{text-decoration:underline}
-.msg-content.user-bubble.user-bubble-accent .text-accent{color:var(--accent-fg)}
+:where(:root:not([data-ui="cli"])) .msg-content.user-bubble.user-bubble-accent a{color:var(--accent-fg);text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--accent-fg) 75%,transparent);text-underline-offset:2px}
+:where(:root:not([data-ui="cli"])) .msg-content.user-bubble.user-bubble-accent span.group:has(>a){background:var(--bg-hover);border-color:var(--border)}
+:where(:root:not([data-ui="cli"])) .msg-content.user-bubble.user-bubble-accent span.group>a.no-underline{text-decoration:underline}
+:where(:root:not([data-ui="cli"])) .msg-content.user-bubble.user-bubble-accent .text-accent{color:var(--accent-fg)}
 /* Kiro theme: lift unselected nav labels + section headers to Prey/300 (#c1bec6, ~9.8:1) per the
    Figma settings-panel guideline (was Prey/400 #938f9b ~5.7:1). Inactive icons inherit this color
    (they only carry opacity-70), lifting them from ~3.4:1 to ~5.6:1. Active items keep .nav-active. */
