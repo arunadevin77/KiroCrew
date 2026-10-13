@@ -1018,10 +1018,11 @@ def _on_stand_in_root(launch, create):
     When the chosen root refuses the create with an errno in ``_STAND_IN_ROOT_GONE``, the
     remaining candidates are probed with the same checks :func:`pick_stand_in_root`
     applies, the first that qualifies becomes the stand-in root for this and every later
-    create, and *create* runs once more there. With no qualifying candidate, or when the
-    second create fails too, the original error propagates and the launch ends as it
-    would have without the retry. Only where the stand-in lives changes: every mask is
-    still placed, in the same order, over a stand-in this launcher created.
+    create, and *create* runs once more there. With no qualifying candidate the original
+    error propagates; when the second create fails too, that second error propagates.
+    Either way the launch ends as it would have without the retry. Only where the
+    stand-in lives changes: every mask is still placed, in the same order, over a
+    stand-in this launcher created.
     """
     try:
         return create(launch.tmpfs_src)
