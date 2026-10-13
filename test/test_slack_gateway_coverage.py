@@ -385,9 +385,16 @@ class TestFireDiscordNudge:
             wake_in_flight=True,
         )
 
-        result = await asyncio.wait_for(
+        # Bounded by the patched 0.01 s turn bound, which is what ends the
+        # wedged turn. The outer wait only exists so a call that never returns
+        # fails instead of hanging, so it uses the load-safe lost-run ceiling
+        # like the sibling nudge-timeout tests: the pre-turn chain makes real
+        # executor hops, and a tight hand-rolled deadline cancelled this call
+        # from the outside on a loaded runner (raw CancelledError) before the
+        # inner bound was reached.
+        result = await _within_lost_run(
             orch._fire_discord_nudge(loop, "[Monitor wake]"),
-            timeout=0.2,
+            "the wedged Discord nudge turn",
         )
 
         assert result is monitor_models.MonitorDispatchResult.DISPATCHED

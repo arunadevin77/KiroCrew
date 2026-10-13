@@ -391,7 +391,7 @@
  3 test_skills_cold_start.py
  1 test_slack_events_coverage.py
  9 test_slack_gateway.py
- 3 test_slack_gateway_coverage.py
+ 2 test_slack_gateway_coverage.py
  3 test_slack_gateway_cron_exec_coverage.py
  3 test_slack_gateway_more_coverage.py
  3 test_slack_handler.py
