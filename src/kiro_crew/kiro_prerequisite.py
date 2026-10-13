@@ -47,6 +47,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+import weakref
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, MutableMapping
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -283,6 +284,14 @@ _ACP_UNSUPPORTED_MARKERS = (
 # this long.
 _IDENTITY_PROBE_TIMEOUT_SECS = 30
 _PROBE_CACHE_SECS = 2.0
+# How old a ``whoami`` verdict may be and still turn a failed prompt into a
+# sign-in error (:meth:`KiroPrerequisiteService.signed_out_confirmed`). Short, so
+# a sign-in from a terminal is seen on the next failure; the same bound the
+# destructive reruns use (``dashboard/kiro_readiness._VERIFY_MAX_AGE_SECS``).
+_TURN_AUTH_MAX_AGE_SECS = 30.0
+# What ``kiro-cli whoami`` prints when there is no sign-in (measured on kiro-cli
+# 2.31.0: "Not logged in", exit 1). The launcher's refusal says the same words.
+_WHOAMI_SIGNED_OUT_MARKER = "not logged in"
 # Floor between HOST probes driven by the status endpoint, however many callers
 # ask. The first-run gate polls with ``refresh=1`` every 5s while it blocks the
 # dashboard (it has to: readiness is latched at boot, so a latch read can never
@@ -597,6 +606,20 @@ class ProcessResult:
     # state leaves this None, so an unrelated failure can never be misreported
     # as a sandbox problem, and a child cannot print its way into one.
     sandbox_failure: tuple[str, str, str] | None = None
+
+
+def _whoami_says_signed_out(result: ProcessResult) -> bool:
+    """Whether a ``whoami`` run answered, by itself, that nobody is signed in.
+
+    Needs all of: it exited (no timeout, no spawn failure), non-zero, and printed
+    the signed-out banner. Anything less is "unknown", never "signed out".
+    """
+    return (
+        not result.ok
+        and not result.timed_out
+        and result.returncode not in (None, 0)
+        and _WHOAMI_SIGNED_OUT_MARKER in result.output.casefold()
+    )
 
 
 @dataclass
@@ -2979,6 +3002,13 @@ class KiroPrerequisiteService:
         self._last_probe_at = 0.0
         self._has_probed = False
         self._viable_binary = ""
+        # The failed-turn sign-in check (:meth:`signed_out_confirmed`) keeps its
+        # own ``whoami`` verdict, apart from ``_status``: it must never rewrite
+        # the readiness latch, or a network blip during a token refresh would
+        # flip the whole gateway to not-ready. ``None`` = never asked.
+        self._turn_auth_lock = asyncio.Lock()
+        self._turn_auth_checked_at: float | None = None
+        self._turn_auth_signed_out = False
         # Which account the store named when the latch was last written.
         # Comparing it against a fresh read is how an out-of-band `kiro-cli
         # logout` (or a switch to another account) is noticed at all: nothing
@@ -4030,7 +4060,10 @@ class KiroPrerequisiteService:
         an install/login operation. There is deliberately no timer re-probe and
         no probe on the send path: a signed-out CLI is discovered by the ACP
         attempt itself, which raises ``AcpAuthRequired`` and surfaces an
-        actionable sign-in error in the chat transcript.
+        actionable sign-in error in the chat transcript. The one exception runs
+        AFTER a turn has failed, not before it: :meth:`signed_out_confirmed`
+        asks ``whoami`` when a prompt fails with a bare connection error, and it
+        never writes this latch.
 
         Because this value can therefore be arbitrarily stale, turn-starting
         callers treat it as ADVISORY and let the real ACP attempt be the
@@ -4041,6 +4074,45 @@ class KiroPrerequisiteService:
         """
 
         return bool(self._status.ready)
+
+    async def signed_out_confirmed(self) -> bool:
+        """Return True only when a recent ``whoami`` said "not logged in".
+
+        For a prompt that failed with a connection-class error before any output.
+        A signed-out bundled ``kiro-cli-chat`` answers ``initialize`` and
+        ``session/new`` normally and fails ``session/prompt`` with a bare
+        ``dispatch failure``, with nothing on stderr, so the ACP layer alone
+        cannot tell it from a network outage. This is the tie-breaker, and the
+        one probe the send path makes (see :meth:`session_ready`): it runs only
+        after a turn has already failed, never before one.
+
+        Runs ``whoami`` alone, on the binary the boot probe verified, and keeps
+        the verdict apart from ``_status``, so the readiness latch is untouched.
+        The verdict is reused for :data:`_TURN_AUTH_MAX_AGE_SECS`, so a sign-in
+        from a terminal is seen on a later failure, and the lock makes a burst
+        of failing turns wait on one ``whoami``. No verified binary, a
+        ``whoami`` that cannot run, times out or prints anything else answers
+        False: the caller then keeps its ordinary retry.
+        """
+
+        if self._assume_ready:
+            return False
+        async with self._turn_auth_lock:
+            checked_at = self._turn_auth_checked_at
+            if checked_at is not None and self._clock() - checked_at < _TURN_AUTH_MAX_AGE_SECS:
+                return self._turn_auth_signed_out
+            executable = self._viable_binary
+            if not executable:
+                return False
+            try:
+                result = await self._audited_identity_probe(executable, isolate_home=False)
+                verdict = _whoami_says_signed_out(result)
+            except Exception:
+                logger.warning("Kiro sign-in check failed; keeping the retry", exc_info=True)
+                verdict = False
+            self._turn_auth_signed_out = verdict
+            self._turn_auth_checked_at = self._clock()
+            return verdict
 
     def _stamp_probe(self, identity: str) -> None:
         """Record that the latch was just written, and for which account.
@@ -4781,6 +4853,9 @@ class KiroPrerequisiteService:
             logger.warning("Could not write terminal Kiro setup audit event", exc_info=True)
 
     async def close(self) -> None:
+        global _turn_auth_service
+        if _turn_auth_service is not None and _turn_auth_service() is self:
+            _turn_auth_service = None
         tasks: list[asyncio.Task[Any]] = []
         for task in (self._warm_up_task,):
             if task is not None and not task.done() and task not in tasks:
@@ -4788,3 +4863,35 @@ class KiroPrerequisiteService:
                 tasks.append(task)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+
+# The gateway's service, for the ACP layer's failed-prompt check. Set by the
+# dashboard at start (:func:`register_turn_auth_service`) and cleared by that
+# service's ``close``. ``None`` everywhere else (the CLI, tests that do not
+# register one), where :func:`kiro_signed_out_confirmed` answers False and a
+# failed prompt keeps its ordinary retry. A weak reference, so a gateway that
+# is dropped without ``close`` does not keep its service alive here.
+_turn_auth_service: weakref.ref[KiroPrerequisiteService] | None = None
+
+
+def register_turn_auth_service(service: KiroPrerequisiteService | None) -> None:
+    """Name the service whose ``whoami`` verdict failed prompts may consult."""
+    global _turn_auth_service
+    _turn_auth_service = weakref.ref(service) if service is not None else None
+
+
+async def kiro_signed_out_confirmed() -> bool:
+    """Whether the registered service confirms kiro-cli is signed out.
+
+    Never raises: any failure answers False, which leaves the caller's own
+    handling unchanged.
+    """
+    ref = _turn_auth_service
+    service = ref() if ref is not None else None
+    if service is None:
+        return False
+    try:
+        return await service.signed_out_confirmed()
+    except Exception:
+        logger.debug("Kiro sign-in check failed", exc_info=True)
+        return False

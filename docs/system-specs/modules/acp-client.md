@@ -2227,6 +2227,24 @@ the reply once it is older than 300 s (`_LIST_MODELS_CATALOG_TTL_SECS`).
   signal the dashboard shows — there is no reauthentication banner and no paused
   session state (see `modules/learn-cron-dashboard.md` § "The dashboard does not
   guide the user to sign in").
+- **A signed-out `kiro-cli-chat` gives no stderr banner, so `whoami` decides.**
+  The bundled chat binary (the desktop app runs it directly, with no launcher in
+  front) starts and opens sessions with no sign-in, then fails every
+  `session/prompt` with `-32603 ... dispatch failure` and prints nothing on
+  stderr. That frame is classified as a transient connection failure. When such
+  an error reaches `AcpSessionProvider.stream` on the kiro backend before any
+  event, the provider asks `kiro_prerequisite.kiro_signed_out_confirmed()`: the
+  gateway's prerequisite service (registered at dashboard start) runs `whoami`
+  alone on the binary its boot probe verified, at most once per 30 s under one
+  lock, and answers True only when `whoami` exited non-zero saying
+  `not logged in`. This is the one probe on the send path, and it runs only
+  after a turn has failed; its verdict is kept apart from the readiness latch,
+  which it never writes. Then the provider raises
+  `AcpAuthRequired` instead, so the turn takes the sign-in path above with no
+  retry ladder. A timed-out or refused `whoami`, a failure after output, the
+  KAS backend, and callers with no registered service (the CLI) keep the
+  connection-failure retry unchanged. Pinned by
+  `test/test_acp_signed_out_dispatch_failure.py`.
 - **The readiness `whoami` runs against the real home, like an ACP session.**
   `kiro_prerequisite._run_auth_command(..., isolate_home=False)` runs the
   resolved CLI against the real environment/home under the standard OS sandbox

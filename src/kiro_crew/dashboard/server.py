@@ -1739,6 +1739,11 @@ async def start_dashboard(
         assume_ready=assume_kiro_ready,
     )
     state.kiro_prerequisite_service = app["kiro_prerequisite_service"]
+    # A signed-out bundled kiro-cli-chat fails a prompt as a bare connection
+    # error; the ACP layer asks this service's whoami verdict to tell it apart.
+    from kiro_crew.kiro_prerequisite import register_turn_auth_service
+
+    register_turn_auth_service(state.kiro_prerequisite_service)
     # Seed the retirement baseline with the account on disk RIGHT NOW, before
     # anything can spawn a kiro-backed child. Every child postdates this read,
     # so the once-per-lifetime unset-baseline boot sweep -- which on a live
@@ -2506,6 +2511,11 @@ async def start_api_server(
         assume_ready=assume_kiro_ready,
     )
     state.kiro_prerequisite_service = app["kiro_prerequisite_service"]
+    # A signed-out bundled kiro-cli-chat fails a prompt as a bare connection
+    # error; the ACP layer asks this service's whoami verdict to tell it apart.
+    from kiro_crew.kiro_prerequisite import register_turn_auth_service
+
+    register_turn_auth_service(state.kiro_prerequisite_service)
     # Seed the retirement baseline with the account on disk RIGHT NOW, before
     # anything can spawn a kiro-backed child. Every child postdates this read,
     # so the once-per-lifetime unset-baseline boot sweep -- which on a live

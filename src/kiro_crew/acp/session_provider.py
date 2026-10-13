@@ -46,6 +46,7 @@ from kiro_crew.acp.runtime import (
 )
 from kiro_crew.acp.session_handle import WatchdogSettings
 from kiro_crew.acp.types import (
+    ACP_BACKEND_KIRO,
     ACP_BACKENDS_COMPACT,
     ACP_BACKENDS_CONTEXT_RECYCLE,
 )
@@ -618,12 +619,22 @@ class AcpSessionProvider(LLMProvider):
             send = functools.partial(send, allow_image=False)
         if timeout is not None:
             send = functools.partial(send, timeout=timeout)
+        emitted = False
         try:
             async with aclosing(
                 self.essential_delivery.stream(message, send, lambda: self.context_incarnation)
             ) as events:
                 async for event in events:
+                    emitted = True
                     yield event
+        except AcpAuthRequired:
+            raise
+        except AcpError as exc:
+            if not emitted and await self._connection_failure_is_signed_out(exc):
+                raise AcpAuthRequired(
+                    host_auth.signed_out_message(self.backend), backend=self.backend
+                ) from exc
+            raise
         except AcpRuntimeDead as exc:
             # Translate the shared-runtime death into the exception types
             # chat_runner handles (parity with AcpClient) — see _translate_dead.
@@ -702,6 +713,37 @@ class AcpSessionProvider(LLMProvider):
             raise AcpError(str(exc)) from exc
         finally:
             await self._end_shared_turn(claim)
+
+    async def _connection_failure_is_signed_out(self, exc: AcpError) -> bool:
+        """Whether a pre-output connection failure is really a missing sign-in.
+
+        A signed-out bundled ``kiro-cli-chat`` starts and opens sessions normally,
+        then fails every ``session/prompt`` with ``dispatch failure`` and writes
+        nothing to stderr, so ``saw_not_logged_in`` stays False and the frame is
+        classified as a retryable network drop. Only kiro-cli's own ``whoami``
+        can tell the two apart; the gateway's prerequisite service runs it and
+        answers True only on an explicit "not logged in".
+
+        Asked only for the kiro backend (KAS has its own sign-in owner) and only
+        for an error ``_raise_acp_error`` tagged ``connection_failure``, so every
+        other error keeps its ordinary path with no probe.
+        """
+        kiro_connection_failure = (
+            self.backend == ACP_BACKEND_KIRO and getattr(exc, "connection_failure", None) is True
+        )
+        if not kiro_connection_failure:
+            return False
+        # Local import: ``kiro_prerequisite`` pulls in the sandbox plane (see
+        # ``client.py``'s imports of it for the same reason).
+        from kiro_crew.kiro_prerequisite import kiro_signed_out_confirmed
+
+        if not await kiro_signed_out_confirmed():
+            return False
+        logger.warning(
+            "kiro-cli prompt failed as a connection error and whoami reports it is "
+            "not logged in; raising AcpAuthRequired instead of retrying"
+        )
+        return True
 
     def _translate_dead(
         self, exc: AcpRuntimeDead, *, own_write_only: bool = False
