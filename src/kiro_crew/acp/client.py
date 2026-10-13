@@ -3517,46 +3517,6 @@ class AcpClient:
             async for event in events:
                 yield event
 
-    async def _dispatch_prompt_events(
-        self,
-        req_id: int,
-        timeout: float,
-    ) -> AsyncGenerator[AcpEvent, None]:
-        """:meth:`_dispatch_events` for a prompt turn, plus the steers sent into it.
-
-        The one owner of the steers sent into this turn as a second
-        ``session/prompt`` (``ACP_BACKENDS_STEER_CONCURRENT_PROMPT``): they are
-        settled at the turn's ``EVENT_COMPLETE``, while the turn still holds the
-        read lock, and reported consumed just before it. Any exit without that
-        terminal leaves them unreported, and the caller queues their text.
-
-        A terminal ``_dispatch_events`` synthesizes after its read loop (stale
-        turn, compaction failed) is not settled: the read lock is already
-        released there. Its steers stay owed, and ``_settle_orphan_steers``
-        cancels and drains them under the lock before the next prompt.
-        """
-        self._turn_permission_denied = False
-        turn = _ConcurrentSteerTurn()
-        self._steer_turn = turn
-        try:
-            async with aclosing(self._dispatch_events(req_id, timeout)) as events:
-                async for event in events:
-                    if (
-                        event.kind == EVENT_COMPLETE
-                        and turn.steers
-                        and not event.synthetic_completion
-                        and event.stop_reason != STOP_REASON_COMPACTION_FAILED
-                    ):
-                        for consumed in await self._settle_concurrent_steers(turn, event):
-                            yield AcpEvent(kind=EVENT_STEER_CONSUMED, text=consumed)
-                    yield event
-        finally:
-            # Idempotent beside the settle's own close: whichever runs first records
-            # every steer still unanswered as an orphan.
-            self._close_steer_turn(turn)
-            if self._steer_turn is turn:
-                self._steer_turn = None
-
     async def _dispatch_events(
         self,
         req_id: int,
@@ -4054,6 +4014,7 @@ class AcpClient:
     _release_accepted_steers = _client_turn_control._release_accepted_steers
     _steer_via_request = _client_turn_control._steer_via_request
     _steer_via_concurrent_prompt = _client_turn_control._steer_via_concurrent_prompt
+    _dispatch_prompt_events = _client_turn_control._dispatch_prompt_events
     _close_steer_turn = _client_turn_control._close_steer_turn
     _add_orphan_steers = _client_turn_control._add_orphan_steers
     _settle_concurrent_steers = _client_turn_control._settle_concurrent_steers

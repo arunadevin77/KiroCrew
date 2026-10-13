@@ -9,7 +9,8 @@ class binds it by name, so it reads and writes the session's own state on the in
 and a patch of the method on the class or on an instance reaches every caller.
 
 Instance fields written: ``_permission_gate_events``, ``_permission_options``,
-``_pi_gate_asked_ids``, ``_pi_gate_denied_ids``, ``_pi_gate_request_tool``.
+``_pi_gate_asked_ids``, ``_pi_gate_denied_ids``, ``_pi_gate_request_tool``,
+``_turn_permission_denied``.
 
 Instance fields read: ``_acp_config_options``, ``_agent``, ``_deepseek_gate_nonce``,
 ``_pi_gate_nonce``, ``_session_id``, ``_session_key``, ``_side_read_only``,

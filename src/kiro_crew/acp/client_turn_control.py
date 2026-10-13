@@ -10,13 +10,12 @@ and a patch of the method on the class or on an instance reaches every caller.
 
 Instance fields written: ``_active_run_id``, ``_cancel_grace_secs``, ``_cancel_ts``,
 ``_cancelled``, ``_last_activity``, ``_orphan_steers``, ``_orphan_steers_process``,
-``_permission_options``, ``_steer_answers``, ``_steering_waiter_map``,
-``_steers_awaiting_echo``.
+``_permission_options``, ``_steer_answers``, ``_steer_turn``, ``_steering_waiter_map``,
+``_steers_awaiting_echo``, ``_turn_permission_denied``.
 
 Instance fields read: ``_agent``, ``_agent_version``, ``_background_launches``,
 ``_last_stop_reason``, ``_permission_gate_events``, ``_process``, ``_session_id``,
-``_session_key``, ``_stdin_stalled``, ``_steer_turn``, ``_turn_done``,
-``_turn_lock``, ``_turn_permission_denied``.
+``_session_key``, ``_stdin_stalled``, ``_turn_done``, ``_turn_lock``.
 """
 
 from __future__ import annotations
@@ -25,8 +24,9 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import aclosing
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncIterator, Collection
+from typing import TYPE_CHECKING, Any, AsyncGenerator, AsyncIterator, Collection
 
 from kiro_crew import sel as sel_module
 from kiro_crew.acp import transport_framing
@@ -51,6 +51,7 @@ from kiro_crew.acp.types import (
     ACP_BACKEND_GOOSE,
     ACP_BACKENDS_STEER_CONCURRENT_PROMPT,
     ACP_BACKENDS_STEERING_REQUEST,
+    EVENT_COMPLETE,
     EVENT_STEER_CONSUMED,
     MAX_STEERING_ANSWERS,
     MAX_STEERING_TEXT_CHARS,
@@ -63,6 +64,7 @@ from kiro_crew.acp.types import (
     OUTCOME_CANCELLED,
     STEERING_ANSWER_WAIT_SECS,
     STEERING_INJECTED,
+    STOP_REASON_COMPACTION_FAILED,
     STOP_REASON_END_TURN,
     UPDATE_SESSION_INFO,
     UPDATE_USER_MESSAGE_CHUNK,
@@ -94,6 +96,10 @@ class _ConcurrentSteerTurn:
     answers: dict[int, tuple[JsonRpcMessage, bool]] = field(default_factory=dict)
     accepted: set[int] = field(default_factory=set)
     closed: bool = False
+
+
+# Named by the path callers import it from, as it was before the split.
+_ConcurrentSteerTurn.__module__ = "kiro_crew.acp.client"
 
 
 def steering_advertised(init_resp: object) -> bool:
@@ -699,11 +705,12 @@ async def _steer_via_concurrent_prompt(self: AcpClient, text: str) -> bool:
         return False
     wrapped = f"<user_message>\n{text}\n</user_message>"
     sent: list[int] = []
+    steers = turn.steers
 
     def _register(rid: int) -> None:
         # Before the write, so the turn can never read the answer unclaimed.
         sent.append(rid)
-        turn.steers[rid] = wrapped
+        steers[rid] = wrapped
 
     try:
         await self._send_request(
@@ -793,7 +800,48 @@ def _steer_echo_event(self: AcpClient, msg: JsonRpcMessage) -> AcpEvent | None:
     return AcpEvent(kind=EVENT_STEER_CONSUMED, text=wrapped)
 
 
-def _close_steer_turn(self: AcpClient, turn: _ConcurrentSteerTurn) -> None:
+async def _dispatch_prompt_events(
+    self: AcpClient,
+    req_id: int,
+    timeout: float,
+) -> AsyncGenerator[AcpEvent, None]:
+    """:meth:`_dispatch_events` for a prompt turn, plus the steers sent into it.
+
+    The one owner of the steers sent into this turn as a second
+    ``session/prompt`` (``ACP_BACKENDS_STEER_CONCURRENT_PROMPT``): they are
+    settled at the turn's ``EVENT_COMPLETE``, while the turn still holds the
+    read lock, and reported consumed just before it. Any exit without that
+    terminal leaves them unreported, and the caller queues their text.
+
+    A terminal ``_dispatch_events`` synthesizes after its read loop (stale
+    turn, compaction failed) is not settled: the read lock is already
+    released there. Its steers stay owed, and ``_settle_orphan_steers``
+    cancels and drains them under the lock before the next prompt.
+    """
+    self._turn_permission_denied = False
+    turn = _ConcurrentSteerTurn()
+    self._steer_turn = turn
+    try:
+        async with aclosing(self._dispatch_events(req_id, timeout)) as events:
+            async for event in events:
+                if (
+                    event.kind == EVENT_COMPLETE
+                    and turn.steers
+                    and not event.synthetic_completion
+                    and event.stop_reason != STOP_REASON_COMPACTION_FAILED
+                ):
+                    for consumed in await self._settle_concurrent_steers(turn, event):
+                        yield AcpEvent(kind=EVENT_STEER_CONSUMED, text=consumed)
+                yield event
+    finally:
+        # Idempotent beside the settle's own close: whichever runs first records
+        # every steer still unanswered as an orphan.
+        self._close_steer_turn(turn)
+        if self._steer_turn is turn:
+            self._steer_turn = None
+
+
+def _close_steer_turn(self: AcpClient, turn: "_ConcurrentSteerTurn") -> None:
     """Close *turn*'s steer record: each steer still unanswered becomes an orphan."""
     if turn.closed:
         return
@@ -812,7 +860,7 @@ def _add_orphan_steers(self: AcpClient, ids: Collection[int]) -> None:
 
 
 async def _settle_concurrent_steers(
-    self: AcpClient, turn: _ConcurrentSteerTurn, terminal: AcpEvent
+    self: AcpClient, turn: "_ConcurrentSteerTurn", terminal: AcpEvent
 ) -> list[str]:
     """Settle *turn*'s concurrent-prompt steers at its ``EVENT_COMPLETE``.
 
