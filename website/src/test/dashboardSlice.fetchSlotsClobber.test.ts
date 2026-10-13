@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import reducer, {
   sseSlots,
+  sseSlotsPartial,
   sseConnected,
+  markSlotUnread,
   sseSlotTitle,
   sseSlotColor,
   sseTodoUpdate,
@@ -478,5 +480,24 @@ describe('a fetchSlots reply cannot drop a slot whose creation raced it', () => 
     const renamed = reducer(added, sseSlotTitle({ key: 'a', title: 'renamed' }))
     const settled = reducer(renamed, reply([mk('a', { title: 'old' }), mk('b')], 'r1'))
     expect(rowOf(settled, 'a')?.title).toBe('renamed')
+  })
+})
+
+describe('fetchSlots unread hold supersession', () => {
+  const reconnectWithUnread = () => {
+    localStorage.clear()
+    let state = reducer(loaded(mk('a'), mk('b')), sseSlotsPartial(false))
+    state = reducer(state, markSlotUnread({ slot: 'a', ts: '2026-01-01T00:00:00Z' }))
+    return reducer(state, sseConnected())
+  }
+
+  it('keeps the held GET from draining when no complete frame arrived', () => {
+    let state = reducer(reconnectWithUnread(), started('held'))
+
+    state = reducer(state, reply([mk('b')], 'held'))
+
+    expect(state.unreadSlots).toEqual(['a'])
+    expect(state.unreadSince.a).toBe('2026-01-01T00:00:00Z')
+    expect(JSON.parse(localStorage.getItem('mc-unread-shared') ?? '{}')).toHaveProperty('a')
   })
 })

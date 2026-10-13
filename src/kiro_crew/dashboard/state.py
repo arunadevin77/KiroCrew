@@ -716,6 +716,7 @@ def _slots_ws_frame(
     folders: object,
     folders_gen: object,
     governance_gen: object,
+    slots_partial: bool = False,
 ) -> str:
     """Serialize the dashboard-user ``slots`` WS frame.
 
@@ -753,6 +754,8 @@ def _slots_ws_frame(
         # its stale window. Process-local, like the two counters above.
         "governanceGeneration": governance_gen,
     }
+    if slots_partial:
+        frame["slotsPartial"] = True
     # Same offender diagnostic as the coalesced broadcast: the
     # dashboard-user frame serializes the ENRICHED projection, so a value that
     # only enrichment adds raises here and nowhere else. Diagnosis only — the
@@ -6163,6 +6166,12 @@ class DashboardState:
     # restore stays in merge mode, so its writes are never suppressed — see
     # _persist_open_slots / _persist_context_snapshots.
     open_slots_restored: bool = False
+    # True while startup is still discovering the complete slot set. Slot lists
+    # continue flowing with ``slotsPartial`` set, so clients can render restored
+    # rows without treating an absent row as authoritatively gone. A surface that
+    # runs no boot restore never sets it.
+    slot_list_rebuilding: bool = False
+    _slot_list_rebuild_finish_requested: bool = False
     # push_slots_update() coalescing state, on that same read path. The lock
     # defaults to None rather than to a shared Lock(): a None lock means "no
     # coalescing", so a __new__-built state broadcasts straight through instead
@@ -9854,6 +9863,53 @@ class DashboardState:
         if live_id != slot._mcp_report_session_id:
             slot.clear_mcp_report()
 
+    def begin_slot_list_rebuild(self) -> None:
+        """Label subsequent slot lists as partial until the rebuild finishes."""
+        self.slot_list_rebuilding = True
+        self._slot_list_rebuild_finish_requested = False
+
+    def _complete_slot_list_rebuild_if_ready(self) -> bool:
+        """Clear the partial label after its owner finished and every dropped tab is listed."""
+        notice = self.unrestored_slot_notice
+        dropped = self.unrestored_slot_keys if notice is None else notice.get("keys", ())
+        if (
+            (notice is not None and notice.get("unknowable") is True)
+            or not self.slot_list_rebuilding
+            or not self._slot_list_rebuild_finish_requested
+            or self._slots_push_suspend
+            or any(
+                key not in self._slots or key in self._slots_under_construction for key in dropped
+            )
+        ):
+            return False
+        self.slot_list_rebuilding = False
+        self._slot_list_rebuild_finish_requested = False
+        return True
+
+    def finish_slot_list_rebuild(self) -> None:
+        """Mark the slot list complete once no listed tab's unread dot would drain by mistake.
+
+        A client that reads a list as complete drains the unread dot of every session
+        the list omits. So the label waits on the open tabs the restore DROPPED, the
+        keys ``unrestored_slot_notice`` reports (a metadata read or a rehydrate that
+        failed), for as long as each is still absent from ``_slots``: a dropped tab
+        the user reopens from History, or that a turn rebuilds, is listed again and
+        stops holding the label. It does NOT wait on the rest of
+        ``unrestored_slot_keys``, the remote-only reopen seeds of a remote-authority
+        boot: those sit in the seed on every boot by design and their transcripts may
+        never be fetched, so waiting on them held the label for the process lifetime
+        and no deleted session's dot ever drained. Until the restore has reported
+        (``unrestored_slot_notice`` still ``None``: a cancelled or aborted pass)
+        every carried key counts, because none of them was read.
+
+        Once called, later slot-list pushes retry the same condition. This lets a
+        dropped tab rebuilt after boot clear the label even when channel surfacing is
+        off, while a running channel reconciler still owns the first finish request.
+        """
+        self._slot_list_rebuild_finish_requested = True
+        if self._complete_slot_list_rebuild_if_ready():
+            self.push_slots_update()
+
     @contextlib.contextmanager
     def suspend_slots_push(self) -> "Iterator[Callable[[str], None]]":
         """Coalesce every ``push_slots_update()`` inside the block into one at exit.
@@ -10020,6 +10076,7 @@ class DashboardState:
         broadcast. An ordinary call absorbed into the same window widens the
         broadcast back to everyone.
         """
+        self._complete_slot_list_rebuild_if_ready()
         lock = self._slots_broadcast_lock
         if lock is not None:
             with lock:
@@ -10272,6 +10329,7 @@ class DashboardState:
                 "slots": slots_json,
                 "channelTrusted": ch_trusted,
                 "gitlabHostsGeneration": gitlab_hosts_generation(),
+                "slotsPartial": self.slot_list_rebuilding,
                 # getattr, not self._folders: this read path runs on EVERY slots
                 # push, including on a __new__-built DashboardState that seeded only
                 # the push essentials and never ran __init__ (several endpoint
@@ -10311,6 +10369,7 @@ class DashboardState:
                     folders=_safe_folder_tree(getattr(self, "_folders", None)),
                     folders_gen=self.folders_generation(),
                     governance_gen=answer_generation,
+                    slots_partial=self.slot_list_rebuilding,
                 ),
                 **({"skip_slot_patch_clients": True} if legacy_only else {}),
             )
@@ -10834,6 +10893,7 @@ class DashboardState:
                     "slots": slots_list,
                     "yolo": note.get("_yolo", False),
                     "channelTrusted": note.get("channelTrusted", False),
+                    "slotsPartial": note.get("slotsPartial", False),
                     # Consumed by ``_send_ws_all``; never serialized to a client.
                     "_legacy_only": bool(note.get("_legacy_only", False)),
                 }
@@ -10848,6 +10908,7 @@ class DashboardState:
                     folders=note.get("folders"),
                     folders_gen=note.get("foldersGeneration"),
                     governance_gen=note.get("governanceGeneration"),
+                    slots_partial=bool(ws_data["slotsPartial"]),
                 )
             elif msg_type == "slot_title":
                 ws_data = {"key": note["key"], "title": note["title"]}
