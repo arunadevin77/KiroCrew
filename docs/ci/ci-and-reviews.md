@@ -1611,6 +1611,13 @@ PR-time proof only, no publishing.
 - **`build-desktop`** builds the Electron app unsigned through `make desktop` on
   `ubuntu-22.04` and `ubuntu-22.04-arm` for every PR, plus `macos-15` when the
   matrix includes it, and every instantiated leg uploads its artifacts.
+  The `ubuntu-22.04` leg runs on the large CodeBuild fleet label when
+  `desktop-matrix`'s `runner` step admits the run (the same actor, event and
+  fork rule as `ci.yml`'s `changes` resolver); otherwise it stays on hosted
+  `ubuntu-22.04`. The fleet image is `standard:7.0` (Ubuntu 22.04, glibc 2.35,
+  `rpm` installed), so the AppImage's glibc floor does not move. The job name
+  and `matrix.os` stay `ubuntu-22.04`. The arm64 and macOS legs stay hosted,
+  and `build-desktop.yml`, which builds the shipped bytes, is unchanged.
 - **`smoke-install-macos`** runs when the matrix includes `macos-15`: it
   installs the DMG with `scripts/smoke-macos-install.sh`, launches the app,
   and checks that the packaged gateway answers `/api/health` with the bundled

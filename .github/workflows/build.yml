@@ -294,7 +294,30 @@ jobs:
       # 'true' or 'false': whether build-windows-installer runs. Always 'true'
       # off a pull_request; on one, only when a Windows-packaging input changed.
       windows_installer: ${{ steps.compute.outputs.windows_installer }}
+      # Runner for the ubuntu-22.04 (x64) desktop leg: the large CodeBuild label
+      # or the hosted ubuntu-22.04. See the `runner` step.
+      linux_x64_runner: ${{ steps.runner.outputs.linux_x64_runner }}
     steps:
+      # Same admission as ci.yml's `changes` resolver: this repository, a push,
+      # a merge group or an opened/synchronize same-repository PR, and an actor
+      # in CODEBUILD_ACTOR_IDS. Everything else (forks, other PR activities, a
+      # missing variable) stays on hosted ubuntu-22.04. The fleet image is
+      # aws/codebuild/standard:7.0, Ubuntu 22.04, so the glibc the AppImage
+      # links against (2.35) is unchanged; rpm, which the rpm target needs, is
+      # in the image. Large compute: `npm run build` runs vite with a 6 GiB
+      # heap. Only the PR-time leg moves; build-desktop.yml, which builds the
+      # shipped Linux bytes for nightly and release, stays on hosted runners.
+      - name: Pick the Linux x64 desktop runner label
+        id: runner
+        env:
+          ELIGIBLE: ${{ github.repository == 'kirodotdev/KiroCrew' && contains(fromJSON(vars.CODEBUILD_ACTOR_IDS || '[]'), github.actor_id) && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize') && github.event.pull_request.head.repo.full_name == github.repository)) }}
+          LABEL: codebuild-kirocrew-gha-linux-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          if [ "$ELIGIBLE" = "true" ]; then
+            echo "linux_x64_runner=$LABEL instance-size:large" >> "$GITHUB_OUTPUT"
+          else
+            echo "linux_x64_runner=ubuntu-22.04" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -385,7 +408,11 @@ jobs:
   build-desktop:
     needs: [desktop-matrix]
     name: Build Desktop (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    # Only the x64 leg maps to the resolved runner; `matrix.os`, and so the job
+    # name the ruleset requires, stays `ubuntu-22.04`. The arm64 and macOS legs
+    # keep their hosted images. The `||` fallback keeps a hosted runner if the
+    # resolver output is ever empty.
+    runs-on: ${{ matrix.os == 'ubuntu-22.04' && (needs.desktop-matrix.outputs.linux_x64_runner || 'ubuntu-22.04') || matrix.os }}
     # macOS bills at 10x, so an unbounded hang here is the costliest in the repo.
     timeout-minutes: 45
     strategy:

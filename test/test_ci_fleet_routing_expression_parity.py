@@ -391,6 +391,40 @@ def test_ci_resolvers_share_actor_policy_and_emit_large_labels() -> None:
         assert f'echo "{output}={hosted}"' in script
 
 
+def test_build_desktop_routes_only_the_x64_leg_through_the_shared_policy() -> None:
+    """The PR-time x64 desktop leg uses the fleet under ci.yml's admission.
+
+    The arm64 and macOS legs keep their hosted images, `matrix.os` (the
+    required job name) stays `ubuntu-22.04`, and an ineligible run falls back
+    to hosted ubuntu-22.04 -- the same image family whose glibc the AppImage
+    links against.
+    """
+    workflow = yaml.safe_load((_WORKFLOWS_DIR / "build.yml").read_text(encoding="utf-8"))
+    resolver = workflow["jobs"]["desktop-matrix"]
+    expected_eligibility = _CANONICAL_MERGE_GROUP_ROUTING_EXPR.split(" && format(", 1)[0] + " }}"
+    step = {s.get("id"): s for s in resolver["steps"]}["runner"]
+    assert step["env"]["ELIGIBLE"] == expected_eligibility
+    assert step["env"]["LABEL"] == (
+        "codebuild-kirocrew-gha-linux-${{ github.run_id }}-${{ github.run_attempt }}"
+    )
+    assert resolver["outputs"]["linux_x64_runner"] == "${{ steps.runner.outputs.linux_x64_runner }}"
+    script = step["run"]
+    assert 'if [ "$ELIGIBLE" = "true" ]; then' in script
+    assert 'echo "linux_x64_runner=$LABEL instance-size:large"' in script
+    assert 'echo "linux_x64_runner=ubuntu-22.04"' in script
+
+    desktop = workflow["jobs"]["build-desktop"]
+    assert desktop["name"] == "Build Desktop (${{ matrix.os }})"
+    assert desktop["runs-on"] == (
+        "${{ matrix.os == 'ubuntu-22.04' && "
+        "(needs.desktop-matrix.outputs.linux_x64_runner || 'ubuntu-22.04') || matrix.os }}"
+    )
+
+    # The release matrix (nightly/release) builds the shipped bytes on hosted.
+    release = yaml.safe_load((_WORKFLOWS_DIR / "build-desktop.yml").read_text(encoding="utf-8"))
+    assert release["jobs"]["build-desktop"]["runs-on"] == "${{ matrix.os }}"
+
+
 def test_merge_queue_readiness_budget_covers_ci_critical_path() -> None:
     """The poll's TOTAL_BUDGET must outlast the slowest chain of ci.yml job caps.
 
