@@ -1406,11 +1406,12 @@ async def execute_task(
             verdict, test_output = VerificationStatus.NOT_CONFIGURED, "no test command"
         else:
             test_ok, test_output = await run_tests(test_cmd, work_dir)
-            verdict = (
-                VerificationStatus.SKIPPED
-                if test_ok is None
-                else VerificationStatus.PASSED if test_ok else VerificationStatus.FAILED
-            )
+            if test_ok is None:
+                verdict = VerificationStatus.SKIPPED
+            elif test_ok:
+                verdict = VerificationStatus.PASSED
+            else:
+                verdict = VerificationStatus.FAILED
         task.verification = verdict
         if verdict != VerificationStatus.PASSED:
             if require_verification and verdict != VerificationStatus.FAILED:
