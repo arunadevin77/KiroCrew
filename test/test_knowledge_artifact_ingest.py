@@ -891,7 +891,7 @@ class TestArtifactKnowledgeSync:
         assert any("arrived while off" in c for c in _contents(kstore, sid))
 
     @pytest.mark.asyncio
-    async def test_reconcile_now_runs_the_pass_and_returns_its_counts(
+    async def test_reconcile_now_runs_the_pass(
         self, pipeline, art_store, kstore
     ):
         sid, _ = ensure_artifact_source(kstore)
@@ -899,8 +899,9 @@ class TestArtifactKnowledgeSync:
         sync = ArtifactKnowledgeSync(
             art_store=art_store, pipeline=pipeline, kinds=DEFAULT_KINDS,
             loop=asyncio.get_running_loop())
-        assert await sync.reconcile_now(sid) == (1, 0, 0)
+        await sync.reconcile_now(sid)
         assert any("synced by hand" in c for c in _contents(kstore, sid))
+        assert not sync._lock.locked()
 
     @pytest.mark.asyncio
     async def test_reconcile_now_propagates_a_failed_pass(

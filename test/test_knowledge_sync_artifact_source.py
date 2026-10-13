@@ -78,7 +78,7 @@ class TestSyncArtifactSource:
     async def test_sync_runs_the_reconcile_pass_and_ends_synced(self, store, fetch_spy):
         sid = _artifact_source(store, "error")
         artifact_sync = MagicMock()
-        artifact_sync.reconcile_now = AsyncMock(return_value=(0, 0, 0))
+        artifact_sync.reconcile_now = AsyncMock(return_value=None)
         app = _make_app(store, artifact_sync=artifact_sync)
 
         async with TestClient(TestServer(app)) as client:
@@ -110,7 +110,7 @@ class TestSyncArtifactSource:
     async def test_sync_already_syncing_returns_409(self, store, fetch_spy):
         sid = _artifact_source(store, "syncing")
         artifact_sync = MagicMock()
-        artifact_sync.reconcile_now = AsyncMock(return_value=(0, 0, 0))
+        artifact_sync.reconcile_now = AsyncMock(return_value=None)
         app = _make_app(store, artifact_sync=artifact_sync)
 
         async with TestClient(TestServer(app)) as client:
@@ -134,6 +134,33 @@ class TestSyncArtifactSource:
             assert resp.status == 200
             await _drain(app)
 
+        fetch_spy.assert_not_called()
+        assert await asyncio.to_thread(_status, store, sid) == "error"
+
+    @pytest.mark.asyncio
+    async def test_ingest_error_stamped_during_the_pass_is_kept(self, store, fetch_spy):
+        """An artifact ingest that fails inside the pass stamps the row 'error'
+        itself; the closing 'synced' only moves a row still 'syncing', so that
+        failure stays visible."""
+        sid = _artifact_source(store, "synced")
+
+        def _ingest_failed() -> None:
+            store.db.execute("UPDATE sources SET sync_status = 'error' WHERE id = ?", (sid,))
+            store.db.commit()
+
+        async def _pass_with_failed_ingest(source_id: str) -> None:
+            await asyncio.to_thread(_ingest_failed)
+
+        artifact_sync = MagicMock()
+        artifact_sync.reconcile_now = AsyncMock(side_effect=_pass_with_failed_ingest)
+        app = _make_app(store, artifact_sync=artifact_sync)
+
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post(f"/api/knowledge/sources/{sid}/sync")
+            assert resp.status == 200
+            await _drain(app)
+
+        artifact_sync.reconcile_now.assert_awaited_once_with(sid)
         fetch_spy.assert_not_called()
         assert await asyncio.to_thread(_status, store, sid) == "error"
 

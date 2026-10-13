@@ -1056,8 +1056,8 @@ class ArtifactKnowledgeSync:
         except Exception:
             logger.exception("artifact KB reconcile failed")
 
-    async def reconcile_now(self, source_id: str) -> tuple[int, int, int]:
-        """Run the reconcile pass now and return ``(ingested, removed, deferred)``.
+    async def reconcile_now(self, source_id: str) -> None:
+        """Run the reconcile pass now and log what it changed.
 
         The start-time pass and the dashboard's manual Sync on the aggregate
         source both come through here. The pass holds the same lock as the
@@ -1071,7 +1071,6 @@ class ArtifactKnowledgeSync:
                 self.pipeline, self.art_store, source_id, self.kinds
             )
         self._log_reconcile(ingested, removed, deferred)
-        return ingested, removed, deferred
 
     @staticmethod
     def _log_reconcile(ingested: int, removed: int, deferred: int) -> None:
