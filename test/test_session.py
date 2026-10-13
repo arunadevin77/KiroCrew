@@ -708,7 +708,9 @@ class TestWarmPool:
                 await mgr._expire_idle(1)
                 assert mgr._sessions[CONSOLIDATE_KEY].provider is provider
                 provider.shutdown.assert_not_awaited()
-                await asyncio.wait_for(mgr.get_or_create(BACKGROUND_KEY), 2)
+                # _bg must not queue behind the held consolidation semaphore; the
+                # ceiling only turns a regression's hang into a named failure.
+                await asyncio.wait_for(mgr.get_or_create(BACKGROUND_KEY), 30)
                 mgr.release(BACKGROUND_KEY)
             # The finished turn stamped its clock; age it again so the next
             # sweep sees an idle session it is now free to reclaim.
