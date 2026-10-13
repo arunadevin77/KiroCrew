@@ -34,6 +34,28 @@ from kiro_crew.platform_compat import file_lock
 
 SESSION = "acp-sess-0001"
 
+#: Lost-run ceiling for a shutdown drain that has to release a batch parked behind a
+#: long backoff. The drain clamps that backoff to its first pacing slice, which is
+#: ``timeout / DEFAULT_LIMITS.max_write_attempts`` after the call, so a passing run waits
+#: one slice and then does its real store writes. Measured on the Windows shards at a 3 s
+#: window: 0.56-0.59 s per call, of which 0.5 s is that slice, and one loaded runner
+#: still held a batch in flight past 3 s. At 20 s the slice costs 3.3 s and the writes get
+#: about 16.7 s, far beyond any passing run measured, and the ceiling stays under half of
+#: the suite's ``--timeout=120``. It ends a wedged drain; it never decides a passing one.
+SHUTDOWN_DRAIN_CEILING_SECS = 20.0
+
+
+def _assert_drained_for_shutdown(what: str) -> None:
+    """Drain under the lost-run ceiling and name what was still owed if it expires."""
+    started = time.monotonic()
+    drained = emit.drain_for_shutdown(timeout=SHUTDOWN_DRAIN_CEILING_SECS)
+    elapsed = time.monotonic() - started
+    assert drained, (
+        f"{what}: the shutdown drain was not complete after {elapsed:.1f}s "
+        f"(ceiling {SHUTDOWN_DRAIN_CEILING_SECS:.0f}s); "
+        f"{emit.buffered_writes()} append(s) still buffered, {emit.dropped_writes()} dropped"
+    )
+
 
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path, monkeypatch):
@@ -4455,7 +4477,7 @@ def test_retryable_terminal_failure_keeps_the_turn_pinned(monkeypatch):
     assert failures["left"] == 0, "the closer was never attempted"
     assert emit.live_turn(SESSION) == 1, "a retryable terminal failure released the turn pin"
 
-    assert emit.drain_for_shutdown(timeout=3.0)
+    _assert_drained_for_shutdown("the retained closer")
     assert [e["type"] for e in _body()][-1] == "turn/completed"
     assert emit.live_turn(SESSION) == 0
 
@@ -5435,7 +5457,7 @@ def test_the_repair_is_queued_under_the_predecessor_not_the_successor(monkeypatc
     # waiting on it for an inline turn.
     asyncio.run(_open_successor_on_a_loop())
     delays["secs"] = 0.0
-    assert emit.drain_for_shutdown(timeout=3.0)
+    _assert_drained_for_shutdown("the retained outcome and the stood-down repair")
 
     stops = [closer["data"]["stop_reason"] for closer in _closers(SESSION)]
     assert stops == ["end_turn"], f"the repair ran ahead of the outcome still owed: {stops}"
@@ -5593,7 +5615,7 @@ def test_a_repair_dropped_with_the_batch_it_waited_in_comes_back(monkeypatch):
     emit._submit(_fail, "the predecessor's owed append", SESSION, 23)
     asyncio.run(_open_successor_on_a_loop())
     delays["secs"] = 0.0
-    assert emit.drain_for_shutdown(timeout=3.0)
+    _assert_drained_for_shutdown("the dropped batch and its re-queued repair")
 
     assert emit.dropped_writes() == 1, "the budget was not spent, or the repair was counted"
     closers = _closers(SESSION)
