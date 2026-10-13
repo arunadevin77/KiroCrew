@@ -76,7 +76,8 @@ function folderDropHeaderRect(container: DroppableContainer | undefined): Client
  * Only real folders are considered (`folderId` set): the root lane and the
  * ungrouped bucket carry no header row as their first child. An explicit
  * parent target measures its own painted rectangle and outranks an ordinary
- * child header in their deliberate overlap. When explicit targets overlap,
+ * child header in their deliberate overlap, but never an ANCESTOR's visible
+ * header its overlay bleeds onto. When explicit targets overlap,
  * the shallower depth wins because its sticky header paints above the deeper
  * one (`FOLDER_ROW_STICKY_Z - depth`). Among ordinary headers, the OUTERMOST
  * wins by DOM containment.
@@ -99,10 +100,22 @@ function folderDropHeaderHit(args: Parameters<CollisionDetection>[0], containers
       : Number.POSITIVE_INFINITY
     const node = c.node.current as HTMLElement | null
     const hitNode = hit?.node.current as HTMLElement | null | undefined
+    const hitFolderId = (hit?.data?.current as FolderDropData | undefined)?.folderId
     const shallowerExplicitTarget = priority === 1 && priority === hitPriority && depth < hitDepth
     const outerOrdinaryHeader = priority === 0 && priority === hitPriority
       && node && hitNode && node !== hitNode && node.contains(hitNode)
-    if (!hit || priority > hitPriority || shallowerExplicitTarget || outerOrdinaryHeader) {
+    // An explicit target outranks an ordinary header only when that header is
+    // its own folder's or a DESCENDANT's (the deliberate parent-over-child
+    // overlap). An ANCESTOR's visible header keeps the drop: a descendant's
+    // overlay that bleeds onto it must not refile the session one level deeper.
+    const ancestorHeader = (header: HTMLElement | null | undefined, headerFolder: string | null | undefined,
+      target: HTMLElement | null | undefined, targetFolder: string | null | undefined) =>
+      !!header && !!target && header !== target && headerFolder !== targetFolder && header.contains(target)
+    const explicitOverOrdinary = priority > hitPriority
+      && !ancestorHeader(hitNode, hitFolderId, node, d.folderId)
+    const ordinaryAncestorOverExplicit = priority < hitPriority
+      && ancestorHeader(node, d.folderId, hitNode, hitFolderId)
+    if (!hit || explicitOverOrdinary || ordinaryAncestorOverExplicit || shallowerExplicitTarget || outerOrdinaryHeader) {
       hit = c
       hitPriority = priority
       hitDepth = depth

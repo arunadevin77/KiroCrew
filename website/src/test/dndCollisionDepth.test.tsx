@@ -369,4 +369,46 @@ describe('explicit parent-folder target', () => {
     expect(winner(sidebarCollision(onChildBody))).toBe('folder-drop:docw')
     world.cleanup()
   })
+
+  it("keeps an ancestor's visible header ahead of a descendant's explicit target that bleeds onto it", () => {
+    // Session filed directly in the parent: the parent shows no explicit target
+    // of its own, only the child does. The child's overlay runs 4px above the
+    // child row (-top-1), onto the parent's header. A pointer on that strip is
+    // aimed at the parent; resolving it to the child would refile the session
+    // one level deeper.
+    const world = buildWorld()
+    const childTargetHost = document.createElement('div')
+    ;(world.docw.node.current as HTMLElement).appendChild(childTargetHost)
+    const childTarget = container(
+      'folder-parent-drop:docw',
+      rect(169, 213),
+      childTargetHost,
+      { type: 'folder-drop', folderId: 'docw', headerHitRect: 'self', headerHitDepth: 1 },
+    )
+    world.containers.push(childTarget)
+    world.droppableRects.set(childTarget.id as string, childTarget.rect.current as ClientRect)
+    const setElementRect = (element: Element, r: ClientRect) => {
+      Object.defineProperty(element, 'getBoundingClientRect', { value: () => r })
+    }
+    const setFirstChildRect = (candidate: DroppableContainer, r: ClientRect) => {
+      const child = document.createElement('div')
+      setElementRect(child, r)
+      ;(candidate.node.current as HTMLElement).prepend(child)
+    }
+    setElementRect(childTarget.node.current as HTMLElement, rect(169, 213))
+    setFirstChildRect(world.kiro, rect(139, 173))
+    setFirstChildRect(world.docw, rect(173, 205))
+
+    const onParentStrip = () => args({ x: 366, y: 171 }, world, { type: 'session', key: 's1' })
+    expect(winner(sidebarCollision(onParentStrip()))).toBe('folder-drop:kiro')
+    world.containers.reverse()
+    expect(winner(sidebarCollision(onParentStrip()))).toBe('folder-drop:kiro')
+    world.containers.reverse()
+
+    // Below the parent's header the child's own target still wins over the
+    // child's ordinary header it covers.
+    const onChildHeader = args({ x: 366, y: 190 }, world, { type: 'session', key: 's1' })
+    expect(winner(sidebarCollision(onChildHeader))).toBe('folder-parent-drop:docw')
+    world.cleanup()
+  })
 })
