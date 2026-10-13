@@ -2081,6 +2081,92 @@ class TestPooledStubsOnTheClaudeMirror:
         assert "narrowed" in {e["name"] for e in projection.params["mcpServers"]}
 
 
+def _mirror_classes():
+    from kiro_crew.providers.mirrors.codex import CodexMirror
+    from kiro_crew.providers.mirrors.goose import GooseMirror
+    from kiro_crew.providers.mirrors.opencode import OpenCodeMirror
+
+    return [ClaudeCodeMirror, CodexMirror, OpenCodeMirror, GooseMirror]
+
+
+class TestDisabledServersPooledStub:
+    """A server switched off WHOLE never mounts through its pooled broker stub.
+
+    The stub carries the same name as the spec entry it rewrites, so the stub half
+    of the array is where a ``disabled: true`` server could come back. Every
+    mirror holds a stub to the spec's ``tools`` allowlist, and that allowlist never
+    grants a disabled server, whichever source switched it off and whatever
+    ``tools`` says. An enabled pooled server beside it stays mounted.
+    """
+
+    _STUBS = (
+        {"name": "my-server", "command": "/stub", "args": [], "env": [], "type": "stdio"},
+        {"name": "ok", "command": "/stub", "args": [], "env": [], "type": "stdio"},
+    )
+
+    @staticmethod
+    def _switch_off(agents_dir: Path, tmp_path: Path, *, source: str, tools: list) -> None:
+        disabled = {"command": "/bin/x", "disabled": True}
+        servers = {"my-server": dict(disabled) if source == "spec" else {"command": "/bin/x"}}
+        servers["ok"] = {"command": "/bin/ok"}
+        _write_spec(agents_dir, servers=servers, tools=tools)
+        if source == "global":
+            (tmp_path / "settings-mcp.json").write_text(
+                json.dumps({"mcpServers": {"my-server": disabled}}), encoding="utf-8"
+            )
+
+    @pytest.mark.parametrize("mirror_cls", _mirror_classes(), ids=lambda c: c.__name__)
+    @pytest.mark.parametrize("source", ["spec", "global"])
+    @pytest.mark.parametrize("tools", [["@my-server", "@ok"], ["*"]], ids=["referenced", "star"])
+    def test_every_mirror_withholds_a_disabled_servers_stub(
+        self, tmp_path, agents_dir, mirror_cls, source, tools
+    ):
+        self._switch_off(agents_dir, tmp_path, source=source, tools=tools)
+        projection = mirror_cls().session_projection(
+            "kirocrew",
+            stub_server_names=("my-server", "ok"),
+            stub_elements=[dict(s) for s in self._STUBS],
+            permission_surface_owned=True,
+        )
+        names = {e.get("name") for e in projection.params["mcpServers"]}
+        assert "my-server" not in names
+        assert "my-server" in projection.disabled_servers
+        assert "ok" in names
+
+    @pytest.mark.parametrize("overlay_disabled", [False, True], ids=["plain", "flagged"])
+    def test_the_claude_session_array_omits_a_disabled_servers_stub(
+        self, tmp_path, agents_dir, overlay_disabled
+    ):
+        """The whole client path: overlay stubs in, session array out."""
+        from kiro_crew.mcp_gateway.rewriter import _WRAPPER_MARKER
+
+        self._switch_off(agents_dir, tmp_path, source="spec", tools=["@my-server", "@ok"])
+        overlay = tmp_path / "gw" / "mcp-gateway" / "agents"
+        overlay.mkdir(parents=True)
+        wrapped = {
+            name: {
+                _WRAPPER_MARKER: True,
+                "command": "/stub",
+                "args": [f"--target-command={name}-cmd"],
+                "env": {},
+            }
+            for name in ("my-server", "ok")
+        }
+        if overlay_disabled:
+            wrapped["my-server"]["disabled"] = True
+        (overlay / "kirocrew.json").write_text(
+            json.dumps({"name": "kirocrew", "mcpServers": wrapped}), encoding="utf-8"
+        )
+        client = AcpClient(work_dir=tmp_path, agent="kirocrew", acp_backend=ACP_BACKEND_CLAUDE)
+        client._write_claude_local_settings()
+        assert client._claude_settings_authored is True
+        client._mcp_gateway_overlay = overlay
+        assert {s["name"] for s in client._pooled_broker_stubs()} == {"my-server", "ok"}
+        names = {e["name"] for e in client._session_mcp_servers()}
+        assert "my-server" not in names
+        assert "ok" in names
+
+
 class TestLocalSettingsSeed:
     """Crew's seed of ``<work_dir>/.claude/settings.local.json``.
 
