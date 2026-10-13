@@ -102,19 +102,26 @@ Three structural facts explain most of the rest:
   the merge queue.** `PR Readiness` is the one required status: on a pull
   request head it aggregates every lane, and on a merge group it is the queue's
   own check (next bullet). Individual red
-  checks are strong signals a human can weigh. Whether the queue is actually
-  required is a ruleset setting no PR diff shows, so the scheduled
-  `merge-queue-ruleset.yml` reads main's live rules every 6 hours
-  (`scripts/check_merge_queue_ruleset.py`) and goes red when `merge_queue` is
-  not among them; `scheduled-failure-watch.yml` turns that red into one issue.
+  checks are strong signals a human can weigh. Whether the queue is required
+  is the owner's call, and today main does not require it. That is a ruleset
+  setting no PR diff shows, so the scheduled `merge-queue-ruleset.yml` reads
+  main's live rules and the `MERGE_QUEUE_ENABLED` variable every 6 hours
+  (`scripts/check_merge_queue_ruleset.py`). No `merge_queue` rule with the
+  variable not `true` is a clean pass that prints "merge queue not enabled".
+  It goes red only on a misconfiguration: an enabled queue with no
+  `required_status_checks` rule, or the variable `true` while the ruleset has
+  no `merge_queue` rule. `scheduled-failure-watch.yml` turns that red into one
+  issue.
   The same shape covers an npm fact no diff shows: the installer tracks
   `@playwright/cli@latest`, so the daily `playwright-cli-banner.yml` launches
   that release once (`show --port 0`) and fails when
   `scripts/check_playwright_cli_banner.py` cannot parse its `Listening on`
   banner with the Browser view's own parser, naming the CLI version and the
   lines read.
-- **Merge queue:** every test workflow runs on `merge_group`, the tree that
-  actually lands: `ci.yml`, `fast-gate.yml` and `build.yml` on the fleet with
+- **Merge queue:** the queue is off on main today, by the owner's decision,
+  and the push-to-main path runs the full matrix. What follows is what happens
+  once an admin enables it. Every test workflow runs on `merge_group`, the tree
+  that actually lands: `ci.yml`, `fast-gate.yml` and `build.yml` on the fleet with
   the diff-scoped gates diffing against the group's `merge_group.base_sha`,
   `main-ratchet-audit.yml` on the fleet judging the whole integrated tree,
   `client-py.yml` hosted, and `internal-content-scan-gate.yml`, which already

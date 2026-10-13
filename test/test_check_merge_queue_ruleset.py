@@ -48,19 +48,24 @@ _MERGE_QUEUE = {
 }
 
 
-def test_the_live_rules_without_a_queue_fail() -> None:
-    ok, message = gate.verdict(_LIVE_WITHOUT_QUEUE)
-    assert not ok
-    assert "no merge_queue rule" in message
+def test_the_live_rules_without_a_queue_or_the_variable_pass() -> None:
+    # The owner keeps the queue off: main's real rules, variable unset, is clean.
+    for variable in ("", "false"):
+        ok, message = gate.verdict(_LIVE_WITHOUT_QUEUE, variable)
+        assert ok, message
+        assert "merge queue not enabled" in message
 
 
-def test_strict_up_to_date_is_not_a_substitute_for_the_queue() -> None:
-    rules = [dict(rule) for rule in _LIVE_WITHOUT_QUEUE]
-    rules[-1] = {
-        **rules[-1],
-        "parameters": {**rules[-1]["parameters"], "strict_required_status_checks_policy": True},
-    }
-    assert gate.verdict(rules)[0] is False
+def test_the_cli_passes_the_absent_queue_with_the_variable_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    off = tmp_path / "off.json"
+    off.write_text(json.dumps(_LIVE_WITHOUT_QUEUE), encoding="utf-8")
+    monkeypatch.delenv("MERGE_QUEUE_ENABLED", raising=False)
+    assert gate.main(["x", str(off)]) == 0
+    out = capsys.readouterr().out
+    assert "merge queue not enabled" in out
+    assert "::error::" not in out
 
 
 def test_a_merge_queue_rule_passes() -> None:
@@ -80,21 +85,36 @@ def test_a_non_list_body_fails_closed() -> None:
     assert gate.verdict({"message": "Not Found"})[0] is False
 
 
-def test_the_cli_exit_codes(tmp_path: Path) -> None:
+def test_the_cli_exit_codes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     off = tmp_path / "off.json"
     off.write_text(json.dumps(_LIVE_WITHOUT_QUEUE), encoding="utf-8")
     on = tmp_path / "on.json"
     on.write_text(json.dumps([*_LIVE_WITHOUT_QUEUE, _MERGE_QUEUE]), encoding="utf-8")
+    bad = tmp_path / "bad.json"
+    no_checks = [rule for rule in _LIVE_WITHOUT_QUEUE if rule["type"] != "required_status_checks"]
+    bad.write_text(json.dumps([*no_checks, _MERGE_QUEUE]), encoding="utf-8")
+    monkeypatch.delenv("MERGE_QUEUE_ENABLED", raising=False)
+    assert gate.main(["x", str(off)]) == 0
+    assert gate.main(["x", str(on)]) == 0
+    assert gate.main(["x", str(bad)]) == 1
+    assert gate.main(["x", str(tmp_path / "missing.json")]) == 2
+    monkeypatch.setenv("MERGE_QUEUE_ENABLED", "true")
     assert gate.main(["x", str(off)]) == 1
     assert gate.main(["x", str(on)]) == 0
-    assert gate.main(["x", str(tmp_path / "missing.json")]) == 2
 
 
 def test_the_variable_on_without_the_queue_names_the_skipped_push_run() -> None:
     ok, message = gate.verdict(_LIVE_WITHOUT_QUEUE, "true")
     assert not ok
     assert "MERGE_QUEUE_ENABLED is 'true'" in message
-    assert "MERGE_QUEUE_ENABLED" not in gate.verdict(_LIVE_WITHOUT_QUEUE, "")[1]
+    assert "no merge_queue rule" in message
+
+
+def test_the_variable_on_in_any_case_without_the_queue_fails() -> None:
+    # Actions compares `vars.MERGE_QUEUE_ENABLED == 'true'` ignoring case, so
+    # ci.yml trims main's push run for these spellings too.
+    for variable in ("TRUE", "True"):
+        assert gate.verdict(_LIVE_WITHOUT_QUEUE, variable)[0] is False
 
 
 def test_the_cli_reads_the_queue_variable(

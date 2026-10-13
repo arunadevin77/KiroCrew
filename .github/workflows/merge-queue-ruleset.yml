@@ -6,10 +6,12 @@ name: Merge Queue Ruleset Audit
 # is a ruleset setting, not a file, so no pull request check notices when it is
 # switched off, and main then goes red from two PRs that were each green alone.
 #
-# This workflow reads main's live rules and goes red when `merge_queue` is not
-# among them, or when the MERGE_QUEUE_ENABLED variable says the queue is on but
-# the ruleset does not require it (then ci.yml skips main's push run and nothing
-# tests the merged tree).
+# Whether main requires the queue is the owner's call; today it does not. This
+# workflow reads main's live rules and the MERGE_QUEUE_ENABLED variable: no
+# `merge_queue` rule with the variable unset is a clean pass ("merge queue not
+# enabled"). It goes red when an enabled queue has no required status check, or
+# when the variable says the queue is on but the ruleset does not require it
+# (then ci.yml skips main's push run and nothing tests the merged tree).
 #
 # WHY ITS OWN SCHEDULED WORKFLOW, NOT A JOB IN main-ratchet-audit.yml: the fact
 # it reads belongs to no commit. A per-push job would stay red on every merge
@@ -31,7 +33,7 @@ permissions:
 
 jobs:
   check:
-    name: Merge queue required on main
+    name: Merge queue configured on main
     # A fork has none of upstream's rulesets; there the check would only ever
     # report upstream's setting as missing.
     if: ${{ github.repository == 'kirodotdev/KiroCrew' }}
@@ -41,7 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Read main's live rules and require merge_queue
+      - name: Read main's live rules and audit the merge queue
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
