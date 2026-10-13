@@ -217,6 +217,27 @@ class TestShippedScenarios:
         # The catalog fields describe the scenario to people, not to the model.
         assert sc.user_story not in prompt
 
+    def test_a_retry_creates_a_new_name_not_the_first_attempts(self) -> None:
+        # The target boots once per run, so attempt 2 finds the crewmate attempt 1
+        # made. Asking it for the same name is refused as a duplicate and leaves
+        # a dirty "New crewmate" form for the next scenario (Leave site?).
+        sc = scenarios.load_scenario(SCENARIOS_DIR / "crewmate-create-first.yaml")
+        first, second = sc.task_prompt(1), sc.task_prompt(2)
+        assert scenarios.ATTEMPT_SUFFIX not in first + second
+        assert 'type exactly "Radar" in the "Name" field' in first
+        assert 'type exactly "Radar 2" in the "Name" field' in second
+        assert '"Radar 2" is visible' in second
+        assert sc.task_prompt() == first
+
+    def test_attempt_suffix(self) -> None:
+        assert [scenarios.attempt_suffix(n) for n in (0, 1, 2, 3)] == ["", "", " 2", " 3"]
+
+    def test_report_summary_carries_no_placeholder(self) -> None:
+        sc = scenarios.load_scenario(SCENARIOS_DIR / "crewmate-create-first.yaml")
+        res = harness.ScenarioResult.for_scenario(sc, "SKIPPED")
+        assert scenarios.ATTEMPT_SUFFIX not in res.summary
+        assert "named Radar with a job" in res.summary
+
     def test_every_shipped_scenario_is_classified(self) -> None:
         for sc in scenarios.load_all(SCENARIOS_DIR):
             assert sc.feature in scenarios.FEATURES

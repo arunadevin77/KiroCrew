@@ -44,7 +44,13 @@ if __package__ in (None, ""):  # ``python test/gui_user/harness.py`` -- make ``g
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from gui_user import friction, report, x11  # noqa: E402
-from gui_user.scenarios import Scenario, ScenarioError, load_all, select  # noqa: E402
+from gui_user.scenarios import (  # noqa: E402
+    ATTEMPT_SUFFIX,
+    Scenario,
+    ScenarioError,
+    load_all,
+    select,
+)
 
 BEDROCK_ANTHROPIC_VERSION = "bedrock-2023-05-31"
 COMPUTER_USE_BETA = "computer-use-2025-11-24"
@@ -382,7 +388,8 @@ class ScenarioResult:
         return cls(
             name=sc.name,
             tier=sc.tier,
-            summary=sc.summary,
+            # The report names the scenario, not one attempt of it.
+            summary=sc.summary.replace(ATTEMPT_SUFFIX, ""),
             status=status,
             feature=sc.feature,
             user_story=sc.user_story,
@@ -483,7 +490,7 @@ class Runner:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": scenario.task_prompt()},
+                        {"type": "text", "text": scenario.task_prompt(attempt_no)},
                         {"type": "text", "text": "Here is the screen right now:"},
                         image_block(png),
                     ],
