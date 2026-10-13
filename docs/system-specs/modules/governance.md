@@ -2126,7 +2126,9 @@ read-your-writes should add it deliberately, with its own tests.
   spelling, which a recipient predicate over conversation ids can never match —
   and the handler re-decides recipient authorization against the resolved
   conversation id, SEL-audited, immediately after; the `channels` governance
-  decision itself always precedes the resolve's network side effect); the per-transport **startup** gate in
+  decision itself always precedes the resolve's network side effect); the
+  proactive owner DM in `dashboard.messaging_api.channel_delivery._deliver_channel_dm`
+  runs the same two-step on the same ladder; the per-transport **startup** gate in
   `slack.gateway._channel_transport_permitted` (a `channels` deny for a member
   keeps that transport — `slack`/`wecom`/`telegram`/`discord`/`webex` — from
   connecting at boot; resolved under `session_key=HOST_SESSION_KEY` so a

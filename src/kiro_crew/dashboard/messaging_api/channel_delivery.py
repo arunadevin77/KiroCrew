@@ -103,9 +103,9 @@ async def _deliver_channel_dm(
         return False, "", ""
     # Imported here, not at module scope: chat_runner imports from
     # kiro_crew.dashboard.handlers, so a top-level import closes that cycle. Only
-    # this one is deferred -- `HOST_SESSION_KEY` is a constant and is imported at
+    # these two are deferred -- `HOST_SESSION_KEY` is a constant and is imported at
     # module scope, where the top-level-imports rule wants it.
-    from kiro_crew.dashboard.chat_runner import _resolve_channel_target
+    from kiro_crew.dashboard.chat_runner import _authorize_recipient, _resolve_channel_target
 
     # A cron carries its own validated session key; an out-of-band send owns no
     # session, and the host sentinel is what operators bind host-side governance
@@ -115,18 +115,22 @@ async def _deliver_channel_dm(
     # on some channels (Discord opens a DM channel over REST), so a denied
     # channel must never reach it. Offloaded because the governance evaluation
     # reads profile files.
-    # The principal is supplied rather than derived: this addresses a
-    # ``configured_targets()`` entry, so the link carries a ``user:<id>`` target id
-    # and ``session_key`` is a host sentinel naming nobody. The id came off the
-    # transport's own allow-list via ``_owner_dm_target``, which is the authoritative
-    # answer the recipient check would otherwise be unable to reach.
+    #
+    # check_recipient=False, because this link carries the configured-target
+    # spelling (``user:<id>``) rather than a conversation id, and ``may_send_to``
+    # is a recipient predicate over conversation ids: a transport that judges the
+    # id itself (Telegram, whose private ``chat_id`` IS the peer's user id) can
+    # never match the prefixed spelling against its roster of bare ids. Governance
+    # and transport capability still gate the resolve here; the recipient is
+    # decided below, against the resolved conversation, the same two-step the
+    # mirror-link creation handler runs.
     governed = await asyncio.to_thread(
         functools.partial(
             _resolve_channel_target,
             state,
             session_key,
             ChannelLink(channel_type=channel_type, channel_id=target_id),
-            principal=target_id.removeprefix(_DM_TARGET_PREFIX),
+            check_recipient=False,
         )
     )
     if governed is None:
@@ -143,6 +147,31 @@ async def _deliver_channel_dm(
         # rather than fall back to a wider audience.
         return False, "channel_delivery_failed", f"{channel_type} DM target is unavailable"
     conversation_id, thread_id = resolved
+    # Recipient authorization on the RESOLVED conversation, through the one shared
+    # decision the ladder's own recipient leg runs, so the two cannot drift. It
+    # fails closed on a raising transport and SEL-audits a denial. The principal is
+    # supplied rather than derived: ``session_key`` is a host sentinel naming
+    # nobody, and the id came off the transport's own allow-list via
+    # ``_owner_dm_target``, which is the authoritative answer for a transport that
+    # judges the peer rather than the conversation (a Discord DM channel id cannot
+    # be tested against a user roster). Offloaded like the ladder call above,
+    # whose recipient leg this is.
+    permitted = await asyncio.to_thread(
+        functools.partial(
+            _authorize_recipient,
+            live_transport,
+            channel_type,
+            conversation_id,
+            thread_id,
+            principal=target_id.removeprefix(_DM_TARGET_PREFIX),
+            session_key=session_key,
+        )
+    )
+    if not permitted:
+        logger.info(
+            "send_message: outbound to %s refused - recipient not allow-listed", channel_type
+        )
+        return False, "channel_not_permitted", f"{channel_type} is not permitted"
     # Chunked at the transport's own declared ceiling, as a mirrored turn is:
     # Discord rejects a message over its cap outright, so an unchunked long
     # report would arrive as a delivery failure instead of a message. At least one

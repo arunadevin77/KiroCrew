@@ -47,6 +47,9 @@ class _Transport:
     async def resolve_configured_target(self, target_id: str):
         return ("conv-42", None)
 
+    def may_send_to(self, conversation_id: str, thread_id=None, *, principal: str = "") -> bool:
+        return conversation_id == "conv-42"
+
     async def send_message(self, conversation_id: str, text: str, thread_id=None) -> str:
         self.sent.append(text)
         return "MSG1"

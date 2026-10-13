@@ -279,19 +279,17 @@ def _resolve_channel_target(
 
     *principal* lets a caller that has ALREADY established the recipient
     authoritatively supply it, instead of having it derived from *session_key*.
-    ``handlers/messaging._deliver_channel_dm`` is the case: it addresses a
-    ``configured_targets()`` entry rather than a conversation, so its link carries a
-    ``user:<id>`` target id and its session key is a host sentinel that names nobody.
-    Deriving from that key would yield no principal and refuse a send whose
-    recipient came off the transport's own allow-list. ``None`` means derive;
-    a string is used verbatim.
+    ``session_control``'s drop notice is the case: it supplies the peer the
+    dropped entry's own metadata recorded alongside the conversation id.
+    ``None`` means derive; a string is used verbatim.
 
-    *check_recipient* lets the ONE caller whose link does not yet name a
-    conversation opt out of the recipient leg: the mirror-link creation
-    pre-check (``chat_mirror.api_chat_slot_mirror_link``) runs this ladder on the
-    CONFIGURED-TARGET spelling (``user:<id>``) because channel-scope governance
-    must precede ``resolve_configured_target``'s possible network side effect —
-    but ``may_send_to`` is a recipient predicate over conversation ids, so that
+    *check_recipient* lets a caller whose link does not yet name a conversation
+    opt out of the recipient leg. Two run this ladder on the CONFIGURED-TARGET
+    spelling (``user:<id>``) because channel-scope governance must precede
+    ``resolve_configured_target``'s possible network side effect: the
+    mirror-link creation pre-check (``chat_mirror.api_chat_slot_mirror_link``)
+    and the proactive owner DM (``handlers/messaging._deliver_channel_dm``). But
+    ``may_send_to`` is a recipient predicate over conversation ids, so that
     spelling can never match a roster of bare ids and the leg would refuse
     every allow-listed recipient. ``False`` skips ONLY the recipient leg;
     governance and transport capability still gate the resolve, and the caller
