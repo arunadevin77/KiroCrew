@@ -48,6 +48,7 @@ import tempfile
 import time
 import urllib.request
 import weakref
+from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, MutableMapping
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -472,6 +473,8 @@ _CASE_INSENSITIVE_CLAIM_FIELDS = frozenset({"oauth_flow"})
 # time.monotonic() rather than the service's injected clock: this is a real-time
 # rate bound, not part of the probe's testable timing contract.
 _AUTH_FINGERPRINT_CACHE_SECS = 5.0
+# How many of the latest fresh store reads identity_read_other_than can see.
+_IDENTITY_READ_HISTORY = 64
 # Short: the projection is a handful of small reads against a local file, and a
 # stuck open must not hold up sign-in.
 _AUTH_SQLITE_TIMEOUT_SECS = 5.0
@@ -3054,6 +3057,13 @@ class KiroPrerequisiteService:
         # erase the only record that the account existed (a child spawned
         # under it may be unstamped and otherwise invisible).
         self._interim_identity_gen = 0
+        # Every fresh store read, numbered, with the fingerprint it returned. A
+        # shared acquire check reads it to learn whether any read after its own
+        # named another account (identity_read_other_than). The interim latch
+        # cannot answer that: it ignores reads equal to the baseline, and those
+        # are exactly the reads of the account a pending sweep switched away from.
+        self._identity_read_gen = 0
+        self._identity_read_history: deque[tuple[int, str]] = deque(maxlen=_IDENTITY_READ_HISTORY)
 
     @property
     def initial_setup_complete(self) -> bool:
@@ -3663,6 +3673,8 @@ class KiroPrerequisiteService:
             # guessing "unchanged" is what keeps a stale account alive.
             logger.warning("Kiro identity fingerprint could not be read", exc_info=True)
             fingerprint, absence_is_definitive = _AUTH_FINGERPRINT_ABSENT, False
+        self._identity_read_gen += 1
+        self._identity_read_history.append((self._identity_read_gen, fingerprint))
         self._maybe_latch_interim_identity(fingerprint)
         if absence_is_definitive and not self._identity_cache_absence_definitive:
             # A proven sign-out after any other reading starts a new run; see
@@ -3901,6 +3913,26 @@ class KiroPrerequisiteService:
         """
 
         return self._interim_identity_gen
+
+    @property
+    def identity_read_generation(self) -> int:
+        """Count of fresh store reads so far, captured by a check right after its read."""
+
+        return self._identity_read_gen
+
+    def identity_read_other_than(self, fingerprint: str, *, since: int) -> bool:
+        """Whether a fresh read newer than *since* returned anything but *fingerprint*.
+
+        Answers True when the record starts after *since*, because a read it
+        dropped may have returned something else.
+        """
+
+        if self._identity_read_gen <= since:
+            return False
+        history = self._identity_read_history
+        if not history or history[0][0] > since + 1:
+            return True
+        return any(gen > since and seen != fingerprint for gen, seen in history)
 
     def note_sessions_reconciled(
         self, fingerprint: str, *, observations_before: int | None = None
