@@ -36,7 +36,9 @@ async def test_streamed_output_is_not_final_and_the_completed_frame_is(tmp_path,
     slot = state.get_or_create_slot("tool-frame-build")
     slot._titled = True
     events = [
-        AcpEvent(kind=EVENT_TOOL_CALL, tool_call_id="tc-build", title="Running: make test", is_shell=True),
+        AcpEvent(
+            kind=EVENT_TOOL_CALL, tool_call_id="tc-build", title="Running: make test", is_shell=True
+        ),
         # Mid-stream stdout: no status, not final.
         AcpEvent(kind=EVENT_TOOL_RESULT, tool_call_id="tc-build", tool_output="collecting"),
         AcpEvent(
@@ -46,7 +48,9 @@ async def test_streamed_output_is_not_final_and_the_completed_frame_is(tmp_path,
             tool_final=True,
             tool_status="completed",
         ),
-        AcpEvent(kind=EVENT_TOOL_CALL, tool_call_id="tc-fail", title="Running: false", is_shell=True),
+        AcpEvent(
+            kind=EVENT_TOOL_CALL, tool_call_id="tc-fail", title="Running: false", is_shell=True
+        ),
         # A FAILED call has returned too, though `tool_final` is for success only.
         AcpEvent(kind=EVENT_TOOL_RESULT, tool_call_id="tc-fail", tool_status="failed"),
         AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
@@ -62,7 +66,9 @@ async def test_the_text_after_tools_sweep_closes_calls_as_final(tmp_path, monkey
     slot = state.get_or_create_slot("tool-frame-sweep")
     slot._titled = True
     events = [
-        AcpEvent(kind=EVENT_TOOL_CALL, tool_call_id="tc-quiet", title="Running: true", is_shell=True),
+        AcpEvent(
+            kind=EVENT_TOOL_CALL, tool_call_id="tc-quiet", title="Running: true", is_shell=True
+        ),
         AcpEvent(kind=EVENT_TEXT_CHUNK, text="Done."),
         AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
     ]
