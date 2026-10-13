@@ -3853,15 +3853,17 @@ class AcpClient:
 
         Returns whether the exclusion was taken.
         """
+        whose = self._foreign_settings_owner(local_settings)
         if self._claude_adapter_below_setting_sources_floor():
-            self._log_claude_adapter_below_floor(local_settings)
+            self._log_claude_adapter_below_floor(local_settings, whose)
             return False
         if getattr(self, "_permission_mode", None):
             logger.warning(
-                "%s belongs to the project and this session requested permission mode "
+                "%s %s and this session requested permission mode "
                 "%r, which cannot be pinned without that file; the session runs without "
                 "Crew's MCP tools.",
                 local_settings,
+                whose,
                 self._permission_mode,
             )
             return False
@@ -3876,10 +3878,11 @@ class AcpClient:
             found = _project_settings_restrictions(local_settings.parent / name)
             if found is None:
                 logger.warning(
-                    "%s belongs to the project and %s could not be examined, or sets "
+                    "%s %s and %s could not be examined, or sets "
                     "hooks or sandbox settings, so leaving the project tiers out could "
                     "drop a restriction; the session runs without Crew's MCP tools.",
                     local_settings,
+                    whose,
                     local_settings.parent / name,
                 )
                 return False
@@ -3897,11 +3900,12 @@ class AcpClient:
         self._claude_inline_settings = inline
         self._claude_local_settings_excluded = True
         logger.warning(
-            "%s belongs to the project; leaving it untouched and out of this session's "
+            "%s %s; leaving it untouched and out of this session's "
             "setting sources, with Crew's settings and the project's %d deny/ask rule(s) "
             "carried inline instead. The project tiers do not load otherwise, so this "
             "session runs without the repository's env, plugins and CLAUDE.md.",
             local_settings,
+            whose,
             len(project_rules),
         )
         return True
@@ -3921,14 +3925,28 @@ class AcpClient:
             version = getattr(self, "_claude_adapter_disk_version", "")
         return not _claude_adapter_honours_setting_sources(version)
 
-    def _log_claude_adapter_below_floor(self, local_settings: Path) -> None:
+    def _foreign_settings_owner(self, local_settings: Path) -> str:
+        """Who a ``settings.local.json`` Crew does not govern belongs to, as a log phrase.
+
+        The bytes Crew's durable record names are a Crew seed another open
+        session holds, not the project's own file: removing or renaming it only
+        lasts until that session re-seeds it. Same bounded, no-follow read as
+        the share check.
+        """
+        recorded = seed_provenance.recorded_durable(local_settings)
+        if self._settings_path_bytes(local_settings, recorded) is not None:
+            return "is another open Crew session's settings seed for this work dir"
+        return "belongs to the project"
+
+    def _log_claude_adapter_below_floor(self, local_settings: Path, whose: str) -> None:
         floor = ".".join(str(part) for part in CLAUDE_ACP_SETTING_SOURCES_MIN_VERSION)
         logger.warning(
-            "%s belongs to the project and claude-agent-acp reported version %r, not "
+            "%s %s and claude-agent-acp reported version %r, not "
             "verified to honour settingSources (needs %s or newer), so the file cannot "
             "be left out; the session runs without Crew's MCP tools. Upgrade with "
             "'npm i -g %s'.",
             local_settings,
+            whose,
             _scrub_observed(getattr(self, "_agent_version", "")),
             floor,
             claude_mod.CLAUDE_ACP_NPM_PKG,
@@ -4086,10 +4104,11 @@ class AcpClient:
     def _log_declined_share(self, local_settings: Path) -> None:
         """Log that an existing settings file was left authoritative."""
         logger.info(
-            "%s already exists; leaving it as the authoritative project settings. This "
+            "%s already exists and %s; leaving it as it is. This "
             "session therefore runs without Crew's availableModels allowlist and without "
             "the permissions.deny rules from the agent spec.",
             local_settings,
+            self._foreign_settings_owner(local_settings),
         )
 
     def _render_claude_settings_payload(self) -> str:

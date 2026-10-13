@@ -1483,6 +1483,42 @@ class TestSharedPermissionSurface:
         assert sibling._claude_settings_shared is False
         assert _settings(tmp_path).read_text(encoding="utf-8") == before
 
+    def test_a_declined_sibling_seed_is_named_as_crews_not_the_projects(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        # The cause line must not send the user to rename "the project's" file:
+        # it is an open Crew session's seed, which that session writes back.
+        monkeypatch.setattr(mr, "_ADVERTISED_MODELS", {"claude_code": list(_SERVED)})
+        owner = _client(tmp_path, permission_mode="default")
+        owner._write_claude_local_settings()
+
+        sibling = _client(tmp_path, permission_mode="acceptEdits")
+        with caplog.at_level(logging.INFO, logger=acp_client.logger.name):
+            sibling._write_claude_local_settings()
+
+        assert sibling._permission_surface_governed is False
+        path = str(_settings(tmp_path))
+        lines = [r.getMessage() for r in caplog.records if path in r.getMessage()]
+        assert lines
+        assert all("belongs to the project" not in line for line in lines)
+        assert any("another open Crew session's settings seed" in line for line in lines)
+
+    def test_a_user_authored_file_is_still_named_as_the_projects(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        monkeypatch.setattr(mr, "_ADVERTISED_MODELS", {"claude_code": list(_SERVED)})
+        path = _settings(tmp_path)
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"permissions": {"allow": ["Bash(ls)"]}}), encoding="utf-8")
+
+        client = _client(tmp_path, permission_mode="default")
+        with caplog.at_level(logging.INFO, logger=acp_client.logger.name):
+            client._write_claude_local_settings()
+
+        lines = [r.getMessage() for r in caplog.records if str(path) in r.getMessage()]
+        assert any("belongs to the project" in line for line in lines)
+        assert all("another open Crew session" not in line for line in lines)
+
     def test_an_auto_sibling_is_refused_a_pinned_seed(self, tmp_path, monkeypatch):
         # An unpinned session pushes no model, so it would start on the owner's pin.
         monkeypatch.setattr(mr, "_ADVERTISED_MODELS", {"claude_code": list(_SERVED)})
