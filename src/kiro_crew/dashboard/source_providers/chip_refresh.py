@@ -85,11 +85,12 @@ def _chip_refresh_due(
         return now - stamped_at >= cache._TERMINAL_TTL_SECS
     if force:
         return True
-    ttl = (
-        cache._lifecycle_ttl(state)
-        if state in projection._TERMINAL_CHIP_STATES
-        else (chip_status._CHECK_TTL_SECS if open_ttl is None else open_ttl)
-    )
+    if state in projection._TERMINAL_CHIP_STATES:
+        ttl = cache._lifecycle_ttl(state)
+    elif open_ttl is None:
+        ttl = chip_status._CHECK_TTL_SECS
+    else:
+        ttl = open_ttl
     return now - stamped_at >= ttl
 
 
@@ -109,8 +110,9 @@ def schedule_check_refresh(
     ``force`` skips the TTL check for event-driven callers that know the remote
     state just moved (see ``request_check_refresh_now``). The pending cap and
     inflight dedup still apply, so a forced round can never outgrow a paced one.
-    A finished PR ages by ``_TERMINAL_TTL_SECS`` instead of the open-PR TTL, and a
-    MERGED one is not even force-read (``_chip_refresh_due``).
+    A finished PR ages on its own clock instead of the open-PR TTL -- a merged one
+    by ``_TERMINAL_TTL_SECS``, a closed one by ``_CLOSED_TTL_SECS`` -- and a MERGED
+    one is not even force-read (``_chip_refresh_due``).
     """
     now = time.monotonic()
     refreshing: list[str] = []
