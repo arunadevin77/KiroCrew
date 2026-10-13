@@ -460,7 +460,20 @@ jobs:
           [ -n "$APP" ] || { echo "No .app found in signed zip"; exit 1; }
 
           xcrun stapler staple "$APP"
-          xcrun stapler validate "$APP"
+          # validate performs a fresh ticket lookup against Apple's CloudKit
+          # endpoint; that lookup can drop mid-call (NSURLError -1005) after the
+          # staple itself succeeded. Retry only validate -- staple mutates the
+          # bundle and runs once; the spctl gate below stays the final arbiter.
+          validated=0
+          for attempt in 1 2 3; do
+            if xcrun stapler validate "$APP"; then
+              validated=1
+              break
+            fi
+            echo "stapler validate attempt $attempt/3 failed"
+            if [ "$attempt" -lt 3 ]; then sleep $(( 5 * attempt )); fi
+          done
+          [ "$validated" -eq 1 ] || { echo "stapler validate failed after 3 attempts"; exit 1; }
 
           ASSESS=$(spctl --assess --type execute --verbose "$APP" 2>&1)
           echo "$ASSESS"
@@ -542,7 +555,20 @@ jobs:
         run: |
           set -euo pipefail
           xcrun stapler staple "work/${ARTIFACT_BASENAME}.dmg"
-          xcrun stapler validate "work/${ARTIFACT_BASENAME}.dmg"
+          # validate performs a fresh ticket lookup against Apple's CloudKit
+          # endpoint; that lookup can drop mid-call (NSURLError -1005) after the
+          # staple itself succeeded. Retry only validate -- staple mutates the
+          # bundle and runs once; the spctl gate below stays the final arbiter.
+          validated=0
+          for attempt in 1 2 3; do
+            if xcrun stapler validate "work/${ARTIFACT_BASENAME}.dmg"; then
+              validated=1
+              break
+            fi
+            echo "stapler validate attempt $attempt/3 failed"
+            if [ "$attempt" -lt 3 ]; then sleep $(( 5 * attempt )); fi
+          done
+          [ "$validated" -eq 1 ] || { echo "stapler validate failed after 3 attempts"; exit 1; }
           ASSESS=$(spctl --assess --type install --verbose "work/${ARTIFACT_BASENAME}.dmg" 2>&1)
           echo "$ASSESS"
           echo "$ASSESS" | grep -q "Notarized Developer ID" || {
