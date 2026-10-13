@@ -436,11 +436,12 @@ and the reduced-motion handling for free.
 
 **`loader`** fills the indicator's artwork slot with your component: a mascot
 animation, a progress bar, a canvas, anything. `ChatFooter` renders it inside its
-`role="status"` wrapper, followed by the localized "Thinking" label, which is
-screen-reader-only while the art paints and becomes visible when the art fails or the
-loader throws. Your component owns its size, layout and motion. Keep it small (the
-band is ~32px tall), mark it `aria-hidden` (it is decorative), and honour
-`prefers-reduced-motion` yourself.
+`role="status"` wrapper, beside the localized "Thinking" label, which is always
+visible so a sighted user can read what the row means. Your component owns its
+size, layout and motion. Keep it small (the band is ~32px tall), mark it
+`aria-hidden` (it is decorative — the status's `aria-label` carries the single
+spoken name), and honour `prefers-reduced-motion` yourself. Leave room for the
+label beside your artwork.
 
 Resolution is `loader` → `loaderIcons` → artwork bundled for a core theme → the
 default icons, so a theme that registers neither renders exactly what it does
