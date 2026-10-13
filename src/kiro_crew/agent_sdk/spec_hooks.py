@@ -458,7 +458,7 @@ def spec_project_dir(provider: object) -> str | None:
 
 
 def crew_fired_spec_hooks(
-    agent_id: str, project_dir: str | None = None
+    agent_id: str, project_dir: str | None = None, *, translates_tools_settings: bool = False
 ) -> tuple[list[ScriptHook], list[str], int]:
     """The active agent spec's hooks as script hooks, the keys nothing carries, and
     how many ``confirm: true`` hooks are skipped.
@@ -468,7 +468,9 @@ def crew_fired_spec_hooks(
     are for the session-start notice: the spec keys a KAS session runs without, and
     the hooks that wait for a confirmation Crew cannot ask for. Raises when the spec
     cannot be read; the caller fails PreToolUse closed on that. *project_dir* is
-    :func:`spec_project_dir` of the session.
+    :func:`spec_project_dir` of the session. *translates_tools_settings* is true
+    only for a KAS session, the one backend that receives ``toolsSettings`` as
+    ``permissions`` rules.
     """
     # circular import: the ACP layer imports the config loader, which sits below
     # this module; resolved at call time like the other driver seams here.
@@ -476,7 +478,8 @@ def crew_fired_spec_hooks(
 
     spec = _agent_spec(agent_id, project_dir)
     hooks, unconfirmable = _convert(agent_id, spec)
-    return list(hooks), spec_keys_without_carrier(spec), unconfirmable
+    lost = spec_keys_without_carrier(spec, translates_tools_settings=translates_tools_settings)
+    return list(hooks), lost, unconfirmable
 
 
 def spec_hooks_run_nowhere(provider: object) -> bool:

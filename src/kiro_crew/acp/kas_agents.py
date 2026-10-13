@@ -75,6 +75,7 @@ from kiro_crew.acp.kas_permissions import (
     allowed_tools_to_permissions,
     auto_approved_capabilities,
     merge_user_permissions,
+    tools_settings_to_permissions,
     withhold_hook_gated_auto_approval,
 )
 from kiro_crew.agent_discovery import (
@@ -206,12 +207,31 @@ UNSUPPORTED_SPEC_KEYS = frozenset(
 
 #: The keys in :data:`UNSUPPORTED_SPEC_KEYS` that nothing carries to a KAS session,
 #: so an agent that sets one runs without it. The user is told once per session.
-SPEC_KEYS_WITHOUT_CARRIER = UNSUPPORTED_SPEC_KEYS - {"hooks"}
+#: ``toolsSettings`` is not here: it is translated into ``permissions``
+#: (:func:`kiro_crew.acp.kas_permissions.tools_settings_to_permissions`), and only
+#: the entries that translation cannot carry are reported.
+SPEC_KEYS_WITHOUT_CARRIER = UNSUPPORTED_SPEC_KEYS - {"hooks", "toolsSettings"}
 
 
-def spec_keys_without_carrier(spec: dict[str, Any]) -> list[str]:
-    """The keys of :data:`SPEC_KEYS_WITHOUT_CARRIER` that *spec* sets, sorted."""
-    return sorted(k for k in SPEC_KEYS_WITHOUT_CARRIER if spec.get(k))
+def spec_keys_without_carrier(
+    spec: dict[str, Any], *, translates_tools_settings: bool = False
+) -> list[str]:
+    """What *spec* sets that the session runs without, sorted.
+
+    Whole keys from :data:`SPEC_KEYS_WITHOUT_CARRIER`. ``toolsSettings`` is named
+    whole too, unless *translates_tools_settings* says this session receives its
+    ``permissions`` translation (KAS only); then each ``toolsSettings.<tool>.<key>``
+    the translation cannot carry is named instead.
+    """
+    lost = [k for k in SPEC_KEYS_WITHOUT_CARRIER if spec.get(k)]
+    tools_settings = spec.get("toolsSettings")
+    if not translates_tools_settings:
+        if tools_settings:
+            lost.append("toolsSettings")
+        return sorted(lost)
+    _, not_carried = tools_settings_to_permissions(tools_settings)
+    lost.extend(f"toolsSettings.{path}" for path in not_carried)
+    return sorted(lost)
 
 
 class KasAgentTranslationError(ValueError):
@@ -919,6 +939,21 @@ def to_client_custom_agent(
         # saying "auto-approve nothing", and a block must not answer that for them.
         allowlist_present=isinstance(allowed_tools_input, list),
         agent_id=agent_id,
+    )
+    # `toolsSettings` has no wire slot, but KAS's `permissions` is its
+    # replacement. The translated block goes through the same merge as an
+    # authored one: its denies travel, its allows meet the ceiling.
+    translated, _ = tools_settings_to_permissions(spec.get("toolsSettings"))
+    permissions = merge_user_permissions(
+        permissions,
+        translated,
+        ceiling_permits=may_skip_gate_now,
+        audit_decision=lambda refs, outcome, reason: _audit_permission_decision(
+            refs, outcome, reason, agent_id
+        ),
+        allowlist_present=isinstance(allowed_tools_input, list),
+        agent_id=agent_id,
+        source="translated `toolsSettings`",
     )
     permissions = withhold_hook_gated_auto_approval(
         permissions,

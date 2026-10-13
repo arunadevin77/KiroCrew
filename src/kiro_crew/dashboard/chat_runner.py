@@ -1038,7 +1038,13 @@ async def _prepare_spec_hooks(
         return [], True, work_dir
     try:
         hooks, lost, unconfirmable = await asyncio.to_thread(
-            crew_fired_spec_hooks, agent, spec_project_dir(client)
+            functools.partial(
+                crew_fired_spec_hooks,
+                agent,
+                spec_project_dir(client),
+                # Only KAS receives `toolsSettings` as `permissions` rules.
+                translates_tools_settings=capabilities_of(client).backend == ACP_BACKEND_KAS,
+            )
         )
     except Exception:  # noqa: BLE001 - the caller fails PreToolUse closed
         logger.warning(

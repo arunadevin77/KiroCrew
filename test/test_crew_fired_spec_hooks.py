@@ -117,12 +117,31 @@ def test_an_unreadable_spec_fails_closed(agents_dir, notices):
 
 
 def test_tools_settings_notice_fires_once_per_session(agents_dir, notices):
-    _write_spec(agents_dir, "a1", hooks=_OBJECT_HOOKS, toolsSettings={"shell": {}})
+    _write_spec(
+        agents_dir,
+        "a1",
+        hooks=_OBJECT_HOOKS,
+        toolsSettings={"shell": {"autoAllowReadonly": True}},
+    )
     _prepare(_client(ACP_BACKEND_KAS), "a1", is_new=True)
     _prepare(_client(ACP_BACKEND_KAS), "a1", is_new=False)
     assert len(notices) == 1
-    assert "toolsSettings" in notices[0]
+    assert "toolsSettings.shell.autoAllowReadonly" in notices[0]
     assert "hooks" not in notices[0]
+
+
+def test_translated_tools_settings_raise_no_notice(agents_dir, notices):
+    _write_spec(agents_dir, "a1", toolsSettings={"read": {"deniedPaths": ["~/.ssh"]}})
+    _prepare(_client(ACP_BACKEND_KAS), "a1", is_new=True)
+    assert notices == []
+
+
+def test_a_goose_session_still_hears_that_tools_settings_is_lost(agents_dir, notices):
+    """Only KAS receives the translation; goose fires spec hooks but gets no rules."""
+    _write_spec(agents_dir, "a1", toolsSettings={"read": {"deniedPaths": ["~/.ssh"]}})
+    _prepare(_client(ACP_BACKEND_GOOSE), "a1", is_new=True)
+    assert len(notices) == 1
+    assert "toolsSettings" in notices[0]
 
 
 _PROMPT_AND_STOP_HOOKS = {
