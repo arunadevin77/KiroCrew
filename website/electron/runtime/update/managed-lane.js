@@ -1,3 +1,8 @@
+const {
+  GATEWAY_STILL_RUNNING,
+  isGatewayStillRunning: gatewayStillRunning,
+} = require("../../gateway-stop");
+
 /**
  * The marker-driven update lane: an EXTERNALLY-MANAGED marker that carries an
  * `updateCommand` (and optionally a `checkCommand`) owns this install's
@@ -66,6 +71,17 @@ function createManagedLane({
       code,
       message: detail,
       ...(httpStatus === undefined ? {} : { httpStatus }),
+    });
+  };
+
+  // The install-phase failure for a stop that left a gateway from this app's
+  // bundle running. Its own code, so the renderer can tell it from a failed
+  // update command.
+  const emitGatewayStillRunning = (err) => {
+    emit("error", {
+      phase: "install",
+      code: GATEWAY_STILL_RUNNING,
+      message: String((err && err.message) || ""),
     });
   };
 
@@ -258,6 +274,14 @@ function createManagedLane({
       emit("installing", { version: foundVersion });
       try { if (onInstallDispatched) onInstallDispatched(); } catch { /* advisory */ }
       try { if (stopGateway) await stopGateway(); } catch (err) {
+        if (gatewayStillRunning(err)) {
+          // The user asked to quit: honor that, without replacing files a live
+          // gateway is still running from.
+          log.error("[update] managed deferred install refused: a gateway from this app's bundle is still running — quitting without applying", err);
+          try { if (onInstallFailed) onInstallFailed(); } catch { /* advisory */ }
+          app.exit(0);
+          return;
+        }
         log.error("[update] managed stop on quit errored", err);
       }
       log.info("[update] managed deferred install on quit — running update command");
@@ -356,6 +380,12 @@ function createManagedLane({
     emit("installing", { version: foundVersion });
     try { if (onInstallDispatched) onInstallDispatched(); } catch { /* advisory */ }
     try { if (stopGateway) await stopGateway(); } catch (err) {
+      if (gatewayStillRunning(err)) {
+        log.error("[update] managed install refused: a gateway from this app's bundle is still running", err);
+        try { if (onInstallFailed) onInstallFailed(); } catch { /* advisory */ }
+        emitGatewayStillRunning(err);
+        return;
+      }
       log.error("[update] managed stop before install errored", err);
     }
     const { code } = await runUpdateCommand();

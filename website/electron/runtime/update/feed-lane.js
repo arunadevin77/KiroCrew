@@ -1,6 +1,11 @@
 // Every downloaded update is installed only after the gateway has stopped: see
 // the configureUpdater note in auto-update.js for why electron-updater's own
 // install-on-quit stays off on every platform.
+const {
+  GATEWAY_STILL_RUNNING,
+  isGatewayStillRunning: gatewayStillRunning,
+} = require("../../gateway-stop");
+
 const FORCE_EXIT_AFTER_MS = 5 * 1000; // failsafe: guarantee exit after quitAndInstall
 
 /**
@@ -334,10 +339,17 @@ function createFeedLane({
     // STRICT ORDER: stop the gateway and await its exit, THEN quitAndInstall.
     // A live gateway child during the bundle swap can leave a half-replaced app.
     log.info("[update] stopping gateway before install");
+    let gatewayRunning = false;
     try {
       await stopGateway();
     } catch (err) {
-      log.error("[update] gateway stop errored (continuing to install)", err);
+      gatewayRunning = gatewayStillRunning(err);
+      log.error(
+        gatewayRunning
+          ? "[update] a gateway from this app's bundle is still running after the stop"
+          : "[update] gateway stop errored (continuing to install)",
+        err,
+      );
     }
     // An install-phase failure can land while the gateway stops: the error
     // handler classifies it (installing outranks checking there), resets
@@ -346,6 +358,22 @@ function createFeedLane({
     // about, and aborting would run the recovery a second time.
     if (!installing) {
       log.info("[update] install failed while the gateway stopped — dispatch abandoned");
+      return;
+    }
+    // A gateway from this app's bundle that is still running would go on
+    // importing from the files the installer replaces. Refuse the swap the way
+    // an invalidated stage does: the install did not proceed, and the host
+    // restores the gateway it disarmed.
+    if (gatewayRunning) {
+      log.info("[update] not installing while a gateway from this app's bundle is running — restoring");
+      installing = false;
+      try { if (onInstallFailed) onInstallFailed(); } catch { /* advisory */ }
+      emit("error", {
+        phase: "install",
+        code: GATEWAY_STILL_RUNNING,
+        message: "a gateway from this app's bundle was still running when the install was ready to run",
+        ...(foundVersion ? { version: foundVersion } : {}),
+      });
       return;
     }
     // Re-check the stage AFTER the await: a feed response already in flight
@@ -433,7 +461,25 @@ function createFeedLane({
       // No onInstallDispatched here: this handler only runs from before-quit,
       // where main.js has already set isQuitting -- the watchdog is covered.
       log.info("[update] deferred install on quit");
-      try { await stopGateway(); } catch (err) { log.error("[update] stop on quit errored", err); }
+      let gatewayRunning = false;
+      try { await stopGateway(); } catch (err) {
+        gatewayRunning = gatewayStillRunning(err);
+        log.error("[update] stop on quit errored", err);
+      }
+      // The user asked to QUIT: with a gateway from this app's bundle still
+      // running, quit without installing rather than replace its files. The
+      // listener state makes the re-entry safe, as for the stage check below.
+      if (gatewayRunning) {
+        log.info("[update] a gateway from this app's bundle is still running — quitting without installing");
+        try {
+          new Notification({
+            title: "Update not installed",
+            body: "Kiro Crew could not stop its gateway, so the update was not installed. It will be offered again next launch.",
+          }).show();
+        } catch { /* notifications optional */ }
+        app.quit();
+        return;
+      }
       // Same stage re-check as the manual path: a feed response in flight at
       // quit time can invalidate the stage while the gateway stops. The user
       // asked to QUIT, so skip the install and let the quit proceed. What

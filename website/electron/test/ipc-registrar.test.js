@@ -345,7 +345,7 @@ function harness({
     return result;
   };
   const gateway = {
-    stopGracefully: recordGateway("stopGracefully", Promise.resolve("stopped")),
+    stopForUpdate: recordGateway("stopForUpdate", Promise.resolve("stopped")),
     onInstallDispatched: recordGateway("onInstallDispatched"),
     onInstallFailed: recordGateway("onInstallFailed"),
     probePrimaryPortOwner: recordGateway(
@@ -1237,7 +1237,7 @@ test("registerUpdater owns six handlers and preserves lazy gateway hooks", async
   deps.onInstallDispatched();
   deps.onInstallFailed();
   assert.deepEqual(h.gatewayCalls.map(([name]) => name), [
-    "stopGracefully",
+    "stopForUpdate",
     "onInstallDispatched",
     "onInstallFailed",
   ]);

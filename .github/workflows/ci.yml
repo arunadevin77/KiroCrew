@@ -178,6 +178,8 @@ jobs:
               # The update lanes auto-update.js composes; the feed lane picks
               # the per-format feed directory a Linux package install reads.
               - 'website/electron/runtime/update/**'
+              # Loaded by both update lanes: the pre-swap stop's refusal code.
+              - 'website/electron/gateway-stop.js'
               - 'website/electron/bundle-location.js'
               - 'packaging/build-desktop.sh'
               - 'scripts/stamp-distribution.sh'

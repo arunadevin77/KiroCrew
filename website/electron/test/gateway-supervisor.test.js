@@ -219,7 +219,7 @@ test("module has no top-level Electron dependency and its factory accepts fakes"
     "fetchRemoteToken",
     "entryUrl",
     "probePrimaryPortOwner",
-    "stopGracefully",
+    "stopForUpdate",
     "stopOnQuit",
     "reopenTunnel",
     "syncTunnel",
@@ -677,7 +677,7 @@ test("unexpected child exits are visible but quit exits stay file-only", async (
   );
 });
 
-test("stopGracefully is a filesystem-free no-op when no child exists", async () => {
+test("stopForUpdate is a filesystem-free no-op when no child exists and nothing was adopted", async () => {
   let reads = 0;
   const baseFs = harness().fsMod;
   const { supervisor } = harness({
@@ -690,7 +690,7 @@ test("stopGracefully is a filesystem-free no-op when no child exists", async () 
     },
   });
 
-  await supervisor.stopGracefully();
+  await supervisor.stopForUpdate();
   assert.strictEqual(reads, 0);
 });
 
@@ -3344,6 +3344,220 @@ test("a service-owned stale bundle adds conditional service recovery guidance", 
   assert.equal(await state.supervisor.start(), true);
   assert.match(state.dialogs[0].detail, /If the gateway starts again automatically/);
   assert.match(state.dialogs[0].detail, /stop or update the service that restarts it/);
+});
+
+// A gateway this app found already serving and adopted, as it is when a desktop
+// update relaunches over a gateway it did not spawn. `command` is what ps reports
+// for the listener; under /virtual/resources/backend-dist it runs from this
+// app's own bundle. `shutdownStatus` is what POST /api/shutdown answers. When
+// the gateway accepts the stop it releases the port and exits; `rebindPid`
+// models a service manager starting it again from the same files.
+function adoptedGatewayHarness({
+  command = "/virtual/resources/backend-dist/bin/python -m kiro_crew gateway",
+  gatewayVersion = "0.7.0",
+  shutdownStatus = 200,
+  parentPid = 99,
+  platform = "darwin",
+  rebindPid = 0,
+  cliStop = null,
+  exitsOnStop = true,
+} = {}) {
+  const state = {
+    listenPids: [123],
+    alive: new Set([123]),
+    rebindPending: 0,
+    shutdowns: [],
+    signals: [],
+    cliStops: [],
+    dialogs: [],
+  };
+  const releasePort = () => {
+    if (exitsOnStop) state.alive.delete(123);
+    state.listenPids = [];
+    state.rebindPending = rebindPid;
+  };
+  // The port reads free once, then the manager's replacement holds it.
+  const listenerProbe = () => {
+    const answer = state.listenPids.join("\n");
+    if (!state.listenPids.length && state.rebindPending) {
+      state.listenPids = [state.rebindPending];
+      state.alive.add(state.rebindPending);
+      state.rebindPending = 0;
+    }
+    return answer;
+  };
+  const baseFs = harness().fsMod;
+  const instance = harness({
+    app: { isPackaged: true, getVersion: () => "0.7.1" },
+    processRef: {
+      platform,
+      arch: "arm64",
+      env: {},
+      resourcesPath: "/virtual/resources",
+      kill(pid, signal) {
+        if (signal === 0) {
+          if (state.alive.has(pid)) return true;
+          const error = new Error("no such process");
+          error.code = "ESRCH";
+          throw error;
+        }
+        state.signals.push([pid, signal]);
+        return true;
+      },
+    },
+    fsMod: {
+      ...baseFs,
+      readFileSync(file) {
+        if (String(file).endsWith(".local_secret")) return "boot-secret\n";
+        if (String(file).endsWith("gateway.lock")) return "123\n";
+        throw new Error(`unexpected filesystem read: ${file}`);
+      },
+    },
+    httpMod: {
+      get(url, _options, callback) {
+        const req = new EventEmitter();
+        req.destroy = () => {};
+        queueMicrotask(() => {
+          const res = new EventEmitter();
+          res.statusCode = 200;
+          res.resume = () => {};
+          callback(res);
+          res.emit("data", JSON.stringify(String(url).endsWith("/api/ready")
+            ? { ready: true }
+            : { app: "kirocrew", version: gatewayVersion }));
+          res.emit("end");
+        });
+        return req;
+      },
+      request(options, callback) {
+        const req = new EventEmitter();
+        req.destroy = () => {};
+        req.end = () => {
+          state.shutdowns.push({
+            method: options.method,
+            path: options.path,
+            secret: options.headers["X-Local-Secret"],
+          });
+          queueMicrotask(() => {
+            if (shutdownStatus === 200) releasePort();
+            callback({ statusCode: shutdownStatus, resume() {} });
+          });
+        };
+        return req;
+      },
+    },
+    execFileFn(file, args, _options, callback) {
+      if (args[0] === "stop") {
+        state.cliStops.push(args);
+        if (cliStop === "accept") releasePort();
+        callback(cliStop === "accept" ? null : new Error("refused"), "", "");
+      } else if (file.endsWith("lsof") && args.includes("-Fn")) {
+        callback(null, "n/virtual/kirocrew-home/gateway.lock\n", "");
+      } else if (file.endsWith("lsof")) {
+        callback(null, listenerProbe(), "");
+      } else if (args.includes("ppid=")) {
+        callback(null, String(parentPid), "");
+      } else {
+        callback(null, command, "");
+      }
+    },
+    dialog: {
+      async showMessageBox(options) {
+        state.dialogs.push(options);
+        return { response: 0 };
+      },
+    },
+  });
+  return { ...instance, state };
+}
+
+test("the update stop shuts down an adopted gateway that runs from this app's bundle", async () => {
+  const { supervisor, spawnCalls, state } = adoptedGatewayHarness();
+  assert.equal(await supervisor.start(), true);
+  assert.equal(spawnCalls.length, 0, "the existing gateway is adopted, not replaced");
+  assert.equal(state.dialogs.length, 1, "the older bundled gateway is warned about, then continued");
+
+  await supervisor.stopForUpdate();
+
+  assert.deepStrictEqual(state.shutdowns, [
+    { method: "POST", path: "/api/shutdown", secret: "boot-secret" },
+  ], "the adopted gateway is asked to flush and exit before its files are replaced");
+  assert.deepStrictEqual(state.listenPids, [], "the stop resolves only once the port is free");
+  assert.deepStrictEqual(state.signals, [], "a gateway that accepted the stop is never signalled");
+});
+
+test("the same-version adopted bundled gateway is stopped for the update too", async () => {
+  const { supervisor, state } = adoptedGatewayHarness({ gatewayVersion: "0.7.1" });
+  assert.equal(await supervisor.start(), true);
+  assert.equal(state.dialogs.length, 0);
+
+  await supervisor.stopForUpdate();
+
+  assert.equal(state.shutdowns.length, 1);
+  assert.deepStrictEqual(state.listenPids, []);
+});
+
+test("an adopted bundled gateway that refuses the stop fails the update stop and is never signalled", async () => {
+  const { supervisor, state } = adoptedGatewayHarness({ shutdownStatus: 403 });
+  assert.equal(await supervisor.start(), true);
+
+  await assert.rejects(supervisor.stopForUpdate(), { code: "gateway-still-running" });
+
+  assert.equal(state.shutdowns.length, 1);
+  assert.deepStrictEqual(state.signals, [], "macOS has no pidfd to pin a signal to the checked process");
+  assert.deepStrictEqual(state.cliStops, [], "the pid-pinned CLI stop is Linux-only");
+  assert.deepStrictEqual(state.listenPids, [123], "the gateway is left running");
+});
+
+test("on Linux a refused shutdown falls back to the pid-pinned CLI stop for the proven pid", async () => {
+  const { supervisor, state } = adoptedGatewayHarness({
+    platform: "linux", shutdownStatus: 403, cliStop: "accept",
+  });
+  assert.equal(await supervisor.start(), true);
+
+  await supervisor.stopForUpdate();
+
+  assert.equal(state.cliStops.length, 1);
+  assert.deepStrictEqual(state.cliStops[0], ["stop", "--port", "5476", "--expect-pid", "123"]);
+  assert.deepStrictEqual(state.signals, [], "the app itself signals nothing");
+  assert.deepStrictEqual(state.listenPids, []);
+});
+
+test("an adopted bundled gateway that released the port but has not exited fails the update stop", async () => {
+  const { supervisor, state } = adoptedGatewayHarness({ exitsOnStop: false });
+  assert.equal(await supervisor.start(), true);
+
+  await assert.rejects(
+    supervisor.stopForUpdate({ adoptedTimeoutMs: 600 }),
+    { code: "gateway-still-running" },
+  );
+
+  assert.deepStrictEqual(state.listenPids, [], "the port is free, yet the process still runs");
+  assert.deepStrictEqual(state.signals, [], "a draining gateway is waited for, never signalled");
+});
+
+test("an adopted bundled gateway its service manager starts again fails the update stop", async () => {
+  const { supervisor, state } = adoptedGatewayHarness({ parentPid: 1, rebindPid: 456 });
+  assert.equal(await supervisor.start(), true);
+
+  await assert.rejects(supervisor.stopForUpdate(), { code: "gateway-still-running" });
+
+  assert.equal(state.shutdowns.length, 1);
+  assert.deepStrictEqual(state.listenPids, [456], "the restarted gateway runs from the same files");
+});
+
+test("an adopted gateway from another install is left alone by the update stop", async () => {
+  const { supervisor, state } = adoptedGatewayHarness({
+    command: "/usr/local/bin/kirocrew gateway",
+    gatewayVersion: "0.7.1",
+  });
+  assert.equal(await supervisor.start(), true);
+
+  await supervisor.stopForUpdate();
+
+  assert.deepStrictEqual(state.shutdowns, [], "a gateway that does not run from this bundle is not stopped");
+  assert.deepStrictEqual(state.signals, []);
+  assert.deepStrictEqual(state.listenPids, [123]);
 });
 
 test("a client-only launch whose crew opted in opens the managed tunnel before asking the port", async () => {

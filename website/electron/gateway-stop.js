@@ -33,6 +33,22 @@ const KIROCREW_MODULE_RE = /^(?:kiro_crew|kirocrew_[a-z0-9][a-z0-9_]*)$/;
 // `test/test_cli.py::TestDesktopGatewayIdentityParity`; change them together.
 const KIROCREW_SERVER_SUBCOMMANDS = new Set(["gateway", "dashboard", "start"]);
 
+// The code the updater's pre-swap stop rejects with when a gateway running from
+// this app's own bundle still holds the port after the stop. Both update lanes
+// read it to refuse the swap: replacing the files under that process leaves its
+// lazily imported modules reading new code against old in-memory ones.
+const GATEWAY_STILL_RUNNING = "gateway-still-running";
+
+function gatewayStillRunningError(port) {
+  const error = new Error(`a gateway from this app's bundle still holds port ${port}`);
+  error.code = GATEWAY_STILL_RUNNING;
+  return error;
+}
+
+function isGatewayStillRunning(error) {
+  return Boolean(error) && error.code === GATEWAY_STILL_RUNNING;
+}
+
 function commandLineTokens(commandLine) {
   const tokens = [];
   const input = String(commandLine || "").replace(/^\s*CommandLine=/i, "").trim();
@@ -815,4 +831,7 @@ module.exports = {
   isKirocrewCommand,
   isKirocrewGatewayCommand,
   INIT_PPID,
+  GATEWAY_STILL_RUNNING,
+  gatewayStillRunningError,
+  isGatewayStillRunning,
 };

@@ -593,7 +593,7 @@ function createIpcRegistrar({
             // Native notifications are optional; discovery still succeeds.
           }
         },
-        stopGateway: () => gateway.stopGracefully(),
+        stopGateway: () => gateway.stopForUpdate(),
         // WHY this hook precedes stopGateway: it closes the watchdog race before
         // the intentional shutdown and disarms probing throughout bundle swap.
         // auto-update invokes onInstallDispatched before awaiting stopGateway;
