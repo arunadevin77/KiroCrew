@@ -1072,6 +1072,42 @@ def _launch_tools() -> LaunchTools:
     )
 
 
+def _without_local_only_grants(grants: list[str]) -> list[str]:
+    """MCP grants for a remote session, minus every tool that acts on this machine.
+
+    A whole-server ``@kirocrew-core`` grant becomes one ``@kirocrew-core/<tool>``
+    grant per tool that is NOT local-only, because the agent tool allowlist is
+    the fence and it has no per-tool exclusion. The names come from the declared
+    titles table, which ``test_mcp_tool_titles`` pins to the live tool list, so a
+    new core tool is granted here without an edit. Grants on a local-only server
+    are dropped whole.
+    """
+    from kiro_crew.mcp_tool_titles import _table
+    from kiro_crew.session_directive import CORE_MCP_SERVER
+    from kiro_crew.session_environment import LOCAL_ONLY_CORE_TOOLS, LOCAL_ONLY_SERVERS
+
+    core_tools = sorted(set(_table().get(CORE_MCP_SERVER, {})) - LOCAL_ONLY_CORE_TOOLS)
+    out: list[str] = []
+    for grant in grants:
+        server, _, tool = grant[1:].partition("/")
+        if server in LOCAL_ONLY_SERVERS:
+            continue
+        if server == CORE_MCP_SERVER:
+            if not tool:
+                out.extend(f"@{CORE_MCP_SERVER}/{t}" for t in core_tools)
+                continue
+            # ``@kirocrew-core/browser*`` style wildcards would re-admit one.
+            if tool in LOCAL_ONLY_CORE_TOOLS or "*" in tool:
+                if "*" in tool:
+                    prefix = tool.split("*", 1)[0]
+                    out.extend(
+                        f"@{CORE_MCP_SERVER}/{t}" for t in core_tools if t.startswith(prefix)
+                    )
+                continue
+        out.append(grant)
+    return list(dict.fromkeys(out))
+
+
 class AcpRuntime:
     """Owns one kiro-cli acp subprocess with single-reader demux.
 
@@ -1139,6 +1175,14 @@ class AcpRuntime:
         # read by the reader loop: a credential callback is answered from the
         # vault only on a process that was spawned expecting it.
         self._kas_host_auth = False
+        # Set by set_remote_workspace for a session bound to a remote environment:
+        # sessions then get the workspace MCP server and lose the built-in file
+        # and shell tools. The engine itself is local and spawned as usual.
+        self._remote_workspace: Any = None
+        # Set by set_cloud_sandbox for a session bound to Kiro Cloud Sessions:
+        # session/new asks KAS for a cloud sandbox, and the agent then runs in
+        # Kiro's cloud without Crew's agent spec, MCP servers or tool gate.
+        self._cloud_sandbox: dict[str, Any] | None = None
         # First answered credential callback per runtime is logged at INFO as a
         # positive "the engine is drawing its credential from Crew" signal; later
         # ones (the engine refreshes ahead of expiry) drop to DEBUG.
@@ -1891,6 +1935,133 @@ class AcpRuntime:
         self._native_launch_view_alias = None
         self._native_launch_resources = None
         return plan
+
+    def set_remote_workspace(self, launch: Any) -> None:
+        """Give this runtime's sessions a remote workspace instead of local files.
+
+        ``workspace`` is ``{"server": <mcpServers element>, "workdir": <guest path>}``.
+        The engine keeps running here, with every Crew server, credential and
+        approval unchanged. What changes is the agent's tool surface: its built-in
+        file and shell tools are UNMOUNTED and the workspace server, which reaches
+        the guest, is mounted in their place. Unmounting is the fence, so it needs a
+        host whose agent tool allowlist is sent over the wire; KAS is that host
+        (positive identity, never "not some backend").
+        """
+        self.check_remote_workspace_supported()
+        self._remote_workspace = launch
+
+    def check_remote_workspace_supported(self) -> None:
+        """Raise before any guest compute is touched when this runtime cannot fence it."""
+        from kiro_crew.agent_sdk.backends import ACP_BACKEND_KAS
+
+        if self._process is not None:
+            raise AcpRuntimeError("a remote workspace must be set before the runtime spawns")
+        if self.acp_backend != ACP_BACKEND_KAS:
+            raise AcpRuntimeError(
+                "remote session environments need the KAS agent backend, which lets Kiro "
+                "Crew remove the local file and shell tools; switch the backend in Settings"
+            )
+
+    def set_cloud_sandbox(self, repositories: tuple[str, ...] | list[str] = ()) -> None:
+        """Run this runtime's sessions in a Kiro cloud sandbox (Kiro Cloud Sessions).
+
+        KAS relays a ``cloud-sandbox`` session to Kiro's cloud, and forwards only
+        the mode, the target and the repositories. Crew's custom agent, its MCP
+        servers and its steering never reach that sandbox, and its tools run
+        there, so Crew's PreToolUse gate never sees them. The operator opts into
+        exactly that by choosing a Kiro Cloud profile; Crew therefore sends
+        neither, rather than send a surface the sandbox would silently drop.
+        """
+        self.check_remote_workspace_supported()
+        self._cloud_sandbox = {"repositories": [str(r) for r in repositories]}
+
+    def _require_cloud_sandbox_advertised(self) -> None:
+        """Refuse a cloud session KAS cannot place, rather than run it locally."""
+        meta = self._agent_capabilities.get("_meta")
+        kiro = meta.get("kiro") if isinstance(meta, dict) else None
+        targets = kiro.get("executionTargets") if isinstance(kiro, dict) else None
+        if not isinstance(targets, list) or "cloud-sandbox" not in targets:
+            raise AcpRuntimeError(
+                "Kiro Cloud Sessions are not available to this sign-in: the Kiro agent "
+                "server did not offer cloud sandboxes. Sign in to Kiro with an account "
+                "that has Kiro Cloud Sessions, or choose another session environment."
+            )
+
+    def _cloud_session_meta(self, *, loading: bool) -> dict[str, Any]:
+        """The ``_meta.kiro`` keys kiro-cli's own ``--cloud`` flag sends."""
+        assert self._cloud_sandbox is not None
+        meta = self._agent_capabilities.get("_meta")
+        kiro = meta.get("kiro") if isinstance(meta, dict) else None
+        sources = kiro.get("sessionSources") if isinstance(kiro, dict) else None
+        out: dict[str, Any] = {}
+        if isinstance(sources, list) and "remote" in sources:
+            out["sessionSource"] = "remote"
+        if loading:
+            return out
+        out["executionTarget"] = {"kind": "cloud-sandbox"}
+        repositories = self._cloud_sandbox.get("repositories") or []
+        if repositories:
+            out["repositories"] = list(repositories)
+        else:
+            out["isEmptyWorkspace"] = True
+        return out
+
+    def _remote_session_servers(self, servers: list[Any]) -> list[Any]:
+        """The session's MCP array: unchanged, plus the remote workspace server."""
+        if self._remote_workspace is None:
+            return servers
+        from kiro_crew.session_environment import LOCAL_ONLY_SERVERS
+
+        entry = self._remote_workspace["server"]
+        # A server that only ever acts on this machine (computer use) is not
+        # sent at all: nothing it does can reach the remote workspace.
+        kept = [
+            s
+            for s in servers
+            if s.get("name") != entry["name"] and s.get("name") not in LOCAL_ONLY_SERVERS
+        ]
+        return kept + [entry]
+
+    def _remote_workspace_agents(self, agents: Any, servers: list[Any]) -> Any:
+        """Agent definitions with built-in tools unmounted for a remote workspace.
+
+        Only MCP grants (``@server`` / ``@server/tool``) survive; ``"*"`` becomes
+        the explicit list of servers this session was sent. Every built-in (read,
+        write, shell, ...) would act on THIS machine, so none may be mounted.
+        """
+        if self._remote_workspace is None or not agents:
+            return agents
+        name = self._remote_workspace["server"]["name"]
+        workdir = self._remote_workspace["workdir"]
+        notice = (
+            f"\n\nThis session's files and shell live in a remote workspace at {workdir}. "
+            f"Use the @{name} tools for every file and command; local file and shell "
+            "tools are not available. Git over HTTPS or SSH to GitHub, GitLab, Bitbucket "
+            "and Azure DevOps (dev.azure.com) works from those commands as usual, private "
+            "repositories included: the gateway adds the user's credentials, so the "
+            "workspace deliberately holds none. Do not look for keys or tokens in it, and "
+            "do not unset GIT_ASKPASS or git's url rewrites."
+        )
+        out = []
+        for agent in agents:
+            agent = dict(agent)
+            tools = agent.get("tools")
+            if tools == "*" or (isinstance(tools, list) and "*" in tools):
+                kept = [f"@{s['name']}" for s in servers if s.get("name")]
+            else:
+                # ``@builtin`` is the built-in tool set spelled like a server grant.
+                kept = [
+                    t
+                    for t in tools or []
+                    if isinstance(t, str) and t.startswith("@") and t != "@builtin"
+                ]
+            kept = _without_local_only_grants(kept)
+            if f"@{name}" not in kept:
+                kept.append(f"@{name}")
+            agent["tools"] = kept
+            agent["prompt"] = str(agent.get("prompt") or "") + notice
+            out.append(agent)
+        return out
 
     async def _initialize_handshake(self, client_capabilities: dict[str, Any]) -> dict[str, Any]:
         """Send ``initialize`` with the cold-start budget.
@@ -7393,14 +7564,24 @@ class AcpRuntime:
         # unresolved-ref guard. The pre-filter roster is not that; a host that
         # narrows its array would otherwise be reported as having been sent servers
         # the wire never carried, and the guard would judge refs against them.
-        wire_servers = self._harness.session_mcp_servers(
-            mcp_servers, agent_capabilities=self._agent_capabilities
+        wire_servers = self._remote_session_servers(
+            self._harness.session_mcp_servers(
+                mcp_servers, agent_capabilities=self._agent_capabilities
+            )
         )
+        kas_agents = self._remote_workspace_agents(kas_agents, wire_servers)
+        if self._cloud_sandbox is not None:
+            # A cloud sandbox takes none of Crew's surface (see set_cloud_sandbox).
+            self._require_cloud_sandbox_advertised()
+            wire_servers, kas_agents, agent = [], None, None
         params = build_session_new_params(
             session_work_dir,
             mcp_servers=wire_servers,
             kas_custom_agents=kas_agents,
         )
+        if self._cloud_sandbox is not None:
+            meta = params.setdefault("_meta", {})
+            meta.setdefault("kiro", {}).update(self._cloud_session_meta(loading=False))
 
         projected_sources: dict[str, str] = {}
         if self._member_context:
@@ -7916,7 +8097,10 @@ class AcpRuntime:
         # A runtime declared MCP-free skips the ceiling — nothing can arm it.
         # After a real mode SWITCH, reports staged during session/new describe
         # the pre-switch roster, so they must not arm the idle shortcut.
-        if self._harness.notification_aliases.mcp_readiness:
+        if self._cloud_sandbox is not None:
+            # Sent no servers, so none can report: nothing to wait for.
+            await handle.drain_init(no_report_ceiling=0.0)
+        elif self._harness.notification_aliases.mcp_readiness:
             readiness_params: dict[str, Any] = {"mcpServers": mcp_servers}
             attach_kas_custom_agents(readiness_params, kas_agents)
             await self._wait_managed_mcp(
@@ -8262,8 +8446,10 @@ class AcpRuntime:
         # rejected array does not just fail to add tools -- it takes them away from
         # a conversation that already had them.
         # Bound once, for the same consumers as session/new: see the note there.
-        wire_servers = self._harness.session_mcp_servers(
-            mcp_servers, agent_capabilities=self._agent_capabilities
+        wire_servers = self._remote_session_servers(
+            self._harness.session_mcp_servers(
+                mcp_servers, agent_capabilities=self._agent_capabilities
+            )
         )
         load_params: dict[str, Any] = {
             "sessionId": resume_sid,
@@ -8322,11 +8508,25 @@ class AcpRuntime:
             # wire_servers is what the stall diagnostic and the session report read.
             # Setting only load_params would leave both describing the pre-hoist roster
             # -- naming servers this resume did not send.
-            wire_servers = self._harness.session_mcp_servers(
-                mcp_servers, agent_capabilities=self._agent_capabilities
+            wire_servers = self._remote_session_servers(
+                self._harness.session_mcp_servers(
+                    mcp_servers, agent_capabilities=self._agent_capabilities
+                )
             )
             load_params["mcpServers"] = wire_servers
+            kas_agents = self._remote_workspace_agents(kas_agents, wire_servers)
             attach_kas_custom_agents(load_params, kas_agents)
+        if self._cloud_sandbox is not None:
+            # A cloud session lives in Kiro's cloud store; reopen it from there,
+            # again with none of Crew's surface (see set_cloud_sandbox).
+            self._require_cloud_sandbox_advertised()
+            wire_servers, kas_agents, agent = [], None, None
+            load_params = {
+                "sessionId": resume_sid,
+                "cwd": session_work_dir,
+                "mcpServers": [],
+                "_meta": {"kiro": self._cloud_session_meta(loading=True)},
+            }
         budget = await self._session_start_budget()
         self._session_inits_in_flight += 1
         loaded_session_id = ""
@@ -8489,7 +8689,9 @@ class AcpRuntime:
         # before the queue was registered above, so only genuine init frames
         # remain to drain here. MCP-free runtimes skip the no-report ceiling.
         # After a real mode SWITCH, staged reports are pre-switch — don't arm.
-        if self._harness.notification_aliases.mcp_readiness:
+        if self._cloud_sandbox is not None:
+            await handle.drain_init(no_report_ceiling=0.0)
+        elif self._harness.notification_aliases.mcp_readiness:
             await self._wait_managed_mcp(
                 handle,
                 load_params,

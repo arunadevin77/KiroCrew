@@ -3285,6 +3285,69 @@ the same `*_LIMIT` ceiling the MCP tool schemas enforce, so a hand-edited
 `config.json` cannot ask for an unbounded accessibility walk or a full-resolution
 screenshot.
 
+### Session Environments: configuration only
+
+`session_environments` (`SessionEnvironmentsConfig` in `config/sections.py`)
+persists what the Settings UI needs to offer remote session environments, and
+nothing else:
+
+```json
+{
+  "session_environments": {
+    "coder_url": "",
+    "profiles": [
+      {"id": "dev", "name": "Dev box", "template": "python-dev", "workdir": "/home/coder/repo"}
+    ],
+    "fargate_profiles": []
+  }
+}
+```
+
+`coder_url` is `""` (not configured) or an `http`/`https` URL with a hostname and
+no username, password, query or fragment. `profiles` holds at most 20 records, each
+exactly `{id, name, template, workdir}`: `id` is an ASCII letter or digit followed by
+letters, digits, `_` or `-` (64 characters max, unique in the list); `name` is 1-128
+characters; `template` is 1-255; `workdir` is an absolute POSIX path of at most 1024
+characters. Text fields are whitespace-stripped and may not hold control characters.
+There is no `enabled` field (the UI opt-in is the per-device preview flag) and no
+credential field, so the whole section is safe for the masked GET to return.
+
+One validator owns these rules: `config/session_environments.py`. The loader calls
+its lenient `load_session_environments` through `SessionEnvironmentsConfig.from_raw`,
+which keeps every valid part of a hand-edited section — an invalid `coder_url` loads
+as `""`, and each invalid, duplicate or over-cap profile is dropped with a warning —
+while the dashboard write gate calls the strict `validate_*` functions and refuses the
+same value with a 400, writing nothing. An absent or non-object section loads as
+`{"coder_url": "", "profiles": [], "fargate_profiles": []}`; an unmodelled key inside the section is
+preserved by `save()` like any other section key and omitted from the GET.
+
+`fargate_profiles` is a separate list of at most 20 records. Each record contains
+exactly `id`, `name`, `aws_profile`, `region`, `cluster`, `task_definition`,
+`subnets`, `security_groups`, `assign_public_ip`, and `workdir`. IDs, names and
+working directories follow the Coder profile bounds. AWS profile names are
+bounded names, not credential values. Regions use AWS region syntax. Cluster
+and task-definition references are bounded ECS names or ARNs. Subnets contain
+1-16 distinct subnet IDs, security groups contain 1-5 distinct security-group
+IDs, and public-IP assignment must be a boolean. New UI profiles default to
+private networking. These references are not verified against AWS by a save.
+The referenced task definition owns the image, compute size, storage and IAM
+roles, not this form. Unknown keys, including credentials, are refused.
+
+`PATCH /api/config/kirocrew` accepts five paths, all through the handler's
+`"normalized"` spec type (a shared normalizer that raises `ValueError` and returns the
+value to store): `session_environments` (the whole record),
+`session_environments.coder_url`, `session_environments.profiles`,
+`session_environments.fargate_profiles`, and
+`session_environments.archived_retention_days` (an int 0-7, default 7: days an
+archived session's stopped workspace is kept before it is deleted, see
+[providers](providers.md)). Whole-section saves require the Coder
+keys. The optional keys are `SECTION_OPTIONAL_KEYS`: if an older client omits
+one, the writer preserves its saved value under the config lock (a never-saved
+key stays absent and keeps its default). Explicit `[]` clears the Fargate list.
+A write goes through `update_config_locked` like every other PATCH, preserves
+unrelated config, and is hot-applied with no restart. Saving registers no provider,
+activates no remote runtime, checks no connection and provisions nothing.
+
 ### Security-Bounded Config Clamp
 
 Resource-limit and timeout knobs are clamped to hard ceilings **at load time**, not

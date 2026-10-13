@@ -2276,6 +2276,69 @@ keys and the configured default backend otherwise. Ordinary backend governance,
 selectability, member-capability checks and host sandbox rules remain independent
 requirements; memory version adds no direct-MCP refusal.
 
+### Guest-side remote MCP relay (`remote_mcp_relay.py`)
+
+`src/kiro_crew/acp/remote_mcp_relay.py` is the guest half of remote MCP for
+Session Environments, and it is currently a **leaf**: nothing in the gateway
+imports it, no registry, client or provider code references it, and no session
+wiring exists yet. It is a standalone, stdlib-only script whose only job is to be
+copied verbatim into a remote workspace and executed there by the guest's own
+interpreter as an MCP server command. It imports nothing from `kiro_crew`, so the
+copied artifact has no package siblings, and it pops `sys.path[0]` on direct
+execution so a sibling `types.py` in this source directory cannot shadow the
+standard library when the artifact is exercised in place.
+
+Two modes, selected by argv, with no third:
+
+- **Proxy mode** (`--port` + `--cap-file`) connects to `127.0.0.1:<port>` inside
+  the guest, which is the guest-local end of a channel the host forwards. It
+  sends exactly one newline-terminated authentication frame,
+  `{"version":1,"token":<token>}`, then forwards raw bytes in both directions
+  between its own stdin/stdout and that socket: stdin is copied on a daemon
+  thread that half-closes the socket at EOF, and socket reads are written to
+  stdout and flushed as they arrive. Forwarding is byte-oriented, not
+  frame-parsing, so a JSON-RPC response is relayed without waiting for stdin to
+  reach EOF and no line-length assumption is imposed on the payload.
+- **Unsupported mode** (`--unsupported-code`) opens no socket at all. It reads
+  JSON-RPC lines and answers each object carrying an `id` with error code
+  `-32000`, message `Remote MCP transport unavailable`, and
+  `data.code = <the supplied code>`. A notification (no `id`) and an
+  unparseable line are skipped. This is what makes a server the host cannot
+  reach fail as a protocol error the harness can report, rather than as a broken
+  pipe during initialization.
+
+**Capability handling.** The token is read from a file, never from argv or the
+environment, so it does not appear in a guest process listing. The read is
+bounded twice: a read of at most 4 KiB plus one detection byte refuses a larger
+file rather than truncating it, and the stripped text must be non-empty and at
+most 512 characters. Unsupported-mode input uses a bounded read of at most
+1 MiB plus one detection byte per line. An oversized line ends the process with
+exit 1 without consuming its remaining bytes. The relay mints no credential and performs no
+authorization: it presents a capability the host already issued, and the host end
+of the channel remains the only place that decides what that capability grants.
+
+**Failure surface.** Capability and connection failures return exit code 1
+without writing to stderr, and an unreachable transport returns a JSON-RPC
+error. These transport paths keep tokens and remote exception text out of the
+host's stderr drain and its bounded diagnostic ring buffer. Invalid invocation
+arguments use argparse's normal stderr diagnostics, so generated commands must
+carry only the port, capability-file path or a fixed unsupported-transport code,
+never a credential value.
+
+**Not yet implemented, deliberately.** This leaf is not MCP parity for remote
+sessions. There is no gateway bridge, no host-side listener, no forwarding setup,
+no registry projection and no session wiring; the relay never binds a socket and
+never shares one with the live gateway. The host integration that lands later
+must keep both transport requirements this artifact was shaped for: a **stdio**
+server reached over the forwarded loopback connection in proxy mode, and an
+**HTTP** server that either terminates host-side behind the same forwarded
+connection or, where it cannot be reached at all, is failed closed through
+unsupported mode with its own `data.code`. `test/test_remote_mcp_relay.py` covers
+the artifact alone (byte forwarding including pre-EOF delivery, the auth frame,
+capability bounds, argument refusals, the JSON-RPC fallback, and the absence of
+any stderr output) using a loopback listener the test owns on `port=0` and
+synthetic capability files under `tmp_path`.
+
 ### Cold-start admission and startup telemetry
 
 The admission coordinator here and the session-start gate and collector below are

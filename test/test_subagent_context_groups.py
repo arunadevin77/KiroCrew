@@ -183,6 +183,56 @@ class TestProjectGroup:
         assert "[PROJECT] Active project directory: /tmp/proj" in on
         assert "[PROJECT] Active project directory" not in off
 
+    def test_remote_session_names_the_guest_directory_not_the_gateway_project(
+        self, tmp_path, monkeypatch
+    ):
+        from kiro_crew import session_environment as se
+
+        se.remember_remote_workspace("s-remote", "Coder MicroVM", "/home/coder/crew-session")
+        se.remember_remote_memory("s-remote", 6 * 1024**3, 16 * 1024**3)
+        # Force the resource line on so its gateway qualifier is exercised too.
+        status = type(
+            "S",
+            (),
+            {
+                # The builder asks for the remote wording for a remote session,
+                # and hands it the cached reading of the workspace machine.
+                "context_line": lambda self, remote=False, workspace_memory=None: (
+                    f"[RESOURCES] The gateway machine is tight (remote-scoped, "
+                    f"workspace={workspace_memory})."
+                    if remote
+                    else "[RESOURCES] Host memory is tight (~3 GB free)."
+                ),
+                "posture": "tight",
+                "available_gb": 3.0,
+            },
+        )()
+        monkeypatch.setattr("kiro_crew.resource_status.probe", lambda: status)
+        try:
+            b = _builder(tmp_path)
+            msg, _ = b.build_message("hi", True, "s-remote", project="/Users/me/repo")
+            off, _ = b.build_message(
+                "hi",
+                True,
+                "s-remote",
+                project="/Users/me/repo",
+                context_groups=ALL_GROUPS - {CONTEXT_GROUP_PROJECT},
+            )
+        finally:
+            se.forget_remote_workspace("s-remote")
+        assert "remote environment (Coder MicroVM)" in msg
+        assert "/home/coder/crew-session" in msg
+        assert "[PROJECT] Active project directory: /Users/me/repo" not in msg
+        assert (
+            f"[RESOURCES] The gateway machine is tight (remote-scoped, "
+            f"workspace={(6 * 1024**3, 16 * 1024**3)})."
+        ) in msg
+        assert "Host memory is tight" not in msg
+        assert "remote environment" not in off
+        # Forgotten (switched back to local): the plain line returns.
+        local, _ = b.build_message("hi", True, "s-remote", project="/Users/me/repo")
+        assert "[PROJECT] Active project directory: /Users/me/repo" in local
+
 
 class TestEpisodicMemoryGate:
     """Episodes ride in the budgeted activity block; both halves follow inheritance."""

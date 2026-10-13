@@ -31,6 +31,7 @@ import PendingQuestionCard from './PendingQuestionCard'
 import QueueStack, { SubagentDeliveryProgress, splitPaneMessages } from './QueueStack'
 import SubagentProgressBar from '../pages/chat/SubagentProgressBar'
 import ChatFooter from '../pages/chat/ChatFooter'
+import { useEnvironmentStartLabel } from './SessionEnvironmentChip'
 import PinnedPrompt from '../pages/chat/PinnedPrompt'
 import SessionTitleControl from '../pages/chat/SessionTitleControl'
 import { pinCandidateKey, usePinnedPrompt } from '../pages/chat/usePinnedPrompt'
@@ -573,6 +574,10 @@ export default function ChatPane({
     running: crewmateLive,
     delegatedOnly: !!paneSlot?.subagents_running && !paneSlot?.running,
   })
+  // A reply on record means this session's environment connected before, so a
+  // later engine restart is a reconnect, not setup (see useEnvironmentStartLabel).
+  const paneHasReplied = useMemo(() => paneMessages.some(m => m.role === 'assistant'), [paneMessages])
+  const paneEnvironmentStart = useEnvironmentStartLabel(slotKey, !!paneSlot?.running, paneHasReplied)
   // The unfiltered rows, handed to the row set for the one read that must see
   // what the filter dropped (the steer-chip decision reads the policy-block
   // inject row). `undefined` for an ordinary chat, so its renderer set does not
@@ -2012,6 +2017,7 @@ export default function ChatPane({
               {greetingShown && crewmateGreeting}
               {crewmate && crewmateLive && <CrewmateLiveActivity key={slotKey} activity={liveActivity} />}
               <ChatFooter
+                statusLabel={paneEnvironmentStart}
                 running={running || !!paneSlot?.running}
                 stopping={streamState === 'stopping' || !!paneSlot?.stopping}
                 state={streamState}
@@ -2288,6 +2294,7 @@ export default function ChatPane({
           jevAutoAvailable={jevAutoConsented && running}
           busyMode={busyMode}
           autoFocusKey={slotKey}
+          environmentSlot={slotKey}
           agentName={paneAgentName}
           // The chip shows the inherited-default marker; `agentName` stays the
           // raw resolved alias for the skills query and switch title. Uses the

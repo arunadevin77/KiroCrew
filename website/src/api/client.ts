@@ -910,6 +910,115 @@ function sendResponseAuthRecovery(r: Response): Response {
   return r
 }
 
+/** Hot-pool counts for one profile, read from the gateway's registry. */
+export interface SessionEnvironmentPool {
+  /** Ready environments the profile asks for. */
+  target: number
+  /** Claimable right now: a new session starts on one without provisioning. */
+  ready: number
+  /** Being created or started. */
+  warming: number
+}
+
+export interface SessionEnvironmentProfile {
+  id: string
+  name: string
+  provider: string
+  workdir: string
+  /** Present only when the profile keeps ready workspaces (hot_pool > 0). */
+  pool?: SessionEnvironmentPool
+}
+
+export interface RemoteDirListing {
+  root: string
+  path: string
+  entries: { name: string; dir: boolean }[]
+  truncated: boolean
+}
+
+export interface RemoteFileContent {
+  root: string
+  path: string
+  content: string
+  binary: boolean
+  truncated: boolean
+}
+
+export interface RemoteEnvironmentHealth {
+  state: 'running' | 'stopped' | 'unavailable' | 'not_created'
+  workspace?: string
+  workdir?: string
+  error?: string
+  stats?: {
+    os: string
+    arch: string
+    python: string
+    cpus: number
+    load?: number[]
+    memory?: { total_bytes: number; available_bytes: number }
+    disk?: { total_bytes: number; free_bytes: number }
+    uptime_s?: number
+  }
+}
+
+export interface RemoteGitResult {
+  root: string
+  /** False when the workdir is not a repository (or git is missing). */
+  git: boolean
+  output?: string
+  error_text?: string
+  truncated?: boolean
+}
+
+export type GitLoginStatus = 'signed_in' | 'not_signed_in' | 'unchecked'
+
+export interface SessionEnvironmentsCheck {
+  coder: { ok: boolean; owner?: string; error?: string }
+  profiles: { id: string; ok: boolean; error?: string }[]
+  /** Per saved Fargate profile: task definition readable and usable. */
+  fargate?: { id: string; ok: boolean; error?: string }[]
+  /** Per saved Sprites profile: API token saved and accepted. */
+  sprites?: { id: string; ok: boolean; error?: string }[]
+  /** Per saved boxd profile: CLI installed and signed in on the gateway. */
+  boxd?: { id: string; ok: boolean; error?: string }[]
+  git: Record<string, GitLoginStatus>
+}
+
+export interface SessionEnvironmentWorkspace {
+  workspace: string
+  /** Older gateways omit it; those rows are Coder workspaces. */
+  provider?: 'coder' | 'fargate' | 'sprites' | 'boxd'
+  kind: 'session' | 'pool'
+  slot: string
+  state: string
+  template: string
+  created_at: string
+  /** Set once the owning session is archived: when the workspace is deleted. */
+  deletion_due_at: string
+}
+
+/** Provider-neutral stages of a remote session's start, in order. */
+export type SessionEnvironmentStartStage = 'checking' | 'provisioning' | 'connecting' | 'starting_agent'
+
+export interface SlotEnvironment {
+  profile: string | null
+  profiles: SessionEnvironmentProfile[]
+  /** True once the session has a message: its environment can no longer change. */
+  locked?: boolean
+  /** A runtime in this gateway is attached to the remote workspace. */
+  attached?: boolean
+  /** Set while this session's environment is starting in THIS gateway. */
+  starting?: {
+    stage: SessionEnvironmentStartStage
+    stage_elapsed_s: number
+    elapsed_s: number
+    /** Every stage this start has entered, in order. Older gateways omit it. */
+    entered?: SessionEnvironmentStartStage[]
+    /** The gateway already had this session attached: an engine restart. */
+    reconnect?: boolean
+  } | null
+}
+
 /**
  * A non-2xx this endpoint's caller handles itself, identified by the denial it
  * IS rather than by the status it arrives with.

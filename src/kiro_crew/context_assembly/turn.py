@@ -297,7 +297,47 @@ def rail_parts(
     parts: list[str] = []
     # Project context — inject on every message so the LLM always knows
     # the active project, even when set/changed after session start.
-    if project and _inclusion._group_included(context_groups, _inclusion.CONTEXT_GROUP_PROJECT):
+    from kiro_crew.session_environment import remote_workspace_for
+
+    # A session on a remote environment works in the GUEST's directory; the
+    # slot's project names the gateway's checkout, which this session's
+    # file and shell tools cannot reach. Naming the gateway path as "the
+    # codebase you are working in" sent the model looking on the wrong
+    # machine. Values come from operator config (profile name, workdir).
+    remote = remote_workspace_for(session_key)
+    project_on = _inclusion._group_included(context_groups, _inclusion.CONTEXT_GROUP_PROJECT)
+    if remote is not None and not remote[1] and project_on:
+        # No workdir: a Kiro Cloud session, whose agent runs in Kiro's cloud
+        # sandbox with that sandbox's own tools (session_launch.PreparedCloudSession).
+        parts.append(
+            f"[PROJECT] This session runs in a Kiro cloud sandbox ({remote[0]}). "
+            "Files, commands and repositories are in that sandbox. Kiro Crew's own "
+            "tools (memory, schedules, subagents, notifications) are not available "
+            "in it, and the gateway machine's files are not reachable.\n\n"
+        )
+    elif remote is not None and project_on:
+        env_name, env_workdir = remote
+        parts.append(
+            f"[PROJECT] This session runs in a remote environment ({env_name}). "
+            f"Its working directory is {env_workdir} on that remote machine, "
+            "reached only through the @workspace tools (read_file, write_file, "
+            "edit_file, list_directory, glob, grep, run_command). Files, commands, "
+            "the OS and installed tools all describe that remote machine. "
+            "Subagents you spawn run in the same remote environment. "
+            "The gateway machine that hosts you is a different computer, and "
+            "anything describing it (paths, host memory) is not this session's "
+            "workspace.\n\n"
+        )
+        from kiro_crew.session_environment import take_workspace_recreated
+
+        if take_workspace_recreated(session_key):
+            parts.append(
+                "[PROJECT] This session's remote workspace was recreated empty: files, "
+                "uncommitted changes and installed tools from earlier in this "
+                "conversation are gone. Re-clone or rebuild before relying on them; "
+                "anything pushed to git is still on its remote.\n\n"
+            )
+    elif project and project_on:
         parts.append(
             f"[PROJECT] Active project directory: {project}\n"
             "This is the codebase you are working in for this session. "
@@ -354,7 +394,22 @@ def rail_parts(
             from kiro_crew.resource_status import probe as _probe_resources
 
             _rstatus = _probe_resources()
-            _rline = _rstatus.context_line()
+            _wsmem = None
+            if remote is not None:
+                from kiro_crew.session_environment import (
+                    REMOTE_MEMORY_MAX_AGE_SECS,
+                    refresh_remote_memory_soon,
+                    remote_memory_for,
+                )
+
+                # Cached only: the read never waits on the remote machine.
+                # A stale reading is still used (it ages out at 5 minutes)
+                # while a background refresh replaces it for the next turn.
+                _cached = remote_memory_for(session_key)
+                if _cached is not None and _cached[2] < 5 * REMOTE_MEMORY_MAX_AGE_SECS:
+                    _wsmem = (_cached[0], _cached[1])
+                refresh_remote_memory_soon(session_key)
+            _rline = _rstatus.context_line(remote=remote is not None, workspace_memory=_wsmem)
             if _rline:
                 parts.append(_rline + "\n\n")
                 logger.info(

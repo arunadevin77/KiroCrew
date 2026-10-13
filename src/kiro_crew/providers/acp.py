@@ -1067,6 +1067,12 @@ class AcpProvider(LLMProvider):
             outcome = "auth_required"
             raise
         finally:
+            # Ready, failed or cancelled: a remote start's progress stage ends with
+            # the start itself, so a Stop mid-provisioning never leaves a stale one.
+            from kiro_crew.session_environment import clear_start_stage
+
+            key = meta.get("session_key")
+            clear_start_stage(key if isinstance(key, str) else None)
             self._emit_kiro_startup_metric(t0, phases, outcome, meta)
 
     def _emit_kiro_startup_metric(
@@ -1381,6 +1387,58 @@ class AcpProvider(LLMProvider):
         # One priority for both start queues this path enters, set by the session
         # layer for this start (rule: ``kiro_crew.start_priority``).
         start_priority = self.start_priority
+        # A session the operator bound to a remote environment keeps its engine
+        # here and works on the remote workspace through a tool server; every
+        # other session is untouched. Keyed on this session's OWN key, so a
+        # subagent does not inherit its parent's remote compute.
+        from kiro_crew.coder.session_launch import prepare_for_session
+        from kiro_crew.session_environment import report_start_stage
+
+        remote = await prepare_for_session(
+            session_key, before_compute=runtime.check_remote_workspace_supported
+        )
+
+        async def attach_remote_workspace(target: AcpRuntime) -> None:
+            # A fresh guest worker per runtime: the bridge consumes its one-use
+            # secret file when the engine launches it.
+            assert remote is not None and not isinstance(remote, PreparedCloudSession)
+            target.check_remote_workspace_supported()
+            report_start_stage(session_key, "connecting")
+            server = await remote.launch.workspace_server(remote.workdir)
+            target.set_remote_workspace({"server": server, "workdir": remote.workdir})
+            # GitHub git from the workspace goes through this gateway, which holds
+            # the credential (remote_session/git_gateway.py). In the background:
+            # it never delays the start, and a failure only costs git access.
+            begin_git_proxy = getattr(remote.launch, "begin_git_proxy", None)
+            if callable(begin_git_proxy) and session_key:
+                begin_git_proxy(session_key)
+            report_start_stage(session_key, "starting_agent")
+
+        from kiro_crew.coder.session_launch import PreparedCloudSession
+        from kiro_crew.session_environment import (
+            forget_remote_workspace,
+            remember_remote_workspace,
+        )
+
+        if isinstance(remote, PreparedCloudSession):
+            # Kiro Cloud Sessions: KAS places the session in a Kiro cloud sandbox at
+            # session/new. No workspace server, no git proxy: the agent runs there.
+            runtime.set_cloud_sandbox(remote.repositories)
+            report_start_stage(session_key, "starting_agent")
+            remember_remote_workspace(session_key, remote.profile_name, "")
+        elif remote is not None:
+            await attach_remote_workspace(runtime)
+            # Per-message context reads this to name the guest directory
+            # instead of the gateway's project path.
+            remember_remote_workspace(session_key, remote.profile_name, remote.workdir)
+            if remote.created and getattr(self._client, "_resume_session_id", None):
+                # A conversation that already ran got a new, empty workspace.
+                from kiro_crew.session_environment import mark_workspace_recreated
+
+                mark_workspace_recreated(session_key)
+        else:
+            forget_remote_workspace(session_key)
+        session_cwd: str | Path = work_dir
         _t_spawn = time.monotonic()
         try:
             await runtime.spawn(
@@ -1474,7 +1532,7 @@ class AcpProvider(LLMProvider):
                             runtime,
                             str(session_file) if session_file else "",
                             resume_sid,
-                            work_dir,
+                            session_cwd,
                             agent,
                             member_session_key=self._member_session_key(),
                             session_key=self._owning_session_key(),
@@ -1530,6 +1588,8 @@ class AcpProvider(LLMProvider):
                         # joins it (above): its sessions' work is there.
                         shared_scratch=self._shared_scratch or runtime.work_scratch_dir,
                     )
+                    if remote is not None:
+                        await attach_remote_workspace(runtime)
                     try:
                         await runtime.spawn(
                             start_priority=start_priority,
@@ -1548,7 +1608,7 @@ class AcpProvider(LLMProvider):
                         raise
                 try:
                     handle = await runtime.create_session(
-                        cwd=work_dir,
+                        cwd=session_cwd,
                         agent=agent or None,
                         member_session_key=self._member_session_key(),
                         memory_mode=self.memory_mode,

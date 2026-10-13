@@ -37,6 +37,7 @@ import SessionSummaryTab from './SessionSummaryTab'
 import { i18nT } from '../../i18n/t'
 import { queuedWaitText } from './subagentQueuedReason'
 import GitPanel from '../../components/GitPanel'
+import RemoteGitPanel from './RemoteGitPanel'
 import { fmtDateFields } from '../../i18n/format'
 import { isModelDowngrade } from './subagentCompletion'
 import { normalizeModelKey } from '../../lib/model'
@@ -978,7 +979,10 @@ function ArtifactListRow({ row, busy, onOpen, onSave }: {
   )
 }
 
-export default function ActivityViewer({ subagents, toolLog, open, onToggle, slot, onFileOpen, onArtifactOpen, navLinks, navResolving, view, sources, selectedSourceUrl, onSelectSource, onReconcileSource, issues, selectedIssueUrl, onSelectIssue, onReconcileIssue, onAddToChat, pins, pinsLoading, onJumpToPin, onUnpin, slotTitle, chatMode, projectDir }: {
+export default function ActivityViewer({ subagents, toolLog, open, onToggle, slot, onFileOpen, onArtifactOpen, navLinks, navResolving, view, sources, selectedSourceUrl, onSelectSource, onReconcileSource, issues, selectedIssueUrl, onSelectIssue, onReconcileIssue, onAddToChat, pins, pinsLoading, onJumpToPin, onUnpin, slotTitle, chatMode, projectDir, remoteEnvironmentName }: {
+  /** Set when the session runs on a remote environment: the Git view then
+   *  says so instead of describing the gateway's local checkout. */
+  remoteEnvironmentName?: string
   subagents: Record<string, SubagentActivity>; toolLog: ToolActivity[]; open: boolean; onToggle: () => void; slot: string
   onFileOpen?: (path: string) => void; onArtifactOpen?: (slug: string) => void
   projectDir?: string
@@ -1189,7 +1193,10 @@ export default function ActivityViewer({ subagents, toolLog, open, onToggle, slo
       {/* Git (project working tree + history) view */}
       {effectiveTab === ('git' as string) && (
         <div className="flex-1 min-h-0 overflow-hidden">
-          {projectDir ? (
+          {remoteEnvironmentName && slot ? (
+            // A remote session's working tree is in its guest workspace.
+            <RemoteGitPanel slot={slot} name={remoteEnvironmentName} />
+          ) : projectDir ? (
             <GitPanel projectDir={projectDir} onFileOpen={onFileOpen} onClose={onToggle} />
           ) : (
             <div className="text-muted text-[13px] pt-8 px-6 text-center">

@@ -19,6 +19,8 @@ import MarkdownPanel, { type MarkdownPanelHandle } from '../../components/Markdo
 import ArtifactPanel from '../../components/ArtifactPanel'
 import FolderPanel from './FolderPanel'
 import FilesHomePanel from './FilesHomePanel'
+import RemoteFilesPanel from './RemoteFilesPanel'
+import { useSlotRemoteEnvironment } from '../../components/SessionEnvironmentChip'
 import FileBrowserRail from './FileBrowserRail'
 import WebPreviewPanel from '../../components/WebPreviewPanel'
 import CliPanel, { disposeTerminalSession, useDeleteTerminalSession } from '../../components/CliPanel'
@@ -679,7 +681,15 @@ export default function SidePanel({
   // Files header's per-project quick action (issue #1142) so the two entry
   // points cannot drift on WHERE the shell starts — that cwd is the whole point
   // of the affordance.
-  const openProjectTerminal = useCallback(() => { openTerminal({ cwd: projectDir }) }, [openTerminal, projectDir])
+  // Non-null when this session runs on a remote environment: local file, git
+  // and terminal views would otherwise describe (or run on) the gateway machine.
+  const remoteEnvironment = useSlotRemoteEnvironment(slot)
+  const openProjectTerminal = useCallback(() => {
+    // A remote session's terminal is a shell in its workspace, opened by the
+    // gateway over `coder ssh`; the local project dir does not apply.
+    if (remoteEnvironment) openTerminal({ remoteSlot: slot, title: remoteEnvironment.name })
+    else openTerminal({ cwd: projectDir })
+  }, [openTerminal, projectDir, remoteEnvironment, slot])
   const openMenuItem = useCallback((kind: ViewKind | 'terminal') => {
     const run = () => {
       if (kind === 'terminal') openProjectTerminal()
@@ -1374,6 +1384,20 @@ export default function SidePanel({
           // is not one of ActivityViewer's multiplexed session views.
           if (t.kind === 'files') {
             if (!isActive) return null
+            // A remote session's files live in its guest workspace, not in the
+            // gateway project the local browser reads.
+            if (remoteEnvironment) {
+              return (
+                <div key={t.id} className="absolute inset-0">
+                  <RemoteFilesPanel
+                    slot={slot}
+                    name={remoteEnvironment.name}
+                    workdir={remoteEnvironment.workdir}
+                    onOpenTerminal={terminalEnabled && !isWithheld('terminal') ? openProjectTerminal : undefined}
+                  />
+                </div>
+              )
+            }
             // A panel kept mounted but hidden (a Dynamic Dashboard or app tab holds
             // it) keeps the tree's scroll and expansion, with its polling paused.
             return (
@@ -1429,7 +1453,11 @@ export default function SidePanel({
                   onArtifactOpen={onArtifactOpen}
                   pins={pins} pinsLoading={pinsLoading} onJumpToPin={onJumpToPin} onUnpin={onUnpin}
                   slotTitle={slotTitle} chatMode={chatMode}
-                  projectDir={projectDir} navLinks={navLinks} navResolving={navResolving}
+                  // The local project is not this session's working tree when it
+                  // runs remotely, so the Git view must not describe it.
+                  projectDir={remoteEnvironment ? undefined : projectDir}
+                  remoteEnvironmentName={remoteEnvironment?.name}
+                  navLinks={navLinks} navResolving={navResolving}
                 />
               </div>
             )
@@ -1795,7 +1823,7 @@ function TabBody({ tab, active, slot, projectDir, onClose, onContentChange, onDi
   // switch cannot remount its `AppHost`. The tab loop above returns null for both.
   const terminalsPending = usePanelTerminalsPending()
   // A restored shell may be gone: connecting before the ruling would spawn a new one.
-  if (tab.kind === 'terminal') return terminalsPending ? null : <CliPanel sessionId={tab.sessionId ?? ''} cwd={tab.cwd} visible={active} onSendToChat={onTerminalSendToChat} />
+  if (tab.kind === 'terminal') return terminalsPending ? null : <CliPanel sessionId={tab.sessionId ?? ''} cwd={tab.cwd} remoteSlot={tab.remoteSlot} visible={active} onSendToChat={onTerminalSendToChat} />
   if (tab.kind === 'browser') return <WebPreviewPanel sessionKey={slot} active={active} />
   if (tab.kind === 'app') return <McpAppTabBody tab={tab} slot={slot} />
   // Cross-remount scroll identity for document bodies. Same slot+id key shape

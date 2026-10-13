@@ -204,6 +204,10 @@ const WAIVED_BARE_CONTROLS: Record<string, { counts: BareCounts; reason: string 
     counts: { SegmentedControl: 2 },
     reason: 'the two channel SegmentedControls share manual: about.update-channel',
   },
+  'SessionEnvironmentsCard.tsx': {
+    counts: { input: 1, Input: 1 },
+    reason: 'transient: the provider radio only chooses which saved section is shown, and is not persisted; the Sprites API token is a vault credential field with Save/Remove semantics, never a config value',
+  },
   'ChatPanel.tsx': {
     counts: { Input: 2 },
     reason: "LinkPatternsEditor's per-row pattern/url fields — part of a composite the extractor indexes whole (chat.text-link-patterns)",
@@ -340,6 +344,10 @@ describe('settings coverage gate — bare controls', () => {
  * skipped"; this pins each one so a new silent skip fails the build.
  */
 const EXPECTED_DYNAMIC_SKIPS: Record<string, { count: number; reason: string }> = {
+  'SessionEnvironmentsCard.tsx': {
+    count: 6,
+    reason: 'Coder, Fargate, Sprites and boxd per-profile CRUD fields depend on configured rows and cannot be global deep links; the Session Environments page owns them behind its provider choice',
+  },
   'BotChannelPanel.tsx': {
     count: 16,
     reason:

@@ -108,6 +108,17 @@ from kiro_crew.config.service_sections import (  # noqa: F401
     TaskRunnerConfig,
     WatchdogConfig,
 )
+from kiro_crew.config.session_environments import (
+    ARCHIVED_RETENTION_DAYS_DEFAULT,
+    load_archived_retention_days,
+    load_boxd_profiles,
+    load_default_profile,
+    load_fargate_profiles,
+    load_kiro_cloud_profiles,
+    load_session_environments,
+    load_sprites_profiles,
+    load_stop_on_shutdown,
+)
 from kiro_crew.constants import DEFAULT_SPAWN_MIN_MEMORY_GB as _DEFAULT_SPAWN_MIN_MEMORY_GB
 from kiro_crew.constants import DEFAULT_SUBAGENT_COST_GB as _DEFAULT_SUBAGENT_COST_GB
 from kiro_crew.constants import DEFAULT_SUBAGENT_MAX_TURNS as _DEFAULT_SUBAGENT_MAX_TURNS
@@ -3975,6 +3986,161 @@ class WorkspaceConfig:
         default="workspace",
         metadata=_meta("Directory", "Workspace directory path."),
     )
+
+
+@dataclass
+class SessionEnvironmentProfileConfig:
+    """One named remote workspace profile the Session Environments UI offers.
+
+    Configuration only: a profile names a template and a working directory, it
+    does not provision anything. Validated by
+    ``config.session_environments.validate_profile``.
+    """
+
+    id: str = field(
+        default="",
+        metadata=_meta(
+            "Profile ID",
+            "Stable identifier: an ASCII letter or digit first, then letters, "
+            "digits, '_' or '-'; at most 64 characters and unique within the list.",
+        ),
+    )
+    name: str = field(
+        default="",
+        metadata=_meta("Profile Name", "Display name shown in the picker (1-128 characters)."),
+    )
+    template: str = field(
+        default="",
+        metadata=_meta(
+            "Template", "Name of the workspace template this profile uses (1-255 characters)."
+        ),
+    )
+    workdir: str = field(
+        default="",
+        metadata=_meta(
+            "Working Directory",
+            "Absolute POSIX path sessions start in inside the workspace "
+            "(at most 1024 characters).",
+        ),
+    )
+    hot_pool: int = field(
+        default=0,
+        metadata=_meta(
+            "Ready Workspaces",
+            "Workspaces kept running and unclaimed so a new session starts on one "
+            "instead of provisioning (0-5, 0 turns it off). Each ready workspace is "
+            "billed while it waits, and stops on its own if the gateway goes away.",
+        ),
+    )
+
+
+@dataclass
+class SessionEnvironmentsConfig:
+    """Persisted Session Environments settings (configuration only).
+
+    Saving this section registers no provider, activates no remote runtime and
+    contacts nothing. It holds no credential. The UI is gated by the per-device
+    preview flag, so there is deliberately no ``enabled`` field here.
+    """
+
+    coder_url: str = field(
+        default="",
+        metadata=_meta(
+            "Coder URL",
+            "Base URL of the Coder deployment: empty, or an http(s) URL with a "
+            "hostname and no username, password, query or fragment.",
+        ),
+    )
+    profiles: list[SessionEnvironmentProfileConfig] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Profiles",
+            "Named workspace profiles (at most 20), each {id, name, template, workdir, "
+            "hot_pool}.",
+        ),
+    )
+
+    fargate_profiles: list[dict[str, Any]] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Fargate Profiles",
+            "Named AWS profile, region, ECS task definition and network references. "
+            "Configuration only; no credentials or infrastructure changes.",
+        ),
+    )
+    sprites_profiles: list[dict[str, Any]] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Sprites Profiles",
+            "Named Fly.io Sprites profiles, each {id, name, token_secret, workdir}. "
+            "token_secret names the vault secret holding the Sprites API token; "
+            "the token itself is never stored here.",
+        ),
+    )
+    boxd_profiles: list[dict[str, Any]] = field(
+        default_factory=list,
+        metadata=_meta(
+            "boxd Profiles",
+            "Named boxd machine profiles, each {id, name, snapshot, vcpu, workdir}. The "
+            "gateway machine's own boxd auth login authenticates; no credential is stored.",
+        ),
+    )
+    kiro_cloud_profiles: list[dict[str, Any]] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Kiro Cloud Profiles",
+            "Named Kiro Cloud Sessions profiles, each {id, name, repositories}. The "
+            "session runs in a Kiro cloud sandbox through KAS, without Kiro Crew's "
+            "tools or governance gate; the gateway's Kiro sign-in authenticates.",
+        ),
+    )
+    archived_retention_days: int = field(
+        default=ARCHIVED_RETENTION_DAYS_DEFAULT,
+        metadata=_meta(
+            "Keep Archived Workspaces",
+            "Days an archived session's workspace is kept, stopped, before it is "
+            "deleted along with its files (0-7, 0 deletes it as soon as the session "
+            "is archived). Reopening the session before then keeps the workspace.",
+        ),
+    )
+
+    default_profile: str = field(
+        default="",
+        metadata=_meta(
+            "Default Environment",
+            "Profile id new dashboard chats start on; empty runs them on this machine. "
+            "Applied once, when a chat is created, and changeable in its composer until "
+            "the first message. Scheduled jobs, channels and subagents are unaffected "
+            "(a subagent follows its parent).",
+        ),
+    )
+
+    stop_on_shutdown: bool = field(
+        default=True,
+        metadata=_meta(
+            "Stop On Shutdown",
+            "Stop every remote session environment when the gateway shuts down, so "
+            "nothing bills while it is down. Off keeps them running across a restart, "
+            "which reconnects faster; each still stops on its own once no gateway has "
+            "reached it for a while.",
+        ),
+    )
+
+    @classmethod
+    def from_raw(cls, section: object) -> "SessionEnvironmentsConfig":
+        """Build from the raw section, keeping every valid part (never raises)."""
+        coder_url, profiles = load_session_environments(section)
+        return cls(
+            coder_url=coder_url,
+            profiles=[SessionEnvironmentProfileConfig(**p) for p in profiles],
+            fargate_profiles=load_fargate_profiles(section),
+            sprites_profiles=load_sprites_profiles(section),
+            boxd_profiles=load_boxd_profiles(section),
+            kiro_cloud_profiles=load_kiro_cloud_profiles(section),
+            archived_retention_days=load_archived_retention_days(section),
+            default_profile=load_default_profile(section),
+            stop_on_shutdown=load_stop_on_shutdown(section),
+        )
 
 
 @dataclass

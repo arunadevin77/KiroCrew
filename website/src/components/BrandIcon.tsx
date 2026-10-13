@@ -1,6 +1,10 @@
 import type { CSSProperties } from 'react'
 import githubMarkUrl from '../assets/github-mark.svg'
 import discordMarkUrl from '../assets/discord-mark.svg'
+import coderMarkUrl from '../assets/coder-mark.svg'
+import fargateLogoUrl from '../assets/aws-fargate-logo.svg'
+import flyMarkUrl from '../assets/fly-mark.svg'
+import boxdMarkUrl from '../assets/boxd-mark.svg'
 
 /**
  * Monochrome brand marks (GitHub, Discord, the Kiro ghost) tinted via CSS
@@ -59,4 +63,29 @@ export function GithubIcon({ size = 16 }: { size?: number }) {
 
 export function DiscordIcon({ size = 16 }: { size?: number }) {
   return <BrandGlyph url={discordMarkUrl} size={size} />
+}
+
+/** Coder wordmark-style mark. Monochrome, so it is masked and follows the
+ * theme's currentColor in light and dark. The art is about 2.17:1 wide. */
+export function CoderIcon({ size = 16 }: { size?: number }) {
+  return <BrandGlyph url={coderMarkUrl} size={Math.round(size * 2.17)} height={size} />
+}
+
+/** Fly.io balloon mark (Simple Icons artwork). Monochrome, so it is masked and
+ * follows the theme's currentColor like the Coder mark. */
+export function FlyIcon({ size = 16 }: { size?: number }) {
+  return <BrandGlyph url={flyMarkUrl} size={size} />
+}
+
+/** boxd's notched-box mark, without its wordmark. Monochrome, so it is masked
+ * and follows the theme's currentColor. */
+export function BoxdIcon({ size = 16 }: { size?: number }) {
+  return <BrandGlyph url={boxdMarkUrl} size={size} />
+}
+
+/** AWS Fargate service tile. Its brand colors are part of the mark, so it
+ * renders as an image rather than a currentColor mask. Decorative: callers
+ * always pair it with a visible text label. */
+export function FargateIcon({ size = 16 }: { size?: number }) {
+  return <img src={fargateLogoUrl} width={size} height={size} alt="" aria-hidden="true" className="inline-block shrink-0 rounded-[3px]" />
 }

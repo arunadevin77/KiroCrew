@@ -14687,11 +14687,16 @@ class GatewayOrchestrator:
         # same budget: an in-flight renewal finishes and persists the rotated
         # refresh credential instead of being cut off by os._exit below.
         _sign_in_drain = asyncio.create_task(drain_sign_in_refresher(self._sign_in_refresher_task))
+        # Remote session environments stop with the gateway that drives them, in
+        # parallel with the graceful shutdown and under their own ceiling. The
+        # pool keeper goes first so it cannot start a workspace this is stopping.
+        _env_stop = asyncio.create_task(_stop_session_environments())
         try:
             await asyncio.wait_for(self._shutdown(), timeout=GRACEFUL_SHUTDOWN_SECS)
         except (asyncio.TimeoutError, Exception):
             logger.warning("Graceful shutdown timed out — force exiting")
         await _sign_in_drain
+        await _env_stop
 
         print("👻 Goodbye!")
         # Kill any kiro-cli processes that survived graceful shutdown.
@@ -15171,6 +15176,31 @@ _AGENTS_JANITOR_TASK: "asyncio.Task[None] | None" = None
 _AGENT_SCRATCH_SWEEP_TASK: "asyncio.Task[None] | None" = None
 #: Strong ref for the kiro-cli log cap loop.
 _KIRO_CLI_LOG_CAP_TASK: "asyncio.Task[None] | None" = None
+#: Strong ref for the Coder hot pool keeper loop.
+_CODER_HOT_POOL_TASK: "asyncio.Task[None] | None" = None
+
+
+async def _stop_session_environments() -> None:
+    """Stop the remote session environments on shutdown; bounded, never raises."""
+    keeper = _CODER_HOT_POOL_TASK
+    if keeper is not None and not keeper.done():
+        keeper.cancel()
+    try:
+        from kiro_crew.coder.retention import (
+            SHUTDOWN_STOP_SECS,
+            stop_for_shutdown,
+            stop_on_shutdown_enabled,
+        )
+
+        if not await stop_on_shutdown_enabled():
+            # The operator chose fast restarts: each guest still stops on its own
+            # once no gateway reaches it (the worker's orphan timeout and the rest).
+            return
+        await asyncio.wait_for(stop_for_shutdown(), timeout=SHUTDOWN_STOP_SECS)
+    except asyncio.TimeoutError:
+        logger.warning("Session environments did not all stop in time; they stop when idle")
+    except Exception:  # noqa: BLE001 -- the gateway exits regardless
+        logger.warning("Session environments shutdown stop failed", exc_info=True)
 
 
 async def run_gateway(
@@ -15408,6 +15438,20 @@ async def run_gateway(
 
         _KIRO_CLI_LOG_CAP_TASK = asyncio.create_task(
             _run_kiro_cli_log_cap(), name="kiro-cli-log-cap"
+        )
+
+    # ── Coder hot pool keeper (fire-and-forget, every minute) ──
+    # Keeps each Session Environments profile's ``hot_pool`` ready workspaces
+    # running so a new remote session claims one instead of provisioning. Sleeps
+    # first (off the boot path), issues no Coder command while every profile's
+    # pool is 0, and never dies on a failed pass. Skipped in test_mode: the
+    # offline E2E gate must not create compute.
+    global _CODER_HOT_POOL_TASK
+    if not test_mode:
+        from kiro_crew.coder import hot_pool as _coder_hot_pool
+
+        _CODER_HOT_POOL_TASK = asyncio.create_task(
+            _coder_hot_pool.run_keeper(), name="coder-hot-pool"
         )
 
     # ── Anonymous usage beacon (at most one HTTP GET per day) ──
