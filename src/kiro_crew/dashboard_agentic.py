@@ -904,8 +904,7 @@ def turn_block(slug: str) -> str:
     writes = ", ".join(names) if names else "none (every field is folded)"
     block = (
         "[DASHBOARD]\n"
-        f"Your dynamic dashboard is template {manifest.id} v{manifest.version}; the "
-        "Dashboard tab shows it only with the 'Dynamic Dashboard' Feature Preview on.\n"
+        f"Your Dashboard tab shows template {manifest.id} v{manifest.version}.\n"
         + (f"{locked_line}\n" if locked_line else "")
         + f"Fields you write: {writes}. Call dashboard_fields for their shapes and "
         "current values before dashboard_write."

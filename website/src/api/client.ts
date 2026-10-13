@@ -170,8 +170,6 @@ export type {
   MemberActivityEntry,
   MemberRecap,
   CrewTeam,
-  CrewPanelData,
-  CrewPanelMeta,
   DashboardFieldSpec,
   DashboardManifest,
 } from './client/agents'

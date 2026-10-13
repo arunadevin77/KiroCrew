@@ -318,12 +318,10 @@ via `monitor_update`, see "Live steering"):
 
 ## Your panel: publish JUDGMENTS, never numbers
 
-The Dashboard tab beside your chat draws this panel while the "Dynamic Dashboard"
-Feature Preview is off, which is the default. With the preview on, it draws the
-crewmate's own dashboard instead, where an item reaches the reader only through an
-agentic field written with `dashboard_write` (it appears under "Needs you" with the
-act it needs). So publish every item under `you` here, and also write it to the
-dashboard field for readers who turned the preview on.
+The Dashboard tab beside your chat draws your own page, where an item reaches the
+reader only through an agentic field written with `dashboard_write` (it appears
+under "Needs you" with the act it needs). So publish every item under `you` here,
+and also write it to the Dashboard tab's field.
 
 `panel_publish` and `dashboard_write` belong to the `@kirocrew-panel` server,
 which is mounted only on a crew member's own chat session (with `agent.crew_panel`

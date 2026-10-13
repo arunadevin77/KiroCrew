@@ -106,6 +106,18 @@ describe('DeveloperPanel', () => {
     })
   })
 
+  describe('Automatic cards', () => {
+    it('has its own card outside Feature Previews, off by default', async () => {
+      renderPanel()
+      const sw = await screen.findByRole('switch', { name: /automatic cards for all sessions/i })
+      expect(screen.getByTestId('developer-automatic-cards')).toContainElement(sw)
+      expect(sw).toHaveAttribute('aria-checked', 'false')
+      const previews = document.querySelector('[data-setting-key="feature-previews-section"]')
+      expect(previews).not.toBeNull()
+      expect(previews!.contains(sw)).toBe(false)
+    })
+  })
+
   describe('Gateway section', () => {
     type LocalGatewayAPI = { get(): Promise<boolean>; set(enabled: boolean): Promise<boolean> }
     const installBridge = (api: LocalGatewayAPI) => {

@@ -153,8 +153,7 @@ describe('CrewNotesTab (the crewmate\'s own notes)', () => {
     // edit moves the pin instead of leaving a stale literal. This notice sits
     // above an "Ask the agent" hand-off, so it must not name a possessor
     // ("this crewmate's notes") -- the notice and the hand-off would then point
-    // at two different helpers. The same one-actor-word rule the docked webview
-    // error follows (see CrewWebviewDocked.test.tsx).
+    // at two different helpers.
     const notesError = (
       JSON.parse(
         readFileSync(resolve(__dirname, '../../i18n/locales/en.json'), 'utf8'),

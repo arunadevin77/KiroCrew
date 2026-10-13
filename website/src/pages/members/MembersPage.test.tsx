@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { PREVIEW_DASHBOARD, setPreviewFlag } from '../../utils/previewFlags'
 import { useState } from 'react'
 import { screen, fireEvent, waitFor, act, within } from '@testing-library/react'
 import { namedCeiling } from '../../test/namedCeiling'
@@ -68,7 +67,6 @@ vi.mock('../../api/client', () => ({
     // The crew webview drawer. The Dashboard tab no longer reads it (the tab is
     // the crewmate's dynamic dashboard, mocked out below), but other surfaces on
     // this page still open it, and an unstubbed read rejects into a red alert.
-    memberPanel: vi.fn(() => Promise.resolve({ panel: null, html: null })),
     // The panel's session-status frame reads the crewmate's automatic dashboard
     // card. "Waiting, nothing published" is the state every case here is about;
     // an unstubbed read rejects and the frame raises the same red alert, which
@@ -581,9 +579,6 @@ beforeEach(() => {
   // Nor the crewmate-created receipts (browser-session record).
   sessionStorage.clear()
   chatPaneMounts.count = 0
-  // The Dashboard tab and the in-chat dock are a Feature Preview: these cases
-  // exercise them, so the flag is on; the preview's own tests cover it off.
-  localStorage.setItem(PREVIEW_DASHBOARD, '1')
   // The projection store is a module-level singleton fed by the roster seed;
   // clear it so one case's seeded values do not survive into the next.
   memberProjectionStore.clear()
@@ -1308,49 +1303,15 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
     expect(screen.queryByRole('tab', { name: 'Side Chat' })).toBeNull()
   })
 
-  it('the Dashboard tab stays across the preview flag', async () => {
-    act(() => { setPreviewFlag(PREVIEW_DASHBOARD, false) })
-    await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
-    fireEvent.click(await rosterRow('oncall'))
-    // The tab is the crewmate's own published page, not the preview's surface.
-    expect(await screen.findByTestId(`side-panel-leading-tab-${CREW_DASHBOARD_TAB_ID}`)).toHaveTextContent('Dashboard')
-    expect(await screen.findByTestId('member-dashboard')).toBeInTheDocument()
-    act(() => { setPreviewFlag(PREVIEW_DASHBOARD, true) })
-    expect(screen.getByTestId('member-dashboard')).toBeInTheDocument()
-  })
-
   it('the Dashboard is the crewmate\'s generated page, with no repeated identity row', async () => {
     await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
     fireEvent.click(await rosterRow('oncall'))
     expect(await screen.findByTestId('member-dashboard')).toBeInTheDocument()
     // The tab holds the crewmate's own dynamic dashboard, carrying that
-    // crewmate's identity, and NOT the webview drawer's published document --
-    // so the drawer's read is never issued for this tab.
+    // crewmate's identity.
     const stub = await screen.findByTestId('crew-dashboard-stub', undefined, PANE_READY)
     expect(stub).toHaveAttribute('data-slug', 'oncall')
-    expect(api.memberPanel).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('crew-webview-empty')).toBeNull()
     expect(screen.queryByTestId('member-identity-row')).toBeNull()
-  })
-
-  it('with the preview OFF the Dashboard tab keeps the published view', async () => {
-    // "Off by default" has to mean something a reader can see. The dynamic
-    // dashboard replaced what this tab rendered, so without this gate everybody
-    // got the new surface whether or not they had turned the preview on -- and
-    // the flag would describe nothing.
-    //
-    // The TAB is unconditional either way: it is a standing entry, and only what
-    // fills it moves with the flag.
-    localStorage.removeItem(PREVIEW_DASHBOARD)
-    await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
-    fireEvent.click(await rosterRow('oncall'))
-    expect(await screen.findByTestId('member-dashboard')).toBeInTheDocument()
-    // The published view's own read is issued, and its empty state is drawn.
-    await waitFor(() => expect(api.memberPanel).toHaveBeenCalledWith('oncall', 'oncall'), PANE_READY)
-    expect(await screen.findByTestId('crew-webview-empty', undefined, PANE_READY)).toBeInTheDocument()
-    // And the dynamic dashboard is NOT mounted, which is the half that makes this
-    // a gate rather than two surfaces stacked.
-    expect(screen.queryByTestId('crew-dashboard-stub')).toBeNull()
   })
 
   describe('a preview link opens the Dashboard tab on the STAGED page', () => {
@@ -1367,16 +1328,6 @@ describe('MembersPage side panel (Dashboard / Work log / Notes / Schedules) and 
       expect(screen.getByTestId(`side-panel-leading-tab-${CREW_DASHBOARD_TAB_ID}`)).toHaveAttribute('aria-selected', 'true')
       // The one preview label the chat panel uses, above the staged page.
       expect(screen.getByTestId('dashboard-preview-badge')).toHaveTextContent('Preview, not applied')
-    })
-
-    it('draws the staged page even with the Dynamic Dashboard preview off', async () => {
-      // The staged page exists only as a dynamic dashboard, and the person was sent
-      // here to look at it: the published view would show them something else.
-      localStorage.removeItem(PREVIEW_DASHBOARD)
-      await renderPage([row({ bound: true, slot_key: 'member-oncall' })], 'kirocrew', { route: PREVIEW_ROUTE })
-      const stub = await screen.findByTestId('crew-dashboard-stub', undefined, PANE_READY)
-      expect(stub).toHaveAttribute('data-preview', 'true')
-      expect(api.memberPanel).not.toHaveBeenCalled()
     })
 
     it.each([

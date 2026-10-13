@@ -100,6 +100,12 @@ export const DASHBOARD_FALLBACK_REFETCH_MS = 60_000
 /** The preview read's own "nothing staged" answer: 404 `no_preview`. Only that one.
  *  The same route answers 404 `member_not_found` for a crewmate that is gone, and
  *  that is a load failure the reader must be told about, not a preview that ended. */
+/** The read refuses a caller who is not the crewmate's owner. Retry reads the
+ *  same refusal, so the tab says whose page it is instead of offering Retry. */
+function isOwnerOnly(e: unknown): boolean {
+  return apiErrorCode(e) === 'owner_only'
+}
+
 function isNothingStaged(e: unknown): boolean {
   return isNotFoundError(e) && apiErrorCode(e) === 'no_preview'
 }
@@ -448,6 +454,19 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
     return (
       <div className="p-4 text-sm text-muted" data-testid="crew-dashboard-preview-gone">
         {i18nT('pages.chat.dashboardPreviewPanel.gone')}
+      </div>
+    )
+  }
+
+  // 403 `owner_only`: the page carries the crewmate's task titles, so only its
+  // owner reads it.
+  if (isError && isOwnerOnly(error)) {
+    return (
+      <div className="p-4">
+        {/* No hand-off and no Retry: the hand-off navigates to /chat, unmounting the
+            Members page's unsaved Profile and crew-editor drafts, and a retry reads
+            the same refusal. */}
+        <ErrorNotice message={i18nT('pages.membersPage.dashboard_owner_only')} testId="crew-dashboard-owner-only" />
       </div>
     )
   }

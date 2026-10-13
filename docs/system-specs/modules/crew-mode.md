@@ -1738,55 +1738,19 @@ crewmate can read and act on; a browser-local list it never sees would promise
 the opposite, so none is offered until that record exists.
 
 The chat SidePanel has two standing entries on this page: the leading
-**Dashboard** tab and pinned **Files**. Dashboard is the crewmate's generated HTML
-report (`GET /api/members/{slug}/panel?member=<exact-name>`) rendered by
-`CrewDashboardFrame`: the full document fills the tab, minted on mount, with no
-summary card, Contained bar, Expand control, identity row or Command Center
-around it. It shares the drawer's read (`member-panel` query keyed on slug and
-exact member), its `CREW_WEBVIEW_SANDBOX` (`allow-scripts` only), and its
-single-use mint rule; the `CrewWebview` drawer itself is unchanged. Its
-"Opening the conversation" line is withheld while the main column already says
-it (`activeSlot` unset), so two live regions never say it at once. The tab is a
-standing entry whatever `PREVIEW_DASHBOARD` says, but what fills it moves with
-the flag: off (the default) it renders this frame; on, it renders the crewmate's
-dynamic dashboard (`CrewDashboardTab`). With the flag off and an adopted dynamic
-dashboard, the frame shows one line saying where to turn it on. Over the published
-view the line names that view; over the empty state it says nothing is
-published yet, so it never contradicts the bubble below. It learns that from its own
-`member-dashboard-adopted` read of `GET /api/members/{slug}/dashboard`
-(owner-only; `instance_version > 0`, 60 s `staleTime`, no retry), kept outside
-the `member-dashboard` prefix so fold frames do not re-read it. A refused or
-failed read shows no line. The line's "Open Feature Previews" button leaves
-through the page's leave guard, so a Schedules draft or editor pane is asked
-about first. This page never passes the in-chat Command
-Center dock opener into its `ChatPane`, regardless of the preview flag: the
-permanent Dashboard tab is the one entrance here, so a second control would point
-at a different dashboard concept from the same conversation. With no Command
-Center in the tab there is no unsent answer for the page
-to hold or guard, so exits ask only about a Schedules draft. The frame's own
-read-error and mint-failure notices carry a retry and NO agent hand-off: the
-hand-off is a raw soft navigate to `/chat` that unmounts this page without asking
-its leave guard, and `ErrorNotice` has no gate to hand it, so with a Schedules
-draft or an editor pane open it was an unguarded exit. With nothing
-published the tab renders `CrewDashboardEmpty`: the crewmate speaking for
-itself, in the first person, from a speech bubble over its own face (the real
-`CrewAvatar` on the exact `member` as seed and the record's `avatar` verbatim, so
-it wears what its roster row wears), and under that three fixed suggested
-prompts. A crewmate publishes through `panel_publish` (on by default via
-`agent.crew_panel`) when asked or on its own cycle, and nothing in the crew
-editor makes it publish, so the state has no set-up control; the prompts ARE
-the ask, pre-written. Each one only lands in the member's chat box through the
-page's `onAct` (`mergePaneDraft` on the member slot, the same seam the Dynamic
-Dashboard's needs-you options use) and the person sends it -- nothing on this
-surface publishes. Without `onAct` (no confirmed slot, a test, a surface with no
-chat) the prompts are withheld rather than rendered dead. The three are fixed
-copy chosen to hold for any role and to land on what the default template
-draws: get a dashboard at all (what you hold, where it stands, what is next),
-make it keep itself current after every run (what was done, key numbers,
-decisions owed), and let the crewmate pick the three numbers worth watching.
-Deriving them from the crewmate's schedules and sessions is a follow-up that
-keeps this set as its fallback. The read itself stays keyed on the raw
-`member`. Files is the standard SidePanel browser scoped
+**Dashboard** tab and pinned **Files**. Dashboard renders the crewmate's dynamic
+dashboard (`CrewDashboardTab`, read from `GET /api/members/{slug}/dashboard`) for
+every reader: the page fills the tab, with no summary card, Contained bar, Expand
+control, identity row or Command Center around it. Its "Opening the
+conversation" line is withheld while the main column already says it
+(`activeSlot` unset), so two live regions never say it at once. This page never
+passes the in-chat Command Center dock opener into its `ChatPane`: the permanent
+Dashboard tab is the one entrance here, so a second control would point at a
+different dashboard concept from the same conversation. With no Command Center
+in the tab there is no unsent answer for the page to hold or guard, so exits ask
+only about a Schedules draft. The crewmate's `panel_publish` record keeps its MCP
+tool and its `GET /api/members/{slug}/panel` read; no surface on this page draws
+it. Files is the standard SidePanel browser scoped
 to the workspace rule above. Dashboard and Files are the only STANDING tabs.
 Side Chat remains available dynamically through selection Ask and the plus
 menu; it is not a standing entry — and the plus menu keeps every other dynamic

@@ -135,16 +135,11 @@ slash command, and a real question card for the same session wins.
 No status-tile HUD is drawn above the composer, and no agent-published
 `task-dashboard` artifact is read by the panel or the all-session view.
 
-The whole Dynamic Dashboard surface is a developer Feature Preview
-(`PREVIEW_DASHBOARD`, `website/src/utils/previewFlags.ts`), default OFF and
-gating INGRESS only: with the flag off the + menu entry, a persisted Dashboard
-tab and the Sessions menu's All Dashboards item are withheld, while
-`/session-dashboards` stays routable and every API above is unchanged. The Crew
-chat's Dashboard tab is not withheld: it is the crewmate's own page, a standing
-tab whatever the flag. The **Automatic cards for all sessions** switch lives
-inside that preview's card in Settings > Developer > Feature Previews, shown
-whether the preview is on or off: it is a gateway-wide spend setting, and hiding
-it would leave cards running with no control on this device.
+The Dynamic Dashboard surface is on for every reader: the + menu entry, a
+persisted Dashboard tab, the Sessions menu's All Dashboards item and the Crew
+chat's Dashboard tab are offered with no switch. The **Automatic cards for all
+sessions** switch has its own card in Settings > Developer. It is a gateway-wide
+spend setting and starts off.
 
 The host independently projects live sessions, subagents, workflows and accepted
 conductor work. It never treats idle sessions as completed work, nor worker

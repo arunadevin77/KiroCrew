@@ -330,9 +330,7 @@ _MEMBER_DASHBOARD_ITEM = """
    `dashboard` skill and follow it: `dashboard_templates` to search, `dashboard_preview`
    to stage one, `dashboard_apply` once they say yes, `dashboard_rollback` to go back.
    ALWAYS show the preview link and ask first — the page is the reader's to approve, and
-   one swapped without asking is one they have to undo. With the 'Dynamic Dashboard'
-   Feature Preview off (the default) the tab shows your `panel_publish` record; this page
-   shows only for readers who turned the preview on. You cannot write a page
+   one swapped without asking is one they have to undo. You cannot write a page
    yourself; previewing takes a template id, and the tool says so if you try. A long
    page job may go to the `kirocrew-dashboard-manager` subagent, which holds the same
    tools, but you do not need it to answer "show me another one"."""

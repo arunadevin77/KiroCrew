@@ -2569,11 +2569,9 @@ reads it through GET `/api/members/{slug}/panel`.
 
 `dashboard.dynamic_dashboard_cards` is a live, default-off cost opt-in. The
 native **Automatic cards for all sessions** control (`AutomaticCardSetting.tsx`)
-patches this setting; it is rendered inside the Dynamic Dashboard card of
-Settings > Developer > Feature Previews whether that per-device preview flag
-(`PREVIEW_DASHBOARD`) is on or off, because it is a gateway-wide spend setting and
-hiding its only control would leave cards running with no way to turn them off from
-this machine — not in the task panel or on the fleet page, which are for reading. The config watcher applies UI, CLI and file edits alike.
+patches this setting; it is rendered in its own card on Settings > Developer,
+because it is a gateway-wide spend setting — not in the task panel or on the fleet
+page, which are for reading. The config watcher applies UI, CLI and file edits alike.
 Its copy names the hourly attempt limit shared by all sessions, including failures.
 The optional producer is neither imported nor constructed during route or watcher
 registration. Both server entrypoints defer initial activation until after listening.

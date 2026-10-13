@@ -1340,12 +1340,10 @@ async def api_member_panel(request: web.Request) -> web.Response:
     denied = await _deny_app_caller(request, "members.panel")
     if denied is not None:
         return denied
-    # The READ is served to any dashboard caller, exactly as it was before this card
-    # existed: the crew page's webview (`website/.../CrewWebview.tsx:memberPanel`) is
-    # reachable by a non-owner dashboard subject, and gating the whole route would turn
-    # their webview into a 403. Only the derived-card WRITE below is owner-gated, because
-    # that write mutates the owner-facing dynamic-card store; see its guard. This keeps the
-    # read's backwards compatibility while closing the non-owner-write hole.
+    # The READ is served to any dashboard caller: a non-owner dashboard subject may read
+    # a crew's published record, and gating the whole route would turn that read into a
+    # 403. Only the derived-card WRITE below is owner-gated, because that write mutates
+    # the owner-facing dynamic-card store; see its guard.
     slug = request.match_info.get("slug", "")
     try:
         members_mod.validate_slug(slug)

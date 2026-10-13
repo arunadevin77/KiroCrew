@@ -19,7 +19,6 @@ vi.mock('../../api/client', () => ({
     memberActivity: vi.fn(() => Promise.resolve({ slug: '', member: '', capped: false, entries: [] })),
     memberBriefing: vi.fn(() => Promise.resolve({ slug: '', member: '', supported: true, text: '', updated_ts: null, redacted: false, truncated: false })),
     sessionCrewLogProjections: vi.fn(() => Promise.resolve({ folds: {}, resolved: true, writesDrained: true })),
-    memberPanel: vi.fn(() => Promise.resolve({ panel: null, html: null })),
     autonudgeList: vi.fn(() => Promise.resolve({ enabled: true, loops: [] })),
     // reuse_current off: the run path, not the copy path.
     kirocrewConfig: vi.fn(() => Promise.resolve({})),

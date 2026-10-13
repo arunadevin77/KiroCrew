@@ -6,6 +6,7 @@ import { SettingsSection, SettingsCard, SettingsToggle } from '../../components/
 import { useLocalGateway } from '../../hooks/useLocalGateway'
 import { FeaturePreviewsSection } from './FeaturePreviewsSection'
 import { CrewmatesSection } from './CrewmatesSection'
+import AutomaticCardSetting from '../chat/command-center/AutomaticCardSetting'
 
 import { i18nT } from '../../i18n/t'
 const DEV_MODE_KEY = 'mc-dev-mode'
@@ -68,6 +69,14 @@ export function DeveloperPanel() {
             </button>
           </div>
         )}
+      </SettingsCard>
+      {/* Automatic cards for every session: a gateway-wide spend opt-in, off by
+          default. Its own card because it is a server setting, not a per-device
+          switch. */}
+      <SettingsCard>
+        <div data-testid="developer-automatic-cards">
+          <AutomaticCardSetting active />
+        </div>
       </SettingsCard>
     </SettingsSection>
     {/* Between the two consent gates and the desktop-only Gateway switch:

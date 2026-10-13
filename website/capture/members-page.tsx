@@ -185,7 +185,7 @@ async function main() {
   createRoot(document.getElementById('root')!).render(
     <Provider store={store}>
       <QueryClientProvider client={queryClient}>
-        {/* The drawer's CrewDashboardFrame reads useTheme(); without the
+        {/* The page reads useTheme(); without the
             provider the whole page throws on mount. */}
         <ThemeProvider>
         <MemoryRouter initialEntries={[route]}>

@@ -989,7 +989,6 @@ const EXPECTED_FRAMES: Record<string, string[]> = {
     'event mc-live-notification {"note":{"kind":"info","title":"Quiet","ts":"1790000003","priority":"passive"}}',
   ],
   "panel_published": [
-    'query invalidateQueries ["member-panel","crew"]',
     'query invalidateQueries ["member-dashboard","crew"]',
   ],
   "notification ack, unack and clear": [
@@ -1451,7 +1450,6 @@ const EXPECTED_LIFECYCLE: Record<string, string[]> = {
     'query invalidateQueries ["chat-threads"]',
     'query invalidateQueries ["guide-pending"]',
     'query invalidateQueries ["change-cards"]',
-    'query invalidateQueries ["member-panel"]',
     'query removeQueries ["member-thread"]',
     'query fetchQuery ["automation-seed","legacy"] {"staleTime":0,"retry":false}',
     'query fetchQuery ["automation-seed","structured"] {"staleTime":0,"retry":false}',
@@ -1503,7 +1501,6 @@ const EXPECTED_LIFECYCLE: Record<string, string[]> = {
     'query invalidateQueries ["chat-threads"]',
     'query invalidateQueries ["guide-pending"]',
     'query invalidateQueries ["change-cards"]',
-    'query invalidateQueries ["member-panel"]',
     'query removeQueries ["member-thread"]',
     'query fetchQuery ["automation-seed","legacy"] {"staleTime":0,"retry":false}',
     'query fetchQuery ["automation-seed","structured"] {"staleTime":0,"retry":false}',

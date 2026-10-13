@@ -108,10 +108,6 @@ export interface CrewTeam {
   members: string[]
 }
 
-/** Free-form fields a crew publishes into its webview. The crew owns the shape,
- *  so every value is unknown until the renderer narrows it. */
-export type CrewPanelData = Record<string, unknown>
-
 /** Metadata half of GET /api/members/{slug}/panel. The document itself travels
  *  beside it as `html`, already composed server-side from the template. */
 /** One field of a dashboard template manifest, as the gateway serves it.
@@ -135,36 +131,6 @@ export interface DashboardManifest {
   description: string
   source: 'builtin' | 'user' | 'shared'
   fields: Record<string, DashboardFieldSpec>
-}
-
-export interface CrewPanelMeta {
-  template: string
-  title: string
-  crew: string
-  published_at: string
-  data: CrewPanelData
-  /** The template's opt-in to render ITSELF in the docked card: the fixed pixel
-   *  height of that compact frame, or null for a template that did not opt in
-   *  (the drawer then keeps its native, zero-mint summary). */
-  docked_height?: number | null
-  /** The crew's superseded panels, newest last, one row per replaced publish.
-   *  Bounded server-side; a file-only legacy record (published before the fold
-   *  recorded history) omits this rather than sending an empty array. */
-  history?: CrewPanelHistoryRow[]
-  /** How many times this crew has published on this slot. Absent on a file-only
-   *  legacy record for the same reason `history` is. */
-  publishes?: number
-  /** How many history rows aged out past the server's per-owner cap: the bound
-   *  speaking, so a reader tells a history trimmed at its cap from a complete
-   *  one. Absent on a file-only legacy record. */
-  history_omitted?: number
-}
-
-/** One superseded panel in a crew's `CrewPanelMeta.history`. */
-export interface CrewPanelHistoryRow {
-  at: string
-  title: string
-  template: string
 }
 
 export function createAgentsEndpoints({ post, put, del, j, jfetch: fetch, sessionKeyHeader: _sk }: ClientTransport) {
@@ -267,17 +233,6 @@ export function createAgentsEndpoints({ post, put, del, j, jfetch: fetch, sessio
       fetch(
         '/api/members/' + encodeURIComponent(slug) + '/projections?member=' + encodeURIComponent(member),
       ).then(j) as Promise<ProjectionsBlock>,
-    // The crew's published webview: metadata plus the composed document. Read
-    // through this layer rather than a component-local `fetch`, like every sibling
-    // above -- the members page's tests stub `api/client`, so a hand-rolled fetch was
-    // the one reader they could not stub, and a silent fallback (a remembered crew
-    // renamed away) surfaced as a red alert instead. `member` is the exact crew name
-    // because the record carries an ownership claim the server checks against it;
-    // slugs are lossy, so two crews can share one.
-    memberPanel: (slug: string, member: string) =>
-      fetch(
-        '/api/members/' + encodeURIComponent(slug) + '/panel?member=' + encodeURIComponent(member),
-      ).then(j) as Promise<{ panel: CrewPanelMeta | null; html: string | null }>,
     // The crewmate's dynamic dashboard INSTANCE: which template it copied, its own
     // edited page, the manifest that says where each field's value comes from, and
     // the instance's state. Served by the registry (contract v3 part 4/7) and read

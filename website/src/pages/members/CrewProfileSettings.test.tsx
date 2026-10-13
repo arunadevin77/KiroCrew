@@ -49,7 +49,6 @@ import { isTrustRootTarget } from '../../guide/findTargetPolicy'
 import { ApiError } from '../../api/apiError'
 import { MEMBERS_ROSTER_QUERY_KEY } from '../../api/membersQuery'
 import { MEMBER_DASHBOARD_QUERY_PREFIX } from '../../hooks/useWebSocket'
-import { PREVIEW_DASHBOARD } from '../../utils/previewFlags'
 
 let lastQc: QueryClient
 
@@ -75,7 +74,6 @@ const pick = (label: string, option: string) =>
 
 beforeEach(() => {
   vi.clearAllMocks()
-  localStorage.removeItem(PREVIEW_DASHBOARD)
   modelsState.isDegraded = false
   mockApi.memberDashboard.mockResolvedValue({ structure_locked: false })
   mockApi.memberDashboardLock.mockResolvedValue({ ok: true, structure_locked: true })
@@ -230,16 +228,8 @@ describe('CrewProfileSettings model and effort', () => {
  * only shows a badge (CrewDynamicDashboard.test.tsx pins that it has no control). */
 describe('CrewProfileSettings dashboard lock', () => {
   const SWITCH = 'Lock dashboard layout'
-  const on = () => localStorage.setItem(PREVIEW_DASHBOARD, '1')
 
-  it('hides the switch when Dynamic Dashboard preview is off', () => {
-    setup(member())
-    expect(screen.queryByRole('switch', { name: SWITCH })).toBeNull()
-    expect(mockApi.memberDashboard).not.toHaveBeenCalled()
-  })
-
-  it('offers the switch and reads lock state when preview is on', async () => {
-    on()
+  it('offers the switch and reads lock state', async () => {
     setup(member())
     const sw = await screen.findByRole('switch', { name: SWITCH })
     await waitFor(() => expect(sw).toHaveAttribute('aria-checked', 'false'))
@@ -250,7 +240,6 @@ describe('CrewProfileSettings dashboard lock', () => {
   })
 
   it('reads the lock off the dashboard body, so it shows what the gateway holds', async () => {
-    on()
     mockApi.memberDashboard.mockResolvedValue({ structure_locked: true })
     setup(member())
     const sw = await screen.findByRole('switch', { name: SWITCH })
@@ -259,7 +248,6 @@ describe('CrewProfileSettings dashboard lock', () => {
   })
 
   it('is held until the read answers: a switch that moves first shows a state nothing holds', async () => {
-    on()
     let answer: (v: { structure_locked: boolean }) => void = () => {}
     mockApi.memberDashboard.mockReturnValue(new Promise((r) => { answer = r }))
     setup(member())
@@ -272,7 +260,6 @@ describe('CrewProfileSettings dashboard lock', () => {
   })
 
   it('flips the lock through the owner route, then re-reads every dashboard query for the crewmate', async () => {
-    on()
     setup(member())
     const sw = await screen.findByRole('switch', { name: SWITCH })
     await waitFor(() => expect(sw).not.toHaveAttribute('aria-disabled'))
@@ -285,7 +272,6 @@ describe('CrewProfileSettings dashboard lock', () => {
   })
 
   it('says which change failed and what stayed the same', async () => {
-    on()
     mockApi.memberDashboard.mockResolvedValue({ structure_locked: true })
     mockApi.memberDashboardLock.mockRejectedValue(new Error('403'))
     setup(member())
@@ -299,7 +285,6 @@ describe('CrewProfileSettings dashboard lock', () => {
   })
 
   it('hides the switch and shows error + hint when the lock cannot be read', async () => {
-    on()
     mockApi.memberDashboard.mockRejectedValue(new Error('500'))
     setup(member())
     expect(await screen.findByTestId('crew-profile-dashboard-lock-error')).toHaveTextContent(

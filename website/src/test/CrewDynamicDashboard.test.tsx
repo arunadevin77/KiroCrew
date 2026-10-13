@@ -279,6 +279,19 @@ describe('CrewDynamicDashboard', () => {
     expect(screen.getByTestId('crew-dashboard-error-retry')).toBeInTheDocument()
   })
 
+  it('tells a non-owner whose page it is, with no Retry', async () => {
+    // The read refuses a caller who is not the owner on purpose; Retry reads the
+    // same 403, so the tab must not draw it as a transient failure.
+    vi.spyOn(api, 'memberDashboard').mockRejectedValue(
+      new ApiError(403, 'owner authorization required', '{"code":"owner_only"}'),
+    )
+    mount()
+    const notice = await screen.findByTestId('crew-dashboard-owner-only')
+    expect(notice).toHaveTextContent("Only this crewmate's owner can see its dashboard.")
+    expect(screen.queryByTestId('crew-dashboard-error')).toBeNull()
+    expect(screen.queryByTestId('crew-dashboard-error-retry')).toBeNull()
+  })
+
   it('calls a failed read LOADED, and a refused page DRAWN', async () => {
     // Two dead ends that read the same tell a reader nothing about which one they
     // are in. The read failing means no page ever arrived, so "loaded" is the true

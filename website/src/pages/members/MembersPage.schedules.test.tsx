@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { PREVIEW_DASHBOARD } from '../../utils/previewFlags'
 import { useState } from 'react'
 import { screen, fireEvent, waitFor, within, act } from '@testing-library/react'
 import { renderWithProviders } from '../../test/helpers'
@@ -48,7 +47,6 @@ vi.mock('../../api/client', () => ({
     memberActivity: vi.fn(() => Promise.resolve({ slug: '', member: '', capped: false, entries: [] })),
     memberProjections: vi.fn(() => Promise.resolve({ asOfSeq: 0, values: {} })),
     memberBriefing: vi.fn(() => Promise.resolve({ slug: '', member: '', supported: true, text: '', updated_ts: null, redacted: false, truncated: false })),
-    memberPanel: vi.fn(() => Promise.resolve({ panel: null, html: null })),
     autonudgeList: vi.fn(() => Promise.resolve({ enabled: true, loops: [] })),
     // The card's description comes from the crew registry; none of these cases need one.
     kirocrewAgents: vi.fn(() => Promise.resolve({ agents: [], default_agent: 'kirocrew' })),
@@ -241,8 +239,6 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   delete (window as unknown as { __kirocrewPluginHandlesFiles?: boolean }).__kirocrewPluginHandlesFiles
-  // The Dashboard tab and the in-chat dock are a Feature Preview, on here.
-  localStorage.setItem(PREVIEW_DASHBOARD, '1')
   __resetPanelTabs()
   setWindowWidth(WIDE_WINDOW)
   vi.mocked(api.crons).mockResolvedValue({ jobs: JOBS } as never)

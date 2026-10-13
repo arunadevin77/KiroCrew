@@ -4,9 +4,8 @@ import { ArrowRight } from 'lucide-react'
 import { SettingsSection, SettingsCard, SettingsToggle } from '../../components/settings'
 import { FeaturePreviewIntroButton, type FeaturePreviewIntro } from '../../components/FeaturePreviewIntroDialog'
 import { usePreviewFlag, useRemoteCrewChat } from '../../hooks/usePreviewFlag'
-import { PREVIEW_ARTIFACT_DEPLOY, PREVIEW_CREW, PREVIEW_DASHBOARD, PREVIEW_FOLDER_CONDUCTOR, PREVIEW_LAYOUT_HARNESS, PREVIEW_WEBHOOKS, setPreviewFlag, setRemoteCrewChat } from '../../utils/previewFlags'
+import { PREVIEW_ARTIFACT_DEPLOY, PREVIEW_CREW, PREVIEW_FOLDER_CONDUCTOR, PREVIEW_LAYOUT_HARNESS, PREVIEW_WEBHOOKS, setPreviewFlag, setRemoteCrewChat } from '../../utils/previewFlags'
 import { DecisionsCard } from './DecisionsCard'
-import AutomaticCardSetting from '../chat/command-center/AutomaticCardSetting'
 import { i18nT } from '../../i18n/t'
 
 
@@ -134,7 +133,6 @@ export function FeaturePreviewsSection() {
   const crew = usePreviewFlag(PREVIEW_CREW)
   const remoteCrewChat = useRemoteCrewChat()
   const layoutHarness = usePreviewFlag(PREVIEW_LAYOUT_HARNESS)
-  const dashboard = usePreviewFlag(PREVIEW_DASHBOARD)
   const folderConductor = usePreviewFlag(PREVIEW_FOLDER_CONDUCTOR)
 
   return (
@@ -290,39 +288,6 @@ export function FeaturePreviewsSection() {
           checked={layoutHarness}
           onChange={v => setPreviewFlag(PREVIEW_LAYOUT_HARNESS, v)}
         />
-      </SettingsCard>
-      {/* The Dynamic Dashboard: the side panel's Dashboard view, the Crewmates
-          Dashboard tab and the All dashboards page. Still being designed, so
-          held here until it is. The dock above the composer was part of this
-          preview and is retired (`commandCenterRetired.test.ts`), so neither
-          this comment nor the card's description may name it again.
-
-          NO ingress button: turning it on puts the + menu entry and the
-          sidebar's "All dashboards" item back in the same tick, so a link
-          here would be a second door beside ones already on screen. NO "See
-          what it looks like" either, for the capture rule: the surface is
-          changing shape and a capture would be stale by the next change.
-
-          The ONE setting the dashboard owns gateway-wide — automatic cards for
-          every session, a cost opt-in — rides INSIDE this card and only while
-          the flag is on. Not in the panel's Overview or on the All dashboards
-          page: those are places meant for reading, and a setting belongs in
-          Settings. This card is the whole story of the preview, so the switch
-          that spends on its behalf lives here with the switch that reveals it.
-          It stays visible with the preview OFF: it is a gateway-wide server
-          setting, the preview is a per-device flag, and hiding the only
-          control for a spend opt-in would leave cards running with no way to
-          turn them off from this machine. */}
-      <SettingsCard>
-        <SettingsToggle
-          label={i18nT('pages.developer.featurePreviewsTab.dashboard')}
-          description={i18nT('pages.developer.featurePreviewsTab.dashboard_desc')}
-          checked={dashboard}
-          onChange={v => setPreviewFlag(PREVIEW_DASHBOARD, v)}
-        />
-        <div className="pt-1" data-testid="feature-preview-dashboard-settings">
-          <AutomaticCardSetting active />
-        </div>
       </SettingsCard>
       {/* A folder drawn around the session that conducts it: that card pinned
           first inside the folder, with an accent bar and a `conductor` tag.

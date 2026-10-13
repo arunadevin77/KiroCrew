@@ -337,24 +337,13 @@ export function useWebSocket() {
             if (!reconnectingRef.current) dispatchLiveNotification(n)
             break
           }
-          case 'panel_published': {
-            // A crew replaced its webview. The drawer's query sets no finite
-            // staleTime (the client's default is Infinity, freshness by push), so
-            // without this the operator kept looking at the first snapshot read
-            // when the drawer opened -- and the "23m ago" chip froze with it.
-            //
-            // Invalidated by SLUG PREFIX, so it reaches the ['member-panel', slug,
-            // member] key without the frame having to carry the crew's name. The
-            // frame is slug-only on purpose: the ownership digest must not reach a
-            // client, and the refetch re-asks the server, which re-checks ownership.
-            const slug = String((data as { slug?: unknown }).slug || '')
-            if (slug) {
-              queryClient.invalidateQueries({ queryKey: ['member-panel', slug] })
-            }
-            // The crewmate's dashboard page reads the same publish, so it re-reads too.
+          case 'panel_published':
+            // A crew published new panel data, which its dashboard page may read,
+            // so the page re-reads. The frame is slug-only on purpose: the
+            // ownership digest must not reach a client, and the refetch re-asks
+            // the server, which re-checks ownership.
             handleDashboardMoved(queryClient, data)
             break
-          }
           case 'dashboard_value_written':
           case 'dashboard_instance_changed':
             // A crewmate or a root session wrote one of its own dashboard fields, or

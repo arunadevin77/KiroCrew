@@ -18,7 +18,6 @@ import { initI18n } from '../src/i18n/all'
 import { ThemeProvider } from '../src/hooks/useTheme'
 import { store } from '../src/store'
 import { MEMBERS_ROSTER_QUERY_KEY } from '../src/api/membersQuery'
-import { PREVIEW_DASHBOARD } from '../src/utils/previewFlags'
 import type { MemberRosterRow } from '../src/api/client'
 import CrewProfileSettings from '../src/pages/members/CrewProfileSettings'
 import '../src/index.css'
@@ -29,7 +28,6 @@ const locked = params.get('locked') === '1'
 
 localStorage.setItem('mc-theme', theme)
 localStorage.setItem('mc-color-theme', 'kiro')
-localStorage.setItem(PREVIEW_DASHBOARD, '1')  // enable the lock switch section
 document.documentElement.setAttribute('data-theme', theme === 'light' ? 'kiro-light' : 'kiro-dark')
 
 const MEMBER: MemberRosterRow = {

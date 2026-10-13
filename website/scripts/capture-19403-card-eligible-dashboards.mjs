@@ -92,7 +92,7 @@ try {
   await stubDashboardApi(page, {
     slots: SLOTS,
     // The page is a Feature Preview surface; the operator has it on.
-    localStorageEntries: { 'mc-lang': 'en', 'mc-preview-dashboard': '1' },
+    localStorageEntries: { 'mc-lang': 'en' },
     extra: async (path, route) => {
       if (path === '/api/ask-question/pending') {
         await json(route, [QUESTION])
@@ -165,7 +165,7 @@ try {
   logPageProblems(hidden)
   await stubDashboardApi(hidden, {
     slots: SLOTS.filter(slot => !CARDED.includes(slot.key)),
-    localStorageEntries: { 'mc-lang': 'en', 'mc-preview-dashboard': '1' },
+    localStorageEntries: { 'mc-lang': 'en' },
     extra: async (path, route) => {
       if (path === '/api/ask-question/pending') {
         await json(route, [QUESTION])

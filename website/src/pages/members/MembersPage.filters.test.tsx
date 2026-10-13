@@ -31,7 +31,6 @@ vi.mock('../../api/client', () => ({
     // its empty state: an unstubbed reader rejects, the section shows an
     // ErrorNotice of its own, and assertions that read the LAST ErrorNotice props
     // then pick up the webview's failure instead of the one under test.
-    memberPanel: vi.fn(() => Promise.resolve({ panel: null, html: null })),
   },
 }))
 

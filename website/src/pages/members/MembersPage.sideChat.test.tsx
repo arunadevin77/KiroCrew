@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { PREVIEW_DASHBOARD } from '../../utils/previewFlags'
 import { screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { renderWithProviders } from '../../test/helpers'
 import { __resetPanelTabs } from '../../hooks/usePanelTabs'
@@ -27,7 +26,6 @@ vi.mock('../../api/client', () => ({
     memberActivity: vi.fn(() => Promise.resolve({ slug: '', member: '', capped: false, entries: [] })),
     memberBriefing: vi.fn(() => Promise.resolve({ slug: '', member: '', supported: true, text: '', updated_ts: null, redacted: false, truncated: false })),
     sessionCrewLogProjections: vi.fn(() => Promise.resolve({ folds: {}, resolved: true, writesDrained: true })),
-    memberPanel: vi.fn(() => Promise.resolve({ panel: null, html: null })),
     autonudgeList: vi.fn(() => Promise.resolve({ enabled: true, loops: [] })),
   },
 }))
@@ -110,8 +108,6 @@ beforeEach(() => {
   vi.clearAllMocks()
   verdicts.length = 0
   localStorage.clear()
-  // The Dashboard tab is a Feature Preview; these cases pin the strip with it on.
-  localStorage.setItem(PREVIEW_DASHBOARD, '1')
   __resetPanelTabs()
   setWindowWidth(WIDE_WINDOW)
 })

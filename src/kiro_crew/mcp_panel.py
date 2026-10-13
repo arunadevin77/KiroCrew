@@ -53,16 +53,6 @@ logger = logging.getLogger(__name__)
 SERVER_NAME = "kirocrew-panel"
 SERVER_VERSION = "1.0.0"
 
-#: Who can see the crewmate's page. The Dashboard tab draws it only for a reader who
-#: turned the 'Dynamic Dashboard' Feature Preview on; with it off, the default, the tab draws
-#: the panel_publish record. A reply that touches the page carries this sentence so an
-#: agent does not tell a person to look at a page their tab does not show.
-DASHBOARD_PREVIEW_NOTE = (
-    "Only readers with the 'Dynamic Dashboard' Feature Preview on (Settings → "
-    "Developer → Feature Previews) see this page; with it off the tab shows "
-    "panel_publish."
-)
-
 
 def _tool_definitions() -> list[dict[str, Any]]:
     """The tool surface: publish a panel, and discover what can render it."""
@@ -70,12 +60,10 @@ def _tool_definitions() -> list[dict[str, Any]]:
         {
             "name": "panel_publish",
             "description": (
-                "Publish what the human watching you should see into YOUR "
-                "crew's webview, stored for readers of GET /panel. With the "
-                "'Dynamic Dashboard' Feature Preview off (the default) the Dashboard "
-                "tab shows this record; the dynamic dashboard (dashboard_apply, "
-                "dashboard_write) shows only for readers who turned the "
-                "preview on. Send "
+                "Publish what the human watching you should see for YOUR "
+                "crew, stored for readers of GET /panel. The Dashboard tab "
+                "shows it only if its page binds the published board; "
+                "dashboard_fields says whether yours does. Send "
                 "DATA, not layout: you "
                 "pass a JSON object and name a template that renders it, so "
                 "the panel keeps a stable shape across cycles and costs you a "
@@ -402,9 +390,11 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         template = published.get("template") or "default"
         fields = len(data)
         return (
-            f"Published to your crew's webview using the `{template}` template "
+            f"Published using the `{template}` template "
             f"({fields} top-level field{'' if fields == 1 else 's'}). "
-            "It replaced the previous panel."
+            "It replaced the previous panel. The Dashboard tab shows it only "
+            "if its page binds the published board; dashboard_fields says "
+            "whether yours does."
         )
 
     if name == "dashboard_fields":
@@ -452,7 +442,6 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             f"Wrote `{written.get('field', field)}` "
             f"({written.get('type', 'value')}) to your dashboard."
             + (" It corrected an earlier refused write." if d.get("corrected") else "")
-            + f"\n{DASHBOARD_PREVIEW_NOTE}"
         )
 
     if name == "dashboard_templates":
@@ -501,7 +490,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return redact(f"Error: {api_err}")
         return redact(
             f"Your crewmate's page is now version {d.get('instance_version')}, "
-            f"from template `{d.get('template_id')}`.\n{DASHBOARD_PREVIEW_NOTE}" + _guide_tail(d)
+            f"from template `{d.get('template_id')}`." + _guide_tail(d)
         )
 
     if name == "dashboard_rollback":
@@ -836,8 +825,6 @@ def _render_fields(payload: dict[str, Any]) -> str:
         lines.append(
             "Versions dashboard_rollback can still reach: " + ", ".join(str(v) for v in retained)
         )
-    lines.append("")
-    lines.append(DASHBOARD_PREVIEW_NOTE)
     budget = payload.get("retry_budget")
     if budget:
         lines.append("")

@@ -55,7 +55,7 @@ import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useM
 import { useLocation, useNavigate, useNavigationType, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Check, ChevronRight, Circle, Goal, LayoutDashboard, Loader2, MessageCircleQuestionMark, Plus, RotateCw, Square, Star, X, Zap } from 'lucide-react'
 import { usePreviewFlag } from '../../hooks/usePreviewFlag'
-import { PREVIEW_CREW, PREVIEW_DASHBOARD } from '../../utils/previewFlags'
+import { PREVIEW_CREW } from '../../utils/previewFlags'
 import { PanelLeftLight, PanelLeftSolid, PanelRightSolid } from '../../components/icons/panels'
 import { Btn } from '../../components/ui'
 import { CrewMemberMark } from '../../components/CrewMemberMark'
@@ -136,7 +136,6 @@ import CrewProfilePanel, { PROFILE_FACE_PX, type ProfileTab } from './CrewProfil
 import CrewComposer from './CrewComposer'
 import { createPortal } from 'react-dom'
 import { useCrewmateThreadsFlag } from '../../hooks/useCrewmateThreadsFlag'
-import { CrewDashboardFrame } from './CrewWebview'
 import CrewDashboardTab from './CrewDashboardTab'
 import { DASHBOARD_PREVIEW_PARAM, DASHBOARD_PREVIEW_VALUE, isDashboardPreview } from './dashboardPreview'
 import { dashboardPreviewMemberFromRef, dashboardPreviewSlugFromRef } from '../../utils/dashboardPreview'
@@ -2819,11 +2818,6 @@ export default function MembersPage() {
   // making it depend on a value computed further down this render.
   const schedulesMountedRef = useRef(false)
   const activeTabId = shownTabId ?? tabsCtl.activeId
-  // The in-chat Command Center dock is the Dynamic Dashboard, a Feature Preview
-  // (Settings > Developer); off, the dock has no opener. The Dashboard TAB stays a
-  // standing entry either way -- the flag decides what FILLS it, the crewmate's
-  // dynamic dashboard or the published view it showed before.
-  const dashboardPreview = usePreviewFlag(PREVIEW_DASHBOARD)
   const dashboardVisible = panelVisible && activeTabId === CREW_DASHBOARD_TAB_ID
   const [dashboardVisitedFor, setDashboardVisitedFor] = useState<string | null>(null)
   useEffect(() => {
@@ -2839,9 +2833,7 @@ export default function MembersPage() {
   // rather than unmounted. There is no find pane on this page.
   const hasLiveAppTab = useAnyLiveAppTab()
   const hasBrowserTab = tabsCtl.tabs.some((tab) => tab.kind === 'browser')
-  // A Command Center tab is the Dynamic Dashboard preview's; off, nothing of it
-  // may hold the panel.
-  const hasTaskDashboard = dashboardPreview && tabsCtl.tabs.some(tab => tab.kind === 'command-center')
+  const hasTaskDashboard = tabsCtl.tabs.some(tab => tab.kind === 'command-center')
   const mountInput = { activityOpen: panelVisible, hasLiveAppTab, hasBrowserTab, hasTaskDashboard, searchOpen: false }
   const panelMounted = shouldMountSidePanel(mountInput)
   const panelHidden = isSidePanelHidden(mountInput)
@@ -5206,17 +5198,11 @@ export default function MembersPage() {
           // owns live task summaries, questions and approval controls.
           // The Dashboard tab is the crewmate's own dynamic dashboard -- the page the
           // read resolves for it, its adopted copy or the default template, with every
-          // number folded from its crew log -- BEHIND THE FEATURE PREVIEW. With the
-          // preview off the tab keeps rendering the published view it rendered before,
-          // which is what "off by default" has to mean: the standing Dashboard entry
-          // shows the same thing to anybody who has not turned the preview on.
+          // number folded from its crew log. The tab is a standing entry.
           //
-          // The entry itself is unconditional either way. The TAB is a standing one;
-          // only what fills it moves with the flag.
-          //
-          // No card, Contained bar or Expand around either (not the CrewWebview
-          // drawer) and no Command Center above it: each read as one more container
-          // stacked over the one page that matters.
+          // No card, Contained bar or Expand around it and no Command Center above
+          // it: each read as one more container stacked over the one page that
+          // matters.
           const dashboardBody = (
             <div className="h-full min-h-0 flex flex-col" data-testid="member-dashboard" aria-label={t('pages.membersPage.dashboard_tab')}>
               {/* Said here only when the MAIN COLUMN is not already saying it:
@@ -5227,40 +5213,24 @@ export default function MembersPage() {
                 ? <p role="status" className="px-4 pt-3 text-sm text-muted">{t('pages.membersPage.opening_thread')}</p>
                 : null}
               {activeSlug && activeMemberName && (
-                // A preview link is drawn by the dynamic dashboard whatever the
-                // Feature Preview says: the staged page exists only in that form,
-                // and the person was sent here to look at it.
-                dashboardPreview || dashboardPreviewLink ? (
-                  // Keyed per crewmate so the tab remounts on a switch instead of
-                  // opening the next crewmate on the page held for this one.
-                  <CrewDashboardTab
-                    key={JSON.stringify([activeSlug, activeMemberName])}
-                    slug={activeSlug}
-                    member={activeMemberName}
-                    displayName={crewDisplayName(activeView ?? active)}
-                    // A needs-you option lands in this crewmate's chat box; the person sends it.
-                    onAct={activeSlot ? (text: string) => mergePaneDraft(activeSlot, text, []) : undefined}
-                    // Badge click opens the Profile tab directly so the person can unlock.
-                    // Guard against an unsaved schedule form in the already-open card:
-                    // openProfile() increments the nonce which re-mounts the panel.
-                    onOpenProfileTab={() => {
-                      if (!schedAtStakeRef.current()) { openProfile('profile'); return }
-                      void schedGuardRef.current().then((ok) => { if (ok) openProfile('profile') })
-                    }}
-                    preview={dashboardPreviewLink}
-                  />
-                ) : (
-                  <CrewDashboardFrame
-                    slug={activeSlug}
-                    member={activeMemberName}
-                    displayName={crewDisplayName(activeView ?? active)}
-                    avatar={(activeView ?? active).avatar}
-                    // A suggested prompt lands in this crewmate's chat box; the person sends it.
-                    onAct={activeSlot ? (text: string) => mergePaneDraft(activeSlot, text, []) : undefined}
-                    // Through the leave guard, like every other exit from this page.
-                    onOpenPreviews={() => { const destination = '/settings/developer?highlight=developer.dynamic-dashboard'; leave(() => navigate(destination), destination) }}
-                  />
-                )
+                // Keyed per crewmate so the tab remounts on a switch instead of
+                // opening the next crewmate on the page held for this one.
+                <CrewDashboardTab
+                  key={JSON.stringify([activeSlug, activeMemberName])}
+                  slug={activeSlug}
+                  member={activeMemberName}
+                  displayName={crewDisplayName(activeView ?? active)}
+                  // A needs-you option lands in this crewmate's chat box; the person sends it.
+                  onAct={activeSlot ? (text: string) => mergePaneDraft(activeSlot, text, []) : undefined}
+                  // Badge click opens the Profile tab directly so the person can unlock.
+                  // Guard against an unsaved schedule form in the already-open card:
+                  // openProfile() increments the nonce which re-mounts the panel.
+                  onOpenProfileTab={() => {
+                    if (!schedAtStakeRef.current()) { openProfile('profile'); return }
+                    void schedGuardRef.current().then((ok) => { if (ok) openProfile('profile') })
+                  }}
+                  preview={dashboardPreviewLink}
+                />
               )}
             </div>
           )

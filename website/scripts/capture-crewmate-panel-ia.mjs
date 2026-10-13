@@ -235,7 +235,6 @@ const visibleWords = (page) => rail(page).evaluate(el => [...el.querySelectorAll
   const stripText = (await panel.locator('.side-panel-strip').innerText()).replace(/\s+/g, ' ')
   check('side panel strip has no Notes / Work log / Schedules', !/Notes|Work log|Schedules/.test(stripText), stripText)
   check('the dashboard report iframe rendered bare', (await page.getByTestId('crew-dashboard-iframe').count()) === 1)
-  check('no drawer chrome around the report', (await page.getByTestId('crew-webview-summary').count()) === 0 && (await page.getByTestId('crew-webview-expand').count()) === 0)
   const fb = await page.getByTestId('crew-dashboard-iframe').boundingBox()
   const pb = await page.getByTestId('member-dashboard').boundingBox()
   check(`the report fills the tab (frame ${Math.round(fb.width)}x${Math.round(fb.height)}, tab ${Math.round(pb.width)}x${Math.round(pb.height)})`, Math.abs(fb.width - pb.width) <= 2 && Math.abs(fb.height - pb.height) <= 2)
@@ -298,15 +297,6 @@ const visibleWords = (page) => rail(page).evaluate(el => [...el.querySelectorAll
   await page.waitForFunction(() => document.querySelector('[data-testid="member-title-row"]')?.textContent?.includes('Atlas'), null, { timeout: 15000 })
   check('switching lands on Atlas', (await page.getByTestId('member-title-row').innerText()).includes('Atlas'))
 
-  // 12: Atlas has published nothing → the Dashboard tab says so and points at the chat.
-  if ((await page.getByTestId('member-side-panel').count()) === 0 || !(await page.getByTestId('member-dashboard').isVisible().catch(() => false))) {
-    await page.getByTestId('member-panel-toggle').click()
-  }
-  await page.getByTestId('crew-webview-empty').waitFor({ state: 'visible', timeout: 15000 })
-  await page.waitForTimeout(600)
-  check('unpublished Dashboard points at the chat with no button', (await page.getByTestId('crew-webview-setup').count()) === 0)
-  await page.mouse.move(5, 5)
-  await page.screenshot({ path: join(OUT, '12-dashboard-empty-light.png') })
   await context.close()
 }
 

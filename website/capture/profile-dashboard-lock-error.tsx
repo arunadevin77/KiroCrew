@@ -18,7 +18,6 @@ import { ThemeProvider } from '../src/hooks/useTheme'
 import { store } from '../src/store'
 import { MEMBERS_ROSTER_QUERY_KEY } from '../src/api/membersQuery'
 import { MEMBER_DASHBOARD_QUERY_PREFIX } from '../src/hooks/useWebSocket'
-import { PREVIEW_DASHBOARD } from '../src/utils/previewFlags'
 import type { MemberRosterRow } from '../src/api/client'
 import CrewProfileSettings from '../src/pages/members/CrewProfileSettings'
 import '../src/index.css'
@@ -28,7 +27,6 @@ const theme = params.get('theme') === 'light' ? 'light' : 'dark'
 
 localStorage.setItem('mc-theme', theme)
 localStorage.setItem('mc-color-theme', 'kiro')
-localStorage.setItem(PREVIEW_DASHBOARD, '1')
 document.documentElement.setAttribute('data-theme', theme === 'light' ? 'kiro-light' : 'kiro-dark')
 
 const MEMBER: MemberRosterRow = {

@@ -17,7 +17,7 @@
     "purpose_missing": "The agent did not provide a reason for this request.",
     "reject_help": "Reject once refuses this request. Permission mode stays the same.",
     "shared_request_help": "Responding here resolves this request. Other views show the result when refreshed.",
-    "card_benefit": "Summaries of each session’s recent work and next steps.",
+    "card_benefit": "Summaries of each session’s recent work and next steps, shown on the All Dashboards page, which the Sessions list’s ⋮ menu opens. A model call writes each one, so they use model credits.",
     "from_session": "From session: {{name}}",
     "session_label": "Session {{number}}",
     "worker_label": "Worker task {{number}}",
@@ -8505,8 +8505,6 @@
         "decisions_runtime_running_off": "Running on this machine, but nothing is sent to it while the Decisions switch above is off.",
         "decisions_runtime_error": "The model could not be started.",
         "decisions_runtime_retry": "Try again",
-        "dashboard": "Dynamic Dashboard",
-        "dashboard_desc": "Turns on the in-development Dynamic Dashboard: a Dashboard view in the side panel and on a crewmate’s page, and an All Dashboards page. Its layout is still being designed, so it is not shown until you turn it on. Also holds the switch for automatic cards.",
         "folder_conductor": "Folder conductor",
         "folder_conductor_desc": "Lifts the chat that started a folder's other chats to the top of that folder: an accent bar down its left edge and a small conductor tag beside the agent name. This changes the order of the Sessions list, so the list stays as it is until you turn it on. The folder menu's chat item is always there."
       },

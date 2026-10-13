@@ -18,7 +18,6 @@ vi.mock('../../api/client', () => ({
     webhooks: vi.fn(() => Promise.resolve({ tokens: [] })),
     defaultAgent: vi.fn(() => Promise.resolve({ default_agent: '' })),
     autonudgeList: vi.fn(() => Promise.resolve({ enabled: true, loops: [] })),
-    memberPanel: vi.fn(() => Promise.resolve({ panel: null, html: null })),
     memberFreshStart: vi.fn(),
     // The Profile card's own reads (the narrow-screen entry lives there).
     kirocrewAgents: vi.fn(() => Promise.resolve({ agents: [], default_agent: 'kirocrew' })),
