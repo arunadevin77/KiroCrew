@@ -483,10 +483,12 @@ def test_shutdown_leaves_no_gateway_child_alive() -> None:
     So the gateway's descendants are SNAPSHOTTED while it is still serving, each
     with its creation identity, and re-probed after teardown. Before the kill,
     because a kill orphans survivors out of the parent map and a post-teardown walk
-    cannot find them; attributed by ``platform_compat.created_after`` so a recycled
-    pid's stray is not blamed on this gateway; and existence-first on the re-probe,
-    because a creation token stays readable while any handle to the exited process
-    is open and would report a corpse as residue.
+    cannot find them; attributed by ``platform_compat.attributed_descendants`` so
+    every parent-child edge is validated against the IMMEDIATE parent's token, not
+    only the root's -- a stale orphan sitting under a recycled intermediate pid
+    passes a root-only check but fails the per-edge check; and existence-first on
+    the re-probe, because a creation token stays readable while any handle to the
+    exited process is open and would report a corpse as residue.
 
     Liveness is probed through ``platform_compat.pid_exists``, never
     ``os.kill(pid, 0)``, which TERMINATES the target on Windows.
@@ -498,11 +500,15 @@ def test_shutdown_leaves_no_gateway_child_alive() -> None:
         assert status == 200, "gateway was not serving before the shutdown check"
         root_token = platform_compat.process_start_time(pid) or ""
         assert root_token, "the gateway's creation identity must be readable to attribute its tree"
+        # ``attributed_descendants`` walks the tree level-by-level and checks each
+        # child against its IMMEDIATE parent's creation time, not only the root's.
+        # This matches the harness's own teardown attribution and excludes stale
+        # orphans that appear in a flat walk but whose edge timestamp predates the
+        # recycled PID they are reached through.
         descendants = {
             child: token
-            for child in platform_compat.process_descendants(pid)
+            for child in platform_compat.attributed_descendants(pid, root_token)
             if (token := platform_compat.process_start_time(child))
-            and platform_compat.created_after(token, root_token)
         }
 
     assert handle.proc.poll() is not None, "the gateway process was not reaped"
