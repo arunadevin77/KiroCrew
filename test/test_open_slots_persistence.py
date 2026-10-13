@@ -2990,31 +2990,66 @@ def test_cancelled_restore_keeps_the_keys_it_never_read(tmp_path, monkeypatch):
     )
 
     state2 = _make_state(tmp_path / "sessions")
+    from kiro_crew.dashboard import chat_persistence
 
-    async def _cancel_after_one() -> None:
+    # The cut-short is a GATE, not a race. The driver reads each tab in a worker
+    # thread (``asyncio.to_thread(_prefetch_open_slot_inputs, ...)``) and awaits
+    # that read, so the second tab's read is held until the test releases it: the
+    # task is parked at that await when the cancel lands, on every runner speed.
+    # Polling for "one slot applied" and then cancelling is timing-based: a fast
+    # loop applies tabs 2 and 3 and RETURNS between the poll and the cancel, which
+    # makes the cancel a no-op and ``await task`` a normal return.
+    # ``threading.Event`` because the gate is waited on from the worker thread,
+    # not from the loop.
+    real_prefetch = chat_persistence._prefetch_open_slot_inputs
+    second_read_entered = threading.Event()
+    release_second_read = threading.Event()
+    reads = 0
+
+    def _gated_prefetch(*args, **kwargs):
+        # Sequential by construction: the driver awaits each read before starting
+        # the next, so a plain counter is enough and no two reads overlap.
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            second_read_entered.set()
+            # BOUNDED, so a cancel that never comes cannot pin the worker thread --
+            # asyncio.run's executor shutdown waits for it, and an unbounded wait
+            # turns a failed test into a hung one.
+            release_second_read.wait(timeout=10)
+        return real_prefetch(*args, **kwargs)
+
+    monkeypatch.setattr(chat_persistence, "_prefetch_open_slot_inputs", _gated_prefetch)
+
+    async def _cancel_at_the_second_tab() -> None:
         task = asyncio.ensure_future(restore_open_slots_async(state2))
 
         try:
-            # BOUNDED. Unbounded, a restore that finishes without creating a slot --
-            # which every seeded read failing would produce -- spins this worker
+            # BOUNDED. Unbounded, a restore that finishes without reaching a second
+            # read -- which a failing first read would produce -- spins this worker
             # forever instead of reporting the failure, and the suite reports a
             # timeout somewhere else entirely. async_wait_until waits on the signal
-            # (one tab applied) rather than a raw fixed sleep, per testing rule D1.
+            # (the second read entered) rather than a raw fixed sleep, per testing
+            # rule D1.
             await async_wait_until(
-                lambda: bool(state2._slots),
+                second_read_entered.is_set,
                 timeout=10,
-                describe=lambda: "the restore applied no tab before the cancel",
+                describe=lambda: "the restore never reached its second tab",
             )
         finally:
-            # Cancel and AWAIT whatever state the wait left the restore in, so the
-            # task cannot outlive the loop: on the timeout path it is still running,
-            # and an un-awaited cancellation surfaces as "Task was destroyed but it
-            # is pending" against the next test.
+            # Cancel FIRST: ``Task.cancel`` cancels the awaited to_thread future
+            # synchronously, so by the time the gate opens the driver is already
+            # unwinding through its carry guard with tab 2 in hand. Then release the
+            # thread, so it cannot outlive the loop. Then AWAIT whatever state the
+            # wait left the restore in: on the timeout path it is still running, and
+            # an un-awaited cancellation surfaces as "Task was destroyed but it is
+            # pending" against the next test.
             task.cancel()
+            release_second_read.set()
             with pytest.raises(asyncio.CancelledError):
                 await task
 
-    asyncio.run(_cancel_after_one())
+    asyncio.run(_cancel_at_the_second_tab())
 
     # The latch stays DOWN, because this pass never reached the end of the seed.
     # Both defences are wanted and neither subsumes the other: the latch covers the
@@ -3025,7 +3060,7 @@ def test_cancelled_restore_keeps_the_keys_it_never_read(tmp_path, monkeypatch):
     # learned the whole set. A surface that legitimately has nothing to restore
     # releases it through the drivers' own "nothing to enumerate" exits.
     assert state2.open_slots_restored is False
-    assert len(state2._slots) < len(keys), "the premise: the restore really was cut short"
+    assert len(state2._slots) == 1, "the premise: the restore was cut short at tab 2 of 3"
     # The keys it never read are carried, so the flush below cannot prune them.
     assert set(keys) - set(state2._slots) <= set(state2.unrestored_slot_keys)
 
