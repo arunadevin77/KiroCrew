@@ -1137,24 +1137,24 @@ describe('ActivityViewer — subagent panes render markdown', () => {
   })
 })
 
-/* ── Subagent card: tool-call timeline (#13628) ─────────────────────────────*/
+/* ── Subagent card: tool-call timeline (#13628), now the transcript's tool rows ─*/
 
 describe('ActivityViewer — subagent tool-call timeline', () => {
-  it('lists each tool call and says how many it leaves out', () => {
+  it('lists each tool call and says how many the coalescer merged away', () => {
     renderPanel(
       <ActivityViewer
         {...baseProps}
         view="subagents"
         subagents={{ s1: mkAgent('s1', {
           status: 'tool', streaming: 'x', lastTool: 'Running: npm test', toolCount: 5,
-          toolCalls: [{ tool: 'Reading src/a.ts' }, { tool: 'Running: npm test' }],
+          transcript: [{ kind: 'tool', tool: 'Reading src/a.ts', status: 'completed' }, { kind: 'tool', tool: 'Running: npm test' }],
         }) }}
       />,
     )
-    const list = screen.getByTestId('subagent-tool-calls')
+    const list = screen.getByTestId('subagent-transcript')
     // The count (5 counted, 2 listed) sits in the heading, outside the
     // scrolling list, so following the newest call never scrolls it away.
-    const unlisted = within(list).getByTestId('subagent-tool-calls-unlisted')
+    const unlisted = within(list).getByTestId('subagent-transcript-unlisted')
     expect(unlisted).toHaveTextContent('3 earlier calls not shown')
     expect(unlisted.closest('ol')).toBeNull()
     // Same tone as the rows, not the heading's faint label tone.
@@ -1173,13 +1173,14 @@ describe('ActivityViewer — subagent tool-call timeline', () => {
         view="subagents"
         subagents={{ s1: mkAgent('s1', {
           status: 'tool', streaming: 'x', lastTool: 'Running: npm test', toolCount: 2,
-          toolCalls: [{ tool: 'Running: git status' }, { tool: 'Running: npm test' }],
+          transcript: [{ kind: 'tool', tool: 'Running: git status', status: 'completed' }, { kind: 'tool', tool: 'Running: npm test' }],
         }) }}
       />,
     )
-    const items = within(screen.getByTestId('subagent-tool-calls')).getAllByRole('listitem')
+    const items = within(screen.getByTestId('subagent-transcript')).getAllByRole('listitem')
     expect(items[0].textContent?.trim()).toBe('git status')
-    expect(items[0]).toHaveAttribute('title', 'git status')
+    expect(within(items[0]).getByTitle('git status')).toBeInTheDocument()
+    expect(items[0]).not.toHaveAttribute('aria-current')
     expect(items[1].textContent?.trim()).toBe('npm test')
     expect(items[1]).toHaveAttribute('aria-current', 'step')
   })
@@ -1191,13 +1192,13 @@ describe('ActivityViewer — subagent tool-call timeline', () => {
         view="subagents"
         subagents={{ s1: mkAgent('s1', {
           status: 'done', result: 'ok', toolCount: 1,
-          toolCalls: [{ tool: 'Running: npm test' }],
+          transcript: [{ kind: 'tool', tool: 'Running: npm test' }],
         }) }}
       />,
     )
     // A finished card starts collapsed; open it.
     fireEvent.click(screen.getByRole('button', { expanded: false }))
-    const items = within(screen.getByTestId('subagent-tool-calls')).getAllByRole('listitem')
+    const items = within(screen.getByTestId('subagent-transcript')).getAllByRole('listitem')
     expect(items[0].textContent?.trim()).toBe('npm test')
     expect(items[0]).not.toHaveAttribute('aria-current')
   })
@@ -1209,11 +1210,11 @@ describe('ActivityViewer — subagent tool-call timeline', () => {
         view="subagents"
         subagents={{ s1: mkAgent('s1', {
           status: 'tool', streaming: 'x', toolCount: 2,
-          toolCalls: [{ tool: 'a' }, { tool: 'b' }],
+          transcript: [{ kind: 'tool', tool: 'a', status: 'completed' }, { kind: 'tool', tool: 'b' }],
         }) }}
       />,
     )
-    const ol = within(screen.getByTestId('subagent-tool-calls')).getByRole('list')
+    const ol = within(screen.getByTestId('subagent-transcript')).getByRole('list')
     expect(ol).not.toHaveAttribute('data-fade-top')
     // The mask sits on the bare scroller; the solid box around it stays solid.
     expect(ol).not.toHaveClass('bg-bg')
@@ -1234,7 +1235,7 @@ describe('ActivityViewer — subagent tool-call timeline', () => {
         subagents={{ s1: mkAgent('s1', { status: 'tool', streaming: 'x', lastTool: 'Terminal' }) }}
       />,
     )
-    expect(screen.queryByTestId('subagent-tool-calls')).toBeNull()
+    expect(screen.queryByTestId('subagent-transcript')).toBeNull()
     expect(screen.getByTestId('subagent-output-body')).toHaveTextContent('Terminal')
   })
 })

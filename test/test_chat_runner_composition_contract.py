@@ -763,11 +763,15 @@ _BASE_SURFACE: dict[str, tuple[tuple[str, str, str], ...]] = {
             "function",
             "(buf: 'list[str]', text: 'str', total: 'int', cap: 'int' = 40000, hard: 'int' = 80000) -> 'int'",
         ),
-        ("_native_card_feed", "function", "(card_output, card_id: 'str') -> 'str'"),
+        (
+            "_native_card_feed",
+            "function",
+            "(card_output, card_id: 'str', info: \"'dict | None'\" = None) -> 'str'",
+        ),
         (
             "_native_subagent_sync",
             "function",
-            "(state, slot, subagents, tracker, card_output=None) -> 'None'",
+            "(state, slot, subagents, tracker, card_output=None, card_output_len=None, streams=None) -> 'None'",
         ),
         (
             "_register_native_card",
@@ -778,7 +782,7 @@ _BASE_SURFACE: dict[str, tuple[tuple[str, str, str], ...]] = {
         (
             "_native_subagent_close_all",
             "function",
-            "(state, slot, tracker, card_output=None) -> 'None'",
+            "(state, slot, tracker, card_output=None, *, card_output_len: \"'dict[str, int] | None'\", streams: \"'dict[str, dict[str, StreamRedactor]] | None'\") -> 'None'",
         ),
         (
             "_retain_terminal_native",
@@ -1812,7 +1816,7 @@ _GUARDED_CONSTRUCT_HOMES: dict[str, tuple[str, ...]] = {
         "dashboard/chat_turn/turn_spec_hooks.py",
         "dashboard/chat_turn/turn_stats.py",
     ),
-    r"StreamRedactor": (_RUNNER_HOME,),
+    r"StreamRedactor": (_RUNNER_HOME, "dashboard/chat_turn/native_cards.py"),
     r"\.reject_tool\(": ("dashboard/chat_turn/deny_chokepoints.py",),
     r"_reject_attributed\(": (_RUNNER_HOME, "dashboard/chat_turn/deny_chokepoints.py"),
     r"\.approve_tool\(": (_RUNNER_HOME,),
