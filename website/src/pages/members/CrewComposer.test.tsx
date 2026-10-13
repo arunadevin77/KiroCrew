@@ -58,6 +58,16 @@ describe('CrewComposer', () => {
     for (const key of SESSION_CHROME_PROPS) expect(got).not.toHaveProperty(key)
   })
 
+  // A DM with a crewmate is a conversation, not a prompt to rewrite, and with
+  // the toolbar line gone the box is one row while the draft fits it. Both are
+  // ChatInput opt-ins this host sets; the pop-out CrewChatWindow already turns
+  // the optimizer off, so this is the last crewmate surface to do so.
+  it('turns the prompt optimizer off and opts into the one-row shape', () => {
+    render(<CrewComposer value="" onChange={noop} onSend={noop} />)
+    expect(seen.props!.promptOptimizer).toBe(false)
+    expect(seen.props!.inlineToolbarWhileFits).toBe(true)
+  })
+
   it('names every chrome prop the test passes, so a new chip cannot slip through untested', () => {
     expect([...SESSION_CHROME_PROPS].sort()).toEqual(Object.keys(CHROME).sort())
   })

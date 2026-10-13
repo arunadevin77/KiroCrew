@@ -1595,7 +1595,20 @@ thread is opening or refused.
 The DM's composer is `CrewComposer`, handed to `ChatPane` as `composerInput`.
 It is the shared `ChatInput` (text, attachments, send / stop / steer, queue)
 without the session toolbar line: no agent, model or effort chip, no context
-meter, no approval picker. The ordinary chat composer is unchanged.
+meter, no approval picker, and no prompt optimizer (as in the pop-out crew
+window). With that line gone the toolbar holds only attach, mic and send, so
+the box is ONE row -- a capsule: attach, the text, mic, send on a single line
+-- while the draft fits on that line (`ChatInput`'s `inlineToolbarWhileFits`).
+The text wrapping, a newline, or a staged file, quote or session ref moves the
+toolbar under the text (the ordinary two-row shape, 16px corners); cutting the
+draft back to one line brings it back up. Fit is measured on a hidden probe at
+the single row's column width whatever shape the box is in, so the boundary
+does not flutter. Only that change of shape animates (the box's height and the
+text column slide together, ~200ms spring, none under reduced motion); a line
+wrapping inside the two-row shape lands at once, and the buttons never move --
+they sit at the box's bottom edge in both shapes. The glass rim is sized from
+the two-row height in both shapes (`rimSize`), so the lit edge keeps one width
+as the box changes height. The ordinary chat composer is unchanged.
 
 Placement is decided when the card opens, and two things revisit it. A window
 that crosses below `md` while the card holds its column re-places it as the

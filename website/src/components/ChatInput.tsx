@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useCallback, useId, memo, lazy, Suspense } from 'react'
+import { useRef, useEffect, useLayoutEffect, useMemo, useCallback, useId, useState, memo, lazy, Suspense } from 'react'
 import { GUIDE_KEEP_CLEAR } from '../guide/trustRoot'
 import { useGuidePredicate } from '../guide/guidePredicates'
 import { markComposerResize } from '../utils/composerResize'
@@ -17,6 +17,7 @@ import { ToolDetails } from '../pages/chat/ToolDetails'
 import { safeSetItem } from '../utils/safeStorage'
 import { offlineProps } from '../utils/offline'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useReducedMotion } from '../hooks/useReducedMotion'
 import { useComposerSpellcheck } from '../hooks/useComposerSpellcheck'
 import { useComposerInlineMarkdown } from '../hooks/useComposerInlineMarkdown'
 import { useComposerSendMode } from '../hooks/useComposerSendMode'
@@ -95,6 +96,22 @@ const VIDEO_ACCEPT = 'video/mp4,video/x-m4v,video/quicktime,video/webm'
 // gate. Extensions align the picker exactly with the verified server allowlist
 // instead of broadening the dialog to neighboring unsupported formats.
 const AUDIO_ACCEPT = '.mp3,.m4a,.wav,.ogg,.oga,.opus,.flac'
+// The box's height change between the one-row and two-row shapes and on a
+// wrapped or removed line (`inlineToolbarWhileFits`). Short and barely bouncy:
+// it fires mid-typing, so anything longer trails the caret.
+const COMPOSER_ROW_SPRING = { type: 'spring', stiffness: 520, damping: 38, mass: 0.8 } as const
+// Half the one-row box: the 44px text line plus its 1px border each side.
+const COMPOSER_ONE_ROW_RADIUS = 23
+// How long after a shape flip the text column still slides rather than jumps:
+// the spring above is settled well inside this.
+const SHAPE_FLIP_WINDOW_MS = 450
+// The one-row clusters' edge padding (pl-1.5 + pr-1.5), which the text column
+// gives up besides the clusters themselves.
+const ONE_ROW_CLUSTER_PAD_PX = 12
+// The glass rim is a slice of the pane's smaller side. A one-row composer
+// would get half the rim of a two-row one, so the rim is sized from the
+// two-row height (one wrapped line of text plus the toolbar) in both shapes.
+const COMPOSER_RIM_FROM_PX = 102
 const FILE_ACCEPT = IMAGE_ACCEPT + ',' + VIDEO_ACCEPT + ',' + AUDIO_ACCEPT + ',.txt,.text,.xwiki,.md,.json,.jsonl,.excalidraw,.har,.yaml,.yml,.xml,.drawio,.csv,.tsv,.log,.rem,.ret,.py,.js,.ts,.tsx,.jsx,.html,.css,.sh,.bash,.rb,.go,.rs,.java,.c,.cpp,.h,.hpp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf,.zip,.tar,.gz'
 
 import ApprovalModePicker, { APPROVAL_MODE_ADJUSTED_LS_KEY } from './ApprovalModePicker'
@@ -112,6 +129,36 @@ export type { ComposerBusyMode } from './chat-input/props'
 
 /** No Voice atom mounted: every dictation value at its idle default. */
 const NO_VOICE: Partial<ComposerVoiceInputProps> = {}
+
+/**
+ * The box's height animator for `inlineToolbarWhileFits`. Enabled, it is a
+ * bottom-aligned clip whose height follows `height` (the inner box's measured
+ * natural height) and springs between the two shapes when `animate` is set;
+ * the inner box keeps its natural height (`shrink-0`), so while the sizer is
+ * still shorter it clips the TOP of the text column and the buttons at the
+ * bottom never move. Disabled -- every host that does not opt in -- it renders
+ * its children bare, so the ordinary composer's tree is exactly what it was.
+ */
+function ComposerSizer({ enabled, height, animate, className, children }: {
+  enabled: boolean
+  height: number | null
+  animate: boolean
+  className: string
+  children: React.ReactNode
+}) {
+  if (!enabled) return <>{children}</>
+  return (
+    <motion.div
+      data-testid="composer-sizer"
+      initial={false}
+      animate={{ height: height ?? 'auto' }}
+      transition={animate ? COMPOSER_ROW_SPRING : { duration: 0 }}
+      className={className}
+    >
+      {children}
+    </motion.div>
+  )
+}
 
 function ChatInput({
   aboveComposer,
@@ -222,6 +269,7 @@ function ChatInput({
   hiddenCommands,
   slotApprovalChrome = true,
   promptOptimizer = true,
+  inlineToolbarWhileFits = false,
   collapsible = false,
   connected = true,
   onOptimizeResult,
@@ -602,6 +650,102 @@ function ChatInput({
   const micHeldElsewhereAction = micOwnerTitle && voiceBusyElsewhereSession
     ? { label: micOwnerTitle, onClick: () => { void dispatch(switchSlot({ key: voiceBusyElsewhereSession, announceOnMissing: true })) } }
     : undefined
+  // One-row shape (`inlineToolbarWhileFits`): the text still fits on the single
+  // line, nothing but text is staged, and no mode owns the box's shape itself.
+  // Files, folders, a quote and session refs are strips ABOVE the text, and a
+  // strip has no place on a single line. A pinned manual height is the user asking for
+  // a tall box, so it wins over the one-row default.
+  const oneRowProbeRef = useRef<HTMLDivElement>(null)
+  const leftClusterRef = useRef<HTMLDivElement>(null)
+  const rightClusterRef = useRef<HTMLDivElement>(null)
+  const [textFitsOneRow, setTextFitsOneRow] = useState(true)
+  /** The shape the box is in, for the measure that runs at event time. */
+  const inlineRef = useRef(false)
+  // Whether the draft fits the ONE-ROW text column, measured on a hidden probe
+  // at that column's width whatever shape the box is in. Measuring the live
+  // textarea would not do: in the two-row shape it is the full box wide, so a
+  // draft that wrapped on the single row fits again there, and the box would
+  // flip back and forth on every keystroke near the boundary. The probe's
+  // column is the box minus the two button clusters (the same buttons in both
+  // shapes) and their edge padding, so the answer is the same from either side.
+  useLayoutEffect(() => {
+    if (!inlineToolbarWhileFits) return
+    const probe = oneRowProbeRef.current
+    const wrap = wrapperRef.current
+    if (!probe || !wrap) return
+    const measure = () => {
+      const left = leftClusterRef.current?.offsetWidth ?? 0
+      const right = rightClusterRef.current?.offsetWidth ?? 0
+      // The clusters wear their edge padding (`pl-1.5` / `pr-1.5`) only in the
+      // one-row shape, where `offsetWidth` already includes it; in the two-row
+      // shape they sit in the padded bottom row and the column has to give the
+      // padding up itself. Measured the same from either side, or a draft in
+      // that band would fit on two rows and not on one and the box would spring
+      // between the shapes with no keystroke. `clientWidth` excludes the border.
+      const pad = inlineRef.current ? 0 : ONE_ROW_CLUSTER_PAD_PX
+      probe.style.width = `${Math.max(0, wrap.clientWidth - left - right - pad)}px`
+      probe.textContent = value
+      const lineHeight = parseFloat(getComputedStyle(probe).lineHeight) || 0
+      // A newline is a second line whatever the width; otherwise the probe
+      // wraps where the textarea would and its height says so.
+      setTextFitsOneRow(!value.includes('\n') && (value === '' || probe.scrollHeight <= lineHeight + 1))
+    }
+    measure()
+    // The column changes with the window and the panes beside it.
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(wrap)
+    return () => ro.disconnect()
+  }, [inlineToolbarWhileFits, value, showGhost, composerCollapsed])
+  // Every status line the box draws above or below the text is a strip too:
+  // the send-held notice while an upload is in flight, and the voice bar's
+  // idle states (an error, a model download, a cancellable drain, the
+  // mic-held-elsewhere and dictation-landed notices). On the single row each
+  // would be one more flex item beside the text and squeeze it.
+  const inBoxStatusStrip = (holdSend && (composerHasDraft || hasSessionRefs)) ||
+    !!voiceError || !!voiceDownload || voiceDrainCancellable || micHeldElsewhere || voiceHeldLanded
+  const inlineToolbar = inlineToolbarWhileFits && textFitsOneRow && !pendingFiles.length && !pendingDirs.length && !hasQuote && !hasSessionRefs && !inBoxStatusStrip && manualHeight === null &&
+    !terminal.active && !voiceHoldMode && !showDictation && !lexicalLoadFailed
+  inlineRef.current = inlineToolbar
+  const reduceMotion = useReducedMotion()
+  // The box's height (`inlineToolbarWhileFits` only), measured off the inner
+  // box, which keeps its natural height; the sizer around it takes that number
+  // and clips meanwhile. ONLY the change of shape animates: the toolbar going
+  // under the text and coming back up. A line wrapping or going away inside
+  // the two-row shape lands at once, as it does in every other composer -- a
+  // box that eases on every wrapped line trails the caret. The flip is noted
+  // in a layout effect (which runs before the observer delivers the new
+  // height) and consumed by the one measure that follows it. `null` until the
+  // first measure and under a pinned manual height (the drag sets the inner
+  // box's height itself), when the sizer is simply `auto`.
+  const [box, setBox] = useState<{ height: number; animate: boolean } | null>(null)
+  const shapeFlipRef = useRef(false)
+  const prevInlineRef = useRef(inlineToolbar)
+  const [shapeAnimating, setShapeAnimating] = useState(false)
+  useLayoutEffect(() => {
+    if (prevInlineRef.current === inlineToolbar) return
+    prevInlineRef.current = inlineToolbar
+    shapeFlipRef.current = true
+    // The text column's slide (below) runs on the same window.
+    setShapeAnimating(true)
+    const t = setTimeout(() => setShapeAnimating(false), SHAPE_FLIP_WINDOW_MS)
+    return () => clearTimeout(t)
+  }, [inlineToolbar])
+  useLayoutEffect(() => {
+    if (!inlineToolbarWhileFits) return
+    const wrap = wrapperRef.current
+    if (!wrap) return
+    const measure = () => {
+      setBox({ height: Math.round(wrap.getBoundingClientRect().height), animate: shapeFlipRef.current })
+      shapeFlipRef.current = false
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(wrap)
+    return () => ro.disconnect()
+  }, [inlineToolbarWhileFits, showGhost, composerCollapsed])
+  const sizerPinned = inlineToolbarWhileFits && manualHeight === null && box !== null
   const activePlaceholder = !connected ? i18nT('components.chatInput.gateway_offline_message_will_not_send') : disabledProp ? i18nT('components.chatInput.stopping') : voiceRecording ? i18nT('components.chatInput.recording_click_mic_to_stop') : transcribingIsHonest ? i18nT('components.chatInput.transcribing_please_wait') : continuePlaceholder || voiceModePlaceholder || resolvedPlaceholder
   // The sigil hint is a label and may be cut to one line. Every other
   // placeholder here is a sentence the user needs whole, so it still wraps —
@@ -729,10 +873,15 @@ function ChatInput({
           color, no step; the caret is the indicator), and adds the approval glow
           while a decision is pending: the glow takes the shadow slot. */}
       <Glass
-        radius={16}
+        // A capsule in the one-row shape: the radius is half the row's height
+        // (44px of text line inside a 1px border), and 16px otherwise. The rim
+        // is sized from the TWO-row height in both shapes, or the lit edge
+        // would thin to half its width every time the draft is cleared.
+        radius={inlineToolbar ? COMPOSER_ONE_ROW_RADIUS : 16}
+        rimSize={inlineToolbarWhileFits ? COMPOSER_RIM_FROM_PX : undefined}
         data-testid="composer-dock"
         {...GUIDE_KEEP_CLEAR}
-        className={hasApproval ? 'glass-shadow approval-glow' : 'glass-shadow'}
+        className={`${hasApproval ? 'glass-shadow approval-glow' : 'glass-shadow'}${inlineToolbarWhileFits ? ' transition-[border-radius] duration-200' : ''}`}
       >
       <AnimatePresence>
         {pendingApproval && approvalId && (
@@ -948,12 +1097,19 @@ function ChatInput({
       >{/* File drag-and-drop target. Drag-drop is inherently pointer-only; the
            keyboard-accessible path is the "Attach files" button that opens the
            hidden file input above. Hence the scoped disable for the drop zone. */}
+      <ComposerSizer
+        enabled={inlineToolbarWhileFits}
+        height={sizerPinned ? box.height : null}
+        animate={!!(sizerPinned && box.animate && !reduceMotion)}
+        className={`${hasApproval ? 'rounded-b-2xl rounded-t-none' : inlineToolbar ? 'rounded-full' : 'rounded-2xl'} overflow-hidden flex flex-col justify-end transition-[border-radius] duration-200`}
+      >
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
       <div
         data-testid="input-wrapper"
         ref={wrapperRef}
-        className={`@container/composer ${hasApproval ? 'rounded-b-2xl rounded-t-none' : 'rounded-2xl'} relative transition-colors overflow-hidden ${manualHeight !== null ? 'flex flex-col min-h-0' : ''} ${(memoryMode === 'incognito' || memoryMode === 'temporary') ? 'border-2' : 'border'} bg-transparent ${memoryMode === 'temporary' ? 'border-aim' : memoryMode === 'incognito' ? 'border-warn' : 'border-transparent'}`}
+        className={`@container/composer ${hasApproval ? 'rounded-b-2xl rounded-t-none' : inlineToolbar ? 'rounded-full' : 'rounded-2xl'} relative transition-[color,background-color,border-color,border-radius] overflow-hidden ${inlineToolbarWhileFits ? 'shrink-0 ' : ''}${manualHeight !== null ? 'flex flex-col min-h-0' : inlineToolbar ? 'flex items-center' : ''} ${(memoryMode === 'incognito' || memoryMode === 'temporary') ? 'border-2' : 'border'} bg-transparent ${memoryMode === 'temporary' ? 'border-aim' : memoryMode === 'incognito' ? 'border-warn' : 'border-transparent'}`}
 
+        data-inline-toolbar={inlineToolbar ? 'true' : undefined}
         data-tree-drop-active={treeDrop.state === 'accept' ? 'true' : undefined}
         data-tree-drop-refused={treeDrop.state === 'refuse' ? 'true' : undefined}
         onDragOver={treeDrop.onDragOver}
@@ -1037,7 +1193,25 @@ function ChatInput({
             className="mb-1 px-1"
           />
         )}
-        <div className={`relative ${showDictation || voiceHoldMode ? 'sr-only' : ''} ${manualHeight !== null ? 'flex-1 min-h-0 flex flex-col' : ''}`}>
+        {/* `layout="position"` (`inlineToolbarWhileFits` only): the text column
+            slides between its place on the single row and its place above the
+            toolbar at the same spring the sizer's height takes, so the text
+            flows up with the opening top edge rather than waiting behind it.
+            Position only: the column's width changes with the shape and the
+            text re-wraps to it at once, which a size tween would smear. Only
+            the shape flip slides (`shapeAnimating`); a wrapped line inside the
+            two-row shape moves the column at once, like the box around it. */}
+        <motion.div
+          layout={inlineToolbarWhileFits && !reduceMotion && manualHeight === null ? 'position' : false}
+          transition={shapeAnimating ? COMPOSER_ROW_SPRING : { duration: 0 }}
+          className={`relative ${showDictation || voiceHoldMode ? 'sr-only' : ''} ${manualHeight !== null ? 'flex-1 min-h-0 flex flex-col' : inlineToolbar ? 'flex-1 min-w-0' : ''}`}
+        >
+        {/* The one-row fit probe: the textarea's type and horizontal padding,
+            no vertical padding, wrapping as the textarea wraps, measured at the
+            single row's column width (see `textFitsOneRow`). Never painted. */}
+        {inlineToolbarWhileFits && (
+          <div ref={oneRowProbeRef} aria-hidden="true" data-testid="composer-one-row-probe" className="absolute left-0 top-0 invisible pointer-events-none whitespace-pre-wrap break-words px-4 mc-message-font-text font-body leading-normal [scrollbar-gutter:stable] overflow-y-auto" />
+        )}
         {/* The staged quote sits inside the text area, above the caret: the
             quoted message is the first thing the reply says, so it is drawn
             where the reply is written rather than in the strips above (those
@@ -1137,7 +1311,7 @@ function ChatInput({
         />
         {pasteBlocks.length > 0 && <PasteHoverLayer ref={hoverRef} value={value} blocks={pasteBlocks} mirrorRef={mirrorRef} onActivePanelChange={setPastePreviewPanelId} />}
         </>)}
-        </div>
+        </motion.div>
 
         {voiceHoldMode && (
           <HoldToTalkBar manualHeight={manualHeight} setHoldTarget={setHoldTarget} touchPtt={touchPtt} disabled={disabled} micBlocked={micBlocked} optimizing={optimizing} voiceSettling={voiceSettling} holdBarLabel={holdBarLabel} />
@@ -1145,9 +1319,16 @@ function ChatInput({
 
         <PromptLengthNotice value={value} blocks={pasteBlocks} contextWindowTokens={contextWindowTokens} confirmPending={overLimitPending} />
 
-        {/* Bottom icon row */}
-        <div className={`flex items-center justify-between px-2.5 pb-2 pt-0.5${terminal.active ? ' flex-wrap gap-y-1' : ''}`}>
-          <div className="flex items-center gap-0.5 min-w-0">
+        {/* Bottom icon row. Inline (`inlineToolbar`), the row itself is
+            `contents`: its two clusters become flex items of the box, ordered
+            around the text block, so the SAME buttons sit on the text's line
+            without a second copy of them. The clusters do not animate between
+            the shapes: they sit at the box's bottom edge in both (7px up on
+            the single row, 8px on the toolbar), and the sizer around the box
+            is bottom-aligned, so while its height animates the buttons hold
+            still and the text column opens above them. */}
+        <div data-testid="composer-bottom-row" className={inlineToolbar ? 'contents' : `flex items-center justify-between px-2.5 pb-2 pt-0.5${terminal.active ? ' flex-wrap gap-y-1' : ''}`}>
+          <div ref={leftClusterRef} className={`flex items-center gap-0.5 min-w-0${inlineToolbar ? ' order-first pl-1.5 shrink-0' : ''}`}>
             <AttachMenu plus={plus} onUploadFiles={onUploadFiles} uploading={uploading} onCancelUpload={onCancelUpload} directFilePicker={directFilePicker} collapsible={collapsible} fileInputId={fileInputId} openPicker={openPicker} isMac={isMac} isMobile={isMobile} onScreenshot={onScreenshot} collapseMenuRow={collapseMenuRow} typedCommandMenus={typedCommandMenus && !terminal.active} onFileSelect={terminal.active ? undefined : onFileSelect} />
             {directFilePicker && collapsible && (
               /* The repo's own overflow mechanism, not a second spelling of it.
@@ -1251,7 +1432,7 @@ function ChatInput({
               <ApprovalModePicker mode={approvalMode} slotKey={activeSlot || ''} remote={approvalModeRemote} compact onPicked={focusComposerAfterPick} openSignal={approvalPickerSignal} nudge={approvalNudgeActive} onNudgeDismiss={dismissApprovalNudge} onNudgeHide={hideApprovalNudge} />
             )}
           </div>
-          <div className={`flex items-center gap-1 shrink-0${terminal.active ? ' ml-auto max-w-full justify-end [&>button]:shrink-0' : ''}`}>
+          <div ref={rightClusterRef} className={`flex items-center gap-1 shrink-0${terminal.active ? ' ml-auto max-w-full justify-end [&>button]:shrink-0' : ''}${inlineToolbar ? ' order-last pr-1.5' : ''}`}>
             {onVoiceToggle && (
               <MicButton voiceHoldMode={voiceHoldMode} voiceRecording={voiceRecording} micIsModeSwitch={micIsModeSwitch} transcribeInFlight={transcribeInFlight} micHeldElsewhere={micHeldElsewhere} micBlocked={micBlocked} toggleVoiceMode={toggleVoiceMode} onVoiceToggle={onVoiceToggle} onVoicePrewarm={onVoicePrewarm} disabled={disabled} optimizing={optimizing} micLabel={micLabel} />
             )}
@@ -1346,7 +1527,8 @@ function ChatInput({
 
         {/* Mobile bottom sheet */}
 
-      </div></motion.div>)}
+      </div>
+      </ComposerSizer></motion.div>)}
       </AnimatePresence>
 
       {!showGhost && composerCollapsed && (

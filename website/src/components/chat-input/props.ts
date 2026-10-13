@@ -444,6 +444,22 @@ export interface ChatInputProps {
    */
   promptOptimizer?: boolean
   /**
+   * One row while the draft fits on one line. The attach button, the text and
+   * the mic / send cluster share a single line until the text wraps (or holds
+   * a newline), or a file, quote or session ref is staged; then the toolbar
+   * moves under the text (the ordinary two-row shape) so the draft gets the
+   * full width, and comes back up when the draft fits the single line again.
+   * The box's height animates between the shapes. Defaults OFF: the ordinary
+   * composer draws session chrome (automation, approval mode) in that toolbar
+   * and keeps its two rows. The Crewmates DM, which strips that chrome, is the
+   * caller.
+   *
+   * Stands down for a pinned manual height (the user asked for a tall box),
+   * the terminal line, hold-to-talk and dictation, each of which owns the
+   * composer's shape itself.
+   */
+  inlineToolbarWhileFits?: boolean
+  /**
    * The user-driven collapse: the "put the message box away while I read" entry
    * point, the bar that replaces it, and the persisted preference.
    *

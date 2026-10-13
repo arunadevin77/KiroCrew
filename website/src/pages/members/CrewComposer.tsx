@@ -21,11 +21,16 @@ export type CrewComposerProps = Omit<ChatInputProps, (typeof SESSION_CHROME_PROP
  * It reuses the shared ChatInput for every one of those pieces rather than a
  * copy; only the session chrome is left out. ChatPane renders it through its
  * `composerInput` slot, so the ordinary chat composer is untouched.
+ *
+ * With that chrome gone the toolbar holds only attach, mic and send, so the
+ * box is ONE row until something is staged to send (`inlineToolbarWhileFits`).
+ * The prompt optimizer is off here as it is in the pop-out crew window: a DM
+ * with a crewmate is a conversation, not a prompt to be rewritten.
  */
 function CrewComposer(props: ChatInputProps) {
   const core: Record<string, unknown> = { ...props }
   for (const key of SESSION_CHROME_PROPS) delete core[key]
-  return <ChatInput {...(core as CrewComposerProps)} />
+  return <ChatInput {...(core as CrewComposerProps)} inlineToolbarWhileFits promptOptimizer={false} />
 }
 
 // Not memo(): ChatInput is memo()'d itself and subscribes to the language,
