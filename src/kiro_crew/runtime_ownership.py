@@ -1205,6 +1205,62 @@ def _lease_holder(provider: object) -> object | None:
     return None
 
 
+def holds_runtime_lease(provider: object) -> bool:
+    """Whether *provider* currently holds an outstanding runtime lease.
+
+    True when the lease holder's slot carries a lease STRING. This is NOT a
+    sharing-eligibility test: a registered non-sharing chat also takes a lease at
+    registration (``acquire_session_lease``), so it answers True too. A provider
+    with no lease slot, or an empty one -- a provider before registration, a
+    non-ACP backend, a test double -- answers False. For the shared-vs-default
+    question use :func:`is_shared_chat_runtime`, which reads ``_shared_runtime``.
+    A failed-start cleanup uses THIS to tell a provider that has already taken a
+    lease (tear down through its own shutdown, which evicts its session and kills
+    only the last holder) from one that has not (keep the unconditional hard
+    kill): before registration no lease is held, so that cleanup is authorized.
+
+    Duck-typed via :func:`_lease_holder`, so a ``MagicMock`` provider (whose
+    ``_runtime_lease`` resolves to a mock, not ``None`` or a string) is NOT
+    recognised as a holder and answers False -- the non-sharing behaviour the
+    kill-path tests pin.
+    """
+    holder = _lease_holder(provider)
+    if holder is None:
+        return False
+    return isinstance(getattr(holder, "_runtime_lease", None), str)
+
+
+def is_shared_chat_runtime(provider: object) -> bool:
+    """Whether *provider* runs on a SHARED chat runtime (founder or joiner).
+
+    The discriminator for the ownerless control-frame gates in
+    ``chat_runner._run_chat``: only a chat-shared runtime fans a `/clear`,
+    agent-switch or compaction frame to a peer, so the gates that protect a
+    co-tenant must engage ONLY here. A non-sharing session -- the shipped
+    default (chat sharing off), a subagent, a cron/task session -- answers
+    False, so those branches run byte-identically to base for it.
+
+    Reads ``_shared_runtime`` (set from ``chat_share_key is not None`` when the
+    provider is built), which is the same flag ``AcpSessionProvider._chat_turn_gate``
+    uses to decide whether to serialize the turn. A runtime LEASE does NOT tell
+    the two apart: the unshared path also takes a lease at registration
+    (``acquire_session_lease``), so every registered chat holds a lease string
+    whether or not it shares -- ``holds_runtime_lease`` therefore cannot gate
+    these branches.
+
+    Duck-typed on both the provider and its ``_client`` wrapper (the inner
+    ``AcpSessionProvider`` carries the flag), and defaults to False for a shape
+    that has no such attribute -- a non-ACP provider or a test double -- so the
+    gate stays off unless a real shared-runtime provider says otherwise.
+    """
+    for candidate in (provider, getattr(provider, "_client", None)):
+        if candidate is None:
+            continue
+        if getattr(candidate, "_shared_runtime", False) is True:
+            return True
+    return False
+
+
 async def acquire_session_lease(provider: object) -> None:
     """Record a registered session's claim on its runtime. No-op for other shapes.
 
@@ -1252,6 +1308,8 @@ __all__ = [
     "authorize_runtime_kill",
     "claim_runtime_tenancy",
     "commit_runtime_teardown",
+    "holds_runtime_lease",
+    "is_shared_chat_runtime",
     "note_runtime_kill",
     "outstanding_leases",
     "release_runtime_teardown",

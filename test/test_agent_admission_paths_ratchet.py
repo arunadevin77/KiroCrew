@@ -69,6 +69,10 @@ ADMISSION_SITES: dict[Site, frozenset[str]] = {
     ("acp/runtime.py", "AcpRuntime._resolve_spawn_plan"): frozenset({FRESH}),
     ("acp/runtime.py", "AcpRuntime._activate_mode_bracketed"): frozenset({FRESH}),
     ("acp/session_mcp.py", "_agent_spec_and_snapshot_for"): frozenset({FRESH}),
+    (
+        "providers/acp.py",
+        "AcpProvider._start_kiro_runtime_impl._place_chat_runtime",
+    ): frozenset({FORK}),
 }
 
 # Per admission site: (gates it does not reference, whether something else covers it).
@@ -94,6 +98,19 @@ KNOWN_GAPS: dict[Site, tuple[frozenset[str], str]] = {
         frozenset({FORK}),
         "not a start path: it resolves the spec whose MCP servers a session mounts, "
         "and the spawn that consumes it runs its own admission",
+    ),
+    (
+        "providers/acp.py",
+        "AcpProvider._start_kiro_runtime_impl._place_chat_runtime",
+    ): (
+        frozenset({FRESH}),
+        "covered: this is the SHARED-runtime JOIN confirmation, not a spawn. The "
+        "founder ran both gates inside _spawn_chat_runtime -> spawn(), so a joiner "
+        "lands on a process already admitted for freshness; and the confirmation "
+        "block re-reads agent_spec_generation and releases-and-retries on a moved "
+        "spec, so a joiner can never attach across a spec change. Only fork "
+        "governance is checked here, because a failed fork refresh leaves the spec "
+        "bytes unchanged and so is invisible to the generation re-read",
     ),
 }
 

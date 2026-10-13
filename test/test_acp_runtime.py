@@ -61,6 +61,7 @@ from kiro_crew.acp.types import (
     EVENT_TOOL_CALL,
     JSONRPC_METHOD_NOT_FOUND,
     METHOD_COMMANDS_EXECUTE,
+    METHOD_KAS_SESSION_DELETE,
     METHOD_KIRO_SESSION_UPDATE,
     METHOD_MCP_OAUTH_REQUEST,
     METHOD_REQUEST_PERMISSION,
@@ -628,6 +629,172 @@ async def test_kas_readiness_refuses_failure_or_missing_report(kas_readiness_wir
         if start is not None:
             await asyncio.gather(start, return_exceptions=True)
         await _stop_reader(reader_task)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resume", [False, True], ids=["new", "load"])
+async def test_cancelled_kas_readiness_wait_does_not_over_delete(kas_readiness_wire, resume):
+    """A cancelled readiness wait must not delete a resumed session's history.
+
+    ``_wait_managed_mcp`` evicts the session itself on any ``BaseException`` —
+    for a ``session/load`` only a LOCAL unregister (KAS keeps the native history
+    for a later resume), for a fresh ``session/new`` the single ``session/delete``
+    that disposes a session with nothing to preserve. The outer handler on each
+    start path must therefore NOT delete again on a cancel.
+
+    The regression this pins: catching ``Exception`` (not ``BaseException``)
+    around that call let an ``asyncio.CancelledError`` fall through with
+    ``terminated`` still False, so the outer ``except BaseException`` ran
+    ``terminate_session`` -> ``_kiro/session/delete``. On a resumed KAS session
+    that deletes the stored record; on a fresh one it sends the delete a second
+    time. Driven through the REAL ``create_session``/``load_session`` wire (not
+    ``_wait_managed_mcp`` directly, which the lifetime unit tests already cover
+    and which cannot catch an outer-handler regression):
+
+      - load: this head sent ``[session/load, set_mode, _kiro/session/delete]``.
+        The base sends no delete. The fix restores that.
+      - new: this head sent ``_kiro/session/delete`` twice. The base sends it
+        once (from the callee). The fix restores that.
+    """
+    wire = kas_readiness_wire
+    reader_task = await _start_reader(wire.runtime)
+    start = None
+    try:
+        start = await wire.handshake(resume)
+        # Let the start reach the managed-readiness wait: the handle's observed
+        # ``queue.get`` ticks ``reads`` each time it blocks for a frame, so one
+        # tick proves the task is parked inside ``_wait_managed_mcp`` rather than
+        # still mid-handshake.
+        await wire.take(wire.reads)
+        assert not start.done()
+
+        # The self-terminating callee sends ``_kiro/session/delete`` as a bounded
+        # REQUEST and awaits its reply, so the cancel cannot finish unwinding
+        # until the reply lands. A concurrent drainer answers every delete so the
+        # cancelled task can complete; it stops the instant the task is done,
+        # after which every frame the teardown sent is already queued and is
+        # drained deterministically with ``get_nowait`` (no timing barrier).
+        deletes: list[dict] = []
+
+        async def drain_and_answer():
+            while True:
+                frame = await wire.sent.get()
+                if frame["method"] == "_kiro/session/delete":
+                    deletes.append(frame)
+                    _feed(wire.reader, {"id": frame["id"], "result": {}})
+
+        drainer = asyncio.create_task(drain_and_answer())
+        start.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(
+                start, 3.0
+            )  # flake-ok: awaits the just-cancelled task's CancelledError, bounded only to name a hang
+        # The task has fully unwound: every teardown frame it was going to send is
+        # now queued. Stop the drainer and sweep whatever it had not yet consumed.
+        drainer.cancel()
+        await asyncio.gather(drainer, return_exceptions=True)
+        while True:
+            try:
+                frame = wire.sent.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if frame["method"] == "_kiro/session/delete":
+                deletes.append(frame)
+
+        for frame in deletes:
+            assert frame["params"] == {"sessionId": "ready-session"}
+        if resume:
+            assert deletes == [], "a cancelled KAS resume must not delete stored history"
+        else:
+            assert len(deletes) == 1, "a cancelled fresh session is deleted exactly once"
+        assert "ready-session" not in wire.runtime._session_queues
+    finally:
+        if start is not None and not start.done():
+            start.cancel()
+        if start is not None:
+            await asyncio.gather(start, return_exceptions=True)
+        await _stop_reader(reader_task)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "await_site",
+    ["watchdog", "served_default", "permission_routing", "drain_init"],
+)
+async def test_cancelled_kas_resume_sibling_await_sends_no_delete(monkeypatch, await_site):
+    """A cancel in ANY post-load await of a KAS resume must not delete history.
+
+    ``load_session``'s outer ``except BaseException`` is the single structural
+    guard: for a resume it unregisters the session LOCALLY and never sends
+    ``_kiro/session/delete`` (which would irreversibly remove the native record
+    the user resumed), mirroring ``_wait_managed_mcp``'s load branch and the
+    main-branch invariant. This covers every unguarded post-load await at once —
+    ``_load_watchdog_settings``, ``ensure_served_default``,
+    ``apply_session_permission_routing`` (which catches only ``Exception``) and
+    ``drain_init`` — so a cancellation at each of them is driven here through the
+    REAL ``load_session`` and asserted to send no delete.
+
+    The regression: an earlier head's outer handler called
+    ``terminate_session(resume_sid)`` on a cancel, so each of these sites deleted
+    the resumed KAS conversation.
+    """
+    import kiro_crew.acp.runtime as runtime_mod
+    from kiro_crew.acp.session_handle import AcpSessionHandle
+
+    rt, _, _ = _make_runtime()
+    rt._acp_backend = ACP_BACKEND_KAS
+    rt._can_load_session = True
+
+    # ``drain_init`` runs only on the non-readiness branch; the other three run
+    # before it regardless. Turn the managed-readiness alias off for that case so
+    # the ``drain_init`` await is the one reached (and cancelled).
+    if await_site == "drain_init":
+        import dataclasses
+
+        aliases_off = dataclasses.replace(rt._harness.notification_aliases, mcp_readiness=False)
+        monkeypatch.setattr(
+            type(rt._harness),
+            "notification_aliases",
+            property(lambda _self: aliases_off),
+        )
+
+    sent: list[str] = []
+
+    async def _fake_send(method, params, timeout=None, **kwargs):
+        sent.append(method)
+        if method == METHOD_SESSION_LOAD:
+            return {"modes": {"currentModeId": "kirocrew"}, "models": []}
+        return {}
+
+    monkeypatch.setattr(rt, "_send_and_await", _fake_send)
+
+    async def _cancel_async(*_a, **_k):
+        raise asyncio.CancelledError()
+
+    def _cancel_sync(*_a, **_k):
+        raise asyncio.CancelledError()
+
+    if await_site == "watchdog":
+        # ``_load_watchdog_settings`` runs in a thread via ``asyncio.to_thread``.
+        monkeypatch.setattr(runtime_mod, "_load_watchdog_settings", _cancel_sync)
+    elif await_site == "served_default":
+        monkeypatch.setattr(AcpSessionHandle, "ensure_served_default", _cancel_async)
+    elif await_site == "permission_routing":
+        monkeypatch.setattr(AcpSessionHandle, "apply_session_permission_routing", _cancel_async)
+    else:  # drain_init
+        monkeypatch.setattr(AcpSessionHandle, "drain_init", _cancel_async)
+
+    with pytest.raises(asyncio.CancelledError):
+        await rt.load_session(
+            "/home/u/.kiro/sessions/cli/sid-k.json",
+            "sid-k",
+            cwd="/work",
+            agent="kirocrew",
+        )
+
+    assert METHOD_KAS_SESSION_DELETE not in sent, sent
+    # The resumed session was still evicted from the shared process, just locally.
+    assert "sid-k" not in rt._session_queues
 
 
 @pytest.mark.asyncio
@@ -1255,6 +1422,94 @@ async def test_null_session_notification_broadcasts_to_all():
         b = await _next(q["sB"])
         assert a.method == "some/global"
         assert b.method == "some/global"
+    finally:
+        await _stop_reader(task)
+
+
+@pytest.mark.asyncio
+async def test_the_chat_turn_gate_serializes_on_the_real_runtime():
+    """The gate is what keeps one ownerless control frame to one candidate owner.
+
+    Driven against ``AcpRuntime`` itself: the shared-runtime suite proves the
+    PROVIDER enters the gate, but does so against a fake whose gate is a
+    re-implementation, so nothing there would notice this lock being dropped.
+    """
+    rt, _reader, _ = _make_runtime()
+    order: list[str] = []
+    inside = 0
+    peak = 0
+    release_a = asyncio.Event()
+
+    async def hold_a():
+        nonlocal inside, peak
+        async with rt.chat_turn_gate():
+            inside += 1
+            peak = max(peak, inside)
+            order.append("a-in")
+            await release_a.wait()
+            inside -= 1
+            order.append("a-out")
+
+    async def hold_b():
+        nonlocal inside, peak
+        await asyncio.sleep(0)
+        async with rt.chat_turn_gate():
+            inside += 1
+            peak = max(peak, inside)
+            order.append("b-in")
+            inside -= 1
+
+    ta = asyncio.create_task(hold_a())
+    tb = asyncio.create_task(hold_b())
+    # Wait on the STATE, not a fixed sleep (D1): a is inside the gate (order
+    # shows "a-in") and the lock is held, which is what b is parked on. Both are
+    # loop-confined asyncio state, so evaluate on-loop.
+    await async_wait_until(
+        lambda: order == ["a-in"] and rt._chat_turn_lock.locked(),
+        timeout=5,
+        describe=lambda: f"order={order} locked={rt._chat_turn_lock.locked()}",
+    )
+    assert order == ["a-in"], order
+    release_a.set()
+    try:
+        # 30s so a slow runner never decides this; a real deadlock still fails
+        # within it. The ordering/peak assertions below are the actual signal.
+        await asyncio.wait_for(asyncio.gather(ta, tb), timeout=30)
+    except (asyncio.TimeoutError, TimeoutError):
+        for t in (ta, tb):
+            t.cancel()
+        await asyncio.gather(ta, tb, return_exceptions=True)
+        raise AssertionError("chat-turn-gate turns did not drain within 30s")
+    assert order == ["a-in", "a-out", "b-in"], order
+    assert peak == 1, "two chat turns held the real runtime's gate at once"
+
+
+@pytest.mark.asyncio
+async def test_ownerless_control_notification_broadcasts_to_all_marked_ownerless():
+    """A compaction / clear / agent-switch frame that names no session is
+    delivered to EVERY co-tenant queue and marked ``fanout_no_owner`` when it
+    reaches more than one. It is NOT routed by active turn: an earlier revision
+    did that and mis-attributed a co-tenant's frame to a lone turn-active
+    sub-agent (whose own-progress clock reads an unmarked frame as its own).
+    Cross-chat-tenant corruption is prevented by turn serialization
+    (``AcpSessionProvider._chat_turn_gate``) and the consumer's ``owns_frame``
+    gating, not by a reader-side guess at the owner. The founder needs the
+    frame, so it is never dropped."""
+    rt, reader, _ = _make_runtime()
+    q = _register(rt, "sA", "sB")
+    task = await _start_reader(rt)
+    try:
+        _feed(reader, {"method": "_kiro.dev/agent/switched", "params": {"agentName": "x"}})
+        a = await asyncio.wait_for(
+            q["sA"].get(), timeout=1.0
+        )  # flake-ok: awaits the frame the preceding _feed just enqueued, bounded only to name a hang
+        b = await asyncio.wait_for(
+            q["sB"].get(), timeout=1.0
+        )  # flake-ok: awaits the frame the preceding _feed just enqueued, bounded only to name a hang
+        assert a.method == "_kiro.dev/agent/switched"
+        assert b.method == "_kiro.dev/agent/switched"
+        # Broadcast to >1 session, so marked ownerless for the consumer.
+        assert a.fanout_no_owner is True
     finally:
         await _stop_reader(task)
 
@@ -15097,3 +15352,341 @@ async def test_read_path_revalidation_reuses_the_shared_probe_not_a_second_one()
     # refresh path — proof the read path did not grow a second parser/probe.
     assert calls["n"] == 1
     assert [m["modelId"] for m in handle.available_models] == ["auto", "claude-opus-5"]
+
+
+# ── A cancel during the post-session/new finish must not leak the session ──
+
+
+class TestCancelDuringFinishCreateSessionEvictsTheSession:
+    """``_finish_create_session`` registers the native session and its queue the
+    instant ``session/new`` returns, then runs several awaits (watchdog load,
+    permission routing, mode activation, init drain) before it hands a handle
+    back. A cancellation landing in any of those awaits leaves the native session
+    resident on a shared process and its queue registered, while the caller gets
+    no handle — so the start-failure cleanup, which only evicts when a handle was
+    returned, cannot reach it. The finish must evict the session it created on
+    every exit, cancellation included.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_cancel_in_the_watchdog_load_terminates_the_session(self, monkeypatch):
+        rt, _reader, _proc = _make_runtime()
+
+        terminated: list[str] = []
+
+        async def _terminate(session_id: str) -> None:
+            terminated.append(session_id)
+            # Mirror the real terminate_session's local half: drop the queue.
+            rt._session_queues.pop(session_id, None)
+
+        monkeypatch.setattr(rt, "terminate_session", _terminate)
+
+        # The first await after the queue is registered. A cancellation here
+        # stands in for a cancel landing anywhere in the post-session/new waits.
+        def _boom(_crew):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(runtime_mod, "_load_watchdog_settings", _boom)
+
+        with pytest.raises(asyncio.CancelledError):
+            await rt._finish_create_session(
+                "sess-cancel-1",
+                {},
+                buffered_init=[],
+                agent=None,
+                crew_agent=None,
+                kas_agents=None,
+                mcp_servers=[],
+                budget=30.0,
+                stub_token="",
+                denied_tools=frozenset(),
+                mirrored_snapshot=None,
+                ref_spec=None,
+                active_agent="kirocrew",
+                session_work_dir="/tmp",
+                projected_sources={},
+                payload_snapshot=None,
+            )
+
+        assert terminated == ["sess-cancel-1"], (
+            "a cancel during the finish must terminate the native session it "
+            "created, not leave it resident on the shared process"
+        )
+        assert (
+            "sess-cancel-1" not in rt._session_queues
+        ), "the session's queue must be unregistered when the finish is cancelled"
+
+    @pytest.mark.asyncio
+    async def test_an_inner_guard_failure_terminates_exactly_once(self, monkeypatch):
+        """An inner guard that already terminated must not be followed by a second
+        teardown from the outer handler. Several inner paths (the permission
+        routing guard, the mode-activation guards, ``_wait_managed_mcp``) call
+        ``terminate_session`` and re-raise; the re-raised error reaches the outer
+        ``except BaseException``, and a second ``session/terminate`` for an
+        already-gone session makes a non-acking runtime stall for the whole
+        teardown budget before the real error surfaces. The outer handler
+        terminates only while the session is still registered, so an inner guard's
+        teardown is the only one.
+        """
+        rt, _reader, _proc = _make_runtime()
+
+        terminated: list[str] = []
+
+        async def _terminate(session_id: str) -> None:
+            terminated.append(session_id)
+            rt._session_queues.pop(session_id, None)
+
+        monkeypatch.setattr(rt, "terminate_session", _terminate)
+
+        # Make the first inner-guarded await fail: apply_session_permission_routing
+        # raises an ordinary Exception, whose guard terminates then re-raises.
+        async def _routing_boom():
+            raise RuntimeError("permission routing failed")
+
+        import kiro_crew.acp.session_handle as sh_mod
+
+        monkeypatch.setattr(
+            sh_mod.AcpSessionHandle,
+            "apply_session_permission_routing",
+            lambda self: _routing_boom(),
+            raising=False,
+        )
+
+        with pytest.raises(RuntimeError, match="permission routing failed"):
+            await rt._finish_create_session(
+                "sess-inner-1",
+                {},
+                buffered_init=[],
+                agent=None,
+                crew_agent=None,
+                kas_agents=None,
+                mcp_servers=[],
+                budget=30.0,
+                stub_token="",
+                denied_tools=frozenset(),
+                mirrored_snapshot=None,
+                ref_spec=None,
+                active_agent="kirocrew",
+                session_work_dir="/tmp",
+                projected_sources={},
+                payload_snapshot=None,
+            )
+
+        assert terminated == ["sess-inner-1"], (
+            "the inner guard terminated once; the outer handler must not send a "
+            f"second teardown for the already-gone session (saw {terminated})"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_stale_mirrored_spec_terminates_exactly_once(self, monkeypatch):
+        """``_require_unchanged_mirrored_spec`` self-terminates on a stale derived
+        spec and then raises. That re-raised error reaches the outer
+        ``except BaseException``; without a ``terminated = True`` around the call,
+        the outer handler would send a SECOND ``session/terminate`` for the gone
+        session, stalling a non-acking runtime for the whole teardown budget. The
+        callee is a self-evicting one, so the outer guard must defer to it.
+        """
+        rt, _reader, _proc = _make_runtime()
+
+        terminated: list[str] = []
+
+        async def _terminate(session_id: str) -> None:
+            terminated.append(session_id)
+            rt._session_queues.pop(session_id, None)
+
+        monkeypatch.setattr(rt, "terminate_session", _terminate)
+
+        from kiro_crew import agent as agent_mod
+
+        def _raise(_snapshot):
+            raise agent_mod.DerivedSpecStale("spec changed under the session")
+
+        monkeypatch.setattr(agent_mod, "require_unchanged_derived_spec", _raise)
+
+        with pytest.raises(AcpRuntimeError):
+            await rt._finish_create_session(
+                "sess-stale-1",
+                {},
+                buffered_init=[],
+                agent=None,
+                crew_agent=None,
+                kas_agents=None,
+                mcp_servers=[],
+                budget=30.0,
+                stub_token="",
+                denied_tools=frozenset(),
+                # Non-None snapshot makes _mirrored_spec_check_needed say yes, so
+                # the self-terminating check runs.
+                mirrored_snapshot=object(),
+                ref_spec=None,
+                active_agent="kirocrew",
+                session_work_dir="/tmp",
+                projected_sources={},
+                payload_snapshot=None,
+            )
+
+        assert terminated == ["sess-stale-1"], (
+            "the mirrored-spec check self-terminated once; the outer handler must "
+            f"not send a second teardown for the already-gone session (saw {terminated})"
+        )
+        assert "sess-stale-1" not in rt._session_queues
+
+        assert "sess-inner-1" not in rt._session_queues
+
+    @pytest.mark.asyncio
+    async def test_a_non_stale_mirrored_spec_error_still_tears_down_once(self, monkeypatch):
+        """A mirrored-spec check error that is NOT the callee's self-terminating
+        ``DerivedSpecStale`` must still tear the session down exactly once.
+
+        ``_require_unchanged_mirrored_spec`` terminates the session itself only on
+        ``DerivedSpecStale`` (then raises ``AcpRuntimeError``). A ``CancelledError``
+        -- or any other error -- from ``require_unchanged_derived_spec`` leaves the
+        session registered, so the wrap must NOT mark it terminated: the error has
+        to fall through to the outer handler, which performs the single teardown.
+        Guards against regressing the wrap to ``except BaseException`` (which would
+        flag a teardown that never happened and leak the session).
+        """
+        rt, _reader, _proc = _make_runtime()
+
+        terminated: list[str] = []
+
+        async def _terminate(session_id: str) -> None:
+            terminated.append(session_id)
+            rt._session_queues.pop(session_id, None)
+
+        monkeypatch.setattr(rt, "terminate_session", _terminate)
+
+        from kiro_crew import agent as agent_mod
+
+        def _raise(_snapshot):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(agent_mod, "require_unchanged_derived_spec", _raise)
+
+        with pytest.raises(asyncio.CancelledError):
+            await rt._finish_create_session(
+                "sess-cancel-1",
+                {},
+                buffered_init=[],
+                agent=None,
+                crew_agent=None,
+                kas_agents=None,
+                mcp_servers=[],
+                budget=30.0,
+                stub_token="",
+                denied_tools=frozenset(),
+                mirrored_snapshot=object(),
+                ref_spec=None,
+                active_agent="kirocrew",
+                session_work_dir="/tmp",
+                projected_sources={},
+                payload_snapshot=None,
+            )
+
+        assert terminated == ["sess-cancel-1"], (
+            "a non-stale mirrored-spec error does not self-terminate, so the outer "
+            f"handler must send exactly one teardown (saw {terminated})"
+        )
+        assert "sess-cancel-1" not in rt._session_queues
+
+
+def test_load_session_unregisters_locally_on_a_cancelled_post_load_init():
+    """A cancelled post-load init of a resume must NOT delete stored history.
+
+    ``load_session`` registers ``resume_sid``'s queue the instant ``session/load``
+    returns, then runs the same post-response awaits (watchdog, served-default,
+    permission routing, mode activation, init drain) before handing back a handle.
+    A cancellation in any of those -- which the per-step ``except Exception``
+    guards do not catch -- must still evict the resumed session from the (possibly
+    shared) process. But a resume has NATIVE HISTORY to preserve: on KAS
+    ``terminate_session`` sends ``_kiro/session/delete``, which removes the stored
+    record. The outer handler therefore unregisters LOCALLY only -- mirroring
+    ``_wait_managed_mcp``'s load branch and the main-branch invariant a cancelled
+    resume pins -- so the native conversation survives for a later resume. This is
+    the single structural guard that covers every unguarded post-load await at
+    once (behavioural coverage of each site:
+    ``test_cancelled_kas_resume_sibling_await_sends_no_delete``).
+
+    Pinned on the source because driving the real resume needs a live backend; the
+    guard shape is what a later edit breaks.
+    """
+    import inspect
+
+    src = inspect.getsource(runtime_mod.AcpRuntime.load_session)
+    flat = " ".join(src.split())
+    # The post-load body runs under a terminated-flag guard: an outer
+    # ``except BaseException`` that evicts resume_sid only when nothing already
+    # did -- but for a resume it unregisters LOCALLY, never terminate_session,
+    # because the latter deletes the resumed native history on KAS.
+    assert "terminated = False" in flat, (
+        "load_session no longer guards its post-load init, so a cancelled resume "
+        "leaks the resumed session on the shared process"
+    )
+    assert ("if not terminated: self.unregister_session(resume_sid) raise") in flat, (
+        "load_session's outer handler must unregister resume_sid LOCALLY (not "
+        "terminate_session, which deletes the resumed KAS history) when no inner "
+        "guard did"
+    )
+    # The frozen snapshot guard is preserved verbatim (also pinned by
+    # test_process_tree TestEverySessionPathSnapshots[load_session-resume_sid]).
+    assert (
+        "try: await self._snapshot_descendants() except BaseException: "
+        "await self.terminate_session(resume_sid) raise"
+    ) in flat, "load_session's snapshot cleanup guard lost its established shape"
+
+
+@pytest.mark.asyncio
+async def test_load_session_stale_mirrored_spec_terminates_once(monkeypatch):
+    """Behavioural twin of the source-pinned post-load guard, for the ONE path a
+    source pin cannot catch: a mirrored host whose derived spec changes before the
+    resumed session starts. ``_require_unchanged_mirrored_spec`` self-terminates
+    ``resume_sid`` and raises; the outer handler must defer to it (``terminated =
+    True``) rather than send a second ``session/terminate`` that stalls a
+    non-acking runtime for the whole teardown budget.
+    """
+    from types import SimpleNamespace
+
+    from kiro_crew import agent as agent_mod
+
+    def _raise(_snapshot):
+        raise agent_mod.DerivedSpecStale("spec changed under the session")
+
+    monkeypatch.setattr(agent_mod, "require_unchanged_derived_spec", _raise)
+
+    rt, _reader, _proc = _make_runtime()
+    rt._can_load_session = True
+    monkeypatch.setattr(runtime_mod, "has_mirror", lambda _backend: True)
+
+    async def _mirrored(*_a, **_k):
+        return SimpleNamespace(
+            servers=[],
+            stub_token="",
+            denied_tools=frozenset(),
+            derived_spec_snapshot=object(),
+            ref_spec=None,
+        )
+
+    monkeypatch.setattr(rt, "_mirrored_session_mcp", _mirrored)
+
+    async def _fake_send(method, params, timeout=None, **kwargs):
+        if method == METHOD_SESSION_LOAD:
+            return {"modes": {"currentModeId": "agent-a"}, "models": []}
+        return {}
+
+    monkeypatch.setattr(rt, "_send_and_await", _fake_send)
+
+    seen: list[str] = []
+
+    async def _terminate(session_id):
+        seen.append(session_id)
+        rt._session_queues.pop(session_id, None)
+
+    monkeypatch.setattr(rt, "terminate_session", _terminate)
+
+    with pytest.raises(AcpRuntimeError):
+        await rt.load_session("/home/u/.kiro/sessions/cli/sid-9.json", "sid-9", cwd="/work")
+
+    assert seen == ["sid-9"], (
+        "the mirrored-spec check self-terminated the resumed session once; the "
+        f"outer handler must not send a second teardown (saw {seen})"
+    )

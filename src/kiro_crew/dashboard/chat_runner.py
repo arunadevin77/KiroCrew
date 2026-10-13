@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools  # noqa: F401
 import hashlib
 import inspect
@@ -585,6 +586,7 @@ from kiro_crew.recovery.ladder import (
     default_ladder,
 )
 from kiro_crew.repeat_loop import RepeatLoopTracker
+from kiro_crew.runtime_ownership import is_shared_chat_runtime
 from kiro_crew.safety_override import safety_override  # noqa: F401
 from kiro_crew.security import (
     StreamRedactor,
@@ -726,6 +728,35 @@ from kiro_crew.dashboard.chat_utils import (  # noqa: E402, F401
     synthesis_fire_verdict,
     tool_calls_are_read_only_preparation,
 )
+
+
+def _resolve_chat_turn_gate_hold(client: Any) -> Any:
+    """Resolve the per-process chat turn gate hold for ``client``, or a null context.
+
+    Mirrors ``CompactionCoordinator`` (session_compaction.py): a shared-runtime
+    ``AcpProvider`` exposes ``hold_chat_turn_gate`` — a reentrant async context
+    manager that holds the per-process gate so a co-tenant chat cannot start a
+    turn while it is held. The user-typed ``/compact`` deferred wait holds it
+    across ``wait_for_compaction`` so this session's ownerless compaction
+    terminal cannot be fanned to a co-tenant mid-answer. A provider without the
+    hook (non-shared, or a non-ACP provider, or a test double whose attribute is
+    a bare coroutine) resolves to a null context — the prior behaviour — rather
+    than an ``AttributeError`` into a compaction.
+    """
+    hold = getattr(client, "hold_chat_turn_gate", None)
+    if hold is None:
+        return contextlib.nullcontext()
+    candidate = hold()
+    # Only a REAL async context manager counts: a MagicMock's auto-created
+    # attribute returns a bare coroutine, which is not one — close it (so it is
+    # not left un-awaited) and fall back to the null context.
+    if hasattr(candidate, "__aenter__") and hasattr(candidate, "__aexit__"):
+        return candidate
+    close = getattr(candidate, "close", None)
+    if close is not None:
+        with contextlib.suppress(Exception):
+            close()
+    return contextlib.nullcontext()
 
 
 def unavailable_agent_message(agent_name: str) -> str:
@@ -10468,6 +10499,10 @@ async def _run_chat(
     _deferred_options_expiry = (
         _prompt_depth == 0 and first_word in _KIRO_ONLY_BLOCKED_SLASH_COMMANDS
     )
+    # Per-process chat turn gate held across a whole /compact turn; entered just
+    # before stream_command and closed after the deferred-compaction receipt.
+    # Bound here so the finally can close it on any exit path.
+    _compact_gate_stack = contextlib.AsyncExitStack()
     try:
         # Publish the immutable identity BEFORE the first admission await, as
         # the first statement the enclosing finally covers. From here down the
@@ -12628,6 +12663,18 @@ async def _run_chat(
         # the step's duration would include the time the gates took.
         _crew_log_step = crew_log_emit.on_step_started(_crew_log_sid, _crew_log_turn_no)
         _crew_log_step_t0 = time.monotonic()
+        # Hold the per-process chat turn gate across the WHOLE /compact turn, from
+        # before stream_command through the deferred wait_for_compaction receipt.
+        # stream_command's own turn releases the gate when it ends, so acquiring it
+        # only at the deferred wait below would leave a release-reacquire gap on a
+        # shared runtime in which a co-tenant turn could start and receive this
+        # session's ownerless compaction terminal, silently dropping its streamed
+        # reply. Taken HERE so the inner hold at the deferred wait re-enters this
+        # same task's hold as a no-op (see _chat_turn_gate reentrancy). Only for a
+        # user-typed /compact; a non-ACP / non-shared client resolves to a null
+        # context, so this is a no-op elsewhere.
+        if first_word == "/compact":
+            await _compact_gate_stack.enter_async_context(_resolve_chat_turn_gate_hold(client))
         event_stream = client.stream_command(message) if is_slash else client.stream(full_message)
         async for event in event_stream:
             if (_todo_sync_rendered or _todo_recovery_carried) and (
@@ -15816,6 +15863,26 @@ async def _run_chat(
                     _refusal_notices[:] = _still_pending
             elif event.kind == EVENT_COMPACTION_STATUS:
                 logger.debug("Main loop: compaction event text=%r", event.text)
+                # A shared runtime fans a compaction echo to every co-tenant runner
+                # and marks it ``runtime_global`` with NO issuer (and this runner
+                # marks its OWN compaction ownerless whenever a subagent is
+                # registered), so the flag means "nobody can tell", not "a peer's".
+                #   * ``started`` is admitted UNCONDITIONALLY. It only sets this
+                #     session's own in-flight marker and shows the compacting UI;
+                #     a peer's ``started`` admitted here is self-healing, because
+                #     the peer's matching TERMINAL is then admitted too and clears
+                #     what it set. Gating ``started`` is NOT recoverable -- an
+                #     AUTOMATIC mid-turn compaction has no typed command to identify
+                #     its issuer, so a gate would strand the real case in the
+                #     compacting role forever.
+                #   * the DURABLE half -- dropping ``assistant_text`` at the segment
+                #     boundary -- runs only on a REAL (``not event.synthesized``)
+                #     terminal, the one site that scans the accumulator then clears
+                #     it. That window shape is locked by two source ratchets
+                #     (``test_leaked_toolcall_notice`` and
+                #     ``test_post_compaction_continuation``): the scan must precede
+                #     the reset, and the reset must sit under ``not
+                #     event.synthesized`` with nothing between them but the scan.
                 if event.text == "started":
                     # Show the compacting state (input disabled, hourglass) for
                     # an AUTOMATIC mid-turn compaction too, not only from the
@@ -15899,18 +15966,42 @@ async def _run_chat(
                 # replaying the persisted Kiro Crew history afterwards would undo
                 # the user's clear. Retire either an unconsumed slash lease or the
                 # consumed-turn marker before any terminal can re-arm it.
-                if _replay_pending or _replay_accepted_this_turn:
-                    state.sessions.commit_provider_switch_replay_sid(session_key)
-                if _replay_pending:
-                    state.sessions.consume_provider_switch_replay(session_key)
-                    _replay_pending = False
-                _replay_accepted_this_turn = False
+                #
+                # On a SHARED runtime the clear echo is fanned to every co-tenant
+                # runner (``runtime_global``) with no issuer; ignore an ownerless
+                # clear unless THIS runner's own command this turn is ``/clear``, so
+                # a peer's clear never wipes this session's history (a founder marks
+                # its own frame ownerless when a subagent is registered, so the
+                # turn's command, not frame ownership, tells the typer apart).
+                #
+                # Gated on this runner being on a chat-SHARED runtime
+                # (``is_shared_chat_runtime``): only a chat-shared runtime fans a
+                # clear to peers, so with sharing off there is no peer to guard
+                # against and the skip never applies -- the default path runs the
+                # clear exactly as base does, which is what ``## Not a goal``
+                # promises. A runtime lease does NOT tell the two apart (the
+                # unshared path also takes a lease at registration), and the
+                # ownerless flag alone is not enough either: a founder marks its
+                # own frame ownerless whenever a subagent is registered, which
+                # happens on the shipped default too.
+                if (
+                    event.runtime_global
+                    and not _this_turn_is_clear
+                    and is_shared_chat_runtime(client)
+                ):
+                    continue
                 # The FRESH first-turn history debt is armed before the slash
                 # branch, and a slash turn never reaches the context-assembly
                 # settle, so retire it here too: a fresh `/clear` otherwise leaves
                 # the debt armed and the next ordinary prompt rebuilds the very
                 # history the user asked to drop.
                 state.sessions.consume_first_turn_history_owed(session_key)
+                if _replay_pending or _replay_accepted_this_turn:
+                    state.sessions.commit_provider_switch_replay_sid(session_key)
+                if _replay_pending:
+                    state.sessions.consume_provider_switch_replay(session_key)
+                    _replay_pending = False
+                _replay_accepted_this_turn = False
                 # Advance the durable POSITION base by the rows this clear
                 # evicts, exactly as the trim path does (`_ChatSlot.append`)
                 # and as every restore path recomputes it. The base plus the
@@ -15956,6 +16047,29 @@ async def _run_chat(
                     state, slot, "assistant", "🗑️ Conversation cleared.", "msg msg-a"
                 )
             elif event.kind == EVENT_AGENT_SWITCHED:
+                # A shared runtime fans an agent-switch echo to every co-tenant
+                # runner and marks it ``runtime_global`` with NO issuer, and this
+                # runner also marks its OWN switch ownerless whenever a subagent is
+                # registered -- so the flag means "nobody can tell", not "a peer's".
+                # The two error directions are NOT equal, so the two halves of this
+                # branch are gated differently (per GPT 6.1 / Opus review on W14):
+                #   * the member-pin VETO runs UNCONDITIONALLY -- skipping it on
+                #     this session's own switch would leave a pinned member thread
+                #     silently running the switched-to agent with no audit record
+                #     (a security regression), while running it on a peer's switch
+                #     only emits a recoverable spurious notice. Fail toward running.
+                #   * the non-member ``elif new_agent:`` bookkeeping (record the
+                #     provider switch, reset the session) is gated on the frame NOT
+                #     being an ownerless fan-out ON A CHAT-SHARED RUNTIME: recording
+                #     a peer's switch would reset this session onto an agent it never
+                #     chose. The ``is_shared_chat_runtime`` guard scopes that to a
+                #     chat-shared runtime -- only one fans a switch to peers -- so
+                #     with sharing off the condition reads exactly ``new_agent`` and
+                #     the default path records the switch as base does. A lease does
+                #     NOT tell the two apart (the unshared path also takes one), and
+                #     the ownerless flag alone is not enough: a founder marks its own
+                #     switch frame ownerless whenever a subagent is registered, true
+                #     on the shipped default too.
                 new_agent, _ = redact_credentials(event.text)
                 new_agent, _ = redact_exfiltration_urls(new_agent)
                 if new_agent and (
@@ -16019,7 +16133,7 @@ async def _run_chat(
                     # down, the same way the tool-rejection paths above bail
                     # out of a turn that must not continue.
                     break
-                elif new_agent:
+                elif new_agent and (not event.runtime_global or not is_shared_chat_runtime(client)):
                     # A live provider event can change a template selection.
                     # Restore cannot infer that authority from a different
                     # transcript name, including a partially persisted switch.
@@ -16988,9 +17102,25 @@ async def _run_chat(
                 )
                 # kiro-cli fires compaction asynchronously after EVENT_COMPLETE —
                 # just wait for the result without sending another prompt.
-                compaction_result = await client.wait_for_compaction(
-                    timeout=state.sessions.compact_wait_budget_secs()
-                )
+                #
+                # Hold the per-process chat turn gate across this deferred wait,
+                # the same way CompactionCoordinator wraps its own deferred
+                # sequence (session_compaction.py). The ``stream_command('/compact')``
+                # turn upstream already released the gate when its turn ended, so
+                # on a SHARED runtime a co-tenant could start a turn in this
+                # deferred window and receive THIS session's ownerless compaction
+                # terminal (the status names no issuer and is fanned
+                # ``runtime_global`` to every co-tenant runner) — clearing the
+                # co-tenant's already-streamed answer before it is persisted.
+                # ``wait_for_compaction`` is where that terminal is drained, so
+                # holding the gate across it keeps the receipt serialised. The
+                # hold is reentrant for this task; a provider without the hook
+                # (non-shared, or non-ACP) resolves to a null context and the
+                # prior behaviour.
+                async with _resolve_chat_turn_gate_hold(client):
+                    compaction_result = await client.wait_for_compaction(
+                        timeout=state.sessions.compact_wait_budget_secs()
+                    )
                 logger.info("Deferred compaction result: %s", compaction_result)
                 if compaction_result["type"] == "completed":
                     _restore_skills_context_after_compaction()
@@ -17042,6 +17172,11 @@ async def _run_chat(
                 # the next turn. On failure/timeout `used` is unchanged and still
                 # valid, so the same call re-sends the real counts as-is.
                 state.broadcast_context_usage(slot.key, _context_usage_payload(slot.key, client))
+
+        # The /compact turn is done (command turn plus any deferred-compaction
+        # receipt), so release the per-process gate held continuously across it.
+        # Idempotent and a no-op for a non-/compact turn (nothing was entered).
+        await _compact_gate_stack.aclose()
 
         # What the turn produced OF ITS OWN: `assistant_text` minus any backend
         # control notice that arrived as assistant text (the claude adapter's
@@ -20043,6 +20178,11 @@ async def _run_chat(
         if _dispatch_lock_held:
             _dispatch_lock_held = False
             _dispatch_lock.release()
+        # Release the /compact chat-turn gate hold if an exit path (an exception
+        # mid-turn, an early return) skipped the normal close after the deferred
+        # wait. Idempotent: a no-op when nothing was entered or it already closed.
+        with contextlib.suppress(Exception):
+            await _compact_gate_stack.aclose()
         # Second: record this turn's outcome for its tail. Everything the tail
         # needs is known by now, and any step below can raise or be cut short by
         # a second cancel; recorded first, the exit guard then runs the tail with

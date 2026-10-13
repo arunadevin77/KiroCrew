@@ -68,7 +68,9 @@ BUDGET: dict[str, int] = {
     "test/test_chat_hooks.py": 1,
     "test/test_chat_runner_composition_contract.py": 5,
     "test/test_chat_runner_early_recovery_actor.py": 1,
+    "test/test_chat_runtime_sharing.py": 1,  # the fanout-gate shape ratchet reads chat_runner
     "test/test_chat_turn_timeout_consistency.py": 1,
+    "test/test_compact_deferred_wait_gate.py": 2,  # two source-contract checks on _run_chat (deferred-wait hold + before-stream_command hold)
     "test/test_credential_redaction_switch.py": 1,
     "test/test_credential_sources.py": 1,
     "test/test_crew_log_emit.py": 6,
