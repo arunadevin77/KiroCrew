@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from kiro_crew.crew_main_contract import CARD_FIELDS
+from kiro_crew.crew_main_contract import CARD_FIELDS, PHRASES_FIELD
 from kiro_crew.dashboard.dynamic_cards import CardBudget, CardPublisher, normalize_card
 from kiro_crew.testing.wait import await_until
 
@@ -810,7 +810,7 @@ async def test_decoded_card_output_is_redacted(lifecycle, monkeypatch, field, se
     else:
         assert result["status"] == "published"
         # The model's sentence plus the host's folded numbers, and nothing else.
-        assert set(result["card"]["data"]) == CARD_FIELDS
+        assert set(result["card"]["data"]) == CARD_FIELDS | {PHRASES_FIELD}
         if field == "data-only":
             assert result["card"]["html"] == previous["html"]
     assert len(service.publisher.attempts) == 1

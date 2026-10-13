@@ -261,5 +261,13 @@
   "apps.commandBar.attention_more",
   "components.changeCards.scope_count",
   "pages.chat.activityViewer.tool_calls_not_listed",
-  "commandCenter.cards_withheld"
+  "commandCenter.cards_withheld",
+  "commandCenter.crewMain.turns",
+  "commandCenter.crewMain.turns_refused",
+  "commandCenter.crewMain.entries",
+  "commandCenter.crewMain.omitted",
+  "commandCenter.crewMain.subagent",
+  "commandCenter.crewMain.subagent_tiny",
+  "commandCenter.crewMain.tokens",
+  "commandCenter.crewMain.approvals_open"
 ]

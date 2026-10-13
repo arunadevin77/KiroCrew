@@ -79,7 +79,19 @@ layout leaves any fact unbound (`_layout_hides_a_fact`), since a layout of three
 sentences would publish a card with no numbers. Digits in CSS are layout and pass. Only then does `merge_crew_main`, which names every field, put
 the folded values beside the three sentences.
 
-The three sentences are written in one language, which the host names under
+Each folded value is also sent as a phrase: `crew_main_phrases` writes, under the data
+key `crew-main-phrases`, one `[id, params]` pair per field -- a catalog id and the counts
+the fold produced -- and the English above is rendered from those same pairs. The
+browser's `SessionStatusFrame` renders them through the `commandCenter.crewMain`
+catalog (`crewMainPhrases.ts`) before binding, so the numbers read in the dashboard's
+language; it formats each count and picks the plural form, and computes nothing. A value
+the log recorded as text (agent, model, an approval decision the catalog cannot name)
+has no phrase and is shown as recorded, and anything malformed keeps the English.
+`test/fixtures/crew_main_phrases.json` pins the English catalog to the backend renderer
+from both test suites.
+
+The three sentences, and every label the layout shows, are written in one language,
+which the host names under
 `language` in the evidence (`_card_language`): the configured dashboard UI language
 (`context.ui_language_tag`) when there is one, as for the session title, otherwise a
 short sample of the newest text the user typed, with pasted code and links cut out.

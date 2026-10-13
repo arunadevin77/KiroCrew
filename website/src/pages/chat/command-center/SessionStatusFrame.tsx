@@ -9,6 +9,7 @@ import { fmtDateTime } from '../../../i18n/format'
 import { Btn } from '../../../components/ui'
 import ErrorNotice from '../../../components/ErrorNotice'
 import { dashboardDocument } from './dashboardDocument'
+import { localizeCrewMainData } from './crewMainPhrases'
 import type { DynamicDashboardCard } from '../../../types/dynamicDashboard'
 import { useAppSelector } from '../../../store'
 import { canCarryCard } from './model'
@@ -27,7 +28,7 @@ export const TASK_DASHBOARD_SANDBOX = ''
 
 /** The host owns freshness and controls. The isolated document owns presentation. */
 export default function SessionStatusFrame({ slot, title, active }: { slot: string; title: string; active: boolean }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { theme, colorTheme, themeVersion } = useTheme()
   const owner = useAppSelector(s => s.dashboard.slots.find(item => item.key === slot))
   // Mirrors the backend's _derived_allowed on the privacy half (privacy and remoteness),
@@ -46,8 +47,12 @@ export default function SessionStatusFrame({ slot, title, active }: { slot: stri
   const query = useQuery({ queryKey: ['dashboard-card', slot, owner?.linked_session_key ?? '', owner?.memory_mode ?? 'persistent'], queryFn: () => api.dashboardCard(slot),
     enabled: active && eligible, staleTime: Infinity, gcTime: 60_000, retry: false, refetchOnWindowFocus: false })
   const card = eligible ? query.data?.card : null
-  const html = useMemo(() => active && card ? dashboardDocument(card.html, vars, theme, card.data) : null,
-    [active, card, vars, theme])
+  // The crew main card's numbers arrive as English plus phrases; the phrases are rendered
+  // here, in the active language, so the memo re-runs on a language switch.
+  const language = i18n.resolvedLanguage
+  const html = useMemo(() => active && card ? dashboardDocument(card.html, vars, theme, localizeCrewMainData(card.data)) : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [active, card, vars, theme, language])
   const document = useSandboxDoc(html)
   const status = eligible ? query.data?.status ?? 'waiting' : 'unavailable'
   return <section data-testid="session-status-frame" className="space-y-2 min-w-0">
