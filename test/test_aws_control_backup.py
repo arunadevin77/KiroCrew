@@ -782,6 +782,8 @@ class TestSessionsArchiveLayerBGate:
         # cannot tell it from one that was never configured.
         assert audit.call_args.kwargs["result"] == "failed"
         assert "store_relocated_outside_fence" in audit.call_args.kwargs["error"]
+        # The reason travels as `error`; the event's outcome payload is unchanged.
+        assert audit.call_args.args[1]["skipped"] == ""
 
     def test_a_declined_sweep_is_published_to_the_status_read(self, tmp_path, monkeypatch):
         """A decline replaces the sessions row's last result instead of leaving it stale.

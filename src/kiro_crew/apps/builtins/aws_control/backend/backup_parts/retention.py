@@ -39,6 +39,7 @@ from kiro_crew.apps.builtins.aws_control.backend.backup_parts.state import (
     a_retained_archive_carries_conversations,
 )
 from kiro_crew.apps.builtins.aws_control.backend.backup_parts.uploads import (
+    _TEARDOWN_REFUSAL,
     SEL_OP_RETENTION,
     _authorize_upload,
 )
@@ -168,10 +169,11 @@ RETENTION_UNRECORDED_STATE_KEY = "retention_unrecorded"
 #:   deleted: consent withdrawn, the app disabled, the connection repointed. The gate
 #:   files its own audit event for that decision.
 #: * ``failed`` -- anything else that kept it from finishing: an unreadable setting, a
-#:   credential or cloud error at a gate, a listing it would not act on, a declined
-#:   sessions sweep, or a cloud error later on. A cloud error after deletion began may
-#:   still have erased versions, which ``versions`` says. The split is the audit
-#:   event's own, so the two never disagree about one ending.
+#:   credential or cloud error at a gate, the gate's teardown refusal during a
+#:   shutdown, a listing it would not act on, a declined sessions sweep, or a cloud
+#:   error later on. A cloud error after deletion began may still have erased
+#:   versions, which ``versions`` says. The split is the audit event's own, so the two
+#:   never disagree about one ending.
 #:
 #: ``skipped`` is the sweep's own fixed reason text, ``""`` when it had none. It is
 #: never an exception message: an error's text stays in the audit event, where it is
@@ -543,7 +545,7 @@ def _audit_unfiled_authorization(
     is not an access decision, and filing it as a denial would devalue the real
     ones.
     """
-    if isinstance(exc, RuntimeError):
+    if _filed_by_the_gate(exc):
         return
     _audit_retention(
         account,
@@ -554,16 +556,33 @@ def _audit_unfiled_authorization(
     )
 
 
+def _filed_by_the_gate(exc: BaseException) -> bool:
+    """Whether :func:`_refuse_upload` already filed the refusal ``exc`` carries.
+
+    The exception TYPE is the discriminator, for the reason
+    :func:`_audit_unfiled_authorization` gives: ``_refuse_upload`` always ends in a
+    ``RuntimeError``, and nothing else the gate can raise is one.
+    """
+    return isinstance(exc, RuntimeError)
+
+
 def _authorization_ending(exc: BaseException) -> str:
     """The last-sweep ``result`` for a sweep an authorization gate stopped.
 
-    ``refused`` only for a decision :func:`_refuse_upload` made, and ``failed`` for
-    anything else the gate raised -- an expired credential, a dead STS call. The
-    discriminator is :func:`_audit_unfiled_authorization`'s, so the status read and the
-    audit event agree about the same ending: a credential to renew is not a consent
-    somebody withdrew, and reporting it as one points the operator at the wrong fix.
+    ``refused`` only for an access decision :func:`_refuse_upload` made, and
+    ``failed`` for everything else -- an expired credential or a dead STS call, which
+    never reached ``_refuse_upload``, and the teardown refusal, which it files as
+    ``failed`` because a restart is not an access decision. The teardown refusal is
+    told apart by its own fixed text, :data:`_TEARDOWN_REFUSAL`, rather than by the
+    stop flag: the flag stays set for the rest of a shutdown, so reading it would also
+    relabel an access decision the gate made just before the teardown check. So the
+    status read and the audit event agree about the same ending: a credential to
+    renew or a restart is not a consent somebody withdrew, and reporting either as one
+    points the operator at the wrong fix.
     """
-    return "refused" if isinstance(exc, RuntimeError) else "failed"
+    if _filed_by_the_gate(exc) and str(exc) != _TEARDOWN_REFUSAL:
+        return "refused"
+    return "failed"
 
 
 def _record_unclaimed(account: str, kind: str, outcome: dict[str, Any]) -> None:

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime as dt
 import inspect
+import itertools
 import json
 import logging
 import threading
@@ -35,6 +36,10 @@ PROFILE = "p"
 REGION = "us-east-1"
 BUCKET = "kirocrew-drive-0123456789ab"
 INSTALL = "a" * 32
+
+#: The real gate, captured before the ``drive`` fixture stubs it out, for the tests
+#: that need its own refusal shapes rather than a stand-in for them.
+_REAL_AUTHORIZE_UPLOAD = backup._authorize_upload
 
 
 def _version(key: str, modified: str, version_id: str = "", **over: Any) -> dict[str, Any]:
@@ -3038,6 +3043,82 @@ class TestEveryTerminalSweepStateReachesTheStatusRead:
         assert last["skipped"] == "authorization withdrawn before deletion"
         assert last["retired"] == 0
 
+    @pytest.mark.parametrize("at_gate", [1, 2], ids=["first-gate", "second-gate"])
+    def test_a_shutdown_refusal_is_published_as_failed_like_its_audit(
+        self, drive, state, audit, monkeypatch, at_gate
+    ):
+        # The gate's teardown refusal is the one `_refuse_upload` files as `failed`
+        # rather than `denied`: a restart is not an access decision. The real gate
+        # runs here up to the stop check -- everything before it is stubbed to pass --
+        # and the app starts stopping just before the chosen gate call.
+        state(1)
+        backup.clear_stop()
+        drive.rows = _archives(backup.KIND_SNAPSHOT, ["01", "02", "03"])
+        monkeypatch.setattr(
+            "kiro_crew.deploy.engine._checked",
+            lambda *a, **k: json.dumps({"Account": ACCOUNT}),
+        )
+        monkeypatch.setattr("kiro_crew.apps.manager.is_app_enabled", lambda name: True)
+        grant = mock.Mock(account=ACCOUNT)
+        monkeypatch.setattr("kiro_crew.aws_consent.read_grant", lambda service: grant)
+        monkeypatch.setattr("kiro_crew.aws_consent.is_granted", lambda *a, **k: (True, ""))
+        real = _REAL_AUTHORIZE_UPLOAD
+        calls = {"n": 0}
+
+        def gate(*args: Any, **kwargs: Any) -> None:
+            calls["n"] += 1
+            if calls["n"] == at_gate:
+                backup.signal_stop()
+            real(*args, **kwargs)
+
+        monkeypatch.setattr(backup, "_authorize_upload", gate)
+        try:
+            _prune(drive)
+        finally:
+            backup.clear_stop()
+        assert drive.deleted == []
+        assert [entry["outcome"] for entry in audit] == ["failed"]
+        assert "shutting down" in audit[0]["error"]
+        assert _last()["result"] == "failed"
+
+    def test_an_access_decision_during_a_shutdown_is_still_published_as_refused(
+        self, drive, state, audit, monkeypatch
+    ):
+        # Disabling the app sets the stop flag AND makes the app-enabled check refuse,
+        # which runs before the teardown check. The gate files that as `denied`, so the
+        # published result must be `refused` -- reading the stop flag instead of the
+        # refusal itself would relabel it.
+        state(1)
+        backup.clear_stop()
+        drive.rows = _archives(backup.KIND_SNAPSHOT, ["01", "02", "03"])
+        monkeypatch.setattr(
+            "kiro_crew.deploy.engine._checked",
+            lambda *a, **k: json.dumps({"Account": ACCOUNT}),
+        )
+        enabled = {"on": True}
+        monkeypatch.setattr("kiro_crew.apps.manager.is_app_enabled", lambda name: enabled["on"])
+        grant = mock.Mock(account=ACCOUNT)
+        monkeypatch.setattr("kiro_crew.aws_consent.read_grant", lambda service: grant)
+        monkeypatch.setattr("kiro_crew.aws_consent.is_granted", lambda *a, **k: (True, ""))
+        calls = {"n": 0}
+
+        def gate(*args: Any, **kwargs: Any) -> None:
+            calls["n"] += 1
+            if calls["n"] == 2:
+                enabled["on"] = False
+                backup.signal_stop()
+            _REAL_AUTHORIZE_UPLOAD(*args, **kwargs)
+
+        monkeypatch.setattr(backup, "_authorize_upload", gate)
+        try:
+            _prune(drive)
+        finally:
+            backup.clear_stop()
+        assert drive.deleted == []
+        assert [entry["outcome"] for entry in audit] == ["denied"]
+        assert "disabled" in audit[0]["error"]
+        assert _last()["result"] == "refused"
+
     def test_the_standing_record_is_never_older_than_the_one_it_replaced(
         self, drive, state, monkeypatch
     ):
@@ -3046,7 +3127,17 @@ class TestEveryTerminalSweepStateReachesTheStatusRead:
         # then resumes. Whichever commits last is the record a reader sees, so it must
         # carry the later stamp -- a stamp taken before the wait would let it claim to be
         # older than the record it just overwrote.
+        #
+        # The clock is pinned to strictly increasing instants, one per read, so the
+        # order asserted below is the order of the reads and not a property of the
+        # host's clock resolution: two live reads can land in one tick.
         state(1)
+        reads = itertools.count()
+        clock = mock.Mock(wraps=dt.datetime)
+        clock.now.side_effect = lambda *a, **k: dt.datetime(
+            2026, 1, 1, tzinfo=dt.timezone.utc
+        ) + dt.timedelta(seconds=next(reads))
+        monkeypatch.setattr(backup, "dt", mock.Mock(datetime=clock, timezone=dt.timezone))
         real = backup._locked_state_update
         overtaken: dict[str, str] = {}
 

@@ -134,6 +134,12 @@ SEL_OP_BASELINE_PROBE = "aws_control.backup_baseline_probe"
 #: still building instead of only stopping the scheduler.
 _STOP = threading.Event()
 
+#: The teardown refusal's text: the one refusal :func:`_refuse_upload` files as
+#: ``failed`` rather than ``denied``, because a restart is not an access decision.
+#: Named so the retention sweep can publish the same outcome the audit event carries
+#: without a second spelling of the sentence.
+_TEARDOWN_REFUSAL = "aws-control is shutting down; upload refused"
+
 
 def signal_stop() -> None:
     """Refuse further uploads. Called from app teardown."""
@@ -380,7 +386,7 @@ def _authorize_upload(
     if _STOP.is_set():
         _refuse_upload(
             account,
-            "aws-control is shutting down; upload refused",
+            _TEARDOWN_REFUSAL,
             caller=caller,
             outcome="failed",
             operation=operation,

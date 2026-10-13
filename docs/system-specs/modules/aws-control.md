@@ -904,8 +904,9 @@ night looks identical to a working one. `result` is `successful` when the sweep 
 what its configuration asked (retired what `keep` allowed, found nothing to retire,
 had retention off, or saw the owner change the count mid-sweep), `refused` when an
 authorization gate decided against it before anything was deleted, and `failed`
-otherwise -- an unusable setting, a credential or cloud error at a gate, a listing it
-would not act on, a declined sessions sweep, or a later cloud error, after which
+otherwise -- an unusable setting, a credential or cloud error at a gate, the gate's
+teardown refusal during a shutdown, a listing it would not act on, a declined sessions
+sweep, or a later cloud error, after which
 `versions` says what was already erased. The refused/failed split is the audit event's
 own, so the two never disagree about one ending. `skipped` is the
 sweep's own fixed reason text and never an exception message: the error text stays
