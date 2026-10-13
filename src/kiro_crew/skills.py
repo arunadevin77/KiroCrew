@@ -52,6 +52,7 @@ from kiro_crew.atomic_write import (  # noqa: F401
     atomic_write,
     open_access_control_source,
     pinned_parent_replace_supported,
+    replace_with_retry,
 )
 from kiro_crew.config import live
 from kiro_crew.config.loader import KiroCrewConfig, config_dir
@@ -1994,7 +1995,7 @@ def _claim_dir_for_replacement(dest_dir: Path) -> Path | None:
         claim = dest_dir.with_name(f".{dest_dir.name}.sync-claim.{counter}")
         counter += 1
     try:
-        os.replace(dest_dir, claim)
+        replace_with_retry(dest_dir, claim)
     except OSError:
         logger.warning(
             "could not claim skill dir %s for replacement; leaving it untouched",

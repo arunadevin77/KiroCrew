@@ -24,8 +24,11 @@ import time
 from pathlib import Path
 
 import pytest
+from windows_sim import replace_sharing_violation
 
 from conftest import requires_symlinks
+from kiro_crew import atomic_write as aw
+from kiro_crew import platform_compat
 from kiro_crew import skills as skills_mod
 from kiro_crew.skills import (
     _PROVENANCE_MARKER,
@@ -358,6 +361,25 @@ class TestLegitimateUpdatesStillHappen:
         # one cycle (never deleted while writes could still be landing in it).
         parked = base / ".helper.superseded"
         assert "v1" in (parked / "SKILL.md").read_text(encoding="utf-8")
+
+    def test_update_lands_when_the_claim_rename_is_contended(
+        self, builtin_root: Path, base: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # On Windows, a scanner or indexer holding a file in the installed copy
+        # makes the claim rename fail for a moment. The update must still land.
+        monkeypatch.setattr(platform_compat, "IS_WINDOWS", True)
+        monkeypatch.setattr(aw, "_REPLACE_BACKOFF_SECONDS", 0)
+        src = _make_skill(builtin_root, "helper", "v1")
+        _ensure_builtin_skills(base)
+        (src / "SKILL.md").write_text("---\nname: helper\n---\nv2\n", encoding="utf-8")
+        _bump_mtime(src / "SKILL.md")
+
+        with replace_sharing_violation(match=".helper.sync-claim", times=2) as sim:
+            _ensure_builtin_skills(base)
+
+        assert sim["n"] > 2
+        assert "v2" in (base / "helper" / "SKILL.md").read_text(encoding="utf-8")
+        assert not os.path.lexists(base / ".helper.sync-claim")
 
     def test_clean_install_records_provenance(self, builtin_root: Path, base: Path) -> None:
         _make_skill(builtin_root, "helper", "v1")
