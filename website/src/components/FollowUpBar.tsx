@@ -100,6 +100,18 @@ const CHIP_ROW_GAP = 'gap-1.5'
 const ARROW_GUTTER_CLASS = 'shrink-0 w-6 self-stretch'
 
 /**
+ * How long the left arrow's spot keeps swallowing clicks after the arrow
+ * unmounts at the start of the scroll. The start is where the first chip has
+ * to sit flush with the composer, so it cannot carry a blank the way the far
+ * end does; instead the arrow's footprint stays clickable-but-inert long
+ * enough to absorb the second click of a double click on the arrow, which
+ * would otherwise land on the first chip and send it. Above the 220ms
+ * single-click debounce so a pending chip timer cannot be armed through it.
+ * Exported so the test advances fake timers against this value.
+ */
+export const LEFT_ARROW_CLICK_SHIELD_MS = 400
+
+/**
  * Gap between consecutive chips' entrance animations. The whole option set is
  * handed to this component in one render (the tail options are parsed only once
  * the turn ends), so without a ladder every chip would paint in the same frame
@@ -612,6 +624,23 @@ function ScrollLayout({ options, picked, onSelect, onSend, quickSend, multi, ani
     }
   }, [attachEdges, measureOverflow])
 
+  // The left arrow's footprint outlives the arrow by LEFT_ARROW_CLICK_SHIELD_MS
+  // (see that constant). Set on the true -> false edge only, so a row that
+  // never scrolled shows no shield at all.
+  const [leftShield, setLeftShield] = useState(false)
+  const prevLeftRef = useRef(edges.left)
+  useLayoutEffect(() => {
+    const was = prevLeftRef.current
+    prevLeftRef.current = edges.left
+    if (was && !edges.left) setLeftShield(true)
+    else if (edges.left) setLeftShield(false)
+  }, [edges.left])
+  useEffect(() => {
+    if (!leftShield) return
+    const timer = setTimeout(() => setLeftShield(false), LEFT_ARROW_CLICK_SHIELD_MS)
+    return () => clearTimeout(timer)
+  }, [leftShield])
+
   // Mounting or dropping the gutters changes the content width without
   // changing the row's box, so no observer reports it: re-read the edges.
   useLayoutEffect(() => { remeasure() }, [overflows, remeasure])
@@ -668,6 +697,18 @@ function ScrollLayout({ options, picked, onSelect, onSend, quickSend, multi, ani
           <ChevronLeft size={16} />
         </button>
       )}
+      {!edges.left && leftShield && (
+        // Same box and position as the left arrow, invisible and inert: it eats
+        // the click that would otherwise reach the first chip under it.
+        <span
+          aria-hidden="true"
+          data-arrow-click-shield=""
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation() }}
+          onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation() }}
+          className="absolute top-1/2 -translate-y-1/2 z-20 h-6 w-6 left-0.5"
+        />
+      )}
       {edges.right && (
         <button
           type="button"
@@ -718,7 +759,8 @@ function ScrollLayout({ options, picked, onSelect, onSend, quickSend, multi, ani
             it is the last chip, and the next click — or the second click of a
             double click, which sends — lands on that chip. Only the trailing
             end: a leading blank is also there at rest, before any scroll, and
-            pushes the first chip off the composer's left edge. Gated on
+            pushes the first chip off the composer's left edge, so the start
+            is guarded by the left arrow's click shield instead. Gated on
             overflow so a row that fits ends on its last chip. */}
         {overflows && <span aria-hidden="true" data-arrow-gutter="" className={ARROW_GUTTER_CLASS} />}
       </div>

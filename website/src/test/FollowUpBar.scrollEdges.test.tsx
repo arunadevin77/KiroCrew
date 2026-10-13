@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
-import FollowUpBar from '../components/FollowUpBar'
+import FollowUpBar, { FOLLOWUP_CHIP_DEBOUNCE_MS, LEFT_ARROW_CLICK_SHIELD_MS } from '../components/FollowUpBar'
 
 /** `hidden` px of content beyond the right edge, `scrolled` px already past the left. */
 function stubGeometry({ hidden, scrolled = 0 }: { hidden: number; scrolled?: number }) {
@@ -119,8 +119,50 @@ describe('FollowUpBar scroll layout edges', () => {
     expect((scroller.lastElementChild as HTMLElement).hasAttribute('data-arrow-gutter')).toBe(true)
   })
 
-  it('adds no gutter to a row that fits, so its first chip stays flush', () => {
-    stubGeometry({ hidden: 0 })
+  it('keeps the left arrow spot inert for a moment after paging back to the start', () => {
+    vi.useFakeTimers()
+    try {
+      const onSelect = vi.fn()
+      stubGeometry({ hidden: 240, scrolled: 120 })
+      const { container } = render(
+        <FollowUpBar options={OPTIONS} picked={new Set()} onSelect={onSelect} layout="scroll" />,
+      )
+      const scroller = container.querySelector('.overflow-x-auto') as HTMLElement
+      expect(leftArrow()).toBeTruthy()
+      // A row that has not reached the start shows the real arrow, no shield.
+      expect(container.querySelector('[data-arrow-click-shield]')).toBeNull()
+
+      // Paged back to offset 0: the arrow goes, its footprint stays and eats
+      // the click that would otherwise reach the first chip under it.
+      stubGeometry({ hidden: 240, scrolled: 0 })
+      fireEvent.scroll(scroller)
+      expect(leftArrow()).toBeNull()
+      const shield = container.querySelector('[data-arrow-click-shield]') as HTMLElement
+      expect(shield).toBeTruthy()
+      expect(shield.getAttribute('aria-hidden')).toBe('true')
+      expect(shield.className).toContain('left-0.5')
+      expect(shield.className).toContain('z-20')
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true })
+      shield.dispatchEvent(click)
+      expect(click.defaultPrevented).toBe(true)
+      expect(onSelect).not.toHaveBeenCalled()
+
+      // Longer than the chip's single-click debounce, then gone.
+      expect(LEFT_ARROW_CLICK_SHIELD_MS).toBeGreaterThan(FOLLOWUP_CHIP_DEBOUNCE_MS)
+      act(() => { vi.advanceTimersByTime(LEFT_ARROW_CLICK_SHIELD_MS) })
+      expect(container.querySelector('[data-arrow-click-shield]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows no shield on a row that never scrolled', () => {
+    stubGeometry({ hidden: 240 })
+    const { container } = renderScroll()
+    expect(container.querySelector('[data-arrow-click-shield]')).toBeNull()
+  })
+
+  it('adds no gutter to a row that fits, so its first chip stays flush', () => {    stubGeometry({ hidden: 0 })
     const { container } = renderScroll()
     expect(container.querySelector('[data-arrow-gutter]')).toBeNull()
   })
