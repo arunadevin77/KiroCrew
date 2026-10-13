@@ -41,7 +41,7 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.socket_mode.websockets import SocketModeClient as WSSocketModeClient
 from slack_sdk.web.async_client import AsyncWebClient
 
-from kiro_crew import __version__
+from kiro_crew import __version__, slack_manifest
 from kiro_crew.agent_discovery import agent_spec_stems
 from kiro_crew.agent_spec_format import (
     is_markdown_spec,
@@ -1652,6 +1652,16 @@ def _safe_log(text: str) -> str:
     return text
 
 
+#: A command name the bundled manifest can register: ``/kirocrew`` or
+#: ``/kirocrew-<alias>`` (``slack_manifest.slash_command``). Only these get the
+#: mismatch reply. The alias class is what ``slash_command`` emits, which also
+#: keeps the name safe to echo into the shell line the owner is asked to run.
+_MANIFEST_COMMAND_RE = re.compile(
+    rf"/(?:{re.escape(slack_manifest.DEFAULT_ALIAS)}"
+    rf"|{re.escape(slack_manifest.SLASH_COMMAND_PREFIX)}[a-z0-9_-]+)"
+)
+
+
 async def _handle_slash(orch: GatewayOrchestrator, payload: dict) -> None:
     """Route ``/kirocrew <sub-command>`` via :data:`SLASH_REGISTRY`.
 
@@ -1680,6 +1690,26 @@ async def _handle_slash(orch: GatewayOrchestrator, payload: dict) -> None:
 
     slash_command = f"/{orch.slack_command}"
     if cmd != slash_command:
+        if _MANIFEST_COMMAND_RE.fullmatch(cmd):
+            # Slack delivers only commands this app registered, so the app was
+            # created or re-imported from a manifest that names the command
+            # differently from slack.command: re-importing the bundled manifest
+            # into an older install turns /kirocrew into /kirocrew-<alias>.
+            fix = f"kirocrew config set slack.command {cmd[1:]}"
+            logger.warning(
+                "Slash command %s is not the configured %s; run `%s` and restart the gateway",
+                cmd,
+                slash_command,
+                fix,
+            )
+            # Only the owner can make the fix, so only the owner is told.
+            if is_allowed_user(caller_id):
+                _spawn(
+                    _respond(
+                        f"⚠️ Kiro Crew is set up for `{slash_command}`, so `{cmd}` did "
+                        f"nothing. To use `{cmd}`, run `{fix}` and restart the gateway."
+                    )
+                )
         return
 
     # Deny-by-default — only allowed users can invoke slash commands

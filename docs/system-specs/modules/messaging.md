@@ -3477,7 +3477,11 @@ dashboard token auth.
   An empty `command` resets the slash command to the default.
 - `GET /api/slack/manifest` — public manifest template rendered with
   `?alias=` (default `kirocrew`, never `$USER`) plus Slack's one-click
-  create deep link.
+  create deep link and `command`, the slash command that manifest registers
+  (`slack_manifest.slash_command(alias)`). It writes no config, so a caller
+  that passes `?alias=` learns the `slack.command` value the gateway needs.
+  Settings → Slack passes no alias, so its one-click app registers
+  `/kirocrew`, which the default `slack.command` answers.
 
 `allowed_users` / `open_channels` are intentionally not exposed while the
 runtime enforces owner-only access.

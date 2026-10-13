@@ -2418,13 +2418,18 @@ async def api_slack_manifest(request: web.Request) -> web.Response:
     Mirrors ``kirocrew manifest --url`` so the settings UI can offer one-click
     Slack app creation without the CLI: the bundled template gets the user's
     alias substituted, and the comment-stripped YAML is URL-encoded into
-    Slack's new-app deep link. Serves only the public template — no secrets.
+    Slack's new-app deep link. ``command`` is the slash command that manifest
+    registers. The gateway answers only ``/{slack.command}`` and this endpoint
+    writes no config, so a caller that passes ``?alias=`` gets the value its
+    ``kirocrew config set slack.command`` step needs. Settings → Slack passes no
+    alias, so its link registers the default ``/kirocrew``. Serves only the
+    public template — no secrets.
     """
     from kiro_crew import slack_manifest
 
     # Default to a non-identifying alias: $USER is a host account name and
     # should not be volunteered to every authenticated client.
-    alias = request.query.get("alias", "").strip() or "kirocrew"
+    alias = request.query.get("alias", "").strip() or slack_manifest.DEFAULT_ALIAS
     if not slack_manifest.valid_alias(alias):
         return web.json_response({"error": "invalid alias"}, status=400)
     try:
@@ -2437,6 +2442,7 @@ async def api_slack_manifest(request: web.Request) -> web.Response:
             "alias": alias,
             "manifest": rendered,
             "create_url": create_url,
+            "command": slack_manifest.slash_command(alias),
         }
     )
 
