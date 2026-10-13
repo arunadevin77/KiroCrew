@@ -167,6 +167,10 @@ _CANNOT_WIDEN_SETTINGS: frozenset[str] = frozenset(
         "dashboard.mcp_probe_timeout_secs",
         "dashboard.prevent_sleep",
         "dashboard.recent_tint_count",
+        # Display only: the editor is clamped to a closed allowlist of local
+        # editor schemes, so no value changes what an agent may run or reach.
+        # (``dashboard.remote_editor.host`` is ``code_exec``, below.)
+        "dashboard.remote_editor.editor",
         # Stored only: the edition's login handler re-checks every flag against
         # its own allowlist before it runs anything.
         "dashboard.sso_login_flags",
@@ -220,9 +224,13 @@ _CANNOT_WIDEN_SETTINGS: frozenset[str] = frozenset(
 #: ``session.pool_agent`` names the agent spec warm-pool processes start with, and
 #: a session that names no agent claims one (``session_pool._claim_from_pool``),
 #: so it picks which tool grants that session runs under.
+#: ``dashboard.remote_editor.host`` picks the SSH destination the user's own
+#: local editor connects to with the user's credentials, so an agent that sets
+#: it chooses where those keys are presented.
 _CODE_EXEC_SETTINGS: frozenset[str] = frozenset(
     {
         "agent.acp_backend",
+        "dashboard.remote_editor.host",
         "dashboard.terminal.shell",
         "session.pool_agent",
     }
