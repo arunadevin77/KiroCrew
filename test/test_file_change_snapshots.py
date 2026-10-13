@@ -25,7 +25,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from tmpdir_helpers import SHORT_TMP_PREFIX, short_tmp_base
-from turn_harness import Raise, SlotSpec, TurnRecord, TurnScript, run_turn
+from turn_harness import Do, Raise, SlotSpec, TurnRecord, TurnScript, run_turn
 
 from conftest import requires_symlinks
 from kiro_crew.acp.types import (
@@ -51,6 +51,7 @@ from kiro_crew.dashboard.chat_runner import (
     _safe_read_snapshot,
     _snapshot_write_target,
     _truncate_snapshot,
+    _turn_after_reads,
     _turn_line_changes,
 )
 from kiro_crew.dashboard.state import _ChatSlot, row_mid
@@ -2422,3 +2423,450 @@ class TestPendingStrReplaceThroughTheTurnLoop:
         assert record.stop_reason == STOP_REASON_END_TURN
         entry = self._file_change(record)
         assert entry["before"] == self.PARAMS["oldStr"]
+
+
+# ── a small edit past the per-file cut of a large file ─────────────────────
+
+
+def _large_source(lines: int = 20_000) -> str:
+    """About 1 MB of distinct lines, far past ``_MAX_SNAPSHOT``."""
+    return "".join(f"line {i:06d} " + "x" * 40 + "\n" for i in range(lines))
+
+
+def _changed_lines(before: str, after: str) -> tuple[int, int]:
+    import difflib
+
+    added = removed = 0
+    for line in difflib.ndiff(before.splitlines(), after.splitlines()):
+        if line.startswith("+ "):
+            added += 1
+        elif line.startswith("- "):
+            removed += 1
+    return added, removed
+
+
+def _flush_with_reads(slot: _ChatSlot) -> None:
+    """Flush as the turn-completion path does: after reads made first, then applied."""
+    _flush_file_changes(slot, after_reads=_turn_after_reads(slot._file_changes, False))
+
+
+class TestLargeFileEditPastTheCut:
+    """An edit past char ``_MAX_SNAPSHOT`` of a large file keeps its diff.
+
+    The per-file cap kept each side's FIRST ``_MAX_SNAPSHOT`` chars, so both cuts
+    matched, the entry looked unchanged, lost the turn budget's protection, and
+    a one-file turn showed "too large to keep every file's diff".
+    """
+
+    @staticmethod
+    def _edit(text: str) -> tuple[str, str, str]:
+        # 80 lines well past the first _MAX_SNAPSHOT chars.
+        lines = text.splitlines(keepends=True)
+        old = "".join(lines[18_000:18_080])
+        new = "".join(line.replace("x" * 40, "y" * 40) for line in lines[18_000:18_080])
+        assert text.index(old) > 4 * _MAX_SNAPSHOT
+        return old, new, text.replace(old, new, 1)
+
+    def _assert_kept_diff(self, entry: dict, old: str, new: str) -> None:
+        assert not entry.get("content_omitted")
+        assert not entry.get("truncated")
+        assert entry["before"] != entry["after"]
+        assert old in entry["before"] and new in entry["after"]
+        assert _changed_lines(entry["before"], entry["after"]) == (80, 80)
+        for side in ("before", "after"):
+            assert len(entry[side]) <= _MAX_SNAPSHOT
+
+    @pytest.mark.parametrize("command", ["strReplace", "insert"])
+    def test_small_edit_keeps_a_correct_diff(self, short_tmp_dir: Path, command: str):
+        f = short_tmp_dir / "big.py"
+        text = _large_source()
+        f.write_text(text)
+        old, new, edited = self._edit(text)
+        params = {"command": command, "path": str(f)}
+        if command == "strReplace":
+            params.update(oldStr=old, newStr=new)
+        snapshot = _snapshot_write_target(params)
+        assert snapshot is not None and snapshot["truncated"]
+        slot = _make_slot_with_assistant_message()
+        slot._file_changes = []
+        _record_turn_snapshot(slot, snapshot)
+        f.write_text(edited)
+        _flush_with_reads(slot)
+        meta = slot.messages[-1]["meta"]
+        assert "file_changes_omitted_files" not in meta
+        (entry,) = meta["file_changes"]
+        self._assert_kept_diff(entry, old, new)
+        assert entry["before"].startswith("... (")
+        assert "lines not shown)" in entry["before"]
+
+    def test_large_and_small_file_both_keep_their_diffs(self, short_tmp_dir: Path):
+        big = short_tmp_dir / "big.py"
+        small = short_tmp_dir / "small.py"
+        text = _large_source()
+        big.write_text(text)
+        small.write_text("a\n")
+        old, new, edited = self._edit(text)
+        slot = _make_slot_with_assistant_message()
+        slot._file_changes = []
+        _record_turn_snapshot(
+            slot,
+            _snapshot_write_target(
+                {"command": "strReplace", "path": str(big), "oldStr": old, "newStr": new}
+            ),
+        )
+        _record_turn_snapshot(
+            slot, _snapshot_write_target({"command": "insert", "path": str(small)})
+        )
+        big.write_text(edited)
+        small.write_text("b\n")
+        _flush_with_reads(slot)
+        changes = {Path(c["path"]).name: c for c in slot.messages[-1]["meta"]["file_changes"]}
+        self._assert_kept_diff(changes["big.py"], old, new)
+        assert (changes["small.py"]["before"], changes["small.py"]["after"]) == ("a\n", "b\n")
+
+    def test_unchanged_large_file_keeps_the_top_cut(self, short_tmp_dir: Path):
+        f = short_tmp_dir / "big.py"
+        f.write_text(_large_source())
+        slot = _make_slot_with_assistant_message()
+        slot._file_changes = []
+        _record_turn_snapshot(slot, _snapshot_write_target({"command": "insert", "path": str(f)}))
+        _flush_with_reads(slot)
+        (entry,) = slot.messages[-1]["meta"]["file_changes"]
+        # No change: no window, and two top cuts exceed the turn budget, so the
+        # entry is demoted exactly as before.
+        assert entry["truncated"] and entry["content_omitted"]
+
+    def test_change_larger_than_the_cap_keeps_the_top_cut(self, short_tmp_dir: Path):
+        f = short_tmp_dir / "big.py"
+        text = _large_source()
+        f.write_text(text)
+        slot = _make_slot_with_assistant_message()
+        slot._file_changes = []
+        _record_turn_snapshot(slot, _snapshot_write_target({"command": "insert", "path": str(f)}))
+        f.write_text(text.replace("x" * 40, "z" * 40))
+        _flush_with_reads(slot)
+        (entry,) = slot.messages[-1]["meta"]["file_changes"]
+        assert entry["truncated"]
+        assert entry["before"].startswith("line 000000 ")
+
+    def test_fragment_before_is_never_windowed(self, short_tmp_dir: Path):
+        # replaceAll declines reconstruction, so the before is the content
+        # block's fragment. It fits the cap but is not the file: diffing it as
+        # one would invent tens of thousands of added lines.
+        f = short_tmp_dir / "big.txt"
+        block = "a\n" * 30_000
+        f.write_text(block * 4)
+        fragment = block
+        snapshot = _snapshot_write_target(
+            {
+                "command": "strReplace",
+                "path": str(f),
+                "oldStr": block,
+                "newStr": block[:-2] + "b\n",
+                "replaceAll": True,
+            },
+            diff_old_text=fragment,
+            diff_path=str(f),
+        )
+        assert snapshot is not None and "full_content" not in snapshot
+        slot = _make_slot_with_assistant_message()
+        slot._file_changes = []
+        _record_turn_snapshot(slot, snapshot)
+        f.write_text((block[:-2] + "b\n") * 4)
+        _flush_with_reads(slot)
+        (entry,) = slot.messages[-1]["meta"]["file_changes"]
+        assert entry["truncated"]
+        assert "lines not shown)" not in (entry["before"] + entry["after"])
+
+    def test_held_whole_befores_stay_within_the_turn_bound(self, short_tmp_dir: Path, monkeypatch):
+        import kiro_crew.dashboard.chat_runner as cr
+
+        size = len(_large_source())
+        monkeypatch.setattr(cr, "_MAX_TURN_FULL_CONTENT_CHARS", 2 * size)
+        slot = _make_slot_with_assistant_message()
+        slot._file_changes = []
+        for name in ("a.py", "b.py", "c.py"):
+            f = short_tmp_dir / name
+            f.write_text(_large_source())
+            _record_turn_snapshot(
+                slot, _snapshot_write_target({"command": "insert", "path": str(f)})
+            )
+        held = [Path(e["path"]).name for e in slot._file_changes if "full_content" in e]
+        assert held == ["b.py", "c.py"]
+
+
+def _x_to_y(line: str) -> str:
+    return line.replace("x" * 40, "y" * 40)
+
+
+class TestLargeFileEditShapes:
+    """Edit shapes past the cut: far apart, already on disk, oldStr inside newStr."""
+
+    def test_two_far_apart_edits_both_show(self, short_tmp_dir: Path):
+        f = short_tmp_dir / "big.py"
+        lines = _large_source().splitlines(keepends=True)
+        f.write_text("".join(lines))
+        slot = _make_slot_with_assistant_message()
+        slot._file_changes = []
+        for index, at in enumerate((7000, 17000)):
+            old = lines[at]
+            _record_turn_snapshot(
+                slot,
+                _snapshot_write_target(
+                    {"command": "strReplace", "path": str(f), "oldStr": old, "newStr": _x_to_y(old)}
+                ),
+                f"writer-{index}",
+            )
+            lines[at] = _x_to_y(old)
+            f.write_text("".join(lines))
+        _flush_with_reads(slot)
+        (entry,) = slot.messages[-1]["meta"]["file_changes"]
+        assert not entry.get("truncated") and not entry.get("content_omitted")
+        assert _changed_lines(entry["before"], entry["after"]) == (2, 2)
+        # Three left-out runs: above, between and below the two windows.
+        assert entry["before"].count("lines not shown)") == 3
+        assert max(len(entry["before"]), len(entry["after"])) <= _MAX_SNAPSHOT
+
+    def test_auto_approve_path_rebuilds_the_before_in_reverse(self, short_tmp_dir: Path):
+        # kiro-cli writes before the dashboard sees the call: the disk already
+        # holds the after, and the before is the reverse substitution.
+        f = short_tmp_dir / "big.py"
+        text = _large_source()
+        old, new, edited = TestLargeFileEditPastTheCut._edit(text)
+        f.write_text(edited)
+        snapshot = _snapshot_write_target(
+            {"command": "strReplace", "path": str(f), "oldStr": old, "newStr": new},
+            diff_old_text=old,
+            diff_path=str(f),
+        )
+        assert snapshot is not None and snapshot["full_content"] == text
+        slot = _make_slot_with_assistant_message()
+        slot._file_changes = []
+        _record_turn_snapshot(slot, snapshot)
+        _flush_with_reads(slot)
+        (entry,) = slot.messages[-1]["meta"]["file_changes"]
+        TestLargeFileEditPastTheCut()._assert_kept_diff(entry, old, new)
+
+    def test_old_inside_new_settles_on_whole_texts(self, short_tmp_dir: Path):
+        # oldStr is inside newStr and the disk already holds newStr once, so
+        # the file is valid as both states. The capped hypotheses agree past
+        # the cut; the whole-text pre-write test settles it.
+        f = short_tmp_dir / "big.py"
+        lines = _large_source().splitlines(keepends=True)
+        old, new = lines[18000], lines[18000] + lines[18001]
+        text = "".join(lines)
+        f.write_text(text)
+        snapshot = _snapshot_write_target(
+            {"command": "strReplace", "path": str(f), "oldStr": old, "newStr": new},
+            diff_old_text=old,
+            diff_path=str(f),
+        )
+        assert "whole_candidate" in snapshot["pending_str_replace"]
+        slot = _make_slot_with_assistant_message()
+        slot._file_changes = []
+        _record_turn_snapshot(slot, snapshot, "writer")
+        f.write_text(text.replace(old, new, 1))
+        _flush_with_reads(slot)
+        (entry,) = slot.messages[-1]["meta"]["file_changes"]
+        assert not entry.get("truncated")
+        assert _changed_lines(entry["before"], entry["after"]) == (1, 0)
+
+    def test_whole_candidate_refused_after_a_shell(self, short_tmp_dir: Path):
+        f = short_tmp_dir / "big.py"
+        lines = _large_source().splitlines(keepends=True)
+        old, new = lines[18000], lines[18000] + lines[18001]
+        text = "".join(lines)
+        f.write_text(text)
+        snapshot = _snapshot_write_target(
+            {"command": "strReplace", "path": str(f), "oldStr": old, "newStr": new},
+            diff_old_text=old,
+            diff_path=str(f),
+        )
+        slot = _make_slot_with_assistant_message()
+        slot._file_changes = []
+        _record_turn_snapshot(slot, snapshot, "writer")
+        f.write_text(text.replace(old, new, 1))
+        reads = _turn_after_reads(slot._file_changes, True)
+        _flush_file_changes(slot, turn_had_shell=True, after_reads=reads)
+        (entry,) = slot.messages[-1]["meta"]["file_changes"]
+        assert entry["truncated"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["completed", "refused", "failed"])
+    async def test_old_inside_new_already_written_keeps_the_top_cut(
+        self, short_tmp_dir: Path, status
+    ):
+        # The reviewer's repro on the auto-approve path: the disk already holds
+        # the after when the dashboard reads it. Whatever the tool reports, the
+        # only before left is a reverse substitution, which a concurrent restore
+        # of the captured bytes would make false, so the entry keeps the top cut
+        # (a known limit; a pre-write snapshot would lift it).
+        f = short_tmp_dir / "big.py"
+        lines = _large_source().splitlines(keepends=True)
+        old, new = lines[18000], lines[18000] + "added line\n"
+        f.write_text("".join(lines).replace(old, new, 1))
+        record = await _snapshot_turn(
+            AcpEvent(
+                kind=EVENT_TOOL_CALL,
+                tool_call_id="call-big",
+                tool_name="fs_write",
+                tool_kind="edit",
+                title="Write",
+                raw_tool_params={
+                    "command": "strReplace",
+                    "path": str(f),
+                    "oldStr": old,
+                    "newStr": new,
+                },
+                diff_old_text=old,
+                diff_path=str(f),
+            ),
+            AcpEvent(
+                kind=EVENT_TOOL_RESULT,
+                tool_call_id="call-big",
+                tool_output="ok" if status == "completed" else status,
+                tool_status=status,
+                tool_final=status == "completed",
+            ),
+            *_LANDS,
+        )
+        (entry,) = _persisted_meta(record, "done")["file_changes"]
+        assert entry["truncated"]
+        assert "lines not shown)" not in (entry["before"] + entry["after"])
+
+
+class TestLargeFileEditOffTheLoop:
+    """Whole-file reads and diffs run off the event loop, never inline."""
+
+    def test_inline_flush_never_reads_the_whole_file(self, short_tmp_dir: Path, monkeypatch):
+        import kiro_crew.dashboard.chat_runner as cr
+
+        f = short_tmp_dir / "big.py"
+        text = _large_source()
+        f.write_text(text)
+        old, new, edited = TestLargeFileEditPastTheCut._edit(text)
+        slot = _make_slot_with_assistant_message()
+        slot._file_changes = []
+        _record_turn_snapshot(
+            slot,
+            _snapshot_write_target(
+                {"command": "strReplace", "path": str(f), "oldStr": old, "newStr": new}
+            ),
+        )
+        f.write_text(edited)
+
+        real = cr._safe_read_file_text
+
+        def no_whole_read(path, *, whole):
+            assert not whole, "whole-file read on the flush's own thread"
+            return real(path, whole=whole)
+
+        def no_diff(before, after):
+            raise AssertionError("diff on the flush's own thread")
+
+        monkeypatch.setattr(cr, "_safe_read_file_text", no_whole_read)
+        monkeypatch.setattr(cr, "_excerpt_pair", no_diff)
+        _flush_file_changes(slot)
+        (entry,) = slot.messages[-1]["meta"]["file_changes"]
+        assert entry["truncated"]
+
+    @pytest.mark.asyncio
+    async def test_real_turn_keeps_the_diff_and_reads_off_the_loop(
+        self, short_tmp_dir: Path, monkeypatch
+    ):
+        import threading
+
+        import kiro_crew.dashboard.chat_runner as cr
+
+        f = short_tmp_dir / "big.py"
+        text = _large_source()
+        f.write_text(text)
+        old, new, edited = TestLargeFileEditPastTheCut._edit(text)
+        real = cr._read_turn_afters
+        on_main: list[bool] = []
+
+        def tracked(changes, turn_had_shell=False):
+            on_main.append(threading.current_thread() is threading.main_thread())
+            return real(changes, turn_had_shell)
+
+        monkeypatch.setattr(cr, "_read_turn_afters", tracked)
+        record = await _snapshot_turn(
+            AcpEvent(
+                kind=EVENT_TOOL_CALL,
+                tool_call_id="call-big",
+                tool_name="fs_write",
+                tool_kind="edit",
+                title="Write",
+                raw_tool_params={
+                    "command": "strReplace",
+                    "path": str(f),
+                    "oldStr": old,
+                    "newStr": new,
+                },
+                diff_old_text=old,
+                diff_path=str(f),
+            ),
+            Do(lambda ctx: f.write_text(edited)),
+            *_LANDS,
+        )
+        assert on_main == [False]
+        (entry,) = _persisted_meta(record, "done")["file_changes"]
+        TestLargeFileEditPastTheCut()._assert_kept_diff(entry, old, new)
+
+    def test_hidden_last_line_without_newline_is_counted(self):
+        from kiro_crew.dashboard.chat_runner import _excerpt_pair
+
+        tail = "".join(f"t{i}\n" for i in range(99)) + "last"
+        pair = _excerpt_pair("head\nx\n" + tail, "head\ny\n" + tail)
+        assert pair is not None
+        # 100 tail lines, the first 20 shown as context: 80 hidden, "last" included.
+        assert pair[0].endswith("... (80 lines not shown)\n")
+
+
+class TestLargeFileEditRedaction:
+    """Windows are cut from REDACTED whole texts, so no window splits a secret."""
+
+    @staticmethod
+    def _pem(lines: int) -> list[str]:
+        import base64
+        import hashlib
+
+        body = [
+            base64.b64encode(hashlib.sha512(f"k{i}".encode()).digest()).decode()[:64] + "\n"
+            for i in range(lines)
+        ]
+        # Built from parts so the source carries no literal key delimiter.
+        label = "RSA PRIVATE " + "KEY-----\n"
+        return ["-----BEGIN " + label, *body, "-----END " + label]
+
+    def test_edit_just_below_a_private_key_keeps_the_key_out(self, short_tmp_dir: Path):
+        f = short_tmp_dir / "big.conf"
+        lines = _large_source().splitlines(keepends=True)
+        key = self._pem(40)
+        at = 18000
+        before = "".join(lines[:at] + key + lines[at:])
+        old = lines[at]
+        new = _x_to_y(old)
+        f.write_text(before)
+        snapshot = _snapshot_write_target(
+            {"command": "strReplace", "path": str(f), "oldStr": old, "newStr": new}
+        )
+        slot = _make_slot_with_assistant_message()
+        slot._file_changes = []
+        _record_turn_snapshot(slot, snapshot)
+        f.write_text(before.replace(old, new, 1))
+        _flush_with_reads(slot)
+        (entry,) = slot.messages[-1]["meta"]["file_changes"]
+        assert not entry.get("truncated")
+        assert _changed_lines(entry["before"], entry["after"]) == (1, 1)
+        stored = entry["before"] + entry["after"]
+        # The window's 20 context lines above the edit fall inside the key body.
+        assert not any(line.strip() in stored for line in key[1:-1])
+        assert key[-1].strip() not in stored
+
+    def test_flush_redaction_leaves_a_redacted_window_unchanged(self):
+        from kiro_crew.security import redact as redact_text
+
+        text = "".join(self._pem(5)) + "token = AKIAIOSFODNN7EXAMPLE\n"
+        once = redact_text(text)
+        assert redact_text(once) == once

@@ -187,11 +187,14 @@ from kiro_crew.dashboard.chat_turn.file_changes import (  # noqa: F401
     _PATH_TRUNCATION_MARKER,
     _apply_turn_snapshot_budget,
     _classify_str_replace_before,
+    _excerpt_pair,
     _line_change_input,
     _note_reply_row,
     _pending_str_replace_payload,
+    _read_turn_afters,
     _record_turn_snapshot,
     _resolve_pending_str_replace,
+    _safe_read_file_text,
     _safe_read_snapshot,
     _Snapshot,
     _snapshot_write_target,
@@ -2054,6 +2057,15 @@ _SNAPSHOT_TRUNCATION_MARKER = f"\n... (truncated at {_MAX_SNAPSHOT} chars)"
 # this size the stored snapshot is truncated to _MAX_SNAPSHOT anyway, so
 # reconstruction declines instead of stalling the loop on a huge file.
 _MAX_RECONSTRUCT_BYTES = 2_000_000
+# Chars of whole-file before one turn's accumulator may hold beside the capped
+# snapshots. A before proven whole keeps its whole text (each at most
+# ``_MAX_RECONSTRUCT_BYTES``) until the flush, so an edit past the cut can still
+# be told from no edit and shown (``_excerpt_pair``). In memory only, never on
+# the message; the oldest entries lose it first (``_record_turn_snapshot``).
+_MAX_TURN_FULL_CONTENT_CHARS = 2 * _MAX_RECONSTRUCT_BYTES
+# Unchanged lines ``_excerpt_pair`` shows around each changed run of a windowed
+# large-file diff. Runs closer than twice this share one window.
+_EXCERPT_CONTEXT_LINES = 20
 
 # Chars of path+before+after one TURN's file_changes may carry across every
 # entry EXCEPT its protected one -- the most recent entry whose content differs,
@@ -2196,13 +2208,39 @@ def _cap_redacted(text: str, limit: int, marker: str) -> tuple[str, bool]:
     return text[:limit] + marker, True
 
 
+def _turn_after_reads(
+    changes: list[dict[str, Any]], turn_had_shell: bool
+) -> dict[str, tuple[_Snapshot | None, tuple[str, str] | None]]:
+    """``_flush_file_changes``'s ``after_reads``: whole reads, redaction and windows.
+
+    Runs OFF the event loop (the caller wraps it in ``asyncio.to_thread``): reads
+    up to two megabytes per path and diffs them. The WHOLE texts are redacted
+    before ``_excerpt_pair`` cuts windows: a window can start inside a credential
+    (a PEM body below its BEGIN line), and the redactor recognizes one only with
+    its delimiters in view. The flush redacts the windows again, which leaves
+    already-redacted text unchanged.
+    """
+    reads: dict[str, tuple[_Snapshot | None, tuple[str, str] | None]] = {}
+    for key, (after, whole) in _read_turn_afters(changes, turn_had_shell).items():
+        excerpt = _excerpt_pair(redact(whole[0]), redact(whole[1])) if whole else None
+        reads[key] = (after, excerpt)
+    return reads
+
+
 def _flush_file_changes(
     slot: "_ChatSlot",
     turn_boundary: int = 0,
     turn_start_mid: str | None = None,
     turn_had_shell: bool = False,
+    after_reads: dict[str, tuple[_Snapshot | None, tuple[str, str] | None]] | None = None,
 ) -> None:
     """Attach accumulated file changes to this turn's last assistant message.
+
+    ``after_reads`` is ``_turn_after_reads`` run off the event loop by the
+    caller: each path's capped after and, for a change past a large file's
+    per-file cut, its windowed before/after, which replace the top cuts here.
+    Without it each after is the ordinary capped read, inline, and such a change
+    keeps the top cut.
 
     Dedups by canonical path (first before, last after), reads the AFTER content
     from disk, and settles a ``pending_str_replace`` snapshot against that
@@ -2255,11 +2293,12 @@ def _flush_file_changes(
         # before for a file written under two spellings.
         key = fc.get("canonical_path") or p
         if key not in deduped:
+            before_truncated = bool(fc.get("truncated", False))
             deduped[key] = {
                 "path": p,
                 "before": fc["content"],
                 "after": "",
-                "_before_truncated": bool(fc.get("truncated", False)),
+                "_before_truncated": before_truncated,
             }
             if fc.get("pending_str_replace"):
                 pending_by_path[key] = fc["pending_str_replace"]
@@ -2272,7 +2311,11 @@ def _flush_file_changes(
     # leaking credentials.
     for key, entry in deduped.items():
         before_truncated = entry.pop("_before_truncated")
-        after = _safe_read_snapshot(entry["path"])
+        # The caller's off-loop reads when it made them (_read_turn_afters);
+        # otherwise only the ordinary capped snapshot, read inline: no whole-file
+        # read or diff on the event loop, so such an entry keeps the top cut.
+        read = after_reads.get(key) if after_reads is not None else None
+        after, excerpt = read if read is not None else (_safe_read_snapshot(entry["path"]), None)
         entry["after"] = after.content if after is not None else ""
         pending = pending_by_path.get(key)
         # Resolve a deferred strReplace against the turn-end content. The
@@ -2292,7 +2335,14 @@ def _flush_file_changes(
                 # re-truncating would append a second marker.
                 entry["before"] = resolved.content
                 before_truncated = resolved.truncated
-        if before_truncated or (after is not None and after.truncated):
+        if excerpt is not None:
+            # The per-file cap keeps a side's first _MAX_SNAPSHOT chars, so an
+            # edit past it leaves two equal cuts: no diff, and the turn budget
+            # does not protect an entry that reads as unchanged. The windows
+            # _read_turn_afters cut from the WHOLE sides show every change, and
+            # each side is within _MAX_SNAPSHOT, so every bound below holds.
+            entry["before"], entry["after"] = excerpt
+        elif before_truncated or (after is not None and after.truncated):
             entry.update(truncated=True, snapshot_limit_chars=_MAX_SNAPSHOT)
     # Scrub exfil URLs and credentials from path/before/after BEFORE attaching
     # to message meta. _save_slot_to_history runs _redact_meta on persist, but
@@ -18146,12 +18196,27 @@ async def _run_chat(
             )
             if _prompt_depth == 0 and _stats_attached:
                 slot._carried_ttft_clock = None
-            # Attach accumulated file changes to this turn's assistant row before persist
+            # Attach accumulated file changes to this turn's assistant row before persist.
+            # The turn-end disk reads and diffs (a whole file of up to two megabytes
+            # for a large edited file) run off the event loop; the flush then applies
+            # them to the slot here, on the loop. The teardown flush in the
+            # finally reads inline without them: it runs where an await could
+            # skip the session-permit release, so it keeps the ordinary capped
+            # read only.
+            _changes_now = getattr(slot, "_file_changes", None)
+            _after_reads = (
+                await asyncio.to_thread(
+                    _turn_after_reads, list(_changes_now), bool(_shell_tool_calls)
+                )
+                if isinstance(_changes_now, list) and _changes_now
+                else None
+            )
             _flush_file_changes(
                 slot,
                 turn_boundary=_turn_msg_boundary,
                 turn_start_mid=_turn_start_mid,
                 turn_had_shell=bool(_shell_tool_calls),
+                after_reads=_after_reads,
             )
             # The reply is in the window, so this save is the durable clear of
             # the in-flight marker: retire it first and the omission rides the

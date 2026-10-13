@@ -9,10 +9,12 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from kiro_crew.dashboard.chat_runner import (
+        _EXCERPT_CONTEXT_LINES,
         _MAX_RECONSTRUCT_BYTES,
         _MAX_SLOT_MESSAGES,
         _MAX_SNAPSHOT,
         _MAX_SNAPSHOT_PATH_CHARS,
+        _MAX_TURN_FULL_CONTENT_CHARS,
         _MAX_TURN_SNAPSHOT_CHARS,
         _MAX_TURN_SNAPSHOT_ENTRIES,
         _SNAPSHOT_READ_BYTES,
@@ -58,7 +60,21 @@ def _safe_read_snapshot(path: str) -> _Snapshot | None:
     Returns the (possibly truncated) text content, or None if the path is
     sensitive / not a regular file / aliased / unreadable — one shape for every
     refusal, so a caller cannot tell a protected target from a missing file.
+
     """
+    return _safe_read_file_text(path, whole=False)
+
+
+def _safe_read_file_text(path: str, *, whole: bool) -> _Snapshot | None:
+    """The one gated read behind ``_safe_read_snapshot``; see it for the gate.
+
+    ``whole=True`` returns the WHOLE file, uncut (``truncated`` False), or None
+    when it exceeds ``_MAX_RECONSTRUCT_BYTES`` -- the bound the strReplace
+    reconstruction already reads to. A cut read is not the whole file and must
+    not be compared as one, so one byte past the bound is read to tell a larger
+    file apart, and it is refused rather than cut.
+    """
+    max_bytes = _MAX_RECONSTRUCT_BYTES if whole else _SNAPSHOT_READ_BYTES
     try:
         validated = validate_file_path(path)
         if validated is None:
@@ -66,10 +82,10 @@ def _safe_read_snapshot(path: str) -> _Snapshot | None:
         raw = safe_read_file_bytes_nolink(
             validated,
             within_root=os.path.dirname(validated),
-            max_bytes=_SNAPSHOT_READ_BYTES,
+            max_bytes=max_bytes + 1 if whole else max_bytes,
             allow_truncate=True,
         )
-        if raw is None:
+        if raw is None or (whole and len(raw) > max_bytes):
             return None
         # Git and agent-authored files are UTF-8 regardless of the host's
         # preferred code page; decoding the bytes explicitly matters on Windows,
@@ -81,9 +97,66 @@ def _safe_read_snapshot(path: str) -> _Snapshot | None:
         # every unchanged line as modified in the diff chip.
         text = raw.decode("utf-8", errors="replace")
         text = text.replace("\r\n", "\n").replace("\r", "\n")
-        return _truncate_snapshot(text)
+        return _Snapshot(text, False) if whole else _truncate_snapshot(text)
     except Exception:
         return None
+
+
+def _excerpt_pair(before: str, after: str) -> tuple[str, str] | None:
+    """Cut both whole sides to windows around each change, or None if they won't fit.
+
+    The per-file cap keeps a large file's FIRST ``_MAX_SNAPSHOT`` characters, so
+    an edit past that point leaves two identical prefixes: the diff is empty and
+    the entry reads as unchanged. Here each changed line run (``difflib``
+    opcodes) gets a window with ``_EXCERPT_CONTEXT_LINES`` of context, windows
+    that touch are merged, and every run of lines left out -- above, between,
+    below -- becomes one in-band ``... (N lines not shown)`` line. Left-out runs
+    are equal on both sides, so the windowed diff shows exactly the lines the
+    turn changed and counts them correctly.
+
+    Returns None when the sides are identical or a side would exceed
+    ``_MAX_SNAPSHOT``; the caller then keeps the top cut and the truncated flag.
+    Runs off the event loop (``_read_turn_afters``): the line diff is linear-ish
+    on the near-identical sides a turn produces, but over up to two megabytes.
+    """
+    import difflib
+
+    if before == after:
+        return None
+    a, b = before.splitlines(keepends=True), after.splitlines(keepends=True)
+    ctx = _EXCERPT_CONTEXT_LINES
+    # Changed runs as [a_start, a_end, b_start, b_end]; a gap of at most two
+    # contexts joins the run to the one before it.
+    runs: list[list[int]] = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b).get_opcodes():
+        if tag == "equal":
+            continue
+        if runs and i1 - runs[-1][1] <= 2 * ctx:
+            runs[-1][1], runs[-1][3] = i2, j2
+        else:
+            runs.append([i1, i2, j1, j2])
+    # Widen each run by its context. The lines it takes are equal on both
+    # sides, and every gap left between runs is longer than two contexts.
+    for run in runs:
+        lead = min(ctx, run[0], run[2])
+        trail = min(ctx, len(a) - run[1], len(b) - run[3])
+        run[0], run[2] = run[0] - lead, run[2] - lead
+        run[1], run[3] = run[1] + trail, run[3] + trail
+    sides = []
+    for lines, lo, hi in ((a, 0, 1), (b, 2, 3)):
+        out, shown_to = [], 0
+        for run in runs:
+            if run[lo] > shown_to:
+                out.append(f"... ({run[lo] - shown_to} lines not shown)\n")
+            out.extend(lines[run[lo] : run[hi]])
+            shown_to = run[hi]
+        if shown_to < len(lines):
+            # Only the file's last line can lack a newline, and it is hidden here.
+            out.append(f"... ({len(lines) - shown_to} lines not shown)\n")
+        sides.append("".join(out))
+    if max(len(sides[0]), len(sides[1])) > _MAX_SNAPSHOT or sides[0] == sides[1]:
+        return None
+    return sides[0], sides[1]
 
 
 def _classify_str_replace_before(path: str, raw_params: dict) -> tuple[str | None, str | None]:
@@ -194,10 +267,11 @@ def _classify_str_replace_before(path: str, raw_params: dict) -> tuple[str | Non
 def _pending_str_replace_payload(content: str, old_str: str, new_str: str) -> dict[str, _Snapshot]:
     """Precompute the bounded hypotheses a deferred strReplace resolution needs.
 
-    Every hypothesis is ``_truncate_snapshot``-capped, so the payload never
-    retains the raw disk read (up to ``_MAX_RECONSTRUCT_BYTES``) for a whole
-    turn — a deferred snapshot of a large file costs no more than an ordinary
-    snapshot. ``if_post_write`` is the disk content as seen at snapshot time
+    Every hypothesis is ``_truncate_snapshot``-capped, so these two cost no more
+    than an ordinary snapshot. The raw disk read (up to
+    ``_MAX_RECONSTRUCT_BYTES``) is held only as the payload's separate
+    ``whole_candidate``, which ``_snapshot_write_target`` adds and
+    ``_record_turn_snapshot`` bounds per turn. ``if_post_write`` is the disk content as seen at snapshot time
     (the FULL-FILE before, if that snapshot was the PRE-write state);
     ``if_pre_write`` is the forward substitution (what the file reads at turn
     end if the snapshot was pre-write).
@@ -285,6 +359,14 @@ def _snapshot_write_target(
     ``_pending_str_replace_payload``) for ``_flush_file_changes`` to settle
     against the turn-end after-content.
 
+    A before PROVEN to be the whole file (the strReplace reconstruction, a
+    disk read, or create's content block) also carries ``full_content``, at
+    most ``_MAX_RECONSTRUCT_BYTES``, so the flush can tell a change past the
+    per-file cut from no change and window the stored sides on it
+    (``_excerpt_pair``). A strReplace or insert content block is a fragment and
+    never carries it. It lives only in the in-turn accumulator, bounded per
+    turn by ``_record_turn_snapshot``, and never reaches message meta.
+
     For strReplace, FIRST reconstructs the full-file before via
     ``_classify_str_replace_before`` (disk read + reverse substitution),
     because the ACP diff content block's ``oldText`` is only the replaced
@@ -346,18 +428,29 @@ def _snapshot_write_target(
         before_full, undecidable = _classify_str_replace_before(path, raw_params)
         if before_full is not None:
             before = _truncate_snapshot(before_full)
-            return {
+            snapshot = {
                 "path": path,
                 "canonical_path": canonical,
                 "content": before.content,
                 "truncated": before.truncated,
             }
+            # The proven whole-file before, bounded by _MAX_RECONSTRUCT_BYTES
+            # in the classifier.
+            snapshot["full_content"] = before_full
+            return snapshot
         if undecidable is not None:
             pending = dict(
                 _pending_str_replace_payload(
                     undecidable, raw_params["oldStr"], raw_params["newStr"]
                 )
             )
+            # The capped hypotheses above agree past the cut, so they cannot
+            # settle an edit there. Keep the WHOLE disk content as a candidate
+            # before (bounded by _MAX_RECONSTRUCT_BYTES in the classifier, and
+            # per turn by _record_turn_snapshot); _read_turn_afters accepts it
+            # only on the same pre-write test run on whole texts. It rides in
+            # the pending payload, so the writer gate drops it with the rest.
+            pending["whole_candidate"] = (undecidable, raw_params["oldStr"], raw_params["newStr"])
 
     # Prefer authoritative content-block before-text when available.
     if diff_old_text is not None:
@@ -371,13 +464,20 @@ def _snapshot_write_target(
             "content": before.content,
             "truncated": before.truncated,
         }
+        # Only create's content block is the whole previous file; strReplace
+        # and insert carry a fragment, which must never be diffed as one.
+        if cmd == "create" and len(diff_old_text) <= _MAX_RECONSTRUCT_BYTES:
+            snapshot["full_content"] = diff_old_text
         if pending is not None:
             snapshot["pending_str_replace"] = pending
         return snapshot
 
     # Fallback: read from disk (correct on the blocking permission-request path
-    # where the write has NOT yet executed).
-    content = _safe_read_snapshot(path)
+    # where the write has NOT yet executed). One read: the whole file when it is
+    # within _MAX_RECONSTRUCT_BYTES (capped here exactly as the ordinary read
+    # caps it), else the ordinary capped read and no whole text.
+    whole = _safe_read_file_text(path, whole=True)
+    content = _truncate_snapshot(whole.content) if whole is not None else _safe_read_snapshot(path)
     if content is None:
         # File doesn't exist yet (`create` on a new file is the common case)
         # OR was unreadable. Either way, record an empty before so the chip
@@ -389,6 +489,8 @@ def _snapshot_write_target(
         "content": content.content,
         "truncated": content.truncated,
     }
+    if whole is not None:
+        snapshot["full_content"] = whole.content
     if pending is not None:
         snapshot["pending_str_replace"] = pending
     return snapshot
@@ -541,10 +643,83 @@ def _record_turn_snapshot(
             ):
                 held.pop("pending_str_replace", None)
             slot._file_changes.append(slot._file_changes.pop(index))
-            return
-    if writer_key:
-        snapshot["writer_key"] = writer_key
-    slot._file_changes.append(snapshot)
+            break
+    else:
+        if writer_key:
+            snapshot["writer_key"] = writer_key
+        slot._file_changes.append(snapshot)
+    # Whole texts held for the flush (``full_content``, a pending candidate's
+    # ``whole_candidate``) are up to _MAX_RECONSTRUCT_BYTES each and the list
+    # grows by distinct path, so they are bounded per turn: the newest writes
+    # keep theirs -- the flush protects the most recent changed entry -- and
+    # past _MAX_TURN_FULL_CONTENT_CHARS older ones drop it and keep the top cut.
+    total = 0
+    for held in reversed(slot._file_changes):
+        holders: tuple[tuple[Any, str], ...] = (
+            (held, "full_content"),
+            (held.get("pending_str_replace"), "whole_candidate"),
+        )
+        for holder, name in holders:
+            whole = holder.get(name) if isinstance(holder, dict) else None
+            if whole is None:
+                continue
+            size = len(whole) if isinstance(whole, str) else len(whole[0])
+            total += size
+            if total > _MAX_TURN_FULL_CONTENT_CHARS:
+                holder.pop(name)
+                total -= size
+
+
+def _read_turn_afters(
+    changes: Any, turn_had_shell: bool = False
+) -> dict[str, tuple[_Snapshot | None, tuple[str, str] | None]]:
+    """Each distinct path's turn-end after, and its whole before/after when cut.
+
+    For the runner's ``_turn_after_reads``: keyed like the flush buckets
+    (canonical path, else raw path), first entry per key, valued
+    ``(capped after, (whole before, whole after) or None)``. A path with a whole
+    before gets one WHOLE read of its after (capped back for the stored side);
+    the whole pair is returned only when a side passes the per-file cut, for the
+    runner to redact and window (``_excerpt_pair``). The whole
+    before is ``full_content``, or a pending strReplace's ``whole_candidate``
+    accepted on the pre-write test the capped resolver runs, here on whole
+    texts: the edit applied to the disk content gives the turn-end file, which
+    differs from it. Like the capped resolver it never settles the post-write
+    case (the disk already held the after): completion and unchanged bytes
+    cannot tell that from a concurrent restore, so such an edit keeps the top
+    cut. A shell in the turn, or a second writer, blocks it, as they block the
+    capped resolver. Every other path gets the ordinary capped read.
+
+    Reads up to two megabytes per path, so it runs OFF the event loop inside
+    ``_turn_after_reads``. A flush given no reads reads the capped snapshot
+    inline and never reads the whole file or diffs.
+    """
+    reads: dict[str, tuple[_Snapshot | None, tuple[str, str] | None]] = {}
+    if not isinstance(changes, list):
+        return reads
+    for fc in changes:
+        if not isinstance(fc, dict) or not isinstance(fc.get("path"), str):
+            continue
+        key = fc.get("canonical_path") or fc["path"]
+        if key in reads:
+            continue
+        before = fc.get("full_content")
+        pending = fc.get("pending_str_replace")
+        candidate = pending.get("whole_candidate") if isinstance(pending, dict) else None
+        whole = None
+        if before is not None or (candidate is not None and not turn_had_shell):
+            whole = _safe_read_file_text(fc["path"], whole=True)
+        if whole is None:
+            reads[key] = (_safe_read_snapshot(fc["path"]), None)
+            continue
+        if before is None and candidate is not None:
+            disk, old, new = candidate
+            if whole.content != disk and whole.content == disk.replace(old, new, 1):
+                before = disk
+        after = _truncate_snapshot(whole.content)
+        cut = after.truncated or (before is not None and len(before) > _MAX_SNAPSHOT)
+        reads[key] = (after, (before, whole.content) if cut and before else None)
+    return reads
 
 
 def _line_change_input(fc: dict[str, Any], after: _Snapshot | None) -> dict[str, str] | None:
