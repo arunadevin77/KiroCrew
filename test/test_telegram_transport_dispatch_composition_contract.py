@@ -70,7 +70,6 @@ BASE_NAMES = frozenset(
         "ACTIVATION_MENTION",
         "ACTIVATION_OFF",
         "APPROVAL_INTERACTIVE",
-        "AcpError",
         "AgentInfo",
         "Any",
         "CHAT_TYPE_DIRECT",
@@ -176,6 +175,7 @@ BASE_NAMES = frozenset(
         "html",
         "is_bare_mid_turn_override",
         "is_session_trusted",
+        "is_user_worded_failure",
         "list_agents",
         "lists_host_state",
         "live",
@@ -976,11 +976,12 @@ def test_the_package_initializer_imports_nothing() -> None:
     assert [n for n in tree.body if not isinstance(n, ast.Expr)] == []
 
 
-#: The constructs no owner may hold, each with the reason. All but the two in
+#: The constructs no owner may hold, each with the reason. All but the ones in
 #: ``_FORBIDDEN_IN_THE_FACADE_TOO`` stay in ``transport_dispatch.py``, either because a
 #: repository guard locates them there by path or by ``inspect.getsource`` of that
 #: module, or (where marked) as a placement rule that keeps the turn engine whole. Those
-#: two are shapes a guard forbids in the facade, which it can only read there. A guard
+#: are shapes a guard forbids in the facade as well. The agent-SDK import is one: the
+#: facade's boundary baseline is empty, so check_agent_sdk_boundary refuses any. A guard
 #: that requires its construct in the facade fails by itself when the construct leaves;
 #: a guard that forbids a shape goes blind when the shape lands in an owner instead, so
 #: ``_facade_pinned_shapes`` makes both cases fail here, by name. Unguarded
@@ -1002,7 +1003,9 @@ _FACADE_PINNED = {
     "the queue drain": "test_queue_drain_wake: async def _drain_queue",
     "an agent-SDK import": "check_agent_sdk_boundary: kiro_crew.acp / kiro_crew.providers",
 }
-_FORBIDDEN_IN_THE_FACADE_TOO = frozenset({"a name-grant check", "the forgeable spawn title"})
+_FORBIDDEN_IN_THE_FACADE_TOO = frozenset(
+    {"a name-grant check", "the forgeable spawn title", "an agent-SDK import"}
+)
 
 
 def _facade_pinned_shapes(source: str) -> list[str]:

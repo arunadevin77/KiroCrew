@@ -3270,7 +3270,7 @@ class TestDispatcher:
 
         class _FailingProvider(FakeProvider):
             async def stream(self, message: str) -> Any:
-                raise AcpError(msg, transient=False)
+                raise AcpError(msg, transient=False, user_worded=True)
                 yield  # pragma: no cover — makes this an async generator
 
         class _Sessions(FakeSessions):
@@ -6750,25 +6750,34 @@ class TestTelegramSessionPidPublish:
 
 
 class TestUserSafeFailureReason:
-    def test_permanent_acp_error_yields_bounded_single_line(self) -> None:
-        exc = AcpError("line one\nline two\ttail", transient=False)
+    def test_user_worded_acp_error_yields_bounded_single_line(self) -> None:
+        exc = AcpError("line one\nline two\ttail", transient=False, user_worded=True)
         assert _user_safe_failure_reason(exc) == "⚠️ line one line two tail"
 
     def test_local_paths_are_redacted(self) -> None:
-        exc = AcpError("failed reading /home/alice/.kiro/crew/creds", transient=False)
+        exc = AcpError(
+            "failed reading /home/alice/.kiro/crew/creds", transient=False, user_worded=True
+        )
         out = _user_safe_failure_reason(exc)
         assert out is not None
         assert "/home/alice" not in out
 
     def test_length_hard_cap(self) -> None:
-        out = _user_safe_failure_reason(AcpError("x" * 5000, transient=False))
+        out = _user_safe_failure_reason(AcpError("x" * 5000, transient=False, user_worded=True))
         assert out is not None
         # "⚠️ " prefix + capped body (ellipsis included in the cap).
         assert len(out) <= 500 + len("⚠️ ")
         assert out.endswith("…")
 
+    def test_non_retryable_provider_fallback_returns_none(self) -> None:
+        # The formatter's fallback passes the provider's own text through and
+        # still marks it non-retryable; only Kiro Crew's own wording may reach chat.
+        exc = AcpError("provider said: {'data': 'opaque'}", transient=False)
+        assert _user_safe_failure_reason(exc) is None
+
     def test_transient_returns_none(self) -> None:
-        assert _user_safe_failure_reason(AcpError("5xx", transient=True)) is None
+        exc = AcpError("5xx", transient=True, user_worded=True)
+        assert _user_safe_failure_reason(exc) is None
 
     def test_unclassified_returns_none(self) -> None:
         assert _user_safe_failure_reason(AcpError("unknown", transient=None)) is None
@@ -6777,7 +6786,8 @@ class TestUserSafeFailureReason:
         assert _user_safe_failure_reason(ValueError("boom")) is None
 
     def test_empty_message_returns_none(self) -> None:
-        assert _user_safe_failure_reason(AcpError("   \n ", transient=False)) is None
+        exc = AcpError("   \n ", transient=False, user_worded=True)
+        assert _user_safe_failure_reason(exc) is None
 
 
 # ── /yolo (dispatch/commands.py) + /model (dispatch/pickers.py) ────────────
@@ -9126,20 +9136,23 @@ class TestTurnLifecycleCharacterization:
     def test_a_failure_reason_is_bounded_and_scrubbed(self) -> None:
         from kiro_crew.memory_stores import UnknownMemoryStore
 
-        assert _user_safe_failure_reason(AcpError("x" * 500, transient=False)) == "⚠️ " + "x" * 500
-        assert _user_safe_failure_reason(AcpError("x" * 501, transient=False)) == (
-            "⚠️ " + "x" * 499 + "…"
+        assert (
+            _user_safe_failure_reason(AcpError("x" * 500, transient=False, user_worded=True))
+            == "⚠️ " + "x" * 500
         )
-        assert _user_safe_failure_reason(AcpError("a" * 498 + " " + "b" * 10, transient=False)) == (
-            "⚠️ " + "a" * 498 + "…"
-        )
+        assert _user_safe_failure_reason(
+            AcpError("x" * 501, transient=False, user_worded=True)
+        ) == ("⚠️ " + "x" * 499 + "…")
+        assert _user_safe_failure_reason(
+            AcpError("a" * 498 + " " + "b" * 10, transient=False, user_worded=True)
+        ) == ("⚠️ " + "a" * 498 + "…")
         scrubbed = _user_safe_failure_reason(
-            AcpError("failed reading /srv/op/.kiro/crew/creds", transient=False)
+            AcpError("failed reading /srv/op/.kiro/crew/creds", transient=False, user_worded=True)
         )
         assert scrubbed is not None and "/srv/op" not in scrubbed
         assert scrubbed.startswith("⚠️ failed reading ")
         secret = _user_safe_failure_reason(
-            AcpError("token AKIAIOSFODNN7EXAMPLE rejected", transient=False)
+            AcpError("token AKIAIOSFODNN7EXAMPLE rejected", transient=False, user_worded=True)
         )
         assert secret is not None and "AKIAIOSFODNN7EXAMPLE" not in secret
         assert _user_safe_failure_reason(
@@ -9150,7 +9163,9 @@ class TestTurnLifecycleCharacterization:
             def __str__(self) -> str:
                 raise RuntimeError("boom")
 
-        assert _user_safe_failure_reason(_Unprintable("x", transient=False)) is None
+        assert (
+            _user_safe_failure_reason(_Unprintable("x", transient=False, user_worded=True)) is None
+        )
 
     def _instrument(self, monkeypatch: Any, d: Any, sess: Any, stream: Any = None) -> list:
         from kiro_crew.messaging import auto_title
@@ -9315,7 +9330,12 @@ class TestTurnLifecycleCharacterization:
         from kiro_crew.memory_stores import UnknownMemoryStore
 
         cases = [
-            (AcpError("model not in your plan", transient=False), "⚠️ model not in your plan"),
+            (
+                AcpError("model not in your plan", transient=False, user_worded=True),
+                "⚠️ model not in your plan",
+            ),
+            # Non-retryable, but the provider's own fallback text: generic reply.
+            (AcpError("provider said: {'data': 'opaque'}", transient=False), None),
             (AcpError("5xx", transient=True), None),
             (RuntimeError("boom"), None),
             (

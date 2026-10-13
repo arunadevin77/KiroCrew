@@ -649,7 +649,7 @@ class TestMalformedRequestReachesTheHandlePath:
 
         This error is TERMINAL, so a channel dispatcher hands the formatted
         string straight to the user (telegram's ``_user_safe_failure_reason``
-        only surfaces ``transient is False``). The formatter does not know which
+        surfaces a user-worded, non-retryable error). The formatter does not know which
         surface will render it, so it may name only commands spelled the same
         everywhere. ``/chat new`` was not one: it exists nowhere in the product
         (``/new`` on Telegram and Discord, a new tab on the dashboard), so the

@@ -49,8 +49,8 @@ from types import SimpleNamespace  # noqa: F401
 from typing import TYPE_CHECKING, Any, NamedTuple, cast  # noqa: F401
 
 from kiro_crew import runtime_death
-from kiro_crew.acp.client import AcpError
 from kiro_crew.agent_discovery import AgentInfo, list_agents  # noqa: F401
+from kiro_crew.agent_sdk.drivers.acp_vocab import is_user_worded_failure
 from kiro_crew.config import live
 from kiro_crew.config.loader import ACTIVATION_MENTION, ACTIVATION_OFF  # noqa: F401
 from kiro_crew.config.sections import _clamp_pct
@@ -293,19 +293,18 @@ _FAILURE_REASON_MAX_CHARS = 500
 def _user_safe_failure_reason(exc: BaseException) -> str | None:
     """A bounded, user-safe reason for a failed turn, or None for the generic text.
 
-    A private-memory refusal or *permanent* :class:`AcpError` yields a
-    reason: its message is already user-facing and actionable (e.g. names the
-    models the account does include), and the generic "please try again"
-    placeholder would be actively wrong for it. Transient and unclassified
-    failures keep the retry wording, and any other exception type returns
-    None — arbitrary internal errors must never leak into chat (CWE-209).
+    A private-memory refusal or a backend failure Kiro Crew worded for a person
+    (``is_user_worded_failure``) yields a reason: its message is already
+    user-facing and actionable (e.g. names the models the account does
+    include), and the generic "please try again" placeholder would be actively
+    wrong for it. Every other failure keeps the retry wording, including a
+    non-retryable ``AcpError`` whose text is the provider's own fallback
+    message — arbitrary internal errors must never leak into chat (CWE-209).
 
     The text is untrusted output: credentials/exfil URLs and local filesystem
     paths are redacted, newlines are collapsed, and the length is hard-capped.
     """
-    if not isinstance(exc, UnknownMemoryStore) and (
-        not isinstance(exc, AcpError) or exc.transient is not False
-    ):
+    if not isinstance(exc, UnknownMemoryStore) and not is_user_worded_failure(exc):
         return None
     try:
         text = redact_local_paths(redact(str(exc)))[0]
