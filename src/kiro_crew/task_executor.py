@@ -1415,7 +1415,12 @@ async def execute_task(
         task.verification = verdict
         if verdict != VerificationStatus.PASSED:
             if require_verification and verdict != VerificationStatus.FAILED:
-                # The verifier did not run; retrying the agent's work cannot change that.
+                # The verifier did not run, so the step fails on this attempt, without
+                # a retry. With tests off or no command, no agent turn can change
+                # that. A command that could not start is a fault in the configured
+                # command or its environment, not in the step's work. A path-style
+                # program resolves from the work directory, so a turn could create
+                # it, but the verdict would then come from a program the agent wrote.
                 verdict_text = verdict.replace("_", " ")
                 task.error = f"Verification is required but was {verdict_text}: {test_output}"
                 task.status = TaskStatus.FAILED

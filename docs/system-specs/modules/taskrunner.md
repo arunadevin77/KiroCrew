@@ -834,8 +834,11 @@ exits non-zero and reads `failed`.
 With `taskrunner.require_verification` off (the default), a `skipped` or
 `not_configured` step still passes as before and reports its verdict. With it
 on, only `passed` lets a step pass. A step whose verifier did not run fails on
-that attempt, without a retry, since another agent turn cannot start the
-verifier. `_execute_tasks` fails the run before its first step when no command
+that attempt, without a retry. With tests off or no command, no agent turn can
+change that. A command that could not start is a fault in the configured command
+or its environment, not in the step's work. A path-style program resolves from
+the work directory, so a turn could create it, but the verdict would then come
+from a program the agent wrote. `_execute_tasks` fails the run before its first step when no command
 will run (an empty command, or `--no-test`). Required mode judges steps as they
 run: a step that passed before the key was turned on (stored verdict `""`) is kept
 by a resume and is not re-verified.
