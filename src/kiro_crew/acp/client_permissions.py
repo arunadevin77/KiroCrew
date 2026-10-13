@@ -374,6 +374,9 @@ async def reject_tool(self: AcpClient, request_id: str | int) -> None:
     recorded = self._permission_options.pop(request_id, None)
     getattr(self, "_permission_gate_events", {}).pop(request_id, None)
     self._note_pi_gate_denied(request_id)
+    # Read by the concurrent-prompt steer settle: this denial may end the turn
+    # before a steer sent into it is read.
+    self._turn_permission_denied = True
     reject_id = recorded.get("reject") if recorded else None
     if reject_id:
         await self._send_response(

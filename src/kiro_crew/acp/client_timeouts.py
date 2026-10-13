@@ -165,6 +165,17 @@ async def _effective_prompt_timeout_async(timeout: float | None) -> float:
 
 _READ_TIMEOUT = 20.0
 _OPENCODE_PERMISSION_REFINEMENT_TIMEOUT = 2.0
+# Steers sent as a second ``session/prompt`` (``ACP_BACKENDS_STEER_CONCURRENT_PROMPT``).
+# A steer the running loop read is answered at the same idle as the turn, so the
+# turn's clean end waits only this long for its answer.
+_CONCURRENT_STEER_GRACE_SECS = 2.0
+# How long a steer that ran a loop of its own is waited for after its cancel, so
+# none of that loop's frames reach the next turn.
+_CONCURRENT_STEER_CANCEL_SECS = 5.0
+# At most this many such steers per turn, each at most this long. A steer past
+# either bound takes the caller's queue path instead.
+_MAX_CONCURRENT_STEERS = 16
+_MAX_CONCURRENT_STEER_CHARS = 64_000
 # After a compaction `completed` status, kiro-cli emits a fresh
 # `_kiro.dev/metadata` with the real post-compaction contextUsagePercentage
 # about ~1s later (live-probe confirmed). Wait up to this long for it so the

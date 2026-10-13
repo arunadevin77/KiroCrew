@@ -1,6 +1,7 @@
 """Control an ``AcpClient`` turn from outside it.
 
-Steers (kiro ``_session/steer``, claude ``_session/steering``, goose's steer request),
+Steers (kiro ``_session/steer``, claude ``_session/steering``, goose's steer request,
+opencode's second ``session/prompt``),
 cancel, slash commands, and the turn-state queries callers poll.
 
 Each function here whose first parameter is ``self`` is an ``AcpClient`` method: the
@@ -8,12 +9,14 @@ class binds it by name, so it reads and writes the session's own state on the in
 and a patch of the method on the class or on an instance reaches every caller.
 
 Instance fields written: ``_active_run_id``, ``_cancel_grace_secs``, ``_cancel_ts``,
-``_cancelled``, ``_last_activity``, ``_permission_options``, ``_steer_answers``,
-``_steering_waiter_map``, ``_steers_awaiting_echo``.
+``_cancelled``, ``_last_activity``, ``_orphan_steers``, ``_orphan_steers_process``,
+``_permission_options``, ``_steer_answers``, ``_steering_waiter_map``,
+``_steers_awaiting_echo``.
 
 Instance fields read: ``_agent``, ``_agent_version``, ``_background_launches``,
 ``_last_stop_reason``, ``_permission_gate_events``, ``_process``, ``_session_id``,
-``_session_key``, ``_stdin_stalled``, ``_turn_done``.
+``_session_key``, ``_stdin_stalled``, ``_steer_turn``, ``_turn_done``,
+``_turn_lock``, ``_turn_permission_denied``.
 """
 
 from __future__ import annotations
@@ -22,7 +25,8 @@ import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, AsyncIterator, Collection
 
 from kiro_crew import sel as sel_module
 from kiro_crew.acp import transport_framing
@@ -32,21 +36,30 @@ from kiro_crew.acp.client_claude_session import (
 )
 from kiro_crew.acp.client_timeouts import (
     _CANCEL_GRACE_SECS,
+    _CONCURRENT_STEER_CANCEL_SECS,
+    _CONCURRENT_STEER_GRACE_SECS,
+    _MAX_CONCURRENT_STEER_CHARS,
+    _MAX_CONCURRENT_STEERS,
+    _READ_TIMEOUT,
     _SEL_AUDIT_TIMEOUT_SECONDS,
     _STEERING_WAIT_SLICE_SECS,
     _effective_prompt_timeout_async,
 )
-from kiro_crew.acp.transport_errors import AcpError, AcpTimeoutError
+from kiro_crew.acp.transport_errors import AcpError, AcpProcessDied, AcpTimeoutError
 from kiro_crew.acp.transport_framing import write_notification_best_effort
 from kiro_crew.acp.types import (
     ACP_BACKEND_GOOSE,
+    ACP_BACKENDS_STEER_CONCURRENT_PROMPT,
     ACP_BACKENDS_STEERING_REQUEST,
     EVENT_STEER_CONSUMED,
     MAX_STEERING_ANSWERS,
     MAX_STEERING_TEXT_CHARS,
     METHOD_CANCEL,
     METHOD_COMMANDS_EXECUTE,
+    METHOD_PROMPT,
+    METHOD_REQUEST_PERMISSION,
     METHOD_SESSION_STEERING,
+    METHOD_SESSION_UPDATE,
     OUTCOME_CANCELLED,
     STEERING_ANSWER_WAIT_SECS,
     STEERING_INJECTED,
@@ -65,6 +78,22 @@ if TYPE_CHECKING:
 
 #: The client's own logger: this code logged under that name before the split.
 logger = logging.getLogger("kiro_crew.acp.client")
+
+
+@dataclass
+class _ConcurrentSteerTurn:
+    """One prompt turn's concurrent-prompt steers, from first write to settle.
+
+    ``steers`` maps each request id to its wrapped text, registered before the
+    write; ``answers`` holds each answer read, with whether another loop's output
+    came first; ``accepted`` is the ids whose ``steer()`` returned True. Once
+    ``closed``, every id not in ``answers`` has been made an orphan.
+    """
+
+    steers: dict[int, str] = field(default_factory=dict)
+    answers: dict[int, tuple[JsonRpcMessage, bool]] = field(default_factory=dict)
+    accepted: set[int] = field(default_factory=set)
+    closed: bool = False
 
 
 def steering_advertised(init_resp: object) -> bool:
@@ -295,32 +324,7 @@ async def cancel_session(self: AcpClient, grace_secs: float = 0.0) -> None:
         # the call exactly as it treats a rejected one.
         self._note_pi_gate_denied(request_id)
 
-    # Each cancelled approval is a denial Crew made, so it gets its own SEL
-    # record before the answers go out. ONE off-loop hop for all of them, with
-    # the accessor inside it (an unwarmed ``sel()`` initialises on the calling
-    # thread), bounded the way ``_maybe_audit_tool_call`` bounds its write, so
-    # a stuck SEL backend costs this Stop at most one audit timeout.
-    def _audit_cancelled() -> None:
-        log = sel_module.sel()
-        for request_id in open_requests:
-            log.log_tool_invocation(
-                session_key=self._session_key or "",
-                agent=self._agent,
-                source="acp",
-                tool_name="approval_cancel",
-                tool_kind="permission",
-                outcome="rejected_on_cancel",
-                request_id=request_id,
-                metadata={"backend": self.backend},
-            )
-
-    try:
-        await asyncio.wait_for(
-            asyncio.get_running_loop().run_in_executor(subprocess_executor(), _audit_cancelled),
-            timeout=_SEL_AUDIT_TIMEOUT_SECONDS,
-        )
-    except Exception:
-        logger.warning("cancel_session: SEL audit of cancelled approvals failed", exc_info=True)
+    await self._audit_cancelled_approvals(open_requests)
     for request_id in open_requests:
         try:
             await self._send_response(request_id, {"outcome": {"outcome": OUTCOME_CANCELLED}})
@@ -330,6 +334,43 @@ async def cancel_session(self: AcpClient, grace_secs: float = 0.0) -> None:
                 exc_info=True,
             )
             break
+
+
+async def _audit_cancelled_approvals(
+    self: AcpClient, request_ids: list[str | int], *, cause: str = ""
+) -> None:
+    """Write one SEL record per approval Crew answers ``cancelled``.
+
+    Each cancelled approval is a denial Crew made, so it gets its own record
+    before the answers go out. ONE off-loop hop for all of them, with the
+    accessor inside it (an unwarmed ``sel()`` initialises on the calling
+    thread), bounded the way ``_maybe_audit_tool_call`` bounds its write, so a
+    stuck SEL backend costs the caller at most one audit timeout. *cause*, when
+    set, is recorded as the metadata ``cause``.
+    """
+    metadata = {"backend": self.backend, **({"cause": cause} if cause else {})}
+
+    def _audit_cancelled() -> None:
+        log = sel_module.sel()
+        for request_id in request_ids:
+            log.log_tool_invocation(
+                session_key=self._session_key or "",
+                agent=self._agent,
+                source="acp",
+                tool_name="approval_cancel",
+                tool_kind="permission",
+                outcome="rejected_on_cancel",
+                request_id=request_id,
+                metadata=metadata,
+            )
+
+    try:
+        await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(subprocess_executor(), _audit_cancelled),
+            timeout=_SEL_AUDIT_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        logger.warning("SEL audit of cancelled approvals failed", exc_info=True)
 
 
 async def steer(self: AcpClient, message: str) -> bool:
@@ -345,6 +386,10 @@ async def steer(self: AcpClient, message: str) -> bool:
     A backend in ``ACP_BACKENDS_STEERING_REQUEST`` is delivered by a request
     whose answer the read loop hands over instead: goose by
     :meth:`_steer_via_request`, claude by :meth:`_steer_via_steering_request`.
+
+    A backend in ``ACP_BACKENDS_STEER_CONCURRENT_PROMPT`` takes the steer as
+    a second ``session/prompt`` instead (:meth:`_steer_via_concurrent_prompt`),
+    whose answer the turn's own read loop settles.
     """
     text = (message or "").strip()
     if not text or not self._session_id:
@@ -353,6 +398,8 @@ async def steer(self: AcpClient, message: str) -> bool:
         return await self._steer_via_request(_CLIENT_STEERING_REQUEST_METHODS[self.backend], text)
     if self.backend in ACP_BACKENDS_STEERING_REQUEST:
         return await self._steer_via_steering_request(text)
+    if self.backend in ACP_BACKENDS_STEER_CONCURRENT_PROMPT:
+        return await self._steer_via_concurrent_prompt(text)
     wrapped = f"<user_message>\n{text}\n</user_message>"
     await self._send_request("_session/steer", {"sessionId": self._session_id, "message": wrapped})
     # See AcpSessionHandle.steer for why the stamp is taken at the write.
@@ -625,6 +672,56 @@ async def _steer_via_request(self: AcpClient, method: str, text: str) -> bool:
     return True
 
 
+async def _steer_via_concurrent_prompt(self: AcpClient, text: str) -> bool:
+    """Send a user steer as a second ``session/prompt`` into the running turn.
+
+    See ``ACP_BACKENDS_STEER_CONCURRENT_PROMPT`` for what was measured. True
+    means written into a turn of ours that is still running, not consumed.
+    The request's answer is the only delivery evidence, and it comes when the
+    turn ends, so it is read by the turn itself: :meth:`_settle_concurrent_steers`
+    reports the steer consumed at a clean end, and on any other end nothing
+    is reported and the caller's pending entry is queued.
+
+    False, so the caller queues the text, when no prompt turn of ours is
+    running, when the steer is past ``_MAX_CONCURRENT_STEER_CHARS`` or the
+    turn already holds ``_MAX_CONCURRENT_STEERS``, and when the turn ended
+    while the frame was being written. The id is registered on the turn's
+    record before the write, and whoever closes that record -- the settle or
+    the turn's own exit -- decides what is owed for it: nothing when it was
+    answered, a cancel before the next prompt when it was not. This call never
+    decides that itself, so a write that resumes after the close cannot mark an
+    answered steer as owed.
+    """
+    turn = getattr(self, "_steer_turn", None)
+    if turn is None or turn.closed or not self.has_active_turn():
+        return False
+    if len(text) > _MAX_CONCURRENT_STEER_CHARS or len(turn.steers) >= _MAX_CONCURRENT_STEERS:
+        return False
+    wrapped = f"<user_message>\n{text}\n</user_message>"
+    sent: list[int] = []
+
+    def _register(rid: int) -> None:
+        # Before the write, so the turn can never read the answer unclaimed.
+        sent.append(rid)
+        turn.steers[rid] = wrapped
+
+    try:
+        await self._send_request(
+            METHOD_PROMPT,
+            {"sessionId": self._session_id, "prompt": [{"type": "text", "text": text}]},
+            on_id=_register,
+        )
+    except BaseException:
+        if sent and not turn.closed:
+            turn.steers.pop(sent[0], None)
+        raise
+    if turn.closed or self._steer_turn is not turn or not self.has_active_turn():
+        return False
+    turn.accepted.add(sent[0])
+    self._last_steer_monotonic = time.monotonic()
+    return True
+
+
 def _note_active_run(self: AcpClient, msg: JsonRpcMessage) -> None:
     """Track the run id goose announces for the running prompt.
 
@@ -694,6 +791,187 @@ def _steer_echo_event(self: AcpClient, msg: JsonRpcMessage) -> AcpEvent | None:
     if wrapped is None:
         return None
     return AcpEvent(kind=EVENT_STEER_CONSUMED, text=wrapped)
+
+
+def _close_steer_turn(self: AcpClient, turn: _ConcurrentSteerTurn) -> None:
+    """Close *turn*'s steer record: each steer still unanswered becomes an orphan."""
+    if turn.closed:
+        return
+    turn.closed = True
+    unanswered = set(turn.steers) - set(turn.answers)
+    if unanswered:
+        self._add_orphan_steers(unanswered)
+
+
+def _add_orphan_steers(self: AcpClient, ids: Collection[int]) -> None:
+    """Owe a cancel for *ids* on THIS process before its next prompt."""
+    if getattr(self, "_orphan_steers_process", None) is not self._process:
+        self._orphan_steers = set()
+        self._orphan_steers_process = self._process
+    self._orphan_steers.update(ids)
+
+
+async def _settle_concurrent_steers(
+    self: AcpClient, turn: _ConcurrentSteerTurn, terminal: AcpEvent
+) -> list[str]:
+    """Settle *turn*'s concurrent-prompt steers at its ``EVENT_COMPLETE``.
+
+    Runs while the turn still holds the read lock. Each steer's answer is read
+    within ``_CONCURRENT_STEER_GRACE_SECS``: the running loop answers a steer
+    it read at the same idle as the turn. A steer still unanswered then ran a
+    loop of its own; that loop is cancelled and its answer read, so none of its
+    frames reach the next turn. Answers are recorded on *turn* as they are
+    read, and the record is closed in a ``finally``, so a settle cut short by
+    a cancel or the turn ceiling still leaves every unanswered steer owed.
+
+    Returns the wrapped text of each steer the turn consumed. That needs a
+    clean turn -- no cancel, no denied approval, no refusal, a stop reason of
+    exactly ``end_turn`` -- and the steer's own clean ``end_turn`` answer,
+    with no output of another loop read before it. A denied approval ends
+    opencode's loop without reading what came after it, so a turn with one
+    reports nothing. A steer whose ``steer()`` call has not returned True yet
+    is not reported either: the caller writes its row on that return, so a
+    report ahead of it would settle an entry no row backs. Every steer not
+    returned stays pending with the caller, which queues it.
+    """
+    try:
+        waiting = set(turn.steers) - set(turn.answers)
+        if waiting:
+            await self._read_steer_answers(waiting, _CONCURRENT_STEER_GRACE_SECS, into=turn.answers)
+        ran_alone = set(turn.steers) - set(turn.answers)
+        if ran_alone:
+            logger.info(
+                "%d steer(s) on %s ran a turn of their own; cancelling and queueing",
+                len(ran_alone),
+                self._session_id,
+            )
+            await self._write_steer_cancel()
+            await self._read_steer_answers(
+                ran_alone, _CONCURRENT_STEER_CANCEL_SECS, into=turn.answers
+            )
+    finally:
+        self._close_steer_turn(turn)
+    clean = (
+        not self._cancelled
+        and not self._turn_permission_denied
+        and terminal.refusal is None
+        and terminal.stop_reason == STOP_REASON_END_TURN
+    )
+    if not clean:
+        return []
+    consumed = []
+    for rid, wrapped in turn.steers.items():
+        if rid in ran_alone or rid not in turn.accepted:
+            continue
+        answer, after_other_output = turn.answers[rid]
+        result = answer.result if isinstance(answer.result, dict) else {}
+        if answer.error or after_other_output:
+            continue
+        if result.get("stopReason") == STOP_REASON_END_TURN:
+            consumed.append(wrapped)
+    return consumed
+
+
+async def _read_steer_answers(
+    self: AcpClient,
+    ids: set[int],
+    bound: float,
+    *,
+    into: dict[int, tuple[JsonRpcMessage, bool]],
+) -> None:
+    """Read frames until each of *ids* is answered in *into*, or *bound* seconds pass.
+
+    Called with the read lock held, after the turn's own terminal, so every
+    other frame belongs to a loop a steer started: it is dropped, and an
+    approval it asks for is answered ``cancelled``. Each answer is recorded in
+    *into* the moment it is read, with whether such a frame came before it, so
+    a caller cut short keeps what was read.
+    """
+    other_output = False
+    deadline = time.monotonic() + bound
+    while ids - set(into):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            msg = await self._read_message(timeout=min(remaining, _READ_TIMEOUT))
+        except AcpError:
+            break
+        if msg is None:
+            if not self._is_process_alive():
+                break
+            continue
+        if msg.method is None and msg.id in ids:
+            into[msg.id] = (msg, other_output)
+        elif msg.is_method(METHOD_REQUEST_PERMISSION) and msg.id is not None:
+            other_output = True
+            await self._audit_cancelled_approvals([msg.id], cause="steer_loop")
+            await self._send_response(msg.id, {"outcome": {"outcome": OUTCOME_CANCELLED}})
+        elif msg.method is not None and msg.id is not None:
+            other_output = True
+            await self._reject_unknown_server_request(msg)
+        elif msg.is_method(METHOD_SESSION_UPDATE):
+            other_output = True
+
+
+async def _write_steer_cancel(self: AcpClient) -> None:
+    """Send ``session/cancel`` for a loop a steer started; best effort."""
+    if not self._process or not self._process.stdin:
+        return
+    data = json.dumps(
+        {"jsonrpc": "2.0", "method": METHOD_CANCEL, "params": {"sessionId": self._session_id}}
+    )
+    try:
+        await write_notification_best_effort(
+            self._process.stdin,
+            self._stdin_write_lock(),
+            (data + "\n").encode(),
+            bound_secs=transport_framing._RESPONSE_WRITE_BOUND_SECS,
+        )
+    except Exception as exc:
+        logger.warning("steer cancel on %s failed: %s", self._session_id, type(exc).__name__)
+
+
+async def _settle_orphan_steers(self: AcpClient) -> None:
+    """Cancel loops that earlier steers may still run, before a prompt is written.
+
+    A steer whose turn ended before its answer came may have started a loop
+    that no prompt of ours reads. Its frames would otherwise be read by the
+    next turn as that turn's own. Takes the read lock, so it never reads
+    beside a turn. Orphans belong to the process they were sent to: on a new
+    process they are dropped unread. One cut short keeps every id still
+    unanswered owed for the next prompt.
+
+    Raises :class:`AcpProcessDied` after killing the process when a loop is
+    still unanswered after ``_CONCURRENT_STEER_CANCEL_SECS``: its late frames
+    cannot be told from the next turn's, and the prompt is not written yet,
+    so the existing recovery path can replay it on a fresh process.
+    """
+    if not getattr(self, "_orphan_steers", None):
+        return
+    if self._orphan_steers_process is not self._process:
+        self._orphan_steers = set()
+        return
+    ids = set(self._orphan_steers)
+    answers: dict[int, tuple[JsonRpcMessage, bool]] = {}
+    async with self._turn_lock:
+        try:
+            await self._write_steer_cancel()
+            await self._read_steer_answers(ids, _CONCURRENT_STEER_CANCEL_SECS, into=answers)
+        finally:
+            self._orphan_steers.difference_update(answers)
+    if self._orphan_steers:
+        # A loop that did not stop on cancel would stream into the prompt about
+        # to go out, as that turn's own answer. Nothing has been written for it
+        # yet, so the process is retired and the caller's recovery replays it.
+        logger.warning(
+            "%d steer loop(s) on %s did not stop on cancel; retiring the process",
+            len(self._orphan_steers),
+            self._session_id,
+        )
+        self._orphan_steers = set()
+        await self._kill_process(force=True)
+        raise AcpProcessDied("a steer's own turn did not stop on cancel; agent killed to recover")
 
 
 def turn_finished_cleanly(self: AcpClient) -> bool:
