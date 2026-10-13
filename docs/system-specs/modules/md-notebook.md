@@ -154,7 +154,7 @@ UI calls. All vault-scoped routes accept `?vault=<id>` and fall back to the firs
 | `/api/notes` | `{notes[]}` with title, `modifiedAt`, `createdAt`, `syncStatus` |
 | `/api/note?path=` | `{path, content, mtime, meta, backlinks[]}` |
 | `/api/search?q=` | `{results[]}`; an empty query returns nothing, not everything |
-| `/api/changes?since=` | `{rev, changed[], watching}` — external-edit poll |
+| `/api/changes?since=` | `{rev, changed[], watching}` — external-edit poll; also where a pull made outside the app is counted as a sync |
 
 ### Write (POST/PUT/DELETE)
 
@@ -311,6 +311,30 @@ disk.
 This replaces the Node original's recursive `fs.watch`. Snapshot comparison needs no extra
 dependency and no background thread, and since the UI is the only consumer and it polls,
 the observable behaviour is the same.
+
+The same poll counts a pull made outside the app as a sync. Auto sync is not available to
+every user (an SSH remote the sandbox cannot reach), so some keep a vault current with
+`git pull` by hand, and `lastSync` is written only by the backend's own sync paths — the
+"Synced N ago" label would otherwise keep reading from the last time the app pulled. The
+poll stats `FETCH_HEAD` (every `fetch` and `pull` rewrites it; a push does not, so a
+push-only flow is seen at the next fetch) and examines each new fetch once. It earns a stamp
+on the same observation the app's own sync does: origin is still the trusted URL (the same
+pin sync enforces, `remote_is_trusted`), HEAD is the checked-out branch's remote-tracking ref
+(`refs/remotes/origin/<branch>`, which every fetch and pull of that branch moves) and nothing
+is pending in the vault's scope. A fetch that left local commits unpushed or edits uncommitted
+is not a sync — those notes are still only on this machine. The tracking ref is what the vault
+knows of its remote, not proof of what the remote holds: a fetch of some other branch alone,
+on a vault already level with its tracking ref, earns a stamp at that fetch time too, and
+`.git` is agent-writable. The stamp is a label the user reads, never an authorization.
+`FETCH_HEAD` itself is only stat'ed for its mtime, never read. A fetch is examined until it is
+decided, then never again — and a fetch that earns a stamp is consumed only once the stamp is
+written, so a failed settings write leaves it for the next poll; a HEAD-behind-the-tip reading stays open for `FETCH_SETTLE_MS`
+(60 s) because `git pull` writes `FETCH_HEAD` before it merges, and a poll can land between the
+two. The stamp is the fetch time clamped to now (an mtime the agent can set must not read
+"just now" forever), the `.git` pointer is pinned to the recorded `gitDir` as in sync, and
+`record_last_sync` never moves a stamp backwards. The stamp reaches the "Synced N
+ago" label through the settings the page already refetches every minute; the poll's own reply
+is unchanged.
 
 ## Git Behavior
 

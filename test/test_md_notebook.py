@@ -2540,6 +2540,223 @@ async def test_own_save_is_not_reported_as_external(fixtures) -> None:
 
 
 # ---------------------------------------------------------------------------
+# A pull made outside the app counts as a sync
+# ---------------------------------------------------------------------------
+
+
+def _publish_from_seed(seed: Path, name: str) -> None:
+    """Land a new note on the remote from the other checkout, as another writer would."""
+    (seed / name).write_text(f"# {name}\n\nwritten elsewhere\n", encoding="utf-8")
+    _git("add", name, cwd=seed)
+    _git("commit", "-m", f"add {name}", cwd=seed)
+    _git("push", "origin", "main", cwd=seed)
+
+
+def _fetch_head_ms(vault: dict[str, Any]) -> int:
+    return int(os.stat(Path(vault["gitDir"]) / "FETCH_HEAD").st_mtime * 1000)
+
+
+@pytest.mark.asyncio
+async def test_a_manual_pull_that_matches_the_remote_stamps_last_sync(fixtures) -> None:
+    """A user who pulls the vault by hand (auto sync unavailable to them) sees
+    "Synced N ago" move: the poll stamps the fetch time once HEAD sits at the
+    fetched tip with nothing pending, and settings carry that stamp to the page."""
+    server_mod, remote, seed = fixtures
+    async with signed_client(server_mod) as client:
+        vault = await _clone(client, remote)
+        _, first = await client.get(f"/api/changes?vault={vault['id']}&since=0")
+        # A fresh clone has never fetched: nothing to count.
+        assert (await client.get("/api/settings"))[1]["settings"]["lastSync"] == {}
+
+        _publish_from_seed(seed, "Three.md")
+        _git("pull", "--ff-only", "origin", "main", cwd=Path(vault["localPath"]))
+
+        _, poll = await client.get(f"/api/changes?vault={vault['id']}&since={first['rev']}")
+        assert "Three.md" in poll["changed"]
+        _, settings = await client.get("/api/settings")
+        assert settings["settings"]["lastSync"][vault["id"]] == _fetch_head_ms(vault)
+        # The poll's reply shape is unchanged; the stamp travels through settings.
+        assert "lastSync" not in poll
+
+
+@pytest.mark.asyncio
+async def test_a_manual_pull_leaving_local_commits_unpushed_is_not_a_sync(fixtures) -> None:
+    """HEAD ahead of the fetched tip means notes exist only on this machine;
+    the label must not claim they are backed up."""
+    server_mod, remote, seed = fixtures
+    async with signed_client(server_mod) as client:
+        vault = await _clone(client, remote)
+        local = Path(vault["localPath"])
+        (local / "Mine.md").write_text("# Mine\n\nnot pushed\n", encoding="utf-8")
+        _git("add", "Mine.md", cwd=local)
+        _git("commit", "-m", "local only", cwd=local)
+
+        _publish_from_seed(seed, "Theirs.md")
+        _git("pull", "--no-rebase", "--no-edit", "origin", "main", cwd=local)
+
+        await client.get(f"/api/changes?vault={vault['id']}&since=0")
+        _, settings = await client.get("/api/settings")
+        assert settings["settings"]["lastSync"] == {}
+
+
+@pytest.mark.asyncio
+async def test_a_manual_pull_over_uncommitted_edits_is_not_a_sync(fixtures) -> None:
+    """An edit still pending in the vault's scope never reached the remote."""
+    server_mod, remote, seed = fixtures
+    async with signed_client(server_mod) as client:
+        vault = await _clone(client, remote)
+        local = Path(vault["localPath"])
+        _publish_from_seed(seed, "Three.md")
+        _git("pull", "--ff-only", "origin", "main", cwd=local)
+        (local / "One.md").write_text("# One\n\nstill pending\n", encoding="utf-8")
+
+        await client.get(f"/api/changes?vault={vault['id']}&since=0")
+        _, settings = await client.get("/api/settings")
+        assert settings["settings"]["lastSync"] == {}
+
+
+@pytest.mark.asyncio
+async def test_the_apps_own_fetch_is_not_stamped_twice(fixtures) -> None:
+    """The app's sync fetches too; its stamp already covers that fetch, so the
+    poll leaves it alone rather than moving it back to the fetch time."""
+    server_mod, remote, _seed = fixtures
+    async with signed_client(server_mod) as client:
+        vault = await _clone(client, remote)
+        status, body = await client.post(f"/api/sync?vault={vault['id']}", {})
+        assert status == 200, body
+        stamped = body["lastSync"]
+
+        await client.get(f"/api/changes?vault={vault['id']}&since=0")
+        _, settings = await client.get("/api/settings")
+        assert settings["settings"]["lastSync"][vault["id"]] == stamped
+
+
+@pytest.mark.asyncio
+async def test_a_repointed_origin_is_not_a_sync(fixtures, tmp_path: Path) -> None:
+    """The same origin pin sync enforces: a `.git/config` whose origin differs
+    from the trusted URL earns nothing, however level HEAD is with its ref."""
+    server_mod, remote, seed = fixtures
+    async with signed_client(server_mod) as client:
+        vault = await _clone(client, remote)
+        local = Path(vault["localPath"])
+        _publish_from_seed(seed, "Three.md")
+        _git("pull", "--ff-only", "origin", "main", cwd=local)
+        _git("remote", "set-url", "origin", str(tmp_path / "elsewhere.git"), cwd=local)
+
+        await client.get(f"/api/changes?vault={vault['id']}&since=0")
+        _, settings = await client.get("/api/settings")
+        assert settings["settings"]["lastSync"] == {}
+
+
+@pytest.mark.asyncio
+async def test_a_poll_between_fetch_and_merge_does_not_lose_the_pull(
+    fixtures, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`git pull` writes FETCH_HEAD, then merges. A poll landing in between sees
+    HEAD behind the tip; that fetch must still be stamped once the merge lands."""
+    server_mod, remote, seed = fixtures
+    monkeypatch.setattr(server_mod, "FETCH_SETTLE_MS", 10**9)
+    async with signed_client(server_mod) as client:
+        vault = await _clone(client, remote)
+        local = Path(vault["localPath"])
+        _publish_from_seed(seed, "Three.md")
+        _git("fetch", "origin", "main", cwd=local)
+
+        await client.get(f"/api/changes?vault={vault['id']}&since=0")
+        assert (await client.get("/api/settings"))[1]["settings"]["lastSync"] == {}
+
+        _git("merge", "--ff-only", "FETCH_HEAD", cwd=local)
+        await client.get(f"/api/changes?vault={vault['id']}&since=0")
+        _, settings = await client.get("/api/settings")
+        assert settings["settings"]["lastSync"][vault["id"]] == _fetch_head_ms(vault)
+
+
+@pytest.mark.asyncio
+async def test_an_old_head_mismatch_is_final(fixtures, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Past the settle window, HEAD behind or ahead of the tip is a vault that
+    simply differs from its remote; that fetch is not re-examined every tick."""
+    server_mod, remote, seed = fixtures
+    monkeypatch.setattr(server_mod, "FETCH_SETTLE_MS", 0)
+    async with signed_client(server_mod) as client:
+        vault = await _clone(client, remote)
+        local = Path(vault["localPath"])
+        _publish_from_seed(seed, "Three.md")
+        _git("fetch", "origin", "main", cwd=local)
+
+        await client.get(f"/api/changes?vault={vault['id']}&since=0")
+        _git("merge", "--ff-only", "FETCH_HEAD", cwd=local)
+        await client.get(f"/api/changes?vault={vault['id']}&since=0")
+        assert (await client.get("/api/settings"))[1]["settings"]["lastSync"] == {}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_stamp_write_does_not_consume_the_fetch(
+    fixtures, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fetch is marked seen only after its stamp is on disk: a write that
+    fails leaves it for the next poll instead of losing the pull."""
+    server_mod, remote, seed = fixtures
+    async with signed_client(server_mod) as client:
+        vault = await _clone(client, remote)
+        _publish_from_seed(seed, "Three.md")
+        _git("pull", "--ff-only", "origin", "main", cwd=Path(vault["localPath"]))
+
+        # A flag rather than monkeypatch.undo(): undo would also drop the
+        # fixtures' own patches (the backend's test home among them).
+        real_write, disk_full = server_mod._write_settings_sync, True
+
+        def _write(settings: dict[str, Any]) -> None:
+            if disk_full:
+                raise OSError(28, "No space left on device")
+            real_write(settings)
+
+        monkeypatch.setattr(server_mod, "_write_settings_sync", _write)
+        status, _ = await client.get(f"/api/changes?vault={vault['id']}&since=0")
+        assert status == 200
+        assert (await client.get("/api/settings"))[1]["settings"]["lastSync"] == {}
+
+        disk_full = False
+        await client.get(f"/api/changes?vault={vault['id']}&since=0")
+        _, settings = await client.get("/api/settings")
+        assert settings["settings"]["lastSync"][vault["id"]] == _fetch_head_ms(vault)
+
+
+@pytest.mark.asyncio
+async def test_a_redirected_gitdir_fails_the_pin(fixtures, tmp_path: Path) -> None:
+    """The same pin sync enforces: a `.git` pointer aimed elsewhere is refused
+    before any git command runs in the checkout."""
+    server_mod, remote, _seed = fixtures
+    async with signed_client(server_mod) as client:
+        vault = await _clone(client, remote)
+        git_ops_mod = server_mod.git_ops
+        assert await git_ops_mod.gitdir_is_trusted(vault["localPath"], vault["gitDir"])
+        assert not await git_ops_mod.gitdir_is_trusted(
+            vault["localPath"], str(tmp_path / "elsewhere")
+        )
+
+
+@pytest.mark.asyncio
+async def test_record_last_sync_never_moves_backwards(fixtures) -> None:
+    """A fetch time that predates a sync the app completed meanwhile must not
+    roll the stamp back."""
+    server_mod, _remote, _seed = fixtures
+    assert await server_mod.record_last_sync("v", at=2_000) == 2_000
+    assert await server_mod.record_last_sync("v", at=1_000) == 2_000
+    assert (await server_mod.read_settings())["lastSync"]["v"] == 2_000
+
+
+@pytest.mark.asyncio
+async def test_a_future_fetch_time_is_clamped_to_now(fixtures) -> None:
+    """The stamp comes from an mtime the agent can set; a future one would read
+    "just now" forever and never move when syncs stop."""
+    server_mod, _remote, _seed = fixtures
+    far_future = int(time.time() * 1000) + 10**10
+    stamped = await server_mod.record_last_sync("v", at=far_future)
+    assert stamped <= int(time.time() * 1000)
+    assert (await server_mod.read_settings())["lastSync"]["v"] == stamped
+
+
+# ---------------------------------------------------------------------------
 # Token, knowledge flag, folder picker
 # ---------------------------------------------------------------------------
 
