@@ -256,7 +256,21 @@ def _url_payload_command(n: int) -> str:
 #: data-consumer exemption. The branch grows a ``(?<!^-)`` guard and its comment states
 #: which terminal ``e`` is the command. Every execute construct it read before is still
 #: read; no other pattern moved.
-_PACKAGE_LINE_BUDGET = 28_864
+#:
+#: Raised again, from 28,864, for the world-rwx ``chmod`` floor (``chmod_floor.py``,
+#: its own module because ``argv_floor`` sits at its per-module cap): the
+#: ``chmod 777.*`` row names one spelling of the mode change, so the floor reads each
+#: command's argv -- redirections set aside as the shell's (an operator glued to a
+#: word takes the next word as its target), bash's brace expansion performed through
+#: ``argv_floor``'s shared expander, options at any position, a ``-``-led mode word
+#: read as the mode, both the GNU (permuting) and the BSD (``getopt`` from
+#: FreeBSD's source) reading -- and evaluates the mode with GNU
+#: ``mode_compile``'s numeric grammar, comma lists composed. A heredoc body is read as
+#: commands, the shared walk's reading.
+#: Plus the row's gate table and refusal note in ``denied_rules`` and the one call
+#: site in the facade's evaluator. No catalog pattern changed, the shared walk is
+#: untouched and no new regex pass.
+_PACKAGE_LINE_BUDGET = 29_630
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
