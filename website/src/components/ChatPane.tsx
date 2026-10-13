@@ -71,7 +71,7 @@ import { scaleContentWidth } from '../pages/chat/contentWidth'
 import { tryQuickSend } from '../lib/quickSend'
 import { readPaneDraft, takePaneDraft, writePaneDraft, mergePaneDraft, subscribePaneDraft } from '../utils/chatPaneDrafts'
 import { type PasteBlock, expandAll as expandPasteTokens, mergeCarriedDraft } from '../utils/pasteTokens'
-import { sendTurn, type SendReceiptStatus } from '../chat-core/transport/sendTurn'
+import { sendTurn, mintSendId, type SendReceiptStatus } from '../chat-core/transport/sendTurn'
 import { applySteerReceipt } from '../chat-core/transport/steerReceipt'
 import { useSelectionQuoteAsk } from '../chat-core/composer/selectionActions'
 import { useMessageQuote } from '../chat-core/composer/useMessageQuote'
@@ -1163,6 +1163,11 @@ export default function ChatPane({
     }).then(res => {
       if (!res.intercepted) return
       const live = mountedRef.current && slotKeyRef.current === sentSlot
+      // UNCONFIRMED: the turn may have run. Keep the command in the composer
+      // (or the slot's parked draft) and report nothing here -- the side
+      // panel's standing "not confirmed" notice is the report, and an error
+      // would invite a retry that runs the question twice.
+      if (res.unconfirmed) return
       if (res.failed) {
         const fallback = res.stage === 'agent' ? 'pages.chatPage.agent_command_not_run' : 'pages.chatPage.side_command_not_run'
         const message = res.error || i18nT(fallback)
@@ -1264,7 +1269,7 @@ export default function ChatPane({
     // content-equality fallback can never reconcile the server echo against
     // the optimistic bubble — without this id the echo appends a SECOND user
     // bubble carrying the raw marker.
-    const sendId = `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const sendId = mintSendId()
     // Optimistic user bubble: show immediately in the right position (mirrors the
     // single-chat send). Skipped while busy (main turn streaming OR sub-agents
     // running). A real queue has its own card; an immediate dispatch supplies
@@ -1439,7 +1444,7 @@ export default function ChatPane({
     // does), the quote opening the text.
     const turn = buildOutgoingTurn({ text: raw, files, pastes: pasteBlocks, quote: sentQuote }, 'steer')
     const { wire: txt, pastes: steerPastes } = turn
-    const sendId = `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const sendId = mintSendId()
     // `meta.files` is the ORDERED non-image list the `[attached_file N]`
     // tokens index into: the transcript chip resolves marker N to
     // files[N-1]. Without it the renderer falls back to a whitespace-bounded

@@ -258,6 +258,7 @@
   },
   "api": {
     "client": {
+      "accepted_body_unreadable": "서버가 요청을 수락했지만 응답을 읽을 수 없었습니다.",
       "paste_token_url_or_raw_token": "로그인 URL을 붙여넣으세요…",
       "proxy_challenge_reload": "이 브라우저 탭을 다시 로드하세요. 로그인 페이지가 나타나면 액세스 프록시 세션이 만료된 것입니다. 그렇지 않다면 이 대시보드 앞단의 프록시나 방화벽이 요청을 거부한 것이니, 프록시 로그를 확인하거나 나중에 다시 시도하세요.",
       "proxy_challenge_framed": "새 탭에서 {{origin}} 을 여세요. 로그인 페이지가 나타나면 액세스 프록시 세션이 만료된 것입니다. 이 패널 안에서는 로그인할 수 없습니다. 거기서 로그인한 뒤 이 페이지를 다시 로드하세요.",
@@ -394,6 +395,8 @@
   "appSdk": {
     "chatEmbed": {
       "agent_is_working": "에이전트가 작업 중…",
+      "app_not_allowed_to_send_named": "{{app}}은(는) 채팅 메시지를 보낼 수 없습니다. 이 앱은 권한에 채팅 접근을 선언하지 않았습니다.",
+      "server_refused_with_status": "서버가 거부했습니다 (HTTP {{status}}). 잠시 후 다시 시도하세요.",
       "chat_message": "채팅 메시지",
       "message": "메시지…",
       "send": "보내기",
@@ -11966,7 +11969,8 @@
       "tabs_were_not_restored_other": "재시작 전에 열려 있던 탭 {{count}}개가 복원되지 않았습니다.",
       "dismiss_until_next_visit": "다음 방문 전까지 숨기기",
       "could_not_check_restored_tabs": "마지막 재시작 후 모든 탭이 복원되었는지 확인하지 못했습니다.",
-      "could_not_start_fresh_session": "새 세션을 시작할 수 없습니다"
+      "could_not_start_fresh_session": "새 세션을 시작할 수 없습니다",
+      "delivery_unconfirmed_option": "전송이 확인되지 않았습니다 — 대화 기록을 확인한 뒤, 보이지 않으면 제안을 다시 탭하세요."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1개 건너뜀 — 현재 선택됨)",

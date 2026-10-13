@@ -87,6 +87,12 @@ export interface SideQueueEntry {
   raw?: boolean
 }
 
+/** A notice that describes a STANDING state; `restoredDraft` marks the variant
+ *  that says "your text is back in the composer" -- only that one is retired
+ *  when the draft is emptied. */
+export interface SideStandingNotice { text: string; restoredDraft: boolean }
+export interface SideSendStatus { error?: string; notice?: SideStandingNotice }
+
 export interface SideState {
   messages: SideMessage[]
   lastRunId?: string
@@ -98,6 +104,14 @@ export interface SideState {
    *  Set by whichever convergence path lands first; cleared once consumed, so a
    *  lost HTTP response cannot mean lost text and neither path double-applies. */
   releasedText?: string
+  /** The last send's outcome that the panel must still show for this slot: a
+   *  framed failure line and/or a standing "delivery unconfirmed" notice. Kept
+   *  in the store beside `releasedText` rather than in the panel, so it lives
+   *  and dies with the text it explains -- a hand-back that survives a slot
+   *  switch or an unmount reappears WITH its "check the transcript before
+   *  resending" warning, and slot A's status never shows while slot B is
+   *  displayed. Cleared by the next submit to this slot. */
+  sendStatus?: SideSendStatus
   /** Queue ids that have reached a TERMINAL state (drained or cancelled).
    *  A submit's HTTP callback can run after the frame that removed its entry,
    *  and re-pushing then shows a card the server no longer has — one that 404s

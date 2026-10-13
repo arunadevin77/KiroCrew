@@ -268,6 +268,7 @@
   },
   "api": {
     "client": {
+      "accepted_body_unreadable": "The server accepted the request, but its reply could not be read.",
       "paste_token_url_or_raw_token": "Paste sign-in URL…",
       "proxy_challenge_reload": "Reload this browser tab — if a sign-in page appears, your access proxy’s session expired. If not, a proxy or firewall in front of this dashboard refused the request; check the proxy’s logs, or retry later.",
       "proxy_challenge_framed": "Open {{origin}} in a new tab — if a sign-in page appears, your access proxy’s session expired. Signing in inside this panel won’t work. Sign in there, then reload this page.",
@@ -354,6 +355,8 @@
   "appSdk": {
     "chatEmbed": {
       "agent_is_working": "Agent is working...",
+      "app_not_allowed_to_send_named": "{{app}} isn't allowed to send chat messages — it doesn't declare chat access in its permissions.",
+      "server_refused_with_status": "The server rejected it (HTTP {{status}}) — try again in a moment.",
       "message": "Message..."
     },
     "chatMessageList": {
@@ -5619,7 +5622,8 @@
       "tabs_were_not_restored_other": "{{count}} tabs that were open before the restart were not restored.",
       "dismiss_until_next_visit": "Dismiss until next visit",
       "could_not_check_restored_tabs": "Could not check whether every tab was restored after the last restart.",
-      "could_not_start_fresh_session": "Couldn't start a fresh session"
+      "could_not_start_fresh_session": "Couldn't start a fresh session",
+      "delivery_unconfirmed_option": "Delivery not confirmed — check the conversation above, then tap the suggestion again if it is missing."
     },
     "chatSidebar": {
       "no_sessions_match_folders": "No sessions match — only a folder name did",

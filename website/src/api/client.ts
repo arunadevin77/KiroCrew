@@ -15,7 +15,7 @@
  * those modules own are re-exported below, so every import path is unchanged.
  */
 import { installSessionExpiryHandler } from './sessionExpirySignal'
-import { ApiError, friendlyErrText, toApiError } from './apiError'
+import { ApiError, friendlyErrText, toApiError, AcceptedBodyUnreadable } from './apiError'
 import { refreshOnce, __resetRefreshOnceForTests } from './refreshOnce'
 import {
   STALE_OWNER_SESSION_CODE,
@@ -778,7 +778,7 @@ export { STALE_OWNER_SESSION_CODE }
  * every existing consumer, and every test that mocks `../api/client`, is
  * unchanged by the move.
  */
-export { ApiError, friendlyErrText, toApiError }
+export { ApiError, friendlyErrText, toApiError, AcceptedBodyUnreadable }
 
 /**
  * Whether *e* is a failure the user can only clear by signing back in.
@@ -936,13 +936,37 @@ const parseJson = async (r: Response, benign?: BenignDenial, nullOn204 = false) 
   // exactly as it did when this was its own copy of the body.
   if (nullOn204 && r.status === 204) return null
   if (!r.ok) {
-    const errText = await r.text()
+    // The status is the verdict; the body is only its explanation. A non-2xx
+    // whose body read is cut must still surface as an `ApiError` (a refusal,
+    // with the status line as the fallback reason) -- never as a raw network
+    // rejection, which the acceptance-receipt wires have to treat as
+    // indeterminate and would show as "delivery unconfirmed" instead of an
+    // error. The app-sdk's `jsonFetch` keeps the same guard.
+    const errText = await r.text().catch(() => r.statusText)
     throw apiFailure(r, errText, benign)
   }
   return r.json()
 }
 
 const j = (r: Response) => parseJson(r)
+
+/**
+ * `j()` for acceptance-receipt endpoints (a side-panel turn): the same auth
+ * recovery and `ApiError` for a non-2xx, but a body-read failure AFTER a 2xx
+ * is wrapped in `AcceptedBodyUnreadable`, so "accepted, receipt lost" stays
+ * distinguishable from a request that never left (both would otherwise
+ * surface as a `TypeError`/`SyntaxError`).
+ */
+const jAccepted = async (r: Response) => {
+  if (!r.ok) return parseJson(r)
+  checkSessionExpired(r)
+  removeAuthBanner()
+  try {
+    return await r.json()
+  } catch (e) {
+    throw new AcceptedBodyUnreadable(e, r)
+  }
+}
 
 /**
  * Nullable variant of j(): preserves auth recovery + ApiError semantics but
@@ -1261,6 +1285,7 @@ const transport: ClientTransport = {
   del,
   patch,
   j,
+  jAccepted,
   jNullable,
   jInstancesDisabled,
   jfetch,

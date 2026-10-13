@@ -135,7 +135,7 @@ describe('ChatPane client-only slash commands', () => {
     const openSideChat = vi.fn(() => true)
     renderPane({ openSideChat })
     const box = await typeAndSend('/side what changed?')
-    await waitFor(() => expect(api.sideTurn).toHaveBeenCalledWith(SLOT, 'what changed?'))
+    await waitFor(() => expect(api.sideTurn).toHaveBeenCalledWith(SLOT, 'what changed?', undefined))
     expect(api.sideOpen).toHaveBeenCalledWith(SLOT)
     expect(openSideChat).toHaveBeenCalledWith(SLOT)
     expect(api.sendChat).not.toHaveBeenCalled()
@@ -176,12 +176,25 @@ describe('ChatPane client-only slash commands', () => {
     }
   })
 
+  it('an UNCONFIRMED /side keeps the command in the composer and shows no refusal', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { AcceptedBodyUnreadable } = await import('../api/apiError')
+    vi.mocked(api.sideTurn).mockRejectedValueOnce(new AcceptedBodyUnreadable(new TypeError('network error')))
+    renderPane({ openSideChat: () => true })
+    const box = await typeAndSend('/side what changed?')
+    await waitFor(() => expect(api.sideTurn).toHaveBeenCalled())
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    expect(box.value).toBe('/side what changed?')
+    expect(screen.queryByText(i18nT('pages.chatPage.side_command_not_run'))).toBeNull()
+    expect(screen.queryByText(/Couldn't send/)).toBeNull()
+  })
+
   it('a busy pane does not steer /side into the running turn', async () => {
     const openSideChat = vi.fn(() => true)
     const { store } = renderPane({ busy: true, openSideChat })
     await waitFor(() => expect(selectComposerBusy(store.getState(), SLOT)).toBe(true))
     await typeAndSend('/side still there?')
-    await waitFor(() => expect(api.sideTurn).toHaveBeenCalledWith(SLOT, 'still there?'))
+    await waitFor(() => expect(api.sideTurn).toHaveBeenCalledWith(SLOT, 'still there?', undefined))
     expect(api.sendChat).not.toHaveBeenCalled()
   })
 
@@ -222,7 +235,7 @@ describe('ChatPane client-only slash commands', () => {
     // The rebind parked the composer, command included, under the sending slot.
     expect(readPaneDraft(SLOT).text.trim()).toBe('/side what changed?')
     await act(async () => { open() })
-    await waitFor(() => expect(api.sideTurn).toHaveBeenCalledWith(SLOT, 'what changed?'))
+    await waitFor(() => expect(api.sideTurn).toHaveBeenCalledWith(SLOT, 'what changed?', undefined))
     await waitFor(() => expect(readPaneDraft(SLOT).text).toBe(''))
   })
 

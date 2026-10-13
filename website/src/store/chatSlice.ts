@@ -992,7 +992,7 @@ export const {
   sseSubagentSnapshot, sseToolActivity, sseToolResult, sseActivityEvent,
   sseMcpAppRender,
   sseWorkflowEvent, clearWorkflowRun, reconcileWorkflowRuns,
-  sseSideResult, sseSideQueue, sideReleaseConsumed, sideClose, sideOptimisticAppend, sideOptimisticRollback,
+  sseSideResult, sseSideQueue, sideSendStatus, sideReleaseConsumed, sideClose, sideOptimisticAppend, sideOptimisticRollback,
 } = chatSlice.actions
 
 export { clampToolOutput, TOOL_OUTPUT_MAX_CHARS, normalizeQueueEntries, queueEntryAttachments, queueEntryQuote, type QueueEntryAttachments } from './chat/wire'
@@ -1003,7 +1003,7 @@ export {
   slotSwitchFetchLimit, slotCoverageShortfall, countMatchedFetchLimit, isSupersededPagingRejection,
   abortActiveOlderFetch, type CoverageRow,
 } from './chat/paging'
-export type { ChatState, FollowupItem, SideMessage, SideQueueEntry, SideState, SlotState, SlotStatusDetail, WorkflowRunProgress } from './chat/state'
+export type { ChatState, FollowupItem, SideMessage, SideQueueEntry, SideSendStatus, SideStandingNotice, SideState, SlotState, SlotStatusDetail, WorkflowRunProgress } from './chat/state'
 export { FOLDER_SUGGESTION_MAX_TURNS, capturePendingAskId, isAnsweredQuestionEnding, pendingQuestionFor, shouldResolveAskOnSend } from './chat/composerCards'
 export { mcpAppKey } from './chat/mcpApps'
 export {

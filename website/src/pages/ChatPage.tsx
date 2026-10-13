@@ -2071,8 +2071,11 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
         restageOrPark()
         // Keeping the composer intact is the recovery; this is the report.
         // Same surface as a refused footer press, so the reason sits above the
-        // draft it left in place instead of only in the console.
-        if (slashResult.failed) setRefusedPress(slashRefusal(slashResult))
+        // draft it left in place instead of only in the console. An
+        // UNCONFIRMED turn keeps the composer too but is not a refusal: its
+        // report is the side panel's own standing notice (set by the
+        // interceptor), never this error surface.
+        if (slashResult.failed && !slashResult.unconfirmed) setRefusedPress(slashRefusal(slashResult))
         return false
       }
     }

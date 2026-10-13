@@ -278,6 +278,7 @@
   },
   "api": {
     "client": {
+      "accepted_body_unreadable": "Il server ha accettato la richiesta, ma la risposta non è stata leggibile.",
       "paste_token_url_or_raw_token": "Incolla l'URL di accesso…",
       "proxy_challenge_reload": "Ricarica questa scheda del browser: se compare una pagina di accesso, la sessione del tuo proxy di accesso è scaduta. Altrimenti un proxy o un firewall davanti a questa dashboard ha rifiutato la richiesta; controlla i log del proxy oppure riprova più tardi.",
       "proxy_challenge_framed": "Apri {{origin}} in una nuova scheda: se compare una pagina di accesso, la sessione del tuo proxy di accesso è scaduta. Dentro questo pannello non funziona. Accedi lì, poi ricarica questa pagina.",
@@ -422,6 +423,8 @@
   "appSdk": {
     "chatEmbed": {
       "agent_is_working": "L'agente è al lavoro...",
+      "app_not_allowed_to_send_named": "{{app}} non è autorizzata a inviare messaggi di chat: non dichiara l'accesso alla chat nelle sue autorizzazioni.",
+      "server_refused_with_status": "Il server lo ha rifiutato (HTTP {{status}}): riprova tra un momento.",
       "chat_message": "Messaggio di chat",
       "message": "Messaggio...",
       "send": "Invia",
@@ -12324,7 +12327,8 @@
       "tabs_were_not_restored_other": "{{count}} schede che erano aperte prima del riavvio non sono state ripristinate.",
       "dismiss_until_next_visit": "Nascondi fino alla prossima visita",
       "could_not_check_restored_tabs": "Non è stato possibile verificare se tutte le schede sono state ripristinate dopo l'ultimo riavvio.",
-      "could_not_start_fresh_session": "Impossibile avviare una nuova sessione"
+      "could_not_start_fresh_session": "Impossibile avviare una nuova sessione",
+      "delivery_unconfirmed_option": "Consegna non confermata: controlla la conversazione e, se manca, tocca di nuovo il suggerimento."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 saltata — attualmente selezionata)",

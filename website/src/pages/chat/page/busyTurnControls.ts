@@ -187,7 +187,9 @@ export function useBusyTurnControls({
         const onScreen = originSlot === activeSlotRef.current && composerSlotRef.current === originSlot
         if (onScreen) {
           setInput(mergeIntoDraft(inputRef.current, cmdTxt))
-          onSlashRefused?.(res)
+          // UNCONFIRMED is not a refusal: the text comes back, and the side
+          // panel's own standing notice is the report.
+          if (!res.unconfirmed) onSlashRefused?.(res)
         } else {
           const merged = mergeIntoDraft(drafts.current[originSlot], cmdTxt)
           setDraft(drafts.current, originSlot, merged)

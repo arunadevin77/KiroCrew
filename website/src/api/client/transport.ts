@@ -34,6 +34,9 @@ export interface ClientTransport {
   patch: (url: string, body: object, sessionKey?: string, signal?: AbortSignal) => Promise<Response>
   /** Parse a 2xx body; run auth recovery and throw a journaled `ApiError` otherwise. */
   j: (r: Response) => ReturnType<Response['json']>
+  /** `j` for an acceptance-receipt endpoint: a post-2xx body-read failure
+   *  rejects as `AcceptedBodyUnreadable` instead of the raw parse error. */
+  jAccepted: (r: Response) => ReturnType<Response['json']>
   /** `j`, except that a 204 resolves to `null`. */
   jNullable: (r: Response) => ReturnType<Response['json']>
   /**

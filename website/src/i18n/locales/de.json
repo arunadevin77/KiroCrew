@@ -268,6 +268,7 @@
   },
   "api": {
     "client": {
+      "accepted_body_unreadable": "Der Server hat die Anfrage angenommen, aber die Antwort konnte nicht gelesen werden.",
       "paste_token_url_or_raw_token": "Anmelde-URL einfügen…",
       "proxy_challenge_reload": "Lade diesen Browser-Tab neu — erscheint eine Anmeldeseite, ist die Sitzung deines Zugriffsproxys abgelaufen. Wenn nicht, hat ein Proxy oder eine Firewall vor diesem Dashboard die Anfrage abgewiesen; prüfe die Protokolle des Proxys oder versuche es später erneut.",
       "proxy_challenge_framed": "Öffne {{origin}} in einem neuen Tab — erscheint eine Anmeldeseite, ist die Sitzung deines Zugriffsproxys abgelaufen. In diesem Panel funktioniert die Anmeldung nicht. Melde dich dort an und lade dann diese Seite neu.",
@@ -408,6 +409,8 @@
   "appSdk": {
     "chatEmbed": {
       "agent_is_working": "Agent arbeitet...",
+      "app_not_allowed_to_send_named": "{{app}} darf keine Chatnachrichten senden – die App deklariert in ihren Berechtigungen keinen Chat-Zugriff.",
+      "server_refused_with_status": "Der Server hat sie abgelehnt (HTTP {{status}}) – versuche es gleich noch einmal.",
       "chat_message": "Chat-Nachricht",
       "message": "Nachricht...",
       "send": "Senden",
@@ -12145,7 +12148,8 @@
       "tabs_were_not_restored_other": "{{count}} Tabs, die vor dem Neustart geöffnet waren, wurden nicht wiederhergestellt.",
       "dismiss_until_next_visit": "Bis zum nächsten Besuch ausblenden",
       "could_not_check_restored_tabs": "Es konnte nicht geprüft werden, ob nach dem letzten Neustart alle Tabs wiederhergestellt wurden.",
-      "could_not_start_fresh_session": "Neue Sitzung konnte nicht gestartet werden"
+      "could_not_start_fresh_session": "Neue Sitzung konnte nicht gestartet werden",
+      "delivery_unconfirmed_option": "Zustellung nicht bestätigt — prüfe den Verlauf und tippe den Vorschlag erneut an, falls er fehlt."
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 übersprungen — aktuell ausgewählt)",

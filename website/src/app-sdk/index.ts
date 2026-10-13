@@ -400,6 +400,7 @@ import React from 'react'
  */
 export function AppApiProvider({
   appName,
+  appDisplayName,
   appVersion = '0.0.0',
   allowedApiPaths,
   allowedEvents,
@@ -412,6 +413,13 @@ export function AppApiProvider({
   children,
 }: {
   appName: string
+  /**
+   * What the user calls this app (the manifest's display name). `appName` is
+   * the app's ID and stays the key for permissions, event scoping and the
+   * developer-facing warnings; this is only for copy shown to the USER -- the
+   * permission-denied refusal row names the app by it. Omitted, the id is used.
+   */
+  appDisplayName?: string
   appVersion?: string
   allowedApiPaths: string[]
   navigateFn: (path: string) => void
@@ -439,6 +447,7 @@ export function AppApiProvider({
   const existing = useAppIdentity()
   const scoped = React.createElement(AppScopedApiProvider, {
     appName,
+    appDisplayName,
     appVersion,
     allowedApiPaths,
     allowedEvents,
