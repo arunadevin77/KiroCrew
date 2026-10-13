@@ -931,9 +931,10 @@ genuine miss may carry inline data for display, but both provenance flags remain
 false and consumers that need trusted arguments fail closed.
 
 OpenCode can send a shell permission request before the `tool_call_update` that
-contains its command. If the trusted cache
-identifies a shell call but has no command, the prompt loop waits at most two
-seconds for the next frame. It reorders only a same-session, same-call,
+contains its command. If the trusted cache identifies a shell call but has no
+command, the prompt loop selects OpenCode explicitly before calling
+`_defer_opencode_shell_permission` to wait at most two seconds for the next frame.
+The method reorders only a same-session, same-call,
 in-progress `tool_call_update` with a nonempty command and no output, so the
 normal update handler fills the trusted cache before the permission is built.
 An unrelated or missing frame leaves the permission unchanged; the shell gate
