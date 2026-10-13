@@ -424,6 +424,12 @@ def render_unit(*, user_scope: bool = False) -> str:
         # exempt from Restart=), and StartLimit* above caps a tight loop.
         "Restart=always\n"
         "RestartSec=10\n"
+        # systemd 219 (<= 228) reads StartLimit* only from [Service]; the
+        # [Unit] copy above covers systemd >= 229, which places them there.
+        # Emitting both ensures the crash-loop cap works on all supported distros.
+        # StartLimitInterval is the pre-229 key name; >= 229 accepts it as an alias.
+        "StartLimitBurst=3\n"
+        "StartLimitInterval=300\n"
         # ...but never against a home another gateway already serves. The lock
         # refusal for a LIVE holder (kiro_crew.gateway_lock) is a standing
         # condition for this unit: the incumbent keeps serving, and every

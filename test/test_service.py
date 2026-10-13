@@ -460,6 +460,13 @@ class TestLinuxUnitRendering:
         # gateway start cannot melt the user's terminal with journal output.
         assert "StartLimitBurst=3" in unit
         assert "StartLimitIntervalSec=300" in unit
+        # systemd 219 (<= 228) reads StartLimit* only from [Service]; both
+        # sections are populated so the cap works on all supported distros.
+        assert "StartLimitInterval=300" in unit
+        service_idx = unit.index("[Service]")
+        install_idx = unit.index("[Install]")
+        assert unit.index("StartLimitBurst=3", service_idx) < install_idx
+        assert unit.index("StartLimitInterval=300", service_idx) < install_idx
         # Pin a high open-file limit so the gateway (and the FD-hungry
         # frontend build it may launch) never depends on the host's ambient
         # DefaultLimitNOFILE — stock systemd defaults to 1024, which the
@@ -518,6 +525,9 @@ class TestLinuxUnitRendering:
         assert "StartLimitIntervalSec=300" in unit
         # The directive belongs to [Service], not [Unit] or [Install].
         service_block = unit.split("[Service]", 1)[1].split("[Install]", 1)[0]
+        # systemd 219 (<= 228) compatibility: also present in [Service].
+        assert "StartLimitBurst=3" in service_block
+        assert "StartLimitInterval=300" in service_block
         assert directives[0] in service_block.splitlines()
 
     def test_render_unit_carries_the_session_bus_environment(self, monkeypatch):
