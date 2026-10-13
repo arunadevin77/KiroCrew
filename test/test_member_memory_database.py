@@ -254,6 +254,42 @@ def consolidate(store, **overrides):
     return store.apply_consolidation(**arguments)
 
 
+_WORK_EMAIL = {"subject": "user", "predicate": "work_email", "scope": ""}
+
+
+def _identity_holders(store) -> list[str]:
+    return [
+        row[0]
+        for row in store.db.execute(
+            "SELECT record_id FROM memory_record_meta WHERE subject='user' "
+            "AND predicate='work_email' AND status='active'"
+        )
+    ]
+
+
+@pytest.mark.parametrize("seeded", [False, True], ids=["same-batch", "existing-fact"])
+def test_consolidation_reuses_the_key_that_holds_a_fact_identity(member_db, seeded):
+    """A new key carrying an identity another active fact already holds must
+    land on that fact, not INSERT a second row into the unique identity index."""
+    if seeded:
+        assert (
+            member_db.set_semantic(
+                "user.work_email", "a@example.com", 1, "user_explicit", metadata=_WORK_EMAIL
+            )
+            is None
+        )
+    items = [
+        {"key": key, "value": "a@example.com", "confidence": 0.9, "metadata": _WORK_EMAIL}
+        for key in (("user.email",) if seeded else ("user.work_email", "user.email"))
+    ]
+    receipt = consolidate(member_db, result={"semantic": items})
+    assert receipt["source_id"] == "span-1"
+    assert _identity_holders(member_db) == ["key:user.work_email"]
+    assert [row[0] for row in member_db.db.execute("SELECT key FROM semantic_memory")] == [
+        "user.work_email"
+    ]
+
+
 def test_consolidation_receipt_deduplicates_lost_ack_across_reopen(member_db):
     first = consolidate(member_db)
     assert first == {"source_id": "span-1", "semantic": 1, "episodic": 1, "lessons": 1}

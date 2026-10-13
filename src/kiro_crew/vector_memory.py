@@ -1270,6 +1270,10 @@ class VectorMemoryStore:
                         continue
                     metadata = record_meta.normalize_metadata(item.get("metadata"))
                     metadata.setdefault("source_ref", source_id)
+                    # Same identity resolution as set_semantic: a fact already
+                    # held by another key (or written earlier in this batch)
+                    # updates that key instead of inserting a duplicate holder.
+                    key = _semantic.identity_key(self, key, metadata)
                     evidence = record_meta.verified_correction(
                         key=key,
                         before=snapshot.get(key, {}),
