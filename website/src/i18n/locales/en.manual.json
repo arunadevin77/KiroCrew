@@ -3543,6 +3543,7 @@
       "manage_agents": "Manage crewmates…",
       "new_sessions_start_with_this_agent": "New sessions start with this custom agent",
       "set_default_agent": "Set <agent/> as the default for new sessions",
+      "group_templates_hint": "A custom agent is a reusable agent setup.",
       "group_templates_hint_default_workspace": "A custom agent is a reusable agent setup. Picking one uses your default workspace and shared memory; no new crewmate is created."
     },
     "agentSkillsEditor": {

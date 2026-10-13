@@ -5806,6 +5806,7 @@
       "new_sessions_start_with_this_agent": "新会话将使用该队友",
       "no_matches": "无匹配项",
       "set_default_agent": "将 <agent/> 设为新会话的默认选择",
+      "group_templates_hint": "自定义代理是可复用的代理配置。",
       "group_templates_hint_default_workspace": "自定义代理是可复用的代理配置。选择它会使用默认工作区和共享记忆；不会新建队友。"
     },
     "agentImportFlow": {

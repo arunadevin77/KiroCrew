@@ -6008,6 +6008,7 @@
       "new_sessions_start_with_this_agent": "Las nuevas sesiones comienzan con este compañero",
       "no_matches": "Sin coincidencias",
       "set_default_agent": "Establecer <agent/> como predeterminado para las nuevas sesiones",
+      "group_templates_hint": "Un agente personalizado es una configuración de agente reutilizable.",
       "group_templates_hint_default_workspace": "Un agente personalizado es una configuración de agente reutilizable. Elegir uno usa tu espacio de trabajo predeterminado y la memoria compartida; no se crea ningún compañero nuevo."
     },
     "agentImportFlow": {

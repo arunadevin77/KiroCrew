@@ -5907,6 +5907,7 @@
       "new_sessions_start_with_this_agent": "Neue Sitzungen starten mit diesem Crew-Kameraden",
       "no_matches": "Keine Treffer",
       "set_default_agent": "<agent/> als Standard für neue Sitzungen festlegen",
+      "group_templates_hint": "Ein benutzerdefinierter Agent ist eine wiederverwendbare Agent-Konfiguration.",
       "group_templates_hint_default_workspace": "Ein benutzerdefinierter Agent ist eine wiederverwendbare Agent-Konfiguration. Wer einen wählt, nutzt deinen Standard-Arbeitsbereich und das gemeinsame Gedächtnis; es wird kein neuer Crew-Kamerad angelegt."
     },
     "agentImportFlow": {

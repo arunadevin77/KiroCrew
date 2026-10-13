@@ -5776,6 +5776,7 @@
       "new_sessions_start_with_this_agent": "새 세션은 이 크루메이트로 시작합니다",
       "no_matches": "일치하는 항목 없음",
       "set_default_agent": "<agent/>을(를) 새 세션의 기본값으로 설정",
+      "group_templates_hint": "커스텀 에이전트는 다시 쓸 수 있는 에이전트 설정입니다.",
       "group_templates_hint_default_workspace": "커스텀 에이전트는 다시 쓸 수 있는 에이전트 설정입니다. 선택하면 기본 워크스페이스와 공유 메모리를 사용하며, 새 크루메이트는 만들어지지 않습니다."
     },
     "agentImportFlow": {

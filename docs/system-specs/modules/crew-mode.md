@@ -86,19 +86,24 @@ synchronization route (`POST /api/agents/sync`) retain their contracts, but the
 dashboard pickers no longer call sync: `useAgents` reads the catalog, so opening a
 chat, the schedule form or the channel page enrols nothing. The hook returns the
 typed list as `choices` (the chat agent pop-up renders it grouped under
-**Crewmates** / **Custom agents**, each member row wearing the same avatar the
+**Custom agents** then **Crewmates** -- the template group leads because a session
+created without a crewmate runs the default template, so the group holding the way
+back from any switch is read first -- each member row wearing the same avatar the
 roster draws for it, the origin badge dropped because the header already says what
-a row is, and the custom-agents group carrying a one-line hint that a custom-agent pick
-runs on the default crewmate's workspace and memory and creates nothing new) and
+a row is, and the custom-agents group carrying a one-sentence hint saying what a
+custom agent is -- a reusable agent setup -- and nothing about where it runs) and
 the same list folded to one row per name, member first, as `agents` for the
 name-only consumers (cron `agent_id`, channel and project bindings, the cycle
 shortcuts). The pop-up draws the group headers and the custom-agents hint only when it
 lists more than one kind: a header that separates nothing is chrome, and the hint
 contrasts a template against a crewmate the list must then be showing. The folded
 rows keep their `selection_kind`, and `AgentSelector` (the shared roster picker)
-groups by it under the same two headers and hint when a caller passes
-`groupByKind`; the schedule job form does, so a cron's agent field offers
-**Crewmates** then **Custom agents** in one dropdown, and a template pick stores
+groups by it under the same two headers when a caller passes `groupByKind`, in its
+own order and with its own hint: the schedule job form does, so a cron's agent field
+offers **Crewmates** then **Custom agents** in one dropdown, the custom-agents
+group there keeping the longer hint (`group_templates_hint_default_workspace`: the
+job runs the template on the default workspace with shared memory and enrols no
+crewmate, which is the fact an unattended job needs), and a template pick stores
 the bare template name -- the backend's name-first resolution runs an unaliased
 template on `default_workspace` and Global memory, so no cron contract changes.
 The chrome follows the same one-kind rule, decided on the unfiltered roster so a

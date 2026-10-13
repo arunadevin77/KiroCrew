@@ -5776,6 +5776,7 @@
       "new_sessions_start_with_this_agent": "新しいセッションはこのクルーメイトで始まります",
       "no_matches": "マッチするものがありません",
       "set_default_agent": "<agent/> を新しいセッションのデフォルトに設定",
+      "group_templates_hint": "カスタムエージェントは再利用できるエージェント設定です。",
       "group_templates_hint_default_workspace": "カスタムエージェントは再利用できるエージェント設定です。選ぶと既定のワークスペースと共有メモリを使います。新しいクルーメイトは作成されません。"
     },
     "agentImportFlow": {

@@ -319,7 +319,9 @@ export default function AgentDropdownList({ agents, activeAgent, activeKind, def
     <div role="presentation" className="flex flex-col">
       {!grouped
         ? agents.map(row)
-        : (['member', 'template'] as const).map(kind => {
+        // Templates lead: a session created without a crewmate runs the default
+        // template, so the group that holds the way back is the one read first.
+        : (['template', 'member'] as const).map(kind => {
           const rows = agents.filter(a => (a.selection_kind ?? 'member') === kind)
           if (!rows.length) return null
           const label = kind === 'member'
@@ -331,11 +333,10 @@ export default function AgentDropdownList({ agents, activeAgent, activeKind, def
                 <PanelSectionHeader label={label} count={rows.length} className="px-2.5 pt-2 pb-1" />
               )}
               {showGroupChrome && kind === 'template' && (
-                // What a template pick IS, said where the pick happens: it runs the
-                // shared template in the default workspace with shared memory and
-                // enrols nothing.
+                // What a template IS, said where the pick happens, in one sentence:
+                // a reusable agent setup. Where it runs is the row's own business.
                 <p className="px-2.5 pb-1 text-[11px] leading-snug text-muted">
-                  {i18nT('components.agentDropdownList.group_templates_hint_default_workspace')}
+                  {i18nT('components.agentDropdownList.group_templates_hint')}
                 </p>
               )}
               {rows.map(row)}
