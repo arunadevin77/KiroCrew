@@ -110,6 +110,48 @@ function isNothingStaged(e: unknown): boolean {
   return isNotFoundError(e) && apiErrorCode(e) === 'no_preview'
 }
 
+/** The id of the composed page's data island. Mirrors `dashboard_frame._DATA_ELEMENT_ID`. */
+const DATA_ELEMENT_ID = 'kirocrew-dashboard-data'
+
+/**
+ * The read a composed page was filled from, taken out of its data island.
+ *
+ * The gateway bakes the values into `rendered_html` and sends them nowhere else, so
+ * this is where a refill's values come from. Parsed by `DOMParser`, which builds an
+ * inert document and runs none of its scripts, and read back as the island's TEXT:
+ * the island is JSON escaped for HTML with JSON's own `\u` escapes, so `JSON.parse`
+ * returns exactly what the gateway composed. Null on anything else, which makes the
+ * caller load a new document instead.
+ */
+export function islandRead(html: string): Record<string, unknown> | null {
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const raw = doc.getElementById(DATA_ELEMENT_ID)?.textContent
+    if (!raw) return null
+    const read: unknown = JSON.parse(raw)
+    return read && typeof read === 'object' && !Array.isArray(read) ? (read as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
+/** Post the read baked into `html` to `win`, as the page's refill listener takes it.
+ *  False when the html has no readable island, so the caller re-mints instead.
+ *  `win` is always the dashboard frame's own `contentWindow`; `'*'` because that
+ *  frame's origin is opaque and can be named no other way. */
+function postRefill(win: Window, html: string): boolean {
+  const read = islandRead(html)
+  if (!read) return false
+  // nosemgrep: javascript.browser.security.wildcard-postmessage-configuration.wildcard-postmessage-configuration
+  win.postMessage({ type: DATA_MESSAGE_TYPE, read }, '*')
+  return true
+}
+
+/** Which page a document is: a change to any part of this is a new document. */
+function pageKey(page: Loaded): string {
+  return `${page.instanceVersion}:${page.templateId}:${page.templateVersion}`
+}
+
 interface Loaded {
   html: string
   manifest: DashboardManifest
@@ -306,6 +348,23 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
   // above is: a read that carries a stored copy the gateway declined to compose has
   // no page coming either, so waiting on it would show the skeleton for good.
   const awaitingFirstPage = Boolean(data?.rendered_html) && !good && !broken
+  /**
+   * THE DOCUMENT IS KEYED ON THE PAGE, NOT ON ITS VALUES.
+   *
+   * A same-version read swaps `good` to html with new values baked in. Building the
+   * srcdoc from that html on every swap minted a new document per read, and the frame
+   * reloaded on every refetch -- the whole tab flickering each time the data moved.
+   * So the document is rebuilt only when the PAGE changes (version, template id or
+   * template version), the theme changes, or `docRev` says a page that cannot take a
+   * refill needs its new values the old way. A same-page read is posted into the open
+   * document instead (the effect below).
+   *
+   * `shown.html` is read without being a dependency on purpose: whenever the document
+   * IS rebuilt, it is built from the newest values, so a theme change never brings
+   * back numbers a refill already replaced.
+   */
+  const [docRev, setDocRev] = useState(0)
+  const shownKey = shown ? pageKey(shown) : null
   const srcdoc = useMemo(
     () =>
       shown && !isError
@@ -328,11 +387,70 @@ export default function CrewDynamicDashboard({ target, displayName, onAct, previ
             relayTouches: true,
           })
         : null,
-    [shown, isError, themeVars, theme],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the page, see above
+    [shownKey, docRev, isError, themeVars, theme],
   )
   const mint = useSandboxDoc(srcdoc)
   const { url, pending, retry } = mint
   const failed = mint.failed || mint.stalled
+
+  /**
+   * THE REFILL: new values for the page already on screen, posted into it.
+   *
+   * Only for a document that said it can take one. Its ready beacon carries
+   * `refill: true` when the page's own script listens for the refill
+   * (`dashboard_frame._REFILL_PROBE_JS`); every builtin template does. A page that
+   * does not would keep showing its old numbers, so it is re-minted instead, which is
+   * what every page got before. The signal is per DOCUMENT URL: a new document has
+   * said nothing until its own beacon, so it is re-minted until then.
+   *
+   * Posted only to THIS frame's own `contentWindow`, and the message carries only the
+   * read the gateway already composed into this page's html. `'*'` is required: the
+   * frame is sandboxed without `allow-same-origin`, so its origin is opaque and no
+   * other targetOrigin can match it.
+   */
+  const shownRef = useRef(shown)
+  shownRef.current = shown
+  const urlRef = useRef(url)
+  urlRef.current = url
+  const refillUrlRef = useRef<string | null>(null)
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const win = frameRef.current?.contentWindow
+      if (!win || event.source !== win) return
+      const payload = event.data as { type?: unknown; refill?: unknown } | null
+      if (!payload || payload.type !== READY_MESSAGE_TYPE) return
+      if (payload.refill !== true) {
+        refillUrlRef.current = null
+        return
+      }
+      refillUrlRef.current = urlRef.current
+      // A read that landed while this document was loading is in `shown` but may not
+      // be in the document, so the newest values are posted as soon as it can take
+      // them. Same values again is a redraw, not a reload.
+      const current = shownRef.current
+      if (current) postRefill(win, current.html)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
+  const mountedRef = useRef<{ key: string; html: string } | null>(null)
+  useEffect(() => {
+    if (!shown) {
+      mountedRef.current = null
+      return
+    }
+    const key = pageKey(shown)
+    const before = mountedRef.current
+    mountedRef.current = { key, html: shown.html }
+    // A new page is a new document, which the srcdoc above already builds.
+    if (!before || before.key !== key || before.html === shown.html) return
+    const win = frameRef.current?.contentWindow
+    const docUrl = urlRef.current
+    if (win && docUrl && refillUrlRef.current === docUrl && postRefill(win, shown.html)) return
+    // NEVER STALE: a page that has not said it takes refills gets a new document.
+    setDocRev(n => n + 1)
+  }, [shown])
 
   /**
    * The readiness handshake. Listens for the document's beacon and, if a probating

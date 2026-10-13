@@ -174,6 +174,29 @@ class TestTheComposedDocument:
         beacon = doc[doc.index(dashboard_frame.READY_MESSAGE_TYPE) - 400 :]
         assert flag in beacon, "the beacon posts without reading the init-failure flag"
 
+    def test_the_refill_probe_sits_between_the_bootstrap_and_the_page(self) -> None:
+        """The host refills in place only for a page that said it redraws.
+
+        After the bootstrap, so the bootstrap's own refill listener is not counted as
+        the page's; before the page, so the page's listeners are.
+        """
+        doc = self.doc()
+        flag = dashboard_frame._REFILL_FLAG
+        probe = doc.index(flag)
+        assert (
+            doc.index("JSON.parse(el.textContent)") < probe < doc.index("<h1 data-dashboard-field")
+        )
+
+    def test_the_band_does_not_count_as_a_page_that_refills(self) -> None:
+        """The band script runs after the page and listens for the refill event. Through
+        the wrapped ``addEventListener`` it would mark every page refill-capable, and a
+        page that does not redraw would then show stale values instead of reloading."""
+        assert "EventTarget.prototype.addEventListener.call(window" in dashboard_frame._BAND_JS
+
+    def test_the_beacon_reports_whether_the_page_refills(self) -> None:
+        beacon = dashboard_frame._BEACON_JS
+        assert f"refill: window[{dashboard_frame._REFILL_FLAG!r}] === true" in beacon
+
     def test_the_guard_ignores_a_resource_error(self) -> None:
         """A missing image must not blank the page.
 

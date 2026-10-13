@@ -365,6 +365,38 @@ _BOOTSTRAP_JS: Final[str] = f"""
 }})();
 """
 
+#: The flag the beacon reports as ``refill``: did the PAGE register a listener that
+#: a refill reaches?
+_REFILL_FLAG: Final[str] = "__kirocrewPageRefills"
+
+#: Whether the page's own script will redraw on a refill, recorded as it registers.
+#:
+#: The bootstrap's refill fills the bound cells of ANY page, but a page that draws
+#: from ``window.kirocrew`` in its own script only shows the new values if it draws
+#: again when one lands. The host cannot read that off the page, so it asks the page
+#: by watching what it does: a page that listens for ``message`` or for the refill
+#: event on ``window`` is one a refill reaches. Every builtin template does. A page
+#: that does not is re-minted on a new read, which is what every page got before, so
+#: a wrong NO costs a reload and never a stale value.
+#:
+#: Installed AFTER the bootstrap, so the bootstrap's own refill listener is not
+#: counted, and BEFORE the page. The band script after the page registers through
+#: the prototype, so it is not counted either. Not a security boundary: a page that
+#: claims refills it does not handle only keeps its own numbers stale.
+_REFILL_PROBE_JS: Final[str] = f"""
+(function () {{
+  window[{_REFILL_FLAG!r}] = false;
+  var add = window.addEventListener;
+  window.addEventListener = function (type) {{
+    if ((this === window || this == null) &&
+        (type === 'message' || type === {'"kirocrew-dashboard"'})) {{
+      window[{_REFILL_FLAG!r}] = true;
+    }}
+    return add.apply(this == null ? window : this, arguments);
+  }};
+}})();
+"""
+
 #: The wire type of the host's refill message.
 DATA_MESSAGE_TYPE: Final[str] = "kirocrew-dashboard:data"
 
@@ -389,7 +421,11 @@ _BEACON_JS: Final[str] = f"""
 (function () {{
   var post = function () {{
     if (window[{_INIT_FAILED_FLAG!r}]) return;
-    parent.postMessage({{ type: {READY_MESSAGE_TYPE!r} }}, '*');
+    // `refill` tells the host it may post new values into this document instead of
+    // loading a new one. See _REFILL_PROBE_JS.
+    parent.postMessage({{
+      type: {READY_MESSAGE_TYPE!r}, refill: window[{_REFILL_FLAG!r}] === true
+    }}, '*');
   }};
   // One turn of the event loop after load, so an error thrown from a load handler
   // the page registered before this one is already recorded when the flag is read.
@@ -458,7 +494,9 @@ _BAND_JS: Final[str] = f"""
         ' from an earlier read. Everything else on this page is current.'
       : 'Some values are from an earlier read. Everything else on this page is current.';
   }}
-  addEventListener({PAGE_EVENT!r}, paint);
+  // Through the prototype, so the refill probe does not count the host's own
+  // listener as the page's.
+  EventTarget.prototype.addEventListener.call(window, {PAGE_EVENT!r}, paint);
   if (document.readyState === 'loading') addEventListener('DOMContentLoaded', paint);
   else paint();
 }})();
@@ -581,6 +619,7 @@ def compose(html: str, read: Mapping[str, Any], title: str = "") -> str:
         # BEFORE the page, so an error in the page's first script is counted.
         f"<script>{_INIT_GUARD_JS}</script>\n"
         f"<script>{_BOOTSTRAP_JS}</script>\n"
+        f"<script>{_REFILL_PROBE_JS}</script>\n"
         f"{html}\n"
         f"<script>{_BAND_JS}</script>\n"
         f"<script>{_BEACON_JS}</script>\n"

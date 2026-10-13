@@ -17,8 +17,17 @@ import { renderWithProviders } from './helpers'
 import CrewDynamicDashboard, {
   ACT_MESSAGE_TYPE,
   DASHBOARD_FALLBACK_REFETCH_MS,
+  DATA_MESSAGE_TYPE,
   READY_MESSAGE_TYPE,
 } from '../pages/members/CrewDynamicDashboard'
+
+/** A composed body carrying its read in the data island, as `compose_body` builds it. */
+function withIsland(credits: number): string {
+  return (
+    `<script type="application/json" id="kirocrew-dashboard-data">${JSON.stringify({ fields: { credits } })}</script>` +
+    `<p>${credits} credits</p>`
+  )
+}
 import { handleDashboardMoved } from '../hooks/useWebSocket'
 import { LANG_STORAGE_KEY } from '../i18n/detect'
 
@@ -227,14 +236,29 @@ describe('CrewDynamicDashboard', () => {
     // Holding such a read back leaves the tab frozen on whatever it opened with.
     const read = vi
       .spyOn(api, 'memberDashboard')
-      .mockResolvedValueOnce(page({ rendered_html: '<!doctype html><p>12 credits</p>' }))
-      .mockResolvedValue(page({ rendered_html: '<!doctype html><p>31 credits</p>' }))
+      .mockResolvedValueOnce(page({ rendered_html: withIsland(12) }))
+      .mockResolvedValue(page({ rendered_html: withIsland(31) }))
     const { queryClient } = mount()
     await waitFor(() => expect(mints.some((m) => m.includes('12 credits'))).toBe(true))
+    const frame = (await screen.findByTestId('crew-dashboard-iframe')) as HTMLIFrameElement
+    const win = frame.contentWindow as Window
+    const posted = vi.spyOn(win, 'postMessage')
+    // The document says its page redraws on a refill (every builtin does).
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', { data: { type: READY_MESSAGE_TYPE, refill: true }, source: win }))
+    })
 
     await queryClient.invalidateQueries({ queryKey: DASHBOARD_KEY })
     await waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(1))
-    await waitFor(() => expect(mints.some((m) => m.includes('31 credits'))).toBe(true))
+    // REFILLED IN PLACE, not reloaded: the open document gets the new read and no
+    // second document is minted -- a new mint per read is the flicker.
+    await waitFor(() =>
+      expect(posted).toHaveBeenCalledWith(
+        expect.objectContaining({ type: DATA_MESSAGE_TYPE, read: expect.objectContaining({ fields: { credits: 31 } }) }),
+        '*',
+      ),
+    )
+    expect(mints.some((m) => m.includes('31 credits'))).toBe(false)
     // Same version, so this was never a new page and nothing was withheld.
     expect(screen.queryByTestId('crew-dashboard-kept-band')).not.toBeInTheDocument()
   })
