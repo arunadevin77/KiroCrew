@@ -964,6 +964,9 @@ describe('KiroPrerequisiteGate', () => {
     const alert = await screen.findByTestId('kiro-gate-status-error')
     expect(alert).toHaveAttribute('role', 'alert')
     expect(alert).toHaveTextContent('Token required.')
+    // The agent runtime is what could not be checked, so the notice states
+    // `noHandoffReason` and offers no hand-off.
+    expect(within(alert).queryByRole('button', { name: /Ask the agent/ })).not.toBeInTheDocument()
     expect(
       screen.getByText('Retry the gateway check before starting a session.'),
     ).toBeInTheDocument()

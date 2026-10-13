@@ -287,14 +287,12 @@ function SetupStatusError({
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-text-strong">
           {i18nT('components.kiroPrerequisiteGate.we_could_not_check_kiro_cli')}
         </h1>
-        {/* No hand-off: this gate stands between the user and the chat the
-            hand-off would navigate to, and the failure is that kiro-cli — the
-            agent runtime — could not even be checked, so there is no agent to
-            hand it to. Try again is the remedy. */}
+        {/* Try again is the remedy. */}
         <ErrorNotice
           className="mt-3 max-w-lg text-left"
           message={asSentence(message)}
           testId="kiro-gate-status-error"
+          noHandoffReason="this gate stands between the user and the chat the hand-off would open, and kiro-cli, the agent runtime, could not even be checked, so there is no agent to hand it to"
         />
         <p className="mt-3 max-w-lg text-sm leading-relaxed text-muted">
           {i18nT('components.kiroPrerequisiteGate.retry_the_gateway_check_before_starting_a_sessio')}
@@ -721,14 +719,13 @@ function CliOutdated({
             complete (ErrorNotice's body is whitespace-pre-wrap, so the CLI
             output keeps its shape). It appears in place after the button press
             with no route change, which is what role="alert" is for. */}
-        {/* No hand-off: kiro-cli — the agent runtime — is the thing that is
-            outdated here, and this gate hides the chat the hand-off would open. */}
         <ErrorNotice
           className="mt-4 w-full max-w-lg text-left text-xs"
           messageClassName="font-mono"
           title={i18nT('components.kiroPrerequisiteGate.the_update_attempt_failed')}
           message={updateError || null}
           testId="kiro-gate-update-error"
+          noHandoffReason="kiro-cli, the agent runtime, is what is outdated here, and this gate hides the chat the hand-off would open"
         />
         {updateError ? (
           <p className="mt-2 max-w-lg text-left text-[13px] leading-relaxed text-muted">
@@ -782,14 +779,13 @@ function AgentSpecsMissing({
             also informative — it means no repair has been attempted yet.
             `role="alert"` because it appears in place after the button press with
             no route change, so a screen reader would otherwise get nothing. */}
-        {/* No hand-off: the agent specs kiro-cli refused are what the agent runs
-            on, and this gate hides the chat the hand-off would open. */}
         <ErrorNotice
           className="mt-4 w-full max-w-lg text-left text-xs"
           messageClassName="font-mono"
           title={i18nT('components.kiroPrerequisiteGate.the_repair_attempt_failed')}
           message={repairError || null}
           testId="kiro-gate-repair-error"
+          noHandoffReason="the agent specs kiro-cli refused are what the agent runs on, and this gate hides the chat the hand-off would open"
         />
         {/* Plain-language next step: the verbatim output above is for a bug
             report, not something a user can act on by itself. */}
@@ -867,14 +863,13 @@ function AgentSpecsRejected({
             </pre>
           </div>
         ) : null}
-        {/* No hand-off: the agent specs kiro-cli refused are what the agent runs
-            on, and this gate hides the chat the hand-off would open. */}
         <ErrorNotice
           className="mt-4 w-full max-w-lg text-left text-xs"
           messageClassName="font-mono"
           title={i18nT('components.kiroPrerequisiteGate.the_repair_attempt_failed')}
           message={repairError || null}
           testId="kiro-gate-repair-error"
+          noHandoffReason="the agent specs kiro-cli refused are what the agent runs on, and this gate hides the chat the hand-off would open"
         />
         {/* Plain-language next step: the verbatim output above is for a bug
             report, not something a user can act on by itself. */}
@@ -1269,12 +1264,10 @@ function OtherCodingAgents({
             </p>
           ) : failed && others.length === 0 ? (
             <>
-              {/* No hand-off: this prerequisite gate also blocks /chat. With
-                  no confirmed ready harness, navigating there cannot reach an
-                  agent to diagnose the probe failure. */}
               <ErrorNotice
                 message={i18nT('components.kiroPrerequisiteGate.other_agents_unavailable')}
                 testId="other-agents-probe-error"
+                noHandoffReason="this prerequisite gate also blocks /chat, and with no confirmed ready harness there is no agent to diagnose the probe failure"
                 footer={<Btn type="button" onClick={onRetryBackends}>{i18nT('components.kiroPrerequisiteGate.try_again')}</Btn>}
               />
             </>

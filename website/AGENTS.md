@@ -69,7 +69,10 @@ the `internal-content-scan` check.
   that draft in a `{/* No hand-off: … */}` comment. Inside a Radix menu, leave it
   off and render a sibling `ErrorNoticeMenuItem`; its `describedBy` must point to
   the passive notice's `id`, so the hand-off is a real menu focus stop rather than
-  a nested button. Enforced by `AUTOSDE.yaml` (`errors-use-error-notice`).
+  a nested button. When the agent the hand-off would open cannot run (its own
+  credential or backend is what failed), pass `noHandoffReason="…"` instead: a
+  reason for the reviewer, never rendered, and a type error next to `askAgent`.
+  Enforced by `AUTOSDE.yaml` (`errors-use-error-notice`).
 - **Security: every `dangerouslySetInnerHTML` goes through DOMPurify** via
   `md()` / `sanitize()` / `esc()` in `src/api/helpers.ts`. A bypass is an XSS bug,
   so there is no acceptable pointer for this one.

@@ -68,6 +68,29 @@ export function ErrorNoticeMenuItem({
 }
 
 /**
+ * The fourth hand-off state: no hand-off, because the agent it would open
+ * cannot run. The agent's own credential or backend is what failed (on the KAS
+ * backend every agent runs as the stored Kiro sign-in, so an expired sign-in
+ * notice that offered "Ask the agent" would open a chat that fails the same
+ * way).
+ *
+ * `noHandoffReason` is a sentence for the reviewer, never rendered. Setting it
+ * together with `askAgent`, `askAgentLabel` or `onHandoff` does not typecheck:
+ * a notice either hands off or states why it cannot. It is NOT the form for a
+ * notice next to an unsaved draft; that one keeps `askAgent` off with a
+ * `No hand-off:` comment naming the draft (see `errors-use-error-notice` in
+ * `website/AUTOSDE.yaml`).
+ */
+export type ErrorNoticeNoHandoff =
+  | { noHandoffReason?: undefined }
+  | {
+    noHandoffReason: string
+    askAgent?: never
+    askAgentLabel?: never
+    onHandoff?: never
+  }
+
+/**
  * The shared error surface — one place that renders an error *and* offers to
  * hand it to the agent.
  *
@@ -162,7 +185,8 @@ export default function ErrorNotice({
    *
    * Set it `true` where there is nothing to lose — crash fallbacks, and read/list
    * failures on pages that hold no draft input. Leave it off next to any editable
-   * field whose contents are not yet saved somewhere durable.
+   * field whose contents are not yet saved somewhere durable. Where the agent
+   * the hand-off would open cannot run at all, pass `noHandoffReason` instead.
    */
   askAgent?: boolean
   /**
@@ -244,7 +268,7 @@ export default function ErrorNotice({
    * an existing `<p data-testid="…">` keeps its id here.
    */
   testId?: string
-}) {
+} & ErrorNoticeNoHandoff) {
   if (!message) return null
   // The secondary line: smaller than the title, lighter than the lead, but still
   // the alert's own colour -- it is the failure's text, demoted, not a caption.

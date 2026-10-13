@@ -1180,6 +1180,10 @@ export default [
               'autoComplete', 'inputMode', 'enterKeyHint', 'spellCheck',
               'viewBox', 'xmlns', 'fill', 'stroke', 'd', 'points', 'transform',
               'encType', 'accept', 'pattern', 'lang', 'dir',
+              // `ErrorNotice`'s `noHandoffReason`: a sentence for the code reviewer
+              // saying why the notice has no agent hand-off. The component never
+              // renders it, so it is not copy.
+              'noHandoffReason',
             ],
           },
 
