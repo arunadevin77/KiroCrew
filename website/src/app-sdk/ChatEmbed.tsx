@@ -137,6 +137,31 @@ interface ChatSlotData {
   queue?: unknown[]
 }
 
+/** Whether the raw slot queue holds THIS send, by the `meta.sendId` the server
+ *  carries on a queue entry when the send landed behind a busy slot (#8853).
+ *  The queued card then shows it, so the optimistic row must step aside. */
+function queueHasSend(raw: unknown, sendId: string): boolean {
+  if (!Array.isArray(raw)) return false
+  return raw.some(q => typeof q === 'object' && q != null
+    && (q as { meta?: { sendId?: unknown } }).meta?.sendId === sendId)
+}
+
+/** Identity of a polled user row, for the host-`onSend` fallback below. */
+const userRowKey = (m: ChatMessage) => (m.meta?.mid as string | undefined) ?? m.ts ?? m.content
+
+/** Whether the poll shows THIS optimistic send. The default path stamps
+ *  `sendId` on the wire, so identity is the proof. A host `onSend` posts on
+ *  its own endpoint and no `sendId` comes back, so its fallback is a user row
+ *  with the same text that was not in the transcript when the send went out. */
+function isPendingAcked(
+  p: { sendId: string; viaHost: boolean; text: string; before: ReadonlySet<string> },
+  messages: ChatMessage[],
+  queue: unknown,
+): boolean {
+  if (messages.some(m => isOwnUserRow(m, p.sendId)) || queueHasSend(queue, p.sendId)) return true
+  return p.viaHost && messages.some(m => m.role === 'user' && m.content === p.text && !p.before.has(userRowKey(m)))
+}
+
 /** Rows per page of the bounded poll — the slot-detail handler's own default,
  *  so an embed asks for exactly what an unqualified read would have returned
  *  had it been bounded. Exported for tests. */
@@ -221,7 +246,8 @@ function ChatEmbed({
   const settled = settledRef.current?.slot === slotKey ? settledRef.current.data : undefined
   const shown = slotData ?? settled
 
-  const messages = shown?.messages ?? EMPTY_MESSAGES
+  const serverMessages = shown?.messages ?? EMPTY_MESSAGES
+
   const running = shown?.running ?? false
   const title = shown?.title ?? ''
   // Queued sends, through the same hydration and split the dashboard panes
@@ -229,6 +255,27 @@ function ChatEmbed({
   // user card here either. Read-only: the embed offers no cancel/edit, so it
   // adds no write path; the cards retire when the drain lands the row.
   const queueRaw = shown?.queue
+
+  // The just-sent message, shown at once as an optimistic user row. Without it
+  // the composer cleared and the message was missing until the next poll — up
+  // to 5 s at the idle cadence. The row is held until the poll shows THIS
+  // send by its `sendId`: its own user row (`isOwnUserRow`) or its queue entry
+  // when the slot was busy; that copy replaces it. Waiting on the poll rather
+  // than on the send settling keeps it correct whether the receipt comes back
+  // before or after the row is persisted. A send that fails or cannot be
+  // confirmed drops the row (`deliver` below): its text goes back to the
+  // composer, and two copies would invite a duplicate resend.
+  const [pending, setPending] = useState<{
+    slot: string; sendId: string; row: ChatMessage; viaHost: boolean; text: string; before: ReadonlySet<string>
+  } | null>(null)
+  const pendingHere = pending?.slot === slotKey ? pending : null
+  // Derived, not cleared: once acknowledged the row stays hidden until the
+  // next send replaces `pending`.
+  const acked = pendingHere != null && isPendingAcked(pendingHere, serverMessages, queueRaw)
+  const messages = useMemo(
+    () => (pendingHere && !acked ? [...serverMessages, pendingHere.row] : serverMessages),
+    [serverMessages, pendingHere, acked],
+  )
   const { queuedMessages, systemDeliveryCount } = useMemo(
     () => splitPaneMessages(hydrateQueuedBubbles([], normalizeQueueEntries(queueRaw))),
     [queueRaw],
@@ -435,16 +482,17 @@ function ChatEmbed({
   //   second means a resend runs the turn twice. The branch stays for the
   //   contract's sake; the wire does not currently produce it.)
   // - `response-late`: the deadline fired with no receipt either way. ChatPane
-  //   leaves this alone because its optimistic bubble is still on screen; this
-  //   embed keeps no bubble and the composer has already cleared, so the
-  //   user's text has NO visible copy left -- the case the transport contract
+  //   leaves this alone because its optimistic bubble stays on screen; this
+  //   embed drops its optimistic row (it has no failure state to put on it)
+  //   and the composer has already cleared, so the user's text has NO
+  //   visible copy left -- the case the transport contract
   //   names as the one a caller may recover. Hand the text back and say the
   //   delivery is unconfirmed (a notice, not a failure: the turn may well be
   //   running, and the poll will show it if so).
   // - `unknown`: a 2xx was received -- the server has the message and only
   //   the receipt was mangled. Restoring would invite a duplicate; do nothing.
-  // - `dispatched` / `queued`: the server has the message. The poll below
-  //   renders it -- this embed keeps no optimistic bubble to confirm.
+  // - `dispatched` / `queued`: the server has the message. The optimistic row
+  //   stays until the poll renders the server's copy by `sendId`.
   // A host-supplied `onSend` keeps its own endpoint and its rejection proves
   // nothing about delivery (a host may have posted and lost the answer), so
   // it is treated like `response-late`: unconfirmed, text handed back, never
@@ -466,13 +514,16 @@ function ChatEmbed({
       // the next embed that shows it. Only a composer submit has text to hand
       // back -- a chip send never consumed the draft.
       const deliver = (tail: PendingEmbedRecovery['tail']) => {
+        // The text is going back to the composer: drop this send's optimistic
+        // row so the user never sees two copies of it.
+        setPending(p => (p?.sendId === sendId ? null : p))
         const rec: PendingEmbedRecovery = { tail, restoreText: override ? undefined : draftText }
         if (mountedRef.current && slotKeyRef.current === slot) applyRecovery(rec)
         else stashEmbedRecovery({ app: appName, slot }, rec)
       }
       // The copy is the core's (`receiptCopy.ts`, shared with SideChat): a
       // refusal FRAMED as a failed send rather than the server's bare sentence
-      // -- this surface has no optimistic bubble to anchor a raw reason to --
+      // -- the optimistic row is dropped first, leaving no bubble to anchor a raw reason to --
       // and "your text is back" only when the send consumed the draft (a chip
       // send never did).
       const fail = (reason?: string) => {
@@ -496,6 +547,8 @@ function ChatEmbed({
       if (receipt.status === 'refused') fail(receipt.reason)
       if (receipt.status === 'response-late') unconfirmed()
     },
+    // A send that threw never reached the transcript: drop its optimistic row.
+    onError: (_err, { sendId }) => { setPending(p => (p?.sendId === sendId ? null : p)) },
     onSettled: () => { void refetch() },
   })
 
@@ -521,8 +574,19 @@ function ChatEmbed({
     // A fresh id and the slot the send belongs to: the yardstick for "did the
     // poll show THIS send", and the address a receipt is delivered to if this
     // embed is gone by then.
-    sendMutation.mutate({ msg, draftText, override: override != null, sendId: mintSendId(), slot: slotKey })
-  }, [draft, setDraft, sendMutation, slotKey])
+    const sendId = mintSendId()
+    // No `sendId` on the optimistic row's meta: it would read as this send's
+    // own server row and falsely prove an unconfirmed notice delivered.
+    setPending({
+      slot: slotKey,
+      sendId,
+      row: { role: 'user', content: msg, cls: 'user', meta: { clientTs: new Date().toISOString(), optimistic: true } },
+      viaHost: onSend != null,
+      text: msg,
+      before: new Set(serverMessages.filter(m => m.role === 'user').map(userRowKey)),
+    })
+    sendMutation.mutate({ msg, draftText, override: override != null, sendId, slot: slotKey })
+  }, [draft, setDraft, sendMutation, slotKey, onSend, serverMessages])
 
   // Resolve a pending tool approval from inside the embed.
   //

@@ -116,6 +116,15 @@ inserts a line break, and an Enter used to commit an input method editor (IME)
 candidate does not send. The box grows with the draft up to 240 pixels, then
 keeps its height and scrolls vertically.
 
+A sent message appears in the transcript at once, as an optimistic row at the
+end. The embed keeps that row until a poll returns this send by its `sendId`:
+its own `user` row, or its queue entry when the slot was busy. That server copy
+replaces it. The swap does not depend on when the send call settles. A send
+whose text goes back to the composer (refused, or delivery not confirmed) drops
+the row. An `onSend` handler posts on its own endpoint, so no `sendId` comes
+back; there the server copy is a new `user` row with the same text, one that
+was not in the transcript at send time.
+
 A host that boxes the embed at a fixed height passes `composerMaxHeight` (in
 pixels) to lower that cap, so a long draft cannot take most of the box from the
 transcript. The resting (empty) size of the composer is unchanged; only the cap

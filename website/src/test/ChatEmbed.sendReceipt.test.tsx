@@ -16,7 +16,7 @@
  *   the connection dropped", and the second means a resend runs the turn
  *   twice -- so it is the unconfirmed case below, not a failure.
  * - response-late             -> the text handed back under a `notice` row
- *   ("unconfirmed"): this embed keeps no optimistic bubble, so the cleared
+ *   ("unconfirmed"): the embed drops its optimistic row, so the cleared
  *   composer was the only copy -- the recoverable indeterminate outcome.
  * - unknown                   -> nothing: a 2xx was received, so restoring
  *   could invite a duplicate of a turn already running.
