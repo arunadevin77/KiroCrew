@@ -122,9 +122,12 @@ async def api_member_self_update(request: web.Request) -> web.Response:
         )
     except members_mod.SelfUpdateError as exc:
         _audit(sk, OP_UPDATE_SELF, "denied", exc.code)
-        status = (
-            403 if exc.code == "not_a_crewmate" else 409 if exc.code == "changed_meanwhile" else 400
-        )
+        if exc.code == "not_a_crewmate":
+            status = 403
+        elif exc.code == "changed_meanwhile":
+            status = 409
+        else:
+            status = 400
         return _deny(status, exc.code, str(exc))
     except (UnknownMemoryStore, MemberAlreadyExists, MemberApprovalConflict):
         return _not_writable(sk, OP_UPDATE_SELF)
