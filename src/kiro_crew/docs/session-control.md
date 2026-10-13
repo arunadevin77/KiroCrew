@@ -45,7 +45,7 @@ conductor: a session that can dispatch but cannot edit a file. Always pass
 
 | Argument | Required | Meaning |
 |---|---|---|
-| `title` | no | Short sidebar name. Say what the session is FOR |
+| `title` | no | Short sidebar name. Say what the session is FOR. Follows `session_rename`'s character rules (`invalid_title`), then is cut to 200 characters; a title whose first 200 characters show nothing is refused |
 | `agent` | no (but always pass it) | Agent to bind the session to |
 | `agent_kind` | no | One value, `template`: run the shared template `agent` names on your own memory, even when a crewmate carries the same name. Omit for name-first resolution (a crewmate wins, with its own memory). Always pass it for `kirocrew-worker`, which needs no memory of its own. Requires `agent` (`agent_kind_requires_agent` otherwise); a kind that does not resolve is refused `agent_unresolved` rather than falling back to whoever answers by default |
 | `folder` | no | Sidebar folder id or `/`-separated path to file it into, atomically with creation. Missing path segments are created (`mkdir -p`). The create is checked first, so a create that would be refused normally leaves no new empty folder behind (a race can still leave one) |
@@ -71,7 +71,7 @@ use `session_fork` instead.
 | Argument | Required | Meaning |
 |---|---|---|
 | `source` | no | The session to copy from: a session key, slot key, or its exact unique title. Omit to fork **your own** session |
-| `title` | no | Short sidebar name, kept as given. Omit to start from `Fork of <source title>`, which is then renamed automatically after the latest question the copy holds |
+| `title` | no | Short sidebar name, kept as given within `session_create`'s title rules. Omit to start from `Fork of <source title>`, which is then renamed automatically after the latest question the copy holds |
 | `folder` | no | Sidebar folder id or `/`-separated path, created if missing (`mkdir -p`), as for `session_create`. Omit to leave the child in the source's folder |
 | `at_message_index` | no | Fork point: the position of the LAST message to carry, counting the source's user and assistant messages from 0. Omit to carry the whole transcript |
 
@@ -653,11 +653,15 @@ rather than cut down (`invalid_title`). The
 zero-width joiner and non-joiner and the tag characters stay allowed, because
 emoji sequences, flag emoji and scripts such as Persian need them. The stored title
 passes through `_scrub_text`, the scrub the dashboard applies to stored fields.
-It redacts credentials and exfiltration URLs like a `session_create` title, and
-a secret split by an invisible character (such as a zero-width joiner) is still
-redacted. A title that redaction lengthens past 200 characters is refused
-(`invalid_title`) rather than cut, so a stored title never holds a torn
-`[REDACTED]` marker.
+It redacts credentials and exfiltration URLs, and a secret split by an
+invisible character (such as a zero-width joiner) is still redacted. A title
+that redaction lengthens past 200 characters is refused (`invalid_title`)
+rather than cut, so a stored title never holds a torn `[REDACTED]` marker.
+
+`session_create` and `session_fork` titles follow the same character rules and
+the same scrub. Two things differ, because their title is optional: a blank
+title means no title, and a title over 200 characters is cut after the scrub
+rather than refused.
 
 If the new title cannot be written to the session's history right away, the call
 fails with `title_persist_failed`. The sidebar already shows the new title, and

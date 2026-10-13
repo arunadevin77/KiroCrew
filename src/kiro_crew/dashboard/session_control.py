@@ -2503,6 +2503,9 @@ async def create_session(
     ``folder_id`` is then the deepest folder that already exists, which is the
     one the new segments would inherit a project directory from.
     """
+    # Validated before any gate, as `rename_target` does: a malformed title
+    # needs no caller lookup and must be refused before anything is allocated.
+    clean_title = _clean_new_session_title(title, cap=200, not_done="session not created")
     caller_key = caller_slot_key(state, caller_session_key)
     if not caller_key:
         raise SessionControlError(
@@ -2599,7 +2602,7 @@ async def create_session(
     # falling to the global default would put the child on another workspace's
     # memory store the moment the default is bound elsewhere. It also matches what
     # creating a session to hand work to means -- the same kind of session.
-    # Sanitized like `title` below, and for the same reason: this value arrives
+    # Sanitized for the reason `title` is scrubbed at the top: this value arrives
     # from the calling model, is persisted verbatim to the metadata line, and is
     # pushed to every dashboard client. The schema caps its LENGTH; sanitizing is
     # what keeps a credential-shaped string out of storage and out of the sidebar.
@@ -3297,8 +3300,8 @@ async def create_session(
             # exactly as it treats a human pick rather than as a backfilled value.
             slot.model = model_name
             slot._model_pick_gen += 1
-        if title.strip():
-            slot.title = sanitize_outbound(title.strip())[:200]
+        if clean_title:
+            slot.title = clean_title
             slot._titled = True
         # Persist at birth. `save_slot_off_loop` cannot do this: the save it wraps
         # returns early on an empty message window -- a full save has nothing to
@@ -3553,6 +3556,11 @@ async def fork_session(
     ``caller_fenced`` is the HTTP gate's ownership-fence verdict, forwarded to
     ``authorize_target`` for the reason every other verb forwards it.
     """
+    # Validated first, as in `create_session`: a refused title spends no
+    # create-rate token and reads no source transcript.
+    clean_title = _clean_new_session_title(
+        title, cap=_MAX_FORK_TITLE_CHARS, not_done="session not forked"
+    )
     caller_key = caller_slot_key(state, caller_session_key)
     if not caller_key:
         raise SessionControlError(
@@ -3697,7 +3705,6 @@ async def fork_session(
     # see the child born with the grant they just withdrew. The values are
     # recorded for the audit line after the stamp has taken them.
     posture: dict[str, bool] = {}
-    clean_title = sanitize_outbound(title.strip())[:_MAX_FORK_TITLE_CHARS] if title.strip() else ""
 
     def _folder_exists_now() -> bool:
         # The COMMITTED folder list, read synchronously: folder mutations run on
@@ -5921,7 +5928,7 @@ def _pick_audit_fields(model: str | None, reasoning_effort: str | None) -> dict[
 #: refuses a title between 201 and 500 characters, for MCP and direct callers alike.
 _MAX_RENAME_TITLE_CHARS = 200
 
-#: Every Unicode text-direction control, refused in a renamed title: the
+#: Every Unicode text-direction control, refused in an agent-supplied title: the
 #: embeddings, overrides and isolates (U+202A..U+202E, U+2066..U+2069) and the
 #: directional marks (U+200E, U+200F, U+061C).
 _BIDI_CONTROLS = frozenset(
@@ -5935,7 +5942,7 @@ _BIDI_CONTROLS = frozenset(
 #: printable symbol that draws nothing.
 _BLANK_GLYPHS = frozenset("\u2800")
 
-#: Format characters (category ``Cf``) a renamed title may contain: the zero-width
+#: Format characters (category ``Cf``) an agent-supplied title may contain: the zero-width
 #: non-joiner and joiner, which emoji sequences and joined scripts such as Persian
 #: and Devanagari need. The tag characters U+E0020..U+E007F are allowed
 #: separately, by range; the tag block's other format character, U+E0001
@@ -5945,10 +5952,100 @@ _ALLOWED_FORMAT_CHARS = frozenset("\u200c\u200d")
 
 
 def _is_allowed_format_char(ch: str) -> bool:
-    """True for a format character a renamed title keeps: a joiner, or a tag
+    """True for a format character an agent-supplied title keeps: a joiner, or a tag
     character (U+E0020..U+E007F), which spells the subdivision of a flag emoji
     such as England's. Every other ``Cf`` character is refused."""
     return ch in _ALLOWED_FORMAT_CHARS or "\U000e0020" <= ch <= "\U000e007f"
+
+
+def _shows_nothing(text: str) -> bool:
+    """True when every character of *text* is whitespace, invisible or a blank glyph."""
+    return all(ch.isspace() or _is_invisible(ch) or ch in _BLANK_GLYPHS for ch in text)
+
+
+def _refuse_hidden_title_characters(stripped: str, *, not_done: str) -> None:
+    """Refuse a title whose characters hide, reorder or split what it shows.
+
+    The character rules every agent-supplied sidebar title meets, in
+    ``session_create``, ``session_fork`` and ``session_rename``: a model can send
+    any code point, and the title is persisted and broadcast to every dashboard.
+    *stripped* has had its surrounding whitespace removed and is not empty.
+    *not_done* ends each refusal message ("session not renamed").
+    """
+    if any(unicodedata.category(ch) == "Cc" or ch in "\u2028\u2029" for ch in stripped):
+        raise SessionControlError(
+            f"title contains a control character; {not_done}",
+            code="invalid_title",
+            status=400,
+        )
+    # A direction control makes the sidebar render the label in an order other
+    # than the one it was written in.
+    if any(ch in _BIDI_CONTROLS for ch in stripped):
+        raise SessionControlError(
+            f"title contains a text-direction control; {not_done}",
+            code="invalid_title",
+            status=400,
+        )
+    # Any other format character (a zero-width space, a word joiner, a byte-order
+    # mark, a soft hyphen) is invisible inside a visible title, so it can make a
+    # near-duplicate of another session's label. Only the format characters that
+    # emoji and joined scripts need are kept: see :func:`_is_allowed_format_char`.
+    if any(unicodedata.category(ch) == "Cf" and not _is_allowed_format_char(ch) for ch in stripped):
+        raise SessionControlError(
+            f"title contains an invisible format character; {not_done}",
+            code="invalid_title",
+            status=400,
+        )
+    # A title needs at least one character that shows something. Invisible
+    # characters (a zero-width space or joiner, a variation selector, a Hangul
+    # filler) survive `str.strip()`, so a title made only of them, or of blank
+    # glyphs, would store an invisible, final name the automatic titler can
+    # never replace. Such characters are kept inside a visible title: a joiner
+    # is how an emoji sequence is written.
+    if _shows_nothing(stripped):
+        raise SessionControlError(
+            f"title has no visible character; {not_done}",
+            code="invalid_title",
+            status=400,
+        )
+    # A blank glyph is refused anywhere in the title, not only in an all-blank
+    # one. `terminal_safe.normalize_for_scanning` does not remove it (it is a
+    # printable symbol, not an invisible character), so one placed inside a
+    # secret ("AKIA\u2800...") would split it past the redactors that
+    # `_scrub_text` runs afterwards.
+    if any(ch in _BLANK_GLYPHS for ch in stripped):
+        raise SessionControlError(
+            f"title contains a blank glyph (U+2800); {not_done}",
+            code="invalid_title",
+            status=400,
+        )
+
+
+def _clean_new_session_title(title: str, *, cap: int, not_done: str) -> str:
+    """Validate the optional *title* of a session an agent opens; return the stored form.
+
+    Used by :func:`create_session` and :func:`fork_session`. An empty or
+    whitespace-only title is no title and returns ``""``, so the session keeps
+    its automatic name. Any other title meets
+    :func:`_refuse_hidden_title_characters`, then is scrubbed by
+    ``handlers._shared._scrub_text``, which also redacts a secret an invisible
+    character splits (``"AKIA\\u200d..."``), and is cut to *cap* characters.
+    The cut comes after the scrub: cutting first could keep part of a secret
+    that no redactor pattern matches any longer. A cut result that shows
+    nothing (a long run of joiners ahead of the visible text) is refused.
+    """
+    stripped = title.strip()
+    if not stripped:
+        return ""
+    _refuse_hidden_title_characters(stripped, not_done=not_done)
+    cut = _scrub_text(stripped)[:cap]
+    if _shows_nothing(cut):
+        raise SessionControlError(
+            f"title has no visible character; {not_done}",
+            code="invalid_title",
+            status=400,
+        )
+    return cut
 
 
 def _clean_rename_title(title: str) -> str:
@@ -5977,49 +6074,7 @@ def _clean_rename_title(title: str) -> str:
             code="invalid_title",
             status=400,
         )
-    if any(unicodedata.category(ch) == "Cc" or ch in "\u2028\u2029" for ch in stripped):
-        raise SessionControlError(
-            "title contains a control character; session not renamed",
-            code="invalid_title",
-            status=400,
-        )
-    # A direction control makes the sidebar render the label in an order other
-    # than the one it was written in.
-    if any(ch in _BIDI_CONTROLS for ch in stripped):
-        raise SessionControlError(
-            "title contains a text-direction control; session not renamed",
-            code="invalid_title",
-            status=400,
-        )
-    # Any other format character (a zero-width space, a word joiner, a byte-order
-    # mark, a soft hyphen) is invisible inside a visible title, so it can make a
-    # near-duplicate of another session's label. Only the format characters that
-    # emoji and joined scripts need are kept: see :func:`_is_allowed_format_char`.
-    if any(unicodedata.category(ch) == "Cf" and not _is_allowed_format_char(ch) for ch in stripped):
-        raise SessionControlError(
-            "title contains an invisible format character; session not renamed",
-            code="invalid_title",
-            status=400,
-        )
-    # A title needs at least one character that shows something. Invisible
-    # characters (a zero-width space or joiner, a variation selector, a Hangul
-    # filler) survive `str.strip()`, so a title made only of them, or of blank
-    # glyphs, would store an invisible, final name the automatic titler can
-    # never replace. Such characters are kept inside a visible title: a joiner
-    # is how an emoji sequence is written.
-    if all(ch.isspace() or _is_invisible(ch) or ch in _BLANK_GLYPHS for ch in stripped):
-        raise SessionControlError("title is required", code="invalid_title", status=400)
-    # A blank glyph is refused anywhere in the title, not only in an all-blank
-    # one. `terminal_safe.normalize_for_scanning` does not remove it (it is a
-    # printable symbol, not an invisible character), so one placed inside a
-    # secret ("AKIA\u2800...") would split it past the redactors that
-    # `_scrub_text` runs below.
-    if any(ch in _BLANK_GLYPHS for ch in stripped):
-        raise SessionControlError(
-            "title contains a blank glyph (U+2800); session not renamed",
-            code="invalid_title",
-            status=400,
-        )
+    _refuse_hidden_title_characters(stripped, not_done="session not renamed")
     # Sanitized with the stored-field scrub the dashboard handlers use: the title
     # is broadcast to every dashboard and persisted with the transcript. The
     # redactors match literal patterns, so an invisible character placed inside
