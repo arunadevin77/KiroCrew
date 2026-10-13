@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeGuard
 from urllib.parse import quote
 
 from kiro_crew import mcp_core
@@ -250,9 +250,15 @@ def schemas() -> list[dict[str, Any]]:
                 "the CLI's own remedy in the message -- provisioning (venv + SPA "
                 "build) is minutes of work and is not reachable from here; run it "
                 "from the Dev Fleet page or `kirocrew pod provision <wt>`. "
-                "Requires the Dev Fleet app to be enabled. The returned token is a "
-                "2h credential scoped to that pod alone; it is not the live "
-                "gateway's, and no secret of the host is exposed by it. "
+                "Requires the Dev Fleet app to be enabled. The returned token is "
+                "scoped to that pod alone; it is not the live gateway's, and no "
+                "secret of the host is exposed by it. It carries two limits, and "
+                "the reply names both: the token itself is accepted only within a "
+                "short link window (5 minutes), and the first request that carries "
+                "it opens a pod session, kept in a cookie, that lasts 2h. Use the "
+                "token straight away and drive the pod with that session; past the "
+                "window the pod refuses the token as expired. Calling pod_up again "
+                "on a running pod leaves it running and returns a fresh token. "
                 "Release the pod with `pod_down` when done -- a pod holds a port "
                 "and memory until it is stopped."
             ),
@@ -784,6 +790,37 @@ def _pod_failure(payload: dict[str, Any], verb: str) -> str | None:
     return None
 
 
+def _positive_int(value: object) -> TypeGuard[int]:
+    """True for a real positive int; a bool, a float or a numeric string is not one."""
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _format_window(secs: int) -> str:
+    """A token window as a person reads it: '5 min', '2h', or seconds."""
+    if secs >= 3600 and secs % 3600 == 0:
+        return f"{secs // 3600}h"
+    if secs >= 60 and secs % 60 == 0:
+        return f"{secs // 60} min"
+    return f"{secs}s"
+
+
+def _pod_token_limits(resp: dict[str, Any]) -> str:
+    """Both limits of a pod token, as the route read them from its claims.
+
+    The link window and the session lifetime differ by design (minutes versus
+    hours), and naming only one of them tells the agent the wrong thing about the
+    other. When the route sent no usable window the line says to use the token
+    at once and names no duration, because a guessed one is the defect itself.
+    """
+    link, session = resp.get("link_ttl_secs"), resp.get("session_ttl_secs")
+    if _positive_int(link) and _positive_int(session):
+        return (
+            f"use within {_format_window(link)}; "
+            f"the session it opens lasts {_format_window(session)}"
+        )
+    return "use it straight away: the link window is short"
+
+
 def pod_up(name: str, args: dict[str, Any]) -> str:
     _pu_worktree = args["worktree"]
     _pu_resp = mcp_core._post(
@@ -794,8 +831,8 @@ def pod_up(name: str, args: dict[str, Any]) -> str:
         return _pu_err
     # The token is the DELIVERABLE, so it is the one string here that must survive
     # verbatim -- redacting it would return a handle that cannot be used. Scope is
-    # what makes that safe: it is a 2h credential for this pod's own gateway, not
-    # the live one. Everything else in the payload is echoed as the route sent it.
+    # what makes that safe: it is a credential for this pod's own gateway, not the
+    # live one. Everything else in the payload is echoed as the route sent it.
     _pu_port = _pu_resp.get("port")
     _pu_base = _pu_resp.get("base_url") or (f"http://127.0.0.1:{_pu_port}" if _pu_port else "")
     _pu_token = _pu_resp.get("token") or ""
@@ -804,8 +841,12 @@ def pod_up(name: str, args: dict[str, Any]) -> str:
         f"base_url: {_pu_base}",
     ]
     if _pu_token:
-        _pu_lines.append(f"token: {_pu_token}  (ttl {_pu_resp.get('ttl') or '2h'})")
+        _pu_lines.append(f"token: {_pu_token}  ({_pod_token_limits(_pu_resp)})")
         _pu_lines.append(f"open: {_pu_base}/?token={_pu_token}")
+        _pu_lines.append(
+            "Past its window the pod refuses the token as expired; call pod_up "
+            "again (the pod keeps running) for a fresh one."
+        )
     else:
         # `pod up --json` emits an empty token when it could not PROVE it owns the
         # port, and withholding the credential is the correct outcome there. Say so:

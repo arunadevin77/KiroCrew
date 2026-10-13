@@ -52,7 +52,7 @@ systemd part -- so they are the portable choice, and the only one on a host that
 denies you the bus.
 
 ```
-pod_up     {"worktree": "<wt>"}   -> prose: port, base_url, token (+ttl)
+pod_up     {"worktree": "<wt>"}   -> prose: port, base_url, token (+ its two limits)
 pod_status {"worktree": "<wt>"}   -> status + port + health
 pod_ls     {}                     -> every pod active on this host
 pod_down   {"worktree": "<wt>"}   -> stopped, HOME reclaimed
@@ -87,6 +87,14 @@ curl -s "$base_url/api/<anything>?token=$token"      # backend API
 #    live gateway untouched
 kirocrew pod down <wt>
 ```
+
+The token is a link with two limits. The pod accepts the raw token for 5 minutes,
+and the first request that carries it opens a session, kept in a cookie, that lasts
+2h (`ttl` in the JSON is that session lifetime). So use the token straight away and
+drive the pod with the session: keep curl's cookie jar from that first request
+(`curl -c jar -b jar ...`) or let Playwright keep its context. A `?token=` sent after
+the window is refused with `403 token expired`; `pod_up` (or `kirocrew pod token
+<wt>`) on the running pod leaves it running and returns a fresh token.
 
 Other verbs: `ls` (list running pods) · `status <wt>` · `token <wt>` · `url <wt>`
 · `logs <wt>` · `provision <wt>`. Run `kirocrew pod --help` for the full list.

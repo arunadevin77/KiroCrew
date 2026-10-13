@@ -293,8 +293,10 @@ async def handle_pod_up(request: web.Request) -> web.Response:
 
     The response carries the ``base_url`` and ``token`` the CLI's ``--json`` prints,
     which is the whole point: minting happens here, in the gateway, from the pod's
-    own ``.local_secret``. The agent receives a scoped 2h credential and never
-    touches the secret that produced it.
+    own ``.local_secret``. The agent receives a credential scoped to that pod and
+    never touches the secret that produced it. The response also carries
+    ``link_ttl_secs`` and ``session_ttl_secs``: how long the raw token is accepted,
+    and how long the session it opens lasts.
 
     Provisioning is deliberately NOT reachable from here. A cold venv plus an SPA
     build is minutes of work, and holding one request -- and one MCP tool call --

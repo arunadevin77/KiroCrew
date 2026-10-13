@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import functools
 import hashlib
 import json
@@ -12,7 +13,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, TypeGuard
 
 from kiro_crew import dep_sync, frontend, hooks, platform_compat
 from kiro_crew.apps.builtins.dev_fleet import fleet_state, live, npm_preflight, repository, runtime
@@ -294,6 +295,46 @@ def _reclaim_pod_locked(
         return "reclaimed", ""
 
 
+def _is_number(value: object) -> TypeGuard[int | float]:
+    """True for an int or a float claim; a bool (an int subclass) is not a number here."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _token_windows(token: str) -> dict[str, int]:
+    """How long a pod token's link and the session it opens last, in seconds.
+
+    A pod token carries two limits: ``exp``, the link window inside which the raw
+    token is accepted, and ``session_exp``, the lifetime of the session cookie the
+    first request that carries it is given. They differ by design (minutes versus
+    hours), so a caller that is told only one of them is told the wrong thing
+    about the other.
+
+    The claims are read WITHOUT verifying the signature: the token is signed with
+    the pod's own secret, which this gateway never holds. That is sound because the
+    numbers are display-only -- they tell the agent when to use the token, and the
+    pod enforces the real limits whatever is reported here. Anything malformed
+    yields an empty dict, so the caller reports no window rather than a wrong one.
+    """
+    try:
+        encoded = token.split(".", 1)[0]
+        data = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    iat, exp, session_exp = data.get("iat"), data.get("exp"), data.get("session_exp")
+    if not (_is_number(iat) and _is_number(exp) and _is_number(session_exp)):
+        return {}
+    try:
+        link_secs = round(exp - iat)
+        session_secs = round(session_exp - iat)
+    except (ValueError, OverflowError):
+        return {}
+    if link_secs <= 0 or session_secs <= 0:
+        return {}
+    return {"link_ttl_secs": link_secs, "session_ttl_secs": session_secs}
+
+
 def _mint_pod_token_locked(cfg, name: str, expected_checkout: str) -> dict:
     """Revalidate the boot's checkout and mint under one pod-name lock off-loop."""
     outcome, audit_error = "failure", "mint failed"
@@ -433,6 +474,10 @@ async def _pod_up_locked(name: str) -> dict:
         if not minted["ok"]:
             return minted
         handle.update(minted)
+    # Both mint paths (the gateway's and the CLI's own) hand back the same token
+    # shape, so the windows are read from whichever token the handle carries.
+    if isinstance(handle.get("token"), str) and handle["token"]:
+        handle.update(_token_windows(handle["token"]))
     handle["ok"] = True
     return handle
 

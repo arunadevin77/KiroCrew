@@ -361,8 +361,15 @@ Contract:
 The model-facing half is the `pod_up` / `pod_down` / `pod_status` / `pod_ls` tools on
 `kirocrew-core` (`mcp_tools/apps.py`). The pod token is returned to the agent
 verbatim — redacting it would hand back an unusable handle — which is safe because it
-is a 2h credential scoped to that pod's own gateway, minted server-side from the
+is a credential scoped to that pod's own gateway, minted server-side from the
 pod's own internal-API credential so the agent never touches the secret itself.
+The token carries two limits and `pod_up` names both: the raw token is accepted only
+within the link window (5 minutes), and the first request that carries it opens a
+pod session, kept in a cookie, that lasts 2h. The `pod/up` route reads both from the
+minted token's own `exp`, `session_exp` and `iat` claims and returns them as
+`link_ttl_secs` and `session_ttl_secs`. The gateway does not hold the pod's secret,
+so it reads those claims unverified; they are display-only and the pod enforces the
+limits. `pod_up` on a running pod leaves it running and returns a fresh token.
 
 ## Authorization
 
