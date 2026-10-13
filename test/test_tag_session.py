@@ -947,12 +947,13 @@ class TestTopicTagsUiLanguage:
             dispatched.append(fn)
             return fn(*args, **kwargs)
 
-        monkeypatch.setattr(
-            "kiro_crew.dashboard.chat_auto_tag.asyncio.to_thread", _inline_to_thread
-        )
         state = _make_state()
         slot = _topic_slot()
 
-        await maybe_auto_tag(state, slot)
+        # Scoped to the call, not to the test: ``patch_save_slot`` already holds
+        # this attribute, and an outer patch that unwinds after the fixture
+        # would leave the fixture's mock installed for every later test.
+        with patch("kiro_crew.dashboard.chat_auto_tag.asyncio.to_thread", _inline_to_thread):
+            await maybe_auto_tag(state, slot)
 
         assert chat_auto_tag._ui_language in dispatched
