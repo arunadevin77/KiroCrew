@@ -200,6 +200,14 @@ class TestTimedGrantDeadline:
             None
         )
 
+    def test_a_quoted_gt_is_covered_by_a_chat_long_base_grant(self):
+        """The same reading as ``redirect_outside_grant``: a quoted ``>`` is text."""
+        timed = {"echo*": GrantDeadline(100.0, 90.0)}
+        assert timed_grant_deadline("echo 'a > b'", base_trust_patterns("echo"), timed) is None
+        assert timed_grant_deadline("echo 'a' > b", base_trust_patterns("echo"), timed) == (
+            GrantDeadline(float("-inf"), float("-inf"))
+        )
+
     @pytest.mark.parametrize("command", ["ls && rm x", "$(ls)"])
     def test_a_command_no_grant_covers_gets_a_deadline_already_passed(self, command):
         deadline = timed_grant_deadline(command, set(), {"ls*": GrantDeadline(100.0, 100.0)})

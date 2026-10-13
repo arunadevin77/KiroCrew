@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from kiro_crew import platform_compat
 from kiro_crew.dashboard.state import DashboardState, _ChatSlot
 from kiro_crew.history import ConversationLog
 from kiro_crew.trust_patterns import (
@@ -1551,6 +1552,85 @@ class TestRedirectOutsideGrant:
         command = "gh pr view $(id) > /tmp/x"
         assert _canonical_matches_trusted_pattern(command, patterns) is None
         assert redirect_outside_grant(command, patterns) is False
+
+
+def _base_grants(*programs: str) -> set[str]:
+    return set().union(*(base_trust_patterns(program) for program in programs))
+
+
+class TestQuotedRedirectIsText:
+    """A ``>`` bash reads as part of a word is not a redirect the grant must cover."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git log --format='%h -> %s'",
+            "gh api repos/o/r/pulls --jq 'select(.n > 1)'",
+            'grep -E "a>b" file.txt',
+            'echo "a > b"',
+            "echo a \\> b",
+            'echo "a \\" > b"',
+            "echo 'a'\\''b > c'",
+            "echo 'a\\' 'b > c'",
+            "echo hi 2'>'file",
+            "echo '>' 2>/dev/null",
+            "echo '>|' x",
+            "ls && grep 'a > b' f",
+        ],
+    )
+    def test_a_quoted_or_escaped_gt_stays_covered(self, command):
+        patterns = _base_grants("git", "gh", "grep", "echo", "ls")
+        assert _canonical_matches_trusted_pattern(command, patterns) is not None
+        assert redirect_outside_grant(command, patterns) is False
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo 'a' > b",
+            'echo "a > b" > c',
+            "echo hi > out.txt",
+            "echo hi >> out.txt",
+            "echo hi &> out.txt",
+            "echo hi 2>&1 > out.txt",
+            "echo hi 2> err.txt",
+            "echo hi >| out.txt",
+            'echo \\"a > out\\"',
+            "echo \\'a > out\\'",
+            "echo 'a\\' > out",
+            'echo "it\'s" > out',
+            "ls && echo '>' > out",
+            "ls; echo '>' > out",
+            # A quote left open: bash refuses the line, and nothing here guesses.
+            "echo 'a > b",
+            'echo "a > b',
+            # bash writes `out` for each of these, while a plain quote walk sees the
+            # `>` inside quotes: a heredoc body, a comment, ANSI-C `$'\''` and a
+            # quote inside `${...}` each read quotes differently.
+            "cat <<EOF\n'\nEOF\nls > out '\n'",
+            "ls # '\nls > out # '",
+            "echo $'\\'' > out \\'",
+            "echo \"${x#'\"'}\" > out \\'",
+            "echo \"${x:-'\"'}\" > out \\'",
+        ],
+    )
+    def test_a_redirect_bash_runs_still_needs_a_grant_that_spells_it(self, command):
+        assert redirect_outside_grant(command, _base_grants("echo", "ls", "cat")) is True
+
+    def test_a_redirect_inside_a_substitution_matches_no_grant(self):
+        command = "echo $(echo '>' > out)"
+        assert _canonical_matches_trusted_pattern(command, base_trust_patterns("echo")) is None
+
+    def test_on_windows_every_gt_counts(self):
+        """PowerShell runs the command there, and a backslash escapes nothing in it."""
+        patterns = _base_grants("git", "echo")
+        with patch.object(platform_compat, "IS_WINDOWS", True):
+            assert redirect_outside_grant("git log --format='%h -> %s'", patterns) is True
+            assert redirect_outside_grant('echo "a\\" > out \\""', patterns) is True
+
+    def test_a_quoted_gt_in_a_pattern_does_not_spell_a_write(self):
+        command = "jq '.a > 1' x > out"
+        assert redirect_outside_grant(command, {"jq '.a > 1' *"}) is True
+        assert redirect_outside_grant(command, {"jq '.a > 1' * > out"}) is False
 
 
 class TestMatchesTrustedPatternPiped:

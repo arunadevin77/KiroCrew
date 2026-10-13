@@ -3139,12 +3139,23 @@ want of turn budget. Nobody is asked then, so the audit row is the record. Two
 rungs refusing one name with the same detail post the notice once.
 `redirect_outside_grant` (`trust_patterns.py`) judges each segment, and what
 counts as a write is the read-only classifier's own rule
-(`readonly_bash.writes_through_redirect`), so the trust-reads and trusted-pattern
-tiers agree: the discard idioms `>/dev/null`, `2>/dev/null`, `&>/dev/null` and
-`N>&M` are not writes, provided the idiom ends its shell word (a space, tab,
-newline, operator or the end of the line; any other character, including
-non-ASCII whitespace, continues the word), and every other `>` is, quoted or
-not.
+(`readonly_bash.writes_through_redirect`): the discard idioms `>/dev/null`,
+`2>/dev/null`, `&>/dev/null` and `N>&M` are not writes, provided the idiom ends
+its shell word (a space, tab, newline, operator or the end of the line; any other
+character, including non-ASCII whitespace, continues the word), and every other
+`>` is. The trusted-pattern tier applies that rule after dropping each `>` bash
+reads as text: one inside single or double quotes, or right after a backslash
+outside single quotes (`_writes_through_redirect`). `git *` therefore covers
+`git log --format='%h -> %s'`, and `grep *` covers `grep -E "a>b" f`, but
+neither covers `echo 'a' > b` or `echo "a > b" > c`. The same reading decides
+whether a pattern spells a write redirect and which timed grant an approval rests
+on. Where the walk cannot follow bash's quoting, every `>` stays a write: a quote
+left open, a command carrying `<<` (a heredoc body, which can sit in a later
+segment than its `<<`), `#` (a comment), `$'` (ANSI-C quoting, where a backslash
+escapes a single quote) or `${` (a quoting context of its own inside double
+quotes), and Windows, where the shell is PowerShell and a backslash escapes
+nothing. The read-only (trust-reads) tier drops nothing and still refuses every
+`>`, so the two tiers agree on every unquoted `>`.
 
 **Child-fidelity split: identity vs arguments.** A backend-subagent permission
 event whose structured params never reached the tool_call cache is low-fidelity

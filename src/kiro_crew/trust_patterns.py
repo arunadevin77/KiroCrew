@@ -259,25 +259,80 @@ def redirect_outside_grant(command: str, patterns: set[str]) -> bool:
     matches it AND spells a write redirect itself (the exact-command grant for
     that line, or a pattern written with one), or by the broad ``*`` grant.
     Discard redirects (``2>/dev/null``, ``2>&1``) are not writes and need no
-    such pattern. What counts as a write is the read-only classifier's rule,
-    :func:`kiro_crew.security.readonly_bash.writes_through_redirect`.
+    such pattern, and neither is a ``>`` bash reads as text, inside quotes or
+    after a backslash (:func:`_writes_through_redirect`).
 
     ``False`` when the command cannot be segmented: such a command matches no
     pattern in the first place.
     """
-    # Imported here: ``kiro_crew.security`` imports this module at package load.
-    from kiro_crew.security.readonly_bash import writes_through_redirect
-
     split = split_command_segments(command)
     if split is None:
         return False
     normalized, segments = split
     for segment in segments if len(segments) > 1 else [normalized]:
-        if not writes_through_redirect(segment):
+        if not _writes_through_redirect(segment, normalized):
             continue
         if not any(_covers_write_redirect(pattern, segment) for pattern in patterns):
             return True
     return False
+
+
+# Constructs whose quoting :func:`_without_literal_gt` does not follow. A heredoc
+# body (``<<``) and a comment (``#``) take quotes as plain characters, and the
+# body can sit in a later segment than its ``<<``; ``$'...'`` lets a backslash
+# escape a single quote; ``${...}`` opens a quoting context of its own inside
+# double quotes. In a command carrying any of them every ``>`` stays a write.
+_UNMODELLED_QUOTING = ("<<", "#", "$'", "${")
+
+
+def _without_literal_gt(text: str) -> str:
+    """Return ``text`` without the ``>`` characters bash reads as literal text.
+
+    A ``>`` inside single or double quotes, or right after a backslash outside
+    single quotes, is part of a word, not a redirect operator. Every other
+    character stays, quotes and backslashes included, so a discard idiom still
+    ends its word where it did. A quote left open returns ``text`` unchanged,
+    with every ``>`` in it still counted.
+    """
+    out: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for ch in text:
+        if escaped:
+            escaped = False
+            if ch != ">":
+                out.append(ch)
+            continue
+        if ch == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if ch == quote:
+                quote = None
+            elif ch == ">":
+                continue
+        elif ch in ("'", '"'):
+            quote = ch
+        out.append(ch)
+    return text if quote else "".join(out)
+
+
+def _writes_through_redirect(text: str, command: str) -> bool:
+    """Whether ``text`` writes through a redirect, reading a quoted ``>`` as text.
+
+    ``command`` is the whole command ``text`` was cut from, or ``text`` itself.
+    :data:`_UNMODELLED_QUOTING` is looked for there, because such a construct in
+    an earlier segment changes how bash quotes this one. On Windows the shell is
+    PowerShell, where a backslash escapes nothing, so there every ``>`` counts.
+    What counts as a write is otherwise the read-only classifier's rule,
+    :func:`kiro_crew.security.readonly_bash.writes_through_redirect`.
+    """
+    # Imported here: ``kiro_crew.security`` imports this module at package load.
+    from kiro_crew import platform_compat
+    from kiro_crew.security.readonly_bash import writes_through_redirect
+
+    if platform_compat.IS_WINDOWS or any(c in command for c in _UNMODELLED_QUOTING):
+        return writes_through_redirect(text)
+    return writes_through_redirect(_without_literal_gt(text))
 
 
 def _covers_write_redirect(pattern: str, segment: str) -> bool:
@@ -286,9 +341,9 @@ def _covers_write_redirect(pattern: str, segment: str) -> bool:
     The rule :func:`redirect_outside_grant` applies: the broad ``*`` grant, or a
     pattern that matches the segment and spells a write redirect itself.
     """
-    from kiro_crew.security.readonly_bash import writes_through_redirect
-
-    return pattern == "*" or (writes_through_redirect(pattern) and _tool_matches(pattern, segment))
+    return pattern == "*" or (
+        _writes_through_redirect(pattern, pattern) and _tool_matches(pattern, segment)
+    )
 
 
 def extract_base_command(command: str) -> str:
@@ -469,9 +524,6 @@ def timed_grant_deadline(
     redirect lends its deadline even when a chat-long base grant matches the
     rest of the part.
     """
-    # Imported here: ``kiro_crew.security`` imports this module at package load.
-    from kiro_crew.security.readonly_bash import writes_through_redirect
-
     split = split_command_segments(command)
     if split is None:
         return _ENDED
@@ -479,7 +531,9 @@ def timed_grant_deadline(
     parts = segments if len(segments) > 1 else [normalized]
     needed: list[GrantDeadline] = []
     for part in parts:
-        covers = _covers_write_redirect if writes_through_redirect(part) else _tool_matches
+        covers = (
+            _covers_write_redirect if _writes_through_redirect(part, normalized) else _tool_matches
+        )
         if any(covers(p, part) for p in patterns):
             continue
         covering = [d for p, d in timed.items() if covers(p, part)]
