@@ -1712,9 +1712,10 @@ def test_nonmember_claude_does_not_read_member_capability_state(tmp_path, monkey
 )
 def test_the_member_saved_agent_line_follows_the_confirming_backends(backend, available):
     """The card line a user reads to learn whether an enrolled member runs with its
-    saved spec is on for every backend that loads or confirms that spec at spawn, and
-    off for KAS until a consumed-spec confirmation path is added for it."""
+    saved spec is on for every backend that loads or confirms that spec at spawn. It is
+    a detail line, so it is read from the card's details rather than its core lines."""
     from kiro_crew.agent_sdk.backend_cards import LINE_MEMBER_SAVED_AGENT, card_for
 
-    lines = {line.id: line for line in card_for(backend).capabilities}
+    card = card_for(backend)
+    lines = {line.id: line for line in (*card.capabilities, *card.details)}
     assert lines[LINE_MEMBER_SAVED_AGENT].available is available
