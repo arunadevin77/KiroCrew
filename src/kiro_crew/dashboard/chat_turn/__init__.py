@@ -10,10 +10,10 @@ whose bodies keep the original statements and take the original locals as
 same-named parameters. :func:`compose` makes every function an owner defines -- its
 module functions and the methods of the classes it defines -- run on the runner's
 module globals rather than its own. Tests patch the runner's names
-(``chat_runner.sel``, ``.save_slot_off_loop``, ``._flush_file_changes`` and about a
-hundred more). A function that read its owner's globals would keep calling the unpatched
-object and the test would pass while exercising nothing, so the runner stays ONE
-namespace, as the one-module file was. Three consequences follow:
+(``chat_runner.sel``, ``.save_slot_off_loop``, ``._flush_file_changes_off_loop`` and
+about a hundred more). A function that read its owner's globals would keep calling
+the unpatched object and the test would pass while exercising nothing, so the runner
+stays ONE namespace, as the one-module file was. Three consequences follow:
 
 * An owner's imports are inert for its functions. An owner imports the runner and
   its siblings only under ``TYPE_CHECKING``; stdlib names, and the project constants

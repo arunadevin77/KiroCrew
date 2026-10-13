@@ -3087,6 +3087,7 @@ class _ChatSlot:
         "_pending_rewrite",
         "_file_changes",
         "_turn_reply_mids",
+        "_file_changes_flush",
         "linked_session_key",
         # Relay-archive marker: an older build ran this slot's turns on a peer
         # crew. See ``dashboard/relay_archive.py``.
@@ -4163,6 +4164,10 @@ class _ChatSlot:
         # mid-turn (a workflow or sub-agent completion) is never this turn's
         # reply, whatever its position. Reset where the turn's start is captured.
         self._turn_reply_mids: list[str] = []
+        # The turn-end file-change flush while it runs off the loop
+        # (``_flush_file_changes_off_loop``), so a close that gave up waiting
+        # for the cancelled turn can still drain it before archiving.
+        self._file_changes_flush: "asyncio.Future[None] | None" = None
         self.linked_session_key: str = ""  # when set, _run_chat uses this as session key
         # Where the turn CURRENTLY in flight actually started, as opposed to
         # where the slot would route a new one. The two diverge whenever the

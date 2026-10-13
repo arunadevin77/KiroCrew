@@ -459,9 +459,12 @@ async def wait_for_unwinding_turns(state: DashboardState | None) -> None:
     mid-reply saves the text its user watched stream as it unwinds, after that first
     save, and the exit or exec would otherwise beat it.
 
-    Bounded by ``DASHBOARD_TURN_UNWIND_SECS``, and never cancelling: a turn still
-    running at the deadline is left to the exit.
+
+    Bounded by ``DASHBOARD_TURN_UNWIND_SECS``, and never cancelling: a turn or
+    flush still running at the deadline is left to the exit.
     """
+    if state is None:
+        return
     slots = getattr(state, "_slots", None)
     if not isinstance(slots, dict):
         return
