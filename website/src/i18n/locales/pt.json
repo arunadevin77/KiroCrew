@@ -11252,6 +11252,7 @@
         "warning": "Aviso"
       },
       "compactionCard": {
+        "after_turn": "Contexto em {{pct}}, acima do limite de compactação automática de {{limit}} — o chat será resumido ao fim deste turno",
         "no_summary": "Concluído — sem resumo para mostrar",
         "summary_hint": "Resumo recolhido — expanda para ler",
         "title": "Contexto compactado"

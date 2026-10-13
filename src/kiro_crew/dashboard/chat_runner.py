@@ -1224,6 +1224,84 @@ async def _steer_repeat_loop_notice(client: Any, notice: str) -> bool:
     return sent is not False
 
 
+#: The chat row shown once per turn when the context crosses the compaction
+#: threshold mid-turn. The frontend's CompactionCard matches this exact shape and
+#: renders it from the catalog, so the English here is the stored form only.
+COMPACT_AFTER_TURN_NOTICE = (
+    "🔄 Context at {pct:.0f}% (limit {limit:.0f}%) — will compact after this turn."
+)
+#: ``meta["notice"]`` on that row. A notice marker keeps ``is_turn_interrupted``
+#: from reading the row as a ``/compact`` result: nothing has been compacted yet.
+COMPACT_AFTER_TURN_NOTICE_KIND = "compact_after_turn"
+
+
+def _tool_rows_settled(slot: Any) -> bool:
+    """True when no tool row of the trailing tool run is still waiting for its result.
+
+    A notice row appended between a running tool's row and its result would stop the
+    turn's backward scans (the post-tool "mark tools done" walk and
+    ``_flush_segment``'s cleanup) before they reach that tool, so the notice waits
+    for a boundary where every tool above it has finished.
+    """
+    for m in reversed(slot.messages):
+        role = m.get("role")
+        if role == "tool":
+            if not (m.get("meta") or {}).get("done"):
+                return False
+        elif role not in ("permission", "card"):
+            return True
+    return True
+
+
+async def _notice_compaction_after_turn(
+    state: DashboardState, slot: Any, client: Any, session_key: str
+) -> bool:
+    """Tell the person "will compact after this turn", once, while the turn still runs.
+
+    Called at a tool-result boundary of a running turn. Does nothing and returns
+    False unless the end-of-turn check would compact this session right now
+    (:meth:`SessionManager.compaction_due_after_turn`) and the transcript is at a
+    clean boundary. Otherwise appends the notice row and returns True, so the caller
+    can make it once per turn. A display row only: the model is not told anything
+    and the turn runs on unchanged. Never compacts: compaction stays where it was,
+    after the turn. Never raises.
+    """
+    try:
+        # `is not True`: only the manager's own verdict counts, never a truthy stand-in.
+        if state.sessions.compaction_due_after_turn(session_key, client) is not True:
+            return False
+        pct = float(client.context_usage_pct())
+        limit = float(state.sessions.effective_autocompact_pct(session_key))
+    except Exception:
+        logger.debug("compact-after-turn: no context reading", exc_info=True)
+        return False
+    if not _tool_rows_settled(slot):
+        return False
+    try:
+        # Finalize the clients' streaming message first. Pre-tool narration was
+        # persisted without a broadcast, so an open client still holds it as the
+        # streaming row, and an assistant frame arriving now would replace it.
+        state.broadcast_ws("chat_segment", {"slot": slot.key})
+        append_and_surface(
+            state,
+            slot,
+            "assistant",
+            COMPACT_AFTER_TURN_NOTICE.format(pct=pct, limit=limit),
+            "msg msg-a",
+            meta={"kind": "compaction", "notice": COMPACT_AFTER_TURN_NOTICE_KIND},
+        )
+    except Exception:
+        logger.debug("compact-after-turn: notice row failed", exc_info=True)
+    logger.info(
+        "Session %s context at %.0f%% (threshold %.0f%%) mid-turn -- noticed; "
+        "compaction runs after the turn",
+        session_key,
+        pct,
+        limit,
+    )
+    return True
+
+
 async def _steer_policy_notice(
     client: Any,
     title: str,
@@ -10024,6 +10102,8 @@ async def _run_chat(
     _refusal_notices_settled = 0
     # Same call, same result, again and again: told once per call (repeat_loop).
     _repeat_loop = RepeatLoopTracker()
+    # Whether this turn already said "will compact after this turn" (once per turn).
+    _compact_after_turn_noticed = False
     # Whether the current denied batch's cascade already steered its one
     # cause-specific notice. One notice covers the whole cascaded remainder, so
     # this stops the second and later members from repeating it; re-armed each
@@ -14050,6 +14130,19 @@ async def _run_chat(
                     )
                 except Exception:
                     logger.debug("PostToolUse hook error", exc_info=True)
+                if (
+                    _tool_terminal
+                    and not _compact_after_turn_noticed
+                    and not is_slash
+                    and not assistant_text
+                    and not _deferred_cut_text
+                ):
+                    # The context crossed the threshold while this turn is still
+                    # working. Compaction waits for the turn to end, so say so to
+                    # the person, once per turn.
+                    _compact_after_turn_noticed = await _notice_compaction_after_turn(
+                        state, slot, client, session_key
+                    )
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 # Drain the key as soon as its permission decision begins. The
                 # stream handles one decision at a time, so one bounded key is

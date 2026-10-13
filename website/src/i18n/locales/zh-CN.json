@@ -10948,6 +10948,7 @@
         "warning": "警告"
       },
       "compactionCard": {
+        "after_turn": "上下文已达 {{pct}}，超过 {{limit}} 自动压缩阈值，本轮次结束后将汇总对话",
         "no_summary": "已完成，无摘要可显示",
         "summary_hint": "摘要已折叠，展开查看",
         "title": "上下文已压缩"

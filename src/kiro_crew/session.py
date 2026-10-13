@@ -2816,6 +2816,16 @@ class SessionManager:
         self._sync_autocompact_pct()
         return self._compaction.effective_autocompact_pct(key)
 
+    def compaction_due_after_turn(self, key: str, provider: LLMProvider) -> bool:
+        """Delegate: would the end-of-turn check compact *key* if the turn ended now?
+
+        Read-only, for a caller inside a running turn. Adopts a newly published
+        threshold first, as :meth:`effective_autocompact_pct` does, so the answer is
+        measured against the number the turn-end check will use.
+        """
+        self._sync_autocompact_pct()
+        return self._compaction.compaction_due_after_turn(key, provider)
+
     def agent_autocompact_default(self, key: str) -> tuple[str, float] | None:
         """The crew behind *key*'s live session and the threshold it declares.
 

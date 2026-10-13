@@ -719,7 +719,11 @@ class TestGateLadderParity:
             for needle in gate_state_reads:
                 assert needle not in src, f"{entry.__qualname__} reads gate state: {needle}"
 
-        ladder_src = executable_source(CompactionCoordinator._compaction_gate_decision)
+        # The ladder is the gate (pending-verdict settlement) plus the side-effect
+        # free rungs it delegates to, which the mid-turn predicate reads too.
+        gate_src = executable_source(CompactionCoordinator._compaction_gate_decision)
+        assert "self._gate_rung(" in gate_src, "the gate no longer delegates to its rungs"
+        ladder_src = gate_src + executable_source(CompactionCoordinator._gate_rung)
         for needle in gate_state_reads:
             assert needle in ladder_src, f"ladder lost its own rung read: {needle}"
 

@@ -11100,6 +11100,7 @@
         "warning": "Warnung"
       },
       "compactionCard": {
+        "after_turn": "Kontext bei {{pct}}, über dem Schwellenwert für automatische Verdichtung von {{limit}} – der Chat wird nach diesem Zug zusammengefasst",
         "no_summary": "Fertig – keine Zusammenfassung vorhanden",
         "summary_hint": "Zusammenfassung eingeklappt – zum Lesen aufklappen",
         "title": "Kontext komprimiert"

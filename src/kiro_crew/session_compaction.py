@@ -573,6 +573,17 @@ class CompactionCoordinator:
             # later turn's growth and is only safe for cooldown damping.
             self._owner._judge_compact_effect(key, baseline, pct)
 
+        return self._gate_rung(key, provider, pct, log=True)
+
+    def _gate_rung(self, key: str, provider: LLMProvider, pct: float, *, log: bool) -> str | None:
+        """The gate's declining rungs, in lifecycle order, with no state change.
+
+        The ONE ladder both questions read: :meth:`_compaction_gate_decision`
+        (which settles a pending verdict first, then asks here with ``log=True``)
+        and :meth:`compaction_due_after_turn` (which asks mid-turn with
+        ``log=False``, so a reading taken inside a turn writes no line the real
+        check writes again at turn end).
+        """
         if self._deps.is_cc_managed(provider):
             return "cc_managed"
         if pct < self.effective_autocompact_pct(key):
@@ -609,7 +620,9 @@ class CompactionCoordinator:
             # ``cc_managed``'s: the key, the reading, AND which backend
             # answered. INFO, not WARNING: a standing correct condition is not
             # an anomaly, and every sibling rung is INFO too.
-            if _compaction_harness_managed(provider):
+            if not log:
+                pass
+            elif _compaction_harness_managed(provider):
                 self._deps.logger.info(
                     "Session %s context at %.0f%% -- %s manages compaction itself; "
                     "skipping Crew's /compact dispatch",
@@ -637,25 +650,53 @@ class CompactionCoordinator:
                 )
             return "compact_unsupported"
         if self._deps.context_pct_is_unknown(provider):
-            self._deps.logger.info(
-                "Session %s context %.0f%% is unconfirmed for this session — "
-                "skipping compaction until telemetry reports",
-                key,
-                pct,
-            )
+            if log:
+                self._deps.logger.info(
+                    "Session %s context %.0f%% is unconfirmed for this session — "
+                    "skipping compaction until telemetry reports",
+                    key,
+                    pct,
+                )
             return "unconfirmed"
         if key in self.state.compacting:
-            self._deps.logger.info("Session %s compaction already in progress", key)
+            if log:
+                self._deps.logger.info("Session %s compaction already in progress", key)
             return "in_progress"
         cooldown_until = self.state.cooldown_until.get(key, 0.0)
         if cooldown_until > time.monotonic():
-            self._deps.logger.info(
-                "Session %s compaction skipped — cooldown active for %.0fs more",
-                key,
-                cooldown_until - time.monotonic(),
-            )
+            if log:
+                self._deps.logger.info(
+                    "Session %s compaction skipped — cooldown active for %.0fs more",
+                    key,
+                    cooldown_until - time.monotonic(),
+                )
             return "cooldown"
         return None
+
+    def compaction_due_after_turn(self, key: str, provider: LLMProvider) -> bool:
+        """Whether the end-of-turn check would compact *key* if the turn ended now.
+
+        For a caller still INSIDE the turn (the dashboard's "will compact after
+        this turn" notice). It reads the gate's own ladder (:meth:`_gate_rung`) and
+        changes nothing, so asking mid-turn cannot change what the real check
+        decides at turn end. Two answers are False although the ladder passes:
+
+        * a pending verdict is waiting. The gate settles it first, and that
+          settlement can arm a cooldown that declines this very compaction, so
+          nothing is promised until it has settled;
+        * the backend takes the recycle arm (it cannot be handed ``/compact`` and
+          nothing else bounds it). That restarts the session instead of
+          compacting it, so "will compact" would be false.
+        """
+        key = self._owner._fold_key(key)
+        if key in self.state.pending_verdict:
+            return False
+        if self._gate_rung(key, provider, provider.context_usage_pct(), log=False) is not None:
+            return False
+        return (
+            _compact_unsupported_backend(provider) is None
+            and _harness_managed_backend(provider) is None
+        )
 
     def _trigger_compaction(
         self, key: str, reason: str, pct: float, provider: LLMProvider

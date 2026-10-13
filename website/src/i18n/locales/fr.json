@@ -11252,6 +11252,7 @@
         "warning": "Avertissement"
       },
       "compactionCard": {
+        "after_turn": "Contexte à {{pct}}, au-delà du seuil de compactage automatique de {{limit}} — la conversation sera résumée à la fin de ce tour",
         "no_summary": "Terminé — aucun résumé à afficher",
         "summary_hint": "Résumé replié — développer pour lire",
         "title": "Contexte compacté"

@@ -11252,6 +11252,7 @@
         "warning": "Avviso"
       },
       "compactionCard": {
+        "after_turn": "Contesto al {{pct}}, oltre la soglia di compattazione automatica del {{limit}}: la chat verrà riassunta al termine di questo turno",
         "no_summary": "Completato: nessun riepilogo da mostrare",
         "summary_hint": "Riepilogo ripiegato: espandi per leggerlo",
         "title": "Contesto compattato"

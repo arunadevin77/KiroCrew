@@ -6538,6 +6538,7 @@
         "warning": "Warning"
       },
       "compactionCard": {
+        "after_turn": "Context at {{pct}}, past the {{limit}} auto-compact threshold — the chat will be summarized when this turn ends",
         "no_summary": "Done — no summary to show",
         "summary_hint": "Summary folded — expand to read",
         "title": "Context compacted"
