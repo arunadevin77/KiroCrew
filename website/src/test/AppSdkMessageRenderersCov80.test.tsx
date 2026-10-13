@@ -752,3 +752,53 @@ describe('ToolCallPill expanded output panel', () => {
     expect(screen.queryByTestId('tool-panel-copy-error')).toBeNull()
   })
 })
+
+/**
+ * The expanded row must show what the call DID, not the title again: the tool
+ * row's `content` is only "🔧 title", while the persisted `meta.input` /
+ * `meta.output` carry the command and its result.
+ */
+describe('ToolCallPill expanded details from persisted meta', () => {
+  async function expandPanel() {
+    await userEvent.click(screen.getAllByRole('button')[0])
+  }
+
+  it('shows the persisted output, not the repeated title', async () => {
+    render(<ToolCallPill
+      message={msg({ role: 'tool', content: '🔧 zzq-title', meta: { input: 'zzq-cmd --flag', output: 'zzq-result-line' } } as Partial<ChatMessage>)}
+      running={false}
+    />)
+    await expandPanel()
+    const panel = await screen.findByTestId('tool-pill-details')
+    expect(within(panel).getByText(/zzq-result-line/)).toBeInTheDocument()
+    expect(within(panel).queryByText(/^🔧/)).toBeNull()
+  })
+
+  it('reaches the persisted input through the Input tab', async () => {
+    render(<ToolCallPill
+      message={msg({ role: 'tool', content: '🔧 zzq-title', meta: { input: 'zzq-cmd --flag', output: 'zzq-result-line' } } as Partial<ChatMessage>)}
+      running={false}
+    />)
+    await expandPanel()
+    const panel = await screen.findByTestId('tool-pill-details')
+    await userEvent.click(within(panel).getByRole('radio', { name: 'Input' }))
+    await waitFor(() => expect(within(panel).getByText(/zzq-cmd --flag/)).toBeInTheDocument())
+  })
+
+  it('shows input alone for a call that has not returned yet', async () => {
+    render(<ToolCallPill
+      message={msg({ role: 'tool', content: '🔧 zzq-title', meta: { input: 'zzq-only-input' } } as Partial<ChatMessage>)}
+      running
+    />)
+    await expandPanel()
+    const panel = await screen.findByTestId('tool-pill-details')
+    expect(within(panel).getByText(/zzq-only-input/)).toBeInTheDocument()
+  })
+
+  it('falls back to the content panel when no payload was persisted', async () => {
+    render(<ToolCallPill message={msg({ role: 'tool', content: '🔧 zzq-legacy' })} running={false} />)
+    await expandPanel()
+    expect(screen.queryByTestId('tool-pill-details')).toBeNull()
+    expect(screen.getAllByText(/zzq-legacy/).length).toBeGreaterThan(1)
+  })
+})

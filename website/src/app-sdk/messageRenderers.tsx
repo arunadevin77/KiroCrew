@@ -39,6 +39,7 @@ import { ErrorCard } from '../pages/chat/ErrorCard'
 import { decisionStripFieldOf } from '../pages/chat/decisionRecord'
 import { resolveTransientNotice } from '../pages/chat/transientNotice'
 import StopEventCard from '../pages/chat/StopEventCard'
+import { ToolDetails } from '../pages/chat/ToolDetails'
 import { isSubagentCompletionMessage } from '../pages/chat/subagentCompletion'
 import { REASONING_ROLES, stripAppEnvelope } from '../pages/chat/groupDisplayItems'
 import MarkdownRenderer from '../components/MarkdownRenderer'
@@ -269,6 +270,18 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
   const panelText = purpose && rawLabel && purpose !== rawLabel
     ? rawLabel + '\n\n' + (message.content || '')
     : (message.content || '')
+  // The backend persists the call's `input` and its `output` on the tool row's
+  // meta (`_tool_meta` / the tool-result handler in chat_runner.py), and the
+  // embed's transcript response carries them. `message.content` is only the
+  // "🔧 title" line, so when either payload is present the expanded row renders
+  // the main chat's own `ToolDetails` (Input/Output tabs) instead of repeating
+  // the title. The content panel below stays as the fallback for rows that
+  // predate the persisted payloads.
+  const metaInput = typeof message.meta?.input === 'string' ? message.meta.input : ''
+  const metaOutput = typeof message.meta?.output === 'string' ? message.meta.output : ''
+  const hasPayload = !!(metaInput || metaOutput)
+  const detailsId = React.useId()
+  const detailsBar = `color-mix(in srgb, ${isRejected ? 'var(--danger)' : isAutoDenied ? 'var(--warn)' : isDone ? 'var(--ok)' : hasPendingPerm ? 'var(--warn)' : 'var(--accent)'} 70%, transparent)`
   // The two budgets above are width-blind, so the collapsed box is also measured
   // once it is on screen: a real browser then detects the wrap case exactly,
   // while jsdom reports 0 for both heights and falls back to the budgets.
@@ -329,7 +342,27 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
           <PanelRight size={11} />
         </button>
       )}
-      {expanded && message.content && (
+      {expanded && hasPayload && (
+        <div className="w-full mt-1 ml-4" data-testid="tool-pill-details">
+          <ToolDetails
+            purpose={purpose}
+            pillLabel={label}
+            toolName={rawLabel}
+            input={metaInput}
+            output={metaOutput}
+            auto={false}
+            pending={hasPendingPerm}
+            ts={0}
+            hasEntry
+            fmtTime={() => ''}
+            barColor={detailsBar}
+            layoutId={`embed-tool-detail-${detailsId}`}
+            compact
+            flush
+          />
+        </div>
+      )}
+      {expanded && !hasPayload && message.content && (
         <div className="w-full mt-1 ml-4">
           <pre ref={panelRef} className={`w-full text-[11px] leading-4 font-mono text-muted bg-bg-elevated rounded-md p-2 ${showAll ? TOOL_PANEL_EXPANDED_MAX_H : 'max-h-40'} overflow-auto whitespace-pre-wrap break-all border border-border`}>
             {panelText}
