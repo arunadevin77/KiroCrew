@@ -46,6 +46,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
@@ -7947,6 +7948,24 @@ MAX_SEND_MESSAGE_CHARS = MAX_LONG_STRING
 #: so it can weigh the instruction as coming from a peer session, not its user.
 _SEND_PROVENANCE = "[sent by session {caller} via {via}]\n\n"
 
+#: A provenance-shaped opener inside a caller's body. The envelope is a trust label
+#: the target model weighs, and the body is caller-controlled, so a body carrying
+#: its own ``[sent by session <other> via …]`` line could pose as a different peer.
+#: Tolerates case, spacing, invisible format chars and a fullwidth bracket.
+_GAP = r"[\s\u00ad\u200b-\u200f\u2060-\u2064\ufeff]*"
+_FORGED_PROVENANCE_RE = re.compile(rf"[\[\uff3b]{_GAP}sent{_GAP}by{_GAP}session\b", re.IGNORECASE)
+
+
+def _neutralize_send_provenance(body: str) -> str:
+    """Defang any provenance-shaped opener in a peer-sent *body*.
+
+    Substitution rather than deletion, so a reader still sees that the sender
+    wrote something envelope-shaped. Only the genuine envelope, prepended by
+    this module, opens with ``[sent by session``.
+    """
+    return _FORGED_PROVENANCE_RE.sub("[quoted: sent by session", body)
+
+
 #: What the envelope names for a broadcast. The verb is part of the message's
 #: meaning, not decoration: "the base moved, rebase before you push" addressed to
 #: one worker is a fact about that worker's branch, and the same words addressed to
@@ -8195,7 +8214,7 @@ async def send_to_target(
     # limit and keeps the error keyed to what the caller actually sent.
     prompt = _SEND_PROVENANCE.format(
         caller=caller_key or "unknown", via=via or "session_send"
-    ) + sanitize_outbound(body)
+    ) + _neutralize_send_provenance(sanitize_outbound(body))
 
     steered = False
     requeued = False
@@ -8798,7 +8817,7 @@ async def broadcast_to_targets(
     results: list[dict[str, Any]] = []
     timeout_prompt = _SEND_PROVENANCE.format(
         caller=caller_key or "unknown", via=BROADCAST_VIA
-    ) + sanitize_outbound(body)
+    ) + _neutralize_send_provenance(sanitize_outbound(body))
     for name in audience:
         try:
             timeout_slot = _resolve_slot(state, name)
