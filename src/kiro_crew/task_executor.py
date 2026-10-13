@@ -28,6 +28,7 @@ from kiro_crew.agent_sdk.drivers.acp_vocab import (
     STOP_RECOVERY_MAX_RETRIES,
     classify_stop_reason,
 )
+from kiro_crew.agent_sdk.mcp_problems import session_mcp_problems
 from kiro_crew.agent_sdk.spec_hooks import (
     invalidate_stale_kas_session,
     refuse_stale_switch,
@@ -758,6 +759,10 @@ async def execute_task(
             applied_answers.append("recovered")
             task.description = f"{task.description}\n\n## Operator input\n{recorded}\n"
 
+    # The MCP problem line this step already told the operator about, so a retry
+    # on the same broken servers does not repeat the notice every attempt.
+    mcp_noticed = ""
+
     # ``attempt`` is the TURN ordinal (the re-run prompt reads it), and
     # ``MAX_RETRIES`` bounds the LOGIC failures only: an in-place stall recovery
     # the ladder approved raises this ceiling by its own turn instead of
@@ -795,6 +800,10 @@ async def execute_task(
         # survives the loop, so reading it directly would attribute this
         # attempt's death to a runtime it never used.
         _turn_provider: object | None = None
+        # This attempt's MCP problem line as read when its session opened. The
+        # failure handlers reset the session before the finally runs, and a
+        # reset replaces the provider's report with an empty one.
+        _mcp_at_open = ""
         try:
             from kiro_crew.context import inherit_session_memory
 
@@ -822,6 +831,7 @@ async def execute_task(
                 sessions, session_key, agent or "kirocrew", (client, is_new, _resumed), _claim
             )
             _turn_provider = client
+            _mcp_at_open = session_mcp_problems(client)
 
             task_prompt = await build_task_prompt(run, task, attempt, work_dir)
             if ctx:
@@ -1365,8 +1375,29 @@ async def execute_task(
                 compacted=_turn_compacted,
             )
             rollback_skill_bodies(ctx, session_key, landed=_turn_landed)
+            # Read before release: the report lives on this attempt's session,
+            # and a frame that landed mid-turn makes this reading the fuller
+            # one. A failure handler that already reset the session leaves it
+            # empty, so the reading taken at open stands in. Operator-only (log
+            # + dashboard notification), never fed back into a prompt.
+            mcp_problems = session_mcp_problems(_turn_provider) or _mcp_at_open
             if _acquired:
                 sessions.release(session_key)
+            if mcp_problems and mcp_problems != mcp_noticed:
+                mcp_noticed = mcp_problems
+                logger.warning(
+                    "Task %d: MCP servers unusable in this step — %s",
+                    task.index,
+                    mcp_problems,
+                )
+                try:
+                    await on_notify(
+                        f"\u26a0\ufe0f Task {task.index}: MCP servers unusable",
+                        f"MCP servers unusable in this step: {mcp_problems}",
+                        run=run,
+                    )
+                except Exception:
+                    logger.debug("MCP problem notice failed", exc_info=True)
 
         # Only an exit-0 run of the configured command is PASSED (verified).
         if not auto_test:

@@ -24,6 +24,7 @@ from kiro_crew.agent import (
 )
 from kiro_crew.agent_capabilities import CapabilityError
 from kiro_crew.agent_discovery import _read_agent_spec, list_agents
+from kiro_crew.agent_sdk.mcp_problems import session_mcp_problems
 from kiro_crew.config.loader import KiroCrewConfig, data_home
 from kiro_crew.constants import (
     DENY_CAUSE_AUDIT_UNAVAILABLE,
@@ -1560,24 +1561,6 @@ async def _run_hook_inner(
     return result_text
 
 
-def _hook_mcp_problems(client: Any) -> str:
-    """One line naming the MCP servers this webhook session could not use, or "".
-
-    A webhook run's session is ephemeral and headless, so a server that failed to
-    start in it is otherwise visible only as missing tools. The line goes to the
-    operator (run history and the delivered result), never back into a prompt, so
-    the sanitized failure reasons are kept. Never worth failing a run over.
-    """
-    if client is None:
-        return ""
-    try:
-        report = client.mcp_session_report()
-        return report.problem_summary() if report is not None else ""
-    except Exception:
-        logger.debug("webhook MCP session report unreadable", exc_info=True)
-        return ""
-
-
 async def _run_hook_agent(
     state: DashboardState,
     session_key: str,
@@ -1685,7 +1668,7 @@ async def _run_hook_agent(
         # Read before release/reset: the report lives on the session being torn
         # down. Here rather than in the inner turn so a timeout or crash still
         # says which servers never started.
-        mcp_problems = _hook_mcp_problems(clients[0] if clients else None)
+        mcp_problems = session_mcp_problems(clients[0] if clients else None)
         if mcp_problems:
             logger.warning(
                 "Hook agent %s: MCP servers unusable in this run — %s",
