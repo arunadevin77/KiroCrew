@@ -2165,22 +2165,32 @@ class TestEmbedQueueTiming:
     """
 
     def test_a_queued_embed_reports_wait_not_inference(self, tmp_path: Path, monkeypatch) -> None:
+        """The split is checked as an ORDER of events, never as a stopwatch.
+
+        What ``_emit_embed_timing`` is handed is a pair of instants per call:
+        ``t0`` (submitted) and ``t_started`` (the worker entered the model).
+        The property is where the hold lands between them: the bulk embed was
+        already inside the model before the short one was submitted, so nothing
+        it reports as wait is queueing; the short embed entered the model only
+        after the bulk one was released, so the whole hold is its wait and none
+        of it is its inference. Both are facts about ordering, so they hold on
+        any runner. A millisecond ceiling on the bulk embed's wait would not:
+        that interval is the first submission spawning and scheduling the worker
+        thread, which a loaded host stretches arbitrarily and a coarse monotonic
+        clock (Windows ticks at ~15.6 ms) rounds further still.
+        """
         fake_cls = _make_fake_llama_class()
         monkeypatch.setattr("kiro_crew.embeddings._load_llama_class", lambda: fake_cls)
         emb = LlamaCppEmbedder(model_path=_write_model_file(tmp_path / "model.gguf"))
         assert emb.wait_ready(timeout=5)
 
+        # (t0, t_started, chars) as handed to the real emitter, so the assertions
+        # read the same instants the log line is computed from.
         emitted: list[tuple[float, float, int]] = []
         real_emit = embeddings_mod._emit_embed_timing
 
         def _spy(t0, t_started, texts, *, priority=embeddings_mod.PRIORITY_NORMAL, failed=False):
-            emitted.append(
-                (
-                    (t_started - t0) * 1000.0,
-                    (time.monotonic() - t_started) * 1000.0,
-                    sum(len(t) for t in texts),
-                )
-            )
+            emitted.append((t0, t_started, sum(len(t) for t in texts)))
             real_emit(t0, t_started, texts, priority=priority, failed=failed)
 
         monkeypatch.setattr(embeddings_mod, "_emit_embed_timing", _spy)
@@ -2203,8 +2213,8 @@ class TestEmbedQueueTiming:
         # Patch the queue only NOW: the first submission REPLACES self._jobs with
         # a fresh PriorityQueue when it spawns the worker, so a wrapper installed
         # before that point lands on the discarded original and never fires.
-        # Deterministic barrier: a fixed sleep here would race a loaded CI runner,
-        # releasing before the short embed enqueued and collapsing its wait.
+        # Deterministic barrier: releasing before the short embed is enqueued
+        # would let it run unqueued and the wait under test would never exist.
         queued = threading.Event()
         real_put = emb._jobs.put
 
@@ -2219,9 +2229,7 @@ class TestEmbedQueueTiming:
         short = threading.Thread(target=lambda: emb.embed("hi"))
         short.start()
         assert queued.wait(timeout=5), "short embed never reached the queue"
-        # Hold deliberately, so the measured wait is this duration rather than a
-        # scheduling artifact.
-        time.sleep(0.5)
+        released_at = time.monotonic()
         release.set()
         bulk.join(timeout=10)
         short.join(timeout=10)
@@ -2229,9 +2237,20 @@ class TestEmbedQueueTiming:
         big = [e for e in emitted if e[2] == 4000]
         small = [e for e in emitted if e[2] == 2]
         assert len(big) == 1 and len(small) == 1
-        assert big[0][0] < 200, f"bulk should not have queued: {big[0]}"
-        assert small[0][0] >= 300, f"queued embed should report wait: {small[0]}"
-        assert small[0][1] < 200, f"queued embed's own inference was fast: {small[0]}"
+        _big_t0, big_started, _ = big[0]
+        small_t0, small_started, _ = small[0]
+        # The bulk embed was in the model before the short one was submitted:
+        # its reported wait holds only the worker's start-up, never a queue.
+        assert big_started <= small_t0, (
+            f"bulk entered the model {big_started - small_t0:.3f}s after the short "
+            "embed was submitted, so its wait would include queueing"
+        )
+        # The short embed entered the model only once the hold was released, so
+        # the hold is reported as wait and none of it as inference.
+        assert small_started >= released_at, (
+            f"short embed entered the model {released_at - small_started:.3f}s "
+            "before the bulk one was released"
+        )
 
     def test_chars_bucket_is_low_cardinality(self) -> None:
         assert embeddings_mod._chars_bucket(2) == "<=128"
