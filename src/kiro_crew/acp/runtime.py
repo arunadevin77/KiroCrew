@@ -6350,7 +6350,11 @@ class AcpRuntime:
             projection_now: Any = None
             used_generation = 0
             if getattr(self, "_native_skill_projection", None) is not None:
-                from kiro_crew.acp.skill_projection import prepare_native_skill_projection
+                from kiro_crew.acp.skill_projection import (
+                    CrossProcessProjectionLockTimeout,
+                    InProcessProjectionWaitTimeout,
+                    prepare_native_skill_projection,
+                )
 
                 # Preparation and adoption run under the per-runtime projection
                 # lock, so overlapping starts read the specs in the order their
@@ -6362,8 +6366,12 @@ class AcpRuntime:
                     try:
                         # Keep the transport mode selected at spawn for this process.
                         # The rollback environment switch takes effect after restart.
+                        lock_errors: list[OSError] = []
                         prepared, cancelled = await _prepare_projection_to_completion(
-                            prepare_native_skill_projection, self._work_dir, enabled=True
+                            prepare_native_skill_projection,
+                            self._work_dir,
+                            enabled=True,
+                            on_lock_unavailable=lock_errors.append,
                         )
                         if prepared is not None:
                             # set_mode always names the FRESH alias, never an older
@@ -6400,12 +6408,30 @@ class AcpRuntime:
                                 "refusing to start agent %r on a view it cannot verify",
                                 mode_agent,
                             )
+                            # Name a holder only when the preparer proved one: its
+                            # in-process wait timing out means another start in THIS
+                            # gateway; the alias file lock timing out means another
+                            # process. Anything else (a bad lock file, the settings
+                            # lock, a lease, a failed write) names no holder.
+                            if any(
+                                isinstance(e, InProcessProjectionWaitTimeout) for e in lock_errors
+                            ):
+                                held_by = (
+                                    "another session start in this gateway still "
+                                    "held the skill-view lock"
+                                )
+                            elif any(
+                                isinstance(e, CrossProcessProjectionLockTimeout)
+                                for e in lock_errors
+                            ):
+                                held_by = "the skill-view lock is held by another Kiro Crew process"
+                            else:
+                                held_by = "a lock or file it needs was unavailable"
                             raise AcpRuntimeError(
                                 f"Agent {mode_agent!r}: its skill view could not be "
-                                "prepared (the skill-view lock is held by another Kiro "
-                                "Crew process), so this session was not started. Try "
-                                "again in a moment; if it keeps failing, restart the "
-                                "gateway."
+                                f"prepared ({held_by}), so this session was not "
+                                "started. Try again in a moment; if it keeps failing, "
+                                "restart the gateway."
                             )
                     finally:
                         if not adopted:

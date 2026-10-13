@@ -23,7 +23,7 @@ import threading
 import time
 import uuid
 import weakref
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -145,6 +145,20 @@ _PROJECTION_LOCK_TIMEOUT_SECS = 2.0
 # wait is bounded well under the session/new budget; every caller runs off the
 # event loop.
 _IN_PROCESS_PROJECTION_WAIT_SECS = 30.0
+
+
+class InProcessProjectionWaitTimeout(OSError):
+    """The in-process queue for the alias lock timed out.
+
+    Another start in THIS process held the lock the whole wait; no other
+    process is involved, so a caller reporting it must not blame one.
+    """
+
+
+class CrossProcessProjectionLockTimeout(OSError):
+    """The alias file lock could not be taken: another process holds it."""
+
+
 _IN_PROCESS_PROJECTION_LOCKS: dict[str, threading.Lock] = {}
 _IN_PROCESS_PROJECTION_LOCKS_GUARD = threading.Lock()
 # Queued starts pay for each other's locked sections one after another, and the
@@ -957,7 +971,7 @@ def _projection_alias_lock(directory: Path) -> ExitStack:
     stack = ExitStack()
     local = _in_process_projection_lock(directory)
     if not local.acquire(timeout=_IN_PROCESS_PROJECTION_WAIT_SECS):
-        raise OSError(
+        raise InProcessProjectionWaitTimeout(
             "skill projection lock still busy inside this process after "
             f"{_IN_PROCESS_PROJECTION_WAIT_SECS:g}s"
         )
@@ -978,11 +992,18 @@ def _projection_alias_lock(directory: Path) -> ExitStack:
             or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
         ):
             raise OSError("skill projection lock changed while it was opened")
-        stack.enter_context(
-            platform_compat.file_lock(
-                lock_fd, exclusive=True, timeout=_PROJECTION_LOCK_TIMEOUT_SECS
+        try:
+            stack.enter_context(
+                platform_compat.file_lock(
+                    lock_fd, exclusive=True, timeout=_PROJECTION_LOCK_TIMEOUT_SECS
+                )
             )
-        )
+        except OSError as exc:
+            # file_lock reports its timed-out wait as an errno-less OSError; an
+            # errno (ENOLCK, EBADF) is about this fd, not another holder.
+            if exc.errno is not None:
+                raise
+            raise CrossProcessProjectionLockTimeout(str(exc)) from exc
         current = pinned_fs.lstat_by_name(lock_path)
         if (
             platform_compat.is_link_or_junction(lock_path)
@@ -2939,7 +2960,11 @@ def _warn_ceiling_fallback_once(directory: Path, count: int) -> None:
 
 
 def prepare_native_skill_projection(
-    work_dir: Path, *, enabled: bool | None = None, per_session_element: bool = True
+    work_dir: Path,
+    *,
+    enabled: bool | None = None,
+    per_session_element: bool = True,
+    on_lock_unavailable: Callable[[OSError], None] | None = None,
 ) -> NativeSkillProjection | None:
     """Prepare native views after spec freshness admission, before spawning.
 
@@ -2959,6 +2984,12 @@ def prepare_native_skill_projection(
     honoured by kiro-cli itself. No element replaces anything there, so a
     restriction on OTHER tools -- ``disabledTools: ["learn_add"]`` -- refuses
     nothing; only ``skill_search`` itself disabled or excluded still does.
+
+    ``on_lock_unavailable`` receives the error when the alias lock cannot be
+    taken and ``None`` is returned for it, so a caller can say WHY: an
+    :class:`InProcessProjectionWaitTimeout` is this process's own queue, a
+    :class:`CrossProcessProjectionLockTimeout` another process holding the file
+    lock, any other ``OSError`` a problem with the lock file itself.
     """
     directory = kiro_agents_dir()
     crew_home_id = data_home().absolute().as_posix()
@@ -3184,6 +3215,8 @@ def prepare_native_skill_projection(
             "using authored agents",
             exc,
         )
+        if on_lock_unavailable is not None:
+            on_lock_unavailable(exc)
         # `local` was read before agent enumeration and lock acquisition. A
         # concurrent projection can write a newer overlay or unrelated setting
         # while this process waits, so writing this stale snapshot would clobber
