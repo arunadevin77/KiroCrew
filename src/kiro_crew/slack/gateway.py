@@ -7802,6 +7802,11 @@ class GatewayOrchestrator:
                 if callback is not None:
                     callback()
                 _append_nudge()
+                # The row now names the turn's opener. Its frame was queued on
+                # every socket before this push's, and a socket sends in order,
+                # so no client sees the mark drop before the row arrives.
+                turn_slot._wake_starting_task = None
+                dashboard_state.push_slots_update()
                 _settle_admission(MonitorDispatchResult.DISPATCHED)
 
             completion_hook = MonitorCompletionHook(
@@ -7893,6 +7898,12 @@ class GatewayOrchestrator:
         # Mirror dashboard /api/chat/send path so slot.running == True and sidebar
         # shows the "turn active" three-dots indicator immediately.
         slot.task = task
+        if completion_hook is not None:
+            # A structured wake writes its row only once the runner accepts the
+            # turn, so the push below shows the slot running while the newest
+            # opener is still an older row. Mark the turn as a starting wake
+            # first: that same frame then says who is opening it.
+            slot._wake_starting_task = task
         self._session_tasks[slot.key] = task
         self.dashboard_state.push_slots_update()
         if admission is not None:

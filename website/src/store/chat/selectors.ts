@@ -22,8 +22,10 @@ export const selectSlotMessages = (state: RootState, slot: string): ChatMessage[
  *  (`subagent`). The first such row, a user row or a dispatching inject row
  *  from the end decides; the opener roles mirror `_TURN_OPENER_ROLES` in
  *  `dashboard/chat_handlers.py`. A wake turn is the crewmate's own bookkeeping,
- *  not its reply to the person reading. */
+ *  not its reply to the person reading. A structured monitor's wake runs before
+ *  its row is written; until then the slot frame says so (`wake_starting`). */
 export const selectSlotTurnFromWake = (state: RootState, slot: string): boolean => {
+  if (state.dashboard.slots.find((sl) => sl.key === slot)?.wake_starting) return true
   const msgs = selectSlotMessages(state, slot)
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i]

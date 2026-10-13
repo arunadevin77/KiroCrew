@@ -1303,6 +1303,11 @@ export interface ChatSlot {
    * button. Always false while `running`. Lets the sidebar stop rendering a
    * goal-loop session as actively working when it is actually stalled. */
   interrupted?: boolean
+  /** A loop wake is opening the running turn and its row is not in the
+   * transcript yet (a structured monitor writes it only once the runner
+   * accepts the turn). Only ever true while `running`; absent from an older
+   * gateway. */
+  wake_starting?: boolean
   // Soft-stop state machine
   stop_state?: 'idle' | 'soft_pending' | 'killing'
   /** An automatic context compaction holds the session right now. Not a turn,

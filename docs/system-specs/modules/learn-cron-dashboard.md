@@ -4916,7 +4916,12 @@ fingerprint)` claim, crosses SessionManager's synchronous shutdown gate, appends
 the wake, and accepts its completion hook. A background-cap wait that times out
 or a shutdown-gate refusal returns `BUSY` without appending to chat history,
 preserving the same claim for the controller's bounded retry; a final
-authorization refusal returns `UNAVAILABLE`. A claim already persisted as
+authorization refusal returns `UNAVAILABLE`. The slot runs from the handoff,
+before that row exists, so the slot frame carries `wake_starting` from the first
+push that shows it running until acceptance writes the row and pushes again. A
+reader asking who opened the running turn (the Crewmates page's resume greeting,
+`selectSlotTurnFromWake`) reads the flag instead of the transcript's older
+opener; a refused wake's flag ends with its task. A claim already persisted as
 `DISPATCHED` cannot pass admission again. The accepted dashboard invocation runs
 at nested prompt depth so stale-turn, tool-stall, pipe-death, empty-response, and
 other dashboard recovery paths cannot enqueue an additional provider turn beyond

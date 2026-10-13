@@ -43,6 +43,7 @@ _TO_DICT_KEYS = (
     "artifact",
     "messages",
     "running",
+    "wake_starting",
     "compacting",
     "stop_declined",
     "queue_depth",

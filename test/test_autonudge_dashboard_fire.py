@@ -25,9 +25,11 @@ import pytest
 
 from kiro_crew.autonudge import NudgeLoop
 from kiro_crew.config.loader import KiroCrewConfig
+from kiro_crew.dashboard.state import _ChatSlot
 from kiro_crew.monitoring.completion import MonitorCompletionHook
 from kiro_crew.monitoring.models import MonitorState
 from kiro_crew.slack import gateway as gw
+from kiro_crew.testing.wait import await_until
 
 
 def _loop(slot_key: str = "chat-1-1785") -> NudgeLoop:
@@ -39,6 +41,20 @@ def _loop(slot_key: str = "chat-1-1785") -> NudgeLoop:
         max_cycles=24,
         cycle_count=3,
     )
+
+
+def _structured_loop() -> NudgeLoop:
+    """A loop whose structured monitor has an actionable wake in flight."""
+    loop = _loop()
+    loop.monitor = MonitorState(
+        kind="github_pull_request",
+        target="owner/repo#123",
+        objective="review_ready",
+        created_ts=1_000.0,
+        last_wake_fingerprint="failure-a",
+        wake_in_flight=True,
+    )
+    return loop
 
 
 def _slot(key: str = "chat-1-1785", *, running: bool = False) -> MagicMock:
@@ -91,6 +107,14 @@ def _fake_spawn():
 
     _spawn.calls = calls  # type: ignore[attr-defined]
     return _spawn
+
+
+async def _settle(*tasks: asyncio.Task) -> None:
+    """Cancel what still runs, then wait for every task to end under a lost-run bound."""
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    await await_until(asyncio.gather(*tasks, return_exceptions=True), what="the test's tasks")
 
 
 async def _run_chat_through_monitor_boundary(*_args, **kwargs) -> None:
@@ -483,6 +507,110 @@ class TestDashboardNudgeSlotResolution:
         orch.autonudge_svc.monitor_dispatch_is_authorized.assert_not_awaited()
         live.append.assert_not_called()
         run_chat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_monitor_wake_frame_names_the_wake_before_its_row_lands(self) -> None:
+        """The frame that first shows the slot running already says it is a wake.
+
+        The wake's ``nudge`` row is written only once the runner accepts the
+        turn, so every frame pushed before that would otherwise show a running
+        slot whose newest opener is an older row -- and the Crewmates page reads
+        that as a turn the user started. Each frame is the real projection,
+        taken at the push.
+        """
+        orch = _orchestrator()
+        live = _ChatSlot("chat-1-1785")
+        live.append("user", "how is it going?")
+        live.append("assistant", "Round 3 is in review.")
+        orch.dashboard_state.get_slot = MagicMock(return_value=live)
+        # Each push: the frame, and the transcript roles at that moment.
+        frames: list[tuple[dict, list[str]]] = []
+        orch.dashboard_state.push_slots_update = MagicMock(
+            side_effect=lambda: frames.append((live.to_dict(), [m["role"] for m in live.messages]))
+        )
+        setup_entered = asyncio.Event()
+        finish_setup = asyncio.Event()
+
+        async def _run_chat_at_real_boundary(*_args, **kwargs):
+            setup_entered.set()
+            await await_until(finish_setup, what="the test releasing the runner's setup")
+            hook = kwargs["monitor_completion"]
+            if not await hook.authorize():
+                return
+            hook.mark_accepted()
+
+        spawned: list[asyncio.Task] = []
+
+        def _spawn(_state, _slot, coro):
+            task = asyncio.create_task(coro)
+            spawned.append(task)
+            return task
+
+        with (
+            patch.object(gw, "spawn_guarded_turn", _spawn),
+            patch("kiro_crew.dashboard.chat._run_chat", new=_run_chat_at_real_boundary),
+        ):
+            fire = asyncio.create_task(
+                orch._fire_dashboard_nudge(_structured_loop(), "[Monitor wake]")
+            )
+            try:
+                await await_until(setup_entered, what="the wake's runner setup")
+                assert [m["role"] for m in live.messages] == ["user", "assistant"]
+                assert frames and frames[0][0]["running"] is True
+                assert frames[0][0].get("wake_starting") is True
+                finish_setup.set()
+                result = await await_until(fire, what="the wake's admission")
+                await await_until(spawned[0], what="the wake's turn")
+            finally:
+                finish_setup.set()
+                await _settle(fire, *spawned)
+
+        assert result is gw.MonitorDispatchResult.DISPATCHED
+        assert [m["role"] for m in live.messages] == ["user", "assistant", "nudge"]
+        # Every frame that shows the slot running names the wake: by the flag
+        # until the row is written, by the row after.
+        for payload, roles in frames:
+            assert not payload["running"] or payload.get("wake_starting") or "nudge" in roles
+        assert frames[-1][0]["wake_starting"] is False
+        assert live.to_dict()["wake_starting"] is False
+
+    @pytest.mark.asyncio
+    async def test_refused_monitor_wake_leaves_no_starting_mark(self) -> None:
+        """A wake the runner never accepts writes no row and leaves no mark."""
+        orch = _orchestrator()
+        live = _ChatSlot("chat-1-1785")
+        orch.dashboard_state.get_slot = MagicMock(return_value=live)
+
+        async def _reject_at_capacity(_slot, coro):
+            coro.close()
+            raise TimeoutError("background queue remained full")
+
+        spawned: list[asyncio.Task] = []
+
+        def _spawn(_state, _slot, coro):
+            task = asyncio.create_task(coro)
+            spawned.append(task)
+            return task
+
+        orch.dashboard_state.run_background_turn = _reject_at_capacity
+        with (
+            patch.object(gw, "spawn_guarded_turn", _spawn),
+            patch("kiro_crew.dashboard.chat._run_chat", new=AsyncMock()),
+        ):
+            fire = asyncio.create_task(
+                orch._fire_dashboard_nudge(_structured_loop(), "[Monitor wake]")
+            )
+            try:
+                result = await await_until(fire, what="the refused wake's fire")
+                await await_until(spawned[0], what="the refused wake's turn")
+            finally:
+                await _settle(fire, *spawned)
+
+        assert result is gw.MonitorDispatchResult.BUSY
+        assert live.messages == []
+        payload = live.to_dict()
+        assert payload["running"] is False
+        assert payload.get("wake_starting") is False
 
     @pytest.mark.asyncio
     async def test_unreachable_session_retires_the_loop_once_with_a_reason(self, caplog) -> None:

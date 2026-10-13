@@ -413,6 +413,14 @@ class SlotProjection:
             "artifact": slot._artifact,
             "messages": len(rows),
             "running": slot.turn_running,
+            # A loop wake is opening this running turn and its row is not in the
+            # transcript yet: a structured monitor writes that row only once the
+            # runner accepts the turn. Rides the same frame as `running`, so a
+            # reader can tell the wake from a turn the user started before the
+            # row lands.
+            "wake_starting": bool(
+                slot.turn_running and getattr(slot, "_wake_starting_task", None) is slot.task
+            ),
             # An automatic compaction in flight on this session. Separate from
             # `running` because it is NOT a dashboard turn: the composer reads
             # idle while it holds the session, which without this field looks

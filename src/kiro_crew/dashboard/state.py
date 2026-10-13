@@ -2899,6 +2899,7 @@ class _ChatSlot:
         "_task",
         "_turn_admission_reserved",
         "_turn_generation",
+        "_wake_starting_task",
         "_chunk_seq",
         "event",
         "_pending",
@@ -3347,6 +3348,12 @@ class _ChatSlot:
         # None after teardown, so consumers that span awaits cannot distinguish
         # "stayed idle" from "ran and finished" by comparing task references.
         self._turn_generation: int = 0
+        # The turn a structured monitor wake started, until the runner accepts it
+        # and the wake's ``nudge`` row is written. Until then the transcript cannot
+        # say who opened the running turn, so the projection's ``wake_starting``
+        # says it. A refused wake leaves its finished task here, which matches no
+        # later ``task``.
+        self._wake_starting_task: asyncio.Task[Any] | None = None
         # Wire seq of the newest chat_chunk this slot has emitted, across turns:
         # the counter never restarts, so a client's replay floor (the seq its
         # transcript already holds) orders every later chunk above it without

@@ -6506,4 +6506,21 @@ describe('MembersPage warm greeting (a return in the middle of a goal)', () => {
     await screen.findByTestId('member-resume-card', undefined, PANE_READY)
     expect(api.crewBoard).toHaveBeenCalledExactlyOnceWith('member-oncall')
   })
+
+  it('a monitor wake whose slot runs before its row is written keeps the card up', async () => {
+    vi.mocked(api.crewBoard).mockResolvedValue(midGoal as never)
+    const { store } = await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
+    act(() => { store.dispatch(sseChatMessage({ slot: 'member-oncall', role: 'user', content: TURN_TEXT.user })) })
+    fireEvent.click(await rosterRow('oncall'))
+    await screen.findByTestId('member-resume-card', undefined, PANE_READY)
+    // A structured monitor writes its row only once its turn is accepted, so the
+    // slot runs first while the user's older row is still the newest; the frame
+    // says a wake is starting.
+    act(() => {
+      store.dispatch(sseSlots([{ key: 'member-oncall', mode: 'member', running: true, wake_starting: true, messages: 1 }] as never))
+    })
+    expect(screen.getByTestId('member-resume-card')).toBeInTheDocument()
+    act(() => { turnStarts(store, 'nudge') })
+    expect(screen.getByTestId('member-resume-card')).toBeInTheDocument()
+  })
 })
