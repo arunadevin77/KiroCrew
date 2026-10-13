@@ -192,7 +192,13 @@ export const ToolCallPill = memo(function ToolCallPill({ message, running, onFil
   const [copyOutcome, setCopyOutcome] = React.useState<CopyOutcome>('idle')
   const copyResetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   React.useEffect(() => () => { if (copyResetTimer.current) clearTimeout(copyResetTimer.current) }, [])
-  const isDone = message.role === 'tool_result'
+  // A finished call is NOT re-roled: the backend writes the result onto the 🔧
+  // row's own `meta.output` (chat_runner's EVENT_TOOL_RESULT handler; '' for a
+  // terminal frame with no renderable output), so the role alone left every
+  // completed call in a polled transcript on the loader. Same rule as the
+  // store-connected ToolCallLine: a result arrived, or the session is idle and
+  // nothing further will run.
+  const isDone = message.role === 'tool_result' || message.meta?.output != null || !running
   const isRejected = isRejectedDecision(message.meta?.resolved)
   const hasPendingPerm = message.role === 'permission' && !message.meta?.resolved
 

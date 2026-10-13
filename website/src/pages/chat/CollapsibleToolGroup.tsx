@@ -162,7 +162,6 @@ const CollapsibleToolGroup = memo(function CollapsibleToolGroup({ count, autoExp
     : needsAttention ? i18nT('pages.chat.collapsibleToolGroup.approval_needed') : isRunning ? i18nT('pages.chat.collapsibleToolGroup.running_tools') : i18nT('pages.chat.collapsibleToolGroup.tool_call', { count: count })
 
   const preview = needsAttention ? sanitizeLlmOutput(extractPreview(permissionMeta)) : ''
-  const truncated = preview.length > 150 ? preview.slice(0, 150) + '…' : preview
   // Heading over the single-call preview; '' when the command is already the
   // clearest statement of the call (nothing to add above the <pre>).
   const heading = needsAttention ? sanitizeLlmOutput(derivedHeading(permissionMeta)) : ''
@@ -261,7 +260,7 @@ const CollapsibleToolGroup = memo(function CollapsibleToolGroup({ count, autoExp
           gating this row on !expanded left the expanded pending group with no
           actionable buttons — a dead end exactly while the agent is parked
           waiting on the user (#5487). */}
-      {needsAttention && (onApprove || onApproveBatch) && (isBatch ? batchPreviews.length > 0 : !!truncated) && (
+      {needsAttention && (onApprove || onApproveBatch) && (isBatch ? batchPreviews.length > 0 : !!preview) && (
         <div className="mt-1 ml-4 pl-3 shadow-[inset_2px_0_0_0_var(--color-amber-400)] forced-colors:border-l-2">
           {isBatch ? (
             <>
@@ -282,7 +281,12 @@ const CollapsibleToolGroup = memo(function CollapsibleToolGroup({ count, autoExp
           ) : (
             <>
               {heading && <div className="text-[12px] leading-5 text-muted mb-1" data-testid="approval-derived-title">{heading}</div>}
-              <pre className="bg-bg-hover rounded-md px-3 py-2 text-[13px] leading-5 font-mono overflow-x-auto whitespace-pre-wrap break-all max-h-[4.5em] overflow-y-auto mb-2"><ToolInputText text={truncated} /></pre>
+              {/* The FULL command, for the same reason the batch rows are full: a
+                  cut preview can hide a destructive suffix behind a benign prefix
+                  at the one point the human vets what will run. The box is
+                  height-bounded and scrolls, so a long call cannot push the
+                  buttons below the fold. */}
+              <pre className="bg-bg-hover rounded-md px-3 py-2 text-[13px] leading-5 font-mono overflow-x-auto whitespace-pre-wrap break-all max-h-[15em] overflow-y-auto mb-2"><ToolInputText text={preview} /></pre>
             </>
           )}
         </div>

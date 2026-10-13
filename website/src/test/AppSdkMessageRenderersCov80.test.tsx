@@ -460,6 +460,28 @@ describe('ToolCallPill', () => {
     expect(document.querySelector('.animate-spin')).toBeNull()
   })
 
+  it('marks a call whose result landed on its own row done, even mid-run', () => {
+    // The backend writes the result onto the 🔧 row's meta.output instead of
+    // re-roling it, so a polled transcript only ever sees role 'tool'.
+    render(<ToolCallPill
+      message={msg({ role: 'tool', content: '🔧 zzq', meta: { output: 'zzq-out' } })} running
+    />)
+    expect(document.querySelector('.animate-spin')).toBeNull()
+    expect((screen.getByRole('button') as HTMLElement).className).toContain('text-ok')
+  })
+
+  it('marks an empty terminal output done too', () => {
+    render(<ToolCallPill
+      message={msg({ role: 'tool', content: '🔧 zzq', meta: { output: '' } })} running
+    />)
+    expect((screen.getByRole('button') as HTMLElement).className).toContain('text-ok')
+  })
+
+  it('shows every call of an idle session as done, not as a frozen loader', () => {
+    render(<ToolCallPill message={msg({ role: 'tool', content: '🔧 zzq' })} running={false} />)
+    expect((screen.getByRole('button') as HTMLElement).className).toContain('text-ok')
+  })
+
   it('treats an auto-denied call as terminal, so it never spins', () => {
     render(<ToolCallPill
       message={msg({ role: 'tool', content: '🔧 zzq' })} running autoDenied

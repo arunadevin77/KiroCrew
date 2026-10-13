@@ -222,15 +222,18 @@ describe('CollapsibleToolGroup approval dispatch', () => {
     expect(container.querySelector('pre')).toBeNull()
   })
 
-  it('truncates a very long preview', () => {
+  it('shows a very long preview in full, in a bounded scrolling box', () => {
+    // A cut preview could hide a destructive suffix behind a benign prefix.
+    const long = 'z'.repeat(400) + ' && zzq-tail'
     const { container } = renderWithProviders(
-      <CollapsibleToolGroup count={1} hasPermission permissionMeta={{ tool_input: 'z'.repeat(400) }} onApprove={() => {}}>
+      <CollapsibleToolGroup count={1} hasPermission permissionMeta={{ tool_input: long }} onApprove={() => {}}>
         <div>zzq-child</div>
       </CollapsibleToolGroup>,
     )
-    const pre = container.querySelector('pre')!.textContent!
-    expect(pre.endsWith('…')).toBe(true)
-    expect(pre.length).toBeLessThan(400)
+    const pre = container.querySelector('pre')!
+    expect(pre.textContent).toBe(long)
+    expect(pre.className).toContain('overflow-y-auto')
+    expect(pre.className).toMatch(/max-h-\[/)
   })
 })
 
