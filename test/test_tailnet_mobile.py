@@ -995,6 +995,24 @@ class TestQrRefusals:
         mint.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_governance_probe_failure_fails_closed(self, _unrestricted, _quiet_audit) -> None:
+        """If the ceiling probe itself cannot complete, the ceiling is unknown and
+        must read as pinned: a ready machine still refuses to mint."""
+        with _machine(published=True):
+            with (
+                patch.object(
+                    tailnet_mobile.tailnet,
+                    "is_governance_pinned_off",
+                    side_effect=RuntimeError("probe dispatch failed"),
+                ),
+                patch.object(tailnet_mobile, "generate_token") as mint,
+            ):
+                resp = await tailnet_mobile.api_tailnet_mobile_qr(_request(tailnet_host=_HOST))
+        assert resp.status == 409
+        assert b"governance_pinned" in resp.body
+        mint.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_untrusted_origin_refuses(self, _unrestricted, _quiet_audit) -> None:
         """Published but ``dashboard.tailscale.enabled`` off: the gateway rejects its
         own tailnet origin, so the phone would open the link and be answered 403."""

@@ -365,9 +365,12 @@ async def _live_state(request: web.Request, port: int) -> _LiveState:
         # No audit_tool: a polled read must not append an HMAC-chained SEL row
         # per refresh (see tailnet.is_governance_pinned_off).
         pinned = await asyncio.to_thread(tailnet.is_governance_pinned_off)
-    except Exception:  # pragma: no cover - the probe is itself guarded
+    except Exception:
+        # Fail CLOSED, matching the callee's own contract: an unknown ceiling is
+        # treated as pinned, so the QR mint refuses rather than issuing an owner
+        # credential over a tailnet the ceiling may forbid.
         logger.debug("tailnet mobile: governance probe unavailable", exc_info=True)
-        pinned = False
+        pinned = True
 
     probe = tailnet.DaemonProbe(
         name="", installed=False, reachable=False, logged_in=False, detail=""
