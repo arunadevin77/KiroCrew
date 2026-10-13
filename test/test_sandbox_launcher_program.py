@@ -22,6 +22,7 @@ import importlib.util
 import os
 import stat
 import sys
+import tempfile
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -763,6 +764,166 @@ def test_the_stand_in_root_is_the_first_candidate_off_the_home_filesystem(tmp_pa
     program.pick_stand_in_root(run)
     assert run.tmpfs_src == str(same_fs)
     assert os.listdir(same_fs) == []  # the probe directory was removed again
+
+
+class _ReplacedRoots:
+    """``tempfile`` creates that fail under *roots* from the *from_create*-th stand-in on.
+
+    Stands in for systemd-logind replacing ``/run/user/$UID`` while a launcher is still
+    placing masks: the probe that chose the root succeeded, and from that stand-in on
+    every create under the root -- a probe included -- fails with *err*. Stand-in creates
+    are counted, probes are not, so ``from_create=1`` replaces the root right after the
+    launcher chose it.
+    """
+
+    def __init__(self, roots: list[str], from_create: int, err: int = errno.EACCES) -> None:
+        self.roots = set(roots)
+        self.from_create = from_create
+        self.err = err
+        self.creates = 0
+        #: The directory every create that succeeded was made in, in order.
+        self.made_in: list[str] = []
+        self._mkdtemp = tempfile.mkdtemp
+        self._mkstemp = tempfile.mkstemp
+
+    def _gate(self, prefix: str | None, where: str | None) -> None:
+        if prefix != "kirocrew_sbprobe_":
+            self.creates += 1
+        if where in self.roots and self.creates >= self.from_create:
+            raise OSError(self.err, os.strerror(self.err), where)
+
+    def mkdtemp(self, suffix=None, prefix=None, dir=None):  # noqa: ANN001, ANN201
+        self._gate(prefix, dir)
+        made = self._mkdtemp(suffix, prefix, dir)
+        if prefix != "kirocrew_sbprobe_":
+            self.made_in.append(os.path.dirname(made))
+        return made
+
+    def mkstemp(self, suffix=None, prefix=None, dir=None, text=False):  # noqa: ANN001, ANN201
+        self._gate(prefix, dir)
+        made = self._mkstemp(suffix, prefix, dir, text)
+        self.made_in.append(os.path.dirname(made[1]))
+        return made
+
+
+def _replaced_root_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    from_create: int,
+    err: int = errno.EACCES,
+    both: bool = False,
+) -> tuple[program.Launch, _Home, CoveringLibc, _ReplacedRoots, str, str]:
+    """A child run over :class:`_Home` whose first stand-in root is replaced mid-launch.
+
+    Both roots sit on a different filesystem from HOME (``/proc``), so the launcher
+    chooses *first*; *second* is the fallback, refused too when *both* is set.
+    """
+    first, second = tmp_path / "run-user", tmp_path / "dev-shm"
+    first.mkdir()
+    second.mkdir()
+    home = _Home(tmp_path)
+    libc = CoveringLibc()
+    run = launch(
+        tmp_path,
+        home.plan(stand_in_roots=[str(first), str(second)]),
+        libc=libc,
+        environ={"HOME": "/proc"},
+    )
+    roots = [str(first), str(second)] if both else [str(first)]
+    replaced = _ReplacedRoots(roots, from_create, err)
+    monkeypatch.setattr(program.tempfile, "mkdtemp", replaced.mkdtemp)
+    monkeypatch.setattr(program.tempfile, "mkstemp", replaced.mkstemp)
+    return run, home, libc, replaced, str(first), str(second)
+
+
+#: Every stand-in a child run over :class:`_Home` creates: the window stage, the four
+#: per-directory masks, the nested mask re-applied inside the window, the plain file
+#: mask, the unreadable leaf's empty fallback, and the ``~/.ssh`` stand-in.
+_STAND_INS_PER_RUN = 9
+
+
+def test_the_stand_in_count_covers_every_create(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep below replaces the root before each of these creates in turn."""
+    run, _, _, replaced, first, _ = _replaced_root_run(
+        tmp_path, monkeypatch, from_create=_STAND_INS_PER_RUN + 1
+    )
+    program.run_child(run, ["/bin/agent"])
+    assert replaced.creates == _STAND_INS_PER_RUN
+    assert replaced.made_in == [first] * _STAND_INS_PER_RUN
+
+
+@pytest.mark.parametrize(
+    "from_create", range(1, _STAND_INS_PER_RUN + 1), ids=lambda n: f"create-{n}"
+)
+def test_a_replaced_stand_in_root_moves_the_stand_ins_and_keeps_every_mask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, from_create: int
+) -> None:
+    run, home, libc, replaced, first, second = _replaced_root_run(
+        tmp_path, monkeypatch, from_create=from_create
+    )
+    program.run_child(run, ["/bin/agent", "--flag"])
+    # Every stand-in before the replacement stays where it was made; the refused one and
+    # every later one land under the next candidate, which then is the stand-in root.
+    assert run.tmpfs_src == second
+    before = from_create - 1
+    assert replaced.made_in == [first] * before + [second] * (_STAND_INS_PER_RUN - before)
+    # Every mask is placed, exactly as on an undisturbed run.
+    assert len(libc.calls) == _MOUNTS_PER_RUN
+    assert _listing(home.aws) == ["config"]
+    assert _listing(home.cache) == []
+    assert _listing(home.apps) == ["alpha"]
+    assert _listing(home.window) == ["edits", "state.db"]
+    assert _listing(home.nested) == []
+    assert home.secret.read_text() == ""
+    assert home.signing_key.read_bytes() == b""
+    assert _listing(home.ssh) == ["known_hosts"]
+    assert run.execs == [["/bin/agent", "/bin/agent", "--flag"]]
+
+
+@pytest.mark.parametrize("err", [errno.EACCES, errno.ENOENT, errno.EROFS], ids=errno.errorcode.get)
+def test_each_replaced_root_errno_moves_the_stand_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], err: int
+) -> None:
+    run, _, _, replaced, first, second = _replaced_root_run(
+        tmp_path, monkeypatch, from_create=1, err=err
+    )
+    program.run_child(run, ["/bin/agent"])
+    assert run.tmpfs_src == second
+    assert replaced.made_in == [second] * _STAND_INS_PER_RUN
+    warned = capsys.readouterr().err
+    assert "the stand-in root %s refused a create (errno %d)" % (first, err) in warned
+    assert "using %s instead" % second in warned
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["every-root-refuses", "unrelated-errno", "fallback-shares-home-fs"],
+)
+def test_a_stand_in_with_no_usable_root_ends_the_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """The original error ends the launch before any exec, as it does with no retry."""
+    err = errno.ENOSPC if case == "unrelated-errno" else errno.EACCES
+    run, _, libc, replaced, first, _ = _replaced_root_run(
+        tmp_path, monkeypatch, from_create=1, err=err, both=case == "every-root-refuses"
+    )
+    if case == "fallback-shares-home-fs":
+        # HOME on the roots' own filesystem: the fallback fails the isolation check.
+        program.pick_stand_in_root(run)
+        run.environ["HOME"] = str(tmp_path)
+        with pytest.raises(OSError) as raised:
+            program.place_masks(run)
+    else:
+        with pytest.raises(OSError) as raised:
+            program.run_child(run, ["/bin/agent"])
+    assert raised.value.errno == err
+    assert run.tmpfs_src == first
+    assert replaced.made_in == []
+    assert libc.calls == []
+    assert run.execs == []
 
 
 # --------------------------------------------------------------------------- #

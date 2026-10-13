@@ -70,6 +70,9 @@ _PR_SET_DUMPABLE = 4
 
 _O_PATH = getattr(os, "O_PATH", 0)
 _ELOOP = __import__("errno").ELOOP
+_EACCES = __import__("errno").EACCES
+_ENOENT = __import__("errno").ENOENT
+_EROFS = __import__("errno").EROFS
 
 #: ``S_IFMT`` and friends, spelled out rather than taken from ``stat`` so the identity
 #: helpers below read nothing but their arguments.
@@ -970,8 +973,22 @@ def pick_stand_in_root(launch):
     the sibling ``kirocrew_sbprobe_`` prefix, OUTSIDE the pid-parsed family, so the
     janitor never races its mkdtemp/rmdir window.
     """
+    root = _first_stand_in_root(launch)
+    if root is not None:
+        launch.tmpfs_src = root
+    launch.src_prefix = "kirocrew_sb_%d_" % os.getpid()
+
+
+def _first_stand_in_root(launch, skip=None):
+    """The first of ``launch.stand_in_roots`` other than *skip* that passes both checks.
+
+    A root qualifies when it sits on a different filesystem from HOME and a probe
+    directory can be created and removed in it. ``None`` when no candidate qualifies.
+    """
     home_dev = _home_device(launch.environ)
     for candidate in launch.stand_in_roots:
+        if candidate == skip:
+            continue
         try:
             if home_dev is not None and os.stat(candidate).st_dev == home_dev:
                 continue  # same fs as HOME -- no isolation, the race is still possible
@@ -980,11 +997,61 @@ def pick_stand_in_root(launch):
                 os.rmdir(probe)
             except FileNotFoundError:
                 pass  # an external cleaner won the race -- the root still works
-            launch.tmpfs_src = candidate
-            break
+            return candidate
         except (OSError, ValueError):
             continue
-    launch.src_prefix = "kirocrew_sb_%d_" % os.getpid()
+    return None
+
+
+#: What a create under the chosen stand-in root fails with once a different directory
+#: stands at that name than the one the probe saw. systemd-logind removes
+#: ``/run/user/$UID`` at a user's last logout and makes it again, ``root:root`` mode
+#: 0700, at the next login; removing a mount point takes the mount out of this private
+#: namespace as well, so the name then reads as that bare directory (EACCES), as
+#: nothing (ENOENT), or as a read-only directory (EROFS).
+_STAND_IN_ROOT_GONE = frozenset({_EACCES, _ENOENT, _EROFS})
+
+
+def _on_stand_in_root(launch, create):
+    """``create(root)`` under the stand-in root, moved to another root once if that one is gone.
+
+    When the chosen root refuses the create with an errno in ``_STAND_IN_ROOT_GONE``, the
+    remaining candidates are probed with the same checks :func:`pick_stand_in_root`
+    applies, the first that qualifies becomes the stand-in root for this and every later
+    create, and *create* runs once more there. With no qualifying candidate, or when the
+    second create fails too, the original error propagates and the launch ends as it
+    would have without the retry. Only where the stand-in lives changes: every mask is
+    still placed, in the same order, over a stand-in this launcher created.
+    """
+    try:
+        return create(launch.tmpfs_src)
+    except OSError as exc:
+        failed = launch.tmpfs_src
+        if failed is None or exc.errno not in _STAND_IN_ROOT_GONE:
+            raise
+        replacement = _first_stand_in_root(launch, skip=failed)
+        if replacement is None:
+            raise
+        sys.stderr.write(
+            "sandbox: WARNING -- the stand-in root %s refused a create (errno %s); "
+            "using %s instead.\n" % (failed, exc.errno, replacement)
+        )
+        launch.tmpfs_src = replacement
+    return create(launch.tmpfs_src)
+
+
+def _stand_in_mkdtemp(launch):
+    """A fresh, empty stand-in directory under the stand-in root, by its path."""
+    return _on_stand_in_root(
+        launch, lambda root: tempfile.mkdtemp(dir=root, prefix=launch.src_prefix)
+    )
+
+
+def _stand_in_mkstemp(launch):
+    """``(fd, path)`` of a fresh, empty stand-in file under the stand-in root."""
+    return _on_stand_in_root(
+        launch, lambda root: tempfile.mkstemp(dir=root, prefix=launch.src_prefix)
+    )
 
 
 def check_crew_home_aliases(launch):
@@ -1167,7 +1234,7 @@ def stage_private_windows(launch):
                         "sandbox: BLOCKED -- %s is not the directory this spawn "
                         "approved as a data window" % p
                     )
-            _stage_dir = tempfile.mkdtemp(dir=launch.tmpfs_src, prefix=launch.src_prefix)
+            _stage_dir = _stand_in_mkdtemp(launch)
             _mount_or_die(
                 launch,
                 ("/proc/self/fd/%d" % _win_fd).encode(),
@@ -1321,9 +1388,7 @@ def mask_sensitive(launch):
         # so the descriptor path stays valid for exactly the mount.
         _windows = [p for p in launch.private_stage if p.startswith(d.rstrip("/") + "/")]
         try:
-            per_dir_empty = tempfile.mkdtemp(
-                dir=launch.tmpfs_src, prefix=launch.src_prefix
-            ).encode()
+            per_dir_empty = _stand_in_mkdtemp(launch).encode()
             _per_dir_id = _stand_in_identity(per_dir_empty)
             _register_stand_in(launch, _per_dir_id, _mask_fd)
             for p in _windows:
@@ -1371,9 +1436,7 @@ def mask_sensitive(launch):
                 if _nested_target is None:
                     continue
                 try:
-                    _nested_empty = tempfile.mkdtemp(
-                        dir=launch.tmpfs_src, prefix=launch.src_prefix
-                    ).encode()
+                    _nested_empty = _stand_in_mkdtemp(launch).encode()
                     _nested_id = _stand_in_identity(_nested_empty)
                     _register_stand_in(launch, _nested_id, _nested_fd)
                     _mount_or_die(
@@ -1527,8 +1590,10 @@ def _open_unreadable_stand_in(launch, what):
     """
     if not launch.nondumpable:
         return None
+    _stage = _stand_in_mkdtemp(launch)
+    # Read after the create: a retry moves the stand-in root, and the stage is compared
+    # with the root it was actually made in.
     _parent = launch.tmpfs_src or tempfile.gettempdir()
-    _stage = tempfile.mkdtemp(dir=launch.tmpfs_src, prefix=launch.src_prefix)
     _pin = os.open(_stage, os.O_PATH | os.O_NOFOLLOW | os.O_DIRECTORY)
     try:
         _err = _mount_private_tmpfs(launch, ("/proc/self/fd/%d" % _pin).encode())
@@ -1606,7 +1671,7 @@ def mask_sensitive_files(launch):
                 _empty_st = os.fstat(_sealed[0])
                 _empty_src = ("/proc/self/fd/%d" % _sealed[0]).encode()
             else:
-                fd, empty_path = tempfile.mkstemp(dir=launch.tmpfs_src, prefix=launch.src_prefix)
+                fd, empty_path = _stand_in_mkstemp(launch)
                 # ``mkstemp`` hands back the descriptor of the file it created, which is
                 # the stand-in's identity pinned already; no second resolution.
                 _empty_st = os.fstat(fd)
@@ -1695,7 +1760,7 @@ def mask_ssh_keys(launch):
             )
             raise
     # Cross-fs source for the same kernel-race reason as the directory and file masks.
-    ssh_tmp = tempfile.mkdtemp(dir=launch.tmpfs_src, prefix=launch.src_prefix).encode()
+    ssh_tmp = _stand_in_mkdtemp(launch).encode()
     _ssh_tmp_id = _stand_in_identity(ssh_tmp)
     # Host trust is restored INTO the stand-in, before that stand-in is bound over the
     # key directory. Writing it afterwards would address the restored file through
