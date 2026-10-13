@@ -5,7 +5,8 @@ Its prompt tells it to arm a ``monitor_start`` loop on itself afterwards, but
 nothing enforced that: a conductor that forgot left its workers reporting to a
 ledger nobody read. Two pieces close the gap:
 
-* :func:`ensure_patrol` -- called by the bind route after a bind commits. When
+* :func:`ensure_patrol` -- called by the bind route after a bind commits, and by
+  the ``session_create`` route after a create commits. When
   the conductor's slot has no ACTIVE loop, it arms a ``watch="work-ledger"``
   patrol through the same chokepoint an agent's own ``monitor_start`` uses
   (``autonudge_authz.authorize_and_add_nudge``). A loop the system stopped
@@ -43,8 +44,8 @@ PATROL_MAX_RUNTIME_SECS = 86400
 PATROL_WATCH = "work-ledger"
 
 PATROL_MESSAGE = (
-    "Conductor patrol (armed by the gateway when you bound a worker and had no "
-    "loop). Run work_ledger_read with compact=true. For each item with status "
+    "Conductor patrol (armed by the gateway when you dispatched work and had no "
+    "active loop). Run work_ledger_read with compact=true. For each item with status "
     "done, read its bar with a full work_ledger_read, pipe the done-only "
     "accept_batch into the goal-conductor skill's accept_eval.py, and record the "
     "answer with work_ledger_record action=verdict. Answer question and blocked "
@@ -62,11 +63,36 @@ ARM_YOURSELF_NOTE = (
     'watch="work-ledger" before you end this turn, or your workers\' reports go unread.'
 )
 
+#: Rides a dispatch reply when the caller holds no work ledger: a work-ledger
+#: watch would have nothing to read, so none is armed and the caller is told
+#: what fits instead.
+NO_LEDGER_NOTE = (
+    "No patrol runs on your session and you hold no work ledger. Before you end "
+    "this turn, arm a monitor_start loop that reads the session you opened with "
+    "session_read_message, or watches the one PR you wait on."
+)
+
 #: Outcomes :func:`ensure_patrol` returns, surfaced on the bind reply as ``patrol``.
 ARMED = "armed"
 EXISTING = "existing"
 REFUSED = "refused"
 UNSUPPORTED = "unsupported"
+
+
+def reply_line(resp: dict[str, Any]) -> str:
+    """The patrol outcome a dispatch reply ends with, always present.
+
+    A dispatch route answers ``patrol``, ``patrol_reason`` and, when no
+    work-ledger watch is active afterwards, ``patrol_note``. A reply missing
+    ``patrol`` reads ``unknown`` with the arm-yourself note, so a dispatch never
+    looks patrolled when nothing says it is.
+    """
+    patrol = str(resp.get("patrol") or "")
+    if not patrol:
+        return f" patrol=unknown. {ARM_YOURSELF_NOTE}"
+    reason = str(resp.get("patrol_reason") or "unspecified")
+    note = str(resp.get("patrol_note") or "")
+    return f" patrol={patrol} ({reason})" + (f". {note}" if note else "")
 
 
 def nudge_slot_for(state: Any, conductor_key: str) -> str | None:
@@ -142,6 +168,22 @@ REASON_OUTSIDE_ARM = "outside-arm-refused"
 REASON_CANNOT_HOST = "session-cannot-host-loop"
 REASON_ARM_FAILED = "arm-failed"
 REASON_DISABLED = "autonudge-disabled"
+REASON_NO_LEDGER = "no-ledger"
+
+
+def patrol_note(
+    state: Any, conductor_key: str, reason: str, *, has_ledger: bool = True
+) -> str | None:
+    """The note a dispatch reply carries, or ``None`` when the caller is patrolled.
+
+    With a ledger, patrolled means an active work-ledger watch. Without one, any
+    active loop is the patrol: it watches the session or PR the caller opened.
+    """
+    if not has_ledger:
+        return None if reason in (REASON_ACTIVE_LEDGER, REASON_ACTIVE_OTHER) else NO_LEDGER_NOTE
+    if has_active_patrol(state, conductor_key):
+        return None
+    return ARM_YOURSELF_NOTE
 
 
 def _refusal_reason(state: Any, slot: str, status: object) -> str:
@@ -158,7 +200,13 @@ def _refusal_reason(state: Any, slot: str, status: object) -> str:
     return REASON_ARM_FAILED
 
 
-async def ensure_patrol(state: Any, conductor_key: str) -> tuple[str, str]:
+async def ensure_patrol(
+    state: Any,
+    conductor_key: str,
+    *,
+    has_ledger: bool = True,
+    source: str = "work-ledger-bind",
+) -> tuple[str, str]:
     """Leave the conductor's slot with a work-ledger patrol, or say why not.
 
     Answers ``(outcome, reason)``: *outcome* is one of ``ARMED``, ``EXISTING``,
@@ -172,8 +220,12 @@ async def ensure_patrol(state: Any, conductor_key: str) -> tuple[str, str]:
     the allowlist a directive re-arm uses, so this path cannot revive a stop a
     directive could not.
 
+    A caller with no work ledger (*has_ledger* False, which the caller reads
+    through the store's own route seam) gets nothing armed (``no-ledger``): the
+    watch would read nothing and fire on its timer for a day.
+
     Never raises: every failure is logged and answered as an outcome, because
-    the bind that called this has already committed.
+    the dispatch that called this has already committed.
     """
     try:
         svc, loop, slot = _loop_on(state, conductor_key)
@@ -192,6 +244,9 @@ async def ensure_patrol(state: Any, conductor_key: str) -> tuple[str, str]:
                 except Exception:  # noqa: BLE001 - a store read must not fail the caller
                     ledger = False
                 return EXISTING, REASON_ACTIVE_LEDGER if ledger else REASON_ACTIVE_OTHER
+        if not has_ledger:
+            return UNSUPPORTED, REASON_NO_LEDGER
+        if loop is not None:
             if not _stopped_row_is_replaceable(loop):
                 logger.warning(
                     "conductor patrol not armed for %s: its loop was stopped by a person",
@@ -213,7 +268,8 @@ async def ensure_patrol(state: Any, conductor_key: str) -> tuple[str, str]:
             max_runtime_secs=PATROL_MAX_RUNTIME_SECS,
             watch=PATROL_WATCH,
             gate=True,
-            source="work-ledger-bind",
+            # The audit tag: which dispatch route armed this patrol.
+            source=source,
             caller="conductor-patrol",
             # Create-only: a loop that appeared since the read above wins, and
             # nothing is ever stacked beside it. Stopped-row displacement only for

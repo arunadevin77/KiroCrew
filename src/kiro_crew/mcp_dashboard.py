@@ -81,6 +81,7 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
 
+from kiro_crew.conductor_patrol import reply_line
 from kiro_crew.config.loader import KiroCrewConfig
 from kiro_crew.config.sections import FOLDER_SORT_DEFAULT, FOLDER_SORT_MODES
 from kiro_crew.dashboard.folder_ownership import (
@@ -2866,7 +2867,7 @@ def _run_session_create(args: dict[str, Any], ctx: ToolContext) -> str:
     return redact(
         f"\U0001f195 Opened `{resp.get('target')}` ({resp.get('title')}){filed}{on_model}.{made_note} "
         "It is empty and waiting in the user's sidebar; watch it with "
-        "session_read_message."
+        "session_read_message." + reply_line(resp)
     )
 
 

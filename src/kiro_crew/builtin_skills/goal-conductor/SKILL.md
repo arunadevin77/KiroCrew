@@ -256,13 +256,11 @@ Settings offers no control for it.
 
 ### Patrol
 
-**Dispatch means monitor.** Any session that dispatches work holds an active
-loop while that work is open, on every backend. The default is
-`watch="work-ledger"`. A loop that watches one subject (a single PR URL) fits
-only when that subject is all you are waiting on. Every `bind` reply ends
-`patrol=<outcome> (<reason>)`: `armed` means the gateway armed the default for
-you, and `refused`, `unsupported` or `active-other-watch` means nobody reads
-your ledger until you arm one yourself.
+**Dispatch means monitor**, default `watch="work-ledger"` (one PR URL only when
+that PR is all you wait on). Every `session_create` and `bind` reply ends
+`patrol=<outcome> (<reason>)`. Anything but `armed` or
+`existing (active-work-ledger)` means nobody reads your ledger until you arm
+the loop below.
 
 After dispatching, arm a loop on your own session with `monitor_start`. Put the
 check AND the exit condition in the message, and pass explicit positive

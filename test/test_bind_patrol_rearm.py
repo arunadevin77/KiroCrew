@@ -186,6 +186,31 @@ async def test_a_system_stopped_own_loop_is_replaced_on_bind(svc, conductor):
 
 
 @pytest.mark.asyncio
+async def test_a_finished_pr_watch_is_replaced_on_bind(svc, conductor):
+    """A slot holds one loop. A PR watch that ended because its PR merged has
+    nothing left to watch, and the new bind is work nobody reads without a
+    patrol, so the finished watch is replaced on purpose."""
+    slot = _slot_of(conductor)
+    finished = _own_loop_finished(slot)
+    finished.watch = ""
+    svc.loops[slot] = finished
+
+    body = await _bind_one(conductor)
+
+    assert body["patrol"] == conductor_patrol.ARMED
+    assert body["patrol_reason"] == conductor_patrol.REASON_REPLACED
+    assert svc.loops[slot].watch == "work-ledger"
+
+
+@pytest.mark.asyncio
+async def test_holds_ledger_reads_the_callers_own_ledger(svc, conductor):
+    assert await routes.holds_ledger(conductor) is False
+    await _bind_one(conductor)
+    assert await routes.holds_ledger(conductor) is True
+    assert await routes.holds_ledger("chat-r-nobody") is False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", [MonitorOutcome.USER_STOP, None])
 async def test_a_user_stopped_loop_is_refused_not_rearmed(svc, conductor, outcome):
     slot = _slot_of(conductor)

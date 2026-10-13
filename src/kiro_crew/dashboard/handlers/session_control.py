@@ -16,6 +16,7 @@ import logging
 
 from aiohttp import web
 
+from kiro_crew import conductor_patrol, session_ledger
 from kiro_crew.dashboard import session_control as sc
 from kiro_crew.dashboard.handlers._shared import (
     _read_session_key,
@@ -281,6 +282,22 @@ async def api_session_control_create(request: web.Request) -> web.Response:
         )
     except sc.SessionControlError as exc:
         return _refusal(exc)
+    if not dry_run and isinstance(result, dict):
+        # A create is a dispatch, and a dispatch needs a patrol reading what
+        # comes back: the same default patrol a ledger bind arms, through the
+        # same outside-arm authorizer (``conductor_patrol.ensure_patrol``).
+        # Never raises, and the create already committed.
+        from kiro_crew.dashboard.handlers.work_ledger import holds_ledger
+
+        caller = session_ledger.ledger_key(_read_session_key(request))
+        ledger = await holds_ledger(caller)
+        patrol, reason = await conductor_patrol.ensure_patrol(
+            state, caller, has_ledger=ledger, source="session-create"
+        )
+        result = {**result, "patrol": patrol, "patrol_reason": reason}
+        note = conductor_patrol.patrol_note(state, caller, reason, has_ledger=ledger)
+        if note:
+            result["patrol_note"] = note
     return web.json_response(result)
 
 

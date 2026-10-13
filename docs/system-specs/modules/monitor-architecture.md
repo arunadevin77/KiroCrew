@@ -146,9 +146,17 @@ succeeds; the bind reply carries `patrol: armed | existing | refused |
 unsupported` and `patrol_reason` (`no-loop`, `replaced-system-stopped`,
 `active-work-ledger`, `active-other-watch`, `user-stopped`,
 `outside-arm-refused`, `session-cannot-host-loop`, `arm-failed`,
-`autonudge-disabled`), plus a `patrol_note` telling the conductor to arm its own
+`autonudge-disabled`, `no-ledger`), plus a `patrol_note` telling the conductor to arm its own
 `monitor_start` in the same turn whenever no `work-ledger` watch is active after
-the bind. The MCP tool renders all three on every bind reply. The armed loop carries `default_patrol: true`, and that tag is the one
+the bind. The MCP tool renders all three on every bind reply. A `session_create`
+(`POST /api/session-control/create`, not a dry run) is a dispatch too and runs
+the same `ensure_patrol` on its caller, with the same fields on its reply. A
+caller that holds no work ledger gets nothing armed (`no-ledger`): the watch
+would read nothing and fire on its timer, so the reply says what fits instead. A
+crew/member caller is still refused: neither route can tell the member's own
+turn from a cron, app or sub-agent turn on the same session key, and the only
+path that can (`session_directive_apply`, through `DIRECTIVE_TOOLS` and
+`mcp_core.derive_directive`) is reached by a member's own `monitor_start`. The armed loop carries `default_patrol: true`, and that tag is the one
 exception to create-only: ANY create-only arm of a loop that is not itself a
 default patrol -- the conductor's own `monitor_start` or `monitor_watch`, and
 equally a person's dashboard create or a channel arm -- displaces an ACTIVE

@@ -1805,8 +1805,9 @@ async def api_work_ledger_record(request: web.Request) -> web.Response:
             patrol, reason = await conductor_patrol.ensure_patrol(state, key)
             payload["patrol"] = patrol
             payload["patrol_reason"] = reason
-            if not conductor_patrol.has_active_patrol(state, key):
-                payload["patrol_note"] = conductor_patrol.ARM_YOURSELF_NOTE
+            note = conductor_patrol.patrol_note(state, key, reason)
+            if note:
+                payload["patrol_note"] = note
         conductor = result.get("conductor")
         if conductor is not None:
             payload["conductor"] = conductor.to_dict()
@@ -1820,6 +1821,20 @@ async def api_work_ledger_record(request: web.Request) -> web.Response:
     # the lock goes back with that divergence visible to the next reader.
     async with _board_lock(key):
         return await _drain_before_cancelling(_under_board())
+
+
+async def holds_ledger(session_key: str) -> bool:
+    """Whether *session_key* holds a readable work ledger.
+
+    For the session-control create route, which arms a work-ledger patrol only
+    on a caller that has a ledger to watch. The key is the caller's own,
+    resolved from its ``X-Session-Key`` by that route; this answers a yes/no
+    and returns nothing from the record.
+    """
+    try:
+        return await asyncio.to_thread(work_ledger.read_conductor, session_key) is not None
+    except Exception:  # noqa: BLE001 - an unreadable ledger is no ledger to watch
+        return False
 
 
 async def api_work_ledger_rebuild(request: web.Request) -> web.Response:

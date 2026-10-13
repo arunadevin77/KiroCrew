@@ -752,30 +752,14 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 f"verdict={item.get('verdict') or '(none)'}"
             )
             if action == "bind":
-                line += _patrol_line(resp)
+                from kiro_crew.conductor_patrol import reply_line
+
+                line += reply_line(resp)
             return line
         conductor = resp.get("conductor") or {}
         return f"Recorded {action}. round={conductor.get('round', '(unset)')}"
 
     return f"Error: unknown tool '{name}'"  # pragma: no cover - guarded above
-
-
-def _patrol_line(resp: dict[str, Any]) -> str:
-    """The bind reply's patrol outcome, always present.
-
-    The route answers ``patrol``, ``patrol_reason`` and, when no work-ledger
-    watch is active afterwards, ``patrol_note``. A reply missing ``patrol`` is
-    reported as ``unknown`` with the arm-yourself note, so a dispatch never ends
-    looking patrolled when nothing says it is.
-    """
-    from kiro_crew.conductor_patrol import ARM_YOURSELF_NOTE
-
-    patrol = str(resp.get("patrol") or "")
-    if not patrol:
-        return f" patrol=unknown. {ARM_YOURSELF_NOTE}"
-    reason = str(resp.get("patrol_reason") or "unspecified")
-    note = str(resp.get("patrol_note") or "")
-    return f" patrol={patrol} ({reason})" + (f". {note}" if note else "")
 
 
 def _refusal(what: str, resp: dict[str, Any]) -> str:
