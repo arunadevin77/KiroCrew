@@ -372,15 +372,22 @@ ACP_BACKENDS_INDEPENDENT_SETUP: FrozenSet[str] = frozenset(
 # are stdio elements too (``mcp_gateway.session_servers._acp_server_entry``) and
 # ``_pooled_mcp_servers`` appended them to this very array for opencode whenever
 # pooling was on. See ``providers/mirrors/opencode.py``.
-# Pi is NOT a member, for a reason that is worse than absence and is exactly why
-# membership is evidence-based: ``pi-acp`` ACCEPTS the array on ``session/new``
-# without error, stores it on its session state, and never hands it to the ``pi``
-# process -- driven against pi-acp 0.0.33, a stdio server placed in the array
-# produced no error and no tool, and the adapter's own documentation lists MCP
-# under its limitations. A server in the array is therefore accepted and inert.
-# Membership here would make the dashboard report Crew tools as mounted on a
-# session where none can be called, which is the one state an absent tool never
-# produces. See ``providers/mirrors/registry.py`` for the projection that says so.
+# Pi is a member, and it is the one member whose array is NOT what mounts the
+# servers. ``pi-acp`` accepts the array on ``session/new``, stores it on its session
+# state, and never hands it to the ``pi`` process (its own documentation lists MCP
+# under its limitations, and an array-only drive spawns no server). What mounts
+# them is Crew's gate extension: the launch writes the SAME composition to an
+# owner-only handoff file bound to the session nonce and sealed with a key only that
+# spawn's environment carries (``acp.harness.pi.pi_mcp_handoff_payload``), and the extension registers each
+# entry with pi's built-in MCP support (``pi.registerMcpServer``; the release that
+# carries it is ``PI_MIN_VERSION``). The array still travels on the wire because
+# the session report reads its roster from it. Captured as a ROUND TRIP against
+# pi-acp 0.0.34 over pi 1.2.0: ``test/fixtures/acp_frames/pi/mcp-stdio-mount-live.jsonl``
+# -- the server is asked ``initialize``, ``tools/list`` and ``tools/call``, the call
+# raises ``session/request_permission`` through the gate first, and the tool's own
+# result reaches the turn. A same-named server in pi's own ``mcp.json`` (user-level,
+# or a trusted project's) outranks an extension's registration, so the extension
+# refuses that name's tools.
 # goose is the fourth member and it joins on a ROUND TRIP rather than on an accepted
 # element, which is the distinction pi's exclusion exists to draw. Driven against
 # goose 1.50.1: one element shaped as ``acp.session_mcp.acp_server_element`` emits is
@@ -449,6 +456,7 @@ ACP_BACKENDS_SESSION_MCP_ARRAY: FrozenSet[str] = frozenset(
         ACP_BACKEND_OPENCODE,
         ACP_BACKEND_GOOSE,
         ACP_BACKEND_DEEPSEEK,
+        ACP_BACKEND_PI,
     }
 )
 
@@ -1027,9 +1035,9 @@ ACP_BACKENDS_MEMBER_TOOL_LIMITS = frozenset({ACP_BACKEND_KIRO})
 # ``WHOLE_SERVER``, so narrowing a dashboard tool withholds the whole mount and the
 # thread runs as plain chat.
 #
-# pi is excluded on the evidence in ``ACP_BACKENDS_SESSION_MCP_ARRAY``: the array is
-# accepted and never forwarded to the agent, so a member dispatch mounted through it
-# would be inert.
+# pi is not a member yet. Its servers reach the session through the gate
+# extension's handoff file (``ACP_BACKENDS_SESSION_MCP_ARRAY``), and a member
+# dispatch mount has not been driven on it.
 # deepseek is a member, and it holds the same two things goose does:
 #
 #   * the per-session mount exists, on a RECORDED ROUND TRIP --
@@ -1124,9 +1132,8 @@ ACP_BACKENDS_MEMBER_DISPATCH = frozenset(
 # routing (``Routing.VERIFIED_GATE_EXTENSION``) is enforced. The decision is that a
 # member session on deepseek gets a panel.
 #
-# pi is excluded for the reason the dispatch set states, and it is not about session
-# control specifically: pi accepts the array and never forwards it, so a mounted
-# panel server would be inert.
+# pi is not a member: it holds no member session key (it is outside
+# ``ACP_BACKENDS_MEMBER_DISPATCH``), and a panel mount has not been driven on it.
 #
 # kiro is excluded and cannot be added by this set alone: a member session's key is
 # what every mount reads, and ``providers/acp.py`` ``_member_session_key`` gates

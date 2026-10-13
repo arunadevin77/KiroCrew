@@ -17,9 +17,8 @@ projection, and a ``frozenset`` is why they are only two: it carries one bit -- 
 or out -- so nothing about a non-member is legible in the source data, and three
 reasons a reader wants told apart collapse into one absence: cannot do it, does it
 differently, and nobody has measured it. ``ACP_BACKENDS_MEMBER_DISPATCH`` shows the
-collapse: pi is a non-member because a mount there is INERT (the array is accepted
-and never forwarded), kiro is a non-member because it has no per-session channel at
-all, and KAS is a member on a captured mount.
+collapse: kiro is a non-member because it has no per-session channel at all, and
+KAS is a member on a captured mount.
 
 The third level is NOT derived from the sets, because it is not in them. It is
 :data:`DECLARED_UNMEASURED`, a per-harness per-line table carrying a reason per

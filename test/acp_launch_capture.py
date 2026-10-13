@@ -75,6 +75,7 @@ _PI_ACP_ARGV = ["/opt/bin/node", "/opt/lib/pi-acp/index.js"]
 _PI_BIN = "/opt/bin/pi"
 _PI_LAUNCHER = "/opt/run/pi-launcher.sh"
 _PI_EXTENSION = "/opt/run/kiro_crew_tool_gate.ts"
+_PI_MCP_HANDOFF = "/opt/run/kirocrew_pi_gate_mcp_handoff.json"
 # The DeepSeek Harness gate artifacts, pinned the same way and for the same reason:
 # both are real files in the owner-only run directory, and the golden records the
 # argv rather than the filesystem.
@@ -425,6 +426,9 @@ def _stub_common(stack: list, rec: _Recorder, tmp_path: Path, backend: str = "")
             patch.object(pi_mod, "_seal_pi_gate_extension", return_value=_PI_EXTENSION),
             patch.object(pi_mod, "_ensure_pi_gate_launcher", return_value=_PI_LAUNCHER),
             patch.object(pi_mod, "_verify_pi_gate", return_value=("", "")),
+            patch.object(pi_mod, "publish_pi_mcp_handoff", return_value=_PI_MCP_HANDOFF),
+            # A fixed key, so the golden environment is the same on every run.
+            patch.object(pi_mod, "new_pi_mcp_handoff_key", return_value=bytes(32)),
             patch.object(
                 deepseek_mod, "_seal_deepseek_gate_extension", return_value=_DSH_EXTENSION
             ),

@@ -111,8 +111,10 @@ _PI_GATE_ARTIFACT_PREFIX = "kirocrew_pi_gate_"
 # Named ONCE because two sweeps accept this family: the run dir still holds artifacts
 # written before they moved, and the gate dir holds the current ones. Two spellings could
 # drift and leave one of those directories unswept. ``.tmp`` is the mkstemp stage both pi
-# artifacts pass through before publication.
-_PI_GATE_ARTIFACT_SUFFIXES: tuple[str, ...] = (".sh", ".cmd", ".ts", ".tmp")
+# artifacts pass through before publication. ``.json`` is the per-session MCP handoff
+# (``kirocrew_pi_gate_<pid>_mcp_<nonce>.json``), removed once its session is established;
+# the sweep reclaims one a dead gateway left behind.
+_PI_GATE_ARTIFACT_SUFFIXES: tuple[str, ...] = (".sh", ".cmd", ".ts", ".tmp", ".json")
 _RUN_DIR_ARTIFACTS: dict[str, tuple[str, ...]] = {
     _SANDBOX_ARTIFACT_PREFIX: (_SEATBELT_PROFILE_SUFFIX, _LAUNCHER_SCRIPT_SUFFIX),
     # The run sweep accepts pi artifacts as well as sandbox launchers.

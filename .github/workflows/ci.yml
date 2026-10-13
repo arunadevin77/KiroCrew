@@ -1915,7 +1915,8 @@ jobs:
             --junitxml="$RUNNER_TEMP/real-adapter-results.xml" \
             test/test_codex_session_mcp.py \
             test/test_opencode_session_mcp.py \
-            test/test_per_tool_mcp_deny_single_binary.py
+            test/test_per_tool_mcp_deny_single_binary.py \
+            test/test_pi_gate_extension_mcp.py
 
       # The second half of the no-silent-skip rule, and the half that does not trust
       # the first. KIROCREW_E2E_REQUIRE turns an absent adapter into a failure; this

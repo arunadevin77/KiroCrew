@@ -18,6 +18,7 @@ whose gate plugin rides the same machinery (:mod:`kiro_crew.acp.harness.deepseek
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -108,7 +109,19 @@ _PI_READBACK_TIMEOUT_S = 30.0
 # pi-acp 0.0.33 never ends a turn on pi 0.80.3 or older. Both drive 0.81.0,
 # which is the floor pi-acp 0.0.34 documents. Without this check the chat just
 # spins, because nothing below names the version as the cause.
-PI_MIN_VERSION = (0, 81, 0)
+#
+# The floor is 0.99.2. 0.99.0 added pi's built-in MCP support and the extension API
+# the gate uses to carry Crew's servers in (``pi.registerMcpServer``,
+# ``pi.getMcpServers``; see :func:`pi_mcp_handoff_payload`), and 0.99.2 is the
+# release that names an MCP tool ``mcp__<server>__<tool>`` with every server
+# character outside ``[A-Za-z0-9_]`` written as ``_``, the spelling the gate's
+# shadow refusal matches. Driven with pi-acp 0.0.34 and the shipped extension: on
+# 0.99.2 and 1.2.0 a handed-off stdio server is asked ``tools/call`` and a
+# same-named server in pi's ``mcp.json`` is refused; on 0.99.0 the server mounts
+# under its raw name (``mcp__probe-server__echo``). On an older pi the gate would
+# load and the session would hold none of Crew's tools, while the card says it
+# holds them.
+PI_MIN_VERSION = (0, 99, 2)
 
 # Every npm name pi has shipped under. The old one stopped at 0.73.1, so an
 # install made under it is always below the floor; it is named so that install
@@ -122,6 +135,22 @@ _PI_MANIFEST_SEARCH_DEPTH = 4
 # the dispatch parser accepts only envelopes this session's own extension wrote.
 _ENV_PI_GATE_SESSION = "KIROCREW_PI_GATE_SESSION"
 
+# Names the per-session MCP handoff file in the child's environment. The PATH
+# travels in the environment, never the servers: an element's ``env`` can carry a
+# credential, and the agent's own shell tool prints this process's environment.
+_ENV_PI_MCP_HANDOFF = "KIROCREW_PI_MCP_HANDOFF"
+
+# The key that opens THIS spawn's handoff file (hex), on the child's environment
+# alone, so the file is ciphertext to every other session that can read the leaf.
+_ENV_PI_MCP_KEY = "KIROCREW_PI_MCP_KEY"
+
+# The handoff file's marker, beside the session nonce it is bound to.
+_PI_MCP_HANDOFF_MARKER = "kiro-crew-mcp"
+
+# pi's own rule for a server name; a name outside it makes ``registerMcpServer``
+# throw, so such an element is left out here and logged instead.
+_PI_MCP_SERVER_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
+
 # SHA-256 of the shipped gate extension. The file lives in the package tree,
 # which on a source or user install an agent's own file tools may be able to
 # write; a read-back that matched the probe by name and path alone would accept
@@ -134,7 +163,7 @@ _ENV_PI_GATE_SESSION = "KIROCREW_PI_GATE_SESSION"
 # digest over the raw bytes would read every Windows install as tampered and refuse
 # every pi session there. ``.gitattributes`` pins the checkout LF as well; the
 # normalization here is what keeps the property from resting on a repo-config line.
-PI_GATE_EXTENSION_SHA256 = "33caa696e70e3b0c0793a705b0c6e06c372c52478e3ac4abf75f0e8d67d1e600"
+PI_GATE_EXTENSION_SHA256 = "cea63649151641c1b9a93776359da3266b52803e771271a136f8ea0304e3073a"
 
 _pi_acp_argv_cache: tuple[list[str] | None, str] | object = launch_mod._UNRESOLVED
 
@@ -476,6 +505,141 @@ def _ensure_pi_gate_launcher(pi_bin: str, extension_path: str) -> str:
     return tmp
 
 
+def _pi_acp_pairs(pairs: object) -> dict[str, str] | None:
+    """An ACP ``[{name, value}]`` list as pi's ``{name: value}`` map, or ``None``.
+
+    ``None`` when a value would be READ by pi rather than passed: pi expands
+    ``${NAME}`` in an ``env``/``headers`` value and runs a value starting with
+    ``!`` as a command. Every other harness hands the value to the server as
+    written, so an element carrying either is left out rather than given a
+    different meaning here.
+    """
+    out: dict[str, str] = {}
+    for pair in pairs if isinstance(pairs, list) else ():
+        if not isinstance(pair, dict):
+            continue
+        name, value = pair.get("name"), pair.get("value")
+        if not isinstance(name, str) or not isinstance(value, str):
+            continue
+        if "${" in value or value.startswith("!"):
+            return None
+        out[name] = value
+    return out
+
+
+def _pi_mcp_server_config(element: dict) -> dict | None:
+    """One ACP ``mcpServers`` element as a pi ``mcpServers`` entry, or ``None``.
+
+    ``exposure: "direct"`` declares the server's tools to the model the way every
+    other harness's array does; pi's default would reach them only from codemode.
+    An ``sse`` element is left out: pi rejects that transport.
+    """
+    if element.get("type") == "sse":
+        return None
+    url = element.get("url")
+    if isinstance(url, str) and url:
+        headers = _pi_acp_pairs(element.get("headers"))
+        if headers is None:
+            return None
+        return {"url": url, "headers": headers, "exposure": "direct"}
+    command = element.get("command")
+    if not isinstance(command, str) or not command:
+        return None
+    args = element.get("args")
+    env = _pi_acp_pairs(element.get("env"))
+    if env is None:
+        return None
+    return {
+        "command": command,
+        "args": [a for a in args if isinstance(a, str)] if isinstance(args, list) else [],
+        "env": env,
+        "exposure": "direct",
+    }
+
+
+def new_pi_mcp_handoff_key() -> bytes:
+    """A fresh AES-256-GCM key for one spawn's handoff file."""
+    return os.urandom(32)
+
+
+def pi_mcp_handoff_payload(elements: list, nonce: str, key: bytes) -> tuple[bytes, tuple[str, ...]]:
+    """The handoff file's bytes for *elements*, and the names it carries.
+
+    *elements* is the array Crew composes for this session's ``session/new``, the
+    same list every array harness is handed on the wire. pi-acp stores that array
+    and never gives it to pi, so the gate extension reads this file instead and
+    registers each entry with pi's built-in MCP support.
+
+    The servers are SEALED with *key* (AES-256-GCM, the nonce as associated data).
+    The file sits in the pi-gate leaf every pi and DeepSeek child can read, and an
+    element's ``env`` carries a member session's identity and an operator's own
+    server credentials; the key travels only in THIS spawn's environment
+    (``KIROCREW_PI_MCP_KEY``), so a sibling session that reads the file reads
+    ciphertext. The extension accepts only a file whose nonce is the one in its own
+    environment and whose seal opens under its own key.
+    """
+    servers: dict[str, dict] = {}
+    for element in elements:
+        if not isinstance(element, dict):
+            continue
+        name = element.get("name")
+        if not isinstance(name, str) or not _PI_MCP_SERVER_NAME_RE.fullmatch(name):
+            logger.warning("pi: MCP server %r has a name pi refuses; it is not mounted", name)
+            continue
+        config = _pi_mcp_server_config(element)
+        if config is None:
+            logger.warning(
+                "pi: MCP server %r has a transport or an env/header value pi would "
+                "reinterpret; it is not mounted",
+                name,
+            )
+            continue
+        servers.setdefault(name, config)
+    # Imported here, as the vault does: a module-level import would make every pi
+    # import depend on the crypto library's load.
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    iv = os.urandom(12)
+    plaintext = json.dumps({"servers": servers}, sort_keys=True).encode("utf-8")
+    sealed = AESGCM(key).encrypt(iv, plaintext, nonce.encode("utf-8"))
+    body = {
+        _PI_MCP_HANDOFF_MARKER: 1,
+        "nonce": nonce,
+        "iv": base64.b64encode(iv).decode("ascii"),
+        "sealed": base64.b64encode(sealed).decode("ascii"),
+    }
+    return json.dumps(body, sort_keys=True).encode("utf-8"), tuple(servers)
+
+
+def _pi_mcp_handoff_name(nonce: str) -> str:
+    """The handoff file's name: the pi gate family, the owner's pid, the nonce."""
+    return f"kirocrew_pi_gate_{os.getpid()}_mcp_{nonce}.json"
+
+
+def publish_pi_mcp_handoff(nonce: str, payload: bytes) -> str:
+    """Write the handoff file, owner-only, into the pi gate artifact directory.
+
+    The directory is the owner-only leaf the launcher and sealed extension live in,
+    which the sandbox exposes to the child read-only; the file itself is ``0400``.
+    Republished before each ``session/new`` or ``session/load``, because pi-acp
+    starts a pi process on either and the extension removes the file after reading
+    it where it can. Blocking; callers run it off the loop.
+    """
+    return _publish_gate_artifact(
+        _pi_gate_artifact_dir(),
+        _pi_mcp_handoff_name(nonce),
+        payload,
+        stage_prefix=f"kirocrew_pi_gate_{os.getpid()}_",
+    )
+
+
+def discard_pi_mcp_handoff(path: str) -> None:
+    """Remove the handoff file; absent already is the same outcome. Blocking."""
+    if path:
+        with suppress(FileNotFoundError):
+            os.remove(path)
+
+
 def _pi_readback_remedy() -> str:
     """What an operator does when the harness's command registry cannot be read."""
     return (
@@ -626,6 +790,10 @@ class PiLaunch(ProcessAdapter):
         # carried from the read-back to the child's environment.
         self._launcher = ""
         self._nonce = ""
+        # The MCP handoff file this spawn published and the key that opens it, both
+        # named on the child's environment and nowhere else.
+        self._mcp_handoff = ""
+        self._mcp_key = b""
 
     async def resolve_spawn(self, ctx: SpawnContext) -> SpawnPlan:
         """Resolve both components, check pi's version, then seal and verify the gate."""
@@ -697,6 +865,22 @@ class PiLaunch(ProcessAdapter):
         # The nonce the dispatch parser accepts gate envelopes under, recorded on
         # the session whose permission frames it vouches for.
         session._pi_gate_nonce = self._nonce
+        # Crew's MCP servers, handed to the extension through a file because the
+        # adapter drops the session/new array. The SAME composition the wire
+        # array is built from -- the member mounts, then the pooled broker stubs
+        # -- so what the extension registers is what the session report lists.
+        await session._prepare_session_mcp()
+        elements = [
+            *session._session_mcp_servers(),
+            *(await asyncio.to_thread(session._pooled_mcp_servers)),
+        ]
+        self._mcp_key = new_pi_mcp_handoff_key()
+        payload, names = pi_mcp_handoff_payload(elements, self._nonce, self._mcp_key)
+        self._mcp_handoff = await asyncio.to_thread(publish_pi_mcp_handoff, self._nonce, payload)
+        session._pi_mcp_handoff = (self._mcp_handoff, payload)
+        # The names pi will spell its tools after: the permission path maps a pi
+        # ``mcp__<server>__<tool>`` title back to the server Crew placed.
+        session._pi_mcp_server_names = names
         self._launcher = await asyncio.to_thread(_ensure_pi_gate_launcher, pi_bin, extension_path)
         # Wrapped in the SAME sandbox with the SAME credential mask as the session
         # spawn, for the same reason the opencode read-back is: this child is the
@@ -748,3 +932,6 @@ class PiLaunch(ProcessAdapter):
         if self._launcher:
             env[_ENV_PI_ACP_PI_COMMAND] = self._launcher
             env[_ENV_PI_GATE_SESSION] = self._nonce
+            if self._mcp_handoff:
+                env[_ENV_PI_MCP_HANDOFF] = self._mcp_handoff
+                env[_ENV_PI_MCP_KEY] = self._mcp_key.hex()

@@ -20,6 +20,7 @@ import logging
 import math
 import re
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NamedTuple, cast
@@ -64,7 +65,7 @@ from kiro_crew.acp.types import (
     JsonRpcMessage,
     RefusalInfo,
 )
-from kiro_crew.acp_backends import ACP_BACKENDS_META_IDENTITY
+from kiro_crew.acp_backends import ACP_BACKEND_PI, ACP_BACKENDS_META_IDENTITY
 from kiro_crew.agent_files import kas_wire_agent_id
 from kiro_crew.mcp_gateway.tool_surface import mcp_identity_name, mcp_identity_unreadable
 from kiro_crew.metrics.tool_calls import note_tool_call_started, record_tool_call_finished
@@ -1579,6 +1580,36 @@ def gate_envelope(tool_call: dict[str, Any], nonce: str | None) -> dict[str, Any
     }
 
 
+#: The server-name characters pi keeps in an MCP tool name; any other is ``_``.
+_PI_MCP_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9_]")
+
+
+def pi_mcp_title(tool_name: str, mcp_servers: Iterable[str]) -> str:
+    """A pi ``mcp__<server>__<tool>`` name in the server's own spelling.
+
+    pi writes every server character outside ``[A-Za-z0-9_]`` as ``_``, so a Crew
+    server ``kirocrew-core`` arrives as ``mcp__kirocrew_core__send_message``. Matched
+    against the servers Crew handed the session (longest first, the first of equal
+    length winning, as pi registers the first of two names it counts as one), the
+    title becomes ``mcp__kirocrew-core__send_message`` -- what every other harness
+    states -- so a governance or deny rule written as ``@kirocrew-core`` binds to it.
+    A name no handed-off server prefixes is returned as it came.
+    """
+    if not tool_name.startswith("mcp__"):
+        return tool_name
+    rest = tool_name[len("mcp__") :]
+    best = ""
+    for server in mcp_servers:
+        if not isinstance(server, str) or not server or len(server) <= len(best):
+            continue
+        prefix = f"{_PI_MCP_NAME_UNSAFE.sub('_', server)}__"
+        if rest.startswith(prefix) and len(rest) > len(prefix):
+            best = server
+    if not best:
+        return tool_name
+    return f"mcp__{best}__{rest[len(_PI_MCP_NAME_UNSAFE.sub('_', best)) + 2 :]}"
+
+
 def scoped_tool_cache_key(cache_scope: str, tool_call_id: str) -> str:
     """The key a per-tool cache entry is stored under, for ONE emitting origin.
 
@@ -2055,6 +2086,10 @@ def build_permission_event(
     # below are consulted under the same key the preceding ``tool_call`` frame wrote.
     envelope = gate_envelope(tool_call, gate_envelope_nonce)
     if envelope is not None:
+        # pi spells a Crew server's tools in its own alphabet; the title is put back
+        # in the server's spelling so title-derived rules (governance, deny) bind.
+        if harness_backend == ACP_BACKEND_PI:
+            envelope["title"] = pi_mcp_title(envelope["title"], harness_mcp_servers)
         tool_call = {
             "toolCallId": envelope["toolCallId"] or tool_call.get("toolCallId", ""),
             "title": envelope["title"],

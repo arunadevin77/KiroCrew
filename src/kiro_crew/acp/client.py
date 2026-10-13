@@ -2088,6 +2088,13 @@ class AcpClient:
         # environment there, and the only key under which a permission frame is read
         # as an envelope.
         self._pi_gate_nonce = ""
+        # The pi MCP handoff file the launch published and its bytes, kept so it can
+        # be republished before each request that starts a pi process and removed
+        # once the session is established (``acp.harness.pi``).
+        self._pi_mcp_handoff: tuple[str, bytes] = ("", b"")
+        # Every server name that handoff carried (the member mounts AND the pooled
+        # stubs), which is what a pi MCP tool title is spelled after.
+        self._pi_mcp_server_names: tuple[str, ...] = ()
         self._deepseek_gate_nonce = ""
         # toolCallIds the gate extension asked about in this session, read off the
         # envelopes; a completed tool call not in it is a call the gate never saw.
@@ -3288,6 +3295,41 @@ class AcpClient:
         warms the cache off the loop.
         """
         return self._session_mcp_servers()
+
+    def _pi_session_mcp_servers(self) -> list:
+        """MCP server array passed to a pi ``session/new`` / ``session/load``.
+
+        Only the member mounts, as on deepseek: pi has no mirror, so its spec is not
+        translated and Crew's pooled tools arrive through the shared broker append.
+        pi-acp stores the wire array and never forwards it, so what MOUNTS these
+        servers is the handoff file the spawn wrote from the same composition
+        (:func:`kiro_crew.acp.harness.pi.pi_mcp_handoff_payload`). The wire copy is
+        what the session report reads its roster from. In-memory only.
+        """
+        return self._session_mcp_servers()
+
+    async def _republish_pi_mcp_handoff(self) -> None:
+        """Rewrite the MCP handoff file before a request that starts a pi process.
+
+        pi-acp starts pi on ``session/load`` and on ``session/new``, and a load that
+        fails falls through to a new session on the same adapter, so the file has to
+        be present for each. The extension removes it after reading where its
+        sandbox lets it. Off-loop: a file write.
+        """
+        from kiro_crew.acp.harness.pi import publish_pi_mcp_handoff
+
+        path, payload = getattr(self, "_pi_mcp_handoff", ("", b""))
+        if path and self._pi_gate_nonce:
+            await asyncio.to_thread(publish_pi_mcp_handoff, self._pi_gate_nonce, payload)
+
+    async def _discard_pi_mcp_handoff(self) -> None:
+        """Remove the MCP handoff file and forget it. Off-loop: an unlink."""
+        from kiro_crew.acp.harness.pi import discard_pi_mcp_handoff
+
+        path, _payload = getattr(self, "_pi_mcp_handoff", ("", b""))
+        self._pi_mcp_handoff = ("", b"")
+        if path:
+            await asyncio.to_thread(discard_pi_mcp_handoff, path)
 
     def _goose_session_mcp_servers(self) -> list:
         """MCP server array passed to a goose ``session/new`` / ``session/load``.
@@ -7122,6 +7164,16 @@ class AcpClient:
                         pass
         # Clean up sandbox temp files (macOS seatbelt profile)
         self._discard_sandbox_cleanup()
+        # The pi MCP handoff file of a spawn that never reached an established
+        # session: one unlink, the same shape as the sandbox file above.
+        handoff_path, _payload = getattr(self, "_pi_mcp_handoff", ("", b""))
+        self._pi_mcp_handoff = ("", b"")
+        self._pi_mcp_server_names = ()
+        if handoff_path:
+            try:
+                os.remove(handoff_path)
+            except OSError:
+                pass
         # The settings.local.json THIS session seeded is removed by
         # _discard_claude_settings_seed, which every caller awaits in the `try` of
         # the `finally` that reaches here -- it is async because the ownership hash,
@@ -7356,6 +7408,7 @@ class AcpClient:
                 *(self._opencode_session_mcp_servers() if self._is_opencode else []),
                 *(self._goose_session_mcp_servers() if self._is_goose else []),
                 *(self._deepseek_session_mcp_servers() if self._is_deepseek else []),
+                *(self._pi_session_mcp_servers() if self._is_pi else []),
                 *(await asyncio.to_thread(self._pooled_mcp_servers)),
             ],
         }
@@ -7373,6 +7426,8 @@ class AcpClient:
         self._guard_unresolved_mcp_refs(new_params.get("mcpServers"))
 
         self._last_substitution_model = None
+        if self._is_pi:
+            await self._republish_pi_mcp_handoff()
         session_id = await self._send_request(METHOD_SESSION_NEW, new_params)
         session_resp = await self._wait_for_response(
             session_id,
@@ -7427,6 +7482,7 @@ class AcpClient:
                 *(self._opencode_session_mcp_servers() if self._is_opencode else []),
                 *(self._goose_session_mcp_servers() if self._is_goose else []),
                 *(self._deepseek_session_mcp_servers() if self._is_deepseek else []),
+                *(self._pi_session_mcp_servers() if self._is_pi else []),
                 *(await asyncio.to_thread(self._pooled_mcp_servers)),
             ]
             if self.backend in ACP_BACKENDS_PRUNE_UNSTARTABLE_MCP:
@@ -7586,6 +7642,7 @@ class AcpClient:
                             *(self._opencode_session_mcp_servers() if self._is_opencode else []),
                             *(self._goose_session_mcp_servers() if self._is_goose else []),
                             *(self._deepseek_session_mcp_servers() if self._is_deepseek else []),
+                            *(self._pi_session_mcp_servers() if self._is_pi else []),
                             *(await asyncio.to_thread(self._pooled_mcp_servers)),
                         ],
                     }
@@ -7605,6 +7662,8 @@ class AcpClient:
                     # A resumed session re-declares everything Crew mounts on it, so it
                     # can be short of a referenced server exactly as a fresh one can.
                     self._guard_unresolved_mcp_refs(load_params.get("mcpServers"))
+                    if self._is_pi:
+                        await self._republish_pi_mcp_handoff()
                     load_id = await self._send_request(restore_method, load_params)
                     load_resp = await self._wait_for_response(
                         load_id,
@@ -7713,6 +7772,10 @@ class AcpClient:
             if self._is_claude:
                 await self._pin_claude_starting_mode(session_resp)
         self._last_activity = time.monotonic()
+        # The session exists, so the pi process that read the MCP handoff file has
+        # started; the file has no further reader and goes now.
+        if self._is_pi:
+            await self._discard_pi_mcp_handoff()
 
         # Seek to end of JSONL so we only read new tool results.
         # claude-agent-acp stores sessions via its own SDK, not ~/.kiro/ — skip.
@@ -12185,10 +12248,13 @@ class AcpClient:
         """Every MCP server name this session's harness may state a tool of.
 
         The servers Crew placed, then those the opencode read-back found in the
-        harness's own config. An instance built without ``__init__`` has neither.
+        harness's own config, then every server the pi MCP handoff carried -- on pi
+        the pooled stubs are not in the placed array, and pi spells each of their
+        tools after its name. An instance built without ``__init__`` has none.
         """
         found = getattr(self, "_opencode_config_mcp_servers", ())
-        return tuple(dict.fromkeys([*self._placed_mcp_server_names(), *found]))
+        handed_off = getattr(self, "_pi_mcp_server_names", ())
+        return tuple(dict.fromkeys([*self._placed_mcp_server_names(), *found, *handed_off]))
 
     def _build_permission_event(self, msg: JsonRpcMessage) -> AcpEvent | None:
         """Build one permission event through the transport-shared parser.

@@ -284,25 +284,26 @@ PROJECTIONS: dict[str, McpProjection] = {
         per_tool_deny=PerToolDeny.SETTINGS_FILE,
     ),
     ACP_BACKEND_PI: McpProjection(
-        kind=ProjectionKind.NO_CHANNEL,
+        kind=ProjectionKind.BROKER_ONLY,
         reason=(
-            "pi-acp ACCEPTS the session/new mcpServers array without error, stores it on "
-            "its session state, and never hands it to the pi process: its initialize "
-            "result advertises mcpCapabilities of http:false and sse:false, its own "
-            "documentation lists MCP forwarding as not wired, and a stdio server placed "
-            "in the array produced no error and no tool (verified live). That is worse "
-            "than a refused array, because a projection written into it would make the "
-            "dashboard report Crew tools as mounted on a session where none can be "
-            "called -- which is why pi is outside ACP_BACKENDS_SESSION_MCP_ARRAY. The "
-            "shared gateway's broker stubs are stdio elements too and land in the same "
-            "inert array. A pi session therefore holds none of Crew's own tools, "
-            "gateway on or off"
-        ),
-        channel=(
-            "the adapter forwarding the array to the pi process (an open upstream "
-            "change does this by loading a bridge extension into pi), or an extension "
-            "of Crew's that bridges MCP the way the gate extension bridges permissions "
-            "-- the one channel this harness is shown to read today"
+            "pi-acp accepts the session/new mcpServers array, stores it on its session "
+            "state, and never hands it to the pi process, so the array is not the "
+            "channel. Crew's own gate extension is: the launch writes the same "
+            "composition deepseek is sent -- the member mounts and the pooled broker "
+            "stubs _pooled_mcp_servers appends for a backend outside MIRRORS -- to an "
+            "owner-only handoff file bound to the session nonce and sealed with a key only "
+            "that spawn's environment carries "
+            "(acp.harness.pi.pi_mcp_handoff_payload), and the extension registers each "
+            "entry with pi's built-in MCP support (pi.registerMcpServer; the release "
+            "that carries it is PI_MIN_VERSION). Captured end to end rather than inferred: "
+            "test/fixtures/acp_frames/pi/mcp-stdio-mount-live.jsonl shows the server "
+            "asked initialize/tools/list/tools/call, the call gated by "
+            "session/request_permission first, and the result reaching the turn. So a pi "
+            "session holds Crew's pooled tools, reachably. What it does not hold is the "
+            "servers its own agent spec declares, or the spec's per-tool deny set, "
+            "because no mirror translates them. A same-named server in pi's own mcp.json "
+            "outranks an extension's registration; the extension refuses that name's "
+            "tools"
         ),
         tracking="docs/request-for-change/rfc-agent-config-mirror.md#5-migration",
     ),

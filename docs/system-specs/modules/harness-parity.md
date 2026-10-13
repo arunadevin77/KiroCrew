@@ -143,6 +143,35 @@ exists, it uses the factory's member-aware `select_provider_backend` authority.
 default `agent.acp_backend` capability only; a member session routed to a
 different harness is still judged by the gate above when the command is sent.
 
+### pi: what its own channels can and cannot carry
+
+pi-acp drops the `session/new` MCP array, so pi joins
+`ACP_BACKENDS_SESSION_MCP_ARRAY` on a different carrier: the launch writes the
+array's composition to an owner-only handoff file bound to the session nonce and
+sealed with a key only that spawn's environment carries, and
+Crew's sealed gate extension registers each entry with pi's built-in MCP support
+(`pi.registerMcpServer`, from `PI_MIN_VERSION`). A same-named server in pi's own
+`mcp.json`, user-level or a trusted project's, outranks that registration, so the
+extension refuses its tools (`acp/harness/pi.py`, `test_pi_gate_extension_mcp.py`).
+
+Two card lines stay unavailable on pi, each on a driven observation:
+
+- **Mid-turn steer.** pi-acp 0.0.34 serves no steer verb. A `session/prompt` sent
+  during a turn is queued and runs as the next turn; the running turn's follow-up
+  model request does not contain it. pi's own RPC can steer, but pi-acp owns pi's
+  stdin, so Crew cannot reach it.
+- **Side Chat tools.** The READ_ONLY gate would have to trust the tool NAME in the
+  gate envelope, and on pi a name proves nothing: an extension that registers a tool
+  called `read` replaces the built-in one (driven: the gate saw `read` and the call
+  wrote a file), and user-level extensions, installed pi packages and a trusted
+  project's extensions all load beside Crew's. The known route is a side-chat pi
+  process launched with `-ne` (no discovered, configured or built-in extensions;
+  explicit `--extension` paths still load) and `--no-approve`, so only Crew's sealed
+  gate runs and the built-in names can be trusted, plus a pi tool table for the
+  READ_ONLY proof and a refusal of sensitive paths that pi's own settings cannot
+  pre-approve. That is a change to how side sessions launch, not a membership edit,
+  and it has not been built.
+
 ## Group C: the Kiro path keeps its own machinery
 
 An adapter that lands by *generalizing* a Kiro-specific step to a

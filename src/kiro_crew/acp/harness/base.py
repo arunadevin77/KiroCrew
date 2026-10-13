@@ -140,6 +140,8 @@ class ProcessSession(Protocol):
     _opencode_native_mounts: frozenset[str]
     _session_mcp_cache: list[dict[str, Any]] | None
     _pi_gate_nonce: str
+    _pi_mcp_handoff: tuple[str, bytes]
+    _pi_mcp_server_names: tuple[str, ...]
     _deepseek_gate_nonce: str
 
     def _scrub_observed(self, value: object) -> object:
@@ -151,6 +153,12 @@ class ProcessSession(Protocol):
 
     def _resolve_session_mcp_servers(self) -> list[dict[str, Any]]:
         """Translate the agent spec into this session's ``mcpServers`` array (blocking)."""
+
+    def _session_mcp_servers(self) -> list[dict[str, Any]]:
+        """The warmed array, in memory: empty for a harness outside the array set."""
+
+    def _pooled_mcp_servers(self) -> list[dict[str, Any]]:
+        """The pooled broker stubs the session/new array appends (blocking)."""
 
     async def _seed_session_settings(self) -> None:
         """Seed the session's own settings file, best-effort."""

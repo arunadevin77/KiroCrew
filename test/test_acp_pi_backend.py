@@ -312,9 +312,17 @@ class TestATooOldPiIsRefusedByName:
     def test_a_release_below_the_floor_names_the_upgrade(self, tmp_path):
         pi_bin = self._linked_bin(tmp_path, acp_client.PI_NPM_PKG, "0.80.5")
         issue = acp_client._pi_version_issue(pi_bin)
-        assert "0.80.5" in issue and "0.81.0" in issue
+        assert "0.80.5" in issue and "0.99.2" in issue
         assert f"npm i -g {acp_client.PI_NPM_PKG}" in issue
         assert "npm rm" not in issue
+
+    def test_a_release_before_the_mcp_tool_spelling_is_below_the_floor(self, tmp_path):
+        """0.99.0 added built-in MCP; 0.99.2 is the release whose MCP tool names the
+        gate's shadow refusal matches, so a pi below it would hold no usable Crew tools."""
+        assert acp_client.PI_MIN_VERSION == (0, 99, 2)
+        pi_bin = self._linked_bin(tmp_path, acp_client.PI_NPM_PKG, "0.99.1")
+        issue = acp_client._pi_version_issue(pi_bin)
+        assert "0.99.1" in issue and "0.99.2" in issue
 
     def test_the_old_package_name_is_removed_first(self, tmp_path):
         """Both names install a ``pi`` bin, so npm refuses the new one until the old one goes."""
@@ -342,7 +350,7 @@ class TestATooOldPiIsRefusedByName:
     def test_a_current_pi_reaches_the_rest_of_the_spawn(
         self, tmp_path, monkeypatch, fresh_pi_resolution
     ):
-        pi_bin = self._linked_bin(tmp_path, acp_client.PI_NPM_PKG, "0.87.1")
+        pi_bin = self._linked_bin(tmp_path, acp_client.PI_NPM_PKG, "1.2.0")
         _inject_pi_resolvers(monkeypatch, pi_bin)
 
         class Reached(Exception):
@@ -1589,7 +1597,15 @@ def test_the_adapter_is_told_to_run_the_launcher(monkeypatch, tmp_path) -> None:
     rig.adapter.apply_spawn_env(env)
     nonce = rig.client._pi_gate_nonce
     assert re.fullmatch(r"[0-9a-f]{32}", nonce), "no nonce was recorded on the session"
-    assert env == {"PI_ACP_PI_COMMAND": rig.LAUNCHER, "KIROCREW_PI_GATE_SESSION": nonce}
+    handoff, _payload = rig.client._pi_mcp_handoff
+    assert handoff.endswith(f"_mcp_{nonce}.json")
+    assert env == {
+        "PI_ACP_PI_COMMAND": rig.LAUNCHER,
+        "KIROCREW_PI_GATE_SESSION": nonce,
+        "KIROCREW_PI_MCP_HANDOFF": handoff,
+        "KIROCREW_PI_MCP_KEY": rig.adapter._mcp_key.hex(),
+    }
+    assert len(rig.adapter._mcp_key) == 32
 
 
 def test_no_launcher_is_named_before_the_gate_is_verified() -> None:

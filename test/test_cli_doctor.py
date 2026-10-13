@@ -20,7 +20,6 @@ import pytest
 
 from conftest import make_dir_link, requires_symlinks
 from kiro_crew import cli_doctor, cron, extras, kiro_cli
-from kiro_crew.agent_sdk.backends import ACP_BACKEND_PI
 
 
 class TestManagedServicePolicyDoctor:
@@ -998,11 +997,10 @@ class TestSelectedBackendProjectionRow:
         asserts -- but it IS the state an operator gets told about, so the set is
         pinned by name and a new one is a deliberate change to this assertion.
 
-        ``pi`` is the one member, on evidence rather than absence: pi-acp accepts the
-        ``session/new`` MCP array and never hands it to the pi process (a stdio server
-        placed in it produced no error and no tool, verified live on pi-acp 0.0.33),
-        so the row below is what tells the operator a pi session carries none of
-        Kiro Crew's own tools. The case that follows pins that the row is rendered.
+        No backend ships as one: pi, whose adapter drops the ``session/new`` array,
+        receives Crew's servers through its gate extension instead and is declared
+        ``broker-only`` like deepseek. The case that follows pins that pi's row is
+        therefore silent.
         """
         from kiro_crew.providers.mirrors import PROJECTIONS, ProjectionKind
 
@@ -1011,13 +1009,12 @@ class TestSelectedBackendProjectionRow:
             for backend, declared in PROJECTIONS.items()
             if declared.kind is ProjectionKind.NO_CHANNEL
         }
-        assert gaps == {ACP_BACKEND_PI}, f"no-channel backends shipping: {sorted(gaps)}"
+        assert gaps == set(), f"no-channel backends shipping: {sorted(gaps)}"
 
-    def test_the_real_pi_declaration_drives_the_no_channel_row(self, capsys):
-        """Read off the SHIPPED declaration: the operator is told, not left to find out."""
+    def test_the_real_pi_declaration_prints_no_channel_row(self, capsys):
+        """Read off the SHIPPED declaration: pi's servers arrive, so nothing is said."""
         cli_doctor._doctor_selected_backend_projection(self._cfg("pi"))
-        out = capsys.readouterr().out
-        assert "carries none of Kiro Crew's own tools" in out
+        assert "carries none of Kiro Crew's own tools" not in capsys.readouterr().out
 
     def test_a_backend_that_does_receive_its_servers_prints_nothing(self, capsys):
         """Silence is the whole point on a stock install.

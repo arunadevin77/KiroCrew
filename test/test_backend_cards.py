@@ -367,7 +367,7 @@ def test_core_counts_per_harness_are_pinned() -> None:
         "kas": 7,
         "kiro": 6,
         "opencode": 4,
-        "pi": 3,
+        "pi": 4,
     }
     assert counts["kas"] == len(cards_mod.USER_FACING_LINES)
 
@@ -377,8 +377,10 @@ def test_crew_tools_are_available_on_both_channels_and_absent_on_neither() -> No
 
     The kiro family loads Crew's agent spec itself and the array members are
     handed the server list per session; a harness in neither has none of Crew's
-    tools, which is the line this card exists to make visible. Pi is that harness
-    today: it ACCEPTS the array and never forwards it.
+    tools, which is the line this card exists to make visible. pi is an array
+    member whose adapter drops the array; its servers arrive through Crew's gate
+    extension, which is why it reads available. No known harness is in neither, so
+    that side is held by an id this build does not know.
     """
 
     def crew_tools(backend: str) -> bool:
@@ -388,7 +390,8 @@ def test_crew_tools_are_available_on_both_channels_and_absent_on_neither() -> No
 
     assert crew_tools(ACP_BACKEND_KIRO) is True
     assert crew_tools(ACP_BACKEND_DEEPSEEK) is True
-    assert crew_tools(ACP_BACKEND_PI) is False
+    assert crew_tools(ACP_BACKEND_PI) is True
+    assert crew_tools("not-a-known-harness") is False
 
 
 def test_effort_reads_available_on_the_harness_that_uses_a_slash_command() -> None:
