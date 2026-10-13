@@ -394,6 +394,7 @@ const REFUSED_PRESS_TITLE_KEYS = {
   side_open: 'pages.chatPage.could_not_open_side_chat',
   side_turn: 'pages.chatPage.could_not_send_to_side_chat',
   agent_switch: 'pages.chatPage.could_not_switch_agent',
+  fresh_session: 'pages.chatPage.could_not_start_fresh_session',
 } as const
 type RefusedPressAction = keyof typeof REFUSED_PRESS_TITLE_KEYS
 
@@ -3262,7 +3263,8 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   const {
     continuable, interrupted, sendUnconfirmed, continuing, handleContinue,
     openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openTurnLimitSetting,
-    featureRequestRefused, sessionStartRepeated,
+    featureRequestRefused, sessionStartRepeated, contextOverflowed,
+    freshSession, handleFreshSession,
   } = useTurnRecovery({
     activeSlot,
     slotRunning,
@@ -4526,6 +4528,8 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       onOpenSignIn: embedded || popout ? undefined : openKiroSignIn,
       onOpenTurnLimit: embedded || popout ? undefined : openTurnLimitSetting,
       onOpenCapabilities: embedded || popout ? undefined : openMemberCapabilities,
+      onFreshSession: handleFreshSession,
+      freshSession,
       onSessionOpen: selectSessionTab,
       sessions: connected ? sessionTitles : undefined,
       activeSession: activeSlot || undefined,
@@ -4563,7 +4567,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
       bubble,
     ])
     return { renderers, fallback: bubble }
-  }, [slotRunning, handleFileOpen, handleArtifactOpen, selectSessionTab, sessionTitles, connected, handleFork, handleQuote, handleAsk, quoteWholeMessage, handleJumpToQuote, chatConfig, activeSlot, regenerating, activeSlotRemoteBound, handleRegenerate, handleEditResend, editLast, handleEditConsumed, slotHasMore, loadingOlder, cursorIsForActiveSlot, slotOldestIndex, handleLoadEarlier, renderUserContentCb, highlightTs, activeSlotTitle, mode, embedded, popout, handleOpenDiff, planTaskId, artifactPaths, automationId, toolDisclosure, setToolDisclosureFor, linkPreviewsOn, socialShareOn, voiceRecoverySlot, handleSubagentPanelOpen, isPinned, handleTogglePinForMessage, showRefusedPress, transcriptHot, revealAppInPanel, continuable, interrupted, continuing, handleContinue, openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openTurnLimitSetting, handleFolderOpen, handleSpeak, handleApplyPlan, mcpAppPanel, redactionCoachTs, setAutomationOpen])
+  }, [slotRunning, handleFileOpen, handleArtifactOpen, selectSessionTab, sessionTitles, connected, handleFork, handleQuote, handleAsk, quoteWholeMessage, handleJumpToQuote, chatConfig, activeSlot, regenerating, activeSlotRemoteBound, handleRegenerate, handleEditResend, editLast, handleEditConsumed, slotHasMore, loadingOlder, cursorIsForActiveSlot, slotOldestIndex, handleLoadEarlier, renderUserContentCb, highlightTs, activeSlotTitle, mode, embedded, popout, handleOpenDiff, planTaskId, artifactPaths, automationId, toolDisclosure, setToolDisclosureFor, linkPreviewsOn, socialShareOn, voiceRecoverySlot, handleSubagentPanelOpen, isPinned, handleTogglePinForMessage, showRefusedPress, transcriptHot, revealAppInPanel, continuable, interrupted, continuing, handleContinue, openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openTurnLimitSetting, handleFreshSession, freshSession, handleFolderOpen, handleSpeak, handleApplyPlan, mcpAppPanel, redactionCoachTs, setAutomationOpen])
 
   const renderMessage = useCallback((i: number, m: ChatMessage) => {
     // Key identity rules (clientTs preference + streaming->assistant role
@@ -6597,8 +6601,11 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                  the ordinary Send button; typing still works.
                  `sessionStartRepeated` is the same rule for a session start
                  that failed twice in a row: the card names the remedy and
-                 withholds Resume, so the composer falls back to Send. */
-              continuable={continuable && interrupted && !featureRequestRefused && !sessionStartRepeated}
+                 withholds Resume, so the composer falls back to Send.
+                 `contextOverflowed` is the same rule for a conversation too
+                 big for the model: Resume re-sends it, the card offers a fresh
+                 session instead. */
+              continuable={continuable && interrupted && !featureRequestRefused && !sessionStartRepeated && !contextOverflowed}
               continueIsRecovery={interrupted}
               onContinue={handleContinue}
               continuing={continuing}

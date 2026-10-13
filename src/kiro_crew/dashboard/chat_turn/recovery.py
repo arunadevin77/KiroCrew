@@ -13,6 +13,7 @@ if TYPE_CHECKING:
         _PROMISE_ONLY_CONTINUE_MSG,
         _SYNTHETIC_RECOVERY_MSGS,
         AUTH_REQUIRED_KIND,
+        CONTEXT_OVERFLOW_KIND,
         FALSE_TOOL_BLOCKER_REPLAY_KIND,
         MODEL_UNENTITLED_KIND,
         SESSION_START_FAILED_KIND,
@@ -244,10 +245,12 @@ async def _note_cycle_failure(
 def _terminal_error_meta(exc: BaseException) -> dict[str, object] | None:
     """Row-level kind for a terminal ACP error, or None for a plain error row.
 
-    Four structural tags, read here without looking at the prose. Three are set
+    Five structural tags, read here without looking at the prose. Four are set
     by ``_raise_acp_error`` from the raw frame: a model-entitlement rejection
-    (``rejected_model`` / ``advertised``), a sign-in failure (``auth_required``)
-    and a spent plan allowance (``usage_limit``). The entitlement verdict wins
+    (``rejected_model`` / ``advertised``), a sign-in failure (``auth_required``),
+    a spent plan allowance (``usage_limit``) and a context overflow
+    (``context_overflow``, whose fix is a fresh conversation, not a retry on
+    any model). The entitlement verdict wins
     when it is set, because its fix (pick a served model) is the one the prose
     describes; the other two are exclusive at raise time. The fourth,
     ``session_start_failed``, is set at the ACP session-start timeout raise
@@ -263,6 +266,8 @@ def _terminal_error_meta(exc: BaseException) -> dict[str, object] | None:
         return {"kind": AUTH_REQUIRED_KIND}
     if getattr(exc, "usage_limit", False):
         return {"kind": USAGE_LIMIT_KIND}
+    if getattr(exc, "context_overflow", False) is True:
+        return {"kind": CONTEXT_OVERFLOW_KIND}
     if getattr(exc, "session_start_failed", False) is True:
         return {"kind": SESSION_START_FAILED_KIND}
     return None

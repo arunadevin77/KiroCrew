@@ -11165,7 +11165,10 @@
         "feature_request_form_hint": "Seu uso mensal acabou — envie sua sugestão no GitHub por este formulário em vez disso. Este formulário dispensa o agente: ele abre o formulário de issue do GitHub para você preencher e não consome nada do seu uso mensal.",
         "session_start_repeat_hint": "A sessão do agente falhou ao iniciar mais de uma vez seguida, então retomar apenas repetiria o mesmo início. Reinicie o gateway em um terminal com {{command}} e reenvie sua mensagem.",
         "capabilities_changed": "O arquivo do agente personalizado deste companheiro mudou fora do Customize, então novos chats não podem começar. Abre o Customize, revê e guarda a alteração; depois inicia um novo chat.",
-        "open_capabilities": "Abrir Customize"
+        "open_capabilities": "Abrir Customize",
+        "fresh_session": "Iniciar uma nova sessão",
+        "fresh_session_hint": "Mantém este chat e suas capturas de tela na tela; o assistente segue a partir de um resumo em texto em vez de reler as imagens.",
+        "fresh_session_done": "Pronto. Digite sua próxima mensagem abaixo; o assistente segue a partir de um resumo em texto deste chat."
       },
       "folderPanel": {
         "clear_search": "Limpar pesquisa",
@@ -12180,7 +12183,8 @@
       "tabs_were_not_restored_one": "{{count}} aba que estava aberta antes da reinicialização não foi restaurada.",
       "tabs_were_not_restored_other": "{{count}} abas que estavam abertas antes da reinicialização não foram restauradas.",
       "dismiss_until_next_visit": "Ocultar até à próxima visita",
-      "could_not_check_restored_tabs": "Não foi possível verificar se todas as abas foram restauradas após a última reinicialização."
+      "could_not_check_restored_tabs": "Não foi possível verificar se todas as abas foram restauradas após a última reinicialização.",
+      "could_not_start_fresh_session": "Não foi possível iniciar uma nova sessão"
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 ignorada — atualmente selecionada)",

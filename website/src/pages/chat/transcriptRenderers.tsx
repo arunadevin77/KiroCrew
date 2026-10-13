@@ -39,7 +39,7 @@ import ConversationCard, { CARD_ROLE } from '../../cards/ConversationCard'
 import RecoveryCard, { opensTurn, resolveInjectCard } from './RecoveryCard'
 import { SystemNoticeRow, isSystemNoticeRow } from './CompactionCard'
 import SkillLoadCard, { isSkillLoadRow } from './SkillLoadCard'
-import { ErrorCard, SESSION_START_REPEAT_REFUSAL_AT, isAuthRequired, isCapabilitiesChanged, isModelUnentitled, isSessionStartFailed, isTurnTimeout, isUsageLimit, sessionStartFailureStreak } from './ErrorCard'
+import { ErrorCard, SESSION_START_REPEAT_REFUSAL_AT, isAuthRequired, isCapabilitiesChanged, isContextOverflow, isModelUnentitled, isSessionStartFailed, isTurnTimeout, isUsageLimit, sessionStartFailureStreak, type FreshSessionState } from './ErrorCard'
 import { FEATURE_REQUEST_FORM_URL, isFeatureRequestRow } from '../../prompts/featureRequest'
 import NoticeCard from './NoticeCard'
 import { resolveTransientNotice } from './transientNotice'
@@ -161,6 +161,12 @@ export interface TranscriptRendererOptions {
   /** Fix affordance for a `turn_timeout` row: deep-link to the Turn Time Limit
    *  setting. Omitted on a surface with no settings route. */
   onOpenTurnLimit?: () => void
+  /** Fix affordance for the newest `context_overflow` row: reset this slot's
+   *  native conversation so the next message starts fresh from a text recap.
+   *  Omitted on a surface that cannot reset a session. */
+  onFreshSession?: () => void
+  /** Where that press stands, for the card's spinner and its "done" line. */
+  freshSession?: FreshSessionState
   /** Draw the assistant rows as a CREWMATE speaking: avatar + name + time on
    *  the first message of a run, one bordered bubble per message, grouped
    *  corners (components/chat/crewmateBubbles). Set by the Members page for a
@@ -236,6 +242,20 @@ export function sessionStartRepeatIsNewest(messages: readonly ChatMessage[]): bo
     if (row.role === 'assistant' || opensTurn(row)) return false
   }
   return isSessionStartFailed(messages[idx]) && sessionStartFailureStreak(messages) >= SESSION_START_REPEAT_REFUSAL_AT
+}
+
+/** True when the transcript's newest state is a context overflow: the newest
+ *  error row is a `context_overflow` row and nothing after it opens a new
+ *  turn. The card withholds Resume there (it re-sends the history that
+ *  overflowed); ChatPage reads this to withhold the composer's Resume too. */
+export function contextOverflowIsNewest(messages: readonly ChatMessage[]): boolean {
+  const idx = lastErrorIndex(messages)
+  if (idx < 0) return false
+  for (let j = idx + 1; j < messages.length; j++) {
+    const row = messages[j]
+    if (row.role === 'assistant' || opensTurn(row)) return false
+  }
+  return isContextOverflow(messages[idx])
 }
 
 /** Index of the last `error` row, so only that one offers Continue. Derived
@@ -578,6 +598,11 @@ export function createTranscriptRenderers(
         // keeps today's card exactly: Resume, same words.
         const sessionStartRepeat =
           newest && isSessionStartFailed(m) && sessionStartFailureStreak(ctx.messages) >= SESSION_START_REPEAT_REFUSAL_AT
+        // A context overflow never offers Resume (it re-sends the history that
+        // overflowed). The fresh-session press is offered only while this row
+        // is the transcript's newest state: an older row, or one a later turn
+        // already answered past, is settled and its session may already be new.
+        const overflow = isContextOverflow(m)
         return ctx.row(
           <ErrorCard
             content={transient ? transient.text : m.content}
@@ -588,7 +613,7 @@ export function createTranscriptRenderers(
             // signed-out wall, or the same spent allowance, or the same start
             // that already failed twice).
             onContinue={
-              !unentitled && !authRequired && !featureRequestFormUrl && !sessionStartRepeat && !isCapabilitiesChanged(m) && o.onContinue && o.continuable && o.interrupted && newest
+              !unentitled && !authRequired && !overflow && !featureRequestFormUrl && !sessionStartRepeat && !isCapabilitiesChanged(m) && o.onContinue && o.continuable && o.interrupted && newest
                 ? o.onContinue
                 : undefined
             }
@@ -602,6 +627,8 @@ export function createTranscriptRenderers(
             onOpenCapabilities={openCapabilities}
             onOpenTurnLimit={isTurnTimeout(m) ? o.onOpenTurnLimit : undefined}
             turnLimitSlot={isTurnTimeout(m) ? o.slot : undefined}
+            onFreshSession={overflow && newest && contextOverflowIsNewest(ctx.messages) ? o.onFreshSession : undefined}
+            freshSession={o.freshSession}
           />,
         )
       },

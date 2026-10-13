@@ -3962,6 +3962,18 @@ USAGE_LIMIT_KIND = "usage_limit"
 #: prose, which a reword or a translation moves.
 SESSION_START_FAILED_KIND = "session_start_failed"
 
+#: Row-level kind for the terminal `error` row a CONTEXT OVERFLOW produces: the
+#: provider refused the turn because the conversation does not fit in one
+#: request (kiro-cli's "context window overflowed", the claude adapter's "Input
+#: is too long" -- the ``context_overflow`` tag ``_raise_acp_error`` sets). The
+#: native history is what overflowed, so a retry, a Resume or another model
+#: re-sends the same history and fails the same way. The card swaps Resume for
+#: the fix that ends it: a fresh native conversation on the same slot
+#: (``reset-conversation``), which Crew seeds from the transcript's TEXT -- the
+#: replay strips image references, so the pictures that usually fill the
+#: window are not carried over.
+CONTEXT_OVERFLOW_KIND = "context_overflow"
+
 #: Structural queue-entry kinds for system injections.  Classification by kind
 #: tag — set at enqueue time — is unforgeable: a user typing the same prefix
 #: text will not have the kind tag and will correctly classify as plain input.

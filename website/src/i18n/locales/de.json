@@ -11013,7 +11013,10 @@
         "feature_request_form_hint": "Dein monatliches Kontingent ist aufgebraucht — reiche deinen Vorschlag stattdessen auf GitHub über dieses Formular ein. Dieses Formular umgeht den Agenten: Es öffnet das GitHub-Issue-Formular, das du selbst ausfüllst, und verbraucht nichts von deinem monatlichen Kontingent.",
         "session_start_repeat_hint": "Die Agent-Sitzung konnte mehrmals hintereinander nicht gestartet werden; Fortsetzen würde nur denselben Start wiederholen. Starte das Gateway in einem Terminal mit {{command}} neu und sende deine Nachricht noch einmal.",
         "capabilities_changed": "Die Datei des benutzerdefinierten Agenten dieses Crewmates wurde außerhalb von Customize geändert, daher können keine neuen Chats starten. Öffne Customize, prüfe und speichere die Änderung und starte dann einen neuen Chat.",
-        "open_capabilities": "Customize öffnen"
+        "open_capabilities": "Customize öffnen",
+        "fresh_session": "Neue Sitzung starten",
+        "fresh_session_hint": "Behält diesen Chat und seine Screenshots auf dem Bildschirm; der Assistent macht mit einer Textzusammenfassung weiter, statt die Bilder erneut zu lesen.",
+        "fresh_session_done": "Bereit. Gib unten deine nächste Nachricht ein; der Assistent macht mit einer Textzusammenfassung dieses Chats weiter."
       },
       "folderPanel": {
         "clear_search": "Suche löschen",
@@ -12010,7 +12013,8 @@
       "tabs_were_not_restored_one": "{{count}} Tab, der vor dem Neustart geöffnet war, wurde nicht wiederhergestellt.",
       "tabs_were_not_restored_other": "{{count}} Tabs, die vor dem Neustart geöffnet waren, wurden nicht wiederhergestellt.",
       "dismiss_until_next_visit": "Bis zum nächsten Besuch ausblenden",
-      "could_not_check_restored_tabs": "Es konnte nicht geprüft werden, ob nach dem letzten Neustart alle Tabs wiederhergestellt wurden."
+      "could_not_check_restored_tabs": "Es konnte nicht geprüft werden, ob nach dem letzten Neustart alle Tabs wiederhergestellt wurden.",
+      "could_not_start_fresh_session": "Neue Sitzung konnte nicht gestartet werden"
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 übersprungen — aktuell ausgewählt)",

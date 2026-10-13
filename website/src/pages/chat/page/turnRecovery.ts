@@ -8,7 +8,8 @@ import { useAppSelector } from '../../../store'
 import { selectContinuable, selectTrailingSendUnconfirmed, selectTurnInterrupted } from '../../../store/chatSlice'
 import type { ChatMessage } from '../../../types'
 import { KIRO_SIGN_IN_PATH } from '../../developer/kiroSignInLink'
-import { featureRequestRefusalIsNewest, sessionStartRepeatIsNewest } from '../transcriptRenderers'
+import type { FreshSessionState } from '../ErrorCard'
+import { contextOverflowIsNewest, featureRequestRefusalIsNewest, sessionStartRepeatIsNewest } from '../transcriptRenderers'
 
 interface TurnRecoveryOptions {
   activeSlot: string | null
@@ -19,7 +20,7 @@ interface TurnRecoveryOptions {
   anchorModelBtn: (rect: DOMRect, trigger?: HTMLElement | null) => void
   setModelDropdown: (open: boolean) => void
   modelPickerReturnsFocusRef: MutableRefObject<boolean>
-  showRefusedPress: (action: 'continue', e: unknown) => void
+  showRefusedPress: (action: 'continue' | 'fresh_session', e: unknown) => void
 }
 
 /**
@@ -131,6 +132,41 @@ export function useTurnRecovery({
   // composer must not urge the press beneath it. Typing still works and is
   // what resets the count.
   const sessionStartRepeated = sessionStartRepeatIsNewest(messages)
+  // Same rule for a context overflow: Resume would re-send the history that
+  // overflowed, so the composer yields to the card's fresh-session press.
+  const contextOverflowed = contextOverflowIsNewest(messages)
+
+  // The fix on a `context_overflow` row: drop the native conversation so the
+  // next message starts a fresh one from a text summary of this chat. One entry
+  // per slot, so a request that settles after the user switched tabs (or
+  // pressed in another tab) only ever writes its own slot's state. The server
+  // refuses (409) while a turn or sub-agent runs; that refusal is rendered by
+  // the shared refused-press surface, like Continue's.
+  const [freshSessionBySlot, setFreshSessionBySlot] = useState<Readonly<Record<string, FreshSessionState>>>({})
+  const setSlotFreshSession = useCallback((slot: string, state: FreshSessionState) => {
+    setFreshSessionBySlot(prev => {
+      if ((prev[slot] ?? 'idle') === state) return prev
+      const next = { ...prev }
+      if (state === 'idle') delete next[slot]
+      else next[slot] = state
+      return next
+    })
+  }, [])
+  const freshSession: FreshSessionState = (activeSlot && freshSessionBySlot[activeSlot]) || 'idle'
+  const handleFreshSession = useCallback(() => {
+    if (!activeSlot || freshSession !== 'idle' || slotRunning) return
+    const slot = activeSlot
+    setSlotFreshSession(slot, 'pending')
+    api.resetConversation(slot).then(
+      () => setSlotFreshSession(slot, 'done'),
+      (e: unknown) => {
+        showRefusedPress('fresh_session', e)
+        setSlotFreshSession(slot, 'idle')
+      },
+    )
+  }, [activeSlot, freshSession, slotRunning, showRefusedPress, setSlotFreshSession])
+  // A new turn on the active slot (the user sent again) starts its state over.
+  useEffect(() => { if (slotRunning && activeSlot) setSlotFreshSession(activeSlot, 'idle') }, [slotRunning, activeSlot, setSlotFreshSession])
 
   const handleContinue = useCallback(() => {
     if (!activeSlot || continuing || !continuable) return
@@ -149,6 +185,7 @@ export function useTurnRecovery({
   return {
     continuable, interrupted, sendUnconfirmed, continuing, handleContinue,
     openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openTurnLimitSetting,
-    featureRequestRefused, sessionStartRepeated,
+    featureRequestRefused, sessionStartRepeated, contextOverflowed,
+    freshSession, handleFreshSession,
   }
 }

@@ -11165,7 +11165,10 @@
         "feature_request_form_hint": "Ton quota mensuel est épuisé — dépose plutôt ta demande sur GitHub avec ce formulaire. Ce formulaire contourne l’agent : il ouvre le formulaire d’issue GitHub que tu remplis toi-même et ne consomme rien de ton quota mensuel.",
         "session_start_repeat_hint": "La session de l’agent n’a pas pu démarrer plusieurs fois de suite ; reprendre ne ferait que relancer le même démarrage. Redémarre le gateway depuis un terminal avec {{command}}, puis renvoie ton message.",
         "capabilities_changed": "Le fichier d’agent personnalisé de ce coéquipier a changé en dehors de Customize, donc les nouvelles discussions ne peuvent pas démarrer. Ouvre Customize, vérifie et enregistre la modification, puis démarre une nouvelle discussion.",
-        "open_capabilities": "Ouvrir Customize"
+        "open_capabilities": "Ouvrir Customize",
+        "fresh_session": "Démarrer une nouvelle session",
+        "fresh_session_hint": "Garde ce chat et ses captures d’écran à l’écran ; l’assistant reprend à partir d’un résumé texte au lieu de relire les images.",
+        "fresh_session_done": "Prêt. Tape ton prochain message ci-dessous ; l’assistant reprend à partir d’un résumé texte de ce chat."
       },
       "folderPanel": {
         "clear_search": "Effacer la recherche",
@@ -12180,7 +12183,8 @@
       "tabs_were_not_restored_one": "{{count}} onglet qui était ouvert avant le redémarrage n'a pas été restauré.",
       "tabs_were_not_restored_other": "{{count}} onglets qui étaient ouverts avant le redémarrage n'ont pas été restaurés.",
       "dismiss_until_next_visit": "Masquer jusqu’à la prochaine visite",
-      "could_not_check_restored_tabs": "Impossible de vérifier si tous les onglets ont été restaurés après le dernier redémarrage."
+      "could_not_check_restored_tabs": "Impossible de vérifier si tous les onglets ont été restaurés après le dernier redémarrage.",
+      "could_not_start_fresh_session": "Impossible de démarrer une nouvelle session"
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 ignorée — actuellement sélectionnée)",

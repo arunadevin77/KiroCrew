@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 
-import { ErrorCard, isAuthRequired, isCapabilitiesChanged, isModelUnentitled, isSessionStartFailed, isTurnTimeout, isUsageLimit, retryProse, sessionStartFailureStreak } from '../pages/chat/ErrorCard'
+import { ErrorCard, isAuthRequired, isCapabilitiesChanged, isContextOverflow, isModelUnentitled, isSessionStartFailed, isTurnTimeout, isUsageLimit, retryProse, sessionStartFailureStreak } from '../pages/chat/ErrorCard'
 import type { ChatMessage } from '../types'
 import { FEATURE_REQUEST_FORM_URL } from '../prompts/featureRequest'
 import { i18nT } from '../i18n/t'
@@ -257,6 +257,53 @@ describe('ErrorCard — agent not signed in', () => {
     render(<ErrorCard content="not signed in" />)
     expect(screen.queryByTestId('error-card-sign-in')).toBeNull()
     expect(screen.getByTestId('error-card')).not.toHaveAttribute('data-auth-required')
+  })
+})
+
+describe('ErrorCard — conversation too big for the model', () => {
+  const TOO_LONG = 'Input is too long: this conversation does not fit in one request to the model.'
+
+  it('offers Start a fresh session and NO Resume, with the hint saying what carries over', () => {
+    const onContinue = vi.fn()
+    const onFreshSession = vi.fn()
+    render(<ErrorCard content={TOO_LONG} onContinue={onContinue} onFreshSession={onFreshSession} />)
+    const card = screen.getByTestId('error-card')
+    expect(card).toHaveAttribute('data-context-overflow', 'true')
+    expect(card).toHaveTextContent('Input is too long')
+    expect(screen.getByTestId('error-card-fresh-session-hint')).toHaveTextContent(i18nT('pages.chat.errorCard.fresh_session_hint'))
+    expect(screen.queryByTestId('error-card-continue')).toBeNull()
+    fireEvent.click(screen.getByTestId('error-card-fresh-session'))
+    expect(onFreshSession).toHaveBeenCalledTimes(1)
+    expect(onContinue).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it('disables the press while it runs, so it cannot double-fire', () => {
+    const onFreshSession = vi.fn()
+    render(<ErrorCard content={TOO_LONG} onFreshSession={onFreshSession} freshSession="pending" />)
+    const btn = screen.getByTestId('error-card-fresh-session')
+    expect(btn).toBeDisabled()
+    fireEvent.click(btn)
+    expect(onFreshSession).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it('says to type the next message once the fresh session is ready, drops the button, the stale instruction and the danger colours', () => {
+    render(<ErrorCard content={TOO_LONG} onFreshSession={() => {}} freshSession="done" />)
+    expect(screen.queryByTestId('error-card-fresh-session')).toBeNull()
+    // Recovered: the card drops the failure's colours.
+    expect(screen.getByTestId('error-card').className).not.toMatch(/bg-danger-subtle/)
+    // The sentence that asks for a fresh session is gone once one exists.
+    expect(screen.getByTestId('error-card')).not.toHaveTextContent('Input is too long')
+    expect(screen.getByTestId('error-card-fresh-session-hint')).toHaveTextContent(i18nT('pages.chat.errorCard.fresh_session_done'))
+    cleanup()
+  })
+
+  it('recognises the context_overflow kind on both carriers', () => {
+    expect(isContextOverflow({ kind: 'context_overflow' })).toBe(true)
+    expect(isContextOverflow({ meta: { kind: 'context_overflow' } })).toBe(true)
+    expect(isContextOverflow({ kind: 'usage_limit' })).toBe(false)
+    expect(isContextOverflow({})).toBe(false)
   })
 })
 

@@ -10861,7 +10861,10 @@
         "feature_request_form_hint": "今月の利用量を使い切りました — 代わりにこのフォームから GitHub にリクエストを送信できます。このフォームはエージェントを介しません。GitHub の Issue フォームが開き、自分で入力するため、今月の利用量は消費されません。",
         "session_start_repeat_hint": "エージェントセッションの起動が連続して複数回失敗しました。再開しても同じ起動を繰り返すだけです。ターミナルで {{command}} を実行して gateway を再起動し、メッセージをもう一度送信してください。",
         "capabilities_changed": "このクルーメイトのカスタムエージェントファイルが Customize の外で変更されたため、新しいチャットを開始できません。Customize を開き、変更を確認して保存してから、新しいチャットを開始してください。",
-        "open_capabilities": "Customize を開く"
+        "open_capabilities": "Customize を開く",
+        "fresh_session": "新しいセッションを開始",
+        "fresh_session_hint": "このチャットとスクリーンショットは画面に残ります。アシスタントは画像を読み直さず、テキスト要約から続けます。",
+        "fresh_session_done": "準備ができました。下に次のメッセージを入力してください。アシスタントはこのチャットのテキスト要約から続けます。"
       },
       "folderPanel": {
         "clear_search": "検索をクリア",
@@ -11840,7 +11843,8 @@
       "open_older_sessions": "「以前のセッション」を開く",
       "tabs_were_not_restored_other": "再起動前に開いていたタブ {{count}} 個が復元されませんでした。",
       "dismiss_until_next_visit": "次回アクセスまで非表示にする",
-      "could_not_check_restored_tabs": "前回の再起動後にすべてのタブが復元されたかを確認できませんでした。"
+      "could_not_check_restored_tabs": "前回の再起動後にすべてのタブが復元されたかを確認できませんでした。",
+      "could_not_start_fresh_session": "新しいセッションを開始できませんでした"
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "(1 件を除外 — 現在選択中)",

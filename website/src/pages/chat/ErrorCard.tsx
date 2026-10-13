@@ -1,5 +1,5 @@
 import { memo, type ReactNode } from 'react'
-import { ExternalLink, KeyRound, Loader2, RotateCw, Settings, ShieldCheck, SlidersHorizontal } from 'lucide-react'
+import { ExternalLink, KeyRound, Loader2, MessageSquarePlus, RotateCw, Settings, ShieldCheck, SlidersHorizontal } from 'lucide-react'
 
 import { i18nT } from '../../i18n/t'
 import { useLanguageGeneration } from '../../i18n/useLanguageGeneration'
@@ -65,6 +65,19 @@ const TURN_TIMEOUT_KIND = 'turn_timeout'
 
 export const isTurnTimeout = (m: Pick<ChatMessage, 'kind' | 'meta'>): boolean =>
   m.kind === TURN_TIMEOUT_KIND || (m.meta as { kind?: string } | undefined)?.kind === TURN_TIMEOUT_KIND
+
+/** Row kind the backend stamps on the terminal error a CONTEXT OVERFLOW
+ *  produces (`chat_utils.CONTEXT_OVERFLOW_KIND`): the conversation does
+ *  not fit in one request ("Input is too long"). A retry, a Resume or another
+ *  model re-sends the same history, so the row offers a fresh session instead.
+ *  Same two carriers as above. */
+const CONTEXT_OVERFLOW_KIND = 'context_overflow'
+
+export const isContextOverflow = (m: Pick<ChatMessage, 'kind' | 'meta'>): boolean =>
+  m.kind === CONTEXT_OVERFLOW_KIND || (m.meta as { kind?: string } | undefined)?.kind === CONTEXT_OVERFLOW_KIND
+
+/** Where the fresh-session press on a `context_overflow` row stands. */
+export type FreshSessionState = 'idle' | 'pending' | 'done'
 
 /** Consecutive tagged session-start failures at which the card stops offering
  *  Resume and the server refuses the re-run (`session_start_repeat`). Two, not
@@ -241,6 +254,16 @@ export interface ErrorCardProps {
    * own turn time limit, with the Settings link (every session) inside it.
    */
   turnLimitSlot?: string
+  /**
+   * The fix for the newest `context_overflow` row: drop this slot's native
+   * conversation so the next message starts a fresh one, seeded from a text
+   * recap of the transcript (images left out). Offered INSTEAD of Resume, which
+   * would re-send the history that overflowed. Omitted on a settled row.
+   */
+  onFreshSession?: () => void
+  /** Where that press stands: `pending` while the request runs, `done` once the
+   *  session was reset (the card then says to send the message again). */
+  freshSession?: FreshSessionState
 }
 
 // No `shrink-0` and no `truncate`: every action sits in a flex row, and a
@@ -309,6 +332,8 @@ export const ErrorCard = memo(function ErrorCard({
   onOpenCapabilities,
   onOpenTurnLimit,
   turnLimitSlot,
+  onFreshSession,
+  freshSession = 'idle',
 }: ErrorCardProps) {
   useLanguageGeneration() // memo() bails out of the provider-level repaint; subscribe directly
   // Swap the gateway's "please retry" wording ONLY on a row that renders the
@@ -405,6 +430,52 @@ export const ErrorCard = memo(function ErrorCard({
     )
   }
   const displayText = chatErrorDisplayText(content, meta)
+  if (onFreshSession) {
+    // The conversation is too big for the model: the fix is a fresh session
+    // that carries a text recap of this chat. The prose (the backend's own
+    // sentence) stays first; the hint says what the press keeps and drops, so
+    // "fresh" does not read as "lose everything".
+    // Once the reset landed the failure is over: the card drops its danger
+    // colours so it reads as recovered, and the ready line becomes the body.
+    const done = freshSession === 'done'
+    const pending = freshSession === 'pending'
+    return (
+      <div
+        className={`${done ? 'bg-bg-elevated ring-border' : 'bg-danger-subtle ring-danger/20'} ring-1 ring-inset forced-colors:border rounded-md self-center w-full max-w-full min-w-0 px-3 py-2 flex flex-col gap-2 animate-scale-in`}
+        data-testid="error-card"
+        data-context-overflow="true"
+        data-fresh-session={freshSession}
+      >
+        {/* The error sentence ends by telling the reader to start a fresh
+            session, so once that is done it would ask for a step already
+            taken: the recovered card shows only the ready line. */}
+        {!done && (
+          <div className="text-danger text-[13px] leading-5 min-w-0" style={{ overflowWrap: 'anywhere' }}>
+            {withOriginLink(displayText)}
+          </div>
+        )}
+        <div className={`text-[12px] leading-5 ${done ? 'text-text font-medium' : 'text-muted'}`} data-testid="error-card-fresh-session-hint" aria-live="polite">
+          {done ? i18nT('pages.chat.errorCard.fresh_session_done') : i18nT('pages.chat.errorCard.fresh_session_hint')}
+        </div>
+        {!done && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onFreshSession}
+              disabled={pending}
+              className={`${ACTION_BTN} bg-accent text-accent-fg hover:bg-accent-hover`}
+              data-testid="error-card-fresh-session"
+            >
+              {pending
+                ? <Loader2 size={12} className="lucide-inline shrink-0 animate-spin" aria-hidden="true" />
+                : <MessageSquarePlus size={12} className="lucide-inline shrink-0" aria-hidden="true" />}
+              {i18nT('pages.chat.errorCard.fresh_session')}
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
   const unentitledActions = onPickModel || onOpenDefaultModel
   // Name only the affordance THIS surface lacks: a pane has neither, an
   // embed/popout has the picker but not the settings route. Saying "the

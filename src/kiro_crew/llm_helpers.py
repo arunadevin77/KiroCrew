@@ -289,9 +289,13 @@ _RE_CONTEXT_OVERFLOW_TEXT = re.compile(
 def is_context_overflow_error(exc: BaseException) -> bool:
     """True when *exc* is a turn refused as too long for the model's window.
 
-    Structural first (the raise-time classifier's ``context_overflow`` tag), then
-    the text: the classifier reads only the error's ``data`` field, and the claude
-    adapter puts its "Prompt is too long" refusal in ``message``. Scoped to
+    Structural first: the raise-time classifier's ``context_overflow`` tag, which
+    owns the claude adapter's ``message``-borne refusal through the anchored
+    ``_RE_ADAPTER_INPUT_TOO_LONG`` in ``acp/transport_errors.py``. The text match
+    is the fallback for a frame that classifier cannot read (a non-dict error,
+    formatted ``Prompt error: <raw>``), for an ``AcpError`` built from text, and for the
+    OpenAI-style "maximum context length", which no captured frame places yet, so
+    it stays untagged rather than risk a false terminal on an echo. Scoped to
     ``AcpError`` so an unrelated exception mentioning a long prompt never counts.
     The only consumer forces a ``_bg`` recycle, so a false positive costs one
     provider respawn.

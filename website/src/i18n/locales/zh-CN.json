@@ -10861,7 +10861,10 @@
         "feature_request_form_hint": "本月用量已用完 — 可以改为通过此表单在 GitHub 上提交请求。此表单不经过代理：它会打开 GitHub 的 Issue 表单，由你自行填写，不消耗本月用量。",
         "session_start_repeat_hint": "代理会话已连续多次启动失败，继续只会再次执行同一次启动。请在终端运行 {{command}} 重启 gateway，然后重新发送消息。",
         "capabilities_changed": "该队友的自定义代理文件在 Customize 之外发生了变化，因此无法启动新对话。打开 Customize，查看并保存更改，然后启动新对话。",
-        "open_capabilities": "打开 Customize"
+        "open_capabilities": "打开 Customize",
+        "fresh_session": "开始新会话",
+        "fresh_session_hint": "这个聊天和其中的截图仍留在屏幕上；助手会从文字摘要继续，而不是重新读取图片。",
+        "fresh_session_done": "已就绪。请在下方输入下一条消息；助手会从本次聊天的文字摘要继续。"
       },
       "folderPanel": {
         "clear_search": "清除搜索",
@@ -11840,7 +11843,8 @@
       "open_older_sessions": "打开“较早的会话”",
       "tabs_were_not_restored_other": "重启前打开的 {{count}} 个标签页未恢复。",
       "dismiss_until_next_visit": "下次访问前不再显示",
-      "could_not_check_restored_tabs": "无法确认上次重启后所有标签页是否已恢复。"
+      "could_not_check_restored_tabs": "无法确认上次重启后所有标签页是否已恢复。",
+      "could_not_start_fresh_session": "无法开始新会话"
     },
     "chatSidebar": {
       "1_skipped_currently_selected": "（跳过 1 个 — 当前已选中）",

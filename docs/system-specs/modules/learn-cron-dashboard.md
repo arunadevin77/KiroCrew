@@ -4072,6 +4072,31 @@ budget is torn down by the `StartCollector` rather than handed to the slot (the
 subagent path already adopts, `subagent_manager/run.py`); binding a late handle
 to a slot is a lifecycle change wider than this guard.
 
+**A context overflow swaps Resume for a fresh session.** A turn the provider
+refused because the conversation does not fit in one request (kiro-cli's
+"context window overflowed", the claude adapter's "Input is too long", the
+`context_overflow` tag `_raise_acp_error` sets) leaves an error row stamped
+`chat_utils.CONTEXT_OVERFLOW_KIND` (`context_overflow`) by
+`_terminal_error_meta`, ranked below the entitlement, sign-in and usage-limit
+kinds. The overflow is in the native history the backend re-sends, so Resume,
+a retry and every model in the fallback chain fail the same way. On the NEWEST
+such row `transcriptRenderers` withholds `onContinue` and passes
+`ErrorCard.onFreshSession`, and ChatPage withholds the composer's Resume while
+`contextOverflowIsNewest` holds. The press (`turnRecovery.handleFreshSession`)
+calls `POST /api/chat/slots/{slot}/reset-conversation` with `replay: true`: the
+native conversation is dropped, the transcript stays, and the next turn is a
+fresh session seeded from the replay, which keeps only text rows and strips
+image references (`context_assembly.replay._quota_tail`), so the screenshots
+that usually fill the window do not come back. The route's own guards (turn in
+flight, sub-agents attached) answer 409, rendered through the refused-press
+notice (`could_not_start_fresh_session`). The button reads "Start a fresh session";
+once it lands the card drops its danger colours and the error sentence and
+says to type the next message. The press state is kept per slot, so a request
+that settles after a tab switch only updates its own slot. kiro-cli's own
+overflow rows carry the same kind, so they get the same card. Pinned by `test_context_overflow_recovery.py`,
+`ErrorCard.test.tsx`, `transcriptRenderers.test.tsx` and
+`useChatPageTurnRecovery.test.tsx`.
+
 **The destructive reruns are the exception and still fail closed.** `regenerate`,
 `edit-resend`, and `rewind` truncate `slot.messages` and **persist** the result
 (`_save_slot_to_history`, `_pending_rewrite`) *before* dispatching the background

@@ -24,7 +24,7 @@ import { join } from 'node:path'
 import type { ReactElement } from 'react'
 import type { ChatMessage } from '../types'
 import { mergeRenderers, resolveRenderer, type MessageRenderContext } from '../app-sdk/messageRenderers'
-import { createTranscriptRenderers, featureRequestRefusalIsNewest, sessionStartRepeatIsNewest } from '../pages/chat/transcriptRenderers'
+import { contextOverflowIsNewest, createTranscriptRenderers, featureRequestRefusalIsNewest, sessionStartRepeatIsNewest } from '../pages/chat/transcriptRenderers'
 import { ErrorCard } from '../pages/chat/ErrorCard'
 import NoticeCard from '../pages/chat/NoticeCard'
 import { i18nT } from '../i18n/t'
@@ -464,6 +464,51 @@ describe('a session start that failed twice in a row swaps Resume for the restar
       const untagged = () => msg('error', { content: TIMEOUT })
       expect(sessionStartRepeatIsNewest([msg('user', { content: 'hi' }), untagged(), resumed(), untagged()])).toBe(false)
     })
+  })
+})
+
+describe('a context overflow swaps Resume for a fresh session', () => {
+  const TOO_LONG = 'Input is too long: this conversation does not fit in one request to the model.'
+  const overflow = () => msg('error', { content: TOO_LONG, meta: { kind: 'context_overflow' } })
+  const onFreshSession = () => undefined
+  const recoverable = { slot: 's1', continuable: true, interrupted: true, onContinue: () => undefined, onFreshSession }
+
+  it('offers the fresh session and never Resume on the newest overflow row', () => {
+    const rows = [msg('user', { content: 'hi' }), overflow()]
+    const el = render(rows[1], recoverable, { index: 1, messages: rows }) as ReactElement
+    expect(el.props.onContinue).toBeUndefined()
+    expect(el.props.onFreshSession).toBe(onFreshSession)
+  })
+
+  it('leaves an older overflow row as settled prose', () => {
+    const rows = [msg('user', { content: 'hi' }), overflow(), msg('user', { content: 'again' }), overflow()]
+    const el = render(rows[1], recoverable, { index: 1, messages: rows }) as ReactElement
+    expect(el.props.onFreshSession).toBeUndefined()
+    expect(el.props.onContinue).toBeUndefined()
+  })
+
+  it('stops offering it once a later turn answered past the row', () => {
+    const rows = [msg('user', { content: 'hi' }), overflow(), msg('user', { content: 'again' }), msg('assistant', { content: 'ok' })]
+    const el = render(rows[1], recoverable, { index: 1, messages: rows }) as ReactElement
+    expect(el.props.onFreshSession).toBeUndefined()
+  })
+
+  it('reads the kind from the rebuilt carrier too, and never from the prose', () => {
+    const rebuilt = msg('error', { content: TOO_LONG, kind: 'context_overflow' })
+    const rows = [msg('user', { content: 'hi' }), rebuilt]
+    expect((render(rows[1], recoverable, { index: 1, messages: rows }) as ReactElement).props.onFreshSession).toBe(onFreshSession)
+    const untagged = [msg('user', { content: 'hi' }), msg('error', { content: TOO_LONG })]
+    const el = render(untagged[1], recoverable, { index: 1, messages: untagged }) as ReactElement
+    expect(el.props.onFreshSession).toBeUndefined()
+    expect(el.props.onContinue).toBeTypeOf('function')
+  })
+
+  it('contextOverflowIsNewest: the composer stands down until a later turn opens', () => {
+    const base = [msg('user', { content: 'hi' }), overflow()]
+    expect(contextOverflowIsNewest(base)).toBe(true)
+    expect(contextOverflowIsNewest([...base, msg('user', { content: 'again' })])).toBe(false)
+    expect(contextOverflowIsNewest([...base, msg('assistant', { content: 'ok' })])).toBe(false)
+    expect(contextOverflowIsNewest([msg('user', { content: 'hi' }), msg('error', { content: TOO_LONG })])).toBe(false)
   })
 })
 
