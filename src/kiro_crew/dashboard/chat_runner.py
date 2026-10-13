@@ -1147,7 +1147,12 @@ def _redacted_hook_block(event: Any, pre_hook_results: Any) -> tuple[str, str]:
 _REFUSAL_CARD_LEAD = "Response declined by the model."
 
 
-def refusal_card_text(refusal: "RefusalInfo | None", *, streamed_text: str = "") -> str:
+def refusal_card_text(
+    refusal: "RefusalInfo | None",
+    *,
+    streamed_text: str = "",
+    fallback_off: bool = False,
+) -> str:
     """The one refusal card, rendered from whatever the harness reported.
 
     Every harness lands on the same ``RefusalInfo``; this renders one line per
@@ -1163,6 +1168,10 @@ def refusal_card_text(refusal: "RefusalInfo | None", *, streamed_text: str = "")
     text already carries the explanation the card does not repeat it -- the
     user reads it once, and the card adds only what the text could not say
     (the category, the hint).
+
+    *fallback_off* is ``True`` when ``agent.refusal_fallback_model`` is not
+    configured. The card then appends one sentence naming the setting so the
+    user can discover the automatic-recovery feature at the moment they need it.
     """
     lines = [_REFUSAL_CARD_LEAD]
     if refusal is not None and refusal.category:
@@ -1175,6 +1184,11 @@ def refusal_card_text(refusal: "RefusalInfo | None", *, streamed_text: str = "")
         lines.append(
             "Try rephrasing your request, or start a new conversation without the "
             "content that tripped the filter."
+        )
+    if fallback_off:
+        lines.append(
+            "Automatic retry on another model is available but switched off"
+            " (`agent.refusal_fallback_model`)."
         )
     return " ".join(lines)
 
@@ -17103,7 +17117,11 @@ async def _run_chat(
                         slot.key,
                         (_turn_refusal.category or "-") if _turn_refusal else "-",
                     )
-                    _refusal_card = refusal_card_text(_turn_refusal, streamed_text=assistant_text)
+                    _refusal_card = refusal_card_text(
+                        _turn_refusal,
+                        streamed_text=assistant_text,
+                        fallback_off=not _configured_refusal_fallback(),
+                    )
                     if slot._refusal_fallback_attempted:
                         # This refusal came from the retry turn itself: the
                         # configured fallback also declined. Say so — the card
@@ -17159,7 +17177,9 @@ async def _run_chat(
                     _produced_visible_output,
                     len(full_message),
                 )
-                _refusal_card = refusal_card_text(_turn_refusal)
+                _refusal_card = refusal_card_text(
+                    _turn_refusal, fallback_off=not _configured_refusal_fallback()
+                )
                 if slot._refusal_fallback_attempted:
                     # This refusal came from the retry turn itself: the
                     # configured fallback also declined. Say so — the card
