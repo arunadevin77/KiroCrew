@@ -3952,14 +3952,20 @@ class SessionManager:
         *,
         force: bool = False,
         preserve_queue: bool = False,
+        owned_by: Callable[[dict], bool] | None = None,
         on_soft: Callable[[], Awaitable[None]] | None = None,
         on_hard: Callable[[], Awaitable[None]] | None = None,
     ) -> StopOutcome:
-        """Cooperatively stop a turn, escalating to reset and eager respawn."""
+        """Cooperatively stop a turn, escalating to reset and eager respawn.
+
+        *owned_by* scopes the queue clear to one presser's entries
+        (``SessionLifecycle.stop_turn``).
+        """
         return await self._lifecycle_boundary().stop_turn(
             key,
             force=force,
             preserve_queue=preserve_queue,
+            owned_by=owned_by,
             on_soft=on_soft,
             on_hard=on_hard,
         )

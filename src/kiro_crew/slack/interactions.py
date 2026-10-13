@@ -40,6 +40,7 @@ from kiro_crew.dashboard.chat_utils import (
 )
 from kiro_crew.loop_lock import LoopBoundLock
 from kiro_crew.messaging.identity import channel_inbound_permitted
+from kiro_crew.messaging.queue_drain import entries_queued_by
 from kiro_crew.messaging.renderer import count_redaction_tags, redaction_notice
 from kiro_crew.security import (
     redact_and_truncate,
@@ -2574,9 +2575,29 @@ async def _handle_stop_confirm(payload: dict, channel: str, msg_ts: str, user_id
         # its queue, which in a shared thread holds co-tenants' messages;
         # ``stop_turn`` parks them for the successor instead.
         _kw = {"force": True, "preserve_queue": True} if _force else {}
-        outcome = await _orch.sessions.stop_turn(
-            thread_ts, on_soft=_on_soft, on_hard=_on_hard, **_kw
-        )
+        # Imported here: ``slack.events`` imports this module.
+        from kiro_crew.slack.events import _entry_owner, slack_stop_in_flight
+
+        # The PRESSER's queued messages, not the thread's: every member of a
+        # thread queues under its one session key, the way ``!stop`` scopes it.
+        # The hold keeps the others' kept entries from starting until the stop,
+        # and the cancel of the task it ended, have settled.
+        async with slack_stop_in_flight(_orch, thread_ts):
+            outcome = await _orch.sessions.stop_turn(
+                thread_ts,
+                owned_by=entries_queued_by(_entry_owner(user_id, channel)),
+                on_soft=_on_soft,
+                on_hard=_on_hard,
+                **_kw,
+            )
+            if outcome != "compacting":
+                # Pop only the task this Stop ended. A successor dispatched from
+                # a message admitted mid-await is the user's newer intent: left
+                # running and tracked.
+                if _orch._session_tasks.get(thread_ts) is active_task:
+                    _orch._session_tasks.pop(thread_ts, None)
+                if active_task and not active_task.done():
+                    active_task.cancel()
         if outcome == "compacting":
             # Nothing was stopped: the task stays tracked and nothing is cancelled.
             # The reply promises that a repeat forces, so arm the marker for this
@@ -2601,16 +2622,6 @@ async def _handle_stop_confirm(payload: dict, channel: str, msg_ts: str, user_id
                     return False
 
             await decline_stop(thread_ts, user_id, _say_declined)
-        else:
-            # Pop only the task this Stop ended; a successor dispatched during
-            # the await from pending work is cancelled with it (see the same
-            # guard on the !stop command path in slack/events.py).
-            # A successor dispatched from a message admitted mid-await is the
-            # user's newer intent: left running and tracked.
-            if _orch._session_tasks.get(thread_ts) is active_task:
-                _orch._session_tasks.pop(thread_ts, None)
-            if active_task and not active_task.done():
-                active_task.cancel()
         # If stop_turn returned "idle" (no active turn), neither callback
         # fired — dismiss the stale ephemeral with a "Nothing running" message.
         if outcome == "idle":
@@ -3324,7 +3335,18 @@ async def _handle_inline_stop(
     )
     # ``preserve_queue`` with the force, for the reason the confirm button gives.
     _kw = {"force": True, "preserve_queue": True} if _force else {}
-    outcome = await _orch.sessions.stop_turn(session_key, on_soft=_on_soft, on_hard=_on_hard, **_kw)
+    from kiro_crew.slack.events import _entry_owner, slack_stop_in_flight
+
+    # The presser's queued messages only, held until the stop settles, for the
+    # reasons the confirm button gives.
+    async with slack_stop_in_flight(_orch, session_key):
+        outcome = await _orch.sessions.stop_turn(
+            session_key,
+            owned_by=entries_queued_by(_entry_owner(user_id, channel)),
+            on_soft=_on_soft,
+            on_hard=_on_hard,
+            **_kw,
+        )
     if outcome == "compacting":
         # The reply promises that a repeat forces, so arm the marker -- and only
         # once the reply landed. This update is conditional on a client and a

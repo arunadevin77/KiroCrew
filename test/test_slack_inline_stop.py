@@ -130,6 +130,10 @@ def mock_orch():
     orch.slack.update_message = AsyncMock()
     orch.sessions = MagicMock()
     orch.sessions.stop_turn = AsyncMock(return_value="soft")
+    # Empty queues: the stop's release drain finds nothing to start.
+    orch.sessions.dequeue = MagicMock(return_value=None)
+    orch._session_tasks = {}
+    orch._pending_queue = {}
     return orch
 
 
@@ -168,7 +172,7 @@ class TestHandleInlineStop:
         interactions = setup_interactions
 
         # Make stop_turn invoke on_soft callback (simulating soft stop)
-        async def _invoke_soft(key, on_soft=None, on_hard=None):
+        async def _invoke_soft(key, owned_by=None, on_soft=None, on_hard=None):
             if on_soft:
                 await on_soft()
             return "soft"
@@ -194,7 +198,7 @@ class TestHandleInlineStop:
         """Hard stop invokes on_hard callback with reset message."""
         interactions = setup_interactions
 
-        async def _invoke_hard(key, on_soft=None, on_hard=None):
+        async def _invoke_hard(key, owned_by=None, on_soft=None, on_hard=None):
             if on_hard:
                 await on_hard()
             return "hard"

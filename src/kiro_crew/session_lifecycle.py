@@ -3440,10 +3440,20 @@ class SessionLifecycleService:
         *,
         force: bool = False,
         preserve_queue: bool = False,
+        owned_by: Callable[[dict], bool] | None = None,
         on_soft: Callable[[], Awaitable[None]] | None = None,
         on_hard: Callable[[], Awaitable[None]] | None = None,
     ) -> StopOutcome:
-        """Cooperatively stop a turn, escalating to reset and eager respawn."""
+        """Cooperatively stop a turn, escalating to reset and eager respawn.
+
+        *owned_by* narrows the queue clear to the entries it selects, for a Stop
+        pressed by ONE member of a shared session: every member of a Slack thread
+        queues under that thread's key, so a whole-queue clear drops messages the
+        others are still owed an answer to. It runs at the same point as the
+        whole-queue clear, before the cancel, so the cancelled turn's end-of-turn
+        drain cannot start a message this Stop was aimed at. Ignored with
+        *preserve_queue*, which clears nothing.
+        """
         owner = self._owner
         logger = self._deps.logger
         key = owner._fold_key(key)
@@ -3474,7 +3484,7 @@ class SessionLifecycleService:
             return "idle"
 
         if not preserve_queue:
-            owner.clear_queue(key)
+            owner.clear_queue(key, owned_by)
         budget: float = owner._cfg.agent.soft_stop_budget_secs
         t0 = self._deps.monotonic()
 

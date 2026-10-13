@@ -288,7 +288,7 @@ class TestStopCommand:
     async def test_soft_stop_posts_stopped(self, slack, sessions, owner):
         sessions.has_session.return_value = True
 
-        async def _stop(key, *, force=False, on_soft=None, on_hard=None):
+        async def _stop(key, *, force=False, owned_by=None, on_soft=None, on_hard=None):
             await on_soft()
             return "soft"
 
@@ -301,7 +301,7 @@ class TestStopCommand:
     async def test_hard_stop_reports_session_reset(self, slack, sessions, owner):
         sessions.has_session.return_value = True
 
-        async def _stop(key, *, force=False, on_soft=None, on_hard=None):
+        async def _stop(key, *, force=False, owned_by=None, on_soft=None, on_hard=None):
             await on_hard()
             return "hard"
 

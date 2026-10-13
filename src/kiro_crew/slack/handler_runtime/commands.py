@@ -329,7 +329,21 @@ async def _bang_stop(
     # its queue, which in a shared thread holds co-tenants' messages;
     # ``stop_turn`` parks them for the successor instead.
     _kw = {"force": True, "preserve_queue": True} if force_stop else {}
-    outcome = await sessions.stop_turn(session_key, on_soft=_on_soft, on_hard=_on_hard, **_kw)
+    from kiro_crew.messaging.queue_drain import entries_queued_by
+    from kiro_crew.slack.events import _entry_owner
+
+    # The caller's queued messages, not the thread's: every member of a thread
+    # queues under its one session key, the way events.py's ``!stop`` scopes it.
+    # No stop hold here, unlike the buttons: this ``!stop`` itself runs as the
+    # turn ``_route_message`` registered on the thread's bare key, and every
+    # Slack drain reads that key as busy until this turn ends.
+    outcome = await sessions.stop_turn(
+        session_key,
+        owned_by=entries_queued_by(_entry_owner(user_id, channel)),
+        on_soft=_on_soft,
+        on_hard=_on_hard,
+        **_kw,
+    )
     # If stop_turn returned "idle" (no active turn), neither callback
     # fired — dismiss the stale "Stopping…" ephemeral explicitly.
     if outcome == "idle":

@@ -16,6 +16,7 @@ processing the same Slack event twice.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import logging
@@ -27,6 +28,7 @@ from collections import OrderedDict
 from typing import (
     TYPE_CHECKING,
     Any,
+    AsyncIterator,
     Callable,
     Coroutine,
     Iterable,
@@ -66,7 +68,7 @@ from kiro_crew.mcp_discovery import list_servers
 from kiro_crew.messaging.commands import note_user_stop
 from kiro_crew.messaging.dispatch import admit_inbound_callback
 from kiro_crew.messaging.identity import channel_inbound_permitted
-from kiro_crew.messaging.link import canonical_key
+from kiro_crew.messaging.link import canonical_key, legacy_key
 from kiro_crew.messaging.queue_drain import (
     entries_queued_by,
     owner_token,
@@ -258,6 +260,42 @@ async def _settle_stop_hold(orch: GatewayOrchestrator, session_key: str, hold: _
     if kept_pending:
         later = orch._pending_queue.get(session_key) or []
         orch._pending_queue[session_key] = kept_pending + list(later)
+
+
+@contextlib.asynccontextmanager
+async def slack_stop_in_flight(
+    orch: GatewayOrchestrator | None, session_key: str
+) -> AsyncIterator[None]:
+    """Read *session_key* as busy for a Stop that detaches nothing of its own.
+
+    The Stop buttons let ``stop_turn(owned_by=...)`` drop the presser's entries and
+    leave everyone else's queued. Without this, the running turn can end while
+    ``stop_turn`` awaits the cancel, its turn-end drain starts one of those kept
+    entries, and an escalation to a hard reset then aborts it after it left the
+    queue. Joining the shared hold keeps every drain off the key until the last
+    overlapping Stop -- ``!stop`` included -- settles, then drains once.
+
+    No orchestrator (a handler double, or a call before the gateway wired one) has
+    no drain to hold, so nothing is held.
+    """
+    if orch is None:
+        yield
+        return
+    # The router keys its tasks, holds and drains by the BARE thread ts, while a
+    # button can carry the canonical ``slack:<ts>``: a hold under the canonical
+    # form would leave the router's busy check blind to it, and would not share
+    # an overlapping ``!stop``'s count.
+    session_key = legacy_key(session_key) or session_key
+    hold = _stops_in_flight.setdefault(orch, {}).setdefault(session_key, _StopHold())
+    hold.count += 1
+    try:
+        yield
+    finally:
+        hold.count -= 1
+        if hold.count <= 0:
+            _stops_in_flight.get(orch, {}).pop(session_key, None)
+            await _settle_stop_hold(orch, session_key, hold)
+            await _drain_slack_queue(orch, session_key)
 
 
 _skills_loader: SkillsLoader | None = None
@@ -1244,7 +1282,13 @@ async def _drain_slack_queue(orch: GatewayOrchestrator, session_key: str) -> Non
     """Start the next queued message when no turn's own tail will drain it.
 
     One message per call; each dispatched turn calls this again when it ends.
+
+    The session layer's wake (``register_drain``) can name the canonical
+    ``slack:<ts>``, while the router registers tasks, stop holds and the
+    pre-session stash under the bare ts. Normalized first, so the busy check
+    sees them and a queued entry cannot start under a running turn or a Stop.
     """
+    session_key = legacy_key(session_key) or session_key
     if _key_busy(orch, session_key) or not orch.sessions:
         return
     _next = orch.sessions.dequeue(session_key)
@@ -3206,7 +3250,7 @@ async def _route_message(
                     # is cleared by identity below; ``stop_turn``'s own whole-queue
                     # clear would take a message admitted since the detach, which is
                     # newer intent this Stop was never aimed at.
-                    _kw = {"force": True} if force_stop else {}
+                    _kw: dict[str, Any] = {"force": True} if force_stop else {}
                     outcome = await orch.sessions.stop_turn(
                         session_key, preserve_queue=True, on_soft=_on_soft, on_hard=_on_hard, **_kw
                     )

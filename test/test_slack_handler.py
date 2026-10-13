@@ -253,7 +253,7 @@ class FakeSessionManager:
             self.replay_gaps = getattr(self, "replay_gaps", []) + [("close", key)]
         self._gap_open = False
 
-    async def stop_turn(self, key, *, force=False, on_soft=None, on_hard=None):
+    async def stop_turn(self, key, *, force=False, owned_by=None, on_soft=None, on_hard=None):
         """Fake stop_turn that defaults to 'soft' outcome."""
         outcome = getattr(self, "_stop_outcome", "soft")
         self.removed.append(f"stop_turn:{key}:force={force}")

@@ -153,7 +153,9 @@ async def test_hard_stop_orders_abort_reset_respawn_and_hook(cfg: KiroCrewConfig
     )
     manager._sessions["key"] = session
 
-    manager.clear_queue = MagicMock(side_effect=lambda _key: events.append("queue-cleared"))
+    manager.clear_queue = MagicMock(
+        side_effect=lambda _key, _owned_by=None: events.append("queue-cleared")
+    )
     manager._send_abort_for_session = AsyncMock(  # type: ignore[method-assign]
         side_effect=lambda *_: events.append("abort-sent")
     )
