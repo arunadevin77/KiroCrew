@@ -199,6 +199,15 @@ reads the file only after acquiring it. Projection holds that lock from the
 fresh read through alias publication and settings commit, so a concurrent writer
 cannot be replaced by a stale pre-enumeration snapshot. Lock identity changes or
 a two-second acquisition timeout fail closed without writing the settings file.
+When the workspace is a git work-tree top (it holds `.git` itself), taking that
+lock also appends anchored patterns for the overlay and its lock to the
+repository's local `info/exclude` (the common git dir, so linked worktrees are
+covered), so neither file shows in the user's `git status`. A subfolder or a
+Crew run dir inside a repository is left alone, so per-run dirs never grow a
+repository's exclude list. Only missing lines are appended, the
+user's own lines are never rewritten, and a failed exclude write never blocks
+the overlay. A repository that already tracks `.kiro/settings/cli.json` still
+sees it modified: git's exclude list does not hide tracked files (known limit).
 Crew records the original local inheritance key's presence and value in
 `kirocrew.skillDiscovery.previousInheritance`. Rollback restores that snapshot
 only while the native key still equals Crew's asserted `true`, removes Crew's

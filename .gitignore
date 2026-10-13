@@ -193,5 +193,7 @@ src/kiro_crew/BUILD_VERSION
 # ~27MB build artifact sits in a tracked path waiting for a `git add -A`.
 src/kiro_crew/apps/builtins/aws_control/crew/runtime/vendor/*.whl
 
-# Cross-process lock for workspace Kiro CLI overlay writers.
+# Workspace Kiro CLI overlay and its cross-process lock. Crew writes both before
+# every session spawn, so they are local session state, not project config.
+/.kiro/settings/cli.json
 /.kiro/settings/.kirocrew-cli-settings.lock
