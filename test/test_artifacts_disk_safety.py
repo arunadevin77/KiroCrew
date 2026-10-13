@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import errno
 import os
+import stat
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from kiro_crew import artifacts
 from kiro_crew.artifacts import ArtifactError, ArtifactStore
 
 
@@ -82,23 +82,18 @@ class TestDiskFullFailsClosed:
     def _fill_disk_on_write(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Make every store file write raise ENOSPC, as a full disk does.
 
-        Injected at the store's OWN seam: ``_prepare_store_write`` returns the
-        opener its writers hand to ``open``, so an opener that raises is exactly
-        what a writer meets when the filesystem has no room for the temp file.
-        Creating the parent directory still happens, because a full disk does not
-        un-create what is already there.
+        The store publishes through ``atomic_write``, whose ``_write_all`` is the
+        single call that hands the content bytes to the temp file's descriptor --
+        exactly where a filesystem with no room reports ENOSPC. A raising
+        ``_write_all`` is what a store writer meets on a full disk: the temp file
+        has been created, no bytes land, the rename never runs, and the helper's
+        own cleanup must unlink the temp it opened.
         """
-        real_prepare = artifacts._prepare_store_write
 
-        def refusing_prepare(resolved: Path, *, owner_only: bool) -> Any:
-            real_prepare(resolved, owner_only=owner_only)
+        def refusing_write_all(fd: int, data: bytes, path: Any) -> None:
+            raise OSError(errno.ENOSPC, "No space left on device")
 
-            def opener(path: str, flags: int) -> int:
-                raise OSError(errno.ENOSPC, "No space left on device")
-
-            return opener
-
-        monkeypatch.setattr(artifacts, "_prepare_store_write", refusing_prepare)
+        monkeypatch.setattr("kiro_crew.atomic_write._write_all", refusing_write_all)
 
     def test_an_existing_artifact_keeps_its_last_content(
         self, store: ArtifactStore, monkeypatch: pytest.MonkeyPatch
@@ -204,12 +199,46 @@ class TestAFailedWritebackDoesNotPublish:
         self, store: ArtifactStore, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Refusing here would make the store unusable wherever a descriptor
-        cannot be synced, and the rename's atomicity holds without it."""
-        art = store.create(name="Report", kind="widget", content="<p>old</p>")
-        with monkeypatch.context() as no_sync:
-            self._fsync_raises(no_sync, errno.EINVAL, "Invalid argument")
-            store.update(art.slug, content="<p>new</p>")
-        assert "new" in store.get(art.slug).content
+        cannot be synced, and the rename's atomicity holds without it. Every
+        errno that means "this descriptor has no fsync" -- not that the write
+        failed -- lets the store fall back to an unsynced-but-still-atomic
+        publish, and leaves no temp file behind."""
+        for code, text in (
+            (errno.EINVAL, "Invalid argument"),
+            (errno.ENOSYS, "Function not implemented"),
+            (errno.ENOTSUP, "Operation not supported"),
+            (getattr(errno, "EOPNOTSUPP", errno.ENOTSUP), "Operation not supported on socket"),
+        ):
+            art = store.create(name=f"Report {code}", kind="widget", content="<p>old</p>")
+            with monkeypatch.context() as no_sync:
+                self._fsync_raises(no_sync, code, text)
+                store.update(art.slug, content="<p>new</p>")
+            assert "new" in store.get(art.slug).content, f"errno {code} did not publish"
+            leftover = [
+                str(p.relative_to(store._root)) for p in store._root.rglob("*.tmp") if p.is_file()
+            ]
+            assert not leftover, f"errno {code} left a temp file behind: {leftover}"
+
+    def test_a_supported_write_routes_through_atomic_write_with_fsync(
+        self, store: ArtifactStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The store publishes through ``atomic_write(fsync=True)`` -- not its
+        own tmp-file writer -- when the platform can sync the descriptor, so the
+        durability guarantee is the shared helper's and the fallback above never
+        runs on a healthy filesystem."""
+        import kiro_crew.atomic_write as aw
+
+        calls: list[bool] = []
+        real = aw.atomic_write
+
+        def spy(path: Any, content: Any, **kw: Any) -> None:
+            calls.append(bool(kw.get("fsync")))
+            return real(path, content, **kw)
+
+        monkeypatch.setattr("kiro_crew.artifacts._atomic_write", spy)
+        store.create(name="Report", kind="widget", content="<p>hi</p>")
+        assert calls, "the store did not route a write through atomic_write"
+        assert all(calls), f"a store write skipped fsync on a healthy fs: {calls}"
 
 
 class TestAWriteNeverLandsThroughALink:
@@ -268,3 +297,42 @@ class TestAWriteNeverLandsThroughALink:
         assert (
             target.read_text(encoding="utf-8") == "untouched"
         ), "the write followed a link and landed outside the store"
+
+
+class TestOwnerOnlyFilesSurviveASymlinkedDataHome:
+    """An owner-only store publishes 0600 even when its data home is a symlink.
+
+    The store decides owner-only once from the root AS SPELLED, lexically. The
+    writers resolve the path before handing it to ``atomic_write``, whose own
+    0600 default keys on the same lexical home check -- which a realpath-resolved
+    path fails when the data home is reached through a symlink. A relocated,
+    symlinked data home is an ordinary setup, so the store carries its own
+    owner-only decision to the write instead of relying on that default; without
+    it the file would publish at the umask mode (0644 under umask 022).
+    """
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    def test_a_symlinked_data_home_still_publishes_0600(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from kiro_crew import owner_only_files as oof
+
+        real_home = tmp_path / "real_home"
+        real_home.mkdir()
+        link_home = tmp_path / "link_home"
+        link_home.symlink_to(real_home, target_is_directory=True)
+        # The policy home is the symlink SPELLING, so a store rooted inside it is
+        # owner-only while realpath(root) resolves under real_home.
+        monkeypatch.setattr(oof, "_policy_home", lambda: Path(os.path.abspath(link_home)))
+
+        old_umask = os.umask(0o022)
+        try:
+            store = ArtifactStore(root=link_home / "artifacts")
+            assert store._owner_only, "store should be owner-only under the symlinked home"
+            art = store.create(name="Report", kind="widget", content="<p>hi</p>")
+            store.update(art.slug, content="<p>bye</p>")
+            content_file = Path(os.path.realpath(store._root / art.slug / "current.html"))
+            mode = stat.S_IMODE(content_file.stat().st_mode)
+            assert mode == 0o600, f"a symlinked-home store published {oct(mode)}, not 0600"
+        finally:
+            os.umask(old_umask)
