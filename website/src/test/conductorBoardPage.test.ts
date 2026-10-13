@@ -176,7 +176,43 @@ describe('kirocrew-conductor page', () => {
   it('counts the tasks the fold cut in the meter total', () => {
     mount({ items: [item({ state: 'accepted', status: 'done' }), item({ item_id: 'b', status: 'done' })], omitted: 3 })
     expect(text('#cb-meter')).toContain('1 of 5 accepted by the conductor')
-    expect(text('#cb-meter')).toContain('1 being checked')
+    // The same words as the card's pill, so the two read as one state.
+    expect(text('#cb-meter')).toContain('1 conductor checking')
+  })
+
+  it('labels the truncation button with what it does', () => {
+    mount({ items: [item()], omitted: 3 })
+    expect(text('#cb-more button.reply')).toBe('\u270e Ask in chat for all tasks')
+  })
+
+  it('puts the tasks that need the reader first, the rest in ledger order', () => {
+    mount({
+      items: [
+        item({ item_id: 'a', title: 'not started', status: null }),
+        item({ item_id: 'b', title: 'running', status: 'progress' }),
+        item({ item_id: 'c', title: 'stuck', status: 'blocked' }),
+      ],
+    })
+    expect(all('#cb-tasks .card .t').map((n) => n.textContent)).toEqual(['stuck', 'not started', 'running'])
+  })
+
+  it('gives a task card that needs the reader the same Reply as the band', () => {
+    const sent: Array<{ text: string }> = []
+    const spy = vi.spyOn(window.parent, 'postMessage').mockImplementation((m: unknown) => {
+      sent.push(m as { text: string })
+    })
+    mount({
+      items: [
+        item({ title: 'stuck one', status: 'blocked' }),
+        item({ item_id: 'b', title: 'running', status: 'progress' }),
+      ],
+    })
+    const onCards = all('#cb-tasks button.reply') as HTMLButtonElement[]
+    expect(onCards).toHaveLength(1)
+    onCards[0].click()
+    ;(document.querySelector('#cb-you button.reply') as HTMLButtonElement).click()
+    expect(sent.map((m) => m.text)).toEqual(['About "stuck one": ', 'About "stuck one": '])
+    spy.mockRestore()
   })
 
   it('offers a Reply button that only fills the chat box', () => {
