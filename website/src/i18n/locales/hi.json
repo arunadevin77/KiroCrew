@@ -11458,6 +11458,9 @@
         "give_up": "कनेक्शन अस्थिर है — फिर से कोशिश करें।"
       },
       "turnBlock": {
+        "earlier_step_one": "{{count}} पिछला चरण",
+        "earlier_step_other": "{{count}} पिछले चरण",
+        "hide_earlier_steps": "पिछले चरण छिपाएँ",
         "hide_tool_calls": "टूल कॉल छिपाएँ",
         "worked_through_step_one": "{{count}} चरण पूरा किया",
         "worked_through_step_other": "{{count}} चरण पूरे किए"

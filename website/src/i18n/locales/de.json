@@ -11458,6 +11458,9 @@
         "give_up": "Verbindung instabil — bitte erneut versuchen."
       },
       "turnBlock": {
+        "earlier_step_one": "{{count}} früherer Schritt",
+        "earlier_step_other": "{{count}} frühere Schritte",
+        "hide_earlier_steps": "Frühere Schritte ausblenden",
         "hide_tool_calls": "Werkzeugaufrufe ausblenden",
         "worked_through_step_one": "{{count}} Schritt durchgearbeitet",
         "worked_through_step_other": "{{count}} Schritte durchgearbeitet"

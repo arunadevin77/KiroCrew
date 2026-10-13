@@ -11293,6 +11293,8 @@
         "give_up": "接続が不安定です — もう一度お試しください。"
       },
       "turnBlock": {
+        "earlier_step_other": "以前の {{count}} ステップ",
+        "hide_earlier_steps": "以前のステップを非表示",
         "hide_tool_calls": "ツール呼び出しを非表示",
         "worked_through_step_other": "{{count}} ステップを処理"
       },

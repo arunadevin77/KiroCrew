@@ -11788,6 +11788,11 @@
         "give_up": "Соединение нестабильно — повторите попытку."
       },
       "turnBlock": {
+        "earlier_step_few": "{{count}} предыдущих шага",
+        "earlier_step_many": "{{count}} предыдущих шагов",
+        "earlier_step_one": "{{count}} предыдущий шаг",
+        "earlier_step_other": "{{count}} предыдущих шага",
+        "hide_earlier_steps": "Скрыть предыдущие шаги",
         "hide_tool_calls": "Скрыть вызовы инструментов",
         "worked_through_step_few": "Проработано {{count}} шага",
         "worked_through_step_many": "Проработано {{count}} шагов",

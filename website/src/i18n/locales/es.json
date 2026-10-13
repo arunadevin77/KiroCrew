@@ -11623,6 +11623,10 @@
         "give_up": "Conexión inestable — inténtalo de nuevo."
       },
       "turnBlock": {
+        "earlier_step_many": "{{count}} pasos anteriores",
+        "earlier_step_one": "{{count}} paso anterior",
+        "earlier_step_other": "{{count}} pasos anteriores",
+        "hide_earlier_steps": "Ocultar pasos anteriores",
         "hide_tool_calls": "Ocultar llamadas a herramientas",
         "worked_through_step_many": "Completó {{count}} pasos",
         "worked_through_step_one": "Completó {{count}} paso",

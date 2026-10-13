@@ -5117,6 +5117,9 @@
         "agent_running_other": "{{count}} agents running"
       },
       "turnBlock": {
+        "earlier_step_one": "{{count}} earlier step",
+        "earlier_step_other": "{{count}} earlier steps",
+        "hide_earlier_steps": "Hide earlier steps",
         "hide_tool_calls": "Hide tool calls",
         "worked_through_step_one": "Worked through {{count}} step",
         "worked_through_step_other": "Worked through {{count}} steps"

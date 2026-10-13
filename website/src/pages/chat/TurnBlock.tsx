@@ -1,5 +1,5 @@
 import { memo, useState, useRef, useEffect, useMemo, useCallback, type ReactNode } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { ChevronRight } from 'lucide-react'
 import type { DisplayItem, TurnItem } from './types'
 import { uniqueRowKeys } from '../../chat-core/transcript/rowKeys'
@@ -204,6 +204,27 @@ function splitSegments(items: TurnItem[], appToolCallIds: ReadonlySet<string>, o
 const countCollapsedSteps = (segs: Seg[]): number =>
   segs.flatMap(s => s.type === 'collapsed' ? s.items : []).filter(({ it }) => !isHiddenTool(it)).length
 
+/** How many tool-call rows a RUNNING turn keeps open. */
+const LIVE_ACTIVITY_WINDOW = 5
+
+/**
+ * The running-turn window: which rows of `items` fold behind the "N earlier
+ * steps" row. Only plain tool rows fold. Answer text, the merged reasoning row,
+ * everything `isVisibleInline` keeps open, and a row the caller pins (a tool
+ * pill the user expanded) never fold. A hidden completion row folds with the
+ * older steps but is not counted, the same rule `countCollapsedSteps` applies.
+ */
+function liveFoldRows(items: TurnItem[], appToolCallIds: ReadonlySet<string>, isPinned: (it: TurnItem) => boolean): { rows: ReadonlySet<number>; count: number } {
+  const order = items.map((_, i) => i).filter(i =>
+    isTool(items[i], appToolCallIds) && !isVisibleInline(items[i], appToolCallIds) && !isPinned(items[i]))
+  const counted = order.filter(i => !isHiddenTool(items[i]))
+  if (counted.length <= LIVE_ACTIVITY_WINDOW) return { rows: new Set(), count: 0 }
+  const oldestKept = order.indexOf(counted[counted.length - LIVE_ACTIVITY_WINDOW])
+  return { rows: new Set(order.slice(0, oldestKept)), count: counted.length - LIVE_ACTIVITY_WINDOW }
+}
+
+const NEVER_PINNED = (): boolean => false
+
 /** Stable empty set so the mcpApps selector returns a referentially-equal
  *  value when the slot has no app renders (avoids useless re-renders). */
 const EMPTY_ID_SET: ReadonlySet<string> = new Set()
@@ -355,7 +376,7 @@ function mergeTurnThinking(items: TurnItem[]): TurnItem[] {
  *  renders it for ChatEmbed with no Provider mounted, and a pane must scope the
  *  set to its OWN session key, not the globally-active slot.
  */
-function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMPTY_ID_SET, disclosure, disclosureKey, onDisclosureChange }: { turn: Extract<DisplayItem, {kind:'turn'}>; renderItem: (item: TurnItem, i: number) => ReactNode; collapseAll?: boolean; appToolCallIds?: ReadonlySet<string>; disclosure?: boolean; disclosureKey?: string; onDisclosureChange?: (key: string, expanded: boolean) => void }) {
+function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMPTY_ID_SET, disclosure, liveDisclosure, disclosureKey, onDisclosureChange, isRowPinned = NEVER_PINNED }: { turn: Extract<DisplayItem, {kind:'turn'}>; renderItem: (item: TurnItem, i: number) => ReactNode; collapseAll?: boolean; appToolCallIds?: ReadonlySet<string>; disclosure?: boolean; liveDisclosure?: boolean; disclosureKey?: string; isRowPinned?: (it: TurnItem) => boolean; onDisclosureChange?: (key: string, expanded: boolean) => void }) {
   // memo() bails out of the provider-level language repaint, so this component
   // subscribes to language generation itself: its i18nT() strings must
   // re-translate even when no prop moves.
@@ -381,11 +402,25 @@ function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMP
     if (onDisclosureChange && disclosureKey !== undefined) onDisclosureChange(disclosureKey, next)
     else setLocalExpanded(next)
   }, [expanded, onDisclosureChange, disclosureKey])
+  // The running-turn fold's own disclosure (see "Running-turn window" below).
+  // Host-owned under `${disclosureKey}:live` for the same reason as
+  // `disclosure`: the virtualizer unmounts rows, and local state dies with them.
+  const [liveLocal, setLiveLocal] = useState(false)
+  const liveExpanded = liveDisclosure ?? liveLocal
+  const setLiveExpanded = useCallback((next: boolean) => {
+    if (onDisclosureChange && disclosureKey !== undefined) onDisclosureChange(`${disclosureKey}:live`, next)
+    else setLiveLocal(next)
+  }, [onDisclosureChange, disclosureKey])
   const wasComplete = useRef(turn.complete)
   useEffect(() => {
-    if (turn.complete && !wasComplete.current && !userToggled.current) setLocalExpanded(false)
+    if (turn.complete && !wasComplete.current && !userToggled.current) {
+      // A live fold the user opened stays open into the settled render, and
+      // the choice is handed to the host so a virtualizer remount keeps it.
+      if (!liveExpanded) setLocalExpanded(false)
+      else if (onDisclosureChange && disclosureKey !== undefined) onDisclosureChange(disclosureKey, true)
+    }
     wasComplete.current = turn.complete
-  }, [turn.complete])
+  }, [turn.complete, liveExpanded, onDisclosureChange, disclosureKey])
 
   // Fold the turn's reasoning bursts into ONE `thinking` row (see
   // mergeTurnThinking). Every render path below reads THIS list, not
@@ -399,6 +434,53 @@ function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMP
   const msgKey = useStableMessageKey()
   const keys = useMemo(() => uniqueRowKeys(items, msgKey), [items, msgKey])
   const rowKey = (i: number): string => keys[i] ?? `pos-${i}`
+
+  // Running-turn window: only the newest LIVE_ACTIVITY_WINDOW tool rows stay
+  // open; older ones fold behind one "N earlier steps" row. It has its OWN
+  // disclosure because the turn's `expanded` defaults open while running.
+  const liveFold = useMemo(
+    () => turn.complete ? { rows: new Set<number>() as ReadonlySet<number>, count: 0 } : liveFoldRows(items, appToolCallIds, isRowPinned),
+    [turn.complete, items, appToolCallIds, isRowPinned],
+  )
+  const reduceMotion = useReducedMotion()
+  const firstFolded = liveFold.count > 0 ? Math.min(...liveFold.rows) : -1
+  // Every in-place row of every render path is this ONE keyed `motion.div`,
+  // so a fold, an unfold and the completion flip never change a row's element,
+  // parent or key (the #11083 identity rule, see the interim render below).
+  // A folded row animates its height to 0; reduced motion makes it instant.
+  const row = (i: number, child: ReactNode) => {
+    const folded = liveFold.rows.has(i) && !liveExpanded
+    return (
+      <motion.div
+        key={rowKey(i)}
+        initial={false}
+        animate={folded
+          ? { height: 0, opacity: 0, overflow: 'hidden' }
+          : { height: 'auto', opacity: 1, transitionEnd: { overflow: '' } }}
+        transition={reduceMotion ? { duration: 0 } : { type: 'spring', bounce: 0, duration: 0.3 }}
+        // Same marker CollapsibleSection sets, for the bubble-vanish probe;
+        // `inert` (untyped in React 18) keeps folded buttons out of the tab order.
+        {...(folded ? { 'data-collapsed': 'true', 'aria-hidden': true, ...({ inert: '' } as Record<string, string>) } : {})}
+      >
+        {child}
+      </motion.div>
+    )
+  }
+  // The flat render every mode uses for a running turn (and for a settled
+  // turn with nothing to fold).
+  const renderFlat = () => {
+    const out: ReactNode[] = []
+    items.forEach((it, i) => {
+      if (i === firstFolded) {
+        out.push(
+          <CollapseToggle key="toggle" expanded={liveExpanded} onToggle={() => setLiveExpanded(!liveExpanded)}
+            label={liveExpanded ? i18nT('pages.chat.turnBlock.hide_earlier_steps') : i18nT('pages.chat.turnBlock.earlier_step', { count: liveFold.count })} />,
+        )
+      }
+      out.push(row(i, renderItem(it, i)))
+    })
+    return <>{out}</>
+  }
 
   // Auto-expand only when the active search match lives inside a COLLAPSED
   // segment of this turn — collapsed reasoning is mounted but height-0, so the
@@ -442,6 +524,14 @@ function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMP
     if (notify && disclosureKeyRef.current !== undefined) notify(disclosureKeyRef.current, true)
     else setLocalExpanded(true)
   }, [matchInCollapsedSegment])
+  // A search match inside the live fold opens it, as the settled folds do
+  // above; a folded row is height 0, so its <mark> would be invisible.
+  const matchInLiveFold = !!term && currentMessageIdx >= 0 && Array.from(liveFold.rows).some(i => {
+    const it = items[i]
+    return it.kind === 'single' ? it.idx === currentMessageIdx
+      : currentMessageIdx >= it.startIdx && currentMessageIdx < it.startIdx + it.msgs.length
+  })
+  useEffect(() => { if (matchInLiveFold) setLiveExpanded(true) }, [matchInLiveFold, setLiveExpanded])
 
   // Interim fan-out region: everything the agent emitted between the user's
   // prompt and the synthesis turn that restates it (see `interim` in types.ts).
@@ -454,7 +544,7 @@ function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMP
     const segs = splitSegments(items, appToolCallIds)
     const stepCount = countCollapsedSteps(segs)
     if (!turn.complete || stepCount === 0) {
-      // Each always-visible row is wrapped in `<div key={rowKey(i)}>` — its
+      // Each always-visible row is wrapped by `row(i)` (one keyed `motion.div`) — its
       // message-identity key (see "Row keys" above), the same element type, parent and
       // key the folded render below gives it — and emitted as ONE keyed array
       // (the fragment's single child slot) so adding the toggle in the folded
@@ -465,7 +555,7 @@ function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMP
       // visible row's React identity, or React unmounts and remounts it —
       // harmless for text, but it re-creates an inline MCP App iframe and loses
       // in-canvas state (#11083).
-      return <>{items.map((it, i) => <div key={rowKey(i)}>{renderItem(it, i)}</div>)}</>
+      return renderFlat()
     }
     const children: ReactNode[] = [
       <CollapseToggle key="toggle" expanded={expanded} onToggle={toggle}
@@ -473,7 +563,7 @@ function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMP
     ]
     for (const seg of segs) {
       if (seg.type === 'visible') {
-        children.push(<div key={rowKey(seg.idx)}>{renderItem(seg.it, seg.idx)}</div>)
+        children.push(row(seg.idx, renderItem(seg.it, seg.idx)))
       } else {
         children.push(
           <CollapsibleSection key={`c-${rowKey(seg.items[0].idx)}`} expanded={expanded}>
@@ -500,11 +590,11 @@ function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMP
     const stepCount = countCollapsedSteps(segs)
 
     if (!turn.complete || stepCount === 0) {
-      // Wrap every row as `<div key={rowKey(i)}>` (message identity) so the
+      // Wrap every row with `row(i)` (message identity) so the
       // completion flip, mid-turn reorders and history backfills preserve each
       // visible row's React identity — see the #11083 comment on the interim
       // flat render above.
-      return <>{items.map((it, i) => <div key={rowKey(i)}>{renderItem(it, i)}</div>)}</>
+      return renderFlat()
     }
 
     const children: ReactNode[] = [
@@ -513,7 +603,7 @@ function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMP
     ]
     for (const seg of segs) {
       if (seg.type === 'visible') {
-        children.push(<div key={rowKey(seg.idx)}>{renderItem(seg.it, seg.idx)}</div>)
+        children.push(row(seg.idx, renderItem(seg.it, seg.idx)))
       } else {
         children.push(
           <CollapsibleSection key={`c-${rowKey(seg.items[0].idx)}`} expanded={expanded}>
@@ -522,8 +612,8 @@ function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMP
         )
       }
     }
-    if (conclusion) children.push(<div key={rowKey(conclusionIdx)}>{renderItem(conclusion, conclusionIdx)}</div>)
-    after.forEach((it, i) => children.push(<div key={rowKey(conclusionIdx + 1 + i)}>{renderItem(it, conclusionIdx + 1 + i)}</div>))
+    if (conclusion) children.push(row(conclusionIdx, renderItem(conclusion, conclusionIdx)))
+    after.forEach((it, i) => children.push(row(conclusionIdx + 1 + i, renderItem(it, conclusionIdx + 1 + i))))
     return <>{children}</>
   }
 
@@ -540,11 +630,11 @@ function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMP
   // the claim about how many calls it hides moved.
   const toolCount = items.filter(it => isTool(it, appToolCallIds) && !isHiddenTool(it)).length
   if (!turn.complete || toolCount === 0) {
-    // Wrap every row as `<div key={rowKey(i)}>` (message identity) so the
+    // Wrap every row with `row(i)` (message identity) so the
     // completion flip, mid-turn reorders and history backfills preserve each
     // visible row's React identity — see the #11083 comment on the interim
     // flat render above.
-    return <>{items.map((it, i) => <div key={rowKey(i)}>{renderItem(it, i)}</div>)}</>
+    return renderFlat()
   }
 
   type Segment = { type: 'tools'; items: { it: TurnItem; idx: number }[] } | { type: 'visible'; it: TurnItem; idx: number }
@@ -566,7 +656,7 @@ function TurnBlock({ turn, renderItem, collapseAll = false, appToolCallIds = EMP
   ]
   for (const seg of segments) {
     if (seg.type === 'visible') {
-      children.push(<div key={rowKey(seg.idx)}>{renderItem(seg.it, seg.idx)}</div>)
+      children.push(row(seg.idx, renderItem(seg.it, seg.idx)))
     } else {
       children.push(
         <AnimatePresence key={`c-${rowKey(seg.items[0].idx)}`} initial={false}>

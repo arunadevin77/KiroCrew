@@ -18,6 +18,7 @@ import { toApiDecision } from '../utils/approvalDecision'
 import { isHiddenInvisibleAssistantRow } from '../utils/invisibleText'
 import { mergeRenderers, resolveRenderer, type MessageRenderer, type MessageRenderContext } from '../app-sdk/messageRenderers'
 import { createTranscriptRenderers } from './chat/transcriptRenderers'
+import { toolDisclosureKey } from './chat/transcriptRenderers'
 import { useDrawerSwipe, animateDrawer, registerDrawerTargets, takeOverDrawer, safeAreaLeft } from '../hooks/useDrawerSwipe'
 import { useAppSelector, useAppDispatch, useAppStore, store, type AppDispatch } from '../store'
 import { useConnected } from '../hooks/useConnected'
@@ -726,6 +727,12 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
   const setToolDisclosureFor = useCallback((key: string, expanded: boolean) => {
     setToolDisclosure(prev => (prev[key] === expanded ? prev : { ...prev, [key]: expanded }))
   }, [])
+  // A tool pill the user expanded must not fold into a running turn's
+  // "N earlier steps" row under them: TurnBlock asks this, keyed exactly as the
+  // pill keys its own disclosure entry (toolDisclosureKey over messageRowKey).
+  const isTurnRowPinned = useCallback((it: TurnItem) =>
+    it.kind === 'single' && it.msg.role === 'tool' && !!toolDisclosure[toolDisclosureKey(it.msg, messageRowKey(it.msg, it.idx))],
+  [toolDisclosure])
   // Row keys are only unique within a slot, so carrying them across a slot
   // switch would apply one session's choices to another's turns.
   useEffect(() => { setTurnDisclosure({}); setToolDisclosure({}) }, [activeSlot])
@@ -6215,7 +6222,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
                 // wrapper too, or each quiet cycle leaves an empty spacer row.
                 if (item.kind === 'single' && isHiddenInvisibleAssistantRow(item.msg)) return null
                 if (item.kind === 'turn') {
-                  return <div key={vi.key} ref={virt.measureRef(vi.index)} data-display-index={displayIdx}><TurnBlock turn={item} renderItem={renderTurnItem} collapseAll={chatConfig.collapseAllSteps} appToolCallIds={appToolCallIds} disclosure={turnDisclosure[vi.key]} disclosureKey={vi.key} onDisclosureChange={setTurnDisclosureFor} /></div>
+                  return <div key={vi.key} ref={virt.measureRef(vi.index)} data-display-index={displayIdx}><TurnBlock turn={item} renderItem={renderTurnItem} collapseAll={chatConfig.collapseAllSteps} appToolCallIds={appToolCallIds} disclosure={turnDisclosure[vi.key]} liveDisclosure={turnDisclosure[`${vi.key}:live`]} disclosureKey={vi.key} isRowPinned={isTurnRowPinned} onDisclosureChange={setTurnDisclosureFor} /></div>
                 }
                 // This row's bubble is the one the pinned banner is standing in for
                 // (identity rule below): hide the row and mark it for index.css. The
