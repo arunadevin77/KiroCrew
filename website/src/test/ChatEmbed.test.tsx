@@ -489,14 +489,15 @@ describe('ChatEmbed', () => {
       expect(screen.getByText('My Custom Title')).toBeInTheDocument()
     })
 
-    it('shows slotKey as fallback when no title', async () => {
+    it('shows "New session" when no title, with the slotKey only as the hover title', async () => {
       mockGet.mockResolvedValue({ messages: [], running: false })
 
       await act(async () => {
         renderWithProviders(<ChatEmbed slotKey="fallback-slot" />)
       })
 
-      expect(screen.getByText('fallback-slot')).toBeInTheDocument()
+      expect(screen.getByText('New session')).toHaveAttribute('title', 'fallback-slot')
+      expect(screen.queryByText('fallback-slot')).toBeNull()
     })
   })
 

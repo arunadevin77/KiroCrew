@@ -109,6 +109,10 @@ import { ChatEmbed } from '@kirocrew/app-sdk'
 <ChatEmbed slotKey="coder-abc123" />
 ```
 
+Unless `frameless` is set, a header strip shows the session's title. A session
+that has no title yet reads "New session" in the user's language; the slot key
+is never shown as text, only as the header's hover tooltip.
+
 | Prop | Type | Default | What it does |
 |---|---|---|---|
 | `slotKey` | `string` | required | The chat slot (session) the embed reads and sends to. |

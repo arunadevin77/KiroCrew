@@ -461,7 +461,8 @@
       "attachments_not_allowed": "Это приложение не принимает файлы. Прикрепи их в разделе «{{page}}».",
       "uploading_files": "Загрузка файлов…",
       "stop_restarts_session": "«Остановить» перезапустит сессию: история чата останется, но текущая работа и сообщения в очереди будут отброшены.",
-      "stop_did_not_go_through": "Эта остановка не прошла."
+      "stop_did_not_go_through": "Эта остановка не прошла.",
+      "untitled_session_title": "Новый сеанс"
     },
     "chatMessageList": {
       "copied": "Скопировано!",

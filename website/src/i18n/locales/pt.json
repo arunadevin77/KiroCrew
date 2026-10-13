@@ -447,7 +447,8 @@
       "attachments_not_allowed": "Este app não aceita arquivos. Anexe-os em \"{{page}}\".",
       "uploading_files": "Enviando arquivos…",
       "stop_restarts_session": "Parar vai reiniciar esta sessão: o histórico do chat fica, mas o trabalho em andamento e as mensagens na fila são descartados.",
-      "stop_did_not_go_through": "Essa parada não foi concluída."
+      "stop_did_not_go_through": "Essa parada não foi concluída.",
+      "untitled_session_title": "Nova sessão"
     },
     "chatMessageList": {
       "copied": "Copiado!",

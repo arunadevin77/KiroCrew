@@ -948,7 +948,15 @@ function ChatEmbed({
         <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card shrink-0">
           {/* Muted while stalled: the idle accent would say the session is fine. */}
           <span className={`w-2 h-2 rounded-full shrink-0 ${stalled ? 'bg-muted' : running ? 'bg-ok animate-pulse' : 'bg-accent'}`} />
-          <span className="text-[13px] font-semibold text-text-strong truncate flex-1">{title || slotKey}</span>
+          {/* An untitled session reads "New session", never the internal slot
+              key; the key stays reachable on hover for whoever is debugging. */}
+          <span
+            className="text-[13px] font-semibold text-text-strong truncate flex-1"
+            title={slotKey}
+            data-testid="chat-embed-title"
+          >
+            {title || i18nT('appSdk.chatEmbed.untitled_session_title')}
+          </span>
           {agent && <span className="text-[10px] font-mono text-muted">{agent}</span>}
           {running && <span className={`text-[10px] font-mono ${stopUnderWay ? 'text-danger' : 'text-ok'}`}>{stopUnderWay ? stopLabel : i18nT('appSdk.chatEmbed.streaming')}</span>}
         </div>
