@@ -1851,6 +1851,70 @@ def _join_install_receipt_workers() -> None:
         waiter()
 
 
+#: Thread name ``metrics.provider._schedule_consent_check_locked`` gives its worker.
+#: Matched by name, like the exporter guard below: the module keeps no handle to the
+#: thread (only an in-flight flag), so the name is the one thing a test can find it by.
+_TELEMETRY_CONSENT_THREAD = "kirocrew-telemetry-consent"
+
+
+def _live_telemetry_consent_workers() -> list:
+    return [
+        t for t in threading.enumerate() if t.name == _TELEMETRY_CONSENT_THREAD and t.is_alive()
+    ]
+
+
+def _join_telemetry_consent_worker() -> "BaseException | None":
+    """Join the metrics provider's consent-recheck worker before this test's pins lift.
+
+    ``metrics.provider.get_recorder()`` is on the path of ordinary production code
+    (``skills``, ``session``, ``context``, ``hooks`` and the metric helpers all call
+    it), and once per ``_CONSENT_RECHECK_SECS`` the call hands a consent re-read to a
+    daemon thread. That thread runs ``KiroCrewConfig.load()``, which reaches
+    ``config_dir()``, which honours ``KIROCREW_HOME`` *at call time* and ``mkdir``s
+    the data home it names. The recorder is process-global and nothing resets it
+    between tests, so the test that schedules the worker is rarely the test whose
+    home it creates: the read lands a few milliseconds later, under the NEXT test's
+    pin, and that test sees its own data home appear underneath it from a thread it
+    never started. The same lazy-resolving-worker shape as the receipt writer above,
+    one module over.
+
+    MEASURED, replaying one Windows CI shard's file list with a probe on every
+    ``os.mkdir`` of a per-test home: the only off-main-thread creator of a home that
+    was not the running test's own was this thread. The symptom it produced on CI was
+    ``test_pathres_loop_starvation.py::test_the_inline_anchors_are_the_bounded_anchors``:
+    the test builds the sensitive-target set twice and compares, and on Windows
+    ``os.path.realpath`` keeps its ``\\\\?\\`` prefix when the directory above a
+    not-yet-existing anchor is created between its two lookups -- so the first build
+    carried ``\\\\?\\...\\<n>-kirocrew-home\\diag`` (``diag`` being the first anchor under
+    the crew home) and the second did not.
+
+    Same place and same reason as :func:`_join_install_receipt_workers`: the
+    ``tryfirst`` teardown hook runs before any fixture unwinds, so the pins still hold
+    and the worker's read lands in the home of the test that scheduled it. The module
+    is found by thread name rather than imported, so a run that never builds a
+    recorder pays one ``threading.enumerate``. Bounded by ``_EXECUTOR_JOIN_SECS``; a
+    worker still alive past it is RETURNED as the failure to raise after the
+    hookwrapper's ``yield`` (see :func:`_retire_crew_log_eager_fold` for why it is not
+    raised here), because a consent read that does not finish in ten seconds is a
+    wedged config read, and the next test would otherwise start with a live thread
+    able to create its home at any moment.
+    """
+    workers = _live_telemetry_consent_workers()
+    if not workers:
+        return None
+    deadline = time.monotonic() + _EXECUTOR_JOIN_SECS
+    for worker in workers:
+        worker.join(max(0.0, deadline - time.monotonic()))
+    still_alive = [t.name for t in workers if t.is_alive()]
+    if not still_alive:
+        return None
+    return AssertionError(
+        f"a telemetry consent-recheck worker {still_alive} is still running "
+        f"{_EXECUTOR_JOIN_SECS:.0f}s after this test ended; its config read would land "
+        "under the next test's KIROCREW_HOME. See conftest._join_telemetry_consent_worker."
+    )
+
+
 def _resume_crew_log_eager_fold() -> None:
     """Lift the eager-fold fence for the test about to run.
 
@@ -2143,6 +2207,10 @@ def pytest_runtest_teardown(item, nextitem):
     # fresh daemon nothing holds a handle to. Stopping the worker once its producers are
     # quiescent is what makes the stop final.
     wedged_eager_fold = _retire_crew_log_eager_fold()
+    # After every step above: a cancelled task's ``finally`` or a drained writer can
+    # itself call ``get_recorder()`` and schedule a consent re-read, and a worker
+    # scheduled by teardown must still be joined under this test's pins.
+    wedged_consent_worker = _join_telemetry_consent_worker()
     resolved_real_home = (
         _resolved_real_default_home() if item.stash.get(_HOME_PIN_ARMED, False) else None
     )
@@ -2160,6 +2228,8 @@ def pytest_runtest_teardown(item, nextitem):
         # Reported AFTER the yield for the reason on _retire_crew_log_eager_fold: fixture
         # finalization has run by here, so failing the test costs nothing but the failure.
         raise wedged_eager_fold
+    if wedged_consent_worker is not None:
+        raise wedged_consent_worker
     if refused_network is not None:
         raise refused_network
 

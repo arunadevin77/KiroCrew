@@ -1233,6 +1233,28 @@ measures, never above.
   before any fixture (including `monkeypatch`) is torn down, so no test has to
   remember it. A thread you cannot join is a thread you cannot isolate.
 
+  The third instance of that shape is the **metrics consent-recheck worker**
+  (`metrics/provider.py`): once per `_CONSENT_RECHECK_SECS`, `get_recorder()` -- on the
+  path of `skills`, `session`, `context`, `hooks` and every metric helper -- hands a
+  consent re-read to a daemon thread whose `KiroCrewConfig.load()` reaches
+  `config_dir()` and `mkdir`s whatever `KIROCREW_HOME` names at that instant. The
+  recorder is process-global and nothing resets it between tests, so the read lands a
+  few milliseconds later under the NEXT test's pin and creates that test's data home
+  from a thread it never started. The Windows fingerprint of that race is a
+  `\\?\`-prefixed path: `os.path.realpath` keeps the prefix when the directory above a
+  not-yet-existing path appears between its two lookups, which is how
+  `test_pathres_loop_starvation.py::test_the_inline_anchors_are_the_bounded_anchors`
+  saw `\\?\...\<n>-kirocrew-home\diag` in one build of the sensitive-target set and not
+  the other (`diag` is the first anchor under the crew home; a recorder *creating*
+  `diag` cannot produce that string -- an anchor that exists at both lookups resolves
+  prefix-free). MEASURED by replaying one Windows shard's file list with a probe on
+  every `os.mkdir` of a per-test home: this thread was the only off-main-thread
+  creator of a home that was not the running test's own. The rootdir teardown hook
+  joins it (`_join_telemetry_consent_worker`, bounded by `_EXECUTOR_JOIN_SECS`) beside
+  the receipt-worker join, and fails the test that left one wedged past the bound.
+  When you see a per-test directory appear with no test writing it, list the threads
+  first: `threading.enumerate()` names the lazy resolver, the filesystem never will.
+
 - **A cwd-relative default in a constructor is a write into the checkout.**
   `TaskRunner(work_dir=None)` falls back to `Path.cwd()`, which under pytest is the repo
   root, and its first save wrote `runs.json` there. The rootdir conftest's repository
