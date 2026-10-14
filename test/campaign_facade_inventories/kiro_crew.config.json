@@ -1,0 +1,23 @@
+{
+ "base_public_names": [
+  "KiroCrewConfig",
+  "config_dir",
+  "config_local_path",
+  "config_path",
+  "data_home",
+  "ensure_data_home",
+  "env_path",
+  "resolve_agent_config_path"
+ ],
+ "note": "The package forwards these to the loader facade, which serves them from its owners.",
+ "rebound": {
+  "KiroCrewConfig": "kiro_crew.config.loader_config",
+  "config_dir": "kiro_crew.config.paths",
+  "config_local_path": "kiro_crew.config.loader_locations",
+  "config_path": "kiro_crew.config.loader_locations",
+  "data_home": "kiro_crew.config.paths",
+  "ensure_data_home": "kiro_crew.config.paths",
+  "env_path": "kiro_crew.config.loader_credentials",
+  "resolve_agent_config_path": "kiro_crew.config.loader_locations"
+ }
+}
