@@ -41,10 +41,11 @@ would not.
 `ChatEmbed` and `ChatInput` mount the store-free `chat-core/composer/Attach.tsx`
 picker atom. Each host supplies its existing staging writer and keeps its own
 trigger, file-type hint and focus-return behavior. File selection is reset in
-one place so choosing the same file after removal still works. The embed's
-`useEmbedAttachments` is only an SDK permission/transport adapter over
-`useComposerAttachments`: staging, paste/drop, upload holds and cancellation
-live in chat-core, with no Redux or router dependency and no default transport.
+one place so choosing the same file after removal still works. Only the picker
+is shared: the embed's staging, paste/drop, upload holds, cancellation and
+failed-send recovery stay in the SDK's `useEmbedAttachments`, beside its
+explicit upload grant and scoped transport. Sharing that lifecycle with the
+main chat is still open under #19994.
 `ComposerSend` receives the embed's actual staged-file and upload state, so a
 file-only turn remains sendable and an in-flight upload still holds Send.
 The main chat's slot persistence, file mentions, upload cancellation and send

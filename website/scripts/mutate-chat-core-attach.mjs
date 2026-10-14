@@ -7,11 +7,9 @@ mkdirSync(output, { recursive: true })
 const cases = [
   ['picker-reset', 'src/chat-core/composer/Attach.tsx', "event.target.value = ''", '// mutation: skip reset'],
   ['picker-writer', 'src/chat-core/composer/Attach.tsx', 'if (files.length) onFiles?.(files)', 'if (false) onFiles?.(files)'],
-  ['upload-grant', 'src/app-sdk/useEmbedAttachments.ts', 'upload: granted ? upload : undefined', 'upload'],
+  ['upload-grant', 'src/app-sdk/useEmbedAttachments.ts', 'if (!granted) {', 'if (false) {'],
   ['files-only', 'src/chat-core/composer/atoms.tsx', 'text.trim().length > 0 || hasAttachments', 'text.trim().length > 0'],
-  ['upload-hold', 'src/chat-core/composer/atoms.tsx', 'pending || uploadPending || !hasContent', 'pending || !hasContent'],
-  ['abort-upload', 'src/chat-core/composer/useComposerAttachments.ts', 'live.forEach(c => c.abort()); live.clear()', 'live.clear()'],
-  ['slot-isolation', 'src/chat-core/composer/useComposerAttachments.ts', 'if (controller.signal.aborted || gen !== generation.current) return', 'if (false) return'],
+  ['upload-hold', 'src/chat-core/composer/atoms.tsx', 'pending || uploading || !hasContent', 'pending || !hasContent'],
 ]
 let survived = 0
 for (const [name, file, from, to] of cases) {
