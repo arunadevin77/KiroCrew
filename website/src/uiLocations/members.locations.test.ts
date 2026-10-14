@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { readPageFamily } from '../test/pageFamily'
 
 interface Placement {
   surface_id: string
@@ -97,7 +98,7 @@ describe('the Crewmates area in the index', () => {
   })
 
   it("marks agents.delete on the Danger zone's unarmed delete only, never the armed confirm", () => {
-    const page = fs.readFileSync(path.resolve(__dirname, '../pages/KiroCrewAgentsPage.tsx'), 'utf-8')
+    const page = readPageFamily('KiroCrewAgentsPage')
     expect(page.split("uiLocation('agents.delete')").length - 1).toBe(1)
     const confirm = page.split('\n').find(l => l.includes('data-testid="confirm-delete-crew"'))!
     expect(confirm).not.toContain('uiLocation(')

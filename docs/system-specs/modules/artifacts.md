@@ -620,6 +620,18 @@ provider's first page are reachable rather than silently truncated.
   sandboxed iframe (same security model as inline `<mcwidget>`), with a
   version dropdown
 
+The `/artifacts` page is `website/src/pages/ArtifactsPage.tsx`: filters and
+chat scope, folder management, the library query, drag and drop, the
+collapsible chrome and where each section renders. Its owners sit beside it
+and take new work for their part: the artifact card and the three gallery
+renderers switched at `VIRTUALIZE_AT` (`ArtifactsPageGallery.tsx`); folder
+cards, their grid, the breadcrumb and the drag geometry
+(`ArtifactsPageFolders.tsx`); the "From your chats" list and a provider's
+remote list (`ArtifactsPageSections.tsx`); the Add Artifact and New Artifact
+doors (`useArtifactsPageCreate.ts`); and the React-free list logic, the kind
+options, column sort and import-refusal wording (`artifactsPageModel.ts`).
+Every other module imports the page, never an owner.
+
 ### Publish panel (`PublishHub`) — reading a publish outcome
 
 `PublishHub` posts to the row's declared `endpoint` and must recognize **two**

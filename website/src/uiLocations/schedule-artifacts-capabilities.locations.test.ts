@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { readPageFamily } from '../test/pageFamily'
 
 interface Req { kind: string; value?: string; location?: string; when?: string; id?: string; flag?: string }
 interface Placement { surface_id: string; route: string; parent_ids: string[]; entry_kind: string; requires: Req[] }
@@ -18,7 +19,7 @@ const index = JSON.parse(fs.readFileSync(INDEX_FILE, 'utf-8')) as { locations: L
 const byId = new Map(index.locations.map(l => [l.id, l]))
 const src = (rel: string) => fs.readFileSync(path.resolve(__dirname, rel), 'utf-8')
 const SCHEDULE_SRC = src('../pages/SchedulePage.tsx')
-const ARTIFACTS_SRC = src('../pages/ArtifactsPage.tsx')
+const ARTIFACTS_SRC = readPageFamily('ArtifactsPage')
 const SKILLS_SRC = src('../pages/overview/SkillsTab.tsx')
 const MCP_SRC = src('../pages/overview/McpTab.tsx')
 

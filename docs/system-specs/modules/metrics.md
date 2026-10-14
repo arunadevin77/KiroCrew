@@ -896,6 +896,16 @@ defaulted. The block is `null` when no row carries the fields, and is served
 independently of the `telemetry.enabled` switch because those rows are always
 written (the panel therefore renders it even with OTEL export off).
 
+**The panel's source.** `website/src/pages/TelemetryPanel.tsx` is the panel:
+the window control, the tab choice, the off, empty and error states, and the
+OTEL-shard figures (the health strip, the Latency and Startup tabs), which
+format through its `fmtMs`. Beside it, `telemetryPanelModel.ts` holds the
+payload types, the measured window (`PanelWindowCtx`) and `usePersistedChoice`;
+`TelemetryPanelBlocks.tsx` the sortable `DataTable`, `Sums` and `Histogram`;
+and `TelemetryPanelConversations.tsx` the Spend and Context tabs with the
+formatters and colour thresholds only they read. Every other module imports
+the panel, never an owner.
+
 ## Per-turn token usage row store
 
 Separate from the OTEL histogram sink above (`~/.kiro/crew/metrics/`, DELTA
