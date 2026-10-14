@@ -126,7 +126,9 @@ describe('SttSettings custom-model pair explanation', () => {
   it('keeps explaining while only one half of the pair is filled', async () => {
     mount({ custom_model_path: FILE, custom_model_sha256: '' })
     await waitFor(() => expect(modelSelect()).toBeTruthy())
-    expect(explanation()).not.toBeNull()
+    // The explanation renders only after the config lands AND its effect sets
+    // custom intent, so wait for it rather than asserting it synchronously.
+    await waitFor(() => expect(explanation()).not.toBeNull())
   })
 
   it('says nothing once the pair is complete and custom is in force', async () => {
