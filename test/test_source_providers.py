@@ -2726,6 +2726,33 @@ async def test_fetch_gitlab_rereads_merge_state_until_the_provider_settles_it(
 
 
 @pytest.mark.asyncio
+async def test_fetch_gitlab_merge_state_reread_passes_the_host(monkeypatch) -> None:
+    """The re-read is a ``glab`` call, and ``_run_provider`` refuses any ``glab``
+    call without a host. A re-read that drops it is denied, the loop swallows
+    the refusal and the panel shows ``unknown`` for an MR GitLab had settled."""
+    monkeypatch.setattr(source, "_MERGE_STATE_REREAD_DELAY_SECS", 0)
+    detail_hosts: list[str] = []
+
+    async def fake_run(*argv: str, host: str = "", **_kwargs: int):
+        command = " ".join(argv)
+        if command.endswith("merge_requests/42"):
+            detail_hosts.append(host)
+            if len(detail_hosts) == 1:
+                return {"iid": 42, "detailed_merge_status": "checking"}
+            return {"iid": 42, "detailed_merge_status": "mergeable"}
+        return []
+
+    monkeypatch.setattr(source, "_run_json", fake_run)
+
+    data = await source._fetch_gitlab(
+        source.parse_source_url("https://gitlab.com/acme/repo/-/merge_requests/42")
+    )
+
+    assert detail_hosts == ["gitlab.com", "gitlab.com"]
+    assert (data["mergeable"], data["mergeStateStatus"]) == ("mergeable", "clean")
+
+
+@pytest.mark.asyncio
 async def test_fetch_gitlab_degrades_to_unknown_when_reread_cannot_settle(monkeypatch) -> None:
     monkeypatch.setattr(source, "_MERGE_STATE_REREAD_DELAY_SECS", 0)
     detail_reads: list[str] = []
