@@ -30,6 +30,7 @@ from body_stream_helpers import BodyStreamPayload
 from dashboard_owner_helpers import owner_claims
 
 from conftest import host_abs
+from kiro_crew.config.integration_sections import DEFAULT_STUB_ROSTER
 from kiro_crew.dashboard.handlers import mcp as mcp_mod
 from kiro_crew.mcp_discovery import McpServerInfo
 from kiro_crew.testing.wait import await_until
@@ -2864,7 +2865,12 @@ class TestGatewaySetStub:
             "restart_required": True,
         }
         saved = json.loads(config_path().read_text(encoding="utf-8"))
-        assert _effective_stubs(saved["mcp_gateway"]) == ["ok-mcp"]
+        # A file with no roster freezes the shipped one first, so the click adds
+        # to the managed servers rather than replacing them.
+        assert _effective_stubs(saved["mcp_gateway"]) == [
+            *sorted(DEFAULT_STUB_ROSTER),
+            "ok-mcp",
+        ]
 
     @pytest.mark.asyncio
     async def test_an_unwired_batch_that_wrote_nothing_claims_no_restart(
@@ -3094,7 +3100,12 @@ class TestGatewaySetStub:
         assert body["code"] == "mcp_apply_failed"
         # The config write happens BEFORE apply, so it survives the failure.
         saved = json.loads(config_path().read_text(encoding="utf-8"))
-        assert _effective_stubs(saved["mcp_gateway"]) == ["ok-mcp"]
+        # A file with no roster freezes the shipped one first, so the click adds
+        # to the managed servers rather than replacing them.
+        assert _effective_stubs(saved["mcp_gateway"]) == [
+            *sorted(DEFAULT_STUB_ROSTER),
+            "ok-mcp",
+        ]
         outcomes = [c.kwargs.get("outcome") for c in sel.log_api_access.call_args_list]
         assert "error" in outcomes
 
