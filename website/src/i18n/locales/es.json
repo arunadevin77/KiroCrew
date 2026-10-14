@@ -996,8 +996,8 @@
           "pending": "pendientes",
           "read_namespace": "Leer el namespace {{name}}",
           "invalid_namespace_name": "Los nombres de los namespaces se convierten en nombres de carpeta, así que solo pueden contener letras latinas minúsculas (a–z), dígitos (0–9), puntos, guiones y guiones bajos, deben empezar y terminar con una letra o un dígito y tener entre 2 y 64 caracteres.",
-          "invalid_namespace_name_char": "“{{char}}” no se puede usar en el nombre de un namespace. Usa letras minúsculas a–z, 0–9, . - _",
-          "invalid_namespace_name_letter": "“{{char}}” ({{script}}, {{code}}) no se puede usar en el nombre de un namespace. Usa letras minúsculas a–z, 0–9, . - _"
+          "invalid_namespace_name_char": "“{{char}}” no se puede usar en el nombre de un namespace. Usa letras minúsculas a–z, 0–9, . -⁠ _",
+          "invalid_namespace_name_letter": "“{{char}}” ({{script}}, {{code}}) no se puede usar en el nombre de un namespace. Usa letras minúsculas a–z, 0–9, . -⁠ _"
         },
         "leftRail": {
           "code_review_sage": "Code Review Sage",
@@ -4641,8 +4641,8 @@
         "verifying_compiler": "Verificando…",
         "your_papers": "Tus artículos",
         "invalid_project_name": "Los nombres de los artículos se convierten en nombres de carpeta, así que solo pueden contener letras latinas minúsculas (a–z), dígitos (0–9), puntos, guiones y guiones bajos, deben empezar con una letra o un dígito y tener como máximo 64 caracteres.",
-        "invalid_project_name_char": "“{{char}}” no se puede usar en el nombre de un artículo. Usa letras minúsculas a–z, 0–9, . - _",
-        "invalid_project_name_letter": "“{{char}}” ({{script}}, {{code}}) no se puede usar en el nombre de un artículo. Usa letras minúsculas a–z, 0–9, . - _"
+        "invalid_project_name_char": "“{{char}}” no se puede usar en el nombre de un artículo. Usa letras minúsculas a–z, 0–9, . -⁠ _",
+        "invalid_project_name_letter": "“{{char}}” ({{script}}, {{code}}) no se puede usar en el nombre de un artículo. Usa letras minúsculas a–z, 0–9, . -⁠ _"
       },
       "preview": {
         "compile_to_see_the_pdf": "Compila para ver el PDF.",

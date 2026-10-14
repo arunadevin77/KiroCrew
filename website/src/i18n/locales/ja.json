@@ -952,8 +952,8 @@
           "pending": "保留中",
           "read_namespace": "名前空間 {{name}} を読む",
           "invalid_namespace_name": "名前空間の名前はフォルダー名になるため、使用できるのは小文字のラテン文字（a–z）、数字（0–9）、ピリオド、ハイフン、アンダースコアのみです。先頭と末尾は英字か数字にし、2 文字以上 64 文字以内にする必要があります。",
-          "invalid_namespace_name_char": "「{{char}}」は名前空間の名前に使用できません。小文字の a–z、0–9、. - _ を使用してください。",
-          "invalid_namespace_name_letter": "「{{char}}」（{{script}}、{{code}}）は名前空間の名前に使用できません。小文字の a–z、0–9、. - _ を使用してください。"
+          "invalid_namespace_name_char": "「{{char}}」は名前空間の名前に使用できません。小文字の a–z、0–9、. -⁠ _ を使用してください。",
+          "invalid_namespace_name_letter": "「{{char}}」（{{script}}、{{code}}）は名前空間の名前に使用できません。小文字の a–z、0–9、. -⁠ _ を使用してください。"
         },
         "leftRail": {
           "code_review_sage": "Code Review Sage",
@@ -4565,8 +4565,8 @@
         "verifying_compiler": "検証中…",
         "your_papers": "ペーパー",
         "invalid_project_name": "ペーパー名はフォルダー名になるため、使用できるのは小文字のラテン文字（a–z）、数字（0–9）、ピリオド、ハイフン、アンダースコアのみです。先頭は英字か数字にし、64 文字以内にする必要があります。",
-        "invalid_project_name_char": "「{{char}}」はペーパー名に使用できません。小文字の a–z、0–9、. - _ を使用してください。",
-        "invalid_project_name_letter": "「{{char}}」（{{script}}、{{code}}）はペーパー名に使用できません。小文字の a–z、0–9、. - _ を使用してください。"
+        "invalid_project_name_char": "「{{char}}」はペーパー名に使用できません。小文字の a–z、0–9、. -⁠ _ を使用してください。",
+        "invalid_project_name_letter": "「{{char}}」（{{script}}、{{code}}）はペーパー名に使用できません。小文字の a–z、0–9、. -⁠ _ を使用してください。"
       },
       "preview": {
         "compile_to_see_the_pdf": "PDF を表示するようコンパイルします。",

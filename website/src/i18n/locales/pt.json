@@ -996,8 +996,8 @@
           "pending": "pendentes",
           "read_namespace": "Ler o namespace {{name}}",
           "invalid_namespace_name": "Os nomes dos namespaces viram nomes de pasta, então só podem conter letras latinas minúsculas (a–z), dígitos (0–9), pontos, hifens e sublinhados, precisam começar e terminar com uma letra ou um dígito e ter de 2 a 64 caracteres.",
-          "invalid_namespace_name_char": "“{{char}}” não pode ser usado no nome de um namespace. Use letras minúsculas a–z, 0–9, . - _",
-          "invalid_namespace_name_letter": "“{{char}}” ({{script}}, {{code}}) não pode ser usado no nome de um namespace. Use letras minúsculas a–z, 0–9, . - _"
+          "invalid_namespace_name_char": "“{{char}}” não pode ser usado no nome de um namespace. Use letras minúsculas a–z, 0–9, . -⁠ _",
+          "invalid_namespace_name_letter": "“{{char}}” ({{script}}, {{code}}) não pode ser usado no nome de um namespace. Use letras minúsculas a–z, 0–9, . -⁠ _"
         },
         "leftRail": {
           "code_review_sage": "Code Review Sage",
@@ -4641,8 +4641,8 @@
         "verifying_compiler": "A verificar…",
         "your_papers": "Os seus artigos",
         "invalid_project_name": "Os nomes dos artigos viram nomes de pasta, então só podem conter letras latinas minúsculas (a–z), dígitos (0–9), pontos, hifens e sublinhados, precisam começar com uma letra ou um dígito e ter no máximo 64 caracteres.",
-        "invalid_project_name_char": "“{{char}}” não pode ser usado no nome de um artigo. Use letras minúsculas a–z, 0–9, . - _",
-        "invalid_project_name_letter": "“{{char}}” ({{script}}, {{code}}) não pode ser usado no nome de um artigo. Use letras minúsculas a–z, 0–9, . - _"
+        "invalid_project_name_char": "“{{char}}” não pode ser usado no nome de um artigo. Use letras minúsculas a–z, 0–9, . -⁠ _",
+        "invalid_project_name_letter": "“{{char}}” ({{script}}, {{code}}) não pode ser usado no nome de um artigo. Use letras minúsculas a–z, 0–9, . -⁠ _"
       },
       "preview": {
         "compile_to_see_the_pdf": "Compile para ver o PDF.",

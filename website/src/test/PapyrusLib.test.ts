@@ -417,7 +417,7 @@ describe('projectErrorText', () => {
   it('names a refused letter with its script and code point, then the one-clause rule', () => {
     const err = new PapyrusApiError('invalid project name', 400, '', 'invalid_project_name', '论')
     const text = projectErrorText(err)
-    expect(text).toBe('“论” (character, U+8BBA) can’t be used in a paper name. Use lowercase a–z, 0–9, . - _')
+    expect(text).toBe('“论” (character, U+8BBA) can’t be used in a paper name. Use lowercase a–z, 0–9, .\u00a0-\u2060\u00a0_')
     expect(text).not.toContain('invalid project name')
   })
 
@@ -443,7 +443,7 @@ describe('projectErrorText', () => {
   it('names a refused non-letter without a script or code point', () => {
     for (const char of ['/', 'U+202E']) {
       const err = new PapyrusApiError('invalid project name', 400, '', 'invalid_project_name', char)
-      expect(projectErrorText(err)).toBe(`“${char}” can’t be used in a paper name. Use lowercase a–z, 0–9, . - _`)
+      expect(projectErrorText(err)).toBe(`“${char}” can’t be used in a paper name. Use lowercase a–z, 0–9, .\u00a0-\u2060\u00a0_`)
     }
   })
 

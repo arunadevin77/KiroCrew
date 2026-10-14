@@ -88,7 +88,8 @@ The dashboard renders that code as the rule in the user's own language; the Engl
 `error` is for logs. A refused letter is shown with its script and code point
 (`“О” (Cyrillic letter, U+041E)`), because a Cyrillic or Greek capital renders exactly
 like the Latin one the rule allows, and the rule beside it is one clause
-(`Use lowercase a–z, 0–9, . - _`). Pinned by `test/test_papyrus_store.py::TestProjectNameStaysAscii`
+(`Use lowercase a–z, 0–9, . - _`), its `. - _` tail joined by a no-break space between
+the characters and a word joiner after the hyphen so it never wraps mid-list. Pinned by `test/test_papyrus_store.py::TestProjectNameStaysAscii`
 and the `test_create_explains_*` tests in `test/test_papyrus_routes.py`.
 
 ## Security model

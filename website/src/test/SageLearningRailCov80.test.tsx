@@ -34,6 +34,10 @@ import LearningRail from '../apps/code-review-sage/components/LearningRail'
 
 const api = sageApi as unknown as Record<string, ReturnType<typeof vi.fn>>
 
+// Matches rendered text exactly: the default normalizer folds a no-break space
+// into a plain one, which would hide whether the refusal's tail stays joined.
+const EXACT_TEXT = { normalizer: (text: string) => text }
+
 function mount() {
   const qc = new QueryClient({
     defaultOptions: {
@@ -172,7 +176,8 @@ describe('LearningRail create', () => {
     await userEvent.click(await screen.findByRole('button', { name: /New namespace/i }))
     await userEvent.type(screen.getByRole('textbox', { name: /New namespace name/i }), 'Отчет{Enter}')
     const message = await screen.findByText(
-      '“О” (Cyrillic letter, U+041E) can’t be used in a namespace name. Use lowercase a–z, 0–9, . - _',
+      '“О” (Cyrillic letter, U+041E) can’t be used in a namespace name. Use lowercase a–z, 0–9, .\u00a0-\u2060\u00a0_',
+      EXACT_TEXT,
     )
     expect(message).toBeInTheDocument()
     expect(message.textContent!.length).toBeLessThanOrEqual(100)
@@ -186,7 +191,7 @@ describe('LearningRail create', () => {
     mount()
     await userEvent.click(await screen.findByRole('button', { name: /New namespace/i }))
     await userEvent.type(screen.getByRole('textbox', { name: /New namespace name/i }), 'team/a{Enter}')
-    expect(await screen.findByText('“/” can’t be used in a namespace name. Use lowercase a–z, 0–9, . - _')).toBeInTheDocument()
+    expect(await screen.findByText('“/” can’t be used in a namespace name. Use lowercase a–z, 0–9, .\u00a0-\u2060\u00a0_', EXACT_TEXT)).toBeInTheDocument()
     expect(screen.queryByText(/U\+/)).not.toBeInTheDocument()
   })
 

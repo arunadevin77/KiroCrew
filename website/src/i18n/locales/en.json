@@ -556,8 +556,8 @@
           "pending": "pending",
           "read_namespace": "Read namespace {{name}}",
           "invalid_namespace_name": "Namespace names become folder names, so they can use only lowercase Latin letters (a–z), digits (0–9), dots, hyphens and underscores, must start and end with a letter or digit, and must be 2 to 64 characters long.",
-          "invalid_namespace_name_char": "“{{char}}” can’t be used in a namespace name. Use lowercase a–z, 0–9, . - _",
-          "invalid_namespace_name_letter": "“{{char}}” ({{script}}, {{code}}) can’t be used in a namespace name. Use lowercase a–z, 0–9, . - _"
+          "invalid_namespace_name_char": "“{{char}}” can’t be used in a namespace name. Use lowercase a–z, 0–9, . -⁠ _",
+          "invalid_namespace_name_letter": "“{{char}}” ({{script}}, {{code}}) can’t be used in a namespace name. Use lowercase a–z, 0–9, . -⁠ _"
         },
         "leftRail": {
           "code_review_sage": "Code Review Sage",
@@ -3176,8 +3176,8 @@
         "verifying_compiler": "Verifying…",
         "your_papers": "Your papers",
         "invalid_project_name": "Paper names become folder names, so they can use only lowercase Latin letters (a–z), digits (0–9), dots, hyphens and underscores, must start with a letter or digit, and can be at most 64 characters.",
-        "invalid_project_name_char": "“{{char}}” can’t be used in a paper name. Use lowercase a–z, 0–9, . - _",
-        "invalid_project_name_letter": "“{{char}}” ({{script}}, {{code}}) can’t be used in a paper name. Use lowercase a–z, 0–9, . - _"
+        "invalid_project_name_char": "“{{char}}” can’t be used in a paper name. Use lowercase a–z, 0–9, . -⁠ _",
+        "invalid_project_name_letter": "“{{char}}” ({{script}}, {{code}}) can’t be used in a paper name. Use lowercase a–z, 0–9, . -⁠ _"
       },
       "preview": {
         "compile_to_see_the_pdf": "Compile to see the PDF.",

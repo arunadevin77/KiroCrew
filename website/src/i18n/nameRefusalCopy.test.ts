@@ -27,6 +27,13 @@ const CHAR_KEYS = [
 const SCRIPT_LABELS = ['latin', 'greek', 'cyrillic', 'other'] as const
 
 /**
+ * The rule's allowed-punctuation tail, joined so it never wraps mid-list: a
+ * no-break space between the characters, plus a word joiner after the hyphen,
+ * because a line may still break between a hyphen and a no-break space.
+ */
+const JOINED_TAIL = '.\u00a0-\u2060\u00a0_'
+
+/**
  * The longest rendered message a catalog may carry. The full multi-clause rule ran
  * 250 to 380 characters and wrapped to about seven lines in the rail; the one-clause
  * form fits in a little over a hundred in the widest language.
@@ -75,7 +82,8 @@ describe.each(AUTHORED)('name-refusal copy in %s', (_code, { translation }) => {
 
   it.each([...LETTER_KEYS, ...CHAR_KEYS])('states the rule as one clause (%s)', (key) => {
     const value = leaf(translation, key)
-    for (const part of ['a–z', '0–9', '. - _']) expect(value).toContain(part)
+    for (const part of ['a–z', '0–9', JOINED_TAIL]) expect(value).toContain(part)
+    expect(value).not.toMatch(/\. +- +_/)
     // The start, end and length constraints belong to the message shown when no
     // single character is to blame.
     expect(value).not.toMatch(/64/)

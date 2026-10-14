@@ -952,8 +952,8 @@
           "pending": "待处理",
           "read_namespace": "查看 namespace {{name}}",
           "invalid_namespace_name": "namespace 名称会用作文件夹名称，因此只能包含小写拉丁字母（a–z）、数字（0–9）、点、短横线或下划线，必须以字母或数字开头和结尾，长度为 2 到 64 个字符。",
-          "invalid_namespace_name_char": "namespace 名称中不能使用“{{char}}”。只能使用小写 a–z、0–9、. - _。",
-          "invalid_namespace_name_letter": "namespace 名称中不能使用“{{char}}”（{{script}}，{{code}}）。只能使用小写 a–z、0–9、. - _。"
+          "invalid_namespace_name_char": "namespace 名称中不能使用“{{char}}”。只能使用小写 a–z、0–9、. -⁠ _。",
+          "invalid_namespace_name_letter": "namespace 名称中不能使用“{{char}}”（{{script}}，{{code}}）。只能使用小写 a–z、0–9、. -⁠ _。"
         },
         "leftRail": {
           "code_review_sage": "Code Review Sage",
@@ -4477,8 +4477,8 @@
         "verifying_compiler": "正在校验……",
         "your_papers": "你的论文",
         "invalid_project_name": "论文名称会用作文件夹名称，因此只能包含小写拉丁字母（a–z）、数字（0–9）、点、短横线或下划线，必须以字母或数字开头，且最多 64 个字符。",
-        "invalid_project_name_char": "论文名称中不能使用“{{char}}”。只能使用小写 a–z、0–9、. - _。",
-        "invalid_project_name_letter": "论文名称中不能使用“{{char}}”（{{script}}，{{code}}）。只能使用小写 a–z、0–9、. - _。"
+        "invalid_project_name_char": "论文名称中不能使用“{{char}}”。只能使用小写 a–z、0–9、. -⁠ _。",
+        "invalid_project_name_letter": "论文名称中不能使用“{{char}}”（{{script}}，{{code}}）。只能使用小写 a–z、0–9、. -⁠ _。"
       },
       "preview": {
         "compile_to_see_the_pdf": "编译后即可查看 PDF。",
