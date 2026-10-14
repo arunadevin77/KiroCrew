@@ -2854,9 +2854,14 @@ class TestRunIdMinting:
         # collision at whatever width it picked, so none of them may draw.
         assert component_draws == []
 
-        source = pathlib.Path(subagent_module.__file__).read_text(encoding="utf-8")
-        assert source.count("os.urandom(") == 1
-        assert "uuid4()" not in source
+        facade = pathlib.Path(subagent_module.__file__)
+        source = facade.read_text(encoding="utf-8")
+        family = "".join(
+            path.read_text(encoding="utf-8")
+            for path in (facade, *sorted(facade.with_name("subagent_parts").glob("*.py")))
+        )
+        assert family.count("os.urandom(") == 1
+        assert "uuid4()" not in family
         mint = source.split("def _mint_agent_id", 1)[1].split("\n    def ", 1)[0]
         assert "os.urandom(_RUN_ID_HEX_CHARS // 2).hex()" in mint
 

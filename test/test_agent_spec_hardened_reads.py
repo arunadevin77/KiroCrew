@@ -1147,7 +1147,7 @@ _EXPECTED_CALL_SITE_LABELS: dict[str, list[tuple[str, str]]] = {
     # reader refuses as unreadable (refuse) rather than as "no spec"; a denial
     # there belongs to the sub-agent surface that asked to spawn. The second
     # label is the same walk over the parent session's ``<project>/.kiro/agents``.
-    "kiro_crew/subagent.py": [
+    "kiro_crew/subagent_parts/agent_policy.py": [
         ("spawn_available_agents", "subagent"),
         ("spawn_available_agents_project", "subagent"),
     ],

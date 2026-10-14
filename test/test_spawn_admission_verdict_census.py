@@ -197,7 +197,11 @@ def test_every_outcome_on_the_spawn_path_is_accounted_for() -> None:
     release and the wave bookkeeping write ``spawn_run`` outcomes too."""
     root = pathlib.Path(subagent_mod.__file__).parent
     outcomes: set[str] = set()
-    for path in [*sorted((root / "subagent_manager").rglob("*.py")), root / "subagent.py"]:
+    for path in [
+        *sorted((root / "subagent_manager").rglob("*.py")),
+        root / "subagent.py",
+        *sorted((root / "subagent_parts").glob("*.py")),
+    ]:
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if not isinstance(node, ast.Call):
                 continue

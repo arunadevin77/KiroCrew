@@ -1927,6 +1927,10 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         "subagent_manager/monitoring.py",
         "subagent_manager/run.py",
         "subagent_manager/terminal.py",
+        # The owners composed onto that same ``subagent.py`` namespace hold its moved
+        # redaction helpers; they add no transport or audience either.
+        "subagent_parts/agent_policy.py",
+        "subagent_parts/run_output.py",
         # Internal partitions behind the single registered
         # ``apps/builtins/aws_control/backend/backup.py`` boundary, which keeps every
         # outbound archive and label PUT. ``egress_text`` defines the redaction sequence

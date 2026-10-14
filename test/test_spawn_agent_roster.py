@@ -133,7 +133,13 @@ class TestPredicateReadsTheWireCode:
 
         assert spawn_tools.AGENT_NOT_FOUND_CODE is sa.AGENT_NOT_FOUND_CODE
         for module, expected in ((sa, 1), (spawn_tools, 0)):
-            src = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+            path = pathlib.Path(module.__file__)
+            paths = (
+                [path, *sorted(path.with_name("subagent_parts").glob("*.py"))]
+                if module is sa
+                else [path]
+            )
+            src = "".join(p.read_text(encoding="utf-8") for p in paths)
             assert src.count('"agent_not_found"') == expected, (
                 f"{module.__name__} respells the refusal code; import "
                 "subagent.AGENT_NOT_FOUND_CODE instead"
@@ -261,7 +267,13 @@ class TestSpawnListUsesTheSameFilter:
         default = inspect.signature(sa.visible_agent_names).parameters["exclude"].default
         assert default is sa.UNADVERTISED_AGENTS
         for module in (sa, spawn_tools):
-            src = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+            path = pathlib.Path(module.__file__)
+            paths = (
+                [path, *sorted(path.with_name("subagent_parts").glob("*.py"))]
+                if module is sa
+                else [path]
+            )
+            src = "".join(p.read_text(encoding="utf-8") for p in paths)
             expected = 1 if module is sa else 0
             for reserved in (
                 "kirocrew-conductor",

@@ -58,11 +58,11 @@ Verified at `c4f253891` on 2026-08-22.
 
 ### 2.1 Strong lifecycle invariants exist, but they are concentrated
 
-`SubagentManager` begins at `src/kiro_crew/subagent.py:1344` and the module is
+`SubagentManager` lives in `src/kiro_crew/subagent.py`, and the module is
 6,415 lines. Its constructor owns process execution, approval callbacks,
 in-memory run/task registries, the admission queue, batch accounting, terminal
 report tasks, follow-up watchers, conversation retention, and the periodic
-reaper (`subagent.py:1347-1478`). The public `spawn()` path then handles identity,
+reaper (`SubagentManager.__init__`). The public `spawn()` path then handles identity,
 admission, approval, queueing, persistence, event publication, and task creation
 (`subagent.py`: `spawn`, `_announce_rejection`, `_drain_queue`,
 `_spawn_with_approval`, and `_log_spawned`).

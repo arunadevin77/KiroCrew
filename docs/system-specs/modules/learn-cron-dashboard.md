@@ -3084,7 +3084,7 @@ body — which the store keeps VERBATIM so the row stays diagnosable after the
 process that failed is gone. `handlers/tasks._scrub_prose` runs
 `security.redact_and_truncate` over every string leaf, walking nested dicts and
 lists (a credential inside a signal dict is the same leak), which is the
-composition `subagent.py`'s `_redact` and `taskrunner._execute_tasks` spell for
+composition `subagent_parts/run_output.py`'s `_redact` and `taskrunner._execute_tasks` spell for
 the same strings: **exfiltration URLs first, then credentials.** That order is
 load-bearing — a URL whose query IS the credential is what the URL rewriter
 exists for and it removes the whole URL, while credentials-first leaves

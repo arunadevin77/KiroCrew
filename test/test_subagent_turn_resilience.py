@@ -2554,6 +2554,7 @@ def test_no_raw_cancel_outside_chokepoint():
     source_root = Path(subagent_mod.__file__).resolve().parent
     source_paths = [Path(subagent_mod.__file__).resolve()]
     source_paths.extend(sorted((source_root / "subagent_manager").glob("*.py")))
+    source_paths.extend(sorted((source_root / "subagent_parts").glob("*.py")))
     raw_sites = [
         (path.relative_to(source_root).as_posix(), i + 1, line.strip())
         for path in source_paths

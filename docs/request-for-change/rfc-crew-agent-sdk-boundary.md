@@ -1757,7 +1757,7 @@ reopens it.
    DECIDED: a `ChildAttribution | None` value object,** non-`None` only on
    subagent-related events.
    Measured rather than assumed. Outside `acp/` and `providers/`, the three
-   fields have **10 references across 4 files**: `dashboard/chat_runner.py:6624`; `subagent.py:1719`;
+   fields have **10 references across 4 files**: `dashboard/chat_runner.py:6624`; `subagent.py`;
    `messaging/driver.py:468`; plus two comment lines. `mcp_identity_ambiguous`
    has **zero** external readers. The 466-usage figure in §2.1 counts the whole
    `EVENT_*` / `STOP_REASON_*` vocabulary; almost none of it reads attribution.

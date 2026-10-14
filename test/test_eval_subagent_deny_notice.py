@@ -754,6 +754,7 @@ _SUBAGENT_MODULES = [
     *sorted(
         path.relative_to(_SRC).as_posix() for path in (_SRC / "subagent_manager").rglob("*.py")
     ),
+    *sorted(path.relative_to(_SRC).as_posix() for path in (_SRC / "subagent_parts").glob("*.py")),
 ]
 
 

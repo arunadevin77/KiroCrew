@@ -737,7 +737,7 @@ detail; this table is only an index.
 | Session manager (pool, expiry, compaction) | `src/kiro_crew/session.py` | [session.md](../system-specs/modules/session.md) |
 | Side conversations | `src/kiro_crew/dashboard/side_state.py` | [side.md](../system-specs/modules/side.md) |
 | Slack gateway and handler | `src/kiro_crew/slack/` | [slack-gateway.md](../system-specs/modules/slack-gateway.md) |
-| Subagents (parallel background agents) | `src/kiro_crew/subagent.py` | [subagent.md](../system-specs/modules/subagent.md) |
+| Subagents (parallel background agents) | `src/kiro_crew/subagent.py`, `subagent_parts/`, `subagent_manager/` | [subagent.md](../system-specs/modules/subagent.md) |
 | Task state machine | `src/kiro_crew/task.py` | [task.md](../system-specs/modules/task.md) |
 | TaskRunner (spec to plan to execution) | `src/kiro_crew/taskrunner.py` | [taskrunner.md](../system-specs/modules/taskrunner.md) |
 | Themes | `src/kiro_crew/dashboard/handlers/themes.py` | [themes.md](../system-specs/modules/themes.md) |
