@@ -114,10 +114,11 @@ export function CardChanges({ changes }: { changes: CardChange[] }) {
           ) : (c.before !== undefined || c.after !== undefined) && (
             <>
               <span className="inline-flex max-w-full flex-wrap items-baseline gap-x-1.5" data-testid="change-card-value">
-                {c.before !== undefined && <span className="text-muted [overflow-wrap:anywhere]">{changeValue(c, c.before)}</span>}
+                {/* pre-wrap: a value is shown as approved, so runs of spaces must not collapse. */}
+                {c.before !== undefined && <span className="whitespace-pre-wrap text-muted [overflow-wrap:anywhere]">{changeValue(c, c.before)}</span>}
                 {c.before !== undefined && <span aria-hidden="true" className="text-muted">→</span>}
                 {c.before !== undefined && <span className="sr-only">{i18nT('components.changeCards.becomes')}</span>}
-                {c.after !== undefined && <span className="font-medium [overflow-wrap:anywhere]">{changeValue(c, c.after)}</span>}
+                {c.after !== undefined && <span className="whitespace-pre-wrap font-medium [overflow-wrap:anywhere]">{changeValue(c, c.after)}</span>}
               </span>
               {changeHint(c) && (
                 <span className="block text-[12px] leading-4 text-muted" data-testid="change-card-hint">{changeHint(c)}</span>

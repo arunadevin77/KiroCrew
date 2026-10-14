@@ -25,6 +25,7 @@ from kiro_crew.dashboard import change_cards as cards
 from kiro_crew.dashboard.change_cards import CardError, CardStore
 from kiro_crew.dashboard.handlers import change_cards as routes
 from kiro_crew.dashboard.state import _ChatSlot
+from kiro_crew.testing.wait import async_wait_until, await_until
 
 REPO = Path(__file__).resolve().parents[1]
 SECRET_VALUE = "sk-live-DO-NOT-STORE-0123456789"
@@ -2751,6 +2752,170 @@ def test_a_capability_undo_runs_its_second_step():
     assert asyncio.run(cards.resumed_undo_is_stale(rec, 1, state=None, app=None)) is False
 
 
+# ── an mcp.share card re-reads what sharing starts before it turns sharing on ──
+
+_SHARE_BEFORE = {
+    "exists": True,
+    "can_share": True,
+    "shared": False,
+    "share_blocked": None,
+    "launch_commands": ["/opt/slack --stdio"],
+    "launch_env_lines": [],
+    "expected_launch": "a" * 64 + ":" + "b" * 64,
+    "sharing_on": False,
+    "other_marked": ["chorus-mcp"],
+    "other_launches": [
+        {"name": "chorus-mcp", "launches": [{"command": "/opt/chorus --stdio", "env": []}]}
+    ],
+}
+
+
+def _share_world(world, monkeypatch, store, *, after_share=None, whole_reads=None):
+    """A card over fake stub/enable routes; ``now`` is the state every reader sees."""
+    import copy as _copy
+
+    now = _copy.deepcopy(_SHARE_BEFORE)
+
+    async def read_state(kind, params, evidence, *, state, app):
+        assert kind == catalog.KIND_MCP_SHARE
+        return _copy.deepcopy(now)
+
+    def whole_snapshot(name, *, whole=False, state=None):
+        assert whole and name == "slack-mcp"
+        if whole_reads is not None:
+            whole_reads.append(name)
+            if len(whole_reads) == 1 and getattr(whole_reads, "fail_first", False):
+                raise OSError("transient read")
+        return _copy.deepcopy(now)
+
+    monkeypatch.setattr(cards, "read_state", read_state)
+    monkeypatch.setattr(cards, "_mcp_share_snapshot", whole_snapshot)
+
+    async def stub(request):
+        body = await request.json()
+        world.calls.append(("POST", "/api/mcp-gateway/servers/stub"))
+        now["shared"] = bool(body["stub"])
+        if after_share is not None:
+            after_share(now)
+        return web.json_response({"ok": True})
+
+    async def enable(request):
+        body = await request.json()
+        world.calls.append(("POST", "/api/mcp-gateway/enable"))
+        now["sharing_on"] = bool(body["enabled"])
+        return web.json_response({"ok": True})
+
+    app = web.Application(middlewares=[_fake_auth, routes.change_card_middleware])
+    app["state"] = FakeState(store)
+    routes.register_change_card_routes(app)
+    app.router.add_post("/api/mcp-gateway/servers/stub", stub)
+    app.router.add_post("/api/mcp-gateway/enable", enable)
+    params = catalog.validate_params(
+        catalog.KIND_MCP_SHARE, {"server": "slack-mcp", "shared": True}
+    )
+    preview = catalog.build_preview(catalog.KIND_MCP_SHARE, params, _SHARE_BEFORE, {})
+    card = store.propose(
+        slot_key=SLOT,
+        session_key=SK,
+        kind=catalog.KIND_MCP_SHARE,
+        params=params,
+        reason="share it",
+        preview=preview,
+        before=_SHARE_BEFORE,
+        context={},
+    )
+    return app, card
+
+
+def _drive_share(app, card, *, retry_step1=False):
+    async def main():
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            plan = card["plan"]["apply"]
+            assert [s["path"] for s in plan] == [
+                "/api/mcp-gateway/servers/stub",
+                "/api/mcp-gateway/enable",
+            ]
+            statuses = []
+            r0 = await client.post(
+                plan[0]["path"], json=plan[0]["body"], headers=_card_headers(card)
+            )
+            statuses.append(r0.status)
+            for _ in range(2 if retry_step1 else 1):
+                r1 = await client.post(
+                    plan[1]["path"], json=plan[1]["body"], headers=_card_headers(card, step=1)
+                )
+                code = (
+                    (await r1.json()).get("code") if r1.content_type == "application/json" else None
+                )
+                statuses.append((r1.status, code))
+            if routes._BACKGROUND:
+                await asyncio.gather(*list(routes._BACKGROUND))
+            return statuses
+        finally:
+            await client.close()
+
+    return asyncio.run(main())
+
+
+def test_an_unchanged_share_card_turns_sharing_on(world, monkeypatch, tmp_path):
+    store = CardStore(tmp_path / "c.json")
+    app, card = _share_world(world, monkeypatch, store)
+
+    statuses = _drive_share(app, card)
+
+    assert statuses == [200, (200, None)]
+    assert world.calls == [
+        ("POST", "/api/mcp-gateway/servers/stub"),
+        ("POST", "/api/mcp-gateway/enable"),
+    ]
+    assert store.get(card["id"])["status"] == "applied"
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        lambda now: now["other_launches"][0]["launches"][0].update(command="/opt/evil"),
+        lambda now: now["other_marked"].append("grasp-mcp"),
+        lambda now: now.update(other_launches=None),
+        lambda now: now.update(expected_launch="c" * 64 + ":" + "d" * 64),
+    ],
+    ids=["other-command", "roster", "unreadable", "target-launch"],
+)
+def test_a_share_card_never_turns_sharing_on_after_a_drift(world, monkeypatch, tmp_path, drift):
+    """Between the share and the switch, what sharing would start moved: refuse step 1."""
+    store = CardStore(tmp_path / "c.json")
+    app, card = _share_world(world, monkeypatch, store, after_share=drift)
+
+    # The second press of step 1 is answered from the record, never the route.
+    statuses = _drive_share(app, card, retry_step1=True)
+
+    assert statuses == [200, (409, "changed_since_preview"), (200, None)]
+    assert ("POST", "/api/mcp-gateway/enable") not in world.calls
+    rec = store.get(card["id"])
+    assert rec["status"] == "partial"
+    assert rec["error"]["code"] == "changed_since_preview"
+
+
+def test_a_share_card_whose_recheck_could_not_read_retries_the_enable(world, monkeypatch, tmp_path):
+    """A read that raised admitted nothing; the next press re-checks and proceeds."""
+
+    class Reads(list):
+        fail_first = True
+
+    reads = Reads()
+    store = CardStore(tmp_path / "c.json")
+    app, card = _share_world(world, monkeypatch, store, whole_reads=reads)
+
+    statuses = _drive_share(app, card, retry_step1=True)
+
+    assert statuses[0] == 200 and statuses[1][0] == 500 and statuses[2] == (200, None)
+    assert len(reads) == 2
+    assert world.calls.count(("POST", "/api/mcp-gateway/enable")) == 1
+    assert store.get(card["id"])["status"] == "applied"
+
+
 # ── a capability apply whose PUT never lands applies nothing and offers no Undo ──
 
 _CAP_PARAMS = {
@@ -4311,3 +4476,64 @@ def test_a_create_cards_after_read_finds_its_schedule_at_its_own_step(
     got = asyncio.run(cards.read_state("crewmate.create", p, evidence, state=state, app=None))
     assert asked == [job_id]
     assert got["schedule_exists"] is True
+
+
+@pytest.mark.parametrize("field", ["serving", "other_marked"])
+def test_share_enable_rechecks_after_waiting_for_apply_lock(world, monkeypatch, tmp_path, field):
+    from kiro_crew.dashboard.handlers import mcp as mcp_mod
+
+    class ObservedLock:
+        def __init__(self):
+            self.lock = asyncio.Lock()
+            self.waiting = asyncio.Event()
+
+        async def __aenter__(self):
+            self.waiting.set()
+            await self.lock.acquire()
+
+        async def __aexit__(self, *args):
+            self.lock.release()
+
+    store = CardStore(tmp_path / "c.json")
+    app, card = _share_world(world, monkeypatch, store)
+    original = cards._mcp_share_snapshot
+    moved = False
+
+    def snapshot(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if moved:
+            value[field] = ["different-mcp"]
+        return value
+
+    monkeypatch.setattr(cards, "_mcp_share_snapshot", snapshot)
+
+    async def main():
+        nonlocal moved
+        lock = ObservedLock()
+        monkeypatch.setattr(mcp_mod, "_MCP_GATEWAY_APPLY_LOCK", lock)
+        async with TestClient(TestServer(app)) as client:
+            plan = card["plan"]["apply"]
+            first = await client.post(
+                plan[0]["path"], json=plan[0]["body"], headers=_card_headers(card)
+            )
+            assert first.status == 200
+            await lock.lock.acquire()
+            task = asyncio.ensure_future(
+                client.post(
+                    plan[1]["path"], json=plan[1]["body"], headers=_card_headers(card, step=1)
+                )
+            )
+            try:
+                await async_wait_until(lambda: lock.waiting.is_set() or task.done())
+                assert lock.waiting.is_set(), "enable bypassed the authoritative apply lock"
+                moved = True
+            finally:
+                lock.lock.release()
+                response = await await_until(task)
+            assert response.status == 409
+            assert (await response.json())["code"] == "changed_since_preview"
+            assert ("POST", "/api/mcp-gateway/enable") not in world.calls
+            if routes._BACKGROUND:
+                await await_until(asyncio.gather(*list(routes._BACKGROUND)))
+
+    asyncio.run(main())

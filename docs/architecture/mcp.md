@@ -952,7 +952,11 @@ rides on it. **Share all** reads every candidate's launch the same way, lists
 them all, and shares nothing until the button under that list is pressed; each
 share is pinned to the launch the list showed, and one whose launch cannot be
 displayed whole is left out. The `mcp.share` change card shows the launch on
-the card and pins it.
+the card and pins it. Launch resolution uses one strict agent-directory enumeration
+for both the rewrite fingerprint and the actual pass. A listing error marks the pass
+incomplete and leaves existing overlays and sidecars untouched; it is never treated
+as an empty directory or cached as a successful empty pass. A later successful pass
+resolves the same sources normally.
 The leakage classes return 409 `share_refused`
 (`launch_approval.share_refusal`: credential vending, `POOLING_REQUIRES_TENANT_NONCE`,
 `kirocrew-computer`), and a launch set over the store's caps returns 409

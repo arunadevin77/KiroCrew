@@ -1023,7 +1023,53 @@ until it is placed in one. `dashboard.tailscale.pin_scope`, which the route take
 the value the loader applies (`config.sections.effective_pin_scope`: case, spaces,
 fallback to `node`). A stored card whose `risk` differs from the one its kind and params
 now derive, because a setting was reclassified, keeps loading with the newly derived
-`risk` rather than being dropped; every other derived field must still match. A reminder that runs once is a `schedule.create` card with `at` (a local
+`risk` rather than being dropped; every other derived field must still match. An `mcp.share`
+card (`{server, shared}`) shares one MCP server across chats in one press through the
+same `POST /api/mcp-gateway/servers/stub` the Settings button sends. Sharing is
+`code_exec`: the shared copy runs outside the chat sandbox, so the card lists each
+`Command` it approves and each declared env line as a `Setting` row (the value, or its
+hidden digest), and its apply step carries the
+`expected_launch` of that display, so a launch that moved before the press is refused.
+A launch it cannot display refuses the card (`launch_unreadable`). Stopping is
+`tighten`. Undo of a share stops sharing, and turns page-wide sharing back off when the
+card turned it on; a stop offers no Undo (`reshare_needs_review`),
+because sharing again would approve whatever launch was read before the stop, possibly
+one an agent edited. Its primary button names the action ("Share server" / "Stop
+sharing"). Commands are shown whole, never shortened. It refuses the leakage classes
+(`share_refused`, one line naming the class) and shows a `Saves` row only when the
+gateway measured the per-chat copies running now. With page-wide sharing off, a
+sharing card also turns it on (a second apply step, `POST /api/mcp-gateway/enable`)
+and shows that as a `Sharing Off -> On` row. Turning it on also shares every other
+marked server whose launch the gateway would run then (resolved with sharing on, and
+approved or the managed `kirocrew-*` invocation); a marked server with no such launch
+stays one per chat and is not named. Each server the press shares gets one
+`field: "server"` row followed by every `Command` and `Setting` of its launches, shown
+whole like the card's own; the title names them all and the primary button counts
+them ("Share 3 servers"). Another marked server whose launch cannot be read, or not
+shown whole, refuses the card (`launch_unreadable`), and so does a resolution that may
+have missed a launch: a marked server past the approval store's caps
+(`ResolvedLaunches.over_cap`), or a pass that could not read an agent spec, the global
+`mcp.json` or the agents directory (the rewriter's `live_incomplete`, surfaced as
+`ResolvedLaunches.complete` false; bad JSON is not a failed read, since the gateway
+injects nothing from it either). The same holds for the shared server's
+own launch, which is then not pinned. These launches are part of the
+card's snapshot, so a moved roster or launch refuses the press as
+`changed_since_preview`. The enable step is held to the preview again just before it
+runs (`resumed_apply_is_stale`): the whole snapshot is re-read and must equal the
+preview's with only the server shared, or the step is refused `changed_since_preview`
+without reaching the route and the card settles as partial. The snapshot's `serving`
+comes from `DashboardState._mcp_gateway_serving`, an explicit read callback over the
+orchestrator's `_mcp_stub_servers_started`, the exact set enable re-emits. Pending
+removals remain in `other_marked` and their launches are displayed; pending additions
+are not claimed as running. `other_configured` separately pins the next-start intent.
+An unknown serving set or a main target absent from it refuses the share card rather
+than falling back to configuration, even when sharing is already enabled. Stopping
+sharing does not need a launch preview. The enable card step holds
+`_MCP_GATEWAY_APPLY_LOCK` across the fresh snapshot check and the handler's persist/apply;
+the handler reuses that lock, and cancellation drains the whole step before release.
+Thus a configured or serving set that changes while the request waits refuses before
+the enable route runs. Stub edits still wait for the next gateway start; this check
+never applies them early. A reminder that runs once is a `schedule.create` card with `at` (a local
 ISO-8601 date-time, no offset) instead of `cron_expr`. `search_docs` searches and pages
 through `kiro_crew/docs/*.md` only, by the directory's own listing, and `find_ui` searches
 the packaged dashboard location index

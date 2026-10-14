@@ -273,7 +273,8 @@ class LaunchApprovals:
     #: refusals and derived env.
     full_pass: bool = False
     #: Set when a pass kept at least one agent's previous overlay without
-    #: admitting the launches behind it, so :attr:`launch_identities` is not
+    #: admitting the launches behind it, could not read the global
+    #: ``mcp.json``, or found no agents directory, so :attr:`launch_identities` is not
     #: the full set of launches live after this pass. Retirement of a stale
     #: pair needs the full set, so it waits for a pass that has it.
     live_incomplete: bool = False

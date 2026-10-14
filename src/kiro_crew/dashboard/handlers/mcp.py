@@ -8,6 +8,7 @@ import logging
 import re
 import time
 from collections.abc import Collection, Mapping
+from contextlib import nullcontext
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -4040,7 +4041,14 @@ async def api_mcp_gateway_enable(request: web.Request) -> web.Response:
         # toggles cannot interleave (write A, write B, apply B, apply A) and leave
         # persisted config.json diverged from live broker state. The config lock is
         # nested inside only for the read-modify-write of config.json itself.
-        async with _MCP_GATEWAY_APPLY_LOCK:
+        # Only the card middleware can place this object on the request; it
+        # holds the same lock across its snapshot check and this transaction.
+        lock = (
+            nullcontext()
+            if request.get("mcp_gateway_apply_lock") is _MCP_GATEWAY_APPLY_LOCK
+            else _MCP_GATEWAY_APPLY_LOCK
+        )
+        async with lock:
             async with _get_config_lock():
                 # The overlay is user-owned and read-only here; its verdict does not
                 # depend on config.json, so it is taken before the locked write.

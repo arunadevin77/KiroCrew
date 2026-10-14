@@ -6283,6 +6283,7 @@ class DashboardState:
         # Read by the /api/mcp-gateway/* handlers off request.app['state'].
         self._mcp_gateway_manager: Any = None  # GatewayManager | None
         self._mcp_gateway_apply: Any = None  # async (enabled: bool) -> dict
+        self._mcp_gateway_serving: Any = None  # () -> frozenset[str]; None means unknown
         self._mcp_gateway_apply_stub: Any = None  # async () -> dict
         self._mcp_resolve_refresh: Any = None  # async () -> dict
         # Read by the restart handler: stops the broker this gateway owns before

@@ -20,7 +20,9 @@ settings-page route with ``X-Card-Id`` / ``X-Card-Revision`` / ``X-Card-Op`` /
 the dashboard owner (an internal-secret caller, an app token or an agent is a 403
 whatever it claims), requires the request to equal the plan step exactly, re-reads
 the current state before the first write (``409 changed_since_preview``, or
-``changed_since_apply`` for an undo), runs the real handler unchanged, and records
+``changed_since_apply`` for an undo) and again before a later step that acts on
+more than the earlier ones changed (an ``mcp.share`` card's enable step), runs the
+real handler unchanged, and records
 the step only from that handler's own 2xx response.
 
 Every owner mutation through those routes -- with or without a card -- also
@@ -987,6 +989,20 @@ async def change_card_middleware(
         if 200 <= resp.status < 300:
             _record_memory(route, dict(request.match_info), body, before, "via settings page")
         return resp
+    if route == ("POST", "/api/mcp-gateway/enable"):
+        from kiro_crew.dashboard.chat_utils import run_to_completion
+        from kiro_crew.dashboard.handlers.mcp import _MCP_GATEWAY_APPLY_LOCK
+
+        async def locked_step(route: tuple[str, str], card_id: str) -> web.StreamResponse:
+            async with _MCP_GATEWAY_APPLY_LOCK:
+                request["mcp_gateway_apply_lock"] = _MCP_GATEWAY_APPLY_LOCK
+                try:
+                    return await _run_card_step(request, handler, route, card_id)
+                finally:
+                    request.pop("mcp_gateway_apply_lock", None)
+
+        # Keep the lock until the write AND apply finish even if the client leaves.
+        return await run_to_completion(locked_step(route, card_id))
     return await _run_card_step(request, handler, route, card_id)
 
 
@@ -1046,8 +1062,13 @@ async def _run_card_step(
                 current = await cards.read_state(
                     rec["kind"], rec["params"], [], state=state, app=request.app
                 )
-                if cards.canonical(cards.comparable_state(rec["kind"], current)) != cards.canonical(
-                    cards.comparable_state(rec["kind"], rec["before"])
+                kind = rec["kind"]
+                # Key-result readings and the mcp.share RSS reading both move
+                # between preview and press without being a change.
+                if cards.canonical(
+                    cards.comparable_state(kind, cards.comparable_snapshot(kind, current))
+                ) != cards.canonical(
+                    cards.comparable_state(kind, cards.comparable_snapshot(kind, rec["before"]))
                 ):
                     store.abort_step(rec)
                     unsaved = await _published_or_refusal(request, rec, revert)
@@ -1076,6 +1097,29 @@ async def _run_card_step(
                         "changed_since_apply",
                         "this changed after the card was applied; undo refused",
                     )
+        elif op == catalog.OP_APPLY and await cards.resumed_apply_is_stale(
+            rec, index, state=state, app=request.app
+        ):
+            # Recorded as this step's failure, so the card settles as partial
+            # and a second press replays that verdict; the route never runs.
+            unsaved = await _record_failed_step(
+                request,
+                rec,
+                op,
+                index,
+                409,
+                {
+                    "code": "changed_since_preview",
+                    "error": "this changed since the card was shown; preview it again",
+                },
+            )
+            if unsaved is not None:
+                return unsaved
+            return _deny(
+                409,
+                "changed_since_preview",
+                "this changed since the card was shown; preview it again",
+            )
         elif op == catalog.OP_UNDO and await cards.resumed_undo_is_stale(
             rec, index, state=state, app=request.app
         ):
