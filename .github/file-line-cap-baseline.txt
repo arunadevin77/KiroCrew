@@ -336,7 +336,6 @@
 2543 test/test_mcp_launch_approval.py
 2552 test/test_mcp_shared.py
 5390 test/test_md_notebook.py
-3980 test/test_meetings_routes.py
 2629 test/test_member_dashboard_package_route.py
 3249 test/test_member_essential_context.py
 2044 test/test_member_session_control.py
@@ -369,7 +368,6 @@
 2968 test/test_queue_depth_reconcile.py
 2147 test/test_recovery_l1_chat_runner.py
 5775 test/test_remote_crew_chaining.py
-3966 test/test_remove_slot_for_history_key.py
 4825 test/test_runtime_reconcile.py
 3193 test/test_sandbox_absent_ceiling_seal.py
 4933 test/test_sandbox_argv.py

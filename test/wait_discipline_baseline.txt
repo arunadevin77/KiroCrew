@@ -266,7 +266,8 @@
  3 test_mcp_shared_deferred_tools.py
  7 test_md_notebook.py
  1 test_meetings_audio_import.py
-12 test_meetings_routes.py
+ 8 test_meetings_routes.py
+ 4 test_meetings_routes_lifecycle.py
  3 test_member_memory_mcp_routing.py
  5 test_member_memory_runtime.py
  1 test_members_eventlog_wiring.py

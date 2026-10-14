@@ -368,7 +368,7 @@ the second half of `drain_and_clear`.
 Guarded by AST checks over the route modules: no `ACTIVE.clear()` outside the
 draining helper, and no handler calling `ACTIVE.set()` without a drain — so a new
 teardown OR replace path cannot quietly reintroduce the loss.
-`test_meetings_routes.py::TestTeardownDrainsBeforeClearing`.
+`test_meetings_routes_lifecycle.py::TestTeardownDrainsBeforeClearing`.
 
 **Dispatch is in-process.** Upstream POSTed each batch back to its own gateway
 over authenticated loopback HTTP. Here the routes live ON the gateway, so a batch
@@ -766,7 +766,9 @@ internal-git update-check cron was deleted (a builtin versions with the package)
 `test_meetings_session.py` (dispatcher, breaker, lifecycle, prompts),
 `test_meetings_providers.py` (both registries, the `.ics` parser,
 scheme/address refusals), `test_meetings_routes.py` (the HTTP contract,
-validation, redaction, the enable gate), `test_meetings_calendar_poller.py` (the
+validation, redaction, the enable gate; the lifecycle routes and teardown
+invariants are in `test_meetings_routes_lifecycle.py`, the task and calendar
+routes in `test_meetings_routes_tasks.py`), `test_meetings_calendar_poller.py` (the
 due-event rule, a tick against a real `.ics`, pre-creation as init-not-start, the
 loop surviving a bad tick, the settings round trip), `test_meetings_minutes.py` (the
 editable minutes: sidecar ownership, the read overlay, staleness, the widget
