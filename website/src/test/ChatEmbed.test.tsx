@@ -459,6 +459,35 @@ describe('ChatEmbed', () => {
       expect(mockGet).toHaveBeenCalled()
     })
 
+    it.each([
+      { name: 'a fresh session', messages: [] },
+      { name: 'a resumed session', messages: [{ role: 'user', content: 'Earlier turn', cls: '' }] },
+    ])('replaces the untitled label after polling $name without remounting', async ({ messages }) => {
+      mockGet.mockResolvedValue({ messages, running: false })
+      const slotKey = 'coder-untitled'
+      await act(async () => {
+        renderWithProviders(<ChatEmbed slotKey={slotKey} />)
+      })
+      expect(mockGet).toHaveBeenCalledTimes(1)
+      const header = screen.getByTestId('chat-embed-title')
+      expect(header).toHaveTextContent(/^New session$/)
+      expect(header).toHaveAttribute('title', slotKey)
+      expect(screen.queryByText(slotKey)).toBeNull()
+
+      mockGet.mockResolvedValue({ messages, running: false, title: 'Trip planning' })
+      // Step the real query scheduler until its next poll, without copying its cadence.
+      for (let step = 0; step < 20 && mockGet.mock.calls.length < 2; step++) {
+        await act(async () => { await vi.advanceTimersToNextTimerAsync() })
+      }
+      expect(mockGet).toHaveBeenCalledTimes(2)
+      // React Query delivers the settled result through its notification timer.
+      await act(async () => { await vi.advanceTimersToNextTimerAsync() })
+      expect(screen.getByTestId('chat-embed-title')).toBe(header)
+      expect(header).toHaveTextContent(/^Trip planning$/)
+      expect(screen.queryByText('New session')).toBeNull()
+      expect(screen.queryByText(slotKey)).toBeNull()
+    })
+
     it('shows streaming indicator when running', async () => {
       mockGet.mockResolvedValue({ messages: [], running: true, title: 'My Session' })
 

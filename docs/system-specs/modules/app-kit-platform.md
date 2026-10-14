@@ -8,6 +8,15 @@ the publish-facing policy in
 [../../app-kit/publishing-guide.md](../../app-kit/publishing-guide.md); this
 document is the behaviour and the one-way doors.
 
+## Embedded chat title
+
+A framed `ChatEmbed` with no title displays the localized "New session" label,
+never its internal slot key as visible text. This also applies to a resumed
+untitled conversation: the label is a fallback, not a claim about its age.
+The next settled title poll replaces that label on the same mounted header.
+The slot key remains the header's hover title for debugging; `frameless` embeds
+have no title strip. `ChatEmbed.test.tsx` covers fresh and resumed title updates.
+
 ## Scoped frontend HTTP transport
 
 `useAppApi()` exposes `raw(path, RequestInit)`, `request(path, RequestInit)` and
