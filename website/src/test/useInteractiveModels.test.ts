@@ -252,7 +252,11 @@ describe('interactive model visibility', () => {
     const chatPage = readFileSync(resolve(root, 'pages/ChatPage.tsx'), 'utf8')
     const chatPane = readFileSync(resolve(root, 'components/ChatPane.tsx'), 'utf8')
     const bulkSwitcher = readFileSync(resolve(root, 'pages/ChatSidebar.tsx'), 'utf8')
-    const settings = readFileSync(resolve(root, 'pages/settings/ChatPanel.tsx'), 'utf8')
+    // Settings ▸ Chat is a facade over sibling owners: read them as one text.
+    const settings = [
+      'ChatPanel.tsx', 'ChatPanelLinkPatternsEditor.tsx', 'chatPanelOptions.ts',
+      'useChatPanelDashboard.ts', 'useChatPanelModels.ts', 'useChatPanelTypedFields.ts',
+    ].map(file => readFileSync(resolve(root, 'pages/settings', file), 'utf8')).join('\n')
     expect(chatPage).toContain('const availableModels = effectiveModels')
     expect(chatPage).toContain('useFilteredDropdown(modelPickerModels)')
     expect(chatPage).toContain('filterInteractiveModels(effectiveModels')

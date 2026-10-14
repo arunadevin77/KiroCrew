@@ -188,6 +188,11 @@ export const PANEL_TAB_MAP: Record<string, PanelTarget> = {
   // would mean the extractor never looks at the file at all.
   'DecisionsPointPanel.tsx': 'developer',
   'AboutPanel.tsx': 'about',
+  // AboutPanel.tsx's owners (the in-app update step-up and request card; a gateway
+  // install's Updates card body). Mapped with it so a control either one gains stays
+  // indexed on the About tab.
+  'AboutPanelUpdateFlow.tsx': 'about',
+  'AboutPanelGatewayUpdate.tsx': 'about',
   'SttSettings.tsx': 'voice',
   // The `instances` tab mounts RemoteCrewPanel (SettingsPage.tsx), which also
   // renders InstancesPanel.tsx's AddInstanceForm — both files map to the same
@@ -203,6 +208,10 @@ export const PANEL_TAB_MAP: Record<string, PanelTarget> = {
   // yields no entry today; mapped so a static control added to it lands on the
   // Model page's deep link.
   'AppModelsSection.tsx': { tab: 'chat', params: { sub: 'models' } },
+  // The link-pattern rule editor ChatPanel's Transcript page mounts. Its row is indexed
+  // from the `<LinkPatternsEditor>` use in ChatPanel.tsx; mapped so a static control added
+  // to the editor lands on the Transcript page's deep link.
+  'ChatPanelLinkPatternsEditor.tsx': { tab: 'chat', params: { sub: 'transcript' } },
 }
 
 /** Panels whose controls sit in `case '<sub>':` pages of a SettingsSubNav;

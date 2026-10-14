@@ -80,6 +80,8 @@ const UNMAPPED_PANELS: Record<string, string> = {
   'ImportPanel.tsx': 'single action button launching the import wizard; no persistent settings',
   'InstanceFormFields.tsx': 'per-instance CRUD form fields (add/edit crew), not global settings',
   'McpManagement.tsx': 'mounted only on the standalone Developer page — a settings deep link would be dead',
+  'McpManagementAssessment.tsx': "McpManagement.tsx's read-only Sharing assessment view, on the standalone Developer page — a settings deep link would be dead",
+  'McpManagementLaunchReview.tsx': "McpManagement.tsx's launch review and refused-row panels, on the standalone Developer page — a settings deep link would be dead",
   'MobileLoginCard.tsx': 'mint-a-sign-in-link action card; the link it returns is a one-time credential, not a persistent setting',
   'OptionalSdkCard.tsx': 'read-only install-command card the Feishu, Teams and WhatsApp panels mount when their optional SDK is missing; zero controls, only a copy button',
   'PostureDisclosure.tsx': "read-only disclosure rows for SecurityPanel's posture section (manual entry security.live-security-posture)",
@@ -204,7 +206,7 @@ const WAIVED_BARE_CONTROLS: Record<string, { counts: BareCounts; reason: string 
     counts: { SegmentedControl: 2 },
     reason: 'the two channel SegmentedControls share manual: about.update-channel',
   },
-  'ChatPanel.tsx': {
+  'ChatPanelLinkPatternsEditor.tsx': {
     counts: { Input: 2 },
     reason: "LinkPatternsEditor's per-row pattern/url fields — part of a composite the extractor indexes whole (chat.text-link-patterns)",
   },
@@ -453,7 +455,12 @@ describe('settings coverage gate — manual entries anchor to panel source', () 
 
 describe('settings coverage gate — Chat rail pages', () => {
   it('every Chat control is tagged with a page the rail lists', () => {
-    const source = readPanel('ChatPanel.tsx')
+    // Settings ▸ Chat is a facade over sibling owners: read them as one text, owners first,
+    // so a control an owner gained has no `case` above it and reads as off the rail.
+    const source = [
+      'ChatPanelLinkPatternsEditor.tsx', 'chatPanelOptions.ts', 'useChatPanelDashboard.ts',
+      'useChatPanelModels.ts', 'useChatPanelTypedFields.ts', 'ChatPanel.tsx',
+    ].map(readPanel).join('\n')
     const railStart = source.indexOf('= [', source.indexOf('const railItems'))
     const railBlock = source.slice(railStart, source.indexOf('\n  ]', railStart))
     const railKeys = [...railBlock.matchAll(/key: '([a-z0-9-]+)'/g)].map(m => m[1])

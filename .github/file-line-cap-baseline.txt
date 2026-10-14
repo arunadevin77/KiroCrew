@@ -466,9 +466,6 @@
 2026 website/src/pages/connections/ConnectionsPage.tsx
 6529 website/src/pages/members/MembersPage.test.tsx
 5633 website/src/pages/members/MembersPage.tsx
-2423 website/src/pages/settings/AboutPanel.tsx
-2065 website/src/pages/settings/ChatPanel.tsx
-2355 website/src/pages/settings/McpManagement.tsx
 2861 website/src/pages/settings/RemoteCrewPanel.tsx
 2722 website/src/pages/settings/SecurityPanel.test.tsx
 3503 website/src/pages/settings/SecurityPanel.tsx
