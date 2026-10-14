@@ -172,6 +172,7 @@ from kiro_crew.acp.types import (
     ACP_BACKEND_OPENCODE,
     ACP_BACKEND_PI,
     ACP_BACKENDS_ADVERTISED_MODEL_SELECTION,
+    ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION,
     ACP_BACKENDS_FORK_AT_MESSAGE,
     ACP_BACKENDS_HARNESS_OWNED_SESSIONS,
     ACP_BACKENDS_INLINE_COMPACTION,
@@ -6186,17 +6187,27 @@ class AcpClient:
     def _sync_effort_levels(self) -> None:
         """Push ACP-reported effort levels to the global validation set.
 
-        Skips an off-only list: a backend that advertises only ``off`` (no real
-        effort levels) must not overwrite the global fallback that other
-        backends such as kiro-cli use, or those sessions' dropdowns would show
-        only "off".
+        A backend in ``ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION`` advertises a
+        list that belongs to this session alone (pi adds ``minimal``, deepseek
+        omits ``medium`` and ``xhigh``, goose offers ``off`` on a model that does
+        not think). Its levels join the validation set so the API and the picker
+        accept them, but they never replace the global fallback ORDER, which a
+        slot whose provider advertises no effort option of its own (kiro-cli)
+        is served. Every other backend's list still seeds that fallback.
         """
         levels = self.get_valid_effort_levels()
-        if levels and set(levels) != {"off"}:
+        if not levels:
+            return
+        if self.backend in ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION:
             # circular import: chat_persistence → dashboard → session → acp.client
-            from kiro_crew.dashboard.chat_persistence import update_reasoning_effort_values
+            from kiro_crew.dashboard.chat_persistence import register_reasoning_effort_values
 
-            update_reasoning_effort_values(levels)
+            register_reasoning_effort_values(levels)
+            return
+        # circular import: chat_persistence → dashboard → session → acp.client
+        from kiro_crew.dashboard.chat_persistence import update_reasoning_effort_values
+
+        update_reasoning_effort_values(levels)
 
     @property
     def acp_config_options(self) -> list[dict]:

@@ -123,6 +123,7 @@ from kiro_crew.acp.types import (
     ACP_BACKEND_KAS,
     ACP_BACKEND_KIRO,
     ACP_BACKENDS_ADVERTISED_MODEL_SELECTION,
+    ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION,
     ACP_BACKENDS_HOOKS_LIST,
     ACP_BACKENDS_INLINE_COMPACTION,
     ACP_BACKENDS_MODEL_EFFORT_PAIR_IDS,
@@ -4679,14 +4680,24 @@ class AcpSessionHandle:
     def _sync_effort_levels(self) -> None:
         """Push ACP-reported effort levels to the global validation set (parity
         with AcpClient._sync_effort_levels). Without this, the unified kiro path
-        never refreshes the reasoning-effort allow-list. Function-level import
-        avoids the chat_persistence -> dashboard -> session -> acp import cycle."""
+        never refreshes the reasoning-effort allow-list. A backend in
+        ``ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION`` advertises a per-session
+        list: it joins the validation set but never replaces the global fallback
+        order other slots are served. Function-level import avoids the
+        chat_persistence -> dashboard -> session -> acp import cycle."""
         levels = self.get_valid_effort_levels()
-        if levels:
+        if not levels:
+            return
+        if self._runtime.acp_backend in ACP_BACKENDS_EFFORT_FROM_ADVERTISED_OPTION:
             # circular import: chat_persistence -> dashboard -> session -> acp
-            from kiro_crew.dashboard.chat_persistence import update_reasoning_effort_values
+            from kiro_crew.dashboard.chat_persistence import register_reasoning_effort_values
 
-            update_reasoning_effort_values(levels)
+            register_reasoning_effort_values(levels)
+            return
+        # circular import: chat_persistence -> dashboard -> session -> acp
+        from kiro_crew.dashboard.chat_persistence import update_reasoning_effort_values
+
+        update_reasoning_effort_values(levels)
 
     # NOTE: resume is done via AcpRuntime.load_session() (issues session/load
     # DIRECTLY under the transcript's own sid). The old per-handle load() is
