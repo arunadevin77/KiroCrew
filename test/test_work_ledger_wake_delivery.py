@@ -630,6 +630,37 @@ class TestSteeringAWakeIntoARunningTurn:
         ):
             assert (await orch._steer_work_ledger_wake(loop, _slot(running=True), "WAKE")) is False
 
+    @pytest.mark.asyncio
+    async def test_a_requeued_wake_drains_as_autonudge_never_as_user(self):
+        """The admission the steer records is what a turn-end requeue copies onto
+        the queue entry, and the drain names the turn's actor from it. Unstamped,
+        the wake drains as `user`, recording a person for a turn the monitor
+        subsystem caused.
+
+        Mutation guard: drop `TURN_ACTOR_META_KEY` from the admission in
+        `_steer_work_ledger_wake` and the drained actor falls back to `""`.
+        """
+        from kiro_crew.dashboard.chat_delivery import TURN_ACTOR_META_KEY
+        from kiro_crew.dashboard.chat_runner import _actor_for_queue_items
+
+        orch = _orchestrator()
+        loop = _ledger_loop()
+        steer = AsyncMock(return_value="steered")
+        with (
+            patch("kiro_crew.dashboard.chat_delivery.steer_into_running_turn", steer),
+            patch(
+                "kiro_crew.dashboard.session_control.containment_meta",
+                return_value={"queued_containment": {"linked": False}},
+            ),
+        ):
+            assert await orch._steer_work_ledger_wake(loop, _slot(running=True), "WAKE") is True
+        admission = steer.await_args.kwargs["admission"]
+        assert admission[TURN_ACTOR_META_KEY] == "autonudge"
+        assert admission["queued_containment"] == {"linked": False}, "containment kept"
+        assert _actor_for_queue_items([{"content": "WAKE", "meta": dict(admission)}]) == (
+            "autonudge"
+        )
+
 
 # ── the wake turn carries the news and the pointer ──────────────────
 

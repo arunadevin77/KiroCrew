@@ -901,7 +901,9 @@ NO_PERMIT_CARD = (
 )
 
 
-async def _capped_run_chat(state: Any, slot: Any, prompt: str) -> None:
+async def _capped_run_chat(
+    state: Any, slot: Any, prompt: str, *, _turn_actor: str = "crew"
+) -> None:
     """One crew turn, charged against the app-owned background-turn cap.
 
     Handed to ``enqueue_or_run_prompt`` in place of ``_run_chat`` itself. That
@@ -923,7 +925,13 @@ async def _capped_run_chat(state: Any, slot: Any, prompt: str) -> None:
             slot,
             # The prompt is composed by the crew runtime, so the ledger records
             # the crew as the actor rather than a user.
-            _run_chat(state, slot, prompt, _directive_user_origin=False, _turn_actor="crew"),
+            _run_chat(
+                state,
+                slot,
+                prompt,
+                _directive_user_origin=False,
+                _turn_actor=_turn_actor,
+            ),
         )
     except (asyncio.TimeoutError, TimeoutError):
         logger.warning(
@@ -945,7 +953,7 @@ def dispatch_crew_turn(state: Any, slot: Any, prompt: str) -> bool:
     session — so the cap covers all of them. A second copy of this call is how one
     of them ships uncapped again.
     """
-    return bool(slot.enqueue_or_run_prompt(prompt, _capped_run_chat, state))
+    return bool(slot.enqueue_or_run_prompt(prompt, _capped_run_chat, state, turn_actor="crew"))
 
 
 async def wake_crew(

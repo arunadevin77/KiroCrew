@@ -7258,6 +7258,13 @@ def _is_own_recovery(items: "list[dict]", predecessor_actor: str, predecessor_tu
 #: durable (``slot_queue_repository._is_durable_queue_entry``).
 _REPLAYS_COMPLETION_KEY = "_replays_completion"
 
+#: Process-local key on a synthetic-recovery queue entry that retries a turn whose
+#: provenance was restored from disk. ``_queue_recovery`` sets it and the drain
+#: reads it into ``_turn_provenance_restored``, so a retry cannot shed the mark and
+#: drain as a turn this process admitted. It only ever narrows, and it is never
+#: persisted: a kinded entry is not durable.
+_RESTORED_PROVENANCE_RETRY_KEY = "_restored_provenance_retry"
+
 
 def subagents_hold_user_messages(state: DashboardState, session_key: str) -> bool:
     """Whether a live child of *session_key* should keep user messages queued.
@@ -7863,15 +7870,26 @@ async def _start_next_queued_turn(
     # the same reason: the banner these injections wrap their text in is something
     # a user can type. Left unset when no consumed entry carries a mapped kind,
     # which the crew log records as a user turn.
+    #
+    # Provenance this process did not establish: an entry the restore marked, or a
+    # live retry ``_queue_recovery`` requeued for such a turn. Both markers are
+    # process-local and never persisted, so neither can be written from disk. A
+    # restored entry has no actor by construction (`sanitize_restored_queue` drops
+    # the stamp with the directive flags), and a retry's stamp is the fallback its
+    # turn ran under, so neither names an author. Such a turn runs as `other`,
+    # never the `user` fallback a person would be recorded under, unless a
+    # structural kind names its producer. The same predicate marks the turn
+    # restored, so every gate that spends on a `user` actor refuses it.
+    _restored_provenance = any(
+        item.get(RESTORED_QUEUE_KEY) or item.get(_RESTORED_PROVENANCE_RETRY_KEY) is True
+        for item in consumed
+    )
     _queue_actor = _actor_for_queue_items(consumed)
+    if _restored_provenance and _queue_actor in ("", "user"):
+        _queue_actor = "other"
     if _queue_actor:
         _run_kwargs["_turn_actor"] = _queue_actor
-    # Provenance this process did not establish. A restored entry has no actor by
-    # construction (`sanitize_restored_queue` drops the stamp with the directive
-    # flags), and an absent actor reads as `user` below -- so without this the one
-    # arm that spends on an actor of `user` would take a turn whose author is
-    # whoever could write the session file.
-    if any(item.get(RESTORED_QUEUE_KEY) for item in consumed):
+    if _restored_provenance:
         _run_kwargs["_turn_provenance_restored"] = True
     if _settleable or _delivery_callbacks:
         _run_kwargs["_on_consumed"] = _note_consumed
@@ -9815,6 +9833,15 @@ async def _run_chat(
             directive_user_origin=_directive_user_origin,
             directive_channel_origin=_directive_channel_origin,
         )
+        if _turn_provenance_restored:
+            # A retry of a restored turn is still that turn: its author is whoever
+            # could write the session file. The fresh queue id and the `user`
+            # fallback actor stamped above must not turn it into a turn this
+            # process admitted.
+            for _entry in slot._queue:
+                if _entry.get("id") == _recovery_qid:
+                    _entry[_RESTORED_PROVENANCE_RETRY_KEY] = True
+                    break
         if content == turn.message and _turn_is_completion:
             # A verbatim requeue still replays the completion; runner-written
             # text queued after it (a continuation, a retry prompt) does not.
@@ -10398,7 +10425,8 @@ async def _run_chat(
                 # expansion). The actor travels with it: the nested turn has the same
                 # author as the one that carried the mention, and the resolver's
                 # fallback is ``user``, so dropping it here would record a person
-                # who never typed anything.
+                # who never typed anything. Restored provenance travels for the
+                # same reason: the expanded text is still the restored author's.
                 # The nested call is a whole turn with its own exit guard, so the
                 # tail is its to run, however it ends.
                 turn_exit.handed_off = True
@@ -10411,6 +10439,7 @@ async def _run_chat(
                     _directive_self_wake=_directive_self_wake,
                     _directive_channel_origin=_directive_channel_origin,
                     _turn_actor=_turn_actor,
+                    _turn_provenance_restored=_turn_provenance_restored,
                 )
             elif status == "blocked":
                 sel().log_tool_invocation(

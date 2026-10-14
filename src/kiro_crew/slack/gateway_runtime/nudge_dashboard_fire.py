@@ -680,12 +680,16 @@ async def _steer_work_ledger_wake(
     from kiro_crew.dashboard.chat_delivery import (
         STEER_REQUEUED,
         STEER_STEERED,
+        TURN_ACTOR_META_KEY,
         steer_into_running_turn,
     )
     from kiro_crew.dashboard.session_control import containment_meta
 
     try:
-        admission = containment_meta(state, slot)
+        # The actor rides the admission because a steer the teardown requeues
+        # drains as its own turn. An unstamped entry is attributed to `user`,
+        # recording a person for a turn the monitor subsystem caused.
+        admission = {**containment_meta(state, slot), TURN_ACTOR_META_KEY: "autonudge"}
     except Exception:
         # A containment this cannot read is not one to steer past. Declining
         # costs the wake its place in THIS turn; the turn-end retry still

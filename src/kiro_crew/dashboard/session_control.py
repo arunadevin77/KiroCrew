@@ -76,7 +76,7 @@ from kiro_crew.config.sections import (
 from kiro_crew.context_assembly.markers import _apply_marker_spans, _marker_spans
 from kiro_crew.crew_log import emit as crew_log_emit
 from kiro_crew.crew_log.session_tree_projection import projection
-from kiro_crew.dashboard.chat_delivery import sanitize_outbound
+from kiro_crew.dashboard.chat_delivery import TURN_ACTOR_META_KEY, sanitize_outbound
 from kiro_crew.dashboard.chat_folders import (
     _folder_declared_project,
     _resolve_folder_project_dir,
@@ -5772,7 +5772,10 @@ async def _continue_turn_of_target(
                 via="session_control",
                 require_interrupted=require_interrupted,
                 before_dispatch=_reassert_reachable,
-                extra_meta=send_origin_meta(state, caller_key),
+                extra_meta={
+                    **send_origin_meta(state, caller_key),
+                    TURN_ACTOR_META_KEY: "crew",
+                },
             )
         except SlotContinueRefusal as exc:
             raise SessionControlError(exc.message, status=exc.status, code=exc.code) from exc
@@ -8464,7 +8467,17 @@ async def send_to_target(
         # dropped at the drain reports back to us like any queued delivery. Inert
         # for the two other readers: `newly_held_constraints` reads only the
         # containment key, and so does the audience fence below.
-        admission = {**containment_meta(state, slot), **send_origin_meta(state, caller_key)}
+        #
+        # The turn actor rides it for the same reason: a requeued steer drains as
+        # its own turn, and an unstamped entry is attributed to `user`, which
+        # records a person who never typed it and admits it to the gates that
+        # spend on a `user` actor. A peer's text must drain as `crew`, like the
+        # queue arm below.
+        admission = {
+            **containment_meta(state, slot),
+            **send_origin_meta(state, caller_key),
+            TURN_ACTOR_META_KEY: "crew",
+        }
 
         # Which turn this steer is going into. `_turn_generation` increments on every
         # task assignment, so it identifies a turn even if a later task object reuses
@@ -8488,7 +8501,11 @@ async def send_to_target(
         # peer must not inherit the composer's exemption from the LINKED drop.
         async def _steer_delivery() -> str:
             return await steer_into_running_turn(
-                state, slot, prompt, user_origin=False, admission=admission
+                state,
+                slot,
+                prompt,
+                user_origin=False,
+                admission=admission,
             )
 
         delivery_progress.steer_await_entered = True
@@ -8551,6 +8568,7 @@ async def send_to_target(
                 _run_chat,
                 state,
                 extra_meta=send_origin_meta(state, caller_key),
+                turn_actor="crew",
             )
             logger.info(
                 "session_send: orphaned steer to %s came back unavailable and was "
@@ -8739,6 +8757,7 @@ async def send_to_target(
                 # stamp is what lets that drop be reported back to us instead of
                 # ending at the target's own transcript.
                 extra_meta=send_origin_meta(state, caller_key),
+                turn_actor="crew",
             )
         )
     try:

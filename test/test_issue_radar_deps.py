@@ -1303,7 +1303,7 @@ class _FakeSlot:
     def append(self, role, content, cls="", **kw):
         self.messages.append({"role": role, "content": content, "cls": cls})
 
-    def enqueue_or_run_prompt(self, prompt, run_chat_coro, state):
+    def enqueue_or_run_prompt(self, prompt, run_chat_coro, state, **_kwargs):
         return True
 
 

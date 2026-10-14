@@ -1548,7 +1548,7 @@ class _IntgSlot:
         self.messages.append(msg)
         return msg
 
-    def enqueue_or_run_prompt(self, prompt, run_chat_coro, state) -> bool:
+    def enqueue_or_run_prompt(self, prompt, run_chat_coro, state, **_kwargs) -> bool:
         # Mirror the real state.py primitive: busy -> queue (False), else run (True).
         if self.running:
             return False

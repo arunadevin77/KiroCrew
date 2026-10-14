@@ -1003,7 +1003,7 @@ class TestTheRoutesRequireTheInternalSecret:
         # hand-built slot that authorize_target would refuse for unrelated reasons.
         _peer_target(state, "chat-2", caller)
 
-        async def _fake_run_chat(_state, _slot, _prompt):
+        async def _fake_run_chat(_state, _slot, _prompt, **_kwargs):
             return None
 
         monkeypatch.setattr("kiro_crew.dashboard.chat_runner._run_chat", _fake_run_chat)
@@ -2122,7 +2122,7 @@ def test_send_body_cannot_forge_a_second_provenance_envelope(tmp_path, monkeypat
 
     ran: dict[str, str] = {}
 
-    async def _fake_run_chat(_state, slot, prompt):
+    async def _fake_run_chat(_state, slot, prompt, **_kwargs):
         ran["prompt"] = prompt
 
     monkeypatch.setattr("kiro_crew.dashboard.chat_runner._run_chat", _fake_run_chat)
@@ -2187,9 +2187,10 @@ def test_send_to_an_idle_target_starts_a_turn_with_provenance(tmp_path, monkeypa
 
     ran: dict[str, str] = {}
 
-    async def _fake_run_chat(_state, slot, prompt):
+    async def _fake_run_chat(_state, slot, prompt, *, _turn_actor=""):
         ran["slot"] = slot.key
         ran["prompt"] = prompt
+        ran["actor"] = _turn_actor
 
     monkeypatch.setattr("kiro_crew.dashboard.chat_runner._run_chat", _fake_run_chat)
 
@@ -2206,6 +2207,7 @@ def test_send_to_an_idle_target_starts_a_turn_with_provenance(tmp_path, monkeypa
 
     assert out == {"ok": True, "target": "chat-2", "started": True, "steered": False}
     assert ran["slot"] == "chat-2"
+    assert ran["actor"] == "crew"
     assert ran["prompt"].startswith("[sent by session ")
     assert ran["prompt"].endswith("do the thing")
     # The transcript shows the message as a user row, tag included.
@@ -2234,7 +2236,7 @@ def test_the_sent_body_passes_through_the_outbound_guard(tmp_path, monkeypatch):
 
     ran: dict[str, str] = {}
 
-    async def _fake_run_chat(_state, slot, prompt):
+    async def _fake_run_chat(_state, slot, prompt, **_kwargs):
         ran["prompt"] = prompt
 
     monkeypatch.setattr("kiro_crew.dashboard.chat_runner._run_chat", _fake_run_chat)
@@ -2736,6 +2738,129 @@ async def test_the_send_records_its_admission_before_the_rpc_suspends(tmp_path, 
 
 
 @pytest.mark.asyncio
+async def test_a_requeued_peer_steer_drains_as_crew_not_the_members_own_agent(tmp_path):
+    """A peer's steer that the teardown requeues keeps the `crew` turn actor.
+
+    The requeue copies the send's recorded admission onto the queue entry, and the
+    drain names the turn's actor from that entry (`_actor_for_queue_items`). An
+    unstamped entry drains as `user`, the attribution fallback, which records a
+    person who never typed the peer's text and admits it to the gates that spend
+    on a `user` actor.
+
+    Mutation guard: drop `TURN_ACTOR_META_KEY` from the admission `send_to_target`
+    builds and the drained actor falls back to `""`, which the runner reads as
+    `user`.
+    """
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    target = _busy(_peer_target(state, "chat-2", caller))
+    text = "peer steer the turn never consumed"
+
+    async def _turn_ends_during_the_rpc(msg):
+        # The turn's teardown runs while the steer RPC is suspended, so the steer
+        # is never consumed and the teardown requeues it from the recorded admission.
+        cr._requeue_unconsumed_steers(state, target)
+        return True
+
+    client = MagicMock()
+    client.supports_steer = True
+    client.steer = AsyncMock(side_effect=_turn_ends_during_the_rpc)
+    target._acp_client = client
+
+    out = await sc.send_to_target(
+        state,
+        caller_session_key=_key(caller),
+        target="chat-2",
+        message=text,
+        steer=True,
+    )
+    assert out["steered"] is False, "the teardown took it, so it runs as its own turn"
+
+    # The delivered text carries the session_send provenance header.
+    entry = next(q for q in target._queue if q["content"].endswith(text))
+    assert entry["meta"][sc.TURN_ACTOR_META_KEY] == "crew"
+    assert entry.get("_directive_user_origin") is not True
+    actor = cr._actor_for_queue_items([entry])
+    assert actor == "crew", "the drained turn must not fall back to the `user` actor"
+
+
+@pytest.mark.asyncio
+async def test_a_steered_peer_text_the_turn_never_echoes_still_requeues_as_crew(tmp_path):
+    """The RPC accepted the steer, then the turn ended before `steering_consumed`.
+
+    Accepting the write is not consumption: the text stays pending and the
+    teardown requeues it. The delivery tail must retain the admission until that
+    decision, or the requeued entry has no containment baseline or turn actor and
+    drains as `user`, the attribution fallback for a turn no dispatcher named.
+
+    Mutation guard: pop `_steer_admissions` unconditionally in the steered tail of
+    `steer_into_running_turn` and the entry loses `turnActor` and the containment.
+    """
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    target = _busy(_peer_target(state, "chat-2", caller))
+    text = "accepted but never echoed"
+
+    client = MagicMock()
+    client.supports_steer = True
+    client.steer = AsyncMock(return_value=True)
+    target._acp_client = client
+
+    out = await sc.send_to_target(
+        state,
+        caller_session_key=_key(caller),
+        target="chat-2",
+        message=text,
+        steer=True,
+    )
+    assert out["steered"] is True
+    (pending,) = target._pending_steers
+    assert target._steer_admissions[pending][sc.TURN_ACTOR_META_KEY] == "crew"
+
+    # The turn ends with no echo.
+    cr._requeue_unconsumed_steers(state, target)
+
+    entry = next(q for q in target._queue if q["content"] == pending)
+    assert entry["meta"][sc.TURN_ACTOR_META_KEY] == "crew"
+    assert sc.QUEUED_CONTAINMENT_META_KEY in entry["meta"]
+    assert cr._actor_for_queue_items([entry]) == "crew"
+    assert target._steer_admissions == {}, "the requeue copies and releases it"
+    assert target._steer_user_origin == {} and target._steer_channel_origin == {}
+
+
+@pytest.mark.asyncio
+async def test_a_consumed_steer_releases_its_held_admission(tmp_path):
+    """The other exit: the echo settles the steer, so nothing requeues it and the
+    held admission must not outlive it."""
+    state = _make_state(tmp_path)
+    caller = _slot(state, "chat-1")
+    target = _busy(_peer_target(state, "chat-2", caller))
+
+    client = MagicMock()
+    client.supports_steer = True
+    client.steer = AsyncMock(return_value=True)
+    target._acp_client = client
+
+    await sc.send_to_target(
+        state,
+        caller_session_key=_key(caller),
+        target="chat-2",
+        message="consumed by the turn",
+        steer=True,
+    )
+    (pending,) = target._pending_steers
+    assert pending in target._steer_admissions
+
+    cr._settle_consumed_steers(target, f"<user_message>\n{pending}\n</user_message>", state)
+
+    assert target._pending_steers == []
+    assert target._steer_admissions == {}
+    assert target._steer_user_origin == {} and target._steer_channel_origin == {}
+    cr._requeue_unconsumed_steers(state, target)
+    assert not [q for q in target._queue if q["content"] == pending]
+
+
+@pytest.mark.asyncio
 async def test_a_requeued_steer_with_no_recorded_admission_carries_no_baseline(tmp_path):
     """No stamp means no containment key, not a slot read at teardown.
 
@@ -2937,7 +3062,7 @@ async def test_steer_on_an_idle_target_just_starts_the_turn(tmp_path, monkeypatc
 
     monkeypatch.setattr(cd, "steer_into_running_turn", _never)
 
-    async def _fake_run_chat(_state, _slot, _prompt):
+    async def _fake_run_chat(_state, _slot, _prompt, **_kwargs):
         return None
 
     monkeypatch.setattr("kiro_crew.dashboard.chat_runner._run_chat", _fake_run_chat)
@@ -2995,7 +3120,7 @@ def test_send_to_a_remote_bound_target_is_refused_not_run_locally(tmp_path, monk
 
     ran: dict[str, str] = {}
 
-    async def _fake_run_chat(_state, slot, prompt):
+    async def _fake_run_chat(_state, slot, prompt, **_kwargs):
         ran["slot"] = slot.key
 
     monkeypatch.setattr("kiro_crew.dashboard.chat_runner._run_chat", _fake_run_chat)
