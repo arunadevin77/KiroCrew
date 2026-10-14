@@ -585,6 +585,44 @@ class TestDenialAuditNeverRaises:
         assert any("audit row lost" in r.message for r in caplog.records)
 
 
+@pytest.mark.parametrize("stage", ["resolved", "opened"])
+def test_consumer_fence_refusal_is_audited(tmp_path, monkeypatch, stage):
+    from kiro_crew import agent_discovery
+
+    spec = tmp_path / "template.json"
+    spec.write_text(json.dumps({"name": "template"}), encoding="utf-8")
+    opened = tmp_path / "opened.json"
+    refused_path = spec.resolve() if stage == "resolved" else opened
+    audited = []
+    monkeypatch.setattr(agent_discovery, "_audit_denied", lambda **row: audited.append(row))
+
+    if stage == "opened":
+
+        def refuse_open(_real, *, fence, refusal):
+            assert fence(str(opened)) is True
+            raise refusal("opened path refused")
+
+        monkeypatch.setattr(agent_discovery, "open_fenced_for_read", refuse_open)
+
+    assert (
+        agent_discovery._read_agent_spec(
+            spec,
+            operation="member_essentials",
+            source="context",
+            fence=lambda candidate: candidate == refused_path,
+        )
+        is None
+    )
+    assert audited == [
+        {
+            "operation": "member_essentials",
+            "source": "context",
+            "resources": str(refused_path),
+            "error": "consumer fence rejected",
+        }
+    ]
+
+
 class TestSensitiveSymlinkGuard:
     """One representative surface proves the symlink guard flows through.
 
@@ -1076,10 +1114,7 @@ _EXPECTED_CALL_SITE_LABELS: dict[str, list[tuple[str, str]]] = {
         ("connections_warm_mint", "dashboard"),
         ("connections_warm_mint", "dashboard"),
     ],
-    "kiro_crew/context.py": [
-        ("agent_prompt", "context"),
-        ("steering_resources", "unknown"),
-    ],
+    "kiro_crew/context.py": [("steering_resources", "unknown")],
     "kiro_crew/cron_script.py": [("cron_resolve_mcp_server", "cron")],
     "kiro_crew/dashboard/agent_admin/agent_detail.py": [
         ("api_agent_detail", "dashboard"),
@@ -1134,8 +1169,10 @@ _EXPECTED_CALL_SITE_LABELS: dict[str, list[tuple[str, str]]] = {
         ("side_readonly_spec", "dashboard"),
     ],
     "kiro_crew/mcp_discovery.py": [("mcp_discovery_agent_config", "unknown")],
+    # ``read_template_spec`` forwards the labels its own callers name, pinned in
+    # ``_EXPECTED_TEMPLATE_SPEC_CALL_SITE_LABELS``.
     "kiro_crew/member_essential_context.py": [
-        ("member_essentials", "context"),
+        ("forward:operation", "forward:source"),
         ("member_essentials", "context"),
     ],
     "kiro_crew/session.py": [
@@ -1394,6 +1431,14 @@ _EXPECTED_SCOPE_GUARD_CALL_SITE_LABELS: dict[str, list[tuple[str, str]]] = {
 }
 
 
+# A member template is resolved and read in one call so the read fence matches
+# how the template was resolved; each caller names its own surface.
+_EXPECTED_TEMPLATE_SPEC_CALL_SITE_LABELS: dict[str, list[tuple[str, str]]] = {
+    "kiro_crew/context.py": [("agent_prompt", "context")],
+    "kiro_crew/member_essential_context.py": [("member_essentials", "context")],
+}
+
+
 _RATCHET_INVENTORY: dict[str, dict[str, list[tuple[str, str]]]] = {
     "_project_scope_denied": _EXPECTED_SCOPE_GUARD_CALL_SITE_LABELS,
     "_read_agent_spec": _EXPECTED_CALL_SITE_LABELS,
@@ -1401,6 +1446,7 @@ _RATCHET_INVENTORY: dict[str, dict[str, list[tuple[str, str]]]] = {
     "project_agent_files": _EXPECTED_PROJECT_FILES_CALL_SITE_LABELS,
     "project_agent_names": _EXPECTED_PROJECT_NAMES_CALL_SITE_LABELS,
     "read_agent_spec_strict": _EXPECTED_STRICT_CALL_SITE_LABELS,
+    "read_template_spec": _EXPECTED_TEMPLATE_SPEC_CALL_SITE_LABELS,
     "spec_by_declared_name": _EXPECTED_DECLARED_NAME_CALL_SITE_LABELS,
     "warm_agent_specs": _EXPECTED_WARM_SPECS_CALL_SITE_LABELS,
     "warm_project_agent_names": _EXPECTED_WARM_CALL_SITE_LABELS,
