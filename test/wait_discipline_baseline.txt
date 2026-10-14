@@ -299,7 +299,8 @@
 13 test_overload_integration_glue.py
  1 test_papyrus_latex.py
  6 test_pathres_loop_starvation.py
-14 test_pid_lifecycle.py
+ 1 test_pid_lifecycle_process_sweeps.py
+13 test_pid_lifecycle_provider_tree.py
  2 test_plan_mode.py
 11 test_platform_compat.py
  3 test_platform_log_append.py

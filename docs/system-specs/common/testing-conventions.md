@@ -3254,8 +3254,9 @@ went red, or the fix lands in the wrong file and the leak stays.
   in this document ("one `tree_scan_*` group alone retains ~1.3 GiB") predates this change
   and is to be re-derived, not restated, on the next pass.
 - **`kill` at a pid the body has already proven dead.** Fifteen of seventeen signals were
-  identity-pinned at the test's own children and left alone. `test_pid_lifecycle.py`'s
-  `_reap` was the exception: a `finally` that SIGKILLed the RAW root and grandchild numbers
+  identity-pinned at the test's own children and left alone.
+  `test_pid_lifecycle_provider_tree.py`'s `_reap` was the exception: a `finally` that
+  SIGKILLed the RAW root and grandchild numbers
   after production had reaped the root and init had collected the grandchild, so on every
   passing run 19 of its 33 kills went to a number with no `/proc` entry -- whoever holds
   that number next. `_reap` now records `process_start_time` at spawn and signals only

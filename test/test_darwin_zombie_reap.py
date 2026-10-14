@@ -8,7 +8,7 @@ leader's zombie until the last group signal and then cannot prove it is safe to
 collect. ``sysctl KERN_PROC`` walks the kernel's zombie list too; these tests
 pin the record parse, the three-way zombie verdict, the group listing and the
 start-id fallback -- with a fake ``libc``, so they hold on every platform. The real-process end-to-end lives in
-``test_pid_lifecycle.py::TestSyncKillProviderTree`` and runs on the macOS suite.
+``test_pid_lifecycle_provider_tree.py::TestSyncKillProviderTree`` and runs on the macOS suite.
 """
 
 from __future__ import annotations

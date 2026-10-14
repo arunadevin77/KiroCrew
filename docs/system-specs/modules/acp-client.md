@@ -3270,9 +3270,10 @@ reap has untracked the pid would resurrect a line for a dead, recyclable number)
 then reaps, then lets the cancellation through — and both steps run as one task
 the guard only waits on behind `asyncio.shield`, absorbing a repeated `cancel()`
 (a newer slot signal, then a slot deletion, both target the same eager-spawn task)
-until the reap has settled, so being cancelled twice cannot skip it. Pinned by the `_track_session_pid` cases and
+until the reap has settled, so being cancelled twice cannot skip it. Pinned by the `_track_session_pid` cases in
+`test/test_pid_lifecycle.py` and `test/test_pid_lifecycle_tracking_integrity.py`,
 `test_reset_state_retires_by_identity_when_a_spawn_token_is_held` in
-`test/test_pid_lifecycle.py`, `TestAcpRuntimePidTracking` in
+`test/test_pid_lifecycle_teardown.py`, `TestAcpRuntimePidTracking` in
 `test/test_acp_runtime.py`, and `TestRuntimeRootTrackingOffLoop` in
 `test/test_acp_spawn_offload.py`.
 

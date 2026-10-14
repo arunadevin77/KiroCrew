@@ -1774,7 +1774,6 @@ _UNRESOLVED_FACADE_PATCHES: dict[tuple[str, str], int] = {
         "test/test_mcp_oauth_banner.py",
         "TestAnnotationFailsOpen.test_either_lookup_raising_fails_open",
     ): 1,
-    ("test/test_pid_lifecycle.py", "TestBrowserSessionOwnerFakeProc._linux_fixture"): 1,
     ("test/test_session_core_audit.py", "test_resolve_agent_model_serves_cache_within_ttl"): 1,
     ("test/test_subagent_shared_scratch.py", "TestSpawnersMountTheTreeWindow._install_capture"): 5,
     ("test/test_taskrunner.py", "_at_workflow_checkpoint"): 1,
