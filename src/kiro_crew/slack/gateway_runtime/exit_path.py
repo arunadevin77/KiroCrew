@@ -357,9 +357,6 @@ def _install_shutdown_signal_handlers(self: GatewayOrchestrator) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, _on_signal)
-        except (RuntimeError, ValueError):
-            # Not in main thread (e.g. pytest-xdist worker) — skip.
-            pass
         except NotImplementedError:
             # Windows ProactorEventLoop does not support add_signal_handler.
             # Fall back to signal.signal for SIGINT so shutdown_event still
@@ -376,6 +373,9 @@ def _install_shutdown_signal_handlers(self: GatewayOrchestrator) -> None:
                     signal.signal(sig, _sigint_fallback)
                 except (ValueError, OSError):
                     pass  # not in main thread
+        except (RuntimeError, ValueError):
+            # Not in main thread (e.g. pytest-xdist worker) — skip.
+            pass
 
 
 async def _shutdown_and_exit(
