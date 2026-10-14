@@ -1018,6 +1018,9 @@ async def fork_slot(
     # Keep the app-owned agent binding with the agent it binds: the fork runs as
     # the same app agent, so the per-turn shadow check must still apply to it.
     new_slot.app_agent_owner = slot.app_agent_owner
+    # A fork COPIES state rather than making a transition, so an inherited empty project
+    # without the marker reads as never-scoped and lets allocation restore a stored cwd.
+    new_slot.project_cleared = bool(getattr(slot, "project_cleared", False))
     # Inherit the sidebar folder so the fork appears next to its parent in the UI.
     new_slot.folder_id = slot.folder_id
     # Inherit tags (copied, so later edits to either slot's list stay independent).
