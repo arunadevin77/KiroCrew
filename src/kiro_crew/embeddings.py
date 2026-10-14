@@ -48,6 +48,7 @@ import threading
 import time
 import types
 import urllib.parse
+import weakref
 from collections import OrderedDict
 from contextlib import AbstractContextManager
 from contextvars import ContextVar
@@ -1128,6 +1129,51 @@ def _embed_threads() -> int:
     if cores is None:
         return _DEFAULT_EMBED_THREADS
     return max(1, min(_DEFAULT_EMBED_THREADS, cores - 1))
+
+
+def _install_metadata_kv_clear(llm: object) -> bool:
+    """Make the loaded context's KV clear reset cell metadata without zeroing.
+
+    ``Llama.embed`` clears the KV cache before every decode and again after it,
+    and the binding's ``kv_cache_clear`` passes ``data=True``, which memsets the
+    whole KV buffer (224 MiB for the shipped model at 2,048 context tokens) each
+    time. Embedding never reads a cell that the current decode did not write:
+    clearing with ``data=False`` drops every cell's position and sequence ids,
+    so the attention mask excludes all stale cells, and the stale contents are
+    finite values a previous decode produced. The vectors are byte-identical;
+    only the two memsets go. The buffer is zero-filled once when llama.cpp
+    allocates it, so the first decode sees no uninitialised memory either.
+
+    Installed on the context instance (the vendored binding stays upstream's),
+    and only when the native symbol resolves. The context is held weakly so the
+    override does not keep a freed context alive through a reference cycle, and
+    a closed context (``ctx`` cleared, ``memory`` left dangling) is a no-op.
+    Returns True when the override was installed.
+    """
+    ctx = getattr(llm, "_ctx", None)
+    if ctx is None or not callable(getattr(ctx, "kv_cache_clear", None)):
+        return False
+    try:
+        from llama_cpp import llama_cpp as native  # vendored copy, already imported
+    except Exception:  # noqa: BLE001 - keep the binding's own clear
+        return False
+    memory_clear = getattr(native, "llama_memory_clear", None)
+    if not callable(memory_clear):
+        return False
+    ctx_ref = weakref.ref(ctx)
+
+    def kv_cache_clear() -> None:
+        live = ctx_ref()
+        if live is None or getattr(live, "ctx", None) is None:
+            return
+        memory = getattr(live, "memory", None)
+        if memory is None:
+            # Cache-less (non-causal) contexts allocate no KV memory.
+            return
+        memory_clear(memory, False)
+
+    ctx.kv_cache_clear = kv_cache_clear
+    return True
 
 
 def _free_llama(llm: object) -> None:
@@ -2358,6 +2404,7 @@ class LlamaCppEmbedder(EmbeddingBackend):
                 n_threads_batch=threads,
                 verbose=False,
             )
+            _install_metadata_kv_clear(llm)
             try:
                 unchanged = _model_file_stamp(self._model_path) == stamp
             except OSError:
