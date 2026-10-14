@@ -79,6 +79,7 @@ from kiro_crew.acp_backends import (
 from kiro_crew.agent_capabilities import CapabilityError
 from kiro_crew.agent_discovery import (
     agent_welcome_message,
+    served_provider_label,
     session_skill_globs,
     warm_project_agent_names,
 )
@@ -5143,7 +5144,13 @@ def _expand_dollar_skills(
     skills = _get_skills(state)
     project_dir = project or None
     try:
-        only = session_skill_globs(session_key, slot.agent or "kirocrew", project_dir=project_dir)
+        served = state.sessions.get_provider(session_key) if session_key else None
+        only = session_skill_globs(
+            session_key,
+            slot.agent or "kirocrew",
+            project_dir=project_dir,
+            provider_type=served_provider_label(served),
+        )
         resolved = skills.resolve_dollar_skills(message, project_dir, only=only)
     except Exception:
         logger.exception("dollar-skill resolution failed")

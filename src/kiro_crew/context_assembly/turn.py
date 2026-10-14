@@ -116,7 +116,9 @@ def post_compaction_parts(
         parts.append(
             "[Memory tools] Call memory_recall with specific keywords for prior facts and tasks.\n"
         )
-    _inject, _globs = ctx._skills_injection_plan(agent, is_cc=is_cc, project_dir=project)
+    _inject, _globs = ctx._skills_injection_plan(
+        agent, is_cc=is_cc, project_dir=project, provider_type=provider_type
+    )
     if _inject:
         _cfg = ctx.KiroCrewConfig.load()
         lazy_skills = bool(getattr(_cfg.skills, "lazy_load", False))

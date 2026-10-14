@@ -142,7 +142,7 @@ def test_dollar_skills_resolve_against_the_explicit_project(tmp_path, monkeypatc
     slot.key = SLOT_NAME
     seen: dict = {}
 
-    def _globs(_key, _agent, *, project_dir=None):
+    def _globs(_key, _agent, *, project_dir=None, provider_type=None):
         seen["globs"] = project_dir
         return None
 

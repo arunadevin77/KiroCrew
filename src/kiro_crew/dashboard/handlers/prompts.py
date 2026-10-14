@@ -20,6 +20,7 @@ from kiro_crew import pinned_fs
 from kiro_crew.agent_discovery import (
     SkillScopeResolutionError,
     agent_skill_globs,
+    served_provider_label,
     session_skill_globs,
 )
 from kiro_crew.config.loader import KiroCrewConfig
@@ -2336,7 +2337,13 @@ async def api_skills(request: web.Request) -> web.Response:
                 active = sessions.get_agent(session_key)
                 if isinstance(active, str) and active:
                     agent = active
-            only = session_skill_globs(session_key, agent, project_dir=project_dir)
+            served = sessions.get_provider(session_key) if sessions is not None else None
+            only = session_skill_globs(
+                session_key,
+                agent,
+                project_dir=project_dir,
+                provider_type=served_provider_label(served),
+            )
             if action == "read":
                 outcome = skills.read_scoped_skill_page(
                     key,

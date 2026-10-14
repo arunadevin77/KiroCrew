@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import errno
-import fnmatch
 import hashlib
 import json
 import logging
@@ -30,7 +29,14 @@ from typing import Any
 
 from kiro_crew import pinned_fs, platform_compat
 from kiro_crew.acp import session_mcp
-from kiro_crew.agent_discovery import SCOPE_PROJECT, _read_agent_spec, list_agents
+from kiro_crew.agent_discovery import (
+    SCOPE_PROJECT,
+    _read_agent_spec,
+    can_inherit_skills,
+    inherited_skill_globs,
+    list_agents,
+    skill_search_refusal,
+)
 from kiro_crew.agent_spec_format import (
     NATIVE_SKILL_ALIAS_PREFIX,
     SKILL_VIEW_PROJECTION_CEILING,
@@ -1923,9 +1929,10 @@ def _inheritance_preference(
 def inherits_default_resources(work_dir: str | os.PathLike[str] | None) -> bool:
     """Whether a custom agent started in *work_dir* inherits kiro-cli's default resources.
 
-    Those defaults are global and workspace steering plus ``AGENTS.md``. This is
-    the read-only twin of the decision :func:`prepare_native_skill_projection`
-    makes, for callers that must mirror what the native agent loads. Settings
+    Those defaults are global and workspace steering, ``AGENTS.md`` and the
+    global and workspace skill trees. This is the read-only twin of the decision
+    :func:`prepare_native_skill_projection` makes, for callers that must mirror
+    what the native agent loads. Settings
     that cannot be read keep inheritance, which is how those callers behaved
     before they asked.
     """
@@ -3743,6 +3750,10 @@ def prepare_native_skill_projection(
     errors: dict[str, str] = {}
     search_agents: set[str] = set()
     display_sizes: dict[str, tuple[int, str]] = {}
+    # The skill trees an unmapped custom agent inherits. Crew supplies them through
+    # its bounded directory, so such an agent needs the same search tool a mapped
+    # one gets -- see agent_discovery.inherited_skill_globs.
+    inherited_globs = inherited_skill_globs(work_dir, kiro_home_dir=kiro_home())
     for agent in list_agents(project_dir=str(work_dir)):
         if not agent.filename:
             continue
@@ -3772,19 +3783,21 @@ def prepare_native_skill_projection(
         view["resources"] = [
             r for r in resources if not (isinstance(r, str) and r.startswith("skill://"))
         ]
-        needs_search = agent.name == "kirocrew" or any(
-            isinstance(r, str) and r.startswith("skill://") for r in resources
+        mapped = any(isinstance(r, str) and r.startswith("skill://") for r in resources)
+        # An unmapped custom agent reaches the block below only through its
+        # inherited skill trees. Where the block would refuse a mapped agent, this
+        # one keeps the view it had and gets no search: it never relied on it, and
+        # it is not a search agent, so no session of it is refused either.
+        inherited_only = (
+            agent.name != "kirocrew"
+            and not mapped
+            and bool(inherited_globs)
+            and can_inherit_skills(spec)
         )
-        if needs_search:
-            excluded = view.get("excludedTools", [])
-            if isinstance(excluded, list) and any(
-                isinstance(t, str)
-                and (t == "@kirocrew-core" or fnmatch.fnmatchcase(_SEARCH_TOOL, t))
-                for t in excluded
-            ):
-                errors[agent.name] = (
-                    "skill_search is explicitly excluded; bounded skill discovery requires it"
-                )
+        if agent.name == "kirocrew" or mapped or inherited_only:
+            refusal = skill_search_refusal(view)
+            if refusal is not None:
+                errors[agent.name] = refusal
                 continue
             # The bounded directory must have a loading path even for a custom spec
             # whose authored resources rely on native skill activation. Expose
@@ -3792,27 +3805,7 @@ def prepare_native_skill_projection(
             # change the author's approval policy.
             from kiro_crew.agent import managed_mcp_spec_entry
 
-            servers = view.setdefault("mcpServers", {})
-            if not isinstance(servers, dict):
-                errors[agent.name] = "mcpServers must be an object"
-                continue
-            original_core = servers.get("kirocrew-core", {})
-            if not isinstance(original_core, dict):
-                errors[agent.name] = "kirocrew-core must be a server object"
-                continue
-            disabled = original_core.get("disabled", False)
-            disabled_tools = original_core.get("disabledTools", [])
-            if not isinstance(disabled, bool):
-                errors[agent.name] = "kirocrew-core.disabled must be a boolean"
-                continue
-            if not isinstance(disabled_tools, list) or any(
-                not isinstance(tool, str) for tool in disabled_tools
-            ):
-                errors[agent.name] = "kirocrew-core.disabledTools must be a list of strings"
-                continue
-            if disabled or "skill_search" in disabled_tools:
-                errors[agent.name] = "skill_search is disabled; bounded skill discovery requires it"
-                continue
+            original_core = view.get("mcpServers", {}).get("kirocrew-core", {})
             # The verdict the mount will reach for the spec's part, reached here
             # first, over the declaration AS AUTHORED. The managed replacement
             # built below carries only the keys a per-session element can
@@ -3841,24 +3834,31 @@ def prepare_native_skill_projection(
             # (the checks above already refused the view if it did not), so
             # withholding the view for it would refuse a supported customization
             # and abort the spawn over a restriction that reaches the session.
-            if per_session_element:
-                withheld = session_mcp.native_mount_withholding("kirocrew-core", original_core, [])
-                if withheld is not None:
-                    errors[agent.name] = withheld.explain("skill search")
-                    continue
-            entry = managed_mcp_spec_entry("kirocrew-core")
+            withheld = (
+                session_mcp.native_mount_withholding("kirocrew-core", original_core, [])
+                if per_session_element
+                else None
+            )
+            entry = managed_mcp_spec_entry("kirocrew-core") if withheld is None else None
             if entry is None:
-                errors[agent.name] = "Crew's managed skill search server is unavailable"
-                continue
-            for key in ("autoApprove", "disabledTools", "timeout"):
-                if key in original_core:
-                    entry[key] = original_core[key]
-            servers["kirocrew-core"] = entry
-            tools = view.get("tools", [])
-            if tools != "*" and isinstance(tools, list):
-                if not any(t in tools for t in ("*", "@kirocrew-core", _SEARCH_TOOL)):
-                    view["tools"] = [*tools, _SEARCH_TOOL]
-            search_agents.add(agent.name)
+                if not inherited_only:
+                    errors[agent.name] = (
+                        withheld.explain("skill search")
+                        if withheld is not None
+                        else "Crew's managed skill search server is unavailable"
+                    )
+                    continue
+            else:
+                for key in ("autoApprove", "disabledTools", "timeout"):
+                    if key in original_core:
+                        entry[key] = original_core[key]
+                view.setdefault("mcpServers", {})["kirocrew-core"] = entry
+                tools = view.get("tools", [])
+                if tools != "*" and isinstance(tools, list):
+                    if not any(t in tools for t in ("*", "@kirocrew-core", _SEARCH_TOOL)):
+                        view["tools"] = [*tools, _SEARCH_TOOL]
+                if not inherited_only:
+                    search_agents.add(agent.name)
         prompt = view.get("prompt")
         if isinstance(prompt, str) and prompt.startswith("file://"):
             path = Path(prompt[7:]).expanduser()

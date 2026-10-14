@@ -1574,20 +1574,30 @@ def build_session_replay(
 
 
 def _skills_injection_plan(
-    agent: str | None, *, is_cc: bool, project_dir: str | Path | None = None
+    agent: str | None,
+    *,
+    is_cc: bool,
+    project_dir: str | Path | None = None,
+    provider_type: str | None = None,
 ) -> tuple[bool, list[str]]:
     """Whether to inject skills for *agent*, plus the glob restriction to apply.
 
     THE single source of truth for the agent-scoping rule, shared by the
     session-start injection and the post-compaction re-injection. Mapped agents
-    receive the same scoped directory on either backend; an unmapped agent
-    gets the startup directory only when it is the default one.
+    receive the same scoped directory on either backend; an unmapped default
+    agent gets the startup directory, and an unmapped custom agent on kiro-cli
+    (*provider_type* is the ACP label) gets the skill trees kiro-cli lets it
+    inherit unless its workspace opted out. No other harness lends those trees,
+    so there an unmapped custom agent still gets none.
 
     Deliberately one function rather than the same expression written twice: a
     hand-copied second gate is exactly what let the re-injection path ship
     without scoping, handing a mapped agent the catalog its mapping excludes.
     """
-    globs = agent_skill_globs(agent, project_dir=project_dir) if agent else []
+    inherit = provider_type == PROVIDER_ACP
+    globs = (
+        agent_skill_globs(agent, project_dir=project_dir, inherit_defaults=inherit) if agent else []
+    )
     is_custom = bool(agent) and agent != "kirocrew"
     return (bool(globs) or not is_custom), globs
 
@@ -2955,8 +2965,9 @@ class ContextBuilder:
         #    backend (claude-agent-acp) nothing reads agent ``resources``, so
         #    KiroCrew injects the mapped set itself, scoped by ``only=``.
         # 2. No mapping + the kirocrew agent -> bounded discovery and project bodies.
-        # 3. No mapping + a custom agent -> nothing (unchanged; the agent is
-        #    expected to bring its own via kiro-cli).
+        # 3. No mapping + a custom agent -> on kiro-cli, the skill trees it
+        #    inherits (kiro-cli's own inheritance is off on native launches);
+        #    elsewhere nothing.
         #
         # The section budget makes the loader inject a usage-ranked top-K of
         # on-demand skills (plus always:true pinned) and leave the tail to
@@ -2964,7 +2975,9 @@ class ContextBuilder:
         # skill's summary. The slice below is a defensive backstop only.
         # Mapped agents get scoped discovery on both backends. Unmapped: kirocrew only.
         # Shared with the post-compaction re-injection in build_message.
-        inject_skills, skill_globs = _skills_injection_plan(agent, is_cc=is_cc, project_dir=project)
+        inject_skills, skill_globs = _skills_injection_plan(
+            agent, is_cc=is_cc, project_dir=project, provider_type=provider_type
+        )
         if inject_skills:
             required_skills, skills_ctx = _inclusion.skill_parts(
                 self, globs=skill_globs, project=project, caps=caps, lazy_skills=lazy_skills

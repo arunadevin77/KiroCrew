@@ -1107,6 +1107,25 @@ def _walk_confined_skill_fd(
             os.close(child_fd)
 
 
+def project_skill_tree_present(project_dir: str | Path | None) -> bool:
+    """Whether *project_dir* has a ``.kiro/skills`` tree Crew would read.
+
+    Asks trust first and touches no path for an untrusted project; then opens
+    the tree through the no-follow descriptor chain the project traversal uses,
+    so a component that is a link (a network share on Windows, for one) is
+    refused rather than followed. Unsupported platforms answer ``False``.
+    """
+    if not project_dir:
+        return False
+    if not skill_trust.project_skills_enabled() or not skill_trust.is_project_trusted(project_dir):
+        return False
+    fd = _open_project_dir_chain(Path(project_dir) / ".kiro" / "skills")
+    if fd is None:
+        return False
+    os.close(fd)
+    return True
+
+
 def _walk_confined_skill_tree(base: Path) -> Iterator[tuple[str, list[str], list[str]]]:
     """Walk a project tree without path-based traversal or link following."""
     fd = _open_project_dir_chain(base)
