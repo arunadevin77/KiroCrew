@@ -1760,11 +1760,15 @@ was consulted, so the memory wording would misname it. Every other
 `workflow_memory_unavailable` and the guarantee "No Global fallback was used.",
 and names its own reason first: "Workflow memory is unavailable: <reason>. No
 Global fallback was used." `memory_refusal_message` builds that text with
-`execution_context.unavailable_reason`, which strips the shared "Execution memory
-is unavailable: ...; Global was not used" framing so the wording never doubles. A
-memory-store refusal the error wraps adds its reason in parentheses ("malformed
-execution context (a member cannot use the Global store)"); any other cause, such
-as an `OSError` and its path, stays in the log only. When either reason is one of
+`execution_context.unavailable_reason`, which answers the reason inside the shared
+"Execution memory is unavailable: ...; Global was not used" framing so the wording
+never doubles. A memory-store refusal the error wraps adds its reason in
+parentheses ("malformed execution context (a member cannot use the Global
+store)"). Only a reason fixed at its raise site is named: an execution-context
+refusal or a `WorkflowMemoryError`, both raised with fixed text (a test parses
+every raise site to keep it so). Any other cause, such as an `OSError` or a
+memory-store refusal that formats one and its path into its own text, stays in
+the log only. When either reason is one of
 the two a crewmate's own binding produces (`MEMBER_ON_GLOBAL_REASON`,
 `MEMBER_WITHOUT_IDENTITY_REASON`), the text adds the two ways to run a workflow:
 a chat with no crewmate picked (the default template on Global), or a crewmate

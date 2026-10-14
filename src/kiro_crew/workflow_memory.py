@@ -446,6 +446,7 @@ def admission_errors(function):
 
 
 _GENERIC_MEMORY_REFUSAL = "Workflow memory is unavailable; no Global fallback was used."
+_WORKFLOW_HEADLINE_REFUSAL = "Workflow memory is unavailable; Global was not used"
 _MEMBER_BINDING_REASONS = frozenset({MEMBER_ON_GLOBAL_REASON, MEMBER_WITHOUT_IDENTITY_REASON})
 _MEMBER_BINDING_REMEDY = (
     "To run workflows here, start a chat with no crewmate picked, or pick a crewmate "
@@ -453,22 +454,34 @@ _MEMBER_BINDING_REMEDY = (
 )
 
 
+def _named_reason(exc: BaseException) -> str:
+    """The reason *exc* names when its raise site fixes the text, else ``""``.
+
+    A ``WorkflowMemoryError`` is raised with fixed text, and so is an
+    execution-context refusal (see ``unavailable_reason``). Any other
+    memory-store refusal can format an ``OSError`` or sqlite error, and the path
+    it names, into its text, so it answers ``""`` and stays in the log only.
+    """
+    if isinstance(exc, WorkflowMemoryError):
+        text = str(exc).strip().rstrip(".").strip()
+        return "" if text == _WORKFLOW_HEADLINE_REFUSAL else text
+    return unavailable_reason(exc)
+
+
 def memory_refusal_message(exc: BaseException) -> str:
     """The caller-facing text of a memory-class admission refusal.
 
     Names the refusal's own reason, then the no-Global-fallback guarantee. A
     memory-store refusal it wraps adds its reason in parentheses, so a wrapper
-    such as "malformed execution context" still says what was wrong underneath;
-    any other cause (an ``OSError`` and its path) stays in the log only. A
-    refusal caused by the crewmate's own memory binding also names the two ways
-    to run a workflow. A refusal that names no reason keeps the generic text.
+    such as "malformed execution context" still says what was wrong underneath.
+    Only a reason fixed at its raise site is named: any other cause, such as an
+    ``OSError`` or a memory-store refusal that formats one, stays in the log
+    only. A refusal caused by the crewmate's own memory binding also names the
+    two ways to run a workflow. A refusal that names no reason keeps the generic
+    text.
     """
-    from kiro_crew.memory_stores import UnknownMemoryStore
-
-    reasons = [unavailable_reason(exc)]
-    if isinstance(exc.__cause__, UnknownMemoryStore):
-        reasons.append(unavailable_reason(exc.__cause__))
-    named = [reason for reason in dict.fromkeys(reasons) if reason]
+    reasons = [_named_reason(exc), unavailable_reason(exc.__cause__)]
+    named = list(dict.fromkeys(reason for reason in reasons if reason))
     if not named:
         return _GENERIC_MEMORY_REFUSAL
     reason = named[0] if len(named) == 1 else f"{named[0]} ({named[1]})"
@@ -479,8 +492,8 @@ def memory_refusal_message(exc: BaseException) -> str:
 
 
 def _log_refusal(what: str, exc: BaseException) -> None:
-    """Log the refusal with its cause; the caller's text never carries the cause's
-    own detail unless it is a memory-store refusal."""
+    """Log the refusal with its cause; the caller's text names only a reason
+    fixed at its raise site."""
     cause = exc.__cause__
     if cause is not None:
         logger.warning("%s: %s (%s: %s)", what, exc, type(cause).__name__, cause)

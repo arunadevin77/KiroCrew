@@ -229,9 +229,8 @@ def clear_session_execution(
         forget_durable_vouch(session_key, only_if=expected.to_record())
 
 
-_UNAVAILABLE_PREFIXES = ("Execution memory is unavailable: ", "Workflow memory is unavailable: ")
-_UNAVAILABLE_SUFFIXES = ("; Global was not used", "; no Global fallback was used")
-_UNAVAILABLE_HEADLINES = ("Execution memory is unavailable", "Workflow memory is unavailable")
+_UNAVAILABLE_PREFIX = "Execution memory is unavailable: "
+_UNAVAILABLE_SUFFIX = "; Global was not used"
 
 #: The two refusals a crewmate's own memory binding produces. Callers that turn
 #: a refusal into user-facing text key a remedy on these exact reasons.
@@ -240,29 +239,28 @@ MEMBER_WITHOUT_IDENTITY_REASON = "member has no persisted identity"
 
 
 def _unavailable(message: str):
+    """An execution-context refusal. *message* is fixed text, never formatted
+    from an exception or a path, so a caller may show it to the user."""
     from kiro_crew.memory_stores import UnknownMemoryStore
 
-    return UnknownMemoryStore(f"{_UNAVAILABLE_PREFIXES[0]}{message}{_UNAVAILABLE_SUFFIXES[0]}")
+    return UnknownMemoryStore(f"{_UNAVAILABLE_PREFIX}{message}{_UNAVAILABLE_SUFFIX}")
 
 
-def unavailable_reason(exc: BaseException) -> str:
-    """The specific reason a memory refusal names, without its shared wrapper.
+def unavailable_reason(exc: BaseException | None) -> str:
+    """The reason an execution-context refusal names, without its shared wrapper.
 
-    Strips the "Execution memory is unavailable: ...; Global was not used"
-    framing (and the workflow spelling of it) so a caller can put the reason in
-    its own sentence without the wording doubling up. Answers ``""`` when the
-    refusal is only the wrapper and names no reason of its own.
+    Answers the text inside the "Execution memory is unavailable: ...; Global
+    was not used" framing, so a caller can put the reason in its own sentence
+    without the wording doubling up. Only this module's refusals carry that
+    framing, and their reasons are fixed text, so the answer names no path or
+    exception detail. Answers ``""`` for any other exception, including a
+    memory-store refusal that formats an ``OSError`` into its own text, and for
+    ``None``.
     """
-    text = str(exc).strip().rstrip(".").strip()
-    for suffix in _UNAVAILABLE_SUFFIXES:
-        if text.endswith(suffix):
-            text = text[: -len(suffix)].rstrip()
-            break
-    for prefix in _UNAVAILABLE_PREFIXES:
-        if text.startswith(prefix):
-            text = text[len(prefix) :].lstrip()
-            break
-    return "" if text in _UNAVAILABLE_HEADLINES else text
+    text = str(exc).strip()
+    if not (text.startswith(_UNAVAILABLE_PREFIX) and text.endswith(_UNAVAILABLE_SUFFIX)):
+        return ""
+    return text[len(_UNAVAILABLE_PREFIX) : -len(_UNAVAILABLE_SUFFIX)].strip()
 
 
 def canonical_memory_mode(mode: object) -> str:
