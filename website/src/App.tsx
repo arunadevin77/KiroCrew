@@ -1361,13 +1361,20 @@ export default function App() {
           // NavIntent carries no query string, and ChatPage writes `?sid=` back
           // into the URL itself once the session is active.
           { path: '/chat', slotKey },
-          { navigate, switchSlot: (key) => { dispatch(switchSlot({ key, announceOnMissing: true })) } },
+          {
+            navigate,
+            switchSlot: (key) => { dispatch(switchSlot({ key, announceOnMissing: true })) },
+            mayLeave: mayLeaveForNavigation,
+          },
         )
         return
       }
+      // Same leave check as every other in-app exit: a native menu entry
+      // replaces the page on screen just like a sidebar click does.
+      if (!mayLeaveForNavigation()) return
       navigate(path)
     })
-  }, [navigate, dispatch])
+  }, [navigate, dispatch, mayLeaveForNavigation])
 
   useEffect(() => {
     dispatch(fetchSlots()).then(action => {

@@ -45,6 +45,7 @@ const NavigationLeaveGuardContext = React.createContext<Channel | null>(null)
  * `SettingsLink` — the one declarative Settings deep link, which asks once for
  * every prose link built on it (also through `useGuardedLeave`) — a navigation
  * intent a popout window forwards to the main window (`applyNavIntentInMain`) —
+ * a native desktop-menu or Companion navigation (`subscribeNativeNavigate`) —
  * and the
  * browser's own Back/Forward button (through `NavigationBackGuard`, which needs
  * the page to publish a stake — see `usePublishNavigationStake`).

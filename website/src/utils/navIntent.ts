@@ -60,7 +60,8 @@ export function applyNavIntentInMain(
   deps: {
     navigate: (path: string) => void
     switchSlot: (slotKey: string) => void
-    mayLeave?: () => boolean
+    // Required, so every caller decides whether its exit asks the page first.
+    mayLeave: () => boolean
   },
 ): void {
   // Best-effort raise — a channel-delivered intent has no user activation, so
@@ -69,7 +70,7 @@ export function applyNavIntentInMain(
   // main. Raised before the leave check so its confirm shows on a window the
   // user can see.
   try { window.focus() } catch { /* vetoed — non-fatal */ }
-  if (deps.mayLeave && !deps.mayLeave()) return
+  if (!deps.mayLeave()) return
   if (intent.prefill) writePrefill(intent.prefill.slotKey, intent.prefill.prompt)
   if (intent.slotKey) deps.switchSlot(intent.slotKey)
   deps.navigate(intent.path)

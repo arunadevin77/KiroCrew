@@ -1779,7 +1779,10 @@ refuses the exit and opens the page's async discard dialog (`useConfirm`, not
 registry does not pass its target. A navigation intent forwarded from a popout
 ("Ask agent to address", timeline session links) runs that same check in the
 main window before `applyNavIntentInMain` stages a prefill, switches slot or
-navigates, and a refusal drops the whole intent.
+navigates, and a refusal drops the whole intent. The desktop app's native
+menu entries (Settings…, About) and the Companion's "Open session" run the
+same check before they navigate; `applyNavIntentInMain` takes the check as a
+required argument, so no caller can skip it by leaving it out.
 
 **Session resolution (frontend)** — the active bound session is resolved from
 the Redux slots snapshot (`slot.artifact === slug`), so no extra endpoint exists:

@@ -213,3 +213,53 @@ describe('popout-forwarded navigation leave guard', () => {
     await waitFor(() => expect(screen.queryByLabelText('draft')).toBeNull())
   })
 })
+
+describe('native app-menu navigation leave guard', () => {
+  // The desktop app's menu (Settings…, About) and the Companion's "Open
+  // session" hand this window an in-app path; following it replaces the page
+  // on screen exactly like a sidebar click.
+  let nativeHandler: ((path: string) => void) | null = null
+  beforeEach(() => {
+    localStorage.clear(); sessionStorage.clear()
+    nativeHandler = null
+    ;(window as unknown as { electronAPI?: unknown }).electronAPI = {
+      onNavigate: (fn: (path: string) => void) => { nativeHandler = fn; return () => { nativeHandler = null } },
+    }
+  })
+  afterEach(() => {
+    delete (window as unknown as { electronAPI?: unknown }).electronAPI
+    vi.restoreAllMocks(); cleanup()
+  })
+
+  it('keeps the page on screen when the confirm is declined', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderDashboard()
+    await paneReady()
+    typeDraft('half-written prompt')
+    await waitFor(() => expect(nativeHandler).not.toBeNull())
+    act(() => { nativeHandler!('/schedule') })
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(draftValue()).toBe('half-written prompt')
+  })
+
+  it('keeps the page on screen for a declined session deep link', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderDashboard()
+    await paneReady()
+    typeDraft('half-written prompt')
+    await waitFor(() => expect(nativeHandler).not.toBeNull())
+    act(() => { nativeHandler!('/chat?sid=other') })
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(draftValue()).toBe('half-written prompt')
+  })
+
+  it('follows the menu path once the confirm is accepted', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderDashboard()
+    await paneReady()
+    typeDraft('half-written prompt')
+    await waitFor(() => expect(nativeHandler).not.toBeNull())
+    act(() => { nativeHandler!('/schedule') })
+    await waitFor(() => expect(screen.queryByLabelText('draft')).toBeNull())
+  })
+})

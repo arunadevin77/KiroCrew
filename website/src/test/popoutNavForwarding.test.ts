@@ -212,6 +212,7 @@ describe('applyNavIntentInMain', () => {
       {
         navigate: () => order.push('navigate'),
         switchSlot: () => order.push('switchSlot'),
+        mayLeave: () => true,
       },
     )
     expect(order).toEqual(['prefill', 'switchSlot', 'navigate'])
@@ -221,7 +222,7 @@ describe('applyNavIntentInMain', () => {
   it('skips slot switching for intents without a slotKey', () => {
     const switchSlot = vi.fn()
     const navigate = vi.fn()
-    applyNavIntentInMain({ path: '/artifacts' }, { navigate, switchSlot })
+    applyNavIntentInMain({ path: '/artifacts' }, { navigate, switchSlot, mayLeave: () => true })
     expect(switchSlot).not.toHaveBeenCalled()
     expect(navigate).toHaveBeenCalledWith('/artifacts')
   })
