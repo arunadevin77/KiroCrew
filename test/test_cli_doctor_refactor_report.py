@@ -26,7 +26,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from kiro_crew import cli_doctor
+from kiro_crew import _llama_lib_path, cli_doctor
 from kiro_crew.config.loader import KiroCrewConfig
 from kiro_crew.doctor_checks import access, install
 from kiro_crew.platform import PlatformCompositionError
@@ -186,6 +186,9 @@ class _Host:
         mp.setattr(cli_doctor, "_load_llama_class", lambda: self.llama)
         mp.setattr(cli_doctor, "_platform_libs_dirname", lambda: self.libs_dir)
         mp.setattr(cli_doctor, "verify_vendored_libs", lambda: self.vendored)
+        # The lib-path row reads the start-up record as well as the variable cleared
+        # above, and a start-up step that ran earlier in this process leaves that record.
+        mp.setattr(cli_doctor, "dropped_inherited_lib_path", lambda: None)
         mp.setattr(cli_doctor, "resolve_custom_model", lambda: self.custom_model)
         mp.setattr(cli_doctor, "model_file_present", lambda path=None: self.model_present)
         mp.setattr(cli_doctor, "default_model_path", lambda: self.tmp / "model.gguf")
@@ -513,6 +516,20 @@ def test_a_ready_host_prints_every_section_in_order_and_passes(host, capsys) -> 
     # One issues list threads through every section that reports into it.
     lists = {id(_issues_arg(n, a)) for n, a, _k in host.calls if n in _TAKES_ISSUES}
     assert len(lists) == 1
+
+
+def test_a_start_up_record_of_an_inherited_lib_path_leaves_the_report_unchanged(
+    host, capsys
+) -> None:
+    """A start-up step that ran earlier in the process records the lib path it removed."""
+    _ready(host)
+    installed = host.tmp / "old" / "kiro_crew" / "_vendor" / "llama_cpp_libs" / "linux_x86_64"
+    host.mp.setattr(_llama_lib_path, "_dropped_inherited", str(installed))
+
+    out, code = host.run(capsys)
+
+    assert out == _READY
+    assert code is None
 
 
 _BROKEN = """\
