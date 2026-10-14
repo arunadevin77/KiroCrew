@@ -18,6 +18,7 @@
  1 integration/test_governance.py
  2 integration/test_memory_bindings.py
  1 integration/test_script_cron_sessions.py
+ 1 kiro_prerequisite_helpers.py
  1 metrics/test_provider.py
  1 metrics/test_provider_otlp_destinations.py
  1 overload_fakes.py
@@ -221,7 +222,10 @@
  3 test_kas_manual_compact.py
  2 test_kas_mcp_sign_in.py
  4 test_kas_session_teardown.py
- 8 test_kiro_prerequisite.py
+ 1 test_kiro_prerequisite_agent_specs.py
+ 3 test_kiro_prerequisite_handlers.py
+ 1 test_kiro_prerequisite_readiness_state.py
+ 2 test_kiro_prerequisite_supervisor.py
  1 test_kiro_probe_spawn_off_loop.py
  2 test_knowledge.py
  1 test_knowledge_add_source.py

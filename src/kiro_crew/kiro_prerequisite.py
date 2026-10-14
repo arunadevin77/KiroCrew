@@ -94,7 +94,7 @@ OFFICIAL_INSTALL_DOCS_URL = "https://kiro.dev/cli/"
 # The argument tails are split out so login_commands_for() can compose the
 # bundled-copy form (absolute path + same tail) without duplicating flag
 # literals that would drift. They carry the leading space DELIBERATELY: the
-# read-only-probe tripwire in test_kiro_prerequisite.py forbids the standalone
+# read-only-probe tripwire in test_kiro_prerequisite_handlers.py forbids the standalone
 # quoted token a spawn argv element would have, and these are display strings
 # the user types, never argv.
 _LOGIN_TAIL = " login"
