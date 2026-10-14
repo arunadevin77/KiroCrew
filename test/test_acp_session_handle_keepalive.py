@@ -25,6 +25,7 @@ from kiro_crew.acp.liveness import VERDICT_DEAD, VERDICT_UNKNOWN, ToolCallState
 from kiro_crew.acp.session_handle import AcpSessionHandle, WatchdogSettings
 from kiro_crew.acp.session_provider import AcpSessionProvider
 from kiro_crew.acp.types import STOP_REASON_TOOL_STALL
+from kiro_crew.testing.wait import await_until
 
 # Binary fractions, so the clock's sums are exact.
 _TICK = 1 / 64
@@ -206,11 +207,11 @@ async def test_a_keepalive_during_the_oracle_check_prevents_the_cancel(clock):
 
     handle._consult_oracle_offloaded = _oracle  # type: ignore[method-assign]
     drain = asyncio.create_task(_drain(handle, _TickingQueue(clock), timeout=_WINDOW * 4))
-    await asyncio.wait_for(entered.wait(), timeout=5.0)
+    await await_until(entered, what="the first oracle consult")
     touched = clock.now
     handle.note_keepalive()
     release.set()
-    events = await asyncio.wait_for(drain, timeout=5.0)
+    events = await await_until(drain, what="the drain finishing")
 
     assert events[-1].stop_reason == STOP_REASON_TOOL_STALL
     assert cancelled_at["t"] - touched == _WINDOW + _TICK

@@ -36,7 +36,6 @@
  4 test_acp_runtime_failed_start_reap.py
  7 test_acp_sandbox_init_classification.py
  3 test_acp_session_handle_abandoned_turn.py
- 2 test_acp_session_handle_keepalive.py
  1 test_acp_session_handle_stream_command.py
  1 test_acp_set_mode_projection_fallback.py
  4 test_acp_set_mode_projection_race.py
