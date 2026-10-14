@@ -123,8 +123,6 @@
  1 test_connections_l1_smoke.py
 12 test_connections_mint.py
  2 test_connections_premint.py
- 2 test_connections_test_single_flight.py
- 1 test_connections_tool_test.py
 11 test_connections_warm.py
  8 test_connections_warm_mint_composition_contract.py
  1 test_conpty_exit_status.py
