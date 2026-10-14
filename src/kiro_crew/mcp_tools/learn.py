@@ -16,6 +16,7 @@ every existing patch site.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable
 from typing import Any
@@ -430,6 +431,21 @@ def learn_add(name: str, args: dict[str, Any]) -> str:
             f"{lost}"
         )
     if outcome == "deduped":
+        # The stored lesson that claimed the write, when the gateway names it. A
+        # string check rather than trust: this crosses HTTP, and an older gateway
+        # sends no ``winner`` at all, which keeps the learn_list recovery below.
+        raw_winner = d.get("winner")
+        winner = raw_winner.strip() if isinstance(raw_winner, str) else ""
+        # ``winner_repo_scope`` is the delete selector for the winner's row: ``""``
+        # for a global row, the fragment for a scoped one, and null when the route
+        # withheld it. Only a string can be forwarded to learn_remove; without one a
+        # delete would reach every scope, so the reply keeps the learn_list path.
+        raw_winner_scope = d.get("winner_repo_scope")
+        selector = raw_winner_scope if isinstance(raw_winner_scope, str) else None
+        winner_line = ""
+        if winner:
+            winner_where = f" (applies only in {selector})" if selector else ""
+            winner_line = f"\nThe stored lesson that covers it{winner_where}: {winner}"
         # ``rule`` is the SUBMITTED text, not the stored lesson that claimed the
         # write. The old wording put it directly after "an existing stored lesson
         # already covers it", which reads as a quote OF that stored lesson -- so a
@@ -448,14 +464,26 @@ def learn_add(name: str, args: dict[str, Any]) -> str:
                 f"higher authority (set by the user, or imported at higher "
                 f"confidence) already covers it, and that stored lesson stays "
                 f"in effect. The text below is what was DROPPED -- it is NOT the "
-                f"stored lesson: {rule}\n"
+                f"stored lesson: {rule}{winner_line}\n"
                 "Only the user can replace their own lesson; do not remove it on "
                 "their behalf."
                 f"{lost}"
             )
+        if winner and selector is not None:
+            # ``json.dumps`` renders the selector as a literal the model can pass
+            # back unchanged, including the empty string that names a global row.
+            return (
+                f"Lesson was NOT saved{detail}. The text below is what was DROPPED -- "
+                f"it is NOT the stored lesson: {rule}{winner_line}\n"
+                "That stored lesson stays in effect. If this was meant to correct or "
+                "replace it, call learn_remove with that stored text as query and "
+                f"repo_scope={json.dumps(selector)} so only that scope is touched, then "
+                "add this again; otherwise the outdated lesson keeps applying."
+                f"{lost}"
+            )
         return (
             f"Lesson was NOT saved{detail}. The text below is what was DROPPED -- it "
-            f"is NOT the stored lesson: {rule}\n"
+            f"is NOT the stored lesson: {rule}{winner_line}\n"
             "An existing stored lesson already covers it, and that existing lesson "
             "stays in effect. If this was meant to correct or replace a stale lesson, "
             "run learn_list to find the stored wording -- it shows the newest window "

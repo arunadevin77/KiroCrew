@@ -3057,6 +3057,17 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         # Redacting HERE covers both readers: the dashboard and the ``learn_add`` tool
         # each see only what this route sends.
         superseded = _redact_memory_field(list(result.superseded))
+        # The stored lesson a ``deduped`` write lost to, redacted on the same chain
+        # for the same reason: it is stored user text leaving the process. Naming it
+        # lets a caller act on the winner directly instead of paging the list route.
+        winner = _redact_memory_field(result.winner) if result.winner else None
+        # The scope goes out as the ``DELETE /api/lessons`` selector that names the
+        # winner's row: ``""`` for a global row, the fragment for a scoped one, and
+        # ``None`` when the fragment is unusable or carries a credential shape, so a
+        # stored scope never leaves this route unredacted.
+        winner_repo_scope = (
+            _lesson_scope_selector(result.winner_repo_scope) if result.winner else None
+        )
         # Avoid even scanning or scheduling the model-based sweep for V2;
         # explicit corrections remain available through the owner review flow.
         # Skipped without a rule vector too: the scan would embed the rule again
@@ -3166,6 +3177,9 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         # oldest record to the ``_MAX_LESSONS_TOTAL`` cap, but that is an eviction,
         # not this write superseding a rule it overlaps.)
         superseded = []
+        # This store never answers ``deduped``, so there is no winner to name.
+        winner = None
+        winner_repo_scope = None
     # Refreshed unconditionally, and deliberately so. An earlier revision of this
     # change gated the push on the write having landed, which is wrong: a DECLINING
     # outcome can still have mutated the store. ``write_lesson``'s second pass
@@ -3190,9 +3204,18 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     # so a client that re-reads /api/lessons after this response cannot see what it
     # lost. Always present, empty when nothing was superseded, so a client does not
     # have to tell "no deletions" from "this gateway is too old to say".
-    return web.json_response(
-        {"ok": stored, "outcome": outcome, "reason": reason, "superseded": superseded}
-    )
+    response: dict[str, Any] = {
+        "ok": stored,
+        "outcome": outcome,
+        "reason": reason,
+        "superseded": superseded,
+    }
+    # ``winner`` is additive too, and sent only on the outcome that has one: the
+    # stored lesson a ``deduped`` write lost to, with that row's own scope.
+    if winner:
+        response["winner"] = winner
+        response["winner_repo_scope"] = winner_repo_scope
+    return web.json_response(response)
 
 
 async def api_lessons_delete(request: web.Request) -> web.Response:

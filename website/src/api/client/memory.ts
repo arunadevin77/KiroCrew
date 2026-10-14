@@ -203,6 +203,9 @@ export function createMemoryEndpoints({ get, post, put, del, j, jfetch: fetch }:
         ok: boolean
         outcome: 'inserted' | 'enriched' | 'unchanged' | 'deduped' | 'refused'
         reason: string
+        // Present only on `deduped`: the stored lesson the write lost to.
+        winner?: string
+        winner_repo_scope?: string | null
       }>,
   }
 

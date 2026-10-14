@@ -322,6 +322,16 @@ class LessonWriteResult:
     #: path serves AS a standing rule. Defaults to ``None`` so the ~60 existing
     #: construction sites are unchanged.
     applies: str | None = None
+    #: On ``DEDUPED``, the stored lesson that claimed this write, rendered the way
+    #: every human-facing surface renders it (rule plus NOT-clause). The outcome
+    #: alone says "an existing lesson covers it" without naming which, so a caller
+    #: replacing a stale lesson had to page ``learn_list`` to find the row it lost
+    #: to. ``None`` on every other outcome, and when the row has no display text.
+    winner: str | None = None
+    #: The winning row's stored ``repo_scope``, or ``None`` when it is global.
+    #: Read from the row, not the submission. The route turns it into the delete
+    #: selector for that row before it leaves the process.
+    winner_repo_scope: str | None = None
 
     def __bool__(self) -> bool:
         """``wrote`` -- the exact predicate the old ``bool`` return answered.
@@ -3691,6 +3701,10 @@ class VectorMemoryStore:
                             LessonWriteOutcome.DEDUPED,
                             "semantic_similarity",
                             tuple(superseded),
+                            winner=_lesson_row_report_text(existing) or pre_text,
+                            winner_repo_scope=_lessons._lesson_scope(
+                                json.loads(existing["value_json"])
+                            ),
                         )
 
         # Private V2 keeps exact-rule enrichment above, but similarity cannot
@@ -3720,7 +3734,11 @@ class VectorMemoryStore:
                 )
                 _flush_backfills()
                 return LessonWriteResult(
-                    LessonWriteOutcome.DEDUPED, "substring_covered", tuple(superseded)
+                    LessonWriteOutcome.DEDUPED,
+                    "substring_covered",
+                    tuple(superseded),
+                    winner=existing_report,
+                    winner_repo_scope=_lessons._lesson_scope(json.loads(existing["value_json"])),
                 )
             if existing_lower in rule_lower:
                 # This branch was the only one of the four here that deleted a row

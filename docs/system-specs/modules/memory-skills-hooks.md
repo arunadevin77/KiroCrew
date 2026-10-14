@@ -3357,6 +3357,20 @@ TEXT: the deleted row is a tombstone, so by the time the caller looks it is abse
 by the `learn add` CLI and the `learn_add` tool, because that text is the last readable
 copy of the removed rule.
 
+A `deduped` result also names the stored lesson that claimed the write: `winner` is
+that row's display text (rule plus NOT-clause) and `winner_repo_scope` its stored
+scope, `None` when global. Both `deduped` reasons (`substring_covered`,
+`semantic_similarity`) fill them; every other outcome leaves them `None`.
+`POST /api/lessons` adds `winner` (redacted through `_redact_memory_field`, like
+`superseded`) and `winner_repo_scope` only when a winner exists. On the wire the scope
+is the `DELETE /api/lessons` selector for the winner's row, from `_lesson_scope_selector`:
+`""` for a global row, the fragment for a scoped one, and `null` when the fragment is
+unusable or the redaction chain would alter it. The `learn_add` tool prints the winner
+verbatim; with a string selector the replace path names `learn_remove` with that
+`repo_scope`, so the remove reaches only the winner's scope, and without one it keeps
+the `learn_list` wording. The `semantic_similarity` reply still never suggests
+removing the protected lesson.
+
 **The result's truth value is the old bool, deliberately.** `bool(result)` is `wrote`,
 byte-for-byte the predicate the previous `-> bool` return answered, so the three callers
 that only branch on success (`history.py` consolidation counting, the
@@ -3368,7 +3382,8 @@ bare assertion would keep passing while asserting nothing — a silent hazard my
 flag, since a bare `if` on any object is legal. `stored` is the separate property for
 "is my lesson in the store" (true for a no-op re-submit, which is NOT a write). Surfaces
 that report to a human or a model — the `learn add` CLI, the `POST /api/lessons` response
-(`ok` / `outcome` / `reason` / `superseded`), the `learn_add` tool result — read `outcome`
+(`ok` / `outcome` / `reason` / `superseded`, plus `winner` / `winner_repo_scope` on a
+deduped write), the `learn_add` tool result — read `outcome`
 and `reason`, and name the `superseded` rules when there are any.
 The dashboard Memory tab clears its draft and refreshes the list only for `inserted`
 or `enriched`; `unchanged` clears the draft but reports that it was already stored,
