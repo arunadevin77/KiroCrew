@@ -147,7 +147,7 @@ _SENSITIVE_HOME_DIRS: list[str] = [
     # covered too. Agent file tools must not read them through the shared gate.
     # The internal reader opens the DB read-only + SEL-audited (NOT via
     # is_sensitive_path), so it still works; the sandbox bind-mount list
-    # (sandbox.py) is SEPARATE, so kiro-cli's own auth is unaffected.
+    # (sandbox_tiers.py) is SEPARATE, so kiro-cli's own auth is unaffected.
     # The identity-store directories come from the single canonical table
     # (``identity_stores.IDENTITY_STORE_ROOTS``) so this fence and the five other
     # readers cannot drift apart. The splice emits all eight in table

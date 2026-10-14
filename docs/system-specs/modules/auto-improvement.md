@@ -521,7 +521,7 @@ widened to `$HOME`: the interpreter's own stdlib can live there — hiding `~/.l
 `import platform`.
 
 **What remains open**: arbitrary same-user files elsewhere (`~/notes.txt`) are still writable.
-Kiro Crew's own home is sealed per leaf (`sandbox.py` marks each crew-home leaf hidden,
+Kiro Crew's own home is sealed per leaf (`sandbox_leaves.py` marks each crew-home leaf hidden,
 read-only or visible), but `kiro_crew.sandbox` has no general write confinement for arbitrary
 same-user files, and adding one changes the shared sandbox for every caller. Failing closed at
 `profile._run` until then would disable the entire bug track (no test could run at all).

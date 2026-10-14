@@ -76,7 +76,7 @@ Any failed check refuses with a reason, audited `denied`, and nothing is queued.
 
 This narrows a human-only gate in one place. `set_project` and `chat_tag` remain human-only.
 
-The checks keep honest callers out; they are not proof against a hostile conductor. The self-arm record lives under `trust/`, which agent file tools cannot reach, but `trust` is a VISIBLE leaf of the crew sandbox (`_CREW_SANDBOX_VISIBLE_LEAVES` in `src/kiro_crew/sandbox.py`) so in-sandbox code can append to the audit log. A shell the conductor runs could write the record, and the loop store is agent-writable too. That residual is pre-existing and is the same one the crew/member self-arm rule carries.
+The checks keep honest callers out; they are not proof against a hostile conductor. The self-arm record lives under `trust/`, which agent file tools cannot reach, but `trust` is a VISIBLE leaf of the crew sandbox (`_CREW_SANDBOX_VISIBLE_LEAVES` in `src/kiro_crew/sandbox_leaves.py`) so in-sandbox code can append to the audit log. A shell the conductor runs could write the record, and the loop store is agent-writable too. That residual is pre-existing and is the same one the crew/member self-arm rule carries.
 
 The case therefore rests on the harm, which is bounded:
 

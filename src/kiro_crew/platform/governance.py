@@ -168,7 +168,7 @@ _MODES = frozenset({MODE_ALLOW, MODE_DENY})
 
 # Ordinal strictness scales, strictness-ASCENDING (loosest first → strictest
 # last).  ``approval`` and ``sandbox`` are verified against the live enforcers
-# (approval pipeline; ``sandbox.py`` level dirs off<standard<cc<strict).
+# (approval pipeline; ``sandbox_tiers.py`` level dirs off<standard<cc<strict).
 _ORDINAL_SCALES: Dict[str, Tuple[str, ...]] = {
     "approval": ("yolo", "auto", "interactive"),
     "sandbox": ("off", "standard", "cc", "strict"),

@@ -15,6 +15,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import errno
+import importlib
 import json
 import os
 import stat
@@ -2779,7 +2780,9 @@ class TestPinnedEnvBin:
         a future producer could reintroduce the bare form, which is invisible in
         review because it looks identical to the pinned one at the call site.
         """
-        source = Path(sandbox_mod.__file__).read_text(encoding="utf-8")
+        # The module and the owners carved out of it.
+        modules = (sandbox_mod, *map(importlib.import_module, sandbox_mod._CARVED_OWNERS))
+        source = "\n".join(Path(m.__file__).read_text(encoding="utf-8") for m in modules)
         assert (
             '["env",' not in source
         ), 'a bare ["env", ...] argv prefix is PATH-redirectable; use _pinned_env_bin()'

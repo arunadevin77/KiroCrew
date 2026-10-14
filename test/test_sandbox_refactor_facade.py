@@ -13,6 +13,17 @@ builders are the facade's own functions: they gather the live host here, plan th
 rebinds a tier list or a host-fact helper on the facade reaches the plan, and no owner
 imports the facade at all.
 
+The rest of what sandbox.py defined is carved into the owners in ``_CARVED``, which import
+each other lowest layer first (``_CARVED_IMPORTS``) and never the facade. Their code read
+one namespace before the carve, so the facade MIRRORS a write through it
+(``kiro_crew._facade_mirror``): it lands on every carved owner that binds the same object,
+and on the facade when the facade binds the name too. The rows below pin that the mirror
+indexes exactly the carved owners, that a patch reaches every holder and is undone on each,
+and that the renderers and the mount sweep stay out of it. ``test/test_facade_mirror_guards.py``
+holds every mirrored facade, this one included, to the mirror's own rules: one object per
+indexed name, no owner reading an indexed name it does not hold, no member rebinding a
+shared global.
+
 This file also holds what both facades share -- ``kiro_crew.sandbox`` and
 ``kiro_crew.platform_compat`` -- so ``test_platform_compat_refactor_facade`` runs the same
 checks on its facade: the static shape of a facade module, the owner-import scan, and the
@@ -37,6 +48,7 @@ import importlib.util
 import logging
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType
 from typing import Callable
@@ -46,11 +58,20 @@ import pytest
 import test_sandbox_refactor_create_guard as create_guard
 
 from kiro_crew import (
+    _facade_mirror,
+    platform_compat,
     sandbox,
+    sandbox_aliases,
     sandbox_launcher,
+    sandbox_leaves,
     sandbox_mount_sweep,
     sandbox_plan,
+    sandbox_precreate,
+    sandbox_seals,
     sandbox_seatbelt,
+    sandbox_staging,
+    sandbox_tiers,
+    sandbox_workspace,
 )
 
 # The patch census parses every test file once; keep it on one worker.
@@ -63,8 +84,23 @@ _POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="the OS sandbox
 _SRC = Path(sandbox.__file__).resolve().parent
 _REPO = _SRC.parents[1]
 
+#: The owners carved out of sandbox.py, lowest layer first, as the facade imports them.
+_CARVED: dict[str, ModuleType] = {
+    m.__name__: m
+    for m in (
+        sandbox_leaves,
+        sandbox_tiers,
+        sandbox_precreate,
+        sandbox_seals,
+        sandbox_aliases,
+        sandbox_staging,
+        sandbox_workspace,
+    )
+}
+
 _OWNERS: dict[str, ModuleType] = {
-    m.__name__: m for m in (sandbox_launcher, sandbox_seatbelt, sandbox_mount_sweep)
+    **{m.__name__: m for m in (sandbox_launcher, sandbox_seatbelt, sandbox_mount_sweep)},
+    **_CARVED,
 }
 
 #: Every module-level name the split moved out of sandbox.py, by its owner. The two
@@ -97,6 +133,123 @@ _MOVED: dict[str, tuple[str, ...]] = {
         "_cleanup_legacy_mount_source_residue",
         "_cleanup_retired_acp_snapshot_dir",
     ),
+    "kiro_crew.sandbox_leaves": tuple("""
+        _POLICY_CACHE_LEAF _VOICE_RUNTIME_LEAF _CREW_HOME_DEFAULT _CREW_HOME_PREFIXES
+        _LIVE_TARGET_LEAF _LIVE_TARGET_STAGING_LEAF _AUTH_STORE_STAGING_LEAF MD_NOTEBOOK_APP_NAME
+        _MD_NOTEBOOK_STATE_LEAVES _MD_NOTEBOOK_STAGING_LEAF _CREW_HIDDEN_LEAVES
+        _CREW_UNREADABLE_MASK_LEAVES _RELOCATED_CREW_HIDDEN_LEAVES _CREW_READONLY_LEAVES
+        _CREW_SANDBOX_VISIBLE_LEAVES _crew_home_entries _CREW_HIDDEN_DIRS _CREW_READONLY_TARGETS
+        _CREW_CHILD_WITHHELD_LEAVES _CREW_CHILD_READABLE_LEAVES crew_host_runtime_leaves
+        """.split()),
+    "kiro_crew.sandbox_tiers": tuple("""
+        _resolved_kiro_agents_targets _PACKAGED_INSTALL_DIR_NAMES install_root_targets_for
+        _install_root_targets_with _install_root_targets_cached _resolved_install_root_targets
+        _gateway_package_dir _APP_BACKEND_OWNED_LEAVES app_backend_visible_targets
+        crew_home_visible_spellings carveout_chain_has_planted_link
+        carveout_shadowed_by_foreign_mask _STRICT_DIRS _STANDARD_DIRS _CC_DIRS _resolves_to
+        _crew_home_alias_roots _relocated_crew_targets _POD_OS_HOME_GRANT_STORE_LEAVES
+        _POD_OS_HOME_MASKED_SUBLEAVES _pod_os_home_targets _relocated_policy_cache_dirs
+        _CC_EXPOSE_FILES _CC_FILES _SENSITIVE_ENV_PREFIXES _PYTHON_ENV_PREFIXES
+        _AGENT_DENIED_ENV_KEYS _sandbox_policy _SANDBOX_MODE_FALLBACK configured_sandbox_mode
+        _IN_SANDBOX_MARKER _IN_SANDBOX_LEVEL_VAR _TIER_ORDINALS _mode_to_level _SANDBOX_MODE_ALIASES
+        effective_sandbox_mode _governance_sandbox_floor _clamp_sandbox_mode _floor_mandates_sandbox
+        _clamp_sandbox_mode_to_floor
+        """.split()),
+    "kiro_crew.sandbox_precreate": tuple("""
+        _CREW_PRECREATE_READONLY_DIR_LEAVES _CREW_NOFOLLOW_READONLY_DIR_LEAVES
+        _CREW_NOFOLLOW_READONLY_FILE_LEAVES _DELEGATED_OVERLAP_LEAF_REASONS
+        _CREW_PRECREATE_READONLY_FILE_LEAVES _CREW_PRECREATE_HIDDEN_DIR_LEAVES
+        _MD_NOTEBOOK_PRECREATE_CONTENT _LIVE_TARGET_PRECREATE_CONTENT _EMPTY_CEILING_DOCUMENT
+        _CEILING_TEMP_PREFIX
+        """.split()),
+    "kiro_crew.sandbox_seals": tuple("""
+        _sealable_absent_ceilings SandboxCeilingUnsealable _warn_unsealed_ceiling
+        _CREW_NO_ALIAS_LEAVES _symlink_target_display _refuse_if_aliased_protected_leaf
+        _warn_unsealed_ceiling_parent_missing _warn_if_alias_backed _refuse_if_dangling_symlink
+        _refuse_if_symlink_leaf _is_link_or_junction _refuse_linked_models_leaf
+        require_real_model_path _require_real_dir_nofollow _require_real_file_nofollow
+        _publish_empty_ceiling _materialize_sealable_parent_dirs _note_established
+        _mint_gateway_id_before_seal _materialize_sealable_ceilings _warn_aliased_strict_leaves
+        require_unaliased_cloud_config _delete_file_command require_unaliased_launch_state
+        require_unaliased_model_file
+        """.split()),
+    "kiro_crew.sandbox_aliases": tuple("""
+        _CREW_ALIAS_TOLERATED_LEAVES _CREW_ALIAS_CHAIN_DEGRADE_LEAVES _CREW_HARDLINK_REFUSED_LEAVES
+        _first_linked_component_below _masked_crew_home_roots _ALIAS_WALK_MAX_ENTRIES _AliasMask
+        _InodeAliases _inode_aliases_under _refuse_multilinked_credential_leaves _referent_identity
+        _refuse_aliased_masked_leaves _masked_leaf_pathonly_alias_detail
+        _masked_leaf_multilink_detail _masked_leaf_alias_search_hint masked_credential_leaf_aliases
+        """.split()),
+    "kiro_crew.sandbox_staging": tuple("""
+        _materialize_maskable_dirs _materialize_live_target_mask_target
+        _refuse_if_live_target_symlink LiveTargetUnfitness _live_target_irregular_detail
+        _live_target_multilink_detail _live_target_symlink_detail _refuse_unless_sole_regular_link
+        live_target_pointer_unfitness _md_notebook_degraded_mask_dirs
+        _sweep_legacy_md_notebook_temps _MD_NOTEBOOK_STATE_COMPONENTS _open_dir_anchored
+        _AUTH_STORE_PUBLISHED_KEY_LEAF _AUTH_STORE_LEGACY_TEMP_PREFIX
+        _reconcile_auth_store_staging_links _sweep_legacy_auth_store_temps
+        _sweep_one_md_notebook_state_dir _materialize_md_notebook_mask_targets
+        """.split()),
+    "kiro_crew.sandbox_workspace": tuple("""
+        _voice_runtime_paths_lock _voice_runtime_paths_cache _ensure_voice_runtime_directory
+        _literal_ancestor_guards prime_voice_runtime_sandbox_paths
+        _restore_missing_voice_runtime_roots _voice_runtime_sandbox_paths
+        _voice_runtime_parent_paths _voice_runtime_ancestor_guards _path_identity
+        _identity_within_sealed_parent CANONICAL_TEMP_KEYS DECLARED_TEMP_REFUSAL_REASONS
+        DeclaredTempRefusal classify_declared_temp_path classify_declared_temp_env
+        _repr_declared_temp_log_value declared_temp_refusal_reasons format_declared_temp_refusals
+        _VOICE_GUARD_REMEDY _VoiceGuardRelationship _voice_runtime_guard_message
+        _lexical_runtime_overlap voice_runtime_workspace_conflict
+        assert_voice_runtime_outside_agent_workspace _open_directory_descriptor
+        _directory_ancestor_identities bind_voice_safe_agent_workspace _close_bound_agent_workspace
+        release_bound_agent_workspace bind_voice_safe_agent_workspace_async
+        _bound_agent_workspace_matches bound_agent_workspace_target BoundWorkspaceMismatch
+        resolve_bound_session_workspace
+        """.split()),
+}
+
+#: Moved names the facade binds again, by import from their owner, because code still in
+#: sandbox.py reads them as its own globals. The mirror holds the facade's binding and the
+#: owner's as one name, so a patch through the facade reaches both.
+_BOUND_HERE: frozenset[str] = frozenset("""
+    SandboxCeilingUnsealable _AGENT_DENIED_ENV_KEYS _CC_EXPOSE_FILES _CC_FILES _CREW_HIDDEN_DIRS
+    _CREW_HIDDEN_LEAVES _CREW_READONLY_LEAVES _CREW_READONLY_TARGETS _CREW_UNREADABLE_MASK_LEAVES
+    _DELEGATED_OVERLAP_LEAF_REASONS _IN_SANDBOX_LEVEL_VAR _IN_SANDBOX_MARKER
+    _POD_OS_HOME_GRANT_STORE_LEAVES _POD_OS_HOME_MASKED_SUBLEAVES _PYTHON_ENV_PREFIXES
+    _RELOCATED_CREW_HIDDEN_LEAVES _SANDBOX_MODE_ALIASES _SENSITIVE_ENV_PREFIXES _STANDARD_DIRS
+    _TIER_ORDINALS _clamp_sandbox_mode_to_floor _crew_home_alias_roots
+    _directory_ancestor_identities _floor_mandates_sandbox _governance_sandbox_floor
+    _literal_ancestor_guards _materialize_live_target_mask_target _materialize_maskable_dirs
+    _materialize_md_notebook_mask_targets _materialize_sealable_ceilings
+    _md_notebook_degraded_mask_dirs _mode_to_level _open_directory_descriptor
+    _reconcile_auth_store_staging_links _referent_identity _refuse_aliased_masked_leaves
+    _refuse_linked_models_leaf _refuse_multilinked_credential_leaves _relocated_crew_targets
+    _relocated_policy_cache_dirs _resolved_install_root_targets _resolved_kiro_agents_targets
+    _sandbox_policy _sweep_legacy_auth_store_temps _sweep_legacy_md_notebook_temps
+    _voice_runtime_ancestor_guards _voice_runtime_parent_paths _voice_runtime_sandbox_paths
+    _warn_aliased_strict_leaves effective_sandbox_mode
+    """.split())
+
+#: Carved owner -> the owners it imports. Explicit, so a new edge between owners is a
+#: decision; each edge points to an owner earlier in ``sandbox._CARVED_OWNERS`` (so the
+#: graph has no cycle) and is one the owner really uses, both pinned below.
+_CARVED_IMPORTS: dict[str, frozenset[str]] = {
+    "kiro_crew.sandbox_tiers": frozenset({"kiro_crew.sandbox_leaves"}),
+    "kiro_crew.sandbox_precreate": frozenset({"kiro_crew.sandbox_leaves"}),
+    "kiro_crew.sandbox_seals": frozenset({"kiro_crew.sandbox_precreate"}),
+    "kiro_crew.sandbox_aliases": frozenset(
+        {"kiro_crew.sandbox_leaves", "kiro_crew.sandbox_precreate", "kiro_crew.sandbox_seals"}
+    ),
+    "kiro_crew.sandbox_staging": frozenset(
+        {
+            "kiro_crew.sandbox_aliases",
+            "kiro_crew.sandbox_leaves",
+            "kiro_crew.sandbox_precreate",
+            "kiro_crew.sandbox_seals",
+            "kiro_crew.sandbox_tiers",
+        }
+    ),
+    "kiro_crew.sandbox_workspace": frozenset({"kiro_crew.sandbox_leaves"}),
 }
 
 #: Every function in an owner that imports from the facade, and what it reads there.
@@ -301,7 +454,11 @@ def bare_loads(tree: ast.Module, forwarded: set[str]) -> list[tuple[int, str]]:
 
 def check_static_shape(facade: ModuleType, owners: dict[str, ModuleType]) -> None:
     """No bare read of a forwarded name anywhere in the facade, ``__getattr__`` hidden
-    from type checkers, and the ``TYPE_CHECKING`` imports exactly the forwarded names."""
+    from type checkers, and the ``TYPE_CHECKING`` imports exactly the forwarded names.
+
+    A facade that serves through ``kiro_crew._facade_mirror`` defines no module-level
+    ``__getattr__`` at all: the mirror's module class answers every forwarded name, and a
+    resolver of the facade's own would answer first and shadow it."""
     tree = tree_of(facade)
     assert bare_loads(tree, set(facade._EXPORTS)) == []
     module_level = [
@@ -311,15 +468,19 @@ def check_static_shape(facade: ModuleType, owners: dict[str, ModuleType]) -> Non
     defined = [
         n for n in module_level if isinstance(n, ast.FunctionDef) and n.name == "__getattr__"
     ]
-    hidden = [
-        n
-        for n in tree.body
-        if isinstance(n, ast.If)
-        and ast.unparse(n.test) == "not TYPE_CHECKING"
-        and any(child in n.body for child in defined)
-    ]
-    assert len(defined) == 1 and len(hidden) == 1
-    assert callable(vars(facade).get("__getattr__"))  # still the resolver at run time
+    if _facade_mirror.INDEX_ATTRIBUTE in vars(facade):
+        assert defined == [] and "__getattr__" not in vars(facade)
+        assert isinstance(facade, _facade_mirror.MirroredModule)  # the resolver at run time
+    else:
+        hidden = [
+            n
+            for n in tree.body
+            if isinstance(n, ast.If)
+            and ast.unparse(n.test) == "not TYPE_CHECKING"
+            and any(child in n.body for child in defined)
+        ]
+        assert len(defined) == 1 and len(hidden) == 1
+        assert callable(vars(facade).get("__getattr__"))  # still the resolver at run time
     blocks = [
         n for n in tree.body if isinstance(n, ast.If) and ast.unparse(n.test) == "TYPE_CHECKING"
     ]
@@ -387,28 +548,55 @@ def owner_seams(
 
 #: The facades by layer: an owner may import a LOWER facade at module level, as any other
 #: module does (the mount sweep probes pids through ``platform_compat``), but never its own
-#: or a higher one.
-_LAYER = {"kiro_crew.platform_compat": 0, "kiro_crew.sandbox": 1}
+#: or a higher one. A module carved out of a facade sits on its facade's layer, so an owner
+#: of a lower facade cannot reach into it either.
+_LAYER = {"kiro_crew.platform_compat": 0, "kiro_crew.sandbox": 1, **dict.fromkeys(_CARVED, 1)}
 
 
-def check_owner_dependency_direction(owners: dict[str, ModuleType], facade: ModuleType) -> None:
+def owner_imports(module: ModuleType, owners: Mapping[str, ModuleType]) -> set[str]:
+    """Every owner -- registered, or one of *owners* -- that *module* imports, by any
+    spelling: ``from <owner> import``, ``from <package> import <owner>``, a relative
+    ``from . import``, or ``import <owner>``."""
+    known = {**_ALL_OWNERS, **owners}
+    package = module.__name__.rpartition(".")[0]
+    found: set[str] = set()
+    for node in ast.walk(tree_of(module)):
+        if isinstance(node, ast.ImportFrom):
+            spelled = "." * node.level + (node.module or "")
+            imported = importlib.util.resolve_name(spelled, package) if node.level else spelled
+            if imported in known:
+                found.add(imported)
+            found.update(
+                f"{imported}.{a.name}" for a in node.names if f"{imported}.{a.name}" in known
+            )
+        elif isinstance(node, ast.Import):
+            found.update(a.name for a in node.names if a.name in known)
+    return found
+
+
+def check_owner_dependency_direction(
+    owners: dict[str, ModuleType],
+    facade: ModuleType,
+    allowed: Mapping[str, frozenset[str]] | None = None,
+) -> None:
     """Owners are the facade's bottom layer: none imports its own facade, or a higher one,
-    at module level, and none imports another owner."""
+    at module level, and none imports another owner unless *allowed* lists that edge --
+    an owner carved out of the facade importing a lower one."""
+    permitted = allowed or {}
     for owner in owners.values():
         tree = tree_of(owner)
-        rows = facade_imports(tree, owner.__name__.rpartition(".")[0], _FACADE_NAMES)
+        listed = permitted.get(owner.__name__, frozenset())
+        rows = facade_imports(tree, owner.__name__.rpartition(".")[0], set(_LAYER))
         upward = [
             row
             for row in rows
-            if row[0] == "<module>" and _LAYER[row[1]] >= _LAYER[facade.__name__]
+            if row[0] == "<module>"
+            and _LAYER[row[1]] >= _LAYER[facade.__name__]
+            and row[1] not in listed
         ]
         assert upward == [], (owner.__name__, upward)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                assert node.module not in _ALL_OWNERS, (owner.__name__, node.module)
-                assert not any(
-                    f"{node.module}.{a.name}" in _ALL_OWNERS for a in node.names
-                ), owner.__name__
+        unlisted = owner_imports(owner, owners) - listed
+        assert unlisted == set(), (owner.__name__, sorted(unlisted))
 
 
 def check_seams_are_facade_bindings(
@@ -450,7 +638,7 @@ def register_owners(owners: dict[str, ModuleType]) -> None:
     _ALL_OWNERS.update(owners)
 
 
-register_owners(_OWNERS)
+register_owners({name: m for name, m in _OWNERS.items() if name not in _CARVED})
 register_owners(
     {
         name: importlib.import_module(name)
@@ -733,19 +921,28 @@ def shared_bindings(
     facade: ModuleType,
     seams: dict[tuple[str, str], tuple[str, tuple[str, ...]]],
     patches: tuple[_Patch, ...],
+    *,
+    mirrored: Mapping[str, tuple[str, ...]] | None = None,
+    carved: Mapping[str, ModuleType] | None = None,
 ) -> set[str]:
     """The names *patches* rebind through *facade* that the facade AND an owner both
     bind: such a patch lands in the facade's namespace only. A forwarded name is not
     one, nor a name the facade alone binds, nor a seam name, which the owner imports
-    from the facade when it runs."""
+    from the facade when it runs. The owners read are the registered ones plus this
+    facade's *carved* owners, and a binding the facade's mirror holds for that name
+    (*mirrored*: name -> holders) is not one either: the mirror repeats the write there."""
     seam_names = {name for _facade, names in seams.values() for name in names}
+    holders = mirrored or {}
     shared: set[str] = set()
     for _path, _line, _where, patched, name in patches:
         if patched != facade.__name__ or name == _DYNAMIC or name in seam_names:
             continue
         if name in facade._EXPORTS or name not in vars(facade):
             continue
-        if any(name in vars(owner) for owner in _ALL_OWNERS.values()):
+        if any(
+            name in vars(owner) and dotted not in holders.get(name, ())
+            for dotted, owner in {**_ALL_OWNERS, **(carved or {})}.items()
+        ):
             shared.add(name)
     return shared
 
@@ -755,18 +952,25 @@ def check_shared_bindings(
     seams: dict[tuple[str, str], tuple[str, tuple[str, ...]]],
     expected: frozenset[str],
     part: int,
+    *,
+    mirrored: Mapping[str, tuple[str, ...]] | None = None,
+    carved: Mapping[str, ModuleType] | None = None,
 ) -> None:
     """Every shared name the tests of census *part* patch through *facade* is listed, so
     a new one cannot miss an owner's reader silently. One part per test keeps each
     test's work a bounded share of the tree; ``check_listed_bindings_are_patched``
     reads the whole."""
-    assert shared_bindings(facade, seams, census_part(part)) <= set(expected)
+    found = shared_bindings(facade, seams, census_part(part), mirrored=mirrored, carved=carved)
+    assert found <= set(expected)
 
 
 def check_listed_bindings_are_patched(
     facade: ModuleType,
     seams: dict[tuple[str, str], tuple[str, tuple[str, ...]]],
     expected: frozenset[str],
+    *,
+    mirrored: Mapping[str, tuple[str, ...]] | None = None,
+    carved: Mapping[str, ModuleType] | None = None,
 ) -> None:
     """The whole census, read from the parts: the listed names are exactly the shared
     names some test patches, so a stale entry is refused too, and the scan saw enough
@@ -776,7 +980,8 @@ def check_listed_bindings_are_patched(
     patches = facade_patches()
     seen = sum(1 for row in patches if row[3] == facade.__name__)
     assert seen > 50, f"the scan saw only {seen} patches of {facade.__name__}"
-    assert shared_bindings(facade, seams, patches) == set(expected)
+    found = shared_bindings(facade, seams, patches, mirrored=mirrored, carved=carved)
+    assert found == set(expected)
 
 
 # --------------------------------------------------------------------------- #
@@ -791,8 +996,8 @@ def test_every_moved_name_is_defined_by_its_owner_and_read_through_the_facade(
     check_moved_name(sandbox, _OWNERS, owner, name)
 
 
-def test_every_moved_name_is_forwarded_and_none_is_bound_here() -> None:
-    check_forwarded_and_bound_are_disjoint(sandbox, _MOVED, frozenset())
+def test_every_moved_name_is_forwarded_unless_code_still_here_reads_it() -> None:
+    check_forwarded_and_bound_are_disjoint(sandbox, _MOVED, _BOUND_HERE)
 
 
 def test_the_forwarding_table_names_each_owner_by_its_dotted_name() -> None:
@@ -813,12 +1018,17 @@ def test_a_patch_through_the_facade_round_trips_on_the_owner(owner: ModuleType, 
 
 def test_a_write_of_a_facade_name_stays_on_the_facade(monkeypatch: pytest.MonkeyPatch) -> None:
     """A name the facade binds itself -- a table or host fact the live plan host reads,
-    a module it imports -- is an ordinary attribute write, which that code then reads."""
+    a module it imports -- is an ordinary attribute write, which that code then reads. A
+    name it binds that a carved owner binds too (a tier table) is written on both, and
+    never on a renderer."""
     monkeypatch.setattr(sandbox, "_ssh_supports_accept_new", "stub")
     assert vars(sandbox)["_ssh_supports_accept_new"] == "stub"
     assert "_ssh_supports_accept_new" not in vars(sandbox_launcher)
+    assert not any("_ssh_supports_accept_new" in vars(m) for m in _CARVED.values())
     monkeypatch.setattr(sandbox, "_STANDARD_DIRS", ["stub"])
     assert vars(sandbox)["_STANDARD_DIRS"] == ["stub"]
+    assert vars(sandbox_tiers)["_STANDARD_DIRS"] == ["stub"]
+    assert "_STANDARD_DIRS" not in vars(sandbox_launcher)
 
 
 def test_a_loaded_owner_is_read_without_the_import_system() -> None:
@@ -898,7 +1108,67 @@ def test_each_seam_is_a_binding_of_the_facade() -> None:
 
 
 def test_the_owners_depend_on_nothing_above_them() -> None:
-    check_owner_dependency_direction(_OWNERS, sandbox)
+    check_owner_dependency_direction(_OWNERS, sandbox, _CARVED_IMPORTS)
+
+
+def test_the_carved_import_table_has_no_cycle_and_no_unused_edge() -> None:
+    order = {owner: rank for rank, owner in enumerate(sandbox._CARVED_OWNERS)}
+    for owner, imported in _CARVED_IMPORTS.items():
+        assert owner in _CARVED, owner
+        for other in imported:
+            assert other in _OWNERS, (owner, other)
+            if other in _CARVED:
+                assert order[other] < order[owner], (owner, other)
+    used = {owner: owner_imports(module, _OWNERS) for owner, module in _CARVED.items()}
+    assert {owner: edges for owner, edges in used.items() if edges} == _CARVED_IMPORTS
+
+
+def test_the_owner_import_check_refuses_an_unlisted_edge(tmp_path: Path) -> None:
+    probe = tmp_path / "probe_carved_owner.py"
+    probe.write_text(
+        "from kiro_crew.sandbox_leaves import _CREW_HIDDEN_LEAVES\n"
+        "from kiro_crew import sandbox_tiers\n",
+        encoding="utf-8",
+    )
+    module = ModuleType("probe_carved_owner")
+    module.__file__ = str(probe)
+    owners = {**_CARVED, module.__name__: module}
+    leaves_only = {**_CARVED_IMPORTS, module.__name__: frozenset({"kiro_crew.sandbox_leaves"})}
+    with pytest.raises(AssertionError, match="sandbox_leaves"):
+        check_owner_dependency_direction(owners, sandbox, _CARVED_IMPORTS)
+    with pytest.raises(AssertionError, match="sandbox_tiers"):
+        check_owner_dependency_direction(owners, sandbox, leaves_only)
+    both = frozenset({"kiro_crew.sandbox_leaves", "kiro_crew.sandbox_tiers"})
+    check_owner_dependency_direction(owners, sandbox, {**_CARVED_IMPORTS, module.__name__: both})
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        "from . import sandbox_seals\n",
+        "from .sandbox_seals import SandboxCeilingUnsealable\n",
+        "import kiro_crew.sandbox_seals\n",
+    ],
+)
+def test_the_owner_import_scan_reads_every_spelling(tmp_path: Path, spelling: str) -> None:
+    probe = tmp_path / "probe_spelling.py"
+    probe.write_text(spelling, encoding="utf-8")
+    module = ModuleType("kiro_crew.probe_spelling")
+    module.__file__ = str(probe)
+    assert owner_imports(module, _CARVED) == {"kiro_crew.sandbox_seals"}
+
+
+def test_a_lower_facade_s_owner_cannot_reach_into_a_carved_owner(tmp_path: Path) -> None:
+    """A carved owner sits on its facade's layer: an owner of ``platform_compat`` may no
+    more import ``kiro_crew.sandbox_seals`` than ``kiro_crew.sandbox`` itself."""
+    probe = tmp_path / "probe_lower_owner.py"
+    probe.write_text(
+        "from kiro_crew.sandbox_seals import SandboxCeilingUnsealable\n", encoding="utf-8"
+    )
+    module = ModuleType("kiro_crew.probe_lower_owner")
+    module.__file__ = str(probe)
+    with pytest.raises(AssertionError, match="sandbox_seals"):
+        check_owner_dependency_direction({module.__name__: module}, platform_compat)
 
 
 def test_the_owners_log_under_the_sandbox_name() -> None:
@@ -991,11 +1261,24 @@ _SANDBOX_SHARED_BINDINGS_PATCHED: frozenset[str] = frozenset({"time"})
 
 @pytest.mark.parametrize("part", range(CENSUS_PARTS))
 def test_a_patched_name_bound_by_the_facade_and_an_owner_is_a_listed_one(part: int) -> None:
-    check_shared_bindings(sandbox, _SEAM_IMPORTS, _SANDBOX_SHARED_BINDINGS_PATCHED, part)
+    check_shared_bindings(
+        sandbox,
+        _SEAM_IMPORTS,
+        _SANDBOX_SHARED_BINDINGS_PATCHED,
+        part,
+        mirrored=sandbox._MIRROR.holders,
+        carved=_CARVED,
+    )
 
 
 def test_every_listed_shared_binding_is_still_patched() -> None:
-    check_listed_bindings_are_patched(sandbox, _SEAM_IMPORTS, _SANDBOX_SHARED_BINDINGS_PATCHED)
+    check_listed_bindings_are_patched(
+        sandbox,
+        _SEAM_IMPORTS,
+        _SANDBOX_SHARED_BINDINGS_PATCHED,
+        mirrored=sandbox._MIRROR.holders,
+        carved=_CARVED,
+    )
 
 
 def test_the_patch_scan_reads_every_binding_of_a_patch_site() -> None:
@@ -1131,10 +1414,12 @@ def test_each_builder_renders_through_its_owner(
 
 def test_every_moved_name_is_forwarded_so_no_patch_needs_resolving() -> None:
     """Why there is no census of the patch sites a scan cannot resolve: every moved name
-    is forwarded, so a patch through the facade lands on the owner whatever spelling put
-    it there, and a name the facade still binds is one no owner reads."""
+    is forwarded or mirrored, so a patch through the facade lands on every module that
+    holds it whatever spelling put it there, and a name the facade alone binds is one no
+    owner reads."""
     names = {name for group in _MOVED.values() for name in group}
-    assert names == set(sandbox._EXPORTS)
+    assert names - _BOUND_HERE == set(sandbox._EXPORTS)
+    assert _BOUND_HERE <= set(sandbox._MIRROR.holders)
 
 
 def test_the_sweep_s_pin_scan_coverage_class_is_one_class() -> None:
@@ -1151,3 +1436,80 @@ def test_the_forwarding_is_live_for_any_module_that_imported_a_name_early() -> N
     from kiro_crew import cli_doctor
 
     assert cli_doctor._MOUNT_SOURCE_PREFIX is sandbox_mount_sweep._MOUNT_SOURCE_PREFIX
+
+
+# --------------------------------------------------------------------------- #
+# The mirror: a write through the facade reaches every carved owner that reads it.
+# --------------------------------------------------------------------------- #
+
+
+def check_mirror_round_trips(facade: ModuleType, name: str) -> None:
+    """monkeypatch, mock.patch by object and by dotted name, nested either way, and a
+    delete: each lands on every module that holds *name* and is undone on each."""
+    holders = [sys.modules[dotted] for dotted in facade._MIRROR.holders[name]]
+    if name not in facade._MIRROR.exports:
+        holders.append(facade)
+    original = vars(holders[0])[name]
+
+    def seen() -> set[object]:
+        return {id(vars(module).get(name, _Reached)) for module in holders}
+
+    assert len(holders) > 1 and seen() == {id(original)}
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(facade, name, "stub")
+        assert all(vars(module)[name] == "stub" for module in holders)
+    assert seen() == {id(original)}
+    with mock.patch.object(facade, name, "outer"):
+        with mock.patch(f"{facade.__name__}.{name}", "inner"):
+            assert all(vars(module)[name] == "inner" for module in holders)
+        assert all(vars(module)[name] == "outer" for module in holders)
+    assert seen() == {id(original)}
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(facade, name, "mp")
+        with mock.patch.object(facade, name, "mock"):
+            assert all(vars(module)[name] == "mock" for module in holders)
+        assert all(vars(module)[name] == "mp" for module in holders)
+    assert seen() == {id(original)}
+    with pytest.MonkeyPatch.context() as patched:
+        patched.delattr(facade, name)
+        assert not any(name in vars(module) for module in holders)
+        assert not hasattr(facade, name)
+    assert seen() == {id(original)}
+    assert facade._MIRROR.divergent() == ()
+
+
+def test_the_mirror_indexes_exactly_the_carved_owners() -> None:
+    assert sandbox._CARVED_OWNERS == tuple(_CARVED)
+    assert sandbox._MIRROR.owners == sandbox._CARVED_OWNERS
+    assert sandbox._MIRROR.excluded == ()
+    assert sandbox._MIRROR.divergent() == ()
+    carved = {name: owner for name, owner in sandbox._EXPORTS.items() if owner in _CARVED}
+    assert carved == dict(sandbox._MIRROR.exports)
+
+
+def test_the_renderers_and_the_sweep_stay_out_of_the_mirror() -> None:
+    """They owned their names before the carve, and a write through the facade never
+    reached them: patching ``sandbox.time`` for the agents-slice probe leaves the mount
+    sweep's clock alone, as it did."""
+    assert all(set(found) <= set(_CARVED) for found in sandbox._MIRROR.holders.values())
+    unmirrored = {name for name, owner in sandbox._EXPORTS.items() if owner not in _CARVED}
+    assert unmirrored and not any(unmirrored & set(vars(m)) for m in _CARVED.values())
+    real = sandbox_mount_sweep.time
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(sandbox, "time", "stub")
+        assert vars(sandbox)["time"] == "stub" and sandbox_mount_sweep.time is real
+        for dotted in sandbox._MIRROR.holders.get("time", ()):
+            assert vars(sys.modules[dotted])["time"] == "stub"
+    assert sandbox.time is real
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "config_dir",  # an import the facade and many owners bind
+        "_CREW_HIDDEN_LEAVES",  # moved, imported by other owners and by the facade
+        "_publish_empty_ceiling",  # moved and forwarded, imported by another owner
+    ],
+)
+def test_a_patch_through_the_facade_reaches_every_holder(name: str) -> None:
+    check_mirror_round_trips(sandbox, name)

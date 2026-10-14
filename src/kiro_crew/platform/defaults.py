@@ -167,7 +167,7 @@ class DefaultAgentExecutableResolver:
 
 
 class DefaultSandboxPolicy:
-    """Today's open-source sensitive-dir lists from ``sandbox.py``."""
+    """Today's open-source sensitive-dir lists from ``sandbox_tiers.py``."""
 
     def strict_dirs(self) -> List[str]:
         from kiro_crew import sandbox  # circular import: sandbox imports platform

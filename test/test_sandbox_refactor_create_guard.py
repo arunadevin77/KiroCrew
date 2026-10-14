@@ -75,8 +75,18 @@ _THIS_FILE = Path(__file__).resolve().relative_to(_REPO).as_posix()
 _PREMISE = "test_the_premise_create_true_through_the_facade_unbinds_the_owner"
 
 #: Deliberate ``create=True`` premises, as ``(path relative to the repository, test
-#: function)``. The raw scan must equal this set exactly, one hit each.
-_ALLOWED: frozenset[tuple[str, str]] = frozenset({(_THIS_FILE, _PREMISE)})
+#: function)``. The raw scan must equal this set exactly, one hit each. The mirror's own
+#: premise patches a synthetic facade it builds in ``tmp_path``; that file names this
+#: facade in its own create-guard table, which is why the scan reads it.
+_ALLOWED: frozenset[tuple[str, str]] = frozenset(
+    {
+        (_THIS_FILE, _PREMISE),
+        (
+            "test/test_facade_mirror_guards.py",
+            "test_the_premise_create_true_on_a_forwarded_name_unbinds_every_holder",
+        ),
+    }
+)
 
 _LOCAL = "<local>"
 _UNKNOWN = "<unknown>"

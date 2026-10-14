@@ -150,7 +150,7 @@ Detail and rationale: [security](docs/system-specs/modules/security.md),
   command line and the OS sandbox does not hold the path (#7441 went four rounds
   of `command`/`exec -a`/`nice`/`env -i`/`timeout`/`busybox` before restructuring).
 - **The sandbox's SCOPE is the operator's to widen, never yours.** What
-  `sandbox.py` seals, masks or no-follow pins decides which of the operator's own
+  `sandbox.py` and its `sandbox_*` owners seal, mask or no-follow pin decides which of the operator's own
   files their agent can still reach, so a widening they did not ask for surfaces
   days later as work that stopped, with no record that anyone chose to lose it.
   Never add a seal, mask or refusal a task did not ask for, never tighten a fence

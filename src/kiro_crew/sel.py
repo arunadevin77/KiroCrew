@@ -925,7 +925,7 @@ class SecurityEventLog:
 
         The file's mere EXISTENCE cannot be that gate, which is the trap this
         signature closes. ``sel_hmac.key`` is a sandbox read-write leaf
-        (``sandbox.py``'s ``_CREW_SANDBOX_VISIBLE_LEAVES``, alongside ``trust``),
+        (``sandbox_leaves.py``'s ``_CREW_SANDBOX_VISIBLE_LEAVES``, alongside ``trust``),
         so the audited agent can create one on a perfectly healthy install --
         and the lock path never reads its bytes, so any content will do. Gating
         on existence therefore let that agent arm the fallback at will, then
@@ -1521,7 +1521,7 @@ class SecurityEventLog:
             #   destination whose bytes it knows. Every source that could tell the
             #   planted key from the real one -- the destination itself, the
             #   legacy key, ``security_events.jsonl`` and ``security_events.d``
-            #   -- is read-WRITE for that same agent (``sandbox.py``'s
+            #   -- is read-WRITE for that same agent (``sandbox_leaves.py``'s
             #   ``_CREW_SANDBOX_VISIBLE_LEAVES``), so a check against any of them
             #   authenticates the attacker's own evidence. Making the audit log
             #   the anchor is the worst of those, because a forged newest row

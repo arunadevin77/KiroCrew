@@ -873,7 +873,9 @@ class TestAllThreeWrappersShareOneDiscriminator:
     """The decision is factored; the three spawns are deliberately NOT."""
 
     def _source(self) -> str:
-        return pathlib.Path(sandbox_mod.__file__).read_text(encoding="utf-8")
+        # The module and the owners carved out of it.
+        modules = (sandbox_mod, *map(importlib.import_module, sandbox_mod._CARVED_OWNERS))
+        return "\n".join(pathlib.Path(m.__file__).read_text(encoding="utf-8") for m in modules)
 
     def test_every_wrapper_routes_through_the_shared_helper(self):
         src = self._source()

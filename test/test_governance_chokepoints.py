@@ -82,7 +82,7 @@ class TestSandboxFloor:
 
     def test_floor_derives_rank_from_ssot_not_private_table(self):
         # The clamp must rank via _ORDINAL_SCALES (single source of truth), so a
-        # new tier added to the scale is honoured WITHOUT editing sandbox.py.
+        # new tier added to the scale is honoured WITHOUT editing sandbox_tiers.py.
         from kiro_crew.platform import governance as gov
 
         original = gov._ORDINAL_SCALES["sandbox"]

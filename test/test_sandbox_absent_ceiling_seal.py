@@ -48,7 +48,7 @@ from test_sandbox_launcher_program import (
     rendered_payload,
 )
 
-from kiro_crew import sandbox, sandbox_launcher_program
+from kiro_crew import sandbox, sandbox_aliases, sandbox_launcher_program
 from kiro_crew.sandbox_plan import BACKEND_NAMESPACE, ConfinementPlan
 
 program = sandbox_launcher_program
@@ -590,7 +590,7 @@ class TestEveryMaskedLeafIsEnumerated:
         whole-module search passes for any leaf whose name appears anywhere earlier, which
         is every masked leaf, so it would assert nothing.
         """
-        source = inspect.getsource(sandbox)
+        source = inspect.getsource(sandbox_aliases)
         before = source.split("_CREW_ALIAS_TOLERATED_LEAVES: frozenset")[0]
         block = []
         for line in reversed(before.splitlines()):
@@ -1026,7 +1026,7 @@ class TestAMaskedCredentialLeafRefusesASecondHardLink:
         whole-module search passes for any leaf named anywhere earlier, which is every masked
         leaf, so it would assert nothing.
         """
-        source = inspect.getsource(sandbox)
+        source = inspect.getsource(sandbox_aliases)
         before = source.split("_CREW_HARDLINK_REFUSED_LEAVES: frozenset")[0]
         block = []
         for line in reversed(before.splitlines()):

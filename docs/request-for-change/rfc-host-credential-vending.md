@@ -47,7 +47,7 @@ Two masks produce those holes, and they reach different children:
 | `opencode`, `goose`, `pi`, `deepseek` | every tier | hidden | hidden |
 
 The tier rows come from `_STANDARD_DIRS`, `_CC_DIRS` and `_STRICT_DIRS` in
-`sandbox.py`: both of the tighter lists carry `.aws`. `~/.ssh` is hidden by a
+`sandbox_tiers.py`: both of the tighter lists carry `.aws`. `~/.ssh` is hidden by a
 separate `hide_ssh` switch in the launcher builders, true only for `strict`, which
 leaves `known_hosts` readable. The `cc` cell is split because
 `_build_seatbelt_profile` drops `.aws` from the `cc` list on purpose — Seatbelt

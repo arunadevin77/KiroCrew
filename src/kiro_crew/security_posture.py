@@ -1942,7 +1942,7 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         # caller injects, then repr-escapes the result. It emits nothing; the
         # probe and gateway logger modules that consume the returned string are
         # the output boundaries.
-        "sandbox.py",
+        "sandbox_workspace.py",
         # Shared model-fallback text builders (fallback_story_of /
         # annotate_model_fallback): scrub the chain-exhaustion story and the
         # fallback-served warning line ONCE, centrally, so every consumer gets

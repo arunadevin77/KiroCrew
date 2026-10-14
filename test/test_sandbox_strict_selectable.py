@@ -1,6 +1,6 @@
 """``agent.sandbox="strict"`` is a tier the config layer must let through.
 
-``sandbox.py`` has carried a ``strict`` tier for as long as it has had tiers:
+``sandbox_tiers.py`` has carried a ``strict`` tier for as long as it has had tiers:
 ``_STRICT_DIRS`` masks ``~/.aws`` (and ``~/.ssh`` bar ``known_hosts``) where the
 default ``standard`` tier deliberately leaves them visible, ``_mode_to_level``
 maps the spelling to itself, and the product's own remedies name it

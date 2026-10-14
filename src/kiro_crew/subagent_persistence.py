@@ -108,10 +108,10 @@ def _delete_cleanup_identities_file(agent_id: str) -> None:
 # directory listing and two dismissals never contend over a shared file.
 #
 # A top-level leaf of the data home, NOT a subdirectory of ``trust``. The same
-# name is registered in ``security/paths.py`` and in three lists in
-# ``sandbox.py``; a rename here without those is a silently unprotected store,
-# which ``test_subagent_panel_durable_replay.py`` pins by asserting this
-# constant is present in each.
+# name is registered in ``security/paths.py`` and in three lists in ``sandbox_leaves.py``,
+# ``sandbox_precreate.py`` and ``sandbox_seals.py``; a rename here without those is a
+# silently unprotected store, which ``test_subagent_panel_durable_replay.py`` pins by
+# asserting this constant is present in each.
 _PANEL_DISMISSAL_LEAF = "panel-dismissals"
 
 #: What a dismissal write did. Three outcomes rather than a bool, because the two

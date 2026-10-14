@@ -147,6 +147,13 @@ jobs:
               - "test/test_gateway_lock_diagnosis.py"
               # The Seatbelt profile the private-memory boundary compiles.
               - "src/kiro_crew/sandbox.py"
+              - "src/kiro_crew/sandbox_leaves.py"
+              - "src/kiro_crew/sandbox_tiers.py"
+              - "src/kiro_crew/sandbox_precreate.py"
+              - "src/kiro_crew/sandbox_seals.py"
+              - "src/kiro_crew/sandbox_aliases.py"
+              - "src/kiro_crew/sandbox_staging.py"
+              - "src/kiro_crew/sandbox_workspace.py"
               - "src/kiro_crew/sandbox_plan.py"
               - "src/kiro_crew/sandbox_seatbelt.py"
               - "src/kiro_crew/sandbox_mount_sweep.py"

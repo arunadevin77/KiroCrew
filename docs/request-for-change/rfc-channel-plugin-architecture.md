@@ -47,7 +47,7 @@ superseded-by: []
 KiroCrew has 7 chat channels (slack, discord, telegram, webex, wecom, teams, weixin). Each new channel is built by copying the previous one. Measured on main `6298146` (2026-07-28):
 
 - **The turn-dispatch skeleton is duplicated 7 times: 3,796 lines total.** After normalizing channel names, `weixin/transport_dispatch.py` and `wecom/transport_dispatch.py` differ on 248 of ~760 combined lines — roughly two-thirds of every non-Slack dispatcher is the same sequence: governance gate → command intercept → busy-steer → session acquire → publish turn identity → build context → `TurnDriver.run` → guarded post-turn (record, persist, threshold notice, SEL audit) → `finally:` close/release. Telegram (1,045 lines) and Discord (803) are larger only because real per-channel features are interleaved with that same skeleton.
-- **Adding a channel means hand-editing 9 core files:** `config/loader.py`, `sandbox.py`, `slack/gateway.py`, `dashboard/handlers_system.py`, `dashboard/state.py`, `dashboard/server.py`, the governance contract test, `website/src/api/client.ts`, and `ChannelsPanel.tsx` (+ its test). This is not theoretical coupling: when Teams (#572) and WeChat (#627) landed in parallel, these exact files were the merge-conflict set, twice.
+- **Adding a channel means hand-editing 9 core files:** `config/loader.py`, `sandbox_tiers.py`, `slack/gateway.py`, `dashboard/handlers_system.py`, `dashboard/state.py`, `dashboard/server.py`, the governance contract test, `website/src/api/client.ts`, and `ChannelsPanel.tsx` (+ its test). This is not theoretical coupling: when Teams (#572) and WeChat (#627) landed in parallel, these exact files were the merge-conflict set, twice.
 - **The boot orchestrator lives inside the Slack package.** `slack/gateway.py` (5,512 lines) owns `_start_channel_transports()` and the governed members tuple. Every channel PR edits Slack's package to exist.
 - Bug classes get re-fixed per channel. The weixin review alone re-discovered, in channel-local code, problems the next channel will hit again: credential file permissions, two-file credential commit atomicity, event-loop stalls from sync I/O, fail-open policy parsing, hot poll loops.
 
@@ -109,7 +109,7 @@ The nine hand-edited seams reduce to **one required edit** (register the descrip
 | `slack/gateway.py` members tuple + start call | registry iterates descriptors |
 | `dashboard/handlers_system.py` members | derived from registry |
 | `dashboard/state.py` per-channel fields | generic `channel_state[type] = {connected, error}` map |
-| `sandbox.py` denylist entries | derived from descriptor cred fields |
+| `sandbox_tiers.py` denylist entries | derived from descriptor cred fields |
 | `dashboard/server.py` per-channel config routes | generic `/api/channels/{name}/config` |
 | governance contract test | stays, as the tripwire pinning membership |
 | `config/loader.py` dataclass + ctor | descriptor schema |

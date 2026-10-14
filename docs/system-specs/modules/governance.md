@@ -46,7 +46,7 @@ and extensible (adding a scope is data, not engine code).
 can reorder strictness or redefine matching):
 
 - `_ORDINAL_SCALES`: `approval = yolo < auto < interactive`;
-  `sandbox = off < standard < cc < strict` (verified against `sandbox.py`).
+  `sandbox = off < standard < cc < strict` (verified against `sandbox_tiers.py`).
 - `_MATCHERS` — exactly **five**: `identifier` (case-insensitive), `command`
   (case-sensitive `fnmatchcase`), `path`, `host`, and `mcp` (a `@server` grant covers
   `@server/tool`). There is no `bundle_id` or `cu_action` matcher: naming either in a
