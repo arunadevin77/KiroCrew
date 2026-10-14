@@ -3565,7 +3565,7 @@ class TestDispatcher:
         d, cli, sess = _dispatcher({7})
         route = ("direct", "7")
         old_tag = session_provenance_tag(d._session_key(route))
-        d._agent_pref[route] = "research-agent"
+        d._agent_picks.set(route, "research-agent")
 
         asyncio.run(
             d.on_callback(  # type: ignore[arg-type]

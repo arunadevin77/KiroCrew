@@ -88,9 +88,10 @@ adding auto-approval. Native `/agent` mutations are refused with a pointer to Cr
 agent selector, which updates both the native mode and Crew's template binding.
 A typed `/agent <name>` never reaches that refusal on Crew's own surfaces: the
 dashboard composer, the chat runner (split pane and linked channel threads), a
-Slack thread, and the text-command channels (Webex, Discord, Teams, Feishu, via
-`handle_channel_agent_command` / `ChannelAgentPicks`) each switch through Crew
-instead (`agent_switch_command.py`; the runner and the picker's route share
+Slack thread, the text-command channels (Webex, Discord, Teams, Feishu, via
+`handle_channel_agent_command` / `ChannelAgentPicks`) and Telegram's button picker
+(via the same `switch_channel_agent` step) each switch through Crew instead
+(`agent_switch_command.py`; the runner and the picker's route share
 `chat_handlers.switch_slot_agent`).
 Read-only native agent listing/schema commands remain available. Mode activation
 refreshes the view inside the existing derived-spec freshness bracket.

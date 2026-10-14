@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast  # noqa: F401
 from kiro_crew import runtime_death
 from kiro_crew.agent_discovery import AgentInfo, list_agents  # noqa: F401
 from kiro_crew.agent_sdk.drivers.acp_vocab import is_user_worded_failure
+from kiro_crew.agent_switch_command import ChannelAgentPicks
 from kiro_crew.config import live
 from kiro_crew.config.loader import ACTIVATION_MENTION, ACTIVATION_OFF  # noqa: F401
 from kiro_crew.config.sections import _clamp_pct
@@ -425,8 +426,10 @@ class TelegramDispatcher:
         # (a model is a preference about the peer, not about one session).
         self._model_pref: dict[tuple[str, str], str] = {}
         # route -> the kiro-cli agent the user picked with /agent. Keyed by ROUTE
-        # like the model preference, so it survives the idle/daily rotation.
-        self._agent_pref: dict[tuple[str, str], str] = {}
+        # like the model preference, so it survives the idle/daily rotation; the
+        # same store the text channels keep, and the picker's press switches it
+        # through ``switch_channel_agent`` like theirs.
+        self._agent_picks: ChannelAgentPicks[tuple[str, str]] = ChannelAgentPicks()
         # route -> whether this conversation speaks its answers (/voice on|off).
         # Keyed by ROUTE for the same reason as the two above: "read replies aloud
         # to me" is a preference about the peer, not about one session, so it must
@@ -2214,11 +2217,7 @@ class TelegramDispatcher:
         spec decides which MCP servers and skills that kiro-cli process loaded at
         spawn, so there is nothing to swap.
         """
-        if route is not None:
-            picked = self._agent_pref.get(route)
-            if picked:
-                return picked
-        return self._configured_agent()
+        return self._agent_picks.resolve(route, self._configured_agent())
 
     def _route_key(
         self,

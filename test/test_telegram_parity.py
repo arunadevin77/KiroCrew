@@ -1323,7 +1323,7 @@ class TestAgentSwitchSafety:
         outcome = await dispatcher._apply_agent(route, "alpha")
         assert "Still working" in outcome
         assert dispatcher._session_key(route) == before
-        assert route not in dispatcher._agent_pref
+        assert dispatcher._agent_picks.get(route) == ""
 
 
 class TestSessionsCommand:
@@ -1446,9 +1446,9 @@ class TestAgentPicker:
         assert sessions.has_session(before)  # a live conversation to warn about
         outcome = await dispatcher._apply_agent(route, "alpha")
         after = dispatcher._session_key(route)
-        # The agent is part of the key, so a pick necessarily opens a fresh one.
+        # The agent is part of the key, so a pick necessarily leaves this one.
         assert after != before and "alpha" in after
-        assert "fresh conversation" in outcome
+        assert "leaves the current conversation" in outcome
 
     @pytest.mark.asyncio
     async def test_picking_the_default_row_clears_the_preference(self) -> None:
@@ -1457,8 +1457,65 @@ class TestAgentPicker:
         await dispatcher._apply_agent(route, "alpha")
         assert dispatcher._resolve_agent(route) == "alpha"
         await dispatcher._apply_agent(route, "")
-        assert route not in dispatcher._agent_pref
+        assert dispatcher._agent_picks.get(route) == ""
         assert dispatcher._resolve_agent(route) == "kirocrew"
+
+    @pytest.mark.asyncio
+    async def test_a_pick_follows_the_new_agents_own_generations(self) -> None:
+        # After a restart nothing is in memory: the route's counter was seeded
+        # from the default agent's bucket (gen 0) while alpha's bucket already
+        # holds gen 1 and 2 on disk. The pick must land on alpha's latest (gen
+        # 2) so /new goes to gen 3, never back onto alpha's gen 1 or 2.
+        dispatcher, client, sessions = _dispatcher({1})
+        route = ("direct", "1")
+        sessions._has = False
+        persisted = {"kirocrew": 0, "alpha": 2}
+        sessions.max_generation = lambda bucket: persisted[bucket.split(":")[1]]
+        reserved: list[str] = []
+        sessions.reserve_generation = reserved.append
+        assert dispatcher._conv.current_gen(route) == 0
+        assert dispatcher._session_key(route) == "telegram:kirocrew:direct:1"
+
+        assert await dispatcher._apply_agent(route, "alpha") == "✅ Agent set to alpha."
+        assert dispatcher._session_key(route) == "telegram:alpha:direct:1:gen2"
+
+        await dispatcher.handle_message(_msg("/new"))
+        assert client.sent[-1][0] == "✅ New conversation started."
+        assert dispatcher._session_key(route) == "telegram:alpha:direct:1:gen3"
+        assert reserved == ["telegram:alpha:direct:1:gen3"]
+
+        # Back to the default row: its own latest again, not alpha's counter.
+        assert await dispatcher._apply_agent(route, "") == "✅ Agent set to Default (kirocrew)."
+        assert dispatcher._session_key(route) == "telegram:kirocrew:direct:1"
+
+    @pytest.mark.asyncio
+    async def test_pressing_the_current_row_is_not_a_switch(self) -> None:
+        # The in-memory generation can be AHEAD of disk (a /new whose save
+        # failed, a rotation). Pressing the row already marked "•" must not
+        # reseed from disk, or the next message would resume the conversation
+        # the user had already left and a pending compact prompt would be lost.
+        dispatcher, _, sessions = _dispatcher({1})
+        route = ("direct", "1")
+        sessions.max_generation = lambda bucket: 2
+        await dispatcher._apply_agent(route, "alpha")
+        dispatcher._conv.bump_gen(route)  # a /new that never reached disk
+        dispatcher._conv.set_awaiting(route)
+        key = dispatcher._session_key(route)
+        assert key == "telegram:alpha:direct:1:gen3"
+
+        assert await dispatcher._apply_agent(route, "alpha") == "ℹ️ Already using alpha."
+        assert dispatcher._session_key(route) == key
+        assert dispatcher._conv.is_awaiting(route)
+
+        # The Default row with no pick is the same no-op, compared as the agent
+        # each side RUNS rather than as the raw pick.
+        await dispatcher._apply_agent(route, "")
+        dispatcher._conv.bump_gen(route)
+        key = dispatcher._session_key(route)
+        assert await dispatcher._apply_agent(route, "") == "ℹ️ Already using Default (kirocrew)."
+        assert dispatcher._session_key(route) == key
+        assert await dispatcher._apply_agent(route, "kirocrew") == ("ℹ️ Already using kirocrew.")
+        assert dispatcher._session_key(route) == key
 
     @pytest.mark.asyncio
     async def test_a_double_press_applies_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5739,7 +5796,7 @@ class TestAgentPickerCharacterization:
             "/agent takes no argument — pick from the list.\n\n"
             f"Current agent: {self._DEFAULT}\nPick one:"
         )
-        d._agent_pref[("direct", "7")] = "ghost"
+        d._agent_picks.set(("direct", "7"), "ghost")
         asyncio.run(d.handle_message(_dm("/agent")))
         assert client.sent[-1][0] == "Current agent: ghost\nPick one:"
 
@@ -5773,8 +5830,8 @@ class TestAgentPickerCharacterization:
         from test_telegram import _press
 
         rotated = (
-            "✅ Agent set to {} — this starts a fresh conversation. "
-            "Switch back to return to the previous one."
+            "✅ Agent set to {} — this leaves the current conversation. "
+            "Switch back to return to it."
         )
         d, client, sess = _dispatcher({7})
         self._with_names(monkeypatch, d, ["alpha"])
@@ -5784,22 +5841,30 @@ class TestAgentPickerCharacterization:
         asyncio.run(d.handle_message(_dm("/agent")))
         asyncio.run(d.on_callback(_press("g:0", message_id=102)))
         assert client.edits[-1][1] == rotated.format(self._DEFAULT)
-        assert ("direct", "7") not in d._agent_pref
+        assert d._agent_picks.get(("direct", "7")) == ""
 
         d, client, sess = _dispatcher({7})
         sess._has = False
         assert asyncio.run(d._apply_agent(("direct", "7"), "alpha")) == "✅ Agent set to alpha."
+        assert asyncio.run(d._apply_agent(("direct", "7"), "alpha")) == "ℹ️ Already using alpha."
         sess._busy = True
-        assert asyncio.run(d._apply_agent(("direct", "7"), "alpha")) == (
+        assert asyncio.run(d._apply_agent(("direct", "7"), "beta")) == (
             "⏳ Still working on your last message — send /agent again once it finishes "
-            "to switch to alpha."
+            "to switch to beta."
         )
+        # The Default row's label names the configured agent; with no pick it
+        # is the row already in use, so each check switches away first.
         d, _client, sess = _dispatcher({7}, default_agent="research")
         sess._has = False
+        assert asyncio.run(d._apply_agent(("direct", "7"), "")) == (
+            "ℹ️ Already using Default (research)."
+        )
+        asyncio.run(d._apply_agent(("direct", "7"), "alpha"))
         assert asyncio.run(d._apply_agent(("direct", "7"), "")) == (
             "✅ Agent set to Default (research)."
         )
         d.agent = "override"
+        asyncio.run(d._apply_agent(("direct", "7"), "alpha"))
         assert asyncio.run(d._apply_agent(("direct", "7"), "")) == (
             "✅ Agent set to Default (override)."
         )

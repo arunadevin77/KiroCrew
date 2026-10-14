@@ -18,7 +18,7 @@ import asyncio
 import logging
 import re
 from collections.abc import Callable, Hashable
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from kiro_crew.validation import is_registered_agent_name
 
@@ -73,12 +73,14 @@ def agent_switch_target(message: str) -> str | None:
     return name
 
 
-# ── /agent on the text-command channels (Webex, Discord, Teams, Feishu) ──
+# ── /agent on the channels (Webex, Discord, Teams, Feishu, Telegram) ──
 #
-# Those channels have no picker UI, so the command is text: a bare ``/agent``
+# The text channels have no picker UI, so the command is text: a bare ``/agent``
 # shows the current agent and the ones this machine offers, ``/agent <name>``
 # switches, ``/agent default`` goes back to the configured default. Telegram
-# keeps its button picker and Slack its thread agent; neither reads this.
+# keeps its button picker and its own replies, but a press switches through the
+# same :func:`switch_channel_agent` step. Slack keeps its thread agent and
+# reads none of this.
 
 #: Words that are not agent names on the channel command.
 _SHOW_WORDS = frozenset({"list"})
@@ -90,9 +92,9 @@ RouteT = TypeVar("RouteT", bound=Hashable)
 class ChannelAgentPicks(Generic[RouteT]):
     """The agent each channel conversation picked with ``/agent``, by route.
 
-    Keyed by ROUTE (a DM, a space, a thread), like Telegram's ``_agent_pref``,
-    so the pick survives ``/new`` and the idle/daily rotation. In memory only:
-    the durable answer is the configured default agent.
+    Keyed by ROUTE (a DM, a space, a thread) so the pick survives ``/new`` and
+    the idle/daily rotation, on every channel including Telegram's button
+    picker. In memory only: the durable answer is the configured default agent.
     """
 
     def __init__(self) -> None:
@@ -134,6 +136,42 @@ def channel_agent_usage(prefix: str = "/") -> str:
         f"Send `{prefix}agent` to see the agents, `{prefix}agent <name>` to switch, "
         f"or `{prefix}agent default` to go back to the default."
     )
+
+
+#: What :func:`switch_channel_agent` did: refused because a reply runs, set the
+#: pick with no conversation live, or set it and left the live conversation.
+SwitchOutcome = Literal["busy", "fresh", "left"]
+
+
+def switch_channel_agent(
+    picks: ChannelAgentPicks[RouteT],
+    route: RouteT,
+    target: str,
+    *,
+    conv: Any,
+    sessions: Any,
+    session_key: Callable[[], str],
+) -> SwitchOutcome:
+    """Move *route* to *target* (``""`` for the configured default), the step
+    every channel's ``/agent`` switch shares; the caller words the reply.
+
+    *session_key* derives the route's CURRENT key, read BEFORE the pick moves
+    it: the agent is part of the key. A switch is refused while a reply runs on
+    that key (``"busy"``), because everything about a running turn is keyed on
+    it and moving the key would leave that turn with no route back. Otherwise
+    the pick is set and *conv* (the channel's ``ConversationState``) is reseeded
+    from the new agent's own bucket, so the route resumes that agent's latest
+    conversation and ``/new`` goes past every one of its saved generations;
+    switching back reaches the old agent's latest one again. ``"left"`` says a
+    conversation was live and is being left, ``"fresh"`` that none was.
+    """
+    current_key = session_key()
+    if sessions.is_busy(current_key):
+        return "busy"
+    had = sessions.has_session(current_key)
+    picks.set(route, target)
+    conv.reseed(route)
+    return "left" if had else "fresh"
 
 
 async def handle_channel_agent_command(
@@ -201,18 +239,16 @@ async def handle_channel_agent_command(
     # agent changes nothing, so it must not read as a switch.
     if (target or configured) == (current or configured):
         return f"ℹ️ Already using `{label}`."
-    # Both read the key BEFORE the pick moves it: the agent is part of the key.
-    current_key = session_key()
-    if sessions.is_busy(current_key):
+    outcome = switch_channel_agent(
+        picks, route, target, conv=conv, sessions=sessions, session_key=session_key
+    )
+    if outcome == "busy":
         again = f"{prefix}agent {target or 'default'}"
         return (
             f"⏳ Still working on your last message. Send `{again}` again "
             f"once it finishes to switch to `{label}`."
         )
-    had = sessions.has_session(current_key)
-    picks.set(route, target)
-    conv.reseed(route)
-    if not had:
+    if outcome == "fresh":
         return f"✅ Agent set to `{label}`."
     return (
         f"✅ Agent set to `{label}`. This leaves the current conversation; "

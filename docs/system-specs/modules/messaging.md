@@ -1590,13 +1590,17 @@ opening the dashboard:
   `/agent`.
 - **Channel `/agent` (Webex, Discord, Teams, Feishu)** is one handler,
   `agent_switch_command.handle_channel_agent_command`. A pick lives in a
-  route-keyed `ChannelAgentPicks` (in memory, like Telegram's `_agent_pref`) and
-  feeds the dispatcher's `_resolve_agent(route)`, so it moves the session key. Only
-  Telegram's picker list (`_installed_agent_names`) is accepted; a switch is refused
-  while the current key is busy; the no-op test compares effective agents. On a
-  switch `ConversationState.reseed` re-reads the route's generation from the new
-  agent's bucket, so `/new` is always fresh. Discord passes the pick to the shared
-  pipeline as `Asker.agent`; a resumed dashboard session keeps its own agent.
+  route-keyed `ChannelAgentPicks` (in memory; Telegram's dispatcher keeps the same
+  store as `_agent_picks`) and feeds the dispatcher's `_resolve_agent(route)`, so it
+  moves the session key. Only Telegram's picker list
+  (`_installed_agent_names`) is accepted; the no-op test compares effective agents.
+  The switch itself is `switch_channel_agent`, one step for every channel including
+  Telegram's button picker (`_apply_agent`, which only words its own replies): it
+  is refused while the current key is busy, sets the pick, and
+  `ConversationState.reseed` re-reads the route's generation from the new agent's
+  bucket, so `/new` is always fresh even after a restart. Discord passes the pick to
+  the shared pipeline as `Asker.agent`; a resumed dashboard session keeps its own
+  agent.
 - `/new` and `/unlink` call `SessionBinder.release`, which atomically clears the
   inbound link and retires its durable expectation. `/new` then advances the native
   Telegram generation; `/unlink` returns to the existing native conversation. A

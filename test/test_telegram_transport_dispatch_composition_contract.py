@@ -75,6 +75,7 @@ BASE_NAMES = frozenset(
         "CHAT_TYPE_DIRECT",
         "CHAT_TYPE_FORUM",
         "CHAT_TYPE_PRIVATE_TOPIC",
+        "ChannelAgentPicks",
         "ChannelLink",
         "ConversationOwnershipConflict",
         "ConversationState",
