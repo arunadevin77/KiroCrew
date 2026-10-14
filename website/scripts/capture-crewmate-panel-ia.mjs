@@ -100,9 +100,13 @@ const MONITORS = [{
 
 const STOPPED_LOOP = {
   id: 'ledger-kiro', slot_key: 'member-kiro', message: '', created_ts: now - 1200,
-  idle_secs: 600, max_cycles: 300, cycle_count: 9, active: false,
+  idle_secs: 600, max_cycles: 300, cycle_count: 300, active: false,
   last_fire_ts: now - 600, next_due_ts: 0, max_runtime_secs: 86_400,
   stopped_reason: 'cycle_cap', monitor_outcome: '', monitor_kind: 'work-ledger',
+}
+const FAILED_LOOP = {
+  ...STOPPED_LOOP,
+  id: 'failed-kiro', cycle_count: 2, stopped_reason: 'session_start_failures',
 }
 let monitorFrame = 'active'
 
@@ -129,6 +133,7 @@ const extra = async (path, route) => {
     return true
   }
   if (/^\/api\/members\/[^/]+\/activity$/.test(path)) { await json(route, { slug: '', member: '', capped: false, entries: [] }); return true }
+  if (/^\/api\/members\/[^/]+\/goals$/.test(path)) { await json(route, { goals: [] }); return true }
   if (/^\/api\/members\/[^/]+\/briefing$/.test(path)) {
     await json(route, { slug: '', member: '', supported: true, text: '# Briefing\n\n- Hold the push until the CI round is terminal.\n- PR screenshots go under .github/screenshots.\n- Max two buttons per row; the rest in a menu.\n', updated_ts: now - 3600, redacted: false, truncated: false })
     return true
@@ -153,10 +158,17 @@ const extra = async (path, route) => {
     await json(route, { url: 'data:text/html;base64,' + Buffer.from(String(body.html || ''), 'utf8').toString('base64') })
     return true
   }
-  if (path === '/api/autonudge') { await json(route, { enabled: true, loops: monitorFrame === 'stopped' ? [STOPPED_LOOP] : [] }); return true }
-  if (path === '/api/autonudge/slot/member-kiro') { await json(route, { enabled: true, loop: monitorFrame === 'stopped' ? STOPPED_LOOP : null }); return true }
+  if (path === '/api/autonudge') {
+    const loop = monitorFrame === 'stopped' ? STOPPED_LOOP : monitorFrame === 'failed-stop' ? FAILED_LOOP : null
+    await json(route, { enabled: true, loops: loop ? [loop] : [] }); return true
+  }
+  if (path === '/api/autonudge/slot/member-kiro') {
+    const loop = monitorFrame === 'stopped' ? STOPPED_LOOP : monitorFrame === 'failed-stop' ? FAILED_LOOP : null
+    await json(route, { enabled: true, loop }); return true
+  }
   if (path === '/api/monitors') { await json(route, { enabled: true, monitors: monitorFrame === 'active' ? MONITORS : [] }); return true }
   if (path === '/api/monitors/slot/member-kiro') {
+    if (monitorFrame === 'loading') return true
     if (monitorFrame === 'unavailable') await json(route, { error: 'monitor unavailable' }, 503)
     else await json(route, { enabled: true, monitor: monitorFrame === 'active' ? MONITORS[0] : null })
     return true
@@ -193,7 +205,7 @@ async function captureProfileVariant(frame, file, expected) {
   const details = page.getByTestId('crew-profile-monitor')
   await details.waitFor({ state: 'visible', timeout: 10000 })
   // A failed read settles only after React Query's retries; wait for its notice.
-  if (frame === 'unavailable') await page.getByTestId('crew-profile-monitor-error').waitFor({ state: 'visible', timeout: 30000 })
+  if (frame === 'unavailable' || frame === 'failed-stop') await page.getByTestId('crew-profile-monitor-error').waitFor({ state: 'visible', timeout: 30000 })
   const text = (await details.innerText()).replace(/\s+/g, ' ').trim()
   for (const fragment of expected) check(`${frame} Profile shows ${fragment}`, text.includes(fragment), text)
   check(`${frame} Profile avatar has no active mark`, (await page.getByTestId('crew-profile-loop-indicator').count()) === 0)
@@ -264,12 +276,12 @@ async function captureMonitorTransition() {
   await monitor.waitFor({ state: 'visible', timeout: 10000 })
   const monitorText = (await monitor.innerText()).replace(/\s+/g, ' ').trim()
   check('Profile shows active state', /State Active/.test(monitorText), monitorText)
-  check('Profile shows exact monitor type', /Type Bounded monitor/.test(monitorText), monitorText)
-  check('Profile shows exact watch subject', monitorText.includes('Watch https://github.com/kirodotdev/KiroCrew/pull/20026'), monitorText)
+  check('Profile shows exact monitor type', /Type Pull request/.test(monitorText), monitorText)
+  check('Profile shows exact monitor subject', monitorText.includes('Subject https://github.com/kirodotdev/KiroCrew/pull/20026'), monitorText)
   check('Profile shows exact frequency', /Every 5m/.test(monitorText), monitorText)
-  check('Profile shows exact cycle values', /Cycle 7 \/ —/.test(monitorText), monitorText)
-  check('Profile shows exact runtime values', /Runtime 1h \/ 4h/.test(monitorText), monitorText)
-  check('Profile shows a real start time', !/Started —/.test(monitorText), monitorText)
+  check('Profile shows exact check values', /Checks 7 \/ No limit/.test(monitorText), monitorText)
+  check('Profile shows exact time-used values', /Time used 1h \/ 4h/.test(monitorText), monitorText)
+  check('Profile shows a real runtime start', !/Runtime started —/.test(monitorText), monitorText)
   check('Profile shows a real next check', !/Next check —/.test(monitorText), monitorText)
   check('Profile monitor section is read-only', (await monitor.locator('button, input, select, textarea, a').count()) === 0)
   await page.screenshot({ path: join(OUT, '02-profile-card-light.png') })
@@ -277,11 +289,22 @@ async function captureMonitorTransition() {
   if (PROFILE_ONLY) {
     await context.close()
     await captureProfileVariant('stopped', '02c-card-profile-stopped-light.png', [
-      'State Inactive', 'Type Scheduled loop', 'Watch Work ledger',
-      'Every 10m', 'Cycle 9 / 300', 'Stopped because Cycle limit reached',
+      'State Stopped', 'Type Task list', 'Subject —',
+      'Every 10m', 'Checks 300 / 300', 'Time used Unknown / 24h',
+      'Stopped because Check limit reached',
     ])
-    await captureProfileVariant('unavailable', '02d-card-profile-unavailable-light.png', [
-      'State Monitor status unavailable', 'Type —', 'Watch —', 'Cycle — / —',
+    await captureProfileVariant('none', '02d-card-profile-none-light.png', [
+      'State Not watching anything',
+    ])
+    await captureProfileVariant('loading', '02e-card-profile-loading-light.png', [
+      'State Checking monitor status…',
+    ])
+    await captureProfileVariant('unavailable', '02f-card-profile-unavailable-light.png', [
+      'State Monitor status unavailable',
+    ])
+    await captureProfileVariant('failed-stop', '02g-card-profile-failed-stop-light.png', [
+      'State Stopped', 'Type Task list', 'Checks 2 / 300',
+      'Stopped because The session could not start',
     ])
     await captureMonitorTransition()
     await browser.close()

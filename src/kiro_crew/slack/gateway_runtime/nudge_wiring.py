@@ -225,6 +225,7 @@ async def _init_autonudge(self: GatewayOrchestrator) -> None:
                 "idle_secs": loop.idle_secs,
                 "max_cycles": loop.max_cycles,
                 "max_runtime_secs": loop.max_runtime_secs,
+                "created_ts": loop.created_ts,
                 "cycle_count": loop.cycle_count,
                 "active": loop.active,
                 "last_fire_ts": loop.last_fire_ts,

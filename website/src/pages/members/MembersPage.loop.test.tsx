@@ -100,21 +100,37 @@ describe('MembersPage — on-watch loop indicator', () => {
     expect(document.body.textContent).not.toMatch(/3 of 24|On patrol/)
   })
 
+  it('reads a known roster slot while the thread open is still pending', async () => {
+    vi.mocked(api.memberThread).mockImplementationOnce(() => new Promise(() => undefined))
+    await renderPage('/members?member=alpha')
+    fireEvent.click(await screen.findByTestId('member-identity-pill'))
+    const card = await screen.findByTestId('crew-profile-panel')
+    fireEvent.click(within(card).getByRole('tab', { name: 'Profile' }))
+    await waitFor(() => expect(api.monitorForSlot).toHaveBeenCalledWith('member-alpha'))
+  })
+
   it('fails closed when the Profile monitor snapshot cannot be read', async () => {
     vi.mocked(api.monitorForSlot).mockRejectedValue(new Error('owner read failed'))
-    await renderPage('/members?member=alpha')
+    const { store } = await renderPage('/members?member=alpha')
+    const live = normalizeAutomationRecord(monitor('member-alpha'))!
+    act(() => { store.dispatch(sseAutomation(live)) })
     const pill = await screen.findByTestId('member-identity-pill')
+    expect(await within(pill).findByTestId('member-pill-loop-indicator')).toBeInTheDocument()
     fireEvent.click(pill)
     const card = await screen.findByTestId('crew-profile-panel')
     fireEvent.click(within(card).getByRole('tab', { name: 'Profile' }))
     const details = await within(card).findByTestId('crew-profile-monitor')
     await waitFor(() => expect(details).toHaveTextContent('Monitor status unavailable'))
-    expect(within(card).queryByTestId('crew-profile-loop-indicator')).toBeNull()
+    await waitFor(() => expect(within(card).queryByTestId('crew-profile-loop-indicator')).toBeNull())
+    expect(within(details).queryByText('Type')).toBeNull()
   })
 
   it('the Profile avatar and details use the same active record', async () => {
     const raw = monitor('member-alpha', { created_ts: 1_799_996_400 })
-    vi.mocked(api.monitorForSlot).mockResolvedValue({ enabled: true, monitor: raw } as never)
+    const stoppedSnapshot = monitor('member-alpha', {
+      active: false, outcome: 'success', stopped_reason: 'monitor_terminal', stopped_at: 1_800_000_000,
+    })
+    vi.mocked(api.monitorForSlot).mockResolvedValue({ enabled: true, monitor: stoppedSnapshot } as never)
     const { store } = await renderPage('/members?member=alpha')
     act(() => { store.dispatch(sseAutomation(normalizeAutomationRecord(raw)!)) })
     const pill = await screen.findByTestId('member-identity-pill')
@@ -130,6 +146,6 @@ describe('MembersPage — on-watch loop indicator', () => {
     expect(details).toHaveAttribute('data-monitor-active', 'true')
     expect(details).toHaveTextContent('https://github.com/owner/repo/pull/123')
     expect(details).toHaveTextContent('5m')
-    expect(details).toHaveTextContent('5 / —')
+    expect(details).toHaveTextContent('5 / No limit')
   })
 })

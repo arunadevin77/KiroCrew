@@ -687,6 +687,18 @@ describe('MembersPage roster', () => {
     expect(notices.queryByRole('button', { name: /ask the agent/i })).toBeNull()
   })
 
+  it('shows a patrol error when a refetch fails after a good cached read', async () => {
+    const { queryClient } = await renderPage([row()], 'kirocrew', { route: '/members?member=oncall' })
+    await screen.findByTestId('chat-pane-stub', undefined, PANE_READY)
+    await waitFor(() => expect(api.autonudgeList).toHaveBeenCalled())
+
+    vi.mocked(api.autonudgeList).mockRejectedValue(new Error('patrol unavailable'))
+    await act(async () => { await queryClient.refetchQueries({ queryKey: ['autonudge-loops'] }) })
+
+    expect(await screen.findByTestId('member-main-patrol-error', undefined, PANE_READY)).toBeInTheDocument()
+    expect(screen.getByTestId('member-roster-patrol-error')).toBeInTheDocument()
+  })
+
   it('the teams read notice dismisses for the outage, returns on a failure after a good read, and clears on a good read', async () => {
     // The roster reads no default crewmate: a plain session is the default
     // custom agent (a template), so the teams read is the one notice here.

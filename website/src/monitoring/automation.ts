@@ -528,12 +528,19 @@ export function normalizeAutomationRecord(raw: unknown): AutomationRecord | null
   }
 }
 
-export function isAutomationActive(record: AutomationRecord | null | undefined): boolean {
+export function isAutomationRunning(record: AutomationRecord | null | undefined): boolean {
   if (!record) return false
-  if (record.kind === 'legacy_goal_loop') return record.active
-  // Unsupported/malformed structured records are normalized as non-actionable.
-  // They remain inspectable, but cannot claim a live watch in the UI.
-  return record.active && record.actionable && record.terminal === null
+  return record.kind === 'legacy_goal_loop'
+    ? record.active
+    : record.active && record.terminal === null
+}
+
+/** A proven active watch suitable for the avatar and Profile readout.
+ * Close safety is broader: an active future-schema record must still block
+ * close even though this build cannot truthfully animate or describe it. */
+export function isAutomationActive(record: AutomationRecord | null | undefined): boolean {
+  return isAutomationRunning(record)
+    && (record?.kind === 'legacy_goal_loop' || record?.actionable === true)
 }
 
 export function deriveAutomationStatus(record: AutomationRecord): MonitorStatus {

@@ -36,6 +36,13 @@ this spec states the target and that one states the present.
 | Driver | `implemented` | in-session timer of `AutoNudgeService` (`autonudge_service/firing.py`; probe gate `gate.py`, judge `judge_tick.py`), which reads the subject each tick and screens it with the wake judge |
 | Delivery | `implemented` | session directive keyed by the call's input digest, shared by both arming paths |
 
+The dashboard's `autonudge_state` lifecycle frame carries the loop's public
+`created_ts` runtime-budget clock alongside cadence, counters, deadline and stop
+state. The dashboard caches that frame over its REST seed, so omitting this clock
+would erase a known Runtime started/Runtime value after any update. Structured
+subject fields remain withheld from the broad frame and come only from the
+owner-gated monitor read.
+
 ## Three prerequisites
 
 Nothing in the seven layers is reachable until these three exist. Each is a

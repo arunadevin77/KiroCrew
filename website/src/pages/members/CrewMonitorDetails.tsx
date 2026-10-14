@@ -1,27 +1,55 @@
 import { useTranslation } from 'react-i18next'
 
 import ErrorNotice from '../../components/ErrorNotice'
-import { intervalText } from '../../components/autoNudgeLoop'
+import { intervalText, PULL_REQUEST_WATCH_KINDS } from '../../components/autoNudgeLoop'
 import { fmtDateTime, fmtNumber } from '../../i18n/format'
 import { isAutomationActive, type AutomationRecord } from '../../monitoring/automation'
 
 export type MonitorReadState = 'loading' | 'ready' | 'error'
 
-/** Stop reasons a failure caused, as opposed to a person, the agent or a limit. */
-const FAILURE_STOP_REASONS = new Set(['structural_terminal', 'session_start_failures'])
+/** Profile's localized projection of persisted loop and monitor stop codes. */
+const PROFILE_STOP_REASON_KEYS: Readonly<Record<string, string>> = {
+  manual: 'pages.membersPage.profile_monitor_reason_manual',
+  user_stop: 'pages.membersPage.profile_monitor_reason_manual',
+  autonudge_stop: 'pages.membersPage.profile_monitor_reason_agent',
+  cycle_cap: 'pages.membersPage.profile_monitor_reason_cycles',
+  runtime_budget: 'pages.membersPage.profile_monitor_reason_runtime',
+  agent_turn_budget: 'pages.membersPage.profile_monitor_reason_budget',
+  token_budget: 'pages.membersPage.profile_monitor_reason_budget',
+  provider_error_budget: 'pages.membersPage.profile_monitor_reason_budget',
+  approval_stalled: 'pages.membersPage.profile_monitor_reason_approval',
+  approval_stall: 'pages.membersPage.profile_monitor_reason_approval',
+  structural_terminal: 'pages.membersPage.profile_monitor_reason_failed',
+  model_refused: 'pages.membersPage.profile_monitor_reason_failed',
+  interrupted_cycle: 'pages.membersPage.profile_monitor_reason_failed',
+  consecutive_failures: 'pages.membersPage.profile_monitor_reason_failed',
+  session_start_failures: 'pages.membersPage.profile_monitor_reason_start',
+  session_unavailable: 'pages.membersPage.profile_monitor_reason_start',
+  sentinel_dropped: 'pages.membersPage.profile_monitor_reason_blocked',
+  verdict_stall: 'pages.membersPage.profile_monitor_reason_blocked',
+  completion_evidence_unavailable: 'pages.membersPage.profile_monitor_reason_blocked',
+  invalid_monitor_record: 'pages.membersPage.profile_monitor_reason_blocked',
+  unsupported_monitor_version: 'pages.membersPage.profile_monitor_reason_blocked',
+  session_close: 'pages.membersPage.profile_monitor_reason_session_closed',
+  monitor_terminal: 'pages.membersPage.profile_monitor_reason_finished',
+  stop_sentinel: 'pages.membersPage.profile_monitor_reason_finished',
+}
 
-function translatedStopReason(reason: string, t: ReturnType<typeof useTranslation>['t']): string {
-  switch (reason) {
-    case 'manual': return t('pages.membersPage.profile_monitor_reason_manual')
-    case 'autonudge_stop': return t('pages.membersPage.profile_monitor_reason_agent')
-    case 'cycle_cap': return t('pages.membersPage.profile_monitor_reason_cycles')
-    case 'runtime_budget': return t('pages.membersPage.profile_monitor_reason_runtime')
-    case 'approval_stalled': return t('pages.membersPage.profile_monitor_reason_approval')
-    case 'structural_terminal': return t('pages.membersPage.profile_monitor_reason_failed')
-    case 'session_start_failures': return t('pages.membersPage.profile_monitor_reason_start')
-    case 'monitor_terminal': return t('pages.membersPage.profile_monitor_reason_finished')
-    default: return reason
-  }
+/** Profile reason keys that describe a failure rather than a person or limit. */
+const FAILURE_PROFILE_REASON_KEYS = new Set([
+  'pages.membersPage.profile_monitor_reason_failed',
+  'pages.membersPage.profile_monitor_reason_start',
+  'pages.membersPage.profile_monitor_reason_target_unavailable',
+  'pages.membersPage.profile_monitor_reason_blocked',
+])
+
+const TERMINAL_OUTCOME_REASON_KEYS: Readonly<Record<string, string>> = {
+  success: 'pages.membersPage.profile_monitor_reason_finished',
+  blocked: 'pages.membersPage.profile_monitor_reason_blocked',
+  budget: 'pages.membersPage.profile_monitor_reason_budget',
+  user_stop: 'pages.membersPage.profile_monitor_reason_manual',
+  session_close: 'pages.membersPage.profile_monitor_reason_session_closed',
+  target_unavailable: 'pages.membersPage.profile_monitor_reason_target_unavailable',
 }
 
 function stopReason(record: AutomationRecord | null): string {
@@ -32,17 +60,19 @@ function stopReason(record: AutomationRecord | null): string {
 
 function monitorType(record: AutomationRecord | null, t: ReturnType<typeof useTranslation>['t']): string {
   if (!record) return '—'
-  return record.kind === 'legacy_goal_loop'
-    ? t('pages.membersPage.profile_monitor_type_loop')
-    : t('pages.membersPage.profile_monitor_type_bounded')
+  const kind = record.monitorKind
+  if (kind === 'work-ledger') return t('pages.membersPage.profile_monitor_subject_ledger')
+  if (PULL_REQUEST_WATCH_KINDS.has(kind)) {
+    return t('pages.membersPage.profile_monitor_subject_pull_request')
+  }
+  if (record.kind === 'legacy_goal_loop' && !kind) {
+    return t('pages.membersPage.profile_monitor_subject_goal')
+  }
+  return kind || t('pages.membersPage.profile_monitor_type_bounded')
 }
 
-function monitorSubject(record: AutomationRecord | null, t: ReturnType<typeof useTranslation>['t']): string {
-  if (!record) return '—'
-  if (record.kind === 'structured_monitor') return record.target || '—'
-  if (record.monitorKind === 'work-ledger') return t('pages.membersPage.profile_monitor_subject_ledger')
-  if (record.monitorKind === 'gh-pr') return t('pages.membersPage.profile_monitor_subject_pull_request')
-  return record.monitorKind || t('pages.membersPage.profile_monitor_subject_goal')
+function monitorSubject(record: AutomationRecord | null): string {
+  return record?.kind === 'structured_monitor' ? record.target || '—' : '—'
 }
 
 function durationValue(seconds: number): string {
@@ -61,21 +91,29 @@ export default function CrewMonitorDetails({
   const { t } = useTranslation()
   const proven = readState === 'ready'
   const active = proven && isAutomationActive(automation)
-  const unavailable = !proven || (automation?.kind === 'structured_monitor' && !automation.actionable)
-  const status = unavailable
-    ? t('pages.membersPage.profile_monitor_unavailable')
-    : active
-      ? t('pages.membersPage.profile_monitor_active')
-      : t('pages.membersPage.profile_monitor_inactive')
+  const noMonitor = proven && !automation
+  const unsupported = automation?.kind === 'structured_monitor' && !automation.actionable
+  const readFailed = readState === 'error'
+  const status = readState === 'loading'
+    ? t('pages.membersPage.profile_monitor_loading')
+    : readFailed || unsupported
+      ? t('pages.membersPage.profile_monitor_unavailable')
+      : noMonitor
+        ? t('pages.membersPage.profile_monitor_none')
+        : active
+          ? t('pages.membersPage.profile_monitor_active')
+          : t('pages.membersPage.profile_monitor_inactive')
   const cadence = automation
     ? durationValue(automation.kind === 'legacy_goal_loop' ? automation.idleSecs : automation.cadenceSecs)
     : '—'
   const currentCycle = automation
     ? fmtNumber(automation.kind === 'legacy_goal_loop' ? automation.cycleCount : automation.usage.probes)
     : '—'
-  const maximumCycle = automation?.kind === 'legacy_goal_loop' && automation.maxCycles > 0
-    ? fmtNumber(automation.maxCycles)
-    : '—'
+  const maximumCycle = !automation
+    ? '—'
+    : automation.kind === 'legacy_goal_loop' && automation.maxCycles > 0
+      ? fmtNumber(automation.maxCycles)
+      : t('pages.membersPage.profile_monitor_no_limit')
   const createdAt = automation?.createdAt ?? 0
   const nextAt = automation?.kind === 'legacy_goal_loop'
     ? automation.nextDueAt ?? 0
@@ -86,26 +124,40 @@ export default function CrewMonitorDetails({
   const stoppedAt = automation?.kind === 'structured_monitor'
     ? automation.terminal?.stoppedAt ?? 0
     : 0
-  const runtimeUsed = createdAt > 0 && (active || stoppedAt > 0)
-    ? durationValue(Math.max(0, (active ? nowTs : stoppedAt) - createdAt))
-    : '—'
+  const reason = stopReason(automation)
+  const limitEndedRuntime = !active && reason === 'runtime_budget' && maxRuntime > 0
+  const runtimeUsed = !automation
+    ? '—'
+    : limitEndedRuntime
+      ? durationValue(maxRuntime)
+      : createdAt > 0 && (active || stoppedAt > 0)
+        ? durationValue(Math.max(0, (active ? nowTs : stoppedAt) - createdAt))
+        : t('pages.membersPage.profile_monitor_unknown')
   const runtime = maxRuntime > 0
     ? t('pages.membersPage.profile_monitor_runtime_value', {
         used: runtimeUsed,
         max: durationValue(maxRuntime),
       })
     : runtimeUsed
-  const reason = stopReason(automation)
-  const reasonText = reason ? translatedStopReason(reason, t) : '—'
+  const reasonKey = PROFILE_STOP_REASON_KEYS[reason]
+    ?? (automation?.kind === 'structured_monitor'
+      ? TERMINAL_OUTCOME_REASON_KEYS[automation.terminal?.outcome ?? '']
+      : undefined)
+  const reasonText = reasonKey
+    ? t(reasonKey)
+    : reason
+      ? t('pages.membersPage.profile_monitor_reason_unknown')
+      : '—'
   // A stop that a failure caused, or a read that failed, is an error and
   // renders through ErrorNotice; ordinary stops stay plain text.
-  const reasonFailed = !active && FAILURE_STOP_REASONS.has(reason)
-  const readFailed = readState === 'error'
+  const reasonFailed = !active
+    && reasonKey !== undefined
+    && FAILURE_PROFILE_REASON_KEYS.has(reasonKey)
 
   const rows: Array<[string, string, boolean]> = [
     [t('pages.membersPage.profile_monitor_state'), status, readFailed],
     [t('pages.membersPage.profile_monitor_type'), monitorType(automation, t), false],
-    [t('pages.membersPage.profile_monitor_subject'), monitorSubject(automation, t), false],
+    [t('pages.membersPage.profile_monitor_subject'), monitorSubject(automation), false],
     [t('pages.membersPage.profile_monitor_frequency'), cadence, false],
     [t('pages.membersPage.profile_monitor_cycle'), t('pages.membersPage.profile_monitor_cycle_value', { current: currentCycle, max: maximumCycle }), false],
     [t('pages.membersPage.profile_monitor_started'), createdAt > 0 ? fmtDateTime(createdAt) : '—', false],
@@ -113,6 +165,10 @@ export default function CrewMonitorDetails({
     [t('pages.membersPage.profile_monitor_runtime'), runtime, false],
     [t('pages.membersPage.profile_monitor_stopped'), active ? '—' : reasonText, reasonFailed],
   ]
+
+  const visibleRows = readFailed || noMonitor || readState === 'loading'
+    ? rows.slice(0, 1)
+    : rows
 
   return (
     <section
@@ -124,7 +180,7 @@ export default function CrewMonitorDetails({
         {t('pages.membersPage.profile_monitor')}
       </h3>
       <dl className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] gap-x-3 gap-y-1.5 text-[12px] leading-snug">
-        {rows.map(([label, value, failed]) => (
+        {visibleRows.map(([label, value, failed]) => (
           <div key={label} className="contents">
             <dt className="text-muted">{label}</dt>
             {failed ? (
