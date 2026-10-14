@@ -6450,7 +6450,16 @@ alone does not activate p2p event delivery in the current Feishu console.
 Group-chat access is an explicit opt-in gated on BOTH `allow_group=True` AND
 the group's `chat_id` appearing in
 `allowed_group_ids`; every other context is denied with a SEL audit record
-(`denied_group_not_allowed`). `FEISHU_APP_SECRET` is on the sandbox agent env
+(`denied_group_not_allowed`). Inside an allowed group a message is served only
+when its `mentions` list names this app's bot by `open_id`
+(`LarkInbound.bot_mentioned`, computed by `LarkClient._handle_receive_v1`
+against `LarkClient.bot_open_id`). The bot id is resolved after `start()` by a
+background task (`_resolve_bot_open_id`, `GET /open-apis/bot/v3/info` on a
+probe client carrying a request timeout, retried with capped backoff, one
+WARNING on the first failure); until it resolves, every group message reads as
+not mentioned and is refused, while DMs never consult it. A group message that
+does not mention the bot is dropped before `authorize` without a SEL record,
+since chatter is not an access attempt. `FEISHU_APP_SECRET` is on the sandbox agent env
 denylist.
 
 **Dispatch + rendering.** Turns ride the shared `TurnDriver`

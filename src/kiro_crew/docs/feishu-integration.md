@@ -84,9 +84,16 @@ Deny-by-default, in both directions:
 - **`allowed_open_ids` is the allow-list.** An empty list authorises **nobody** —
   the bot stays reachable on the Feishu side but rejects every message. This is
   deliberate: publishing an app must never mean an open door.
-- **Group chats need two switches.** A group message is served only when
-  `allow_group` is `true` **and** the group's `chat_id` is in
-  `allowed_group_ids`. Either one alone denies.
+- **Group chats need two switches and an @-mention.** A group message is
+  served only when `allow_group` is `true` **and** the group's `chat_id` is in
+  `allowed_group_ids`. Either one alone denies. Inside an allowed group, the
+  message must also @-mention **this** bot: the gateway checks the message's
+  mention list for the bot's own `open_id`, which it looks up from Feishu when
+  the channel starts. A plain message from an allow-listed sender is ignored,
+  even when the app holds a permission that delivers every group message.
+  Until the bot's `open_id` is known (the lookup failed, and the gateway logs
+  one warning and keeps retrying) every group message is ignored; direct
+  messages are unaffected.
 - **A group has its own conversation.** A group turn is keyed by the group's
   `chat_id` under a non-direct chat type, so an allow-listed user writing in a
   group never resumes their private DM session — their DM history cannot become
@@ -99,9 +106,13 @@ Deny-by-default, in both directions:
   never evaluated can never run a turn.
 - **Every denial is audited.** Rejected inbound messages write a SEL audit
   record with `source: feishu`, so an unexpected sender shows up in
-  `kirocrew security events` rather than vanishing.
-- Feishu itself only delivers a group message to the bot when it is
-  **@-mentioned**, so a bot in a busy group does not see unrelated chatter.
+  `kirocrew security events` rather than vanishing. A group message that does
+  not mention the bot is chatter, not an access attempt, so it is ignored
+  without a record.
+- With only the `im:message.group_at_msg.include_bot:readonly` grant, Feishu
+  delivers just the group messages that **@-mention** the bot, so a bot in a
+  busy group does not see unrelated chatter. A broader grant delivers more,
+  and the gateway's own mention check still ignores it.
 - **Mentions reach the agent as names.** Feishu puts opaque placeholders
   (`@_user_1`) in the message text and the display names in a separate
   `mentions` list, so the two are rejoined before the agent sees the prompt:
@@ -165,7 +176,8 @@ Known gaps, all follow-up work rather than defects:
 - **Text only.** Non-text messages (images, files, audio) are not read inbound.
   The bot answers with a short line saying so rather than staying silent, so a
   photo does not look like a dead bot — but only to a sender who is already on
-  the allow-list, and in a group only one that is allow-listed too.
+  the allow-list, and in a group only one that is allow-listed too and that
+  @-mentions the bot.
 - **Replies only.** The bot answers an inbound message and cannot start a
   conversation, so it is not a proactive-notification target.
 - **The panel configures the channel; it does not install it.** `lark-oapi` is an
