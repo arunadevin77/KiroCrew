@@ -525,14 +525,14 @@
         "seed": "connections-two",
         "members": [],
         "feature_flags": [],
-        "notes": "McpToolsPanel.tsx renders inside the MCP servers submenu of the session options menu (ChatPageMessageContent.tsx); the chat footer has no MCP button. McpOAuthBanner appears when a server needs sign-in."
+        "notes": "McpToolsPanel.tsx renders inside the MCP servers submenu of the session options menu (ChatHeaderMenu.tsx); the chat footer has no MCP button. McpOAuthBanner appears when a server needs sign-in."
       },
       "runnable": "nightly",
       "estimated_steps": 3,
       "rationale": "Needs seeded MCP servers; OAuth completion is needs-secret and excluded from this record.",
       "source": [
         "website/src/pages/chat/McpToolsPanel.tsx",
-        "website/src/pages/chat/ChatPageMessageContent.tsx",
+        "website/src/pages/chat/ChatHeaderMenu.tsx",
         "website/src/pages/chat/McpOAuthBanner.tsx"
       ],
       "priority": "P2",

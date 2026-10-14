@@ -36,7 +36,7 @@
   "website/src/pages/SystemPage.tsx": 3,
   "website/src/pages/apps/LaunchpadTile.tsx": 2,
   "website/src/pages/chat/AssistantMessage.tsx": 1,
-  "website/src/pages/chat/ChatPageMessageContent.tsx": 2,
+  "website/src/pages/chat/ChatHeaderMenu.tsx": 2,
   "website/src/pages/chat/FolderSuggestionCard.tsx": 4,
   "website/src/pages/chat/SessionColorPicker.tsx": 1,
   "website/src/pages/chat/SidePanel.tsx": 6,

@@ -13,7 +13,7 @@ import type { AppDispatch } from '../../../store'
 import { requestSlotReveal } from '../../../store/chatSlice'
 import type { ChatSlot } from '../../../types'
 import { errMessage } from '../../../utils/thunkError'
-import { ChatHeaderMenu } from '../ChatPageMessageContent'
+import { ChatHeaderMenu } from '../ChatHeaderMenu'
 import SessionTitleControl from '../SessionTitleControl'
 
 // Lazy for the same reason App.tsx lazy-loads the pill: the update chunk is

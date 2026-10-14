@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { mintSendId } from '../pages/chat/ChatPageMessageContent'
+import { mintSendId } from '../utils/sendDelivery'
 
-describe('ChatPage optimistic send correlation ids', () => {
+describe('mintSendId optimistic send correlation ids', () => {
   afterEach(() => vi.restoreAllMocks())
 
   it('preserves the legacy timestamp-and-base36-nonce wire format', () => {

@@ -20,7 +20,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, waitFor, cleanup } from '@testing-library/react'
 import type { ComponentProps, ReactNode } from 'react'
 
-vi.mock('../pages/chat/ChatPageMessageContent', () => ({
+vi.mock('../pages/chat/ChatHeaderMenu', () => ({
   ChatHeaderMenu: (p: { onReveal: () => void; onRename: () => void; onAutoTitle: () => void; triggerLabel: ReactNode }) => (
     <div data-testid="header-menu">
       <span data-testid="trigger-label">{p.triggerLabel}</span>

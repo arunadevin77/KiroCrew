@@ -7,7 +7,7 @@
  * gateway and a seeded websocket, and a half-stubbed shell renders its error
  * boundary instead. So this mounts the REAL `SessionActionsMenu` (unmodified)
  * inside the REAL `DropdownMenu`/`DropdownMenuContent` primitives it ships
- * behind -- the same open-menu markup `ChatPageMessageContent` uses -- against
+ * behind -- the same open-menu markup `ChatHeaderMenu` uses -- against
  * the real store, theme tokens and live i18n catalog. Only the menu's data
  * comes from a seeded slot; the component and its new row are the shipped ones.
  *

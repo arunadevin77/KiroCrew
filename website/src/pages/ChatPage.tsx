@@ -39,7 +39,7 @@ import {
   resumeFromHistory,
   } from '../store/chatSlice'
 import { confirmedDelivered } from '../utils/sendDelivery'
-import { sendTurn } from '../chat-core/transport/sendTurn'
+import { mintSendId, sendTurn } from '../chat-core/transport/sendTurn'
 import { applySteerReceipt } from '../chat-core/transport/steerReceipt'
 import { useSelectionQuoteAsk } from '../chat-core/composer/selectionActions'
 import { useMessageQuote } from '../chat-core/composer/useMessageQuote'
@@ -70,11 +70,10 @@ import type { DisplayItem, TurnItem } from './chat/types'
 import { MeasureFarm } from '../hooks/virtualizer/MeasureFarm'
 import { useScrollManager } from './chat/useScrollManager'
 import { shouldPaginateOlder, shouldContinueOlderWalk, canForkAtWindow, searchScopeIsLimited, earlierAffordanceInView, EARLIER_BAR_SELECTOR, OLDER_WALK_MAX_PAGES_PER_INPUT } from './chat/pagination'
+import { ChatHeaderMenu } from './chat/ChatHeaderMenu'
 import {
-  ChatHeaderMenu,
   KnowledgeBubbleChip,
   messageRowKey,
-  mintSendId,
   msgIdentityKey,
   renderUserContent,
   turnLeadKey,
