@@ -884,14 +884,15 @@ def skill_view_source_agent(name: str) -> str | None:
 
 
 def skill_view_sidecar_dirs() -> tuple[str, str]:
-    """``(metadata, leases)``: the two non-spec directory names beside the aliases.
+    """``(metadata, leases)``: where this home keeps the projection's side files.
 
-    For messages that point an operator at them; their contents stay the
-    projection module's business.
+    Absolute paths under the Kiro Crew data home (never beside the aliases in
+    the agents directory), for messages that point an operator at them; their
+    contents stay the projection module's business.
     """
     from kiro_crew.acp.skill_projection import (
-        _PROJECTION_LEASE_DIR_NAME,
-        _PROJECTION_METADATA_DIR_NAME,
+        _projection_lease_dir,
+        _projection_metadata_dir,
     )
 
-    return (_PROJECTION_METADATA_DIR_NAME, _PROJECTION_LEASE_DIR_NAME)
+    return (str(_projection_metadata_dir()), str(_projection_lease_dir()))

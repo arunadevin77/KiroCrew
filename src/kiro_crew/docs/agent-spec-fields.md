@@ -866,3 +866,16 @@ are omitted from Crew agent discovery, and from the stat-only fingerprints its
 roster and spec caches revalidate on, so an alias write cannot invalidate them
 (`agent_spec_format.is_native_skill_alias_name` is the one predicate both apply).
 See [context management](../../../docs/architecture/context-management.md).
+
+**Why does the Kiro IDE list `kirocrew-skill-view-...` agents?** The IDE's agent
+drop-down shows every spec in `~/.kiro/agents/`, and a view has to live there
+because kiro-cli resolves `--agent <name>` by name against that directory and no
+other. Each view's `description` says so and names the agent to pick instead.
+Views are pruned the moment the session that used them ends (and on every
+spawn and gateway start), so the list shows only the live sessions' views;
+everything else the projection keeps -- its lock, lease records and ownership
+sidecars -- lives under the Kiro Crew data home (`<data_home>/skill-projection/`),
+never in the agents directory. Earlier builds wrote those side files into the
+agents directory too; the first gateway start on a newer build moves this
+home's over. Picking a view in the IDE is harmless but pointless: it is the
+named agent minus its `skill://` resources.

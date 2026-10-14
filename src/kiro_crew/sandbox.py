@@ -802,6 +802,23 @@ _CREW_READONLY_LEAVES: tuple[str, ...] = (
     # not hidden: the id is random, carries nothing secret, and is already served on
     # ``/api/health``. The only writer is the unsandboxed gateway's first-read mint.
     "gateway_id",
+    # The skill projection's side files (``acp/skill_projection.py``): its publication
+    # lock, the per-process lease records and the ownership sidecars with the view
+    # ledger. The sidecars and the ledger are an INPUT TO AN AUTHORIZATION DECISION: a
+    # conversation stored under a ``kirocrew-skill-view-*`` name resumes under the agent
+    # its record maps it to (``source_agent_name``), with that agent's grants, and this
+    # directory is read before the legacy one in the agents tree -- which the sandbox
+    # already seals read-only. A sandboxed shell that could write a record here would
+    # pick the agent a later resume runs as. Leases and the lock steer the prune (a
+    # forged lease keeps any view alive). Read-only, not hidden: no credential lives
+    # here, and an in-sandbox resolver may read a record. Every legitimate writer --
+    # the spawn paths that prepare a view, the boot drain, the finalizer's prune --
+    # runs in the gateway, outside the sandbox; an in-sandbox preparation already
+    # failed closed on the sealed agents tree and falls back to the authored agent
+    # the same way here. On the precreate and no-follow lists too: the directory is
+    # absent until the first spawn prepares a view, and a link at the name would seal
+    # the referent and leave the name replaceable.
+    "skill-projection",
 )
 
 #: Crew-home leaves that MUST stay read-write for a sandboxed process. Every entry is
@@ -1073,6 +1090,12 @@ _CREW_CHILD_READABLE_LEAVES: tuple[str, ...] = (
     # A random id with no host, user or path in it, already published on
     # ``/api/health``. Its risk is a write, answered by the read-only seal.
     "gateway_id",
+    # The skill projection's side files: view names, agent names, source paths and
+    # digests, no credential. An in-sandbox resolver may read a record to map a
+    # stored view name to its agent; the risk is the WRITE that would forge that
+    # mapping, answered by the read-only seal. Off the read-gate floor, so the mask
+    # never covered it.
+    "skill-projection",
 )
 
 
@@ -1631,6 +1654,14 @@ _CREW_PRECREATE_READONLY_DIR_LEAVES: tuple[str, ...] = (
     # Pre-creation gives Linux concrete bind targets on a fresh install.
     "mcp-launch-approvals",
     "mcp/resolved",
+    # The skill projection's side files, on the ``profiles`` argument. (1) Every reader
+    # resolves a record, a lease or the ledger by name under it and treats a missing
+    # one as absent, so an empty directory is no record, no lease and no ledger,
+    # exactly as an absent one. (2) The bind is live, so the records the gateway
+    # writes on the first spawn are seen. Without this entry the seal skips the
+    # directory on every install until that first spawn, which is the window a
+    # sandboxed shell would use to plant the record a later resume resolves through.
+    "skill-projection",
 )
 #: Read-only directory leaves whose NAME must remain the mounted name. A resolving
 #: symlink is unsafe here: the mount follows its target and leaves the lexical name
@@ -1648,6 +1679,7 @@ _CREW_NOFOLLOW_READONLY_DIR_LEAVES: tuple[str, ...] = (
     "pi-gate",
     "mcp-launch-approvals",
     "mcp/resolved",
+    "skill-projection",
 )
 assert set(_CREW_NOFOLLOW_READONLY_DIR_LEAVES) <= set(_CREW_PRECREATE_READONLY_DIR_LEAVES)
 #: Read-only FILE leaves whose NAME must remain the sealed name, for the same reason
@@ -1720,6 +1752,11 @@ _DELEGATED_OVERLAP_LEAF_REASONS: "dict[str, tuple[str, str]]" = {
     "mcp/resolved": (
         "sealed resolved MCP launches",
         "the agent could replace the executable the gateway substitutes for an approved launch",
+    ),
+    "skill-projection": (
+        "sealed skill-view records",
+        "the agent could forge the record that maps a stored skill-view name to the agent "
+        "a later resume runs as",
     ),
 }
 assert set(_DELEGATED_OVERLAP_LEAF_REASONS) == set(_CREW_NOFOLLOW_READONLY_FILE_LEAVES) | set(

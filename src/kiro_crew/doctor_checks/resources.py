@@ -1050,9 +1050,10 @@ def _doctor_skill_view_census(agents_dir: Path) -> None:
         print(f"{render._INDENT}(floors: the census stopped at its retention bound)")
     if unreadable:
         print(
-            f"{render._INDENT}{unreadable} lease record(s) in {lease_dir}/ cannot be read, and"
+            f"{render._INDENT}{unreadable} lease record(s) in {lease_dir}/ (or in the legacy"
+            f" .kirocrew-skill-projection-leases/ beside the aliases) cannot be read, and"
             f" the reclaim keeps every alias while one exists. {stopped[0].upper()}"
-            f"{stopped[1:]}, move that directory out of the agents directory; every"
+            f"{stopped[1:]}, move that directory out of the way; every"
             f" live projection republishes its own lease."
         )
     if total <= _SKILL_VIEW_BACKLOG_WARN:
@@ -1095,8 +1096,8 @@ def _doctor_skill_view_census(agents_dir: Path) -> None:
         f" directory -- so the move below clears a share this gateway cannot drain itself."
     )
     print(
-        f"{render._INDENT}To clear it at once: {stopped}, move the {alias_glob} files and the"
-        f" {metadata_dir}/ directory out of the agents directory (a move is undoable;"
-        f" the doctor never deletes). Every spawn republishes the aliases it needs;"
+        f"{render._INDENT}To clear it at once: {stopped}, move the {alias_glob} files out of"
+        f" the agents directory and the {metadata_dir}/ directory out of the way (a move is"
+        f" undoable; the doctor never deletes). Every spawn republishes the aliases it needs;"
         f" authored agents keep their own names and are not touched."
     )

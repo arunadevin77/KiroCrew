@@ -529,10 +529,11 @@ async def test_a_bad_alias_lock_file_blames_no_process(
 ):
     """The alias lock FILE is unusable (here a symlink): no process holds it, so
     the refusal names none."""
-    agents = _real_preparation_tree(tmp_path, monkeypatch)
+    _real_preparation_tree(tmp_path, monkeypatch)
     from kiro_crew.acp import skill_projection
 
-    lock_path = agents / skill_projection._PROJECTION_LOCK_NAME
+    # The lock lives under the data home, not beside the aliases.
+    lock_path = skill_projection._projection_lock_path()
     real_is_link = skill_projection.platform_compat.is_link_or_junction
     monkeypatch.setattr(
         skill_projection.platform_compat,

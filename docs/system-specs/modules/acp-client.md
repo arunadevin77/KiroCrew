@@ -536,9 +536,40 @@ refreshed projection (frame runs on the current projection, which the shared run
 adopts mid-session), while still refusing to carry `spawn_agent_name`. A projection
 no spawn claimed sets neither field, so an unprojected agent stays hidden.
 
-Projected agent JSON contains only fields accepted by Kiro's strict
-schema; lifecycle ownership lives in the non-spec
-`.kirocrew-skill-projection-metadata` directory. Each sidecar records the alias's
+Projected agent JSON contains only fields accepted by Kiro's strict schema. The
+one display field a view carries is its own `description` -- "Kiro Crew managed
+view of `<agent>` [`<home tag>`]: ... Use `<agent>` instead." -- replacing the
+authored one: the Kiro IDE lists every file in `~/.kiro/agents/` as an agent, so
+the row at least says what it is and which agent to pick (an edit to the
+authored description alone therefore mints no new view). The eight-hex home tag
+is a digest of the publishing data home, read by the prune (below). Lifecycle
+ownership lives OUTSIDE the agents directory, under the Kiro Crew data home:
+`<data_home>/skill-projection/` holds the publication lock (`publication.lock`),
+the lease records (`leases/`) and the ownership sidecars with the view ledger
+(`metadata/`), which the OS sandbox seals read-only (a forged sidecar or ledger
+entry would pick the agent a resumed conversation runs as) and the file-tool
+write floor refuses. Only the views themselves go into the agents directory, because
+kiro-cli resolves `--agent <name>` there by name and knows no other directory;
+everything else there is a row in the IDE's drop-down. Builds before
+this layout wrote the same three things INTO the agents directory as
+`.kirocrew-skill-projection.lock`, `.kirocrew-skill-projection-leases/` and
+`.kirocrew-skill-projection-metadata/`; those legacy locations are still READ
+for one release cycle -- the lease scan, the ownership lookups, the sweeps, the
+census and `source_agent_name` consult this home's directory first and the legacy
+one second -- and never written. The boot drain migrates them once, under the
+publication lock, moving only what is provably this module's and this home's:
+sidecars whose record names this data home (another home's stay; they are that
+home's to move), the legacy ledger's entries merged into this home's ledger (the
+legacy file itself is shared by every home that published here and names no
+home, so it stays while it holds any entry or cannot be read -- another home's
+stored view names resolve through it until that home's own migration copies
+them -- and only an empty, readable one is removed; its names are copied in as
+this home's OLDEST ledger entries, only where the bound leaves room, so a
+re-import never evicts a mapping recovered from a sidecar), the legacy lease
+directory once the lease scan has reclaimed its residue and it is empty (a live
+lease is never moved), and the legacy lock last, only when both legacy
+directories are gone and nobody holds it. The migration is idempotent and
+bounded per boot. Each sidecar records the alias's
 exact byte digest AND the digest of its identity (the view the alias is named by,
 env values out), so a stale or replaced sidecar cannot authorize deletion of a
 different spec, while an alias another program merely re-serialized or
@@ -587,10 +618,17 @@ within its budget instead of failing the start.
 
 No released build ever wrote lifecycle fields INTO a spec --
 kiro-cli denies unknown fields, so the projection never could -- and an alias
-without a sidecar is judged by the unrecorded path above instead. The recorded
+without a sidecar is judged by the unrecorded path above instead, with one
+further gate now that each home keeps its sidecars under its own data home: a
+view ANOTHER home sharing the agents directory published has no sidecar this
+home can see, which is exactly what a pre-sidecar build's view looked like. The
+home tag in the view's description tells them apart -- a sidecar-less view
+tagged by another home is that home's live view and is kept, like a view with a
+foreign sidecar; one tagged by THIS home with its record lost takes the legacy
+path with every gate it has; one with no tag at all is the legacy case. The recorded
 source paths are never probed, so untrusted metadata cannot
-trigger a filesystem or network lookup. Each live projection publishes one bounded lease in the non-spec
-`.kirocrew-skill-projection-leases` directory as TWO files: a `.json` record
+trigger a filesystem or network lookup. Each live projection publishes one bounded lease in
+this home's `skill-projection/leases/` directory as TWO files: a `.json` record
 naming its aliases, which is never locked, and a `.hold` sidecar that carries the
 lock for the projection object's lifetime and is never read. The split is
 required, not stylistic: Windows file locks are MANDATORY, so a lock on byte 0 of
@@ -599,10 +637,28 @@ handle, including one in the same process. Pruning always runs while the current
 projection holds its own lease, so a single-file lease turned every liveness
 probe into the uncertainty answer and reclaimed nothing on Windows while passing
 on POSIX, where locks are advisory. Finalization releases the lock and removes
-both identity-verified sidecars. Pruning runs ONE bounded lease scan for the whole
+both identity-verified sidecars, then prunes EAGERLY: a projection that ends --
+`NativeSkillProjection.release()`, which the direct client calls when its process
+is dead, or the finalizer of a projection that was merely dropped -- runs the same
+bounded prune, under the same lock and gates (lease scan, `_per_spawn_prune_due`
+spacing, time budget), so this home's now-unleased views leave the agents
+directory at once instead of waiting for the next spawn. The eager prune never
+queues behind this process's own in-process lock (a start holding it runs its
+own prune), and when the finalizer runs on an event-loop thread the lease release
+stays inline while the prune goes to a daemon thread, so no session start is
+stalled behind a file-lock wait. Pruning runs ONE bounded lease scan for the whole
 run -- not one scan per candidate, which multiplied the candidate cap by the
 scan cap into a quadratic sweep under the held publication lock -- streaming lease
 records without materializing the directory and stopping at a fixed scan ceiling.
+The scan covers TWO directories under one deadline: this home's own lease
+directory and the legacy one in the agents directory, where an older build
+sharing it still publishes; a lease held in either keeps the aliases it names,
+and uncertainty in either makes the pass uncertain. The legacy directory is
+scanned under the older build's own publication lock (the one it keeps in the
+agents directory, when that file exists): an older publisher writes its lease
+record and then its holder under that lock, so a scan without it could meet the
+pair between the two writes and reclaim a live lease. A lock that cannot be taken
+in the scan's budget is uncertainty.
 That ceiling bounds how many entries are parsed and lock-probed, not how long a
 slow filesystem takes over them, so the scan also reads a between-entry deadline
 (`_PROJECTION_LEASE_SCAN_MAX_SECONDS`, 0.4 s, sized like the candidate walk's
@@ -651,9 +707,17 @@ lock release makes a crashed process's lease stale without trusting a PID. The
 prune performs this scan once and tests a single alias by membership in the
 returned live set; there is no separate single-alias predicate.
 
-Alias publication and pruning share one cross-process lock sidecar in the native
-agents directory, with a two-second acquisition ceiling instead of the platform
-lock's general five-minute ceiling. A sidecar that is a symlink or junction,
+Alias publication and pruning share one cross-process lock file under this
+home's `skill-projection/` directory (it serialises the publishers and pruners
+of THIS home, the only writers of this home's views and side files), with a
+two-second acquisition ceiling instead of the platform lock's general
+five-minute ceiling. An older build sharing the agents directory takes its own
+lock there and is not excluded by this one; what keeps the two from pruning each
+other's live views is the dual-read lease scan above, the home tag, and the
+legacy age floor -- the one window left is an old build reclaiming a new build's
+sidecar-less-looking view after `_LEGACY_RECLAIM_MIN_AGE_SECS`, which the
+re-preparation contract recovers (the next spawn or `set_mode` republishes it).
+A lock file that is a symlink or junction,
 changes identity while opened or acquired, or is otherwise unverifiable is
 treated as lock failure. Removal revalidates the candidate's identity, bytes and
 digest-bound ownership sidecar under that lock immediately before
@@ -677,7 +741,9 @@ the publisher's own spelling, so no caller can hand it a differently normalised
 id. It counts how many `kirocrew-skill-view-*.json` aliases the directory
 holds, how many a lease record names, how many -- among the named and the
 unnamed separately -- an ownership sidecar attributes to another Kiro Crew data
-home (two homes share this directory whenever they share `~/.kiro`), and how
+home (two homes share this directory whenever they share `~/.kiro`; a view with
+no record in either directory is attributed by the home tag in its description,
+the way the prune keeps it), and how
 many lease records are unreadable; a record nested past the interpreter limit
 reads as unreadable rather than aborting, for the probe and the census alike.
 What the census retains is bounded (`_CENSUS_MAX_ALIASES`, the diagnostic's
@@ -690,19 +756,24 @@ record could be the unreadable one that makes a reclaim pass fail closed, so
 the report says reclaimability is unknown rather than promising a drain. A
 backlog left by a build that predates the reclaim is thereby visible without
 `ls`, and its drain can be watched. Above
-`_SKILL_VIEW_BACKLOG_WARN` (2,000, the same number the projection enforces as
+`_SKILL_VIEW_BACKLOG_WARN` (128, the same number the projection enforces as
 `SKILL_VIEW_PROJECTION_CEILING`, so a host the doctor warns about is a host whose
-next spawn has already fallen back to its authored agent; a healthy host carries
-roughly authored agents x workspaces) it warns and says exactly which share the
+next spawn has already fallen back to its authored agent; the number is sized
+for the IDE's drop-down over the measured steady state -- 35 views for 34
+authored agents on a heavily used host, since global agents share one view
+across workspaces and only a project agent or a workspace with its own
+inheritance setting mints more -- not for kiro-cli's start cost alone, which
+the old 2,000 net was) it warns and says exactly which share the
 reclaim covers: this home's unreferenced aliases, a bounded number per spawn;
 this home's lease-named aliases are described as kept while their lease is
 held (the census probes no lock, so a crash-stale record is indistinguishable
 from a held one and is reclaimed on the next spawn's probe); aliases another
 data home owns, leased or not, never drain here; and while a lease record is
 unreadable nothing is reclaimed, which the report states instead of promising a
-drain. The manual fallback -- moving the aliases and their metadata directory
-out with the gateway stopped, or with every gateway that uses the directory
-stopped once another home's aliases are present -- is named without being
+drain. The manual fallback -- moving the aliases out of the agents directory
+and their metadata directory (named by its real path under the data home) out
+of the way with the gateway stopped, or with every gateway that uses the
+directory stopped once another home's aliases are present -- is named without being
 performed and without suggesting a delete: the doctor
 cannot prove who authored a file that merely carries the prefix, and a move is
 undoable.

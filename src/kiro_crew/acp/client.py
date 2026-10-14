@@ -7401,6 +7401,19 @@ class AcpClient:
                         pass
         # Clean up sandbox temp files (macOS seatbelt profile)
         self._discard_sandbox_cleanup()
+        # The process this projection's views were prepared for is dead, so its
+        # lease goes now and this home's unleased views are pruned at once,
+        # rather than whenever the object is collected or the next spawn prunes
+        # (the Kiro IDE lists every view left in the agents directory). The
+        # object stays: a frame still being drained may name one of its aliases.
+        # A respawn prepares a fresh projection. getattr: clients built without
+        # __init__ in tests.
+        projection = getattr(self, "_native_skill_projection", None)
+        if projection is not None:
+            try:
+                projection.release()
+            except Exception:
+                logger.debug("skill projection release failed", exc_info=True)
         # The pi MCP handoff file of a spawn that never reached an established
         # session: one unlink, the same shape as the sandbox file above.
         handoff_path, _payload = getattr(self, "_pi_mcp_handoff", ("", b""))

@@ -58,7 +58,18 @@ NATIVE_SKILL_ALIAS_PREFIX = "kirocrew-skill-view-"
 #: boundary (``.github/agent-sdk-boundary-baseline.txt``) is shrink-only, and the
 #: doctor is a baselined consumer. See
 #: :data:`kiro_crew.acp.skill_projection.SKILL_VIEW_PROJECTION_CEILING`.
-SKILL_VIEW_PROJECTION_CEILING = 2000
+#:
+#: Every view is a row in the Kiro IDE's agent drop-down (it lists the same
+#: directory), so the number is sized to keep that list short, not only to keep
+#: kiro-cli's start cheap: a view is pruned as soon as its session ends, so the
+#: steady state is the live sessions' views, and this is the backstop above it.
+#: Measured before it was set: a heavily used host with 34 authored agents held
+#: 35 views (global agents share one view across workspaces; only a project
+#: agent, or a workspace with its own inheritance setting, mints more). Past the
+#: ceiling a spawn falls back to the authored agent, so it is set well above
+#: that -- a host that trips it has several workspaces' worth of distinct views
+#: live at once, or a leak the doctor names.
+SKILL_VIEW_PROJECTION_CEILING = 128
 
 _FRONTMATTER_CLOSE_RE = re.compile(r"^---[ \t]*\r?$", re.MULTILINE)
 

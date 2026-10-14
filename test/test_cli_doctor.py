@@ -4285,9 +4285,9 @@ class TestDoctorSkillViewCensus:
 
     def test_the_threshold_is_the_real_one_and_exclusive(self, tmp_path, monkeypatch, capsys):
         # Exactly the production threshold is still green; one more warns. No
-        # monkeypatched constant, so the 2,000 the docs claim is what is measured.
+        # monkeypatched constant, so the 128 the docs claim is what is measured.
         limit = cli_doctor._SKILL_VIEW_BACKLOG_WARN
-        assert limit == 2000
+        assert limit == 128
         for i in range(limit):
             self._alias(tmp_path, i, home=None)
         assert "skill views: ✅" in self._run(tmp_path, monkeypatch, capsys)
@@ -4457,8 +4457,14 @@ class TestDoctorSkillViewCensus:
         (tmp_path / ".kirocrew-skill-projection-leases").mkdir()
         (tmp_path / ".kirocrew-skill-projection-leases" / "1-bad.json").write_text("?")
         line = self._line(self._run(tmp_path, monkeypatch, capsys))
-        assert f"{skill_projection._PROJECTION_METADATA_DIR_NAME}/ directory" in line
-        assert f"in {skill_projection._PROJECTION_LEASE_DIR_NAME}/ cannot be read" in line
+        # The side files live under the Kiro Crew data home; the remedy names
+        # those directories by their real path, and the legacy one an older
+        # build left beside the aliases, which the reclaim still reads.
+        metadata_dir = str(skill_projection._projection_metadata_dir())
+        lease_dir = str(skill_projection._projection_lease_dir())
+        assert f"{metadata_dir}/ directory out of the way" in line
+        assert f"in {lease_dir}/ (or in the legacy" in line
+        assert f"{skill_projection._PROJECTION_LEASE_DIR_NAME}/ beside the aliases" in line
 
     @staticmethod
     def _residue(out: str) -> str:

@@ -79,6 +79,23 @@ def _prune_on_every_spawn(monkeypatch):
     monkeypatch.setattr(projection, "_LAST_PER_SPAWN_PRUNE", {})
 
 
+_REAL_EAGER_PRUNE = projection._eager_prune
+
+
+@pytest.fixture(autouse=True)
+def _no_eager_prune(_floor_monkeypatch):
+    """Keep a dropped projection's views on disk until the NEXT prune walks.
+
+    A projection that ends now prunes this home's unleased views at once
+    (``_end_projection``). Most tests here build a backlog by dropping
+    projections and then assert what one per-spawn prune, one boot drain or one
+    census does with it, so the eager prune would empty the directory under
+    them. It is switched off by default and pinned by its own tests, which put
+    the real one back (:data:`_REAL_EAGER_PRUNE`).
+    """
+    _floor_monkeypatch.setattr(projection, "_eager_prune", lambda directory, crew_home_id: None)
+
+
 @pytest.fixture
 def cyclic_gc_quiesced():
     """Keep a cyclic-GC pass (and any finalizer it runs) out of a deep JSON parse.
@@ -923,7 +940,7 @@ def _alias_file(agents, prepared, name="custom"):
 
 
 def _metadata_file(agents, prepared, name="custom"):
-    return agents / projection._PROJECTION_METADATA_DIR_NAME / f"{prepared.agent(name)}.json"
+    return projection._projection_metadata_dir() / f"{prepared.agent(name)}.json"
 
 
 def _spec_with_injected_env(value, extra=None):
@@ -1131,7 +1148,7 @@ def test_a_held_lease_stays_readable_so_it_only_keeps_the_aliases_it_names(nativ
     prepared = projection.prepare_native_skill_projection(project)
     mine = _alias_file(agents, prepared).stem
 
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
+    lease_dir = projection._projection_lease_dir()
     records = list(lease_dir.glob(f"*{projection._PROJECTION_LEASE_RECORD_SUFFIX}"))
     assert len(records) == 1, "the live projection published no readable lease record"
     assert json.loads(records[0].read_bytes())["aliases"] == [mine]
@@ -1168,7 +1185,7 @@ def test_a_lease_is_never_published_past_the_bound_its_reader_enforces(native_tr
 
     stack = projection._acquire_projection_lease(agents, at_cap)
     try:
-        lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
+        lease_dir = projection._projection_lease_dir()
         records = list(lease_dir.glob(f"*{projection._PROJECTION_LEASE_RECORD_SUFFIX}"))
         assert len(records) == 1
         assert len(records[0].read_bytes()) <= projection._PROJECTION_LEASE_MAX_BYTES
@@ -1516,12 +1533,12 @@ def test_republishing_identical_view_keeps_the_file_in_place(native_tree, tmp_pa
 def test_editing_an_agent_publishes_a_new_alias_and_reclaims_the_old(native_tree):
     _home, agents, project = native_tree
     source = agents / "custom.json"
-    source.write_text('{"name":"custom","description":"v1"}', encoding="utf-8")
+    source.write_text('{"name":"custom","prompt":"v1"}', encoding="utf-8")
     first = projection.prepare_native_skill_projection(project)
     stale = _alias_file(agents, first)
     del first
     gc.collect()
-    source.write_text('{"name":"custom","description":"v2"}', encoding="utf-8")
+    source.write_text('{"name":"custom","prompt":"v2"}', encoding="utf-8")
     second = projection.prepare_native_skill_projection(project)
     assert _alias_file(agents, second) != stale
     assert not stale.exists()
@@ -1540,7 +1557,7 @@ def test_prune_reclaims_unused_alias_whose_work_dir_still_exists(native_tree, tm
     run_dir = tmp_path / "subagent_deadbeef"
     run_dir.mkdir()
     source = agents / "custom.json"
-    source.write_text('{"name":"custom","description":"old"}', encoding="utf-8")
+    source.write_text('{"name":"custom","prompt":"old"}', encoding="utf-8")
     ended = projection.prepare_native_skill_projection(run_dir)
     alias = _alias_file(agents, ended)
     metadata = _metadata_file(agents, ended)
@@ -1548,7 +1565,7 @@ def test_prune_reclaims_unused_alias_whose_work_dir_still_exists(native_tree, tm
     gc.collect()
     assert run_dir.is_dir(), "the run directory is deliberately left in place"
 
-    source.write_text('{"name":"custom","description":"new"}', encoding="utf-8")
+    source.write_text('{"name":"custom","prompt":"new"}', encoding="utf-8")
     projection.prepare_native_skill_projection(project)
     assert not alias.exists(), "an unused alias survived because its work dir still exists"
     assert not metadata.exists(), "the ownership sidecar outlived its alias"
@@ -1583,7 +1600,7 @@ def test_prune_reclaims_at_least_as_many_aliases_as_one_spawn_publishes(
     gc.collect()
     for name in names:
         (agents / f"{name}.json").write_text(
-            json.dumps({"name": name, "description": "edited"}), encoding="utf-8"
+            json.dumps({"name": name, "prompt": "edited"}), encoding="utf-8"
         )
 
     live = projection.prepare_native_skill_projection(project)
@@ -1609,7 +1626,7 @@ def test_prune_drains_headroom_beyond_one_spawn_publishes(native_tree, monkeypat
     def edit(version):
         for name in names:
             (agents / f"{name}.json").write_text(
-                json.dumps({"name": name, "description": version}), encoding="utf-8"
+                json.dumps({"name": name, "prompt": version}), encoding="utf-8"
             )
 
     run_dirs = [tmp_path / f"subagent_{n:08x}" for n in range(2)]
@@ -1841,7 +1858,8 @@ def test_projection_lock_refuses_planted_symlink(native_tree):
     (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
     target = agents / "unrelated.lock"
     target.write_text("unrelated", encoding="utf-8")
-    (agents / projection._PROJECTION_LOCK_NAME).symlink_to(target)
+    projection._projection_lock_path().parent.mkdir(parents=True, exist_ok=True)
+    projection._projection_lock_path().symlink_to(target)
 
     prepared = projection.prepare_native_skill_projection(project)
 
@@ -2038,7 +2056,7 @@ def test_prune_reclaims_an_alias_recorded_under_a_symlinked_home_spelling(
     alias = f"{projection.NATIVE_SKILL_ALIAS_PREFIX}aaaaaaaaaaaaaaaaaaaaaaaa"
     alias_path = agents / f"{alias}.json"
     alias_path.write_text(json.dumps({"name": alias}), encoding="utf-8")
-    metadata_dir = agents / projection._PROJECTION_METADATA_DIR_NAME
+    metadata_dir = projection._projection_metadata_dir()
     metadata_dir.mkdir(parents=True, exist_ok=True)
     (metadata_dir / f"{alias}.json").write_text(
         json.dumps(
@@ -2239,7 +2257,7 @@ def test_projection_finalizer_removes_its_lease_sidecar(native_tree):
     _home, agents, project = native_tree
     (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
     prepared = projection.prepare_native_skill_projection(project)
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
+    lease_dir = projection._projection_lease_dir()
     assert len(list(lease_dir.glob("*.json"))) == 1
 
     del prepared
@@ -2250,8 +2268,8 @@ def test_projection_finalizer_removes_its_lease_sidecar(native_tree):
 
 def test_lease_scan_reclaims_valid_unlocked_crash_residue(native_tree):
     _home, agents, _project = native_tree
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     stale = lease_dir / "crashed.json"
     holder = lease_dir / "crashed.hold"
     projection.atomic_write(
@@ -2269,8 +2287,8 @@ def test_lease_scan_reclaims_valid_unlocked_crash_residue(native_tree):
 def test_lease_scan_does_not_mutate_before_finding_later_held_match(native_tree, monkeypatch):
     _home, agents, _project = native_tree
     alias = "kirocrew-skill-view-held"
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     stale = lease_dir / "stale-first.json"
     stale_holder = lease_dir / "stale-first.hold"
     projection.atomic_write(
@@ -2342,8 +2360,8 @@ def test_lease_scan_does_not_mutate_before_finding_later_held_match(native_tree,
 
 def test_lease_scan_error_defers_unlocked_residue_cleanup(native_tree, monkeypatch):
     _home, agents, _project = native_tree
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     stale = lease_dir / "stale-before-error.json"
     holder = lease_dir / "stale-before-error.hold"
     projection.atomic_write(
@@ -2404,8 +2422,8 @@ def test_lease_scan_cap_drains_validated_residue_before_answering_live(native_tr
     nothing it saw.
     """
     _home, agents, _project = native_tree
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     stale = lease_dir / "stale-before-cap.json"
     stale_holder = lease_dir / "stale-before-cap.hold"
     projection.atomic_write(
@@ -2495,8 +2513,8 @@ def test_lease_scan_overflow_is_uncertain_and_retains_stale_alias(native_tree, m
     # residue-0's record and holder plus residue-1's record before it trips, so
     # exactly two records are probed and residue past that is never scanned.
     monkeypatch.setattr(projection, "_PROJECTION_LEASE_SCAN_LIMIT", 3, raising=False)
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir(exist_ok=True)
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True, exist_ok=True)
     for index in range(3):
         stem = f"residue-{index}"
         (lease_dir / f"{stem}{projection._PROJECTION_LEASE_RECORD_SUFFIX}").write_text(
@@ -2607,7 +2625,7 @@ def test_prune_work_cap_counts_retained_candidates_before_reclaims(native_tree, 
 
     scans = 0
 
-    def one_batch_scan(_directory):
+    def one_batch_scan(_directory, **_kwargs):
         nonlocal scans
         scans += 1
         # Every live alias is reported by the single batch scan; the prune folds
@@ -2787,7 +2805,7 @@ def test_census_counts_what_the_reclaim_would_keep_and_remove(native_tree, tmp_p
     # rather than skipped, because the reclaim treats it as "everything live".
     foreign = agents / f"{projection.NATIVE_SKILL_ALIAS_PREFIX}{'f' * 24}.json"
     foreign.write_text("{}", encoding="utf-8")
-    (agents / projection._PROJECTION_METADATA_DIR_NAME / f"{foreign.stem}.json").write_text(
+    (projection._projection_metadata_dir() / f"{foreign.stem}.json").write_text(
         json.dumps(
             {
                 projection._MANAGED_MARKER: projection._MANAGED_MARKER_VALUE,
@@ -2796,9 +2814,7 @@ def test_census_counts_what_the_reclaim_would_keep_and_remove(native_tree, tmp_p
         ),
         encoding="utf-8",
     )
-    (agents / projection._PROJECTION_LEASE_DIR_NAME / "9-broken.json").write_text(
-        "{", encoding="utf-8"
-    )
+    (projection._projection_lease_dir() / "9-broken.json").write_text("{", encoding="utf-8")
     census = projection.census_projected_aliases(agents)
     assert census == {
         "total": published + 1,
@@ -2811,7 +2827,7 @@ def test_census_counts_what_the_reclaim_would_keep_and_remove(native_tree, tmp_p
 
     # The other home's LIVE aliases -- named by its lease -- are split out too,
     # since this gateway's reclaim refuses them whether or not the lease holds.
-    (agents / projection._PROJECTION_LEASE_DIR_NAME / "9-theirs.json").write_text(
+    (projection._projection_lease_dir() / "9-theirs.json").write_text(
         json.dumps({"aliases": [foreign.stem]}), encoding="utf-8"
     )
     census = projection.census_projected_aliases(agents)
@@ -2820,17 +2836,12 @@ def test_census_counts_what_the_reclaim_would_keep_and_remove(native_tree, tmp_p
     assert census["foreign_leased"] == 1
 
     # A RecursionError from json.loads is an unreadable record, not an abort.
-    (agents / projection._PROJECTION_LEASE_DIR_NAME / "9-deep.json").write_text(
+    (projection._projection_lease_dir() / "9-deep.json").write_text(
         "[" * 100000 + "]" * 100000, encoding="utf-8"
     )
     census = projection.census_projected_aliases(agents)
     assert census["unreadable_leases"] == 2
-    assert (
-        projection._read_lease_record(
-            agents / projection._PROJECTION_LEASE_DIR_NAME / "9-deep.json"
-        )
-        is None
-    )
+    assert projection._read_lease_record(projection._projection_lease_dir() / "9-deep.json") is None
 
     # Retention is bounded and the bound is reported, not silently exceeded.
     monkeypatch.setattr(projection, "_PROJECTION_LEASE_SCAN_LIMIT", 1, raising=False)
@@ -2860,7 +2871,7 @@ def _released_backlog(agents, project, count):
     source = agents / "custom.json"
     held = []
     for n in range(count):
-        source.write_text(json.dumps({"name": "custom", "description": f"v{n}"}), encoding="utf-8")
+        source.write_text(json.dumps({"name": "custom", "prompt": f"v{n}"}), encoding="utf-8")
         held.append(projection.prepare_native_skill_projection(project))
     backlog = [(_alias_file(agents, p), _metadata_file(agents, p)) for p in held]
     del held
@@ -3120,7 +3131,7 @@ def test_prune_scans_the_lease_directory_once_for_many_candidates(native_tree, m
     candidates = [_legacy_alias(agents, f"{index:024x}") for index in range(4)]
     walked = [_legacy_alias(agents, f"{index:024x}") for index in range(100, 104)]
     external = projection._acquire_projection_lease(agents, {p.stem for p in candidates})
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
+    lease_dir = projection._projection_lease_dir()
     normalized_lease_dir = os.path.normcase(os.path.normpath(os.fspath(lease_dir)))
     scandir_calls = 0
     real_scandir = projection.os.scandir
@@ -3194,7 +3205,9 @@ def test_prune_skips_all_candidate_deletion_when_lease_scan_is_uncertain(native_
     """Finding 3: any lease-scan uncertainty authorizes NO candidate deletion."""
     _home, agents, _project = native_tree
     stale = [_legacy_alias(agents, f"{index:024x}") for index in range(3)]
-    monkeypatch.setattr(projection, "_scan_projection_leases", lambda _directory: (set(), True))
+    monkeypatch.setattr(
+        projection, "_scan_projection_leases", lambda _directory, **_kwargs: (set(), True)
+    )
 
     projection._prune_stale_managed_aliases(
         agents, projection.data_home().absolute().as_posix(), keep=set()
@@ -3219,8 +3232,8 @@ def test_lease_record_scan_bounds_all_entries_not_only_records(native_tree, monk
     record; the old code walked every pad entry looking for records. Counting the
     walked entries proves the bound is over entries, not records.
     """
-    lease_dir = agents_dir(native_tree) / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     monkeypatch.setattr(projection, "_PROJECTION_LEASE_SCAN_LIMIT", 2, raising=False)
 
     # Many non-record entries first, then a real record far past the ceiling.
@@ -3289,8 +3302,8 @@ def test_lease_record_scan_still_yields_records_within_the_bound(native_tree, mo
     Bounding all entries must not stop yielding legitimate records that fall
     within the ceiling -- only the padding past it is skipped.
     """
-    lease_dir = agents_dir(native_tree) / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     monkeypatch.setattr(projection, "_PROJECTION_LEASE_SCAN_LIMIT", 4, raising=False)
     ordered = [
         f"a{projection._PROJECTION_LEASE_RECORD_SUFFIX}",
@@ -3559,8 +3572,8 @@ def test_capped_lease_scan_reports_its_ceiling_and_reclaimed_count(
     reclaim log, and per-lease reclaims are DEBUG only.
     """
     _home, agents, _project = native_tree
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     for n in range(3):
         projection.atomic_write(
             lease_dir / f"residue-{n}.json",
@@ -3590,8 +3603,8 @@ def test_lease_scan_stops_on_its_deadline_and_answers_uncertain(native_tree, mon
     examined, so no sleep is needed.
     """
     _home, agents, _project = native_tree
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     for n in range(3):
         projection.atomic_write(
             lease_dir / f"residue-{n}.json",
@@ -3669,8 +3682,8 @@ def test_capped_lease_scan_counts_only_fully_removed_pairs(native_tree, monkeypa
     ``.hold`` survived would report progress the next scan will not see.
     """
     _home, agents, _project = native_tree
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     for n in range(3):
         projection.atomic_write(
             lease_dir / f"residue-{n}.json",
@@ -3706,8 +3719,8 @@ def test_unreadable_lease_record_still_drains_validated_residue(native_tree, mon
     lock-validated is reclaimed and the blocking record is reported at INFO.
     """
     _home, agents, _project = native_tree
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     stale = lease_dir / "a-stale.json"
     stale_holder = lease_dir / "a-stale.hold"
     projection.atomic_write(
@@ -3753,8 +3766,8 @@ def test_unreadable_lease_record_does_not_hide_stale_leases_after_it(native_tree
     the bad record is reclaimed.
     """
     _home, agents, _project = native_tree
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     bad = lease_dir / "a-bad.json"
     projection.atomic_write(bad, "not json", restrict_to_owner=True)
     projection.atomic_write(lease_dir / "a-bad.hold", "", restrict_to_owner=True)
@@ -3796,8 +3809,8 @@ def test_record_less_holder_litter_is_reclaimed_and_cannot_pin_the_cap(native_tr
     an unlocked record-less holder is reclaimed as residue. A held one is kept.
     """
     _home, agents, _project = native_tree
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     orphans = [lease_dir / f"{1000 + n}-{uuid.uuid4().hex}.hold" for n in range(4)]
     for orphan in orphans:
         projection.atomic_write(orphan, "", restrict_to_owner=True)
@@ -3830,8 +3843,8 @@ def test_record_less_holder_reclaim_spares_files_the_writer_did_not_name(native_
     empty holders, and head ``f0ecf1e46`` unlinked it on the name alone.
     """
     _home, agents, _project = native_tree
-    lease_dir = agents / projection._PROJECTION_LEASE_DIR_NAME
-    lease_dir.mkdir()
+    lease_dir = projection._projection_lease_dir()
+    lease_dir.mkdir(parents=True)
     foreign = [
         lease_dir / "notes.hold",
         lease_dir / f"{uuid.uuid4().hex}.hold",
@@ -4597,8 +4610,8 @@ def _publish_pre_view_digest(agents, name):
         {"name": name, "resources": [], "mcpServers": {"kirocrew-core": {"command": "x"}}}
     )
     alias.write_text(raw, encoding="utf-8")
-    md = agents / projection._PROJECTION_METADATA_DIR_NAME
-    md.mkdir(exist_ok=True)
+    md = projection._projection_metadata_dir()
+    md.mkdir(parents=True, exist_ok=True)
     sidecar = md / f"{name}.json"
     sidecar.write_text(
         json.dumps(
@@ -4672,8 +4685,8 @@ def test_a_reserialized_alias_whose_sidecar_names_another_home_is_kept(native_tr
 
 def _orphan_sidecar(agents, digest, home=None):
     stem = projection.NATIVE_SKILL_ALIAS_PREFIX + digest
-    md = agents / projection._PROJECTION_METADATA_DIR_NAME
-    md.mkdir(exist_ok=True)
+    md = projection._projection_metadata_dir()
+    md.mkdir(parents=True, exist_ok=True)
     path = md / f"{stem}.json"
     path.write_text(
         json.dumps(
@@ -4699,7 +4712,7 @@ def test_the_prune_sweeps_this_homes_sidecars_whose_alias_is_gone(native_tree, m
     _stem, foreign = _orphan_sidecar(agents, "2" * 24, home="/some/other/crew-home")
     kept_stem, kept = _orphan_sidecar(agents, "3" * 24)
     (agents / f"{kept_stem}.json").write_text('{"name":"operator-owned"}', encoding="utf-8")
-    md = agents / projection._PROJECTION_METADATA_DIR_NAME
+    md = projection._projection_metadata_dir()
     stray = md / "notes.json"
     stray.write_text("{}", encoding="utf-8")
 
@@ -4863,7 +4876,10 @@ def test_an_alias_view_leaves_out_the_welcome_message_and_keeps_a_short_descript
 
     view = json.loads(_alias_file(agents, prepared).read_text(encoding="utf-8"))
     assert "welcomeMessage" not in view
-    assert len(view["description"]) == projection._ALIAS_DESCRIPTION_MAX_CHARS
+    # The authored text is not copied at all: the view carries the short
+    # managed description instead, well under the bound the strip enforces.
+    assert "d" * 100 not in view["description"]
+    assert len(view["description"]) < projection._ALIAS_DESCRIPTION_MAX_CHARS
     assert json.loads(source.read_text(encoding="utf-8"))["welcomeMessage"] == welcome
     warnings = [r.getMessage() for r in caplog.records if "welcomeMessage" in r.getMessage()]
     assert warnings and "'custom'" in warnings[0] and source.as_posix() in warnings[0]
@@ -4874,13 +4890,84 @@ def test_an_alias_view_leaves_out_the_welcome_message_and_keeps_a_short_descript
     assert not [r for r in caplog.records if "welcomeMessage" in r.getMessage()]
 
 
-def test_a_small_description_reaches_the_alias_unchanged(native_tree):
+def test_a_view_describes_itself_as_managed_and_names_the_agent_to_pick(native_tree):
+    """The Kiro IDE lists every file in the agents directory as an agent, with
+    its description. A view's description is the one place it can say what it is
+    and which agent the user should pick instead; the authored description is
+    not copied (the authored agent is listed beside it with its own)."""
     _home, agents, project = native_tree
     spec = {"name": "custom", "tools": ["read"], "description": "Reviews pull requests."}
     (agents / "custom.json").write_text(json.dumps(spec), encoding="utf-8")
     prepared = projection.prepare_native_skill_projection(project)
     view = json.loads(_alias_file(agents, prepared).read_text(encoding="utf-8"))
-    assert view["description"] == "Reviews pull requests."
+    description = view["description"]
+    assert description.startswith(projection._MANAGED_VIEW_DESCRIPTION_PREFIX + "custom [")
+    assert "Use custom instead." in description
+    assert "Reviews pull requests." not in description
+    assert projection._view_home_tag(view) == projection._home_tag(_crew_home_id())
+    # An edit to the authored description alone changes nothing kiro-cli runs,
+    # so it mints no new view.
+    spec["description"] = "Reviews pull requests carefully."
+    (agents / "custom.json").write_text(json.dumps(spec), encoding="utf-8")
+    assert projection.prepare_native_skill_projection(project).agent("custom") == prepared.agent(
+        "custom"
+    )
+
+
+@pytest.mark.parametrize("length", [1, 100, 10_000])
+def test_a_views_managed_description_keeps_the_alias_bound_for_any_agent_name(length):
+    """The managed description replaces the authored one AFTER the alias bound
+    was applied, so it must keep that bound itself: a spec on disk may declare a
+    name of any length. The name is shortened, the home tag the prune reads is
+    not, and the description still parses as a tagged managed view."""
+    name = "a" * length
+    home_id = "/some/home"
+    description = projection._managed_view_description(name, home_id)
+    assert len(description) <= projection._ALIAS_DESCRIPTION_MAX_CHARS
+    assert description.startswith(projection._MANAGED_VIEW_DESCRIPTION_PREFIX + "a")
+    assert description.endswith(" instead.")
+    assert projection._view_home_tag({"description": description}) == projection._home_tag(home_id)
+    if length <= 100:
+        assert f" of {name} [" in description and f"Use {name} instead." in description
+    else:
+        assert "\u2026 [" in description and name not in description
+
+
+def test_a_view_tagged_by_another_home_is_never_reclaimed_as_a_legacy_view(
+    native_tree, monkeypatch, tmp_path
+):
+    """Two homes share one agents directory when they share ``~/.kiro``. Each
+    keeps its ownership records under its OWN data home, so the other home's
+    view has no sidecar this home can see -- exactly what a view from a build
+    before any sidecar looks like. The home tag in the view's description keeps
+    the legacy reclaim off it; a view tagged by THIS home with its record lost
+    still drains through that path."""
+    _home, agents, project = native_tree
+    (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
+    monkeypatch.setattr(projection, "data_home", lambda: tmp_path / "crew-b")
+    theirs = projection.prepare_native_skill_projection(project)
+    their_alias = _alias_file(agents, theirs)
+    theirs.release()
+    assert their_alias.exists()
+    # Their record is under their data home: take it away so this home cannot
+    # even find a legacy-dir record for it, then age the view past the floor.
+    shutil.rmtree(tmp_path / "crew-b")
+    _backdate(their_alias)
+    monkeypatch.setattr(projection, "data_home", lambda: tmp_path / "crew")
+    mine = projection.prepare_native_skill_projection(project)
+    my_alias = _alias_file(agents, mine)
+    assert their_alias.exists(), "another home's live view was reclaimed as a legacy one"
+    assert my_alias.exists() and my_alias != their_alias
+
+    # The same view, tagged by THIS home with its sidecar gone, is this home's
+    # to reclaim: every legacy gate still applies (aged, unleased, inactive).
+    mine.release()
+    _metadata_file(agents, mine).unlink()
+    _backdate(my_alias)
+    with projection._projection_alias_lock(agents):
+        projection._prune_stale_managed_aliases(agents, _crew_home_id(), keep=set())
+    assert not my_alias.exists()
+    assert their_alias.exists()
 
 
 def test_the_display_budget_names_the_readers_frame_limit():
@@ -5054,7 +5141,7 @@ def test_the_churning_census_bounds_the_group_key_it_retains(native_tree):
     spec = {"name": "custom", "mcpServers": {"s": {"command": "s", "env": {"K": "v"}}}}
     (agents / "custom.json").write_text(json.dumps(spec), encoding="utf-8")
     prepared = projection.prepare_native_skill_projection(project)
-    sidecar = agents / projection._PROJECTION_METADATA_DIR_NAME / f"{prepared.agent('custom')}.json"
+    sidecar = projection._projection_metadata_dir() / f"{prepared.agent('custom')}.json"
     record = json.loads(sidecar.read_text(encoding="utf-8"))
     record[projection._MANAGED_AGENT] = "x" * 5000
     record[projection._MANAGED_SOURCE] = "/" + "y" * 5000
@@ -5065,3 +5152,558 @@ def test_the_churning_census_bounds_the_group_key_it_retains(native_tree):
     assert all(
         len(part) <= projection._CHURNING_LABEL_MAX_CHARS for key in churning for part in key
     )
+
+
+# ── side files live under the data home, not in the agents directory ──
+
+
+def test_a_preparation_writes_only_views_into_the_agents_directory(native_tree):
+    """The Kiro IDE lists every entry of ``~/.kiro/agents/`` as an agent. The
+    lock, the lease records and the ownership sidecars are Kiro Crew's own and
+    belong under its data home; only the views kiro-cli resolves by name may
+    land beside the authored specs."""
+    _home, agents, project = native_tree
+    (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
+    prepared = projection.prepare_native_skill_projection(project)
+    alias = prepared.agent("custom")
+
+    assert sorted(p.name for p in agents.iterdir()) == sorted(["custom.json", f"{alias}.json"])
+    side = projection._projection_side_dir()
+    assert side == projection.data_home() / "skill-projection"
+    assert (side / "publication.lock").is_file()
+    assert (side / "metadata" / f"{alias}.json").is_file()
+    assert (side / "metadata" / projection._VIEW_LEDGER_NAME).is_file()
+    records = list((side / "leases").glob("*.json"))
+    assert len(records) == 1 and json.loads(records[0].read_text())["aliases"] == [alias]
+    assert not (agents / projection._PROJECTION_LEASE_DIR_NAME).exists()
+    assert not (agents / projection._PROJECTION_METADATA_DIR_NAME).exists()
+    assert not (agents / projection._PROJECTION_LOCK_NAME).exists()
+
+
+def test_a_lease_an_older_build_holds_in_the_agents_directory_still_keeps_its_view(
+    native_tree, monkeypatch
+):
+    """For one release an older build sharing the agents directory publishes
+    its leases where it always did. The prune reads both places: a lease held
+    THERE keeps the alias it names, exactly as one held under the data home."""
+    _home, agents, project = native_tree
+    (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
+    stale = _legacy_alias(agents, "a" * 24)
+    legacy_leases = projection._legacy_lease_dir(agents)
+    legacy_leases.mkdir()
+    stem = f"{os.getpid()}-{uuid.uuid4().hex}"
+    (legacy_leases / f"{stem}.json").write_text(json.dumps({"aliases": [stale.stem]}))
+    holder = legacy_leases / f"{stem}.hold"
+    holder.write_text("")
+    _hold_the_prune_clock(monkeypatch)
+    with projection.platform_compat.open_lock_file(holder) as holder_fd:
+        with projection.platform_compat.file_lock(holder_fd, exclusive=True, wait=False):
+            assert projection.prepare_native_skill_projection(project) is not None
+            assert stale.exists(), "a view an older build's lease names was reclaimed"
+    # The holder is released: the lease is residue, the view is backlog.
+    assert projection.prepare_native_skill_projection(project) is not None
+    assert not stale.exists()
+    assert not list(legacy_leases.iterdir()), "the released legacy lease was not reclaimed"
+
+
+def test_the_boot_drain_moves_this_homes_legacy_side_files_and_leaves_the_rest(
+    native_tree, monkeypatch
+):
+    """The one-shot migration: sidecars THIS home recorded in the agents
+    directory come over to its data home, another home's stay (they are that
+    home's to move), the legacy ledger is merged, the empty lease directory and
+    the unheld lock go, and running it again changes nothing."""
+    _home, agents, project = native_tree
+    (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
+    monkeypatch.setattr(projection, "_DRAIN_BATCH_PAUSE_SECS", 0)
+    legacy_meta = projection._legacy_metadata_dir(agents)
+    legacy_meta.mkdir()
+    mine = f"{projection.NATIVE_SKILL_ALIAS_PREFIX}{'1' * 24}"
+    theirs = f"{projection.NATIVE_SKILL_ALIAS_PREFIX}{'2' * 24}"
+    for stem, home in ((mine, _crew_home_id()), (theirs, "/some/other/home")):
+        # A view still in use by its (dead, old-build) publisher: the alias
+        # stays on disk, so the sweep has nothing to retire and the pair is
+        # exactly what the migration must carry over or leave.
+        view = {"name": stem, "mcpServers": {"kirocrew-core": {"command": "x"}}}
+        raw = json.dumps(view)
+        (agents / f"{stem}.json").write_text(raw, encoding="utf-8")
+        (legacy_meta / f"{stem}.json").write_text(
+            json.dumps(
+                {
+                    projection._MANAGED_MARKER: projection._MANAGED_MARKER_VALUE,
+                    projection._MANAGED_CREW_HOME: home,
+                    projection._MANAGED_AGENT: "custom",
+                    projection._MANAGED_ALIAS_SHA256: hashlib.sha256(raw.encode()).hexdigest(),
+                }
+            )
+        )
+    (legacy_meta / "notes.txt").write_text("an operator's file", encoding="utf-8")
+    (legacy_meta / projection._VIEW_LEDGER_NAME).write_text(json.dumps({mine: "custom"}))
+    legacy_leases = projection._legacy_lease_dir(agents)
+    legacy_leases.mkdir()
+    residue = f"{os.getpid()}-{uuid.uuid4().hex}"
+    (legacy_leases / f"{residue}.json").write_text(json.dumps({"aliases": [mine]}))
+    (legacy_leases / f"{residue}.hold").write_text("")
+    legacy_lock = projection._legacy_lock_path(agents)
+    legacy_lock.write_bytes(b"")
+    # Another process of this home (one already on the new layout) holds the
+    # view this home's record names, so the drain migrates the pair rather than
+    # reclaiming it; the lease stays held for the whole test.
+    held = projection._acquire_projection_lease(agents, {mine})
+    _hold_the_prune_clock(monkeypatch)
+
+    projection.drain_stale_aliases()
+
+    new_meta = projection._projection_metadata_dir()
+    assert (new_meta / f"{mine}.json").is_file(), "this home's sidecar was not moved"
+    assert not (legacy_meta / f"{mine}.json").exists()
+    assert (legacy_meta / f"{theirs}.json").is_file(), "another home's sidecar was touched"
+    assert (legacy_meta / "notes.txt").is_file(), "a file this module never wrote was touched"
+    assert projection._read_view_ledger(new_meta).get(mine) == "custom"
+    # The foreign sidecar keeps the directory, so the shared ledger stays too.
+    assert (legacy_meta / projection._VIEW_LEDGER_NAME).is_file()
+    assert not legacy_leases.exists(), "the drained legacy lease directory was kept"
+    # The lock stays while any legacy directory stays: an older build may still
+    # be publishing here.
+    assert legacy_lock.exists()
+    assert (agents / f"{theirs}.json").exists(), "another home's view was reclaimed"
+
+    # Idempotent: a second boot finds nothing of this home's to move.
+    before = sorted(str(p) for p in agents.rglob("*")) + sorted(str(p) for p in new_meta.iterdir())
+    projection.drain_stale_aliases()
+    assert before == sorted(str(p) for p in agents.rglob("*")) + sorted(
+        str(p) for p in new_meta.iterdir()
+    )
+
+    # Once the other home has moved its own record, the shared ledger still
+    # holds names: it is every home's record of its retired views and names no
+    # home, so this home keeps it (and the directory and lock with it) rather
+    # than take another home's mappings away. An unreadable one is kept too.
+    (legacy_meta / f"{theirs}.json").unlink()
+    (legacy_meta / "notes.txt").unlink()
+    projection.drain_stale_aliases()
+    assert (legacy_meta / projection._VIEW_LEDGER_NAME).is_file()
+    assert legacy_lock.exists()
+    (legacy_meta / projection._VIEW_LEDGER_NAME).write_text("{not json")
+    projection.drain_stale_aliases()
+    assert (legacy_meta / projection._VIEW_LEDGER_NAME).is_file()
+    # Only an empty, readable ledger goes, and then the directory and the lock
+    # -- every one a file this module names.
+    (legacy_meta / projection._VIEW_LEDGER_NAME).write_text("{}")
+    projection.drain_stale_aliases()
+    assert not legacy_meta.exists()
+    assert not legacy_lock.exists()
+    assert (agents / f"{mine}.json").exists() and (new_meta / f"{mine}.json").is_file()
+    held.close()
+
+
+def test_a_view_name_an_older_build_recorded_in_the_agents_directory_still_resolves(
+    native_tree,
+):
+    """``source_agent_name`` reads the legacy records too, until the migration
+    carries them over: a conversation that stored a view name under the old
+    layout must keep resolving right after the upgrade."""
+    _home, agents, _project = native_tree
+    legacy_meta = projection._legacy_metadata_dir(agents)
+    legacy_meta.mkdir()
+    by_sidecar = f"{projection.NATIVE_SKILL_ALIAS_PREFIX}{'3' * 24}"
+    by_ledger = f"{projection.NATIVE_SKILL_ALIAS_PREFIX}{'4' * 24}"
+    (legacy_meta / f"{by_sidecar}.json").write_text(
+        json.dumps(
+            {
+                projection._MANAGED_MARKER: projection._MANAGED_MARKER_VALUE,
+                projection._MANAGED_AGENT: "custom",
+            }
+        )
+    )
+    (legacy_meta / projection._VIEW_LEDGER_NAME).write_text(json.dumps({by_ledger: "other"}))
+    projection._VIEW_SOURCES.clear()
+    assert projection.source_agent_name(by_sidecar) == "custom"
+    assert projection.source_agent_name(by_ledger) == "other"
+
+
+def test_the_view_ceiling_is_sized_for_the_ide_drop_down():
+    """Every view is a row the Kiro IDE shows. The ceiling is a backstop above
+    the measured steady state of a heavily used host (35 views for 34 authored
+    agents), not a startup-cost net in the thousands."""
+    assert projection.SKILL_VIEW_PROJECTION_CEILING == 128
+
+
+# ── a projection that ends prunes its own views at once ──
+
+
+def test_releasing_a_projection_prunes_this_homes_unleased_views_at_once(native_tree, monkeypatch):
+    """Without this a session's views wait for the NEXT spawn's prune, and on a
+    host that is winding down they sit in the Kiro IDE's agent list indefinitely.
+    ``release()`` drops the lease and prunes right away, under the same lock and
+    gates as the per-spawn prune."""
+    monkeypatch.setattr(projection, "_eager_prune", _REAL_EAGER_PRUNE)
+    _home, agents, project = native_tree
+    (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
+    prepared = projection.prepare_native_skill_projection(project)
+    alias = _alias_file(agents, prepared)
+    sidecar = _metadata_file(agents, prepared)
+    assert alias.exists() and sidecar.exists()
+
+    prepared.release()
+
+    assert not alias.exists(), "the released view waited for the next spawn's prune"
+    assert not sidecar.exists()
+    assert not list(projection._projection_lease_dir().iterdir()), "the lease was not released"
+    assert projection.source_agent_name(alias.stem) == "custom", "the ledger lost the view"
+    # Idempotent, and the projection still translates what it published.
+    prepared.release()
+    assert prepared.agent("custom") == alias.stem
+
+
+def test_a_dropped_projection_prunes_too_and_spares_what_another_projection_holds(
+    native_tree, monkeypatch, tmp_path
+):
+    """The finalizer path: a projection that is simply dropped prunes as
+    ``release()`` does, and neither touches a view a live projection in this
+    process still holds."""
+    monkeypatch.setattr(projection, "_eager_prune", _REAL_EAGER_PRUNE)
+    _home, agents, project = native_tree
+    source = agents / "custom.json"
+    source.write_text('{"name":"custom","prompt":"v1"}', encoding="utf-8")
+    live = projection.prepare_native_skill_projection(project)
+    live_alias = _alias_file(agents, live)
+    source.write_text('{"name":"custom","prompt":"v2"}', encoding="utf-8")
+    ended = projection.prepare_native_skill_projection(tmp_path / "other-run")
+    ended_alias = _alias_file(agents, ended)
+    assert live_alias != ended_alias and live_alias.exists() and ended_alias.exists()
+
+    del ended
+    gc.collect()
+
+    assert not ended_alias.exists(), "a dropped projection's view waited for the next spawn"
+    assert live_alias.exists(), "a view a live projection holds was pruned"
+    assert live.agent("custom") == live_alias.stem
+
+
+def test_two_gateways_still_cannot_both_own_a_view(native_tree, monkeypatch):
+    """The lease protocol, after the lease moved under the data home: while
+    ANOTHER process of this home holds a lease naming a view, this process
+    ending its own projection of the same view must not reclaim it -- neither
+    eagerly nor on its next spawn -- and once that lease is released the view is
+    reclaimable again. The other gateway is stood in for by a second lease
+    record with its own held lock, which is all a reclaim can see of it."""
+    monkeypatch.setattr(projection, "_eager_prune", _REAL_EAGER_PRUNE)
+    _home, agents, project = native_tree
+    (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
+    ours = projection.prepare_native_skill_projection(project)
+    alias = _alias_file(agents, ours)
+    other_gateway = projection._acquire_projection_lease(agents, {alias.stem})
+    assert len(list(projection._projection_lease_dir().glob("*.json"))) == 2
+    _hold_the_prune_clock(monkeypatch)
+
+    ours.release()
+    assert alias.exists(), "a view another gateway's lease names was reclaimed on release"
+    with projection._projection_alias_lock(agents):
+        assert projection._prune_stale_managed_aliases(agents, _crew_home_id(), keep=set()) == 0
+    assert alias.exists(), "a view another gateway's lease names was reclaimed by a prune"
+    assert len(list(projection._projection_lease_dir().glob("*.json"))) == 1
+
+    other_gateway.close()
+    with projection._projection_alias_lock(agents):
+        assert projection._prune_stale_managed_aliases(agents, _crew_home_id(), keep=set()) == 1
+    assert not alias.exists()
+    assert not list(projection._projection_lease_dir().iterdir())
+
+
+def test_a_projection_ended_on_the_event_loop_releases_and_prunes_off_it(native_tree, monkeypatch):
+    """``release()`` runs on the event-loop thread at session shutdown (and a
+    finalizer can run there too, when the shared runtime drops an old
+    projection). Nothing of the end runs on that thread: the lease release --
+    unlock, close, two stats and two unlinks on a data home that may be slow --
+    and the prune, which waits on a file lock, both go to one daemon thread, so
+    no session the gateway serves is stalled behind this one's end."""
+    monkeypatch.setattr(projection, "_eager_prune", _REAL_EAGER_PRUNE)
+    _home, agents, project = native_tree
+    (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
+    prepared = projection.prepare_native_skill_projection(project)
+    alias = _alias_file(agents, prepared)
+    lease_dir = projection._projection_lease_dir()
+    assert len(list(lease_dir.iterdir())) == 2
+    ran_on: list[tuple[str, bool]] = []
+    lease_present_at_prune: list[bool] = []
+    done = threading.Event()
+    gate = threading.Event()
+
+    def recording_prune(directory, crew_home_id):
+        current = threading.current_thread()
+        ran_on.append((current.name, current.daemon))
+        # The release ran before the prune, on this same thread.
+        lease_present_at_prune.append(any(lease_dir.iterdir()))
+        gate.wait(10)
+        try:
+            _REAL_EAGER_PRUNE(directory, crew_home_id)
+        finally:
+            done.set()
+
+    monkeypatch.setattr(projection, "_eager_prune", recording_prune)
+    monkeypatch.setattr(projection, "on_event_loop", lambda: True)
+
+    prepared.release()
+
+    # The caller returned while the thread holds at ``gate``: the only work it
+    # did itself was to start that thread.
+    assert not done.is_set(), "the end ran inline on the loop thread"
+    gate.set()
+    assert done.wait(10), "the prune never ran"
+    assert ran_on == [("kirocrew-skill-view-prune", True)]
+    assert lease_present_at_prune == [False], "the lease outlived its release"
+    assert not list(lease_dir.iterdir())
+    assert not alias.exists()
+
+
+def test_a_projection_ended_on_the_event_loop_releases_inline_when_no_thread_can_start(
+    native_tree, monkeypatch
+):
+    """Interpreter shutdown: a thread cannot start. The lease still goes -- the
+    two unlinks the finalizer always did -- and only the prune is dropped, for
+    the next spawn's prune to cover."""
+    pruned: list[Path] = []
+    monkeypatch.setattr(
+        projection, "_eager_prune", lambda directory, _home_id: pruned.append(directory)
+    )
+    _home, agents, project = native_tree
+    (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
+    prepared = projection.prepare_native_skill_projection(project)
+    alias = _alias_file(agents, prepared)
+
+    class _NoThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("can't create new thread at interpreter shutdown")
+
+    monkeypatch.setattr(projection.threading, "Thread", _NoThread)
+    monkeypatch.setattr(projection, "on_event_loop", lambda: True)
+
+    prepared.release()
+
+    assert not list(projection._projection_lease_dir().iterdir()), "the lease was not released"
+    assert pruned == []
+    assert alias.exists(), "a prune ran with no thread to run it on"
+
+
+def test_the_eager_prune_skips_rather_than_queues_behind_this_processs_own_lock(
+    native_tree, monkeypatch
+):
+    """A start in this process holding the in-process lock runs its own prune;
+    the eager one must not wait the full in-process budget behind it."""
+    monkeypatch.setattr(projection, "_eager_prune", _REAL_EAGER_PRUNE)
+    _home, agents, project = native_tree
+    (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
+    prepared = projection.prepare_native_skill_projection(project)
+    alias = _alias_file(agents, prepared)
+    waits: list[float | None] = []
+    real_lock = projection._projection_alias_lock
+
+    def recording_lock(directory, *, in_process_wait=None):
+        waits.append(in_process_wait)
+        return real_lock(directory, in_process_wait=in_process_wait)
+
+    monkeypatch.setattr(projection, "_projection_alias_lock", recording_lock)
+    local = projection._in_process_projection_lock(agents)
+    assert local.acquire(blocking=False)
+    try:
+        prepared.release()
+    finally:
+        local.release()
+    # The lock was asked for with no wait at all, so the busy queue was skipped
+    # rather than waited out; nothing was pruned without it.
+    assert waits == [0.0]
+    assert alias.exists(), "pruned without the lock"
+    assert not list(projection._projection_lease_dir().iterdir()), "the lease was not released"
+    # With the queue free the same release prunes.
+    prepared = projection.prepare_native_skill_projection(project)
+    prepared.release()
+    assert not alias.exists()
+
+
+def test_a_projection_ending_later_prunes_the_home_it_published_into(
+    native_tree, monkeypatch, tmp_path
+):
+    """A finalizer fires at an arbitrary later moment. It prunes the side directory
+    its projection was prepared under, and never asks which data home is current."""
+    monkeypatch.setattr(projection, "_eager_prune", _REAL_EAGER_PRUNE)
+    _home, agents, project = native_tree
+    (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
+    prepared = projection.prepare_native_skill_projection(project)
+    alias = _alias_file(agents, prepared)
+    published_under = projection._projection_side_dir()
+
+    def refuse_to_resolve():
+        raise AssertionError("the ending projection asked which data home is current")
+
+    monkeypatch.setattr(projection, "data_home", refuse_to_resolve)
+
+    prepared.release()
+
+    assert not alias.exists()
+    assert not list((published_under / "leases").iterdir())
+
+
+def test_importing_the_legacy_ledger_never_evicts_what_this_home_recovered(
+    native_tree, monkeypatch
+):
+    """The shared legacy ledger is re-read on every boot while it holds anything. Its
+    names go in as this home's OLDEST entries, only where the bound leaves room, so a
+    mapping recovered from a sidecar is never pushed out by a re-import."""
+    _home, agents, _project = native_tree
+    monkeypatch.setattr(projection, "_VIEW_SOURCES_MAX", 4)
+    names = [f"{projection.NATIVE_SKILL_ALIAS_PREFIX}{n:024x}" for n in range(8)]
+    metadata = projection._ensure_projection_metadata_directory()
+    # This home holds its own two (the newest last), as after a recovery.
+    projection._record_view_ledger_entries(metadata, {names[6]: "own-a", names[7]: "own-b"})
+    legacy = {name: f"legacy-{n}" for n, name in enumerate(names[:6])}
+
+    projection._import_legacy_ledger(metadata, legacy)
+    held = projection._read_view_ledger(metadata)
+    assert list(held) == [names[4], names[5], names[6], names[7]], "own entries must stay newest"
+    assert held[names[6]] == "own-a" and held[names[7]] == "own-b"
+
+    # A second boot finds nothing to add and writes nothing.
+    writes = []
+    monkeypatch.setattr(projection, "atomic_write", lambda *a, **k: writes.append(a))
+    projection._import_legacy_ledger(metadata, legacy)
+    assert writes == []
+
+    # No room at all: nothing is imported and nothing of this home's goes.
+    monkeypatch.setattr(projection, "_VIEW_SOURCES_MAX", 4)
+    projection._import_legacy_ledger(metadata, {names[0]: "x"})
+    assert projection._read_view_ledger(metadata) == held
+
+
+def test_the_legacy_lease_scan_takes_the_older_builds_publication_lock(native_tree, monkeypatch):
+    """An older build writes its lease record, then its holder, under the lock it keeps
+    in the agents directory. A scan of that lease directory that did not take the same
+    lock could meet the pair between the two writes and reclaim a live lease. While
+    that lock is held the scan answers uncertain and removes nothing."""
+    _home, agents, _project = native_tree
+    legacy_leases = projection._legacy_lease_dir(agents)
+    legacy_leases.mkdir()
+    stem = f"{os.getpid()}-{uuid.uuid4().hex}"
+    record = legacy_leases / f"{stem}.json"
+    record.write_text(
+        json.dumps({"aliases": [f"{projection.NATIVE_SKILL_ALIAS_PREFIX}{'5' * 24}"]})
+    )
+    (legacy_leases / f"{stem}.hold").write_text("")
+    lock_path = projection._legacy_lock_path(agents)
+    lock_path.write_bytes(b"")
+    monkeypatch.setattr(projection, "_PROJECTION_LEASE_SCAN_MAX_SECONDS", 0.2)
+
+    with projection.platform_compat.open_lock_file(lock_path) as lock_fd:
+        with projection.platform_compat.file_lock(lock_fd, exclusive=True, wait=False):
+            live, uncertain = projection._scan_projection_leases(agents)
+            assert uncertain and live == set()
+            assert record.exists(), "a lease was reclaimed while an older publisher held its lock"
+
+    # Lock free: the pair is crash residue and goes, exactly as before.
+    live, uncertain = projection._scan_projection_leases(agents)
+    assert not uncertain and live == set()
+    assert not record.exists()
+
+
+def test_a_prune_holds_the_older_builds_lock_from_its_scan_through_its_reclaims(
+    native_tree, monkeypatch
+):
+    """An older build publishes under the lock it keeps in the agents directory.
+    Held only for the lease scan, that lock would let the older build in between
+    the scan and the reclaim: it reuses an alias the scan found unleased (same
+    bytes, same inode) and takes a lease on it, and the reclaim then deletes a
+    live view. So the prune holds that lock until its last reclaim is done."""
+    _home, agents, _project = native_tree
+    stale = _legacy_alias(agents, "a" * 24)
+    lock_path = projection._legacy_lock_path(agents)
+    lock_path.write_bytes(b"")
+    legacy_leases = projection._legacy_lease_dir(agents)
+    legacy_leases.mkdir()
+    older_build_could_publish: list[bool] = []
+    real_reclaim = projection._reclaim_prune_candidate
+
+    def reclaim_while_probing_the_lock(directory, path, crew_home_id, ledger):
+        # What an older build's publication does first: take ITS lock. With the
+        # prune holding it, the attempt fails at once instead of entering.
+        try:
+            with projection.platform_compat.open_lock_file(lock_path, create=False) as fd:
+                with projection.platform_compat.file_lock(fd, exclusive=True, wait=False):
+                    older_build_could_publish.append(True)
+        except OSError:
+            older_build_could_publish.append(False)
+        return real_reclaim(directory, path, crew_home_id, ledger)
+
+    monkeypatch.setattr(projection, "_reclaim_prune_candidate", reclaim_while_probing_the_lock)
+    with projection._projection_alias_lock(agents):
+        reclaimed = projection._prune_stale_managed_aliases(agents, _crew_home_id(), keep=set())
+
+    assert reclaimed == 1 and not stale.exists()
+    assert older_build_could_publish == [False], "the older build's lock was free during a reclaim"
+    # The hold ends with the prune: the lock is free again, and still there.
+    with projection.platform_compat.open_lock_file(lock_path, create=False) as fd:
+        with projection.platform_compat.file_lock(fd, exclusive=True, wait=False):
+            pass
+    assert lock_path.exists()
+
+
+def test_a_prune_removes_nothing_while_an_older_build_holds_its_lock(native_tree, monkeypatch):
+    """The older build is mid-publication (its lock held): this prune cannot know
+    which alias it is about to reuse, so it reclaims nothing and leaves the
+    backlog for a later run."""
+    _home, agents, _project = native_tree
+    stale = _legacy_alias(agents, "b" * 24)
+    lock_path = projection._legacy_lock_path(agents)
+    lock_path.write_bytes(b"")
+    monkeypatch.setattr(projection, "_PROJECTION_LEASE_SCAN_MAX_SECONDS", 0.2)
+    with projection.platform_compat.open_lock_file(lock_path) as lock_fd:
+        with projection.platform_compat.file_lock(lock_fd, exclusive=True, wait=False):
+            with projection._projection_alias_lock(agents):
+                reclaimed = projection._prune_stale_managed_aliases(
+                    agents, _crew_home_id(), keep=set()
+                )
+
+    assert reclaimed == 0 and stale.exists(), "reclaimed behind an older build's publication"
+    # Lock free: the same prune reclaims.
+    with projection._projection_alias_lock(agents):
+        assert projection._prune_stale_managed_aliases(agents, _crew_home_id(), keep=set()) == 1
+    assert not stale.exists()
+
+
+def test_a_prune_creates_no_lock_file_in_the_agents_directory(native_tree):
+    """No legacy lock file means no older publisher to exclude, and the prune
+    leaves none behind: nothing of this build's goes into the agents directory."""
+    _home, agents, _project = native_tree
+    stale = _legacy_alias(agents, "c" * 24)
+    lock_path = projection._legacy_lock_path(agents)
+    assert not lock_path.exists()
+    with projection._projection_alias_lock(agents):
+        assert projection._prune_stale_managed_aliases(agents, _crew_home_id(), keep=set()) == 1
+    assert not stale.exists()
+    assert not lock_path.exists()
+
+
+def test_the_census_counts_another_homes_untracked_view_as_foreign(native_tree, monkeypatch):
+    """A view with no record here carries its publishing home's tag; the prune keeps
+    it, so the census must not promise this gateway will reclaim it."""
+    _home, agents, project = native_tree
+    (agents / "custom.json").write_text('{"name":"custom"}', encoding="utf-8")
+    mine = projection.prepare_native_skill_projection(project)
+    mine_alias = _alias_file(agents, mine)
+    monkeypatch.setattr(projection, "data_home", lambda: _home.parent / "crew-b")
+    theirs = projection.prepare_native_skill_projection(project)
+    their_alias = _alias_file(agents, theirs)
+    # Their lease holder is an open file under their home; close it before the
+    # home goes (Windows refuses to unlink an open file), as a gateway that has
+    # exited would have. The view itself is fresh, so the release keeps it.
+    theirs.release()
+    shutil.rmtree(_home.parent / "crew-b")  # their records live under their home
+    monkeypatch.setattr(projection, "data_home", lambda: _home.parent / "crew")
+    assert mine_alias.exists() and their_alias.exists()
+
+    counts = projection.census_projected_aliases(agents)
+
+    assert counts["total"] == 2
+    assert counts["foreign_leased"] + counts["foreign_home"] == 1

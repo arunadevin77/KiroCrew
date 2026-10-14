@@ -265,6 +265,10 @@ def host_tree(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("kiro_crew.agent._KIRO_MCP_JSON", home / "settings" / "mcp.json")
     monkeypatch.setattr(runtime_mod, "_PROJECTED_MODE_RETRY_DELAYS_SECS", (0.0, 0.0), raising=False)
+    # The harness measures what each spawn's own prune leaves between spawns; a
+    # dropped projection's eager prune (which runs on a thread off the event
+    # loop) would race those counts. Pinned by test_native_skill_projection.
+    monkeypatch.setattr(projection, "_eager_prune", lambda directory, crew_home_id: None)
     for name in AGENTS:
         resources = [] if name == "plain" else [f"skill://catalog/{name}/*/SKILL.md"]
         spec = {"name": name, "tools": ["read"], "resources": ["file://R.md", *resources]}
@@ -296,15 +300,18 @@ def _runtime(watcher: FakeKiroWatcher, prepared, work_dir: Path) -> tuple[AcpRun
 
 def _census(agents: Path) -> dict[str, int]:
     prefix = projection.NATIVE_SKILL_ALIAS_PREFIX
-    meta = agents / projection._PROJECTION_METADATA_DIR_NAME
-    leases = agents / projection._PROJECTION_LEASE_DIR_NAME
+    # Side files are counted in BOTH places the projection reads them from: this
+    # home's own directories and the legacy ones an older build left in the
+    # agents directory (what _seed_backlog plants).
+    metas = projection._metadata_dirs(agents)
+    lease_dirs = (projection._projection_lease_dir(), projection._legacy_lease_dir(agents))
     return {
         "aliases": len(list(agents.glob(f"{prefix}*.json"))),
         "alias_locks": len(list(agents.glob(f"{prefix}*.lock"))),
         "entries": len(list(agents.iterdir())),
         # Sidecars only: the directory also holds the view ledger.
-        "sidecars": len([p for p in meta.glob(f"{prefix}*.json")]) if meta.is_dir() else 0,
-        "leases": len(list(leases.iterdir())) if leases.is_dir() else 0,
+        "sidecars": sum(len(list(m.glob(f"{prefix}*.json"))) for m in metas if m.is_dir()),
+        "leases": sum(len(list(d.iterdir())) for d in lease_dirs if d.is_dir()),
     }
 
 
@@ -313,8 +320,8 @@ def _seed_backlog(agents: Path, count: int) -> None:
     aliases whose sidecars bind their old bytes, orphaned sidecars, and old
     ``<alias>.lock`` residue, all backdated."""
     home_id = projection.data_home().absolute().as_posix()
-    meta = agents / projection._PROJECTION_METADATA_DIR_NAME
-    meta.mkdir(exist_ok=True)
+    meta = projection._legacy_metadata_dir(agents)  # where that build wrote them
+    meta.mkdir(parents=True, exist_ok=True)
     old = time.time() - 3 * 3600
     for n in range(count):
         stem = f"{projection.NATIVE_SKILL_ALIAS_PREFIX}{n:024x}"

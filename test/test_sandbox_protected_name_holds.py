@@ -348,7 +348,14 @@ class TestLeafOnlyPopulationIsRecorded:
     #: so a sandboxed shell cannot swap the bytes between a loader's digest check
     #: and its reopen. A data-home root leaf, three entries per tier, held by its
     #: own name for the same reason as the root leaves above.
-    EXPECTED: dict[str, int] = {"standard": 275, "cc": 282, "strict": 283}
+    #:
+    #: ``skill-projection`` holds the skill projection's side files: the ownership
+    #: sidecars and view ledger a stored ``kirocrew-skill-view-*`` name is mapped
+    #: back through to the agent a resumed conversation runs as, plus its leases and
+    #: lock. Sealed read-only so a sandboxed shell cannot forge that mapping (the
+    #: agents tree it moved out of was already sealed). A data-home root leaf,
+    #: three entries per tier, leaf-only for the same reason as the root leaves above.
+    EXPECTED: dict[str, int] = {"standard": 278, "cc": 285, "strict": 286}
 
     @pytest.mark.parametrize("tier", TIERS)
     def test_leaf_only_count_has_not_grown(self, tier: str) -> None:
