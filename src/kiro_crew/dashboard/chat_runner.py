@@ -376,6 +376,7 @@ from kiro_crew.dashboard.handlers.usage import (
     read_effective_agent,
     read_turn_model,
 )
+from kiro_crew.dashboard.interaction_coordinator import native_resolution_target
 from kiro_crew.dashboard.recovery_replays import SESSION_NOT_FOUND_CANCELLED_TEXT  # noqa: F401
 from kiro_crew.dashboard.recovery_replays import (
     ReplayFamily,
@@ -15803,6 +15804,7 @@ async def _run_chat(
                         only_if_pending=True,
                     ):
                         slot._dirty = True
+                        _resolved_mid = row_mid(permission_row)
                         state.broadcast_ws(
                             "approval_resolved",
                             {
@@ -15810,6 +15812,8 @@ async def _run_chat(
                                 "approved": _approved,
                                 # Keys the frame for the slot-scoped WS gate.
                                 "slot": slot.key,
+                                # The runner's own request, named by its row.
+                                **native_resolution_target(_resolved_mid),
                             },
                         )
                         state.push_slots_update()
