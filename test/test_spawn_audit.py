@@ -1702,7 +1702,7 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # platform_compat.trusted_system_bin("systemctl"); a miss is inconclusive
         # and spawns nothing, so neither PATH nor an agent can choose it.
         "gateway_restart.py::_systemd_show",
-        "slack/gateway.py::_auto_apply_update",
+        "slack/gateway_runtime/update_apply.py::_auto_apply_update",
         # Pluggable update provider: CommandProvider runs operator-configured
         # shell commands from security_policy.json or config.json (sensitive
         # home dirs the agent cannot write). The check command probes for a
@@ -1711,11 +1711,11 @@ BENIGN_SPAWNS: frozenset[str] = frozenset(
         # the command must reach the host's package manager / registry.
         "platform/update_provider.py::check",
         "platform/update_provider.py::apply",
-        "slack/gateway.py::_check_missing_deps",
+        "slack/gateway_runtime/install_repair.py::_check_missing_deps",
         # The kiro-cli version probe. Fixed argv ("kiro-cli --version"), no
         # agent-influenced input; sandboxing the probe would be circular for the
         # same reason as the other boot-time self-checks above.
-        "slack/gateway.py::_warn_if_kiro_cli_outdated",
+        "slack/gateway_runtime/install_repair.py::_warn_if_kiro_cli_outdated",
         # Only spawn_feature_gateway calls this helper, for initial boot and
         # restart. It fixes sys.executable -m kiro_crew gateway --test-mode;
         # no executable/argv parameter exists. Home/env come from the isolated
@@ -2433,7 +2433,7 @@ def test_container_image_assets_are_not_imported():
 # the same treatment.
 # ═══════════════════════════════════════════════════════════════════════════
 
-_GATEWAY_REL = "slack/gateway.py"
+_GATEWAY_REL = "slack/gateway.py + slack/gateway_runtime/*.py"
 
 #: Functions that own the kill-the-tree + bounded-reap contract. The shared
 #: helper is `platform_compat.kill_and_reap` (`_kill_and_reap` is its delegate
@@ -2444,8 +2444,9 @@ _TREE_KILL_FUNCS = frozenset({"kill_and_reap", "_kill_and_reap", "_kill_startup_
 
 @functools.cache
 def _gateway_tree() -> ast.Module:
-    path = _SRC_ROOT / "slack" / "gateway.py"
-    return ast.parse(path.read_text(encoding="utf-8"), str(path))
+    facade = _SRC_ROOT / "slack" / "gateway.py"
+    paths = (facade, *sorted((_SRC_ROOT / "slack" / "gateway_runtime").glob("*.py")))
+    return ast.parse("\n".join(p.read_text(encoding="utf-8") for p in paths), str(facade))
 
 
 def _is_spawn_call(node: ast.AST) -> bool:

@@ -2020,7 +2020,9 @@ async def callback(job):
 
     def test_every_auto_apply_path_uses_the_final_restart_fence(self):
         path = Path(__file__).resolve().parents[1] / "src" / "kiro_crew" / "slack" / "gateway.py"
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        sources = (path, *sorted((path.parent / "gateway_runtime").glob("*.py")))
+        text = "\n".join(source.read_text(encoding="utf-8") for source in sources)
+        tree = ast.parse(text, filename=str(path))
         methods = {
             node.name: node
             for node in ast.walk(tree)
@@ -2456,6 +2458,7 @@ def test_every_unattended_apply_consults_the_effect_first():
     """
     import ast
     import inspect
+    from pathlib import Path
 
     from kiro_crew.slack import gateway
 
@@ -2464,6 +2467,17 @@ def test_every_unattended_apply_consults_the_effect_first():
         for node in ast.walk(ast.parse(inspect.getsource(gateway)))
         if isinstance(node, ast.ClassDef) and node.name == "GatewayOrchestrator"
     )
+    # The orchestrator's methods are its class body plus the ``self``-taking
+    # functions its composed owners define (``gateway_runtime/*.py``).
+    owners = sorted((Path(gateway.__file__).parent / "gateway_runtime").glob("*.py"))
+    owner_methods = [
+        node
+        for path in owners
+        for node in ast.parse(path.read_text(encoding="utf-8")).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.args.args
+        and node.args.args[0].arg == "self"
+    ]
 
     def _calls(fn, name):
         return [
@@ -2475,7 +2489,7 @@ def test_every_unattended_apply_consults_the_effect_first():
         ]
 
     callers = {}
-    for fn in cls.body:
+    for fn in [*cls.body, *owner_methods]:
         if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             prepares = _calls(fn, "_prepare_auto_update_apply")
             if prepares:
@@ -2486,6 +2500,8 @@ def test_every_unattended_apply_consults_the_effect_first():
         "_check_for_updates_via_provider",
         "_retry_pending_update_restart",
     }
+    # Non-vacuity: the owner walk is what reaches all three callers today.
+    assert set(callers) <= {fn.name for fn in owner_methods}
     for name, (prepares, effects) in callers.items():
         if name == "_retry_pending_update_restart":
             continue
@@ -2568,6 +2584,8 @@ _DYNAMIC_GATES = {
 }
 
 _APPLY_ROUTES = [("_auto_apply_update", "_git_route"), ("_auto_apply_wheel_update", "_wheel_route")]
+#: The gateway owner module both apply paths are defined in.
+_APPLY_OWNER = "kiro_crew.slack.gateway_runtime.update_apply"
 
 
 def _gate_helper_names() -> set[str]:
@@ -2587,10 +2605,10 @@ def _gate_helper_names() -> set[str]:
 @pytest.mark.parametrize("apply_name, route_name", _APPLY_ROUTES)
 def test_the_derivation_reads_every_static_gate_its_apply_path_reads(apply_name, route_name):
     import ast
+    import importlib
     import inspect
 
     from kiro_crew.platform import update_capability
-    from kiro_crew.slack import gateway
 
     def _names(module, name: str) -> set[str]:
         fn = next(
@@ -2608,7 +2626,7 @@ def test_the_derivation_reads_every_static_gate_its_apply_path_reads(apply_name,
     # binary. Named rather than derived, because that module's surface is every
     # POSIX call the product makes.
     helpers = _gate_helper_names() | {"trusted_git_bin", "trusted_system_bin"}
-    applied = _names(gateway, apply_name)
+    applied = _names(importlib.import_module(_APPLY_OWNER), apply_name)
     if "preflight_bases" in applied:
         # The managed-venv apply runs its gates through the shared preflight.
         from kiro_crew.platform import wheel_apply

@@ -2420,6 +2420,16 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         "slack/handler_runtime/inbound.py",
         "slack/handler_runtime/stream.py",
         "slack/handler_runtime/turn_context.py",
+        # The owners composed into slack/gateway.py, in the same class as that
+        # facade: they redact the install-repair and update logs, the AutoNudge
+        # notices and the nudge turn's posted reply, and slack/gateway.py stays the
+        # registered "Slack cron / notification posts" sink for all of it, so the
+        # split adds no egress path of its own.
+        "slack/gateway_runtime/install_repair.py",
+        "slack/gateway_runtime/nudge_channel_fire.py",
+        "slack/gateway_runtime/nudge_wiring.py",
+        "slack/gateway_runtime/update_apply.py",
+        "slack/gateway_runtime/update_schedule.py",
         # Redaction of a LOG line or a diagnostic URL/token, not agent output on
         # its way to a user. These match the (deliberately broad) redactor regex
         # in the drift guard but are not egress paths.

@@ -159,7 +159,7 @@ Slack Socket Mode → events.py (dispatch) → handler.py → SessionManager →
 | `slack/format.py` | Markdown → Slack mrkdwn conversion (headings, links, strike, tables, mermaid, ANSI strip, truncation). `render_for_slack` is the one way text reaches Slack: `strip_ansi` → redact → pre-split → convert → redact → display-settle → redact → split, with each converted block, split piece and truncation settled under the Slack mrkdwn reading |
 | `slack/handler.py` | The native turn path's composition facade: `handle_message()` — orchestrates one turn and streams the ACP response, `handle_interaction()` — button clicks (with None provider guard), and every name the module exported. See [Native handler composition](#native-handler-composition) |
 | `slack/handler_runtime/` | Private owners the handler facade composes, one responsibility each (see [Native handler composition](#native-handler-composition)); nothing else imports them |
-| `slack/gateway.py` | `GatewayOrchestrator` — the composition facade: service construction and boot, the cron/heartbeat/subagent/task callbacks, approvals and the redacting delivery legs, shutdown, the update apply chain. Entry point: `run_gateway()`. See [Composition](#composition) |
+| `slack/gateway.py` | `GatewayOrchestrator` — the composition facade: service construction and boot, the cron/heartbeat/subagent/task callbacks, approvals and the redacting delivery legs, shutdown; the class binds the methods its owners define. Entry point: `run_gateway()`. See [Composition](#composition) |
 | `slack/gateway_runtime/` | Private owners the facade composes, one responsibility each (see [Composition](#composition)); nothing else imports them |
 | `slack/events.py` | Socket Mode event routing — dedup (`SeenCache`), slash commands, `member_joined_channel` tracking, message dispatch |
 | `slack/interactions.py` | Block Kit button routing — tool approval, OPTIONS choices, cron/subagent ack, session resume, track channel approve/deny |
@@ -194,6 +194,12 @@ there; the responsibilities below live in private owners under
 | `slack/gateway_runtime/mcp_broker.py` | The MCP broker's lifecycle: launch approvals, the agent-overlay rewrite, start/stop, the npm pre-resolve prefetch, the dashboard enable/stub callbacks |
 | `slack/gateway_runtime/memory_lifecycle.py` | Memory preparation behind `MemoryStartup`, the paced member-store repair, embeddings and the model download, the legacy migration and re-embed sweep |
 | `slack/gateway_runtime/admission.py` | Opening subagent dispatch and the dashboard workers after the memory fence, child liveness, the adaptive controller and its overload-health sources, the dependency coordinator, runner task admission |
+| `slack/gateway_runtime/install_repair.py` | Repairing the install at boot: missing pip dependencies, the console script, the kiro-cli version check, the bounded kill and reap of those children, the pinned kiro-cli path an unattended spawn execs |
+| `slack/gateway_runtime/update_schedule.py` | When an available update applies: the scheduled provider and legacy checks, the update's effect, the in-flight-work census, the pause, drain and settle around an apply, the claimed restart and its re-exec |
+| `slack/gateway_runtime/update_apply.py` | Applying an update unattended: the git checkout path (fetch, reset, rebuild, dependency sync) and the managed-venv wheel |
+| `slack/gateway_runtime/nudge_wiring.py` | Building and starting AutoNudge: the fire and monitor dispatchers, the observer that persists and publishes loop transitions, the wake judge's evidence readers, the held and expired notices |
+| `slack/gateway_runtime/nudge_dashboard_fire.py` | One nudge or monitor wake into a dashboard slot: the slot turn, the work-ledger wake steer, the fire-time mode and crew-boundary refusals |
+| `slack/gateway_runtime/nudge_channel_fire.py` | One unattended nudge turn into a channel session: a Slack thread, or a DM channel through the shared DM adapter, with the monitor completion accounting (`_delivery_result` and `_monitor_completion_hook`, which the dashboard fire path uses too) |
 
 **One namespace.** `gateway_runtime.compose`, called once after the class body,
 rebinds every function an owner defines -- its module functions, the orchestrator
@@ -206,10 +212,29 @@ only holder of state: an owner keeps none, so a `GatewayOrchestrator.__new__`
 fixture or an unbound `GatewayOrchestrator.<method>(stub, ...)` call reaches an
 owner method unchanged. An owner imports the facade only under `TYPE_CHECKING`,
 so the facade is the one import edge; `test/test_slack_gateway_composition_contract.py`
-sweeps every owner function's bytecode for globals the facade does not bind.
+sweeps every owner function's bytecode for globals the facade does not bind. Under
+`TYPE_CHECKING` an owner names a standard-library module by its own `import`
+(`import time`, `import os`), not through the facade, because
+`scripts/check_sync_io_in_async.py` resolves a blocking call only from an import in the
+same file; `test/test_gateway_runtime_bindings.py` plants a blocking call in each such
+owner and checks the gate reports it.
+
+**Split by binding.** The class body binds an owner's methods under a
+`# gateway_runtime/<owner>.py` header, and a class constant an owner defines is bound
+the same way, so `patch.object(GatewayOrchestrator, …)` and an unbound
+`GatewayOrchestrator.<method>(stub, …)` call reach the owner's function. An owner's
+docstring names the orchestrator fields its members read and write. Because owners
+read the facade's imports as their globals, `setup.cfg` turns flake8's F401 off for
+`slack/gateway.py`; `test/test_gateway_runtime_bindings.py` asserts what it stood for
+-- every facade import is read by a facade or owner function, or is part of the
+module's frozen public surface -- plus that no bound function needs a class body
+(zero-argument `super()`, `__class__`, a mangled name), that every bound member has a
+`_BASE_SURFACE` row, and that every name a test patches on the facade is read by some
+function at call time.
 
 **What stays in the facade, and why.** Repository guards read these constructs in
-`slack/gateway.py` by path, text, AST or `inspect.getsource`, so they live there:
+`slack/gateway.py` by path, text, AST or `inspect.getsource`, so they live there until
+the change that moves one points its guards at the owner as well:
 
 - construction and boot: `__init__`, the per-channel `_hoist_*`,
   `_register_config_appliers`, `_start_channel_transports`, `_init_services`,
@@ -218,24 +243,27 @@ sweeps every owner function's bytecode for globals the facade does not bind.
 - the cron callback (`_init_cron`) with `_apply_gate_verdict`, `_init_heartbeat`
   and the subagent completion path (`_init_subagents`): usage-row, runtime-death,
   dispatch-site, memory-store and reap-race audits;
-- AutoNudge: `_init_autonudge`, every `_fire_*_nudge` adapter and the fire paths
-  they delegate to, and the loop-stop notices: composer, turn-ceiling, event-log
-  and wake-judge audits;
 - the approval callbacks and every delivery leg that renders or redacts before
   egress (`_interactive_approval`, `_heartbeat_approval`, `_deliver_channel_reply`,
   `_deliver_cron_response`, `_deliver_result` with its heartbeat Slack rendering,
   the failure alerts): the security-posture sink row and the baseline-log census;
-- the dependency repair and the whole update path, its checks included
-  (`_check_missing_deps`, `_check_console_script`, `_warn_if_kiro_cli_outdated`,
-  `_run_update_checks`, `_check_for_updates`, `_check_for_updates_via_provider`,
-  `_auto_apply_update`, `_auto_apply_wheel_update`, `_restart_after_update` and
-  its fence): spawn-site and restart audits;
+- `_restart_after_update`: `update_ownership.owning` wraps it at definition time,
+  and compose cannot rebind a wrapper another module compiled;
+- `_REQUIRED_DEPS` and `_is_brazil_install`, which the install repair reads through
+  the class: the internal content scan judges every line a change adds, and a line
+  of `_is_brazil_install` matches one of its rules, so the method stays where it was
+  written rather than being re-added in an owner;
 - the ACP/provider import lines the agent-SDK boundary baseline counts,
   `_persist_turn_row`, and the predecessor run-directory sweep helpers.
 
-The contract test lists the constructs those guards enumerate and fails when an
-owner grows one. A guard whose rule spans code by path rather than naming
-constructs covers the owners with the facade: `test_no_config_dir_in_async.py`
+The dependency repair, the update path and AutoNudge moved to their owners together
+with their guards: the spawn and isolator audits (`test_spawn_audit`,
+`test_internal_python_isolation`), the respawn and restart-fence pins, the composer,
+turn-ceiling, event-log, wake-judge, transcript and memory-store tables read the owners
+as well. The contract test maps each construct those guards enumerate to the exact
+files that hold it (`_GUARDED_TOKEN_HOMES`) and fails when a holder gains or loses
+one. A guard whose rule spans code by path rather than naming constructs covers the
+owners with the facade: `test_no_config_dir_in_async.py`
 scans each owner that defines a coroutine, and the `AUTOSDE.yaml` rule
 `no-new-work-on-gateway-boot-path` matches `slack/gateway_runtime/` because the
 boot path reaches `_init_mcp_gateway`, `_start_embeddings` and the runner

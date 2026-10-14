@@ -204,7 +204,7 @@ Three mechanisms:
 
 | Mechanism | Where | Covers |
 |---|---|---|
-| git self-update | `slack/gateway.py` (`_check_for_updates`, called from startup) → `_auto_apply_update` | `source` only |
+| git self-update | `slack/gateway_runtime/update_schedule.py` (`_check_for_updates`, called from startup) → `_auto_apply_update` (`slack/gateway_runtime/update_apply.py`) | `source` only |
 | Electron OTA | `website/electron/auto-update.js` (electron-updater, `autoDownload=false` at the library level with an auto-download preference above it, `autoInstallOnAppQuit=false`) | `dmg`, `appimage` |
 | — none — | | `wheel`, `docker` |
 

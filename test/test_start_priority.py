@@ -1054,7 +1054,13 @@ def test_slack_automation_paths_name_no_priority():
     """The gateway's own Slack wakes (auto-nudge, monitor) and its completion
     injections take the BACKGROUND default; only the event and interaction paths,
     which carry a person's message, claim one."""
-    source = (_SRC / "slack/gateway.py").read_text(encoding="utf-8")
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            _SRC / "slack/gateway.py",
+            *sorted((_SRC / "slack/gateway_runtime").glob("*.py")),
+        )
+    )
     assert "start_priority" not in source
     events = (_SRC / "slack/events.py").read_text(encoding="utf-8")
     assert events.count("start_priority=person_priority(not ") == 4

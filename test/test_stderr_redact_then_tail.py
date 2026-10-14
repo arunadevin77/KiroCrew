@@ -430,7 +430,11 @@ def test_slack_pip_failure_logs_keep_the_redacted_tail() -> None:
     """Both pip-failure logs in the Slack gateway bound the REDACTED text at its tail."""
     import kiro_crew.slack.gateway as slack_gateway
 
-    text = Path(slack_gateway.__file__).read_text(encoding="utf-8")
+    facade = Path(slack_gateway.__file__)
+    text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (facade, *sorted((facade.parent / "gateway_runtime").glob("*.py")))
+    )
     assert 'logger.error("Dep repair failed: %s", dep_err[-500:])' in text
     assert 'redact_log_via_context(fb_err.decode(errors="replace"))[-300:]' in text
     assert 'fb_err.decode(errors="replace")[:300]' not in text

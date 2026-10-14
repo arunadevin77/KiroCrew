@@ -3113,6 +3113,17 @@ class TestStreakFloorConfig:
         assert _service()._judge_quiet_streak_floor() == _JUDGE_QUIET_STREAK_FLOOR_DEFAULT
 
 
+def _gateway_source() -> str:
+    """The Slack gateway facade's text followed by its composed owners' text."""
+    from kiro_crew.slack import gateway
+
+    facade = pathlib.Path(gateway.__file__)
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (facade, *sorted((facade.parent / "gateway_runtime").glob("*.py")))
+    )
+
+
 class TestUpdatePathCarriesTheBrief:
     """``monitor_update`` must MOVE the brief, not answer success and drop it.
 
@@ -3134,9 +3145,7 @@ class TestUpdatePathCarriesTheBrief:
         age 0.0 -- which is silent, and is exactly what defeats the drop-oldest-first
         bound the recency sort exists to serve.
         """
-        from kiro_crew.slack import gateway
-
-        source = inspect.getsource(gateway)
+        source = _gateway_source()
         assert 'payload["observed_at"] = float(at)' in source
         assert 'getattr(monitor, "last_observed_at", 0.0)' in source
 
@@ -3147,16 +3156,12 @@ class TestUpdatePathCarriesTheBrief:
         only the last ``MAX_ROWS_PER_TARGET``, so an unbounded read loses the oldest
         rows of any burst larger than that and never reads them again.
         """
-        from kiro_crew.slack import gateway
-
-        source = inspect.getsource(gateway)
+        source = _gateway_source()
         assert "limit=_judge.MAX_ROWS_PER_TARGET," in source
 
     def test_the_reader_checks_the_subject_before_answering(self) -> None:
         """One monitor answers every target, so the subject must be verified."""
-        from kiro_crew.slack import gateway
-
-        source = inspect.getsource(gateway)
+        source = _gateway_source()
         assert "_judge.pr_observation_is_about(" in source
 
 

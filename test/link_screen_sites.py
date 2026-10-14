@@ -195,7 +195,7 @@ DECLARED_SITES = frozenset(
         ("skills.py", "_verified_unchanged_fingerprint"),
         ("skills.py", "installed_skill_currency"),
         ("skills.py", "remove_retired_conductor_skill"),
-        ("slack/gateway.py", "GatewayOrchestrator._auto_apply_update._obstructions"),
+        ("slack/gateway_runtime/update_apply.py", "_auto_apply_update._obstructions"),
         ("snapshot.py", "_estimate_selected_bytes"),
         ("snapshot_archive.py", "_copytree_safe._ignore_unsafe"),
         ("snapshot_components.py", "safe_tree_root"),

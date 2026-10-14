@@ -1301,7 +1301,7 @@ monitor spend stays booked to the conversation it nudged.** A monitor nudge exis
 only to serve one conversation, so moving its credits into a separate `monitor`
 bucket would make that conversation under-report what it actually cost — the one
 number the Spend tab exists to give. The consequence is that the two vocabularies
-are permanently different sets: `monitor` (`slack/gateway.py`) and `webhook`
+are permanently different sets: `monitor` (`slack/gateway_runtime/nudge_channel_fire.py`) and `webhook`
 (`handlers/hooks.py`) are written as row surfaces and are NOT members of
 `TELEMETRY_CHANNELS`, and nothing in the read path compares one against the other.
 Unifying them is therefore a product decision that has been made and declined, not

@@ -4507,10 +4507,10 @@ class KiroPrerequisiteService:
         origin-checked and audited. This is the ONE place this module runs a Kiro
         CLI subcommand that is not a read-only probe — justified because
         ``kiro-cli update`` is the CLI updating ITSELF in place (the same command
-        the auto-update path in ``slack/gateway.py`` already runs unattended), not
-        a remote installer script or a credential-writing flow, so it adds no new
-        privileged surface. It is offered only to remedy a too-old CLI that lacks
-        the ``acp`` subcommand.
+        the auto-update path in ``slack/gateway_runtime/update_apply.py`` already
+        runs unattended), not a remote installer script or a credential-writing
+        flow, so it adds no new privileged surface. It is offered only to remedy a
+        too-old CLI that lacks the ``acp`` subcommand.
 
         Returns a snapshot with ``cli_update_error`` set — empty on success. The
         error is returned rather than raised so the gate can render it in place,

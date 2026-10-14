@@ -1,7 +1,6 @@
 """The Slack gateway stays one namespace while its owners live in ``gateway_runtime``.
 
-``kiro_crew.slack.gateway`` keeps its import path, its patch surface and every
-construct a path-keyed repository guard reads in that file; the modules of
+``kiro_crew.slack.gateway`` keeps its import path and its patch surface; the modules of
 ``kiro_crew.slack.gateway_runtime`` hold the rest, one responsibility each, and
 ``gateway_runtime.compose`` runs every function they define on the facade's
 globals. These tests pin what that composition promises:
@@ -14,8 +13,8 @@ globals. These tests pin what that composition promises:
   orchestrator, and an owner's classes keep their own module;
 * nothing but the facade imports an owner, and no owner imports another at
   runtime, so the facade is the only edge;
-* the guards that enumerate constructs in ``slack/gateway.py`` by path keep seeing
-  every construct they enumerate, because no owner holds one.
+* the guards that enumerate constructs by path keep seeing every construct they
+  enumerate, because each stays in exactly the files its guards read.
 """
 
 from __future__ import annotations
@@ -294,6 +293,146 @@ _BASE_SURFACE: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("_is_heartbeat_safe_tool", "function", "(event: 'LLMEvent') -> 'bool'"),
         ("_build_heartbeat_hooks", "function", "(user_hooks: 'HookManager') -> 'HookManager'"),
         ("_bare_tool_name", "function", "(title: 'str') -> 'str'"),
+    ),
+    "install_repair": (
+        ("_KIRO_CLI_RESOLVE_TIMEOUT_SECS", "value", "'float'"),
+        ("_pinned_kiro_cli", "async function", "(purpose: 'str') -> 'str | None'"),
+        (
+            "_kill_startup_child",
+            "async staticmethod",
+            "(proc: \"'asyncio.subprocess.Process'\") -> 'None'",
+        ),
+        (
+            "_reap_startup_child",
+            "async classmethod",
+            "(cls, proc: \"'asyncio.subprocess.Process'\") -> 'None'",
+        ),
+        ("_check_missing_deps", "async method", "(self) -> 'None'"),
+        ("_check_console_script", "async method", "(self) -> 'None'"),
+        ("_schedule_console_script_repair", "method", "(self) -> 'asyncio.Task[None]'"),
+        ("_warn_if_kiro_cli_outdated", "async method", "(self) -> 'None'"),
+    ),
+    "update_schedule": (
+        ("_UPDATE_STOP_GRACE_SECS", "value", "'float'"),
+        ("_in_flight_work_counts", "method", "(self) -> 'tuple[int, int]'"),
+        ("_count_in_flight_work", "method", "(self) -> 'int'"),
+        ("_live_update_handler_tasks", "method", "(self) -> 'list[asyncio.Task[Any]]'"),
+        (
+            "_drain_update_callback_work",
+            "async method",
+            "(self, *, timeout: 'float | None') -> 'bool'",
+        ),
+        (
+            "_prepare_auto_update_apply",
+            "async method",
+            "(self, *, mandatory: 'bool', mandatory_key: 'str' = '') -> 'bool'",
+        ),
+        ("_finish_auto_update_apply", "async method", "(self) -> 'None'"),
+        ("_wheel_apply_module", "staticmethod", "() -> 'Any'"),
+        ("_dashboard_policy_applies", "staticmethod", "() -> \"list['asyncio.Task[Any]']\""),
+        (
+            "_settle_update_work",
+            "async method",
+            "(self, update_task: \"'asyncio.Task[None] | None'\") -> 'None'",
+        ),
+        ("_run_update_checks", "async method", "(self) -> 'None'"),
+        ("_retry_pending_update_restart", "async method", "(self) -> 'None'"),
+        ("_check_for_updates", "async method", "(self) -> 'None'"),
+        (
+            "_auto_update_effect",
+            "async method",
+            "(self, provider: 'object | None') -> 'AutoUpdateEffect'",
+        ),
+        ("_publish_provider_update_state", "method", "(self, result: 'object') -> 'None'"),
+        ("_check_for_updates_via_provider", "async method", "(self, provider: 'object') -> 'None'"),
+        (
+            "_restart_after_update_claimed",
+            "async method",
+            "(self, launcher: 'str | None', exe: 'str | None') -> 'None'",
+        ),
+        ("_check_for_updates_legacy", "async method", "(self) -> 'None'"),
+    ),
+    "update_apply": (
+        ("_auto_apply_update", "async method", "(self, *, mandatory: 'bool' = False) -> 'None'"),
+        (
+            "_auto_apply_wheel_update",
+            "async method",
+            "(self, channel: 'str', version: 'str', *, mandatory: 'bool' = False, mandatory_key: 'str' = '') -> 'None'",
+        ),
+        (
+            "_notice_wheel_update_once",
+            "method",
+            "(self, key: 'str', title: 'str', body: 'str') -> 'None'",
+        ),
+    ),
+    "nudge_wiring": (
+        ("_init_autonudge", "async method", "(self) -> 'None'"),
+        ("_notify_nudge_held", "method", "(self, loop: 'NudgeLoop') -> 'bool'"),
+        ("_notify_nudge_expired", "method", "(self, loop: 'NudgeLoop') -> 'bool'"),
+    ),
+    "nudge_dashboard_fire": (
+        (
+            "_fire_dashboard_nudge",
+            "async method",
+            "(self, loop: 'NudgeLoop', wake_message: 'str | None' = None) -> 'bool | MonitorDispatchResult'",
+        ),
+        (
+            "_work_ledger_wake_loop",
+            "method",
+            "(self, loop: 'NudgeLoop', wake_message: 'str | None') -> 'bool'",
+        ),
+        ("_work_ledger_wake_text", "async method", "(self, loop: 'NudgeLoop') -> 'str'"),
+        (
+            "_steer_work_ledger_wake",
+            "async method",
+            "(self, loop: 'NudgeLoop', slot: 'Any', text: 'str') -> 'bool'",
+        ),
+        (
+            "_dashboard_mode_admits",
+            "async staticmethod",
+            "(loop: 'NudgeLoop', slot: 'Any') -> 'bool'",
+        ),
+        ("_audit_fire_refused", "async staticmethod", "(loop: 'NudgeLoop', slot: 'Any') -> 'None'"),
+    ),
+    "nudge_channel_fire": (
+        ("_NUDGE_TURN_TIMEOUT", "value", "'float'"),
+        (
+            "_delivery_result",
+            "function",
+            "(wake_message: 'str | None', result: 'MonitorDispatchResult') -> 'bool | MonitorDispatchResult'",
+        ),
+        ("_DmDispatchAdapter", "class", ""),
+        (
+            "_fire_slack_nudge",
+            "async method",
+            "(self, loop: 'NudgeLoop', wake_message: 'str | None' = None) -> 'bool | MonitorDispatchResult'",
+        ),
+        (
+            "_fire_dm_nudge",
+            "async method",
+            "(self, loop: 'NudgeLoop', adapter: '_DmDispatchAdapter', wake_message: 'str | None' = None) -> 'bool | MonitorDispatchResult'",
+        ),
+        (
+            "_fire_discord_nudge",
+            "async method",
+            "(self, loop: 'NudgeLoop', wake_message: 'str | None' = None) -> 'bool | MonitorDispatchResult'",
+        ),
+        ("_fire_webex_nudge", "async method", "(self, loop: 'NudgeLoop') -> 'bool'"),
+        (
+            "_stop_message_loop_if_structural_terminal",
+            "async method",
+            "(self, loop: 'NudgeLoop', exc: 'BaseException', wake_message: 'str | None', fired_generation: 'int') -> 'bool'",
+        ),
+        (
+            "_monitor_completion_hook",
+            "method",
+            "(self, loop: 'NudgeLoop') -> 'MonitorCompletionHook | None'",
+        ),
+        (
+            "_report_monitor_completion",
+            "async method",
+            "(self, loop: 'NudgeLoop', disposition: 'MonitorActionDisposition', usage: 'AgentTurnUsage | None', *, hook: 'MonitorCompletionHook | None' = None) -> 'None'",
+        ),
     ),
 }
 
@@ -708,54 +847,63 @@ def test_a_fresh_facade_import_loads_every_owner(tmp_path: Path) -> None:
 
 # ── the path-keyed guards keep their reach ────────────────────────────────────
 
-#: Constructs repository guards enumerate in ``slack/gateway.py`` by path (usage-row
-#: persists, runtime-death attribution and streaks, spawn and exit sites, chat-turn
-#: dispatches, the nudge composer, the memory-store and transcript seams, the
-#: boot-order anchors, the event-log publish). An owner that grew one would move it
-#: out of such a guard's sight without failing it, so each stays in the facade.
-_FACADE_ONLY_TOKENS = (
-    "persist_token_record",
-    ".read_messages",
-    "begin_turn",
-    "os._exit",
-    "save_conversation_turn_off_loop",
-    "session_store_for_turn",
-    "create_subprocess_",
-    "isolated_python_argv",
-    "respawn_executable",
-    "reexec_python_module",
-    "_running_script_ids.add",
-    "caused_by_this_session",
-    "note_shared_death",
-    "clear_marker",
-    "init_socket_mode",
-    "build_message",
-    "VectorMemoryStore",
-    "configure_default_ladder",
-    "eventlog_hooks",
-    "autonudge_state",
-    "_run_chat",
-    "spawn_guarded_turn",
-    "compose_nudge_body",
-    "clear_shared_deaths",
-    "run_in_cron_pool(",
-    "consecutive_failures",
-    "_delivery_queued",
-    "_digest_held",
-    "_deliver_failure_alert",
-    "render_for_slack(",
-)
+#: Constructs repository guards enumerate by path (usage-row persists, runtime-death
+#: attribution and streaks, spawn and exit sites, chat-turn dispatches, the nudge
+#: composer, the memory-store and transcript seams, the boot-order anchors, the
+#: event-log publish), each mapped to the files that hold it -- the facade
+#: (``gateway``) or an owner -- which are the files those guards read. A holder that
+#: grew one, or lost one, would move it out of such a guard's sight without failing
+#: it, so each set is exact; a set changes in the commit that points the token's
+#: guards at its new home (``slack-gateway.md``, Composition).
+_GUARDED_TOKEN_HOMES: dict[str, frozenset[str]] = {
+    "persist_token_record": frozenset({"gateway"}),
+    ".read_messages": frozenset({"gateway", "nudge_wiring"}),
+    "begin_turn": frozenset({"nudge_channel_fire"}),
+    "os._exit": frozenset({"gateway"}),
+    "save_conversation_turn_off_loop": frozenset({"gateway", "nudge_channel_fire"}),
+    "session_store_for_turn": frozenset({"gateway", "nudge_channel_fire"}),
+    "create_subprocess_": frozenset({"gateway", "install_repair", "update_apply"}),
+    "isolated_python_argv": frozenset({"install_repair", "update_apply"}),
+    "respawn_executable": frozenset({"update_apply", "update_schedule"}),
+    "reexec_python_module": frozenset({"update_schedule"}),
+    "_running_script_ids.add": frozenset({"gateway"}),
+    "caused_by_this_session": frozenset({"gateway"}),
+    "note_shared_death": frozenset({"gateway"}),
+    "clear_marker": frozenset({"gateway"}),
+    "init_socket_mode": frozenset({"gateway"}),
+    "build_message": frozenset({"gateway", "nudge_channel_fire"}),
+    "VectorMemoryStore": frozenset({"gateway"}),
+    "configure_default_ladder": frozenset({"gateway"}),
+    "eventlog_hooks": frozenset({"gateway", "nudge_wiring"}),
+    "autonudge_state": frozenset({"nudge_wiring"}),
+    "_run_chat": frozenset({"gateway", "nudge_dashboard_fire"}),
+    "spawn_guarded_turn": frozenset({"gateway", "nudge_dashboard_fire"}),
+    "compose_nudge_body": frozenset({"gateway", "nudge_channel_fire", "nudge_dashboard_fire"}),
+    "clear_shared_deaths": frozenset({"gateway"}),
+    "run_in_cron_pool(": frozenset({"gateway"}),
+    "consecutive_failures": frozenset({"gateway"}),
+    "_delivery_queued": frozenset({"gateway"}),
+    "_digest_held": frozenset({"gateway"}),
+    "_deliver_failure_alert": frozenset({"gateway"}),
+    "render_for_slack(": frozenset({"gateway", "nudge_channel_fire"}),
+}
 
 
-@pytest.mark.parametrize("token", _FACADE_ONLY_TOKENS)
-def test_a_construct_the_facade_guards_count_stays_in_the_facade(token: str) -> None:
-    assert token in Path(gateway.__file__).read_text(encoding="utf-8")
-    holders = [
-        name
-        for name, _ in _owner_trees()
-        if token in (_RUNTIME_DIR / name).read_text(encoding="utf-8")
-    ]
-    assert holders == []
+def _holder_sources() -> dict[str, str]:
+    """The facade's and every owner's source, keyed by stem."""
+    return {
+        "gateway": Path(gateway.__file__).read_text(encoding="utf-8"),
+        **{
+            name.removesuffix(".py"): (_RUNTIME_DIR / name).read_text(encoding="utf-8")
+            for name, _ in _owner_trees()
+        },
+    }
+
+
+@pytest.mark.parametrize("token", sorted(_GUARDED_TOKEN_HOMES))
+def test_a_construct_a_guard_reads_stays_where_the_guard_reads_it(token: str) -> None:
+    holders = {stem for stem, source in _holder_sources().items() if token in source}
+    assert holders == _GUARDED_TOKEN_HOMES[token]
 
 
 def test_no_owner_reads_a_hoisted_channel_attribute() -> None:

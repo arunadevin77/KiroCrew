@@ -259,8 +259,8 @@ pins ride in the policy file for it:
   enterprise ceiling). It never refuses to *boot*: bricking a fleet on a policy
   typo would remove the surface an admin needs to fix it. An unparseable floor
   imposes none, for the same reason. What "takes the update" means depends on
-  the install (`slack/gateway.py` `_check_for_updates` and
-  `_check_for_updates_via_provider`):
+  the install (`slack/gateway_runtime/update_schedule.py` `_check_for_updates`
+  and `_check_for_updates_via_provider`):
   - **A policy provider** (`check_command` below) applies whenever the check
     reports a version.
   - **A git checkout** on a primary branch applies only toward a build whose
@@ -3654,7 +3654,8 @@ carve-out stay as code. It expects `CONTRACT_VERSION == 1` (pinned pre-launch).
   `read_policy_trust_root` (the side-effect-free trust-root reader).
 - `platform/update_governance.py` — the shared update seam (`resolve_remote_url`,
   `update_blocked_reason`, `update_required`, `min_version`) called by
-  `dashboard/handlers/updates.py`, `cli_server.py` and `slack/gateway.py`.
+  `dashboard/handlers/updates.py`, `cli_server.py` and the gateway's update owners
+  (`slack/gateway_runtime/update_schedule.py`, `slack/gateway_runtime/update_apply.py`).
 - `platform/policy_distribution.py` — central distribution: source resolution
   (env ∘ the policy's `distribution` block), the append-only
   `register_policy_fetcher` transport seam, the last-known-good cache, the

@@ -2422,6 +2422,19 @@ class TestQueuedAppendsSurviveShutdown:
         eventlog_hooks.submit(lambda: None)  # must not raise
 
 
+def _gateway_source() -> str:
+    """The Slack gateway facade's text followed by its composed owners' text."""
+    import pathlib
+
+    import kiro_crew
+
+    facade = pathlib.Path(kiro_crew.__file__).parent / "slack" / "gateway.py"
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (facade, *sorted((facade.parent / "gateway_runtime").glob("*.py")))
+    )
+
+
 class TestPatrolTransitionPersistsBeforeItPublishes:
     """The patrol frame must not be broadcast before its append has landed.
 
@@ -2444,13 +2457,8 @@ class TestPatrolTransitionPersistsBeforeItPublishes:
     def _publish_call_owners(self) -> list[str]:
         """Names of the functions that broadcast an ``autonudge_state`` frame."""
         import ast
-        import pathlib
 
-        import kiro_crew
-
-        src = (pathlib.Path(kiro_crew.__file__).parent / "slack" / "gateway.py").read_text(
-            encoding="utf-8"
-        )
+        src = _gateway_source()
         tree = ast.parse(src)
         owners: list[str] = []
         for node in ast.walk(tree):
@@ -2490,13 +2498,8 @@ class TestPatrolTransitionPersistsBeforeItPublishes:
         the observer, which is the pre-fix behaviour wearing the fixed shape.
         """
         import ast
-        import pathlib
 
-        import kiro_crew
-
-        src = (pathlib.Path(kiro_crew.__file__).parent / "slack" / "gateway.py").read_text(
-            encoding="utf-8"
-        )
+        src = _gateway_source()
         tree = ast.parse(src)
         emit_fns = [
             n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_emit_patrol"
@@ -2531,13 +2534,8 @@ class TestPatrolTransitionPersistsBeforeItPublishes:
         ``if``.
         """
         import ast
-        import pathlib
 
-        import kiro_crew
-
-        src = (pathlib.Path(kiro_crew.__file__).parent / "slack" / "gateway.py").read_text(
-            encoding="utf-8"
-        )
+        src = _gateway_source()
         tree = ast.parse(src)
         observers = [
             n
@@ -2611,13 +2609,8 @@ class TestPatrolTransitionPersistsBeforeItPublishes:
         function before any publish is reached.
         """
         import ast
-        import pathlib
 
-        import kiro_crew
-
-        src = (pathlib.Path(kiro_crew.__file__).parent / "slack" / "gateway.py").read_text(
-            encoding="utf-8"
-        )
+        src = _gateway_source()
         tree = ast.parse(src)
         emit_fns = [
             n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_emit_patrol"
@@ -2668,13 +2661,8 @@ class TestPatrolTransitionPersistsBeforeItPublishes:
         not on `_publish_deferred` alone.
         """
         import ast
-        import pathlib
 
-        import kiro_crew
-
-        src = (pathlib.Path(kiro_crew.__file__).parent / "slack" / "gateway.py").read_text(
-            encoding="utf-8"
-        )
+        src = _gateway_source()
         tree = ast.parse(src)
 
         # The guard whose test reads `_publish_deferred` and which calls `_publish`.

@@ -37,8 +37,8 @@ _INTERNAL_PYTHON_SPAWN_SITES = (
     ("mcp_gateway/rewriter.py", "_build_stub_entry"),
     ("piper_runtime.py", "PiperRuntime._start"),
     ("pod/unit.py", "_kirocrew_argv"),
-    ("slack/gateway.py", "GatewayOrchestrator._check_missing_deps"),
-    ("slack/gateway.py", "GatewayOrchestrator._auto_apply_update"),
+    ("slack/gateway_runtime/install_repair.py", "_check_missing_deps"),
+    ("slack/gateway_runtime/update_apply.py", "_auto_apply_update"),
     ("testing/harness.py", "_launch_gateway"),
     ("testing/harness.py", "spawn_feature_gateway"),
 )

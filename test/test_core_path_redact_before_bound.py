@@ -179,6 +179,8 @@ def _package_modules(package: str) -> list[str]:
 _SCANNED_PACKAGES = {
     # The Research Lab facade and the campaign engine it is composed from.
     "src/kiro_crew/apps/builtins/auto_research": 8,
+    # The owners composed into the Slack gateway facade, slack/gateway.py.
+    "src/kiro_crew/slack/gateway_runtime": 5,
 }
 
 # Every module the issue names, then every module of the packages scanned whole,

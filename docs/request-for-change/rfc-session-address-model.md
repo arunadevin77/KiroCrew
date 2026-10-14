@@ -163,7 +163,7 @@ The entry gains these fields. Each replaces exactly one shape-read, and each has
 | `delegated` | `_DELEGATED_CALLER_PREFIXES`, read by `_caller_app_scope` in `mcp_dashboard.py` | mint site |
 | `nudgeable`, `nudge_mode` | `binding_key_for` + `is_channel_key` (`autonudge.py` and its channel predicates) | mint site |
 | `agent` | the ladder at `dashboard/handlers/sessions.py` (`api_session_tool_policy`) | mint site |
-| `channel.thread_id` | `slack/gateway.py` (`_fire_slack_nudge`), which recovers the delivery thread *from the key* | the surface on attach |
+| `channel.thread_id` | `slack/gateway_runtime/nudge_channel_fire.py` (`_fire_slack_nudge`), which recovers the delivery thread *from the key* | the surface on attach |
 | `legacy_stems[]` | the reverse scan `channel_key_for_stem` | migration only |
 
 `channels[]` is not a new idea — Phase 0 already built the attach set and simply kept it in memory. Persisting it is what lets the other rows stop being prefix reads.
@@ -225,7 +225,7 @@ A surface that renders *better* than the dashboard becomes expressible, which Ph
 
 ### 5.5 Routing without parsing
 
-The sharpest dependency is `slack/gateway.py` (`_fire_slack_nudge`), whose comment reads `# Canonical keys embed the thread root ts.` and recovers the delivery target from the key; the same file's `_notif_meta` splits a key into `(channel, ts)` to build a permalink. Other channel-specific notification paths also split keys for routing, so Phase 4 must inventory all routing readers, not just Slack. Under this design they read `channel.conversation_id` and `channel.thread_id` from the record. `messaging/link.py` (`bind_origin_mirror`) skips origin-mirror binding when a key is `unified:` because that name identifies no single conversation — that becomes an absent `channel` record rather than a prefix test.
+The sharpest dependency is `slack/gateway_runtime/nudge_channel_fire.py` (`_fire_slack_nudge`), whose comment reads `# Canonical keys embed the thread root ts.` and recovers the delivery target from the key; `slack/gateway.py`'s `_notif_meta` splits a key into `(channel, ts)` to build a permalink. Other channel-specific notification paths also split keys for routing, so Phase 4 must inventory all routing readers, not just Slack. Under this design they read `channel.conversation_id` and `channel.thread_id` from the record. `messaging/link.py` (`bind_origin_mirror`) skips origin-mirror binding when a key is `unified:` because that name identifies no single conversation — that becomes an absent `channel` record rather than a prefix test.
 
 ## 6. Migration plan
 
@@ -254,7 +254,7 @@ Seven compatibility obligation groups follow. None can be skipped in Phase 4.
 1. **Transcript filenames on disk.** Either alias via `legacy_stems` — mirroring what `transcript_stems` and `_path`'s fallback in `history.py` already do for bare Slack timestamps — or rename with a symlink, which `ConversationLog.list_sessions` skips as a handoff alias. Sidecars share the stem and must move together. The input is not clean: stacked `dashboard_` stems already exist, which is why `_canonical_key` has to strip them.
 2. **The session map.** Needs the envelope first, and must preserve `sid` above all — `SessionMap.prune` (`session_map.py`) validates resumability and can delete a stale row.
 3. **Approval policy and restricted keys.** Nothing on disk, but every construction site must switch in one commit; a half-migrated set is a silent authorization miss, which `dashboard/chat_persistence.py` already documents for the `dashboard_` / `dashboard:` pair.
-4. **The Slack thread reverse index.** Derived, so mostly free — except `channel.thread_id` must be populated for every existing Slack conversation, because the key-derived fallback at `slack/gateway.py` (`_fire_slack_nudge`) disappears.
+4. **The Slack thread reverse index.** Derived, so mostly free — except `channel.thread_id` must be populated for every existing Slack conversation, because the key-derived fallback at `slack/gateway_runtime/nudge_channel_fire.py` (`_fire_slack_nudge`) disappears.
 5. **`_fold_key`.** Kept for legacy rows; new mints bypass it. §5.1's no-dot condition is what guarantees `canonical_key` can never mistake an opaque id for a bare Slack timestamp.
 6. **Persisted foreign keys and reconstruction fallbacks.** The list is larger than four: `CronJob.session_key` in `cron_service/model.py`, with `f"cron:{job_id}"` fallbacks such as the one `cron.py`'s `_force_reap` reaches through `_fence_run_keys`; the subagent `conversation_key` on `SubagentInfo` in `subagent.py`, whose resume-mismatch path in `_run_inner` **refuses to execute** — a hard failure, not a degradation; `ChannelAgent.session_key` in `channel.py`, rebuilt from two ids in `ChannelAgent.deserialize`; versioned `autonudge.json` records (`_STORE_VERSION` in `autonudge_service/store.py` and `NudgeLoop` in `autonudge_service/model.py`); the session ledger's `slot_key`; and transcript metadata's `linked_session_key`. Phase 4 must inventory persisted consumers rather than treating the first four found as exhaustive.
 7. **The audit log.** Append-only and not rewritten, so `_infer_source` must keep classifying legacy keys — which is why `_infer_source`'s `"slack"` fallback in `sel.py` becomes `"unknown"` rather than disappearing.

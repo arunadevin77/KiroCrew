@@ -118,7 +118,7 @@ Step 0, independent of all of the above and the only item with an external deadl
 
 Two remainders of step 0 are DEFERRED rather than closed, and both are named here so neither reads as an oversight:
 
-- **The websocket does not push a structured change to a non-owner.** The REST reads now entitle a non-owner to a reduced monitor row, but the `autonudge_state` frame for a structured loop still goes through `broadcast_ws_owners` (`slack/gateway.py`), so that reader gets no invalidation and its view stays as fetched until it reconnects. Closing this means a reduced presence frame riding `broadcast_ws`, in the same file the step-0 API change deliberately did not touch. An owner is unaffected: it receives the frame and re-reads.
+- **The websocket does not push a structured change to a non-owner.** The REST reads now entitle a non-owner to a reduced monitor row, but the `autonudge_state` frame for a structured loop still goes through `broadcast_ws_owners` (`slack/gateway_runtime/nudge_wiring.py`), so that reader gets no invalidation and its view stays as fetched until it reconnects. Closing this means a reduced presence frame riding `broadcast_ws`, in the same file the step-0 API change deliberately did not touch. An owner is unaffected: it receives the frame and re-reads.
 - **The frame and the REST read now disagree about the same record.** The frame still carries `message`, `max_cycles` and `cycle_count` for a structured monitor. `message` is not a boundary crossing there, since the frame is owner-only, but the two counters are as misleading on the socket as they were on the read.
 
 ## Failure modes the merged design must carry

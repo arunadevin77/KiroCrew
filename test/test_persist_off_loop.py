@@ -308,8 +308,13 @@ def test_every_slack_persist_site_goes_through_the_choke_point() -> None:
     """
     root = _src_root()
     sites = 0
-    for name in ("handler.py", "gateway.py", "transport_dispatch.py"):
-        tree = ast.parse((root / "slack" / name).read_text(encoding="utf-8"))
+    paths = [
+        root / "slack" / name for name in ("handler.py", "gateway.py", "transport_dispatch.py")
+    ]
+    # The gateway facade's composed owners hold part of its persist sites.
+    paths += sorted((root / "slack" / "gateway_runtime").glob("*.py"))
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Call)

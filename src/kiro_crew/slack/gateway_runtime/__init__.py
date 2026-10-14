@@ -20,11 +20,15 @@ hundred more). A function that read its owner's globals would keep calling the
 unpatched object and the test would pass while exercising nothing, so the gateway
 stays ONE namespace, as the one-module file was. Two consequences follow:
 
-* An owner's imports are inert for its functions. They sit under
-  ``TYPE_CHECKING`` and name the facade, for the type checker and the linter;
-  every name a function reads must exist in ``kiro_crew.slack.gateway``, and
-  ``test_slack_gateway_composition_contract.py`` sweeps each function's bytecode
-  to prove it does.
+* An owner's imports are inert for its functions. Apart from what a class
+  definition needs at import time, they sit under ``TYPE_CHECKING``, for the type
+  checker and the linter: a standard-library module by its own name, so a gate
+  that resolves a call from the file's own imports (``check_sync_io_in_async``)
+  still reads it, and every other name from the facade
+  (``test_gateway_runtime_bindings.py`` lists the owners that still take a gated
+  module from the facade). Every name a function reads must exist in
+  ``kiro_crew.slack.gateway``, and ``test_slack_gateway_composition_contract.py``
+  sweeps each function's bytecode to prove it does.
 * A function's ``__module__`` and ``__qualname__`` read as they did before the
   split -- ``kiro_crew.slack.gateway`` and ``GatewayOrchestrator.<name>`` -- so
   reprs, pickling by reference and the names of nested functions are unchanged;

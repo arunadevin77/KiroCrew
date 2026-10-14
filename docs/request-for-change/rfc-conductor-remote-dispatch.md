@@ -80,7 +80,7 @@ Three decisions:
 | No crew target | The session tools reach only this gateway's slot table. |
 | Unbindable | `bind` looks up a local slot; a peer slot has none, so it answers `unknown_worker_session`. |
 | Reports land elsewhere | A worker on the peer calls the PEER's `work_brief`; the peer has no binding, so it answers `not_bound`, and its `work_report` writes nothing the hub can see. |
-| Wrong flags | `ledger_wake.worker_running` and `ledger_wake.worker_closed` read local slots. The read rows (`_slot_closed` in `handlers/work_ledger.py`) and the wake gate (`probes/work_ledger.py`, `slack/gateway.py`) both use them, so a remote worker reads as closed and, once it has reported, wakes the conductor as stalled at once. |
+| Wrong flags | `ledger_wake.worker_running` and `ledger_wake.worker_closed` read local slots. The read rows (`_slot_closed` in `handlers/work_ledger.py`) and the wake gate (`probes/work_ledger.py`, `slack/gateway_runtime/nudge_wiring.py`) both use them, so a remote worker reads as closed and, once it has reported, wakes the conductor as stalled at once. |
 
 The tunnel only opens hub → peer, so the peer cannot call the hub back.
 
