@@ -312,7 +312,13 @@ def _url_payload_command(n: int) -> str:
 #: ``launcher.terminate``. Ten lines, of which four are the comprehension and six the
 #: reason every entry in that list carries. No matching rule, no threshold and no pass
 #: moved -- a target was added to a list the gate already walks.
-_PACKAGE_LINE_BUDGET = 29_175
+#: Raised again, from 29,175, for ``redaction``'s optional native pre-filter: the
+#: loader that accepts ``kc_native`` only when its fingerprint matches the Python
+#: gate, the fingerprint itself, a debug line when a build's fingerprint does not
+#: match, and the dispatcher that falls back to the Python
+#: gate (kept verbatim as ``_might_contain_credential_py``) on a missing, stale,
+#: disabled or failing module. No pattern moved and no pass changed.
+_PACKAGE_LINE_BUDGET = 29_240
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
