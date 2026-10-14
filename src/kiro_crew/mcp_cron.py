@@ -1330,9 +1330,12 @@ def _vet_shell_command(command: str, *, governance_checked: bool = False) -> str
             f"({', '.join('$' + n for n in sorted(leftover))}). A variable composes "
             "a string a static check cannot follow: an unset one expands to empty "
             "and splits a sensitive path, and one the command assigns can hold a "
-            "different value by the time the shell reads it. Use a literal path, "
-            "or ship a `script` job — its body is scanned in full. Only `$HOME` is "
-            "permitted."
+            "different value by the time the shell reads it. Fix: write the value "
+            "in place of the `$NAME` (`DIR=~/x; tar czf a.tgz $DIR` becomes "
+            "`tar czf a.tgz ~/x`); a secret belongs in a `script` job that reads it "
+            "from an env var granted through `cron_secret_request`, never as a "
+            "literal in the command or the script. A `script` job's body is scanned "
+            "in full. Only `$HOME` is permitted."
         )
     # `HOME` rebound, and any `$` that is neither an expansion nor plainly literal. Both
     # are judged on the raw text with no model of the shell (see `_rebinds_home` and
@@ -1344,7 +1347,9 @@ def _vet_shell_command(command: str, *, governance_checked: bool = False) -> str
             "Error: cron command blocked: `HOME` is named as a word. The only "
             "spelling allowed is `$HOME` or `${HOME}`, because `~` and `$HOME` expand "
             "from it and a command that assigns, reads into or unsets it composes a "
-            "path this check cannot see. Write the literal path, or ship a `script` "
+            "path this check cannot see. The word counts anywhere in the text, a "
+            "comment or a quoted string included (`# HOME listing` is refused; write "
+            "`# home listing`). Fix: write the literal path, or ship a `script` "
             "job -- its body is scanned in full."
         )
     if _has_unplain_dollar(command):
@@ -1353,8 +1358,11 @@ def _vet_shell_command(command: str, *, governance_checked: bool = False) -> str
             "another character that is not an expansion. Quote removal can join it to "
             "the text after it and spell an expansion for a nested shell or an "
             "interpreter, so a `$` is allowed only at the end of the command or before "
-            "whitespace or one of `/ | . , : )`. Rewrite the pattern, or ship a "
-            "`script` job -- its body is scanned in full."
+            "whitespace or one of `/ | . , : )`. Fix: for an end-of-line anchor, put "
+            "the `$` outside the quotes so a space follows it (`grep -e x$ f`, or "
+            '`grep -e "two words"$ f` when the pattern has a space; not '
+            '`grep "x$" f`). `$?`, `$!`, `$$`, `$-` and anything else refused here '
+            "(such as `$\\`) need a `script` job -- its body is scanned in full."
         )
     # Route the deny check through the active PlatformContext's PolicyAuthority so
     # the companion's ADD-only deny overlay applies to cron commands too (the same

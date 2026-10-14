@@ -2258,6 +2258,66 @@ def test_plain_command_with_a_local_assignment_is_refused_when_it_reads_it():
 
 
 @pytest.mark.parametrize(
+    "refused,fix_text,rewrite",
+    [
+        pytest.param(
+            "DIR=~/projects; tar czf /tmp/projects.tgz $DIR",
+            "write the value in place of the `$NAME`",
+            "tar czf /tmp/projects.tgz ~/projects",
+            id="variable-reference",
+        ),
+        pytest.param(
+            'grep "ERROR$" /var/log/app.log',
+            "`grep -e x$ f`",
+            "grep -e ERROR$ /var/log/app.log",
+            id="unplain-dollar-anchor",
+        ),
+        pytest.param(
+            'grep "fatal error$" /var/log/app.log',
+            '`grep -e "two words"$ f`',
+            'grep -e "fatal error"$ /var/log/app.log',
+            id="unplain-dollar-anchor-with-space",
+        ),
+        pytest.param(
+            "ls -la ~ > /tmp/listing.txt # HOME listing",
+            "a comment or a quoted string included",
+            "ls -la ~ > /tmp/listing.txt # home listing",
+            id="bare-home-in-comment",
+        ),
+    ],
+)
+def test_refusal_names_its_one_step_fix_and_the_fix_is_stored(refused, fix_text, rewrite):
+    """Each raw-text refusal names the rewrite, and that rewrite passes the same vet."""
+
+    verdict = _vet_shell_command(refused)
+    assert verdict is not None and fix_text in verdict, verdict
+    assert _vet_shell_command(rewrite) is None
+
+
+def test_unplain_dollar_refusal_sends_special_parameters_to_a_script_job():
+    """`$?`, `$!`, `$$`, `$-` and `$\\` have no inline rewrite: the message says `script` job."""
+
+    for command in (
+        "myjob; echo $? >> /tmp/rc",
+        "myjob & echo $! > /tmp/pid",
+        "mktemp /tmp/j.$$.X",
+        "echo $- > /tmp/flags",
+        "echo a$\\b > /tmp/out",
+    ):
+        verdict = _vet_shell_command(command)
+        assert verdict is not None and "anything else" in verdict, verdict
+        assert "need a `script` job" in verdict, verdict
+
+
+def test_variable_reference_refusal_keeps_secrets_out_of_the_command():
+    """Inlining a token stores it in crons.json, so the message names the vault grant."""
+
+    verdict = _vet_shell_command('TOKEN=abc; curl -H "Authorization: Bearer $TOKEN" https://x')
+    assert verdict is not None and "a secret belongs in a `script` job" in verdict, verdict
+    assert "`cron_secret_request`" in verdict and "never as a literal" in verdict, verdict
+
+
+@pytest.mark.parametrize(
     "command",
     [
         'grep "[0-9]\\{1,3\\}" /tmp/notes.txt',
